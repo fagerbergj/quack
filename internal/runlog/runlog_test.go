@@ -93,10 +93,9 @@ func TestStampTurn(t *testing.T) {
 	}
 }
 
-// Pins that PersistNodeEvent copies EVERY token field off NodeDoneData -
-// CachedTokens was silently dropped once when the struct grew (caught in
-// review of the usage-visibility PR); this fails the next time a field is
-// added to one side only.
+// Pins that PersistNodeEvent copies EVERY token field off NodeDoneData - CachedTokens
+// was silently dropped once when the struct grew (caught in review of the
+// usage-visibility PR); this fails the next time a field is added to one side only.
 func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -111,10 +110,9 @@ func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 		NodeID: "n1", Model: "m", PromptTokens: 100, CompletionTokens: 40,
 		ReasoningTokens: 8, TotalTokens: 148, CachedTokens: 60, FinishReason: "stop",
 	}})
-	// PersistNodeEvent writes on its own goroutine (#827) - poll for the
-	// "done" status rather than mere row-existence (mirrors
-	// rest.waitForDagNodeStatus): UpsertDagNode saves the whole row in one
-	// call, so status=="done" and the token fields land atomically together.
+	// PersistNodeEvent writes on its own goroutine (#827) - poll for the "done" status
+	// rather than mere row-existence (mirrors rest.waitForDagNodeStatus):
+	// UpsertDagNode saves the whole row in one call, so status=="done" and the token fields land atomically together.
 	var n *store.DagNode
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -134,19 +132,12 @@ func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 	}
 }
 
-// A genuine iter.Seq2 range loop, not a fake counting yield: proves Drive's
-// recover holds against real rangefunc poisoning (#1016), which a plain
-// closure test cannot exercise (see orchestrator's TestSafeYieldConcurrent*).
-//
-// Mirrors orchestrator.newSafeYield: recovers a real loop-body panic (Drive's
-// own onErr call, triggered by a non-nil err event - not a synthetic
-// closure), then keeps calling yield exactly like orchestrator.Run does
-// after a recovered node panic during RunPlanAsGraph. That second call
-// either re-panics with "range function continued iteration after loop body
-// panic", or - if it never fires - Drive's own return triggers "range
-// function recovered a loop body panic and did not resume panicking". Both
-// are verified reproducible with a minimal Go 1.23+ program outside this
-// repo; Drive's defer/recover must catch whichever one actually happens here.
+// A genuine iter.Seq2 range loop, not a fake counting yield: proves Drive's recover
+// holds against real rangefunc poisoning (#1016), which a plain closure test
+// cannot exercise (see orchestrator's TestSafeYieldConcurrent*). Mirrors
+// orchestrator.newSafeYield: recovers a real loop-body panic (Drive's own onErr call,
+// triggered by a non-nil err event - not a synthetic closure), then keeps calling yield
+// exactly like orchestrator.Run does after a recovered node panic during RunPlanAsGraph. That second call either re-panics with "range function continued iteration after loop body panic", or - if it never fires - Drive's own return triggers "range function recovered a loop body panic and did not resume panicking". Both are verified reproducible with a minimal Go 1.23+ program outside this repo; Drive's defer/recover must catch whichever one actually happens here.
 func TestDriveRecoversPoisonedRangeState(t *testing.T) {
 	const boom = "distinctive-drive-loop-body-panic"
 	safeYield := func(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent, error) bool {

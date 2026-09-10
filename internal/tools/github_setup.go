@@ -8,12 +8,9 @@ import (
 
 type githubSetupContextKey struct{}
 
-// WithGitHubSetup attaches the deterministic dag.Setup facts for a
-// dispatch-originated run: Repo and BaseRef are ground truth off the dispatch
-// for every such run; WorkBranch is a DEFAULT (quack/issue-<n>) unless
-// CheckoutExistingHead marks it as a real existing head (sdk
-// Setup.ExistingHeadRef). Call ONLY from the dispatch boundary - never from
-// anything fed by model output.
+// WithGitHubSetup attaches the deterministic dag.Setup facts for a dispatch-
+// originated run: Repo and BaseRef are ground truth off the dispatch; WorkBranch
+// is a DEFAULT (quack/issue-<n>) unless CheckoutExistingHead marks it an existing head (sdk Setup.ExistingHeadRef). Call ONLY from the dispatch boundary - never from anything fed by model output.
 func WithGitHubSetup(ctx context.Context, s dag.Setup) context.Context {
 	return context.WithValue(ctx, githubSetupContextKey{}, s)
 }

@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// TestRescope_ApplyMatchesDryRunAcrossPages is the review's regression case
-// for #1263's finding #1: role:coding shrinks as points move out of it under
-// apply, so pagination by offset over that SAME bucket must not skip the
-// tail once the eligible set spans more than one List page (DefaultListLimit
-// = 50). 100 resolvable points + 20 with no provenance, on sqlite.
+// TestRescope_ApplyMatchesDryRunAcrossPages is the review's regression case for #1263's
+// finding #1: role:coding shrinks as points move out of it under apply, so pagination by
+// offset over that SAME bucket must not skip the tail once the eligible set spans more than one List page (DefaultListLimit = 50). 100 resolvable points + 20 with no provenance, on sqlite.
 func TestRescope_ApplyMatchesDryRunAcrossPages(t *testing.T) {
 	backends := []struct {
 		name string

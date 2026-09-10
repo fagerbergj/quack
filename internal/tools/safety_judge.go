@@ -52,7 +52,7 @@ ALLOW (do not re-litigate these):
 
 Call submit_safety_verdict exactly once with allow (bool) and a one-sentence reason.`
 
-// NewSafetyJudge: returns a SafetyJudge backed by judgeModel - isolated per-call agent run.
+// judgeModel runs in an isolated per-call agent run.
 func NewSafetyJudge(judgeModel model.LLM) SafetyJudge {
 	return func(ctx context.Context, request, task, toolName string, args map[string]any, activity string) (bool, string, error) {
 		var sink safetyVerdictArgs

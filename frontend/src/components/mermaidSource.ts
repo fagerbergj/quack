@@ -1,10 +1,6 @@
 // Streaming heuristic: a ```mermaid fence at the very end of a message may
 // still be arriving token-by-token, so its content is a growing prefix, not
-// a diagram. Walk fence open/close state line-by-line (mirrors the backend's
-// internal/vetting/mermaid.go walker) and report whether the LAST fence in
-// the text is an unclosed mermaid block - that's the only fence a streaming
-// message can ever leave open (CommonMark: an unterminated fence swallows
-// everything after it, so at most one can be open, and it's always last).
+// a diagram. Walk fence open/close state line-by-line (mirrors the backend's internal/vetting/mermaid.go walker) and report whether the LAST fence is an unclosed mermaid block - the only fence a streaming message can ever leave open (CommonMark: an unterminated fence swallows everything after it, so at most one can be open, and it's always last).
 const fenceOpenRe = /^ {0,3}(`{3,}|~{3,})[ \t]*(\S*)\s*$/
 const fenceCloseRe = /^ {0,3}(`{3,}|~{3,})\s*$/
 
@@ -30,15 +26,7 @@ export function isTrailingMermaidFenceOpen(text: string): boolean {
 
 // lastSafeSplitOffset finds the last blank-line block boundary at or before
 // `maxOffset` that does not fall inside an open fence of ANY language, and
-// isn't immediately followed by an indented line - the only points a
-// streaming markdown document can be cut into a settled, memoizable prefix
-// and a short live tail without breaking an open fence, list item, footnote
-// definition, or indented code block (AgentParts.tsx's AssistantText). A
-// blank line followed by indentation is a lazy continuation, not a real
-// block boundary - e.g. "- item\n\n  more\n\n- item2" is ONE loose list, and
-// splitting at its inner blank line renders it as two unrelated lists.
-// Falls back to an earlier boundary when the nearest one is unsafe; returns
-// -1 when no safe boundary exists at all.
+// isn't immediately followed by an indented line - the only points a streaming markdown document can be cut into a settled, memoizable prefix and a short live tail without breaking an open fence, list item, footnote definition, or indented code block (AssistantText). A blank line followed by indentation is a lazy continuation, not a real boundary ("- item\n\n  more\n\n- item2" is ONE loose list); falls back to an earlier boundary when the nearest is unsafe; returns -1 when none exists.
 export function lastSafeSplitOffset(text: string, maxOffset: number): number {
   let idx = text.lastIndexOf('\n\n', Math.min(maxOffset, text.length))
   while (idx > 0) {

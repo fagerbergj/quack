@@ -41,23 +41,9 @@ type A2AServer struct {
 	listener net.Listener
 }
 
-// Serve starts an A2A server for ag on 127.0.0.1:<ephemeral> and returns it with the AgentCard.
-// comp.Enabled wires adk/v2's native runner-level compaction here; the zero
-// Compaction leaves the runner's Compaction nil and changes nothing.
-//
-// nodeID/sink let this node re-emit a `compaction` SSE event: neither native
-// compaction strategy yields its summary into the runner's event stream (both
-// only ever call sessions.AppendEvent, see compactionSessions's doc), so the
-// only place to observe one is the session service itself. nodeID is baked in
-// per node (internal/serve builds one A2AServer per DAG node, see
-// nativeAgent.ForNode), so a fan-out sibling can never misattribute another
-// node's compaction. sink nil (no active run, or a caller with no hub, e.g.
-// tests) makes this a no-op - Serve itself never touches the hub directly.
-//
-// artifacts is set on the worker's own RunnerConfig - the DAG/orchestrator
-// runners already get one (orchestrator.go, nativegraph.go); leaving a
-// worker's nil made ctx.Artifacts() a silent nil in every worker tool/callback
-// even though the caller has a live service to give it (#A7).
+// Serve starts an A2A server for ag on 127.0.0.1:<ephemeral> and returns it with the AgentCard. comp.Enabled wires adk/v2's native runner-level compaction here; the zero Compaction leaves the runner's Compaction nil and changes nothing. nodeID/sink re-emit a `compaction` SSE event,
+// the only observable, because neither native compaction strategy yields its summary into the runner's event stream (both only call sessions.AppendEvent - see compactionSessions); nodeID is baked in per node, so a fan-out sibling can never misattribute another node's compaction. sink nil (no active run, or a caller with no hub, e.g. tests) is a no-op: Serve never touches the hub directly. artifacts is set on the worker's own RunnerConfig - the
+// DAG/orchestrator runners already get one; leaving a worker's nil made ctx.Artifacts() a silent nil in every worker tool/callback even though the caller has a live service to give it (#A7).
 func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, artifacts artifact.Service, comp Compaction, nodeID string, sink func(stream.SSEEvent)) (*A2AServer, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -112,17 +98,9 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, a
 // Close stops the A2A server's listener.
 func (s *A2AServer) Close() error { return s.listener.Close() }
 
-// compactionSessions re-emits the compaction summaries adk/v2's native
-// strategies append to the session store, which the runner's event stream
-// never carries: the post-invocation sliding-window pass appends via a
-// deferred call it documents as "intentionally not yielded to the caller",
-// and the intra-invocation token-threshold pass "emits no events" - both
-// only ever call AppendEvent on the configured session.Service.
-//
-// A straggler landing mid-append can trigger a repair record covering the
-// same range, so AppendEvent can rarely fire twice for one compaction.
-// ponytail: accepted as a rare duplicate SSE/span rather than tracked and
-// deduped; revisit if a duplicate row is actually seen in the feed.
+// compactionSessions re-emits the compaction summaries adk/v2's native strategies append to the session store, which the runner's event stream never carries (the
+// post-invocation sliding-window pass and the token-threshold pass both only call AppendEvent on the configured session.Service). A straggler landing mid-append can
+// trigger a repair record covering the same range, so AppendEvent can rarely fire twice for one compaction. ponytail: accepted as a rare duplicate SSE/span rather than tracked and deduped; revisit if a duplicate row is actually seen in the feed.
 type compactionSessions struct {
 	session.Service
 	nodeID string
@@ -146,8 +124,7 @@ func maxTranscriptChars(comp Compaction) int {
 
 // NativeCompactionConfig builds adk/v2's runner-level compaction.Config from
 // comp, or nil when compaction is disabled. It reuses quack's own tuned
-// summarizer prompt (compactionSystemPrompt + summaryTemplate, see
-// compaction_prompts.go) rather than adk's default.
+// summarizer prompt (compactionSystemPrompt + summaryTemplate, compaction_prompts.go) rather than adk's default.
 func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	if !comp.Enabled {
 		return nil, nil
@@ -195,12 +172,9 @@ func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
 	return adka2a.BuildAgentSkills(ag)
 }
 
-// ClientForNode returns an ADK agent that dispatches to this server over A2A,
-// under an identity unique to nodeKey (works around an ADK remote-session
-// collision bug for concurrent sibling nodes). contextID seeds the A2A
-// message's ContextID whenever ADK sends one with none, so the worker
-// session this node creates has a deterministic address instead of a
-// server-minted random UUID (#A2 - see WorkerSessionID).
+// ClientForNode returns an ADK agent that dispatches to this server over A2A under an identity unique to nodeKey (works around an ADK remote-session
+// collision bug for concurrent sibling nodes). contextID seeds the message's
+// ContextID whenever ADK sends one with none, so the worker session this node creates gets a deterministic address, not a server-minted random UUID (#A2 - see WorkerSessionID).
 func (s *A2AServer) ClientForNode(nodeKey, contextID string) (adkagent.Agent, error) {
 	return s.clientNamed(s.Card.Name+"#"+nodeKey, contextID)
 }
@@ -256,15 +230,12 @@ func (c scopedClient) SendStreamingMessage(ctx context.Context, req *a2a.SendMes
 }
 
 // scopeMessage rewrites req's parts in place, scoped to invocation + branch,
-// and clears its task/context IDs when ADK's own resume scan (branch-blind)
+// and clears its task/context IDs when ADK's own branch-blind resume scan
 // crossed into a sibling node's event to get them - leaves them alone
 // otherwise, since a HITL resume derives its own IDs a different way.
 //
 // defaultContextID seeds req.Message.ContextID when it arrives empty -
-// otherwise a2a-go mints a fresh random UUID per message
-// (a2asrv/agentexec.go:createNewExecutionContext) and the worker session it
-// addresses (server/adka2a/v2/metadata.go:toInvocationMeta) is never seen
-// again, so nothing can ever delete it (#A2).
+// otherwise a2a-go mints a fresh random UUID per message (agentexec.go:createNewExecutionContext) and the worker session it addresses is never seen again, so nothing can ever delete it (#A2).
 func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest, defaultContextID string) {
 	if req == nil || req.Message == nil {
 		return

@@ -249,8 +249,7 @@ func TestRound_NoCoords_AttributionOmitted(t *testing.T) {
 
 // TestNoDoubleCounting_NativeAndACPEmitIndependently guards #860's premise: a
 // native model call emits via tracedModel, an ACP round emits via this
-// package's seam, and the two never overlap - each path's own numbers show up
-// exactly once, not doubled, when both run against the same reader.
+// package's seam, and the two never overlap - each path's own numbers show up exactly once, not doubled, when both run against the same reader.
 func TestNoDoubleCounting_NativeAndACPEmitIndependently(t *testing.T) {
 	reader := newUsageTestMeter(t)
 

@@ -21,8 +21,7 @@ import (
 
 // DefaultLoginScopes is requested when `server login` is given none: openid
 // (required for a sub/preferred_username-bearing token), profile
-// (preferred_username), and offline_access (a refresh token - several IdPs,
-// e.g. Keycloak and Authentik, only issue one when it's explicitly asked for).
+// (preferred_username), and offline_access (a refresh token - several IdPs, e.g. Keycloak and Authentik, only issue one when it's explicitly asked for).
 var DefaultLoginScopes = []string{"openid", "profile", "offline_access"}
 
 // expirySkew triggers a proactive token refresh shortly before real expiry,
@@ -36,15 +35,12 @@ const refreshTimeout = 15 * time.Second
 
 // loginCallbackTimeout bounds how long Login waits for the browser round trip
 // after opening the authorize URL, so an abandoned login doesn't hang the CLI
-// forever. A var so tests don't have to wait out a real timeout to cover the
-// "nobody ever came back" path.
+// forever. A var so tests don't have to wait out a real timeout to cover the "nobody ever came back" path.
 var loginCallbackTimeout = 5 * time.Minute
 
 // openBrowser best-effort launches url in the user's default browser. A var
 // so tests can replace it with a synchronous fake-IdP + callback round trip
-// (see login_test.go) instead of shelling out. Errors are swallowed - the URL
-// printed to out is always the fallback, and a headless box with no
-// $DISPLAY/xdg-open shouldn't fail login, just leave the user to copy the link.
+// (see login_test.go) instead of shelling out. Errors are swallowed - the URL printed to out is always the fallback, and a headless box with no $DISPLAY/xdg-open shouldn't fail login, just leave the user to copy the link.
 var openBrowser = func(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -60,19 +56,7 @@ var openBrowser = func(url string) {
 
 // Login runs the OAuth 2.0 Authorization Code flow with PKCE (RFC 6749 +
 // RFC 7636) against issuer for clientID - the RFC 8252 "native app" pattern:
-// a loopback listener on an ephemeral port stands in for the redirect URI (no
-// port to pre-register with the IdP), the authorize URL is opened in a
-// browser (and printed as a fallback), and Login blocks until the redirect
-// lands back on the listener. Stores the resulting tokens on the
-// already-registered server name so NewClient picks them up automatically.
-//
-// A headless/SSH box with no local browser and no reachable port can't
-// complete this flow - only a device authorization grant (RFC 8628) could,
-// which this does not implement.
-//
-// Only public OIDC clients are supported (no client secret): PKCE is meant
-// for exactly this, and it keeps the stored registry free of anything more
-// sensitive than the tokens themselves.
+// a loopback listener on an ephemeral port stands in for the redirect URI (no port to pre-register with the IdP), the authorize URL is opened in a browser (and printed as a fallback), and Login blocks until the redirect lands back on the listener. Stores the resulting tokens on the already-registered server name so NewClient picks them up automatically. A headless/SSH box with no local browser and no reachable port can't complete this flow - only a device authorization grant (RFC 8628) could, which this does not implement. Only public OIDC clients are supported (no client secret): PKCE is meant for exactly this, and it keeps the stored registry free of anything more sensitive than the tokens themselves.
 func Login(ctx context.Context, out io.Writer, name, issuer, clientID string, scopes []string) error {
 	cc, err := LoadClient()
 	if err != nil {
@@ -155,10 +139,7 @@ func randomURLSafe(n int) (string, error) {
 
 // awaitCallback serves exactly one /callback request on listener (closing it
 // on return either way), checking state on the way in to guard against a
-// CSRF/confused-deputy redirect, and returns the authorization code. announce
-// is called once the listener is live, so the caller can print the authorize
-// URL and open a browser - after which awaitCallback blocks until the
-// redirect lands or ctx/loginCallbackTimeout expires.
+// CSRF/confused-deputy redirect, and returns the authorization code. announce is called once the listener is live, so the caller can print the authorize URL and open a browser - after which awaitCallback blocks until the redirect lands or ctx/loginCallbackTimeout expires.
 func awaitCallback(ctx context.Context, listener net.Listener, state string, announce func()) (string, error) {
 	type result struct {
 		code string
@@ -208,19 +189,7 @@ func awaitCallback(ctx context.Context, listener net.Listener, state string, ann
 
 // ensureFreshToken returns ref's access token, refreshing it first (via the
 // OAuth2 token endpoint's refresh_token grant) and persisting the result if
-// it's at or near expiry. A ref with no stored auth returns "" (unauthenticated
-// server). A ref whose token has no refresh_token and has expired is returned
-// as-is; the server will 401 it, the caller's signal to `server login` again.
-//
-// Uses golang.org/x/oauth2's Config.TokenSource directly rather than
-// rp.RefreshTokens, which is generic over oidc.IDClaims for ID-token
-// verification this bearer-relaying CLI client has no use for.
-//
-// refreshMu serializes this across goroutines in one process: without it, two
-// callers racing the same near-expiry token can each refresh independently,
-// and an IdP that rotates refresh tokens invalidates the first as soon as the
-// second is consumed. Does not cover two separate `quack` process invocations
-// racing the same file.
+// it's at or near expiry. A ref with no stored auth returns "" (unauthenticated server). A ref whose token has no refresh_token and has expired is returned as-is; the server will 401 it, the caller's signal to `server login` again. Uses golang.org/x/oauth2's Config.TokenSource directly rather than rp.RefreshTokens, which is generic over oidc.IDClaims for ID-token verification this bearer-relaying CLI client has no use for. refreshMu serializes this across goroutines in one process: without it, two callers racing the same near-expiry token can each refresh independently, and an IdP that rotates refresh tokens invalidates the first as soon as the second is consumed. Does not cover two separate `quack` process invocations racing the same file.
 func ensureFreshToken(ctx context.Context, cc *ClientConfig, name string, ref ServerRef) (string, error) {
 	a := ref.Auth
 	if a == nil {
@@ -252,9 +221,7 @@ func ensureFreshToken(ctx context.Context, cc *ClientConfig, name string, ref Se
 	}
 	// Detached from the caller's cancellation/deadline: a token refresh must
 	// complete (or time out on its own terms) even if the request that
-	// triggered it was aborted - otherwise a short-lived caller ctx can poison
-	// a refresh that every other in-flight caller also depends on. Values
-	// (e.g. request-scoped tracing) still flow through via WithoutCancel.
+	// triggered it was aborted - otherwise a short-lived caller ctx can poison a refresh that every other in-flight caller also depends on. Values (e.g. request-scoped tracing) still flow through via WithoutCancel.
 	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
 	defer cancel()
 	newTok, err := cfg.TokenSource(refreshCtx, &oauth2.Token{

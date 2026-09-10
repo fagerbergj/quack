@@ -68,13 +68,9 @@ import (
 // localUserID is the single-user identity every filesystem/git tool resolves against.
 const localUserID = "local"
 
-// dotagentsEmbeddedSkills is the one plugin's skills/ subtree quack's own
-// go:embed (embed.go) bakes into the binary. buildFromConfig hard-requires
-// format-markdown and plan-work at startup, both shipped there, so a
-// standalone install with no repo checkout (bundledir's disk-then-embedded
-// resolution) must still be able to find them even though plugin discovery
-// is otherwise disk-only. No other plugin gets this - it's the only one
-// embedded.
+// dotagentsEmbeddedSkills: the one plugin's skills/ subtree baked in via quack's go:embed
+// (embed.go). buildFromConfig hard-requires format-markdown and plan-work at startup, so a
+// standalone install must find them even though plugin discovery is otherwise disk-only.
 const dotagentsEmbeddedSkills = ".agents/vendor/dotagents/skills"
 
 // Where the plugin pins and their fetcher live, relative to CWD (/ in the
@@ -85,12 +81,9 @@ const (
 	pluginFetchScript  = "scripts/plugins.sh"
 )
 
-// resolvedSkillSource merges quack's own shipped skills/ with each configured
-// plugin root's skills directory (internal/plugin discovery) - the disk-only
-// view both newSkillSource and acpSkillPaths compare the embedded dotagents
-// fallback against.
-// activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for
-// ProviderConfig.Limits.Active, which is keyed by role alone within one provider.
+// resolvedSkillSource: quack's shipped skills/ + each configured plugin root's skills/ (internal/plugin
+// discovery) - the disk-only view newSkillSource and acpSkillPaths compare the embedded fallback against.
+// activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for Limits.Active (role alone per provider).
 func activeKey(provider, role string) string { return provider + "\x00" + role }
 
 // buildAdmission builds the #1007 capacity ledger from the models/providers
@@ -170,10 +163,8 @@ func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 	return spec
 }
 
-// resolvedSkillSource wraps every source in Tolerant: a builtin/plugin
-// skill dir is server-controlled but a plugin's SKILL.md is third-party
-// content, and one field ADK's strict frontmatter parser doesn't know must
-// never fail startup for skills that DID parse (#1080).
+// resolvedSkillSource wraps every source in Tolerant: a plugin's SKILL.md is third-party
+// content, and one unknown frontmatter field must never fail startup for skills that DID parse (#1080).
 func resolvedSkillSource(skillDirs []string) skill.Source {
 	bundleFS := bundledir.SubFS("skills")
 	sources := []skill.Source{skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills")}
@@ -184,12 +175,9 @@ func resolvedSkillSource(skillDirs []string) skill.Source {
 	return skill.NewMergedSource(sources...)
 }
 
-// missingDotagentsSkillNames returns the dotagentsEmbeddedSkills names NOT
-// already resolved on disk via resolvedSkillSource(pluginRoots) - the backfill
-// rule both newSkillSource and acpSkillPaths apply: add by NAME, not
-// unconditionally, since a dotagents plugin root that DID resolve from disk
-// must never also get the embedded copy (MergedSource errors on a skill
-// defined by two sources at once).
+// missingDotagentsSkillNames: dotagentsEmbeddedSkills names NOT already resolved on disk via
+// resolvedSkillSource(pluginRoots) - the backfill rule both callers apply: add by NAME, never
+// unconditionally (MergedSource errors on a skill defined by two sources at once).
 func missingDotagentsSkillNames(skillDirs []string) []string {
 	have := map[string]bool{}
 	if fms, err := resolvedSkillSource(skillDirs).ListFrontmatters(context.Background()); err == nil {
@@ -265,10 +253,9 @@ func BuildArtifactService(cfg *config.Config) (artifact.Service, error) {
 	return store.NewArtifactService(as.URL)
 }
 
-// warnIfEpisodicRecordsWontSurvive: artifacts.store defaults to "" (in-memory,
-// #1006 known ceiling), so any node opting into `artifact:` records dies on
-// every restart with no other signal - loud, not fatal, since GitHub
-// workflows that never set Artifact see zero behavior change either way.
+// warnIfEpisodicRecordsWontSurvive: artifacts.store defaults to "" (in-memory, #1006), so `artifact:`
+// records die on every restart with no other signal - loud, not fatal: workflows that never set
+// Artifact see zero behavior change either way.
 func warnIfEpisodicRecordsWontSurvive(cfg *config.Config) {
 	if cfg.Artifacts.Store != "" {
 		return
@@ -476,10 +463,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			return nil, nil, "", fmt.Errorf("instance id init failed: %w", err)
 		}
 		st.SetInstanceID(id)
-		// Boot's half of #962. Runs here, before anything can register a run
-		// with the Hub, and before the memory consolidator's own boot sweep
-		// is started further down - resume gets the DB to a settled state
-		// first, the sweep goroutines start after.
+		// Boot's half of #962: runs before anything can register a run with the Hub, so resume gets the
+		// DB to a settled state first - the memory consolidator's boot sweep starts after.
 		resumeNodes = reconcileNodes(context.Background(), st, jail, func(chatID, pauseReason string) (bool, string) {
 			// #1176: an archived chat's paused nodes must not be resumed -
 			// they were still holding run slots the archive should free.
@@ -525,10 +510,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		hooks.grace = time.Duration(cfg.Server.ShutdownGraceSeconds) * time.Second
 	}
 
-	// orchRef/judgeModelRef are resolved further down - an SDK extension's
-	// Dispatch/Classify may not fire until long after construction, but its
-	// Tools() are needed now to fold into extTools before buildAgents (which
-	// is also what actually builds the judge model judgeModelRef will hold).
+	// orchRef/judgeModelRef resolve further down: an SDK extension's Dispatch/Classify may fire long
+	// after construction, but its Tools() are needed now to fold into extTools before buildAgents
+	// (which is what actually builds the judge model judgeModelRef will hold).
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
@@ -576,10 +560,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if err != nil {
 			return nil, fmt.Errorf("embedder: %w", err)
 		}
-		// recall runs inside a DAG node's own ctx (real per-round coords); commit
-		// fires from a background goroutine (commitMemoryOnPass) or a tool call
-		// whose ctx never carries them - "embed" is the fallback for that gap,
-		// distinct from the consolidator's "memory" name below.
+		// recall runs in the node's own ctx (real per-round coords); commit fires from a background
+		// goroutine or a tool call whose ctx never carries them - "embed" is the fallback, distinct
+		// from the consolidator's "memory" name below.
 		setDefaultAgent(embedder, "embed")
 		cprov, ok := cfg.Provider(rm.Consolidation.Provider)
 		if !ok {
@@ -634,11 +617,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}
 
-	// One EventLog shared by boot resume and every SDK-extension dispatch:
-	// each used to build its own via runlog.NewEventLog per run, leaking that
-	// run's drain goroutine forever (EventLog has no Close). REST keeps its
-	// own separate instance (rest.NewHandler) - a slow boot-resume backlog on
-	// this one must never delay a live REST run's own event drain.
+	// One EventLog shared by boot resume and every SDK-extension dispatch: per-run logs leaked the run's
+	// drain goroutine forever (EventLog has no Close). REST keeps its own instance - a slow
+	// boot-resume backlog must never delay a live REST run's own event drain.
 	bootEventLog := runlog.NewEventLog(st)
 
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
@@ -657,9 +638,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		extTools = append(extTools, pluginMCPTools(ctx, plugins, cfg.Workspace.Root, mcpCaps)...)
 	}
 
-	// The SDK inverse interfaces' first real consumer: whichever compiled,
-	// configured module implements them (github, today) supplies quack's
-	// push credential and delivery target - detected the same way
+	// The SDK inverse interfaces' first real consumer: whichever configured module implements them
+	// (github, today) supplies quack's push credential and delivery target - detected the same way
 	// Starter is, not hardcoded to one extension's name.
 	gitCredSrc, gitCredSrcName := findGitCredentialSource(sdkExts)
 	deliverer, delivererName := findDeliverer(sdkExts)
@@ -676,12 +656,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if ledgerStore != nil {
 		// #1144 P5: chat/turn/plan writes go through AppendIntent too now.
 		st.SetWALLedger(ledgerStore)
-		// #1144 P3: seed a caught-up watermark (sse, artifact, node_state)
-		// for any chat that already has that projection's data, before the
-		// first watermark-gated write ever runs on it - see
-		// SeedProjectionWatermarks's doc for why this can't be a literal
-		// MAX(seq) copy of the projection's own table. Cheap and idempotent;
-		// runs every boot.
+		// #1144 P3: seed a caught-up watermark (sse, artifact, node_state) for any chat that already
+		// has that projection's data, before the first watermark-gated write - not a literal MAX(seq)
+		// copy (SeedProjectionWatermarks doc); cheap, idempotent, runs every boot.
 		if err := st.SeedProjectionWatermarks(ctx, ledgerStore); err != nil {
 			slog.Warn("projection watermark seeding failed; a first-time fold may re-derive history for old chats", "component", "startup", "err", err)
 		}
@@ -825,11 +802,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
-	// The orchestrator's turns take a session from the same pool its worker
-	// nodes draw on, held only while generating - it is idle while the DAG
-	// runs, and holding across that span would deadlock its own nodes.
-	// Wraps AFTER setDefaultAgent above: that asserts on the concrete traced
-	// model, which the interface-embedding wrapper does not promote.
+	// Orchestrator turns take a session from the same pool its worker nodes draw on, held only while
+	// generating - holding across the DAG span would deadlock its own nodes. Wraps AFTER
+	// setDefaultAgent: that asserts on the concrete traced model, which the wrapper does not promote.
 	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
 	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	// Unconditional, like executor.SetArtifacts above: dag_plan persistence
@@ -1441,9 +1416,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 					_ = srv.Close()
 					return nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
 				}
-				// track's release also reaps the deterministic worker session
-				// this node's first dispatch creates (agent.scopeMessage) -
-				// otherwise every node execution leaks a Postgres
+				// track's release also reaps the deterministic worker session this node's first dispatch
+				// creates (agent.scopeMessage) - otherwise every node execution leaks a Postgres
 				// sessions/events row forever (#A2).
 				release := nodeServers.track(srv, sessions, wag.Name(), agent.WorkerSessionUser(workerContextID), workerContextID)
 				return client, wm, builtins, setRoundCoords, release, nil
@@ -1679,14 +1653,9 @@ func ensureExtractedDotagentsSkillNames(missing []string) {
 	}
 }
 
-// acpSkillPaths collects on-disk skill roots for an ACP agent's skills.paths:
-// quack's own skills/, then each configured plugin's skills directory
-// (internal/plugin discovery), then - only for names that resolution didn't
-// find on disk - the extracted dotagentsEmbeddedSkills dir. Same by-NAME
-// backfill rule as newSkillSource (missingDotagentsSkillNames): a dev run
-// with dotagents checked out on disk must not also get the extracted copy,
-// since opencode's skill loader may error (or worse, silently shadow) on a
-// duplicate name.
+// acpSkillPaths: quack's own skills/, then each configured plugin's skills/ (internal/plugin), then -
+// only for names not found on disk - the extracted dotagentsEmbeddedSkills dir. Same by-NAME backfill as
+// newSkillSource: a dev checkout must not also get the extracted copy (opencode may error or shadow).
 func acpSkillPaths(skillDirs []string) []string {
 	var out []string
 	if abs, err := filepath.Abs("skills"); err == nil {

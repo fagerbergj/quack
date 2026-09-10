@@ -7,9 +7,7 @@ import (
 
 // TestExampleConfigsLoad pins the shipped docs/configuration/examples/*.yaml
 // against real config.Load — a docs-only edit that breaks one of them (a
-// missing models: registry entry, an unregistered model name, a bad argv)
-// fails here instead of at a user's server start. Each file runs with the
-// env vars it references set to the model names its own registry registers.
+// missing models: registry entry, an unregistered model name, a bad argv) fails here, not at a user's server start. Each file runs with the env vars it references set to the model names its own registry registers.
 func TestExampleConfigsLoad(t *testing.T) {
 	for _, tc := range []struct {
 		file string

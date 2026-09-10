@@ -14,10 +14,9 @@ func daysAgo(n int) string {
 	return time.Now().UTC().Add(-time.Duration(n) * 24 * time.Hour).Format(time.RFC3339)
 }
 
-// TestForgetSweep_DefaultRules seeds the three scenarios the epic's P3
-// verification names directly: a verified memory kept despite no recent
-// recall, an old unverified memory invalidated for lack of an upvote, and a
-// net-score -2 memory invalidated regardless of tier.
+// TestForgetSweep_DefaultRules seeds the three scenarios the epic's P3 verification names
+// directly: a verified memory kept despite no recent recall, an old unverified memory
+// invalidated for lack of an upvote, and a net-score -2 memory invalidated regardless of tier.
 func TestForgetSweep_DefaultRules(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -150,10 +149,9 @@ func TestForgetSweep_CustomRules(t *testing.T) {
 	}
 }
 
-// TestSweepOnce_ForgetThenRetain covers epic #1255 P3 verification (f): the
-// forgetting step invalidates a stale memory, then retentionOnce hard-removes
-// it once its (backdated) invalidation would be past the window - proving
-// forgetOnce runs before retentionOnce in sweepOnce, not just each in isolation.
+// TestSweepOnce_ForgetThenRetain covers epic #1255 P3 verification (f): the forgetting step
+// invalidates a stale memory, then retentionOnce hard-removes it once its (backdated)
+// invalidation would be past the window - proving forgetOnce runs before retentionOnce in sweepOnce, not just each in isolation.
 func TestSweepOnce_ForgetThenRetain(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()

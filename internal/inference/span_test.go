@@ -47,12 +47,7 @@ func spanAttrsOf(s tracetest.SpanStub) map[string]string {
 
 // TestTracedModel_DecoratesSpanBeforeADKEndsIt pins the ordering trap: ADK's
 // generate_content span is ended synchronously the instant a non-partial
-// response is handed to its own range-loop body - here simulated by ending
-// the span immediately inside tracedModel's yield callback, exactly where
-// ADK's real base_flow.go does it. If setResponseSpanAttrs ran in a deferred
-// emit (after ADK's End()) instead of before yield, this test would fail with
-// no output-message attribute recorded - SetAttributes on an ended span is a
-// silent no-op, so a naive regression would NOT panic, it would just vanish.
+// response is handed to its own range-loop body - here simulated by ending the span immediately inside tracedModel's yield callback, exactly where ADK's real base_flow.go does it. If setResponseSpanAttrs ran in a deferred emit (after ADK's End()) instead of before yield, this test would fail with no output-message attribute recorded - SetAttributes on an ended span is a silent no-op, so a naive regression would NOT panic, it would just vanish.
 func TestTracedModel_DecoratesSpanBeforeADKEndsIt(t *testing.T) {
 	withContentCapture(t, true)
 	exp := withTestTracer(t)

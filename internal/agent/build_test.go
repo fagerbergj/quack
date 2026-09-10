@@ -58,12 +58,8 @@ func (m *captureSystemInstructionModel) GenerateContent(_ context.Context, req *
 }
 
 // TestBuild_SkillRosterListedOnce guards finding A4: every ADK-native agent
-// (built via Build/BuildChat) carries a SkillToolset in its Toolsets, whose
-// own ProcessRequest already renders the skill roster into the request. If
-// promptbuilder.Agent's InstructionProvider also rendered it, the roster
-// would appear twice in every worker request - on the largest cacheable
-// prefix in the system. Build must pass nil skills to promptbuilder.Agent so
-// the toolset is the roster's only source.
+// (built via Build/BuildChat) carries a SkillToolset in its Toolsets, whose own ProcessRequest already renders the skill roster - on the largest
+// cacheable prefix in the system. Build must pass nil skills to promptbuilder.Agent so the toolset is the roster's only source.
 func TestBuild_SkillRosterListedOnce(t *testing.T) {
 	dir := t.TempDir()
 	writeSkill(t, dir, "format-markdown", "Reformats markdown for clean rendering.")

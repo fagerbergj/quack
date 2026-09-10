@@ -44,15 +44,9 @@ func (j scriptedFindingsJudge) GenerateContent(_ context.Context, _ *model.LLMRe
 	}
 }
 
-// TestJudgeFindings_ContradictedSinksGroundingCriterion pins the #494
-// regression this PR fixes: a judge that scores claims_grounded high on its
-// OWN holistic read (exactly what shipped a false "off-by-one at
-// mermaid.go:112" finding with claims_grounded=1) must still have the
-// criterion forced to 0 once its OWN per-finding verification contradicts a
-// staged finding - proving the code-owned fold, not the judge's guess, is
-// what the gate trusts. Against the pre-#498 code (no Findings field, no
-// applyFindingsVerdict fold) this fails: claims_grounded stays at the judge's
-// self-reported 0.9 and the verdict passes.
+// TestJudgeFindings_ContradictedSinksGroundingCriterion pins the #494 regression this PR fixes: a judge that scores claims_grounded high on its
+// OWN holistic read (exactly what shipped a false "off-by-one at mermaid.go:112" finding with claims_grounded=1) must still have the
+// criterion forced to 0 once its OWN per-finding verification contradicts a staged finding - proving the code-owned fold, not the judge's guess, is what the gate trusts. Against the pre-#498 code (no applyFindingsVerdict fold) this fails: claims_grounded stays at the judge's self-reported 0.9 and the verdict passes.
 func TestJudgeFindings_ContradictedSinksGroundingCriterion(t *testing.T) {
 	judge := scriptedFindingsJudge{
 		score:    0.9,
@@ -86,8 +80,7 @@ func TestJudgeFindings_ContradictedSinksGroundingCriterion(t *testing.T) {
 
 // TestJudgeFindings_VerifiedFindingNoPenalty proves the mirror case: a
 // finding the judge verifies against the code must NOT move
-// findingsGroundingCriterion away from whatever the judge itself scored -
-// verification is informational, not an automatic bonus or malus.
+// findingsGroundingCriterion away from whatever the judge itself scored - verification is informational, not an automatic bonus or malus.
 func TestJudgeFindings_VerifiedFindingNoPenalty(t *testing.T) {
 	judge := scriptedFindingsJudge{
 		score:    3,
@@ -141,12 +134,9 @@ func newMultiFileSpyReadTool(t *testing.T, files map[string]string, calls *[]str
 	return rt
 }
 
-// relatedFileJudge is a deterministic, turn-counted judge: it reads the
-// finding's cited file, THEN a related file the finding never mentions (the
+// relatedFileJudge is a deterministic, turn-counted judge: it reads the finding's cited file, THEN a related file the finding never mentions (the
 // caller), and only after both reads does it submit a verdict contradicting
-// the finding on the strength of what the related file showed. Proves #498's
-// "do not narrow the judge's view to path:line" requirement - the judge's
-// read access reaches a file no finding cited at all.
+// the finding on the strength of what the related file showed. Proves #498's "do not narrow the judge's view to path:line" requirement - the judge's read access reaches a file no finding cited at all.
 type relatedFileJudge struct{ turn int32 }
 
 func (j *relatedFileJudge) Name() string { return "related-file-judge" }
@@ -173,9 +163,7 @@ func (j *relatedFileJudge) GenerateContent(_ context.Context, _ *model.LLMReques
 
 // TestJudgeFindings_ContextDependentRefutationReachesRelatedFile pins test
 // case 3 of #498's design: a finding that is accurate AT ITS OWN LINE can
-// still be refuted only by a file it never cites (here, the caller that
-// already guards the case) - the judge's repo access must not be narrowed to
-// the cited path, or it can never reach that file to check.
+// still be refuted only by a file it never cites (here, the caller that already guards the case) - the judge's repo access must not be narrowed to the cited path, or it can never reach that file to check.
 func TestJudgeFindings_ContextDependentRefutationReachesRelatedFile(t *testing.T) {
 	files := map[string]string{
 		"internal/foo.go": "func handleFoo(input *Thing) { input.Do() }\n",
@@ -207,9 +195,7 @@ func TestJudgeFindings_ContextDependentRefutationReachesRelatedFile(t *testing.T
 
 // reviewGateStub is the worker+judge stub model for
 // TestRunGatedRefine_JudgeNeverMutatesStagedReview: the judge ALWAYS
-// contradicts the one staged finding (so the gate fails and revises), the
-// worker always returns a fixed answer - what matters is what happens to the
-// ReviewStage, not the text either side produces.
+// contradicts the one staged finding (so the gate fails and revises), the worker always returns a fixed answer - what matters is what happens to the ReviewStage, not the text either side produces.
 type reviewGateStub struct {
 	workerCalls int32
 	judgeCalls  int32
@@ -237,9 +223,7 @@ func (m *reviewGateStub) GenerateContent(_ context.Context, req *model.LLMReques
 
 // TestRunGatedRefine_JudgeNeverMutatesStagedReview pins test case 4: even
 // after a full failing judge round (the contradicted finding above sinks the
-// gate, forcing a revise), the staged review's OWN comments - the reviewer's
-// source of truth - are exactly what was staged going in. The judge reports;
-// it never edits, strips, or reorders.
+// gate, forcing a revise), the staged review's OWN comments - the reviewer's source of truth - are exactly what was staged going in. The judge reports; it never edits, strips, or reorders.
 func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	review := &ReviewStage{}
 	review.AddComment("internal/foo.go", 5, "blocking: nil deref on the unchecked input")
@@ -296,9 +280,7 @@ func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	}
 	// behaviour_verified (no run_command in this stub) fails deterministically
 	// every round, so round 2 - the terminal round, whose feedback no revise
-	// ever consumes - skips the judge model entirely and merges the
-	// deterministic verdict directly: 1 judge call, not 2, even though the
-	// round loop still runs both rounds (res.Rounds below).
+	// ever consumes - skips the judge model entirely and merges the deterministic verdict directly: 1 judge call, not 2, even though the round loop still runs both rounds (res.Rounds below).
 	if got := atomic.LoadInt32(&stub.judgeCalls); got != 1 {
 		t.Fatalf("judge calls = %d, want exactly 1 (round 2's already-failing deterministic criterion should skip the judge)", got)
 	}
@@ -319,9 +301,7 @@ func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 
 // TestChangedFilesSection_IncludesNumberedFindingsAndVerdict proves the
 // judge prompt carries the staged findings as an explicit NUMBERED list
-// (not buried in the review prose) ALONGSIDE the review's overall staged
-// verdict, so it can reason about severity/verdict coherence as well as
-// verify each claim - both facts land in the same section the judge reads.
+// (not buried in the review prose) ALONGSIDE the review's overall staged verdict, so it can reason about severity/verdict coherence as well as verify each claim - both facts land in the same section the judge reads.
 func TestChangedFilesSection_IncludesNumberedFindingsAndVerdict(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = true

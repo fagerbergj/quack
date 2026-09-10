@@ -15,14 +15,8 @@ import (
 )
 
 // newTestPostgresLargeObjectService starts a real Postgres container - the
-// only way to exercise loBlobBackend (sqlite has no large objects). Skips
-// (not fails) when Docker isn't reachable (CI's ubuntu-latest has it; local dev may not).
-//
-// BasicWaitStrategies is the module's own fix for the postgres image's double
-// startup: it restarts itself after initdb, and during that first pass both
-// the port and pg_isready already report ready - only the second occurrence
-// of "database system is ready to accept connections" in the log means the
-// real server is up.
+// only way to exercise loBlobBackend (sqlite has no large objects); skips
+// (not fails) when Docker isn't reachable (CI's ubuntu-latest has it; local dev may not). BasicWaitStrategies is the module's own fix for the postgres image's double startup: it restarts itself after initdb, and during that first pass both the port and pg_isready already report ready - only the second occurrence of "database system is ready to accept connections" in the log means the real server is up.
 func newTestPostgresLargeObjectService(t *testing.T) artifact.Service {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

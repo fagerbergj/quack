@@ -14,15 +14,9 @@ var pointerKeywords = []string{
 	"available", "complete", "output", "result",
 }
 
-// danglingDeliverablePathCriterion catches an answer pointing to a path this
-// run wrote but never committed (act.written, !act.committed) - the node's
-// working directory is discarded at run end, so nothing downstream can ever
+// danglingDeliverablePathCriterion catches an answer pointing to a path this run wrote but never committed (act.written, !act.committed) - the node's working directory is discarded at run end, so nothing downstream can ever
 // reach that file. Scoped to the run's OWN writes, AND only when the mention
-// reads as "here is where I put it" (a pointer keyword immediately followed
-// by at/in/to right before the path) - a plain citation of a file the run
-// also happens to have touched must not trip this (#footgun: basename
-// collisions - docker-compose.yml, README.md, main.go - are common filenames
-// an honest answer legitimately names in prose).
+// reads as "here is where I put it" (a pointer keyword followed by at/in/to right before the path) - a plain citation of a file the run also happens to have touched must not trip this (#footgun: basename collisions are common filenames an honest answer legitimately names in prose).
 func danglingDeliverablePathCriterion(answer string, act workerActivity, nodeDir string) (criterionScore, bool) {
 	if act.committed {
 		return criterionScore{}, false
@@ -56,8 +50,7 @@ func danglingDeliverablePathCriterion(answer string, act workerActivity, nodeDir
 
 // pointerPhraseNear reports whether some occurrence of path in answer is
 // immediately preceded by a locating preposition, with a pointerKeyword
-// earlier in that same short window - the shape of "the plan is complete at
-// `X`", not an incidental citation like "the config is in `X`, alongside...".
+// earlier in that same short window - the shape of "the plan is complete at `X`", not an incidental citation like "the config is in `X`, alongside...".
 func pointerPhraseNear(answer, path string) bool {
 	const lookback = 60
 	from := 0

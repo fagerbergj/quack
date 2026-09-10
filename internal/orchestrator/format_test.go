@@ -86,8 +86,7 @@ func TestNeedsFormatPass_StructuredShortAnswerSkipsPass(t *testing.T) {
 
 // TestNeedsFormatPass_UnstructuredLongAnswerNeedsPass: an answer with no
 // heading/list structure still needs the pass regardless of length, and a
-// long answer needs it even if it happens to contain some structure, since
-// formatPassLengthCeiling gates the short-circuit.
+// long answer needs it even if it happens to contain some structure, since formatPassLengthCeiling gates the short-circuit.
 func TestNeedsFormatPass_UnstructuredLongAnswerNeedsPass(t *testing.T) {
 	longUnstructured := strings.Repeat("word ", formatPassLengthCeiling/4)
 	if !needsFormatPass(eligiblePlan(), longUnstructured) {

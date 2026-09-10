@@ -2,13 +2,9 @@ package otelobs
 
 import "testing"
 
-// otlp*http 1.45 stopped appending the default signal path to a path-less
-// endpoint, so the deployed http://otel-collector:4318 would post to / and lose
-// telemetry silently. These pin the join instead of trusting the exporter.
-//
-// The path-bearing cases are #1045: refusing to append to an endpoint that
-// already had a path made Langfuse's /api/public/otel base unusable for EVERY
-// signal, with no configuration that worked.
+// otlp*http 1.45 posts path-less endpoints to / (losing telemetry silently -
+// the deployed otel-collector endpoint is path-less), so these pin the join
+// instead of trusting the exporter; the path-bearing cases are #1045.
 func TestSignalURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, endpoint, path, want string

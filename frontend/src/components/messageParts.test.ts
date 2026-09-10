@@ -32,10 +32,7 @@ describe('showLiveSpinner', () => {
 
 // #746 item 5: two real event sequences pulled from a recorded ACP round
 // (code-reviewer, PR #740) where a call announces pending, then re-announces
-// resolved under the SAME call_id - translate.go's pending partial spec and its
-// terminal pairSpec both carry a FunctionCall part. Before the fix,
-// appendRunToolCall pushed a second row each time, so fillRunToolResult (which
-// fills only the most recent match) left the first permanently unresolved.
+// resolved under the SAME call_id - translate.go's pending partial spec and its terminal pairSpec both carry a FunctionCall part. Before the fix, appendRunToolCall pushed a second row each time, so fillRunToolResult (which fills only the most recent match) left the first permanently unresolved.
 describe('appendRunToolCall / fillRunToolResult (tool-call orphaning, #746)', () => {
   it('a call whose name resolves between announce and pairing produces exactly one row', () => {
     // internal/acp/translate.go's mapToolCall on an execute call with no

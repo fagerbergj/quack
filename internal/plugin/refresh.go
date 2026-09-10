@@ -24,8 +24,7 @@ const refreshTimeout = 60 * time.Second
 
 // Refresh brings each plugin tree named in manifestPath to its pinned ref and
 // reports what is actually on disk. It never fails startup: a plugin that
-// cannot be fetched keeps whatever tree it already has (or is reported with an
-// empty Head), because losing the network must not cost the server its skills.
+// cannot be fetched keeps whatever tree it already has (or is reported with an empty Head), because losing the network must not cost the server its skills.
 func Refresh(manifestPath, script string) []Revision {
 	entries, err := parseManifest(manifestPath)
 	if err != nil {
@@ -96,10 +95,8 @@ func onDiskRef(path string) string {
 type manifestEntry struct{ name, url, ref, path string }
 
 // parseManifest reads the same fixed shape scripts/plugins.sh does. Keeping a
-// hand parser here avoids a yaml dependency for four scalar keys.
-// trimInlineComment drops a trailing YAML comment, which only starts after
-// whitespace - so a "#" inside a value (a URL fragment) survives. Without it a
-// pin annotated `ref: <sha>   # v4.9.0` never equals the on-disk head.
+// hand parser here avoids a yaml dependency for four scalar keys. trimInlineComment drops a trailing YAML comment, which only starts after
+// whitespace (a "#" inside a value, e.g. a URL fragment, survives) - without it a pin annotated `ref: <sha>   # v4.9.0` never equals the on-disk head.
 func trimInlineComment(v string) string {
 	for i := 1; i < len(v); i++ {
 		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {

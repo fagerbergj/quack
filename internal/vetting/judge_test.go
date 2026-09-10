@@ -71,8 +71,7 @@ func readFileResponseContent(req *model.LLMRequest) (string, bool) {
 
 // scriptedJudge is a deterministic judge model: it first calls read_file for
 // the changed file, then - once it has the body back - submits a verdict whose
-// score is DERIVED from the file's contents (pass iff it contains a test). This
-// proves the agentic read loop grounds the score in the real source.
+// score is DERIVED from the file's contents (pass iff it contains a test). This proves the agentic read loop grounds the score in the real source.
 type scriptedJudge struct{}
 
 func (scriptedJudge) Name() string { return "scripted-judge" }
@@ -93,8 +92,7 @@ func (scriptedJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _
 
 // TestJudgeReadsFileBeforeVerdict drives the agentic judge with a read tool and
 // asserts it OPENS the file before scoring and that the verdict reflects the
-// file's contents: a file missing its test fails; the same file with a test
-// passes.
+// file's contents: a file missing its test fails; the same file with a test passes.
 func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -127,8 +125,7 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 
 // recordingJudge captures the full text of every judge prompt it receives
 // (into *prompt) and always submits a fixed-score verdict - a stand-in for
-// asserting what the ASSEMBLED judge prompt looked like, not what the judge
-// decided.
+// asserting what the ASSEMBLED judge prompt looked like, not what the judge decided.
 type recordingJudge struct{ prompt *string }
 
 func (recordingJudge) Name() string { return "recording-judge" }
@@ -140,12 +137,9 @@ func (r recordingJudge) GenerateContent(_ context.Context, req *model.LLMRequest
 	}
 }
 
-// TestJudgeCharBudgetReservesConfiguredMaxOutputTokens is #1215: prod set
-// context_window=65536 and max_output_tokens=8192, but judgeCharBudget only
-// reserved a hardcoded 2000 tokens for the reply - packing the prompt up to
-// window-2000 while the model was asked for up to 8192 reply tokens, ~6K over
-// the slot. That truncated the judge mid-thought with no tool call and no
-// parseable text (ErrJudgeNoVerdict) on the first attempt of nearly every round.
+// TestJudgeCharBudgetReservesConfiguredMaxOutputTokens is #1215: judgeCharBudget
+// must reserve the configured max_output_tokens, not a hardcoded 2000 - the
+// mismatch packed the prompt to window-2000 while the model was asked for up to 8192 reply tokens (~6K over the slot), truncating the judge mid-thought. See judgeOutputReserveTokens' doc for the measurement.
 func TestJudgeCharBudgetReservesConfiguredMaxOutputTokens(t *testing.T) {
 	cfg := Config{JudgeContextWindow: 65_536, JudgeMaxOutputTokens: 8_192}
 	got := judgeCharBudget(cfg)
@@ -164,9 +158,7 @@ func TestJudgeCharBudgetReservesConfiguredMaxOutputTokens(t *testing.T) {
 
 // TestRunJudgeAgent_OverBudgetAnswerFitsBudget proves issue #291's budgeting
 // fix: an answer big enough that the assembled judge prompt would blow past
-// the judge model's configured context window gets clamped BEFORE the call
-// (fitJudgeAnswer), so the judge still sees a within-budget prompt and
-// produces a verdict instead of the call 400ing against the model's slot.
+// the judge model's configured context window gets clamped BEFORE the call (fitJudgeAnswer), so the judge still sees a within-budget prompt and produces a verdict instead of the call 400ing against the model's slot.
 func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	var seenPrompt string
 	factory := NewJudgeFactory(recordingJudge{prompt: &seenPrompt}, nil, nil)
@@ -198,8 +190,7 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 
 // TestRunJudgeAgent_BuildsPromptOnceForARound is perf audit #13:
 // fitJudgeAnswer used to build the full judge prompt purely to measure its
-// length, discard it, then runJudgeRound built the identical string again.
-// A round with no clamp needed and no retries must build it exactly once.
+// length, discard it, then runJudgeRound built the identical string again. A round with no clamp needed and no retries must build it exactly once.
 func TestRunJudgeAgent_BuildsPromptOnceForARound(t *testing.T) {
 	factory := NewJudgeFactory(recordingJudge{prompt: new(string)}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
@@ -219,12 +210,8 @@ func TestRunJudgeAgent_BuildsPromptOnceForARound(t *testing.T) {
 }
 
 // TestRunJudgeAgent_SessionIDIsChatIDNotConstant is the Langfuse-attribution
-// regression: ADK's runner.Run takes the session id as its third argument and
-// stamps gen_ai.conversation.id from it (google.golang.org/adk/v2/internal/
-// telemetry), so a hardcoded "verdict" literal collapsed every judge call
-// ever made, across every chat, into one Langfuse session. A tool callback
-// sees the real ADK session id via adkagent.Context.SessionID() - assert that
-// runJudgeRound passed cfg.ChatID, not the old constant.
+// regression: ADK's runner.Run takes the session id as its third argument and stamps gen_ai.conversation.id from it, so a hardcoded "verdict" literal
+// collapsed every judge call ever made, across every chat, into one Langfuse session. A tool callback sees the real ADK session id via adkagent.Context.SessionID() - assert that runJudgeRound passed cfg.ChatID, not the old constant.
 func TestRunJudgeAgent_SessionIDIsChatIDNotConstant(t *testing.T) {
 	var gotSessionID string
 	spy, err := functiontool.New[spyReadArgs, spyReadResult](
@@ -271,8 +258,7 @@ func (j *flakyTransientJudge) GenerateContent(_ context.Context, _ *model.LLMReq
 
 // TestRunJudgeAgent_RetriesTransientErrorThenSucceeds proves #572's fix: a
 // judge call that fails with a transient-looking error (502) is retried with
-// backoff and, once the endpoint recovers, produces a NORMAL scored verdict -
-// never a degrade.
+// backoff and, once the endpoint recovers, produces a NORMAL scored verdict - never a degrade.
 func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 2}
 	factory := NewJudgeFactory(judge, nil, nil)
@@ -291,8 +277,7 @@ func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 
 // TestRunJudgeAgent_PermanentTransientErrorFailsClosed proves the other half:
 // a judge that never recovers within judgeRetryAttempts still returns an
-// error (fail closed), not a silent pass - node.go's caller is what turns
-// this into a visible caveat rather than a stripped verdict.
+// error (fail closed), not a silent pass - node.go's caller is what turns this into a visible caveat rather than a stripped verdict.
 func TestRunJudgeAgent_PermanentTransientErrorFailsClosed(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 100} // never recovers
 	factory := NewJudgeFactory(judge, nil, nil)
@@ -390,8 +375,7 @@ func skillResponseContent(req *model.LLMRequest) (string, bool) {
 
 // skillJudge first loads a review skill, then - once it has the skill's
 // instructions back - submits a verdict whose score is DERIVED from them (pass
-// iff the skill mandates a test). This proves the judge grounds its score in a
-// skill it loaded agentically, using the same skill library the worker had.
+// iff the skill mandates a test). This proves the judge grounds its score in a skill it loaded agentically, using the same skill library the worker had.
 type skillJudge struct{}
 
 func (skillJudge) Name() string { return "skill-judge" }
@@ -412,8 +396,7 @@ func (skillJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 
 // TestJudgeLoadsSkillBeforeVerdict proves the skill toolset reaches the judge
 // and is callable: the judge loads a review skill, then scores against its
-// principles (a skill that mandates tests yields a higher score than one that
-// does not) before calling submit_verdict.
+// principles (a skill that mandates tests yields a higher score than one that does not) before calling submit_verdict.
 func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -483,8 +466,7 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 	}
 	// #502/#498: the judge must be told the clone root is its working root and
 	// never to use a leading-slash/absolute path - the worker gets this same
-	// grounding, and its absence sent a judge into a dead-end "/frontend" retry
-	// loop until the repeat-guard gave up (a silent gate bypass).
+	// grounding, and its absence sent a judge into a dead-end "/frontend" retry loop until the repeat-guard gave up (a silent gate bypass).
 	if !strings.Contains(with, "plain repo-relative paths") || !strings.Contains(with, "NEVER use a leading slash") {
 		t.Errorf("read-tools behaviour missing repo-relative path grounding: %q", with)
 	}
@@ -502,14 +484,9 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 	}
 }
 
-// TestJudgePromptScopedToNodeNotOrchestratorFileCount pins #664's test case
-// 3: the judge is handed exactly what the node it judges saw (nodeTask, which
-// after the consumer split carries the node's own scoped ask+task, never the
-// orchestrator's <changed_files count=...> summary) plus changedFiles sourced
-// from the actual clone diff (buildImplementDiffSection/buildChangedFilesSection,
-// verified by inspection - neither reads plan.UserMessage or any orchestrator
-// count). The judge prompt must reflect the real diff, and must not manufacture
-// or otherwise surface an orchestrator-style file count it was never given.
+// TestJudgePromptScopedToNodeNotOrchestratorFileCount pins #664's test case 3: the judge is handed exactly what the node it judges saw (nodeTask, which
+// after the consumer split carries the node's own scoped ask+task, never the orchestrator's <changed_files count=...> summary) plus changedFiles sourced
+// from the actual clone diff (buildImplementDiffSection/buildChangedFilesSection - neither reads plan.UserMessage or any orchestrator count). The judge prompt must reflect the real diff, and must not manufacture or otherwise surface an orchestrator-style file count it was never given.
 func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	nodeTask := "<permissions>push_commits_to_pr</permissions>\n<deliverable>a commit</deliverable>\n" +
 		"<issue number=\"7\"><title>t</title><description>d</description></issue>\n\n" +
@@ -532,10 +509,7 @@ func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 
 // TestBuildJudgePromptSectionOrder pins the cache-friendly section order
 // (finding 4): every section that is byte-identical round to round -
-// constitution, rubric, task, question, ledger, changed files, known
-// failures - leads, and the one section that changes every round (the
-// answer being judged) trails last, so the prefix ahead of it stays a
-// prompt-cache hit across rounds.
+// constitution, rubric, task, question, ledger, changed files, known failures - leads, and the one section that changes every round (the answer being judged) trails last, so the prefix ahead of it stays a prompt-cache hit across rounds.
 func TestBuildJudgePromptSectionOrder(t *testing.T) {
 	act := workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="README.md")`}}}
 	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: build failed"}}
@@ -559,17 +533,9 @@ func TestBuildJudgePromptSectionOrder(t *testing.T) {
 	}
 }
 
-// TestBuildJudgePromptStablePrefixIsByteIdentical pins what the section-order
-// test above cannot: two rounds of the SAME node - same task, question,
-// ledger, diff and known failures, only the answer being judged differs, the
-// realistic case this ordering optimises for - must produce prompts that are
-// byte-identical up to and including the "Answer to judge:" header. Order
-// alone is not enough - a clock, a run id, or a re-derived path leaking into
-// any round-invariant section would keep every section in place and still
-// move the first differing byte earlier, which is what llama.cpp's per-slot
-// prefix cache actually measures (verified against the production judge: two
-// rounds assembled this way reuse 2,899 tokens; a prompt that diverges
-// earlier reuses less).
+// TestBuildJudgePromptStablePrefixIsByteIdentical pins what the section-order test above cannot: two rounds of the SAME node - same task, question, ledger, diff and known failures, only the answer being judged differs, the
+// realistic case this ordering optimises for - must produce prompts that are byte-identical up to and including the "Answer to judge:" header. Order
+// alone is not enough - a clock, a run id, or a re-derived path leaking into any round-invariant section would keep every section in place and still move the first differing byte earlier, which is what llama.cpp's per-slot prefix cache actually measures (two production rounds assembled this way reuse 2,899 tokens; a prompt that diverges earlier reuses less).
 func TestBuildJudgePromptStablePrefixIsByteIdentical(t *testing.T) {
 	const constitution, rubric, task = "the constitution", "the rubric", "the node task"
 	question := questionContent("the question")
@@ -648,8 +614,7 @@ func TestBuildJudgePrompt_NoKnownFailuresOmitsSection(t *testing.T) {
 
 // stuckJudge always reads a file and never calls submit_verdict - the judge
 // RAN (it made tool calls, it spent turns) but never committed a verdict,
-// the stand-in for exhausting gates.judge.max_iterations (#779). Distinct
-// from flakyTransientJudge, which never runs at all.
+// the stand-in for exhausting gates.judge.max_iterations (#779). Distinct from flakyTransientJudge, which never runs at all.
 type stuckJudge struct{ calls int32 }
 
 func (j *stuckJudge) Name() string { return "stuck-judge" }
@@ -663,9 +628,7 @@ func (j *stuckJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ b
 
 // TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict is issue #779's
 // test case 2: a judge that spends its whole iteration budget without ever
-// calling submit_verdict must fail with the distinct ErrJudgeNoVerdict
-// sentinel, not the same error shape a transport outage produces - node.go
-// tells the two apart with errors.Is, never by matching this error's text.
+// calling submit_verdict must fail with the distinct ErrJudgeNoVerdict sentinel, not the same error shape a transport outage produces - node.go tells the two apart with errors.Is, never by matching this error's text.
 func TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict(t *testing.T) {
 	var reads int32
 	readTool := newSpyReadTool(t, "package x\n", &reads)
@@ -718,9 +681,7 @@ func changedFilesFixture(t *testing.T, n int) (Config, workerActivity) {
 
 // TestRunJudgeAgent_ChangedFilesCoverage is issue #779's test cases 3 and 4:
 // a changed-file set that fits inside maxChangedFiles produces a verdict with
-// no truncation note, and one that exceeds it (18 files against the 12-file
-// cap) carries the count the judge actually scored alongside the count that
-// existed - not indistinguishable from a fully-scored verdict.
+// no truncation note, and one that exceeds it (18 files against the 12-file cap) carries the count the judge actually scored alongside the count that existed - not indistinguishable from a fully-scored verdict.
 func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 
@@ -803,8 +764,7 @@ func TestRepeatsLastToolCall(t *testing.T) {
 
 // TestRepeatingTailSpan pins the pure detection function #889's runaway-loop
 // guard is built on: a uniformly repeated unit at the end of a string is
-// found and measured; a single occurrence, a too-short string, or ordinary
-// non-repeating prose is not mistaken for one.
+// found and measured; a single occurrence, a too-short string, or ordinary non-repeating prose is not mistaken for one.
 func TestRepeatingTailSpan(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		if got := repeatingTailSpan("", judgeRepeatMinUnitChars, judgeRepeatMaxUnitChars); got != 0 {
@@ -914,12 +874,9 @@ func TestJudgeRequestZeroMaxOutputTokensLeavesUncapped(t *testing.T) {
 	}
 }
 
-// garbledVerdictJudge always calls submit_verdict with an empty args map -
-// exactly what a truncated/broken tool-call payload parses to upstream
+// garbledVerdictJudge always calls submit_verdict with an empty args map - exactly what a truncated/broken tool-call payload parses to upstream
 // (openaimodel's parseJSONArgs swallows the JSON error and returns {}). The
-// call is attempted every turn but its required "score" field is missing, so
-// schema validation rejects it before the handler that populates the verdict
-// ever runs.
+// call is attempted every turn but its required "score" field is missing, so schema validation rejects it before the handler that populates the verdict ever runs.
 type garbledVerdictJudge struct{ calls int32 }
 
 func (j *garbledVerdictJudge) Name() string { return "garbled-verdict-judge" }
@@ -932,10 +889,8 @@ func (j *garbledVerdictJudge) GenerateContent(_ context.Context, _ *model.LLMReq
 }
 
 // TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict proves #889's fix: a
-// submit_verdict call whose arguments fail schema validation (as a truncated
-// tool-call payload would) must never be mistaken for a real submission - the
-// round must end in ErrJudgeNoVerdict, never a "valid" zero-value verdict
-// silently accepted as a scored pass or fail.
+// submit_verdict call whose arguments fail schema validation (as a truncated tool-call payload would) must never be mistaken for a real submission - the
+// round must end in ErrJudgeNoVerdict, never a "valid" zero-value verdict silently accepted as a scored pass or fail.
 func TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict(t *testing.T) {
 	judge := &garbledVerdictJudge{}
 	factory := NewJudgeFactory(judge, nil, nil)
@@ -948,13 +903,9 @@ func TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict(t *testing.T) {
 	}
 }
 
-// loopingJudgeModel emits reasoning text alongside a read_file call every
-// turn - a plain text-only reply would otherwise end the agent run, so the
+// loopingJudgeModel emits reasoning text alongside a read_file call every turn - a plain text-only reply would otherwise end the agent run, so the
 // tool call is what keeps the loop going - and that reasoning text is the
-// EXACT same repeated phrase every time: the #889 incident's shape, a
-// runaway generation loop that never reaches submit_verdict. The read_file
-// path varies per call so this exercises only the #889 repeat guard, not the
-// pre-existing #853 identical-tool-call stutter breaker.
+// EXACT same repeated phrase every time: the #889 incident's shape, a runaway generation loop that never reaches submit_verdict. The read_file path varies per call so this exercises only the #889 repeat guard, not the pre-existing #853 identical-tool-call stutter breaker.
 type loopingJudgeModel struct{ calls int32 }
 
 func (j *loopingJudgeModel) Name() string { return "looping-judge" }
@@ -974,13 +925,9 @@ func (j *loopingJudgeModel) GenerateContent(_ context.Context, _ *model.LLMReque
 	}
 }
 
-// TestRunJudgeAgent_RunawayRepeatAbortsEarly proves #889's repeat guard: a
-// judge stuck decoding the same text is cancelled and routed to the same
+// TestRunJudgeAgent_RunawayRepeatAbortsEarly proves #889's repeat guard: a judge stuck decoding the same text is cancelled and routed to the same
 // no-verdict retry path a truncated reply takes - well before its iteration
-// budget would otherwise let it keep running. The call count assertion is
-// load-bearing: the round ends in ErrJudgeNoVerdict either way (the repeated
-// text never parses as JSON regardless), so only a bounded call count proves
-// the guard fired instead of the loop simply running to the turn cap.
+// budget would otherwise let it keep running. The call count assertion is load-bearing: the round ends in ErrJudgeNoVerdict either way (the repeated text never parses as JSON regardless), so only a bounded call count proves the guard fired instead of the loop simply running to the turn cap.
 func TestRunJudgeAgent_RunawayRepeatAbortsEarly(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
 	judge := &loopingJudgeModel{}
@@ -1048,8 +995,7 @@ func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
 
 // stutterJudge repeats the exact same tool call twice (the model stutter
 // #853 exists for), then - once forcedVerdictCallback has stripped its tools
-// for repeating itself - closes with the verdict as plain-text JSON instead
-// of a tool call.
+// for repeating itself - closes with the verdict as plain-text JSON instead of a tool call.
 type stutterJudge struct{ calls int32 }
 
 func (j *stutterJudge) Name() string { return "stutter-judge" }
@@ -1071,8 +1017,7 @@ func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest,
 
 // TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall is #853 test case (a): a
 // judge that repeats an identical tool call gets its NEXT turn sent with no
-// tools and the forced-close instruction, and the resulting plain-text
-// verdict is parsed via the existing parseVerdict fallback.
+// tools and the forced-close instruction, and the resulting plain-text verdict is parsed via the existing parseVerdict fallback.
 func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
 	var reads int32
 	readTool := newSpyReadTool(t, "package x\n", &reads)
@@ -1095,8 +1040,7 @@ func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
 
 // isFreshRound reports whether req is the first call of a brand-new round
 // (no prior function call in its history yet) - each runJudgeRound call
-// builds its own runner and session, so this is how a scripted fake model
-// tells "still the same round" from "a fresh retry started".
+// builds its own runner and session, so this is how a scripted fake model tells "still the same round" from "a fresh retry started".
 func isFreshRound(req *model.LLMRequest) bool {
 	for _, c := range req.Contents {
 		if c == nil {
@@ -1113,8 +1057,7 @@ func isFreshRound(req *model.LLMRequest) bool {
 
 // roundStuckThenRecoversJudge never reaches a verdict in its first round
 // (repeats a tool call forever, like stuckJudge), then submits a normal
-// verdict on the very first call of any later round - the stand-in for
-// #853's "one retry with a fresh session" recovering a stuck round.
+// verdict on the very first call of any later round - the stand-in for #853's "one retry with a fresh session" recovering a stuck round.
 type roundStuckThenRecoversJudge struct {
 	rounds int32
 	calls  int32
@@ -1160,8 +1103,7 @@ func TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds(t *testing.T) {
 
 // alwaysStuckJudge never reaches a verdict, in any round - the stand-in for
 // #853's "both attempts fail" case. roundsStarted counts independent rounds
-// (fresh sessions), so the test asserts on rounds attempted, not the
-// call-count mechanics of any one round.
+// (fresh sessions), so the test asserts on rounds attempted, not the call-count mechanics of any one round.
 type alwaysStuckJudge struct{ roundsStarted int32 }
 
 func (j *alwaysStuckJudge) Name() string { return "always-stuck-judge" }
@@ -1256,9 +1198,8 @@ func runVerdictTool(t *testing.T, tl tool.Tool, args map[string]any) (map[string
 }
 
 // TestSubmitVerdict_NearMissPayloads pins the two prod near-misses that made the
-// judge "end without a verdict" (Langfuse trace 9ea8cbee38735f00ec66252922acf2aa):
-// an anchor missing `kind`, and `shortfall`/`fix` sent as JSON null. Both must
-// now validate and yield a usable verdict.
+// judge "end without a verdict" (Langfuse trace 9ea8cbee): an anchor missing
+// `kind`, and `shortfall`/`fix` sent as JSON null. Both must now validate and yield a usable verdict.
 func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 	t.Run("anchor missing kind", func(t *testing.T) {
 		var sink verdict
@@ -1398,8 +1339,7 @@ func (j *garbledThenSubmitsJudge) GenerateContent(_ context.Context, _ *model.LL
 
 // TestRunJudgeAgent_SubmitNudgeRecoversGarbledText is #1235's fix: a turn
 // that ends with unparseable text and no submit_verdict call gets one
-// in-session nudge before the fresh-session retry, and a judge that submits
-// on the nudge must not pay for a fresh round at all.
+// in-session nudge before the fresh-session retry, and a judge that submits on the nudge must not pay for a fresh round at all.
 func TestRunJudgeAgent_SubmitNudgeRecoversGarbledText(t *testing.T) {
 	judge := &garbledThenSubmitsJudge{}
 	factory := NewJudgeFactory(judge, nil, nil)
@@ -1429,8 +1369,7 @@ func (j *neverSubmitsTextOnlyJudge) GenerateContent(_ context.Context, req *mode
 	return func(yield func(*model.LLMResponse, error) bool) {
 		// A text-only judge never adds a FunctionCall to the session, so
 		// isFreshRound (which looks for one) can't tell "new session" from
-		// "the in-session nudge continuing this same session" - only a brand
-		// new session starts from just the one prompt message.
+		// "the in-session nudge continuing this same session" - only a brand new session starts from just the one prompt message.
 		if len(req.Contents) == 1 {
 			atomic.AddInt32(&j.roundsStarted, 1)
 		}
@@ -1456,12 +1395,9 @@ func TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict(t *testing.T) {
 	}
 }
 
-// forceClosedGarbledJudge burns two distinct read_file calls (maxIters=3), so
-// its third invocation is the round's own last allowed turn: forcedVerdictCallback
+// forceClosedGarbledJudge burns two distinct read_file calls (maxIters=3), so its third invocation is the round's own last allowed turn: forcedVerdictCallback
 // has already stripped tools and appended judgeForceCloseInstruction by the time
-// this call sees the request. That forced turn answers with unparseable text
-// (the #853 shape #1235's review flagged - a naturally-ending forced close,
-// turns == maxIters, never trips the turns > maxIters loop-break).
+// this call sees the request. That forced turn answers with unparseable text (a naturally-ending forced close, turns == maxIters, never trips the turns > maxIters loop-break).
 type forceClosedGarbledJudge struct{ calls int32 }
 
 func (j *forceClosedGarbledJudge) Name() string { return "force-closed-garbled-judge" }
@@ -1481,13 +1417,9 @@ func (j *forceClosedGarbledJudge) GenerateContent(_ context.Context, req *model.
 	}
 }
 
-// TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge is the fix for the #1236
-// review finding: a round that ends by force-closing (maxIters tool
-// invocations, then the callback strips tools and the model's forced turn is
-// unparseable) must NOT get an in-session submit_verdict nudge - there are no
-// tools on that turn to call, so the nudge would ask for what was just
-// declared unavailable. Calling runJudgeRound directly (not runJudgeAgent)
-// isolates this from the separate fresh-session retry.
+// TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge is the fix for the #1236 review finding: a round that ends by force-closing (maxIters tool
+// invocations, then the callback strips tools and the model's forced turn is unparseable) must NOT get an in-session submit_verdict nudge - there are no
+// tools on that turn to call, so the nudge would ask for what was just declared unavailable. Calling runJudgeRound directly (not runJudgeAgent) isolates this from the separate fresh-session retry.
 func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
 	judge := &forceClosedGarbledJudge{}
 	factory := NewJudgeFactory(judge, nil, nil)
@@ -1503,12 +1435,9 @@ func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
 	}
 }
 
-// repeatTrippedJudgeModel emits the same plain (non-Thought) text every turn
-// alongside a varying tool call - the #889 runaway-repeat shape, but as plain
-// text so it lands in runJudgeRound's accum instead of being suppressed as
-// thinking. nudgeCalls counts any request carrying judgeSubmitNudge, proving
-// the nudge never runs after this abort (#1236 review: repeats.tripped
-// cancels runCtx exactly like a forced close, so the nudge must skip too).
+// repeatTrippedJudgeModel emits the same plain (non-Thought) text every turn alongside a varying tool call - the #889 runaway-repeat shape, but as plain
+// text so it lands in runJudgeRound's accum instead of being suppressed as thinking. nudgeCalls counts any request carrying judgeSubmitNudge, proving
+// the nudge never runs after this abort (#1236 review: repeats.tripped cancels runCtx exactly like a forced close, so the nudge must skip too).
 type repeatTrippedJudgeModel struct{ calls, nudgeCalls int32 }
 
 func (j *repeatTrippedJudgeModel) Name() string { return "repeat-tripped-judge" }
@@ -1537,12 +1466,9 @@ func (j *repeatTrippedJudgeModel) GenerateContent(_ context.Context, req *model.
 	}
 }
 
-// TestRunJudgeAgent_RepeatTripSkipsSubmitNudge is the fix for the #1236
-// review's second finding: the event loop's repeats.tripped break cancels
-// runCtx exactly like the turn-cap break, but forcedVerdictCallback never
-// fires for it (there's no forced turn - the abort happens mid-generation),
-// so forcedClose alone doesn't catch this shape. Calling runJudgeRound
-// directly isolates this from the separate fresh-session retry.
+// TestRunJudgeAgent_RepeatTripSkipsSubmitNudge is the fix for the #1236 review's second finding: the event loop's repeats.tripped break cancels
+// runCtx exactly like the turn-cap break, but forcedVerdictCallback never fires for it (there's no forced turn - the abort happens mid-generation),
+// so forcedClose alone doesn't catch this shape. Calling runJudgeRound directly isolates this from the separate fresh-session retry.
 func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
 	judge := &repeatTrippedJudgeModel{}
@@ -1582,9 +1508,7 @@ func reqHasInlineData(req *model.LLMRequest) bool {
 
 // imagePersistsAfterStripJudge rejects the first call (images attached) with
 // a non-transient error, then answers unparseable text twice (round 2's own
-// turn + its in-session nudge) before finally submitting on the outer
-// fresh-session retry - recording whether InlineData ever reappeared on any
-// call after the strip fired (#1229 follow-up).
+// turn + its in-session nudge) before finally submitting on the outer fresh-session retry - recording whether InlineData ever reappeared on any call after the strip fired (#1229 follow-up).
 type imagePersistsAfterStripJudge struct {
 	calls              int32
 	mu                 sync.Mutex
@@ -1613,9 +1537,7 @@ func (j *imagePersistsAfterStripJudge) GenerateContent(_ context.Context, req *m
 
 // TestRunJudgeAgent_ImageStripPersistsAcrossRetries is the fix for the #1229
 // review follow-up: once a non-transient image rejection strips InlineData
-// from the question, every later retry in the same runJudgeAgent call (the
-// no-verdict fresh-session retry, the shrink fallback) must keep using the
-// stripped content - re-attaching images would just repeat the rejection.
+// from the question, every later retry in the same runJudgeAgent call (the no-verdict fresh-session retry, the shrink fallback) must keep using the stripped content - re-attaching images would just repeat the rejection.
 func TestRunJudgeAgent_ImageStripPersistsAcrossRetries(t *testing.T) {
 	judge := &imagePersistsAfterStripJudge{}
 	factory := NewJudgeFactory(judge, nil, nil)

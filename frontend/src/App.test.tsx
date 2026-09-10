@@ -43,10 +43,9 @@ function stubFetch() {
   vi.stubGlobal('fetch', fetchMock)
 }
 
-// #1171: the nav drawer's open state lives in App (always false on load,
-// never persisted) and the NavToggle in each page's header leading slot
-// drives it - so open-on-click and the close paths are tested here, where
-// the state lives, while NavRail's own suites test the drawer body.
+// #1171: the drawer's open state lives in App (never persisted) and each
+// page's NavToggle drives it, so open/close paths are tested here, where the
+// state lives; NavRail's suites cover the drawer body itself.
 describe('App nav drawer', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -113,12 +112,9 @@ describe('App nav drawer', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close navigation' }))
   })
 
-  // Regression for the desktop-width stacking bug caught in PR review: jsdom
-  // does no layout, so document.elementFromPoint can't reproduce the real
-  // hit-test - instead assert the z-index ordering the bug depends on. The
-  // drawer overlay must outrank ChatList's z-40 (needed only for ChatList's
-  // own off-canvas stacking below md) or the drawer is unclickable behind it
-  // at md+ widths where ChatList renders in-flow.
+  // jsdom does no layout, so the hit-test the stacking bug depends on can't
+  // be reproduced - assert the z-index ordering instead: the overlay must
+  // outrank ChatList's z-40 (off-canvas stacking below md) or the drawer is unclickable at md+.
   it('drawer overlay outranks the chat list z-index at desktop widths', async () => {
     const user = userEvent.setup()
     renderAt('/chat')

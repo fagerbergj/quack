@@ -7,12 +7,9 @@ import (
 	"testing"
 )
 
-// TestFalsePositiveCorrectionRecalledByReviewer is the acceptance path for
-// #249: a conversational correction, committed into coding memory with the
-// same repo+role scope as the former correct_review_finding tool used (repo
-// bucket + coding role), is recalled through the SAME bucket the gate's
-// Recall reads for a later review of that repo (memoryScope in
-// internal/vetting/node.go; codingView above mirrors it).
+// TestFalsePositiveCorrectionRecalledByReviewer is the acceptance path for #249: a
+// conversational correction, committed into coding memory with the same repo+role scope as
+// the former correct_review_finding tool used (repo bucket + coding role), is recalled through the SAME bucket the gate's Recall reads for a later review of that repo (memoryScope in internal/vetting/node.go; codingView above mirrors it).
 func TestFalsePositiveCorrectionRecalledByReviewer(t *testing.T) {
 	ctx := context.Background()
 	const correction = `False positive on acme/games PR #246: "empty Comment.Body breaks dispatch via triggerTask" was flagged in review but is NOT a real issue - dispatch takes the task string directly, it never calls triggerTask`

@@ -18,7 +18,6 @@ type PlanCache struct {
 	rejectionReason string
 }
 
-// NewPlanCache returns an empty cache.
 func NewPlanCache() *PlanCache {
 	return &PlanCache{plans: make(map[string]dag.Plan)}
 }
@@ -67,9 +66,7 @@ func (c *PlanCache) Get(id string) (dag.Plan, bool) {
 
 // RecordRejection notes that the plan judge declined a proposed plan this turn.
 // A single rejection is normal iteration (the model may pivot to a direct
-// answer instead of retrying, #760); repeated rejections are what #693 calls
-// exhausting the rejection budget - Rejections' count is how a caller tells
-// the two apart, never by reading the model's own answer text.
+// answer, #760); repeated rejections exhaust the rejection budget (#693) - the Rejections count is how a caller tells the two apart, never the model's answer text.
 func (c *PlanCache) RecordRejection(reason string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

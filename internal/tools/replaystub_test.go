@@ -27,8 +27,7 @@ func writeToolReplayFixture(t *testing.T) string {
 
 // TestBuild_StrictReplay_NeverConstructsRealTool: Deps.Replayer in strict
 // mode returns a stub with NO live delegate at all - Build never reaches the
-// registry constructor, so a strict replay run has zero real-backend
-// dependency by construction (.quack/replay-log.md).
+// registry constructor, so a strict replay run has zero real-backend dependency by construction (.quack/replay-log.md).
 func TestBuild_StrictReplay_NeverConstructsRealTool(t *testing.T) {
 	sess, err := replay.Load(writeToolReplayFixture(t))
 	if err != nil {
@@ -49,11 +48,7 @@ func TestBuild_StrictReplay_NeverConstructsRealTool(t *testing.T) {
 
 // TestBuild_ForkReplay_FallsThroughToARealTool: fork mode wires a REAL
 // current_date tool as the stub's live delegate (Build's recursive,
-// Replayer-cleared call), and a call the recording can't satisfy (a second
-// call - only one was recorded) is answered by it - proven directly on the
-// replayToolStub (agent.Context plumbing for a real functiontool call is
-// replaytest's job, not this unit test's - see TestBuild_StrictReplay_
-// NeverConstructsRealTool for the strict-mode half of this same wiring).
+// Replayer-cleared call); a call the recording can't satisfy (a second call - only one was recorded) is answered by it, proven directly on the replayToolStub (agent.Context plumbing for a real functiontool call is replaytest's job, not this unit test's - see TestBuild_StrictReplay_NeverConstructsRealTool for the strict half).
 func TestBuild_ForkReplay_FallsThroughToARealTool(t *testing.T) {
 	sess, err := replay.Load(writeToolReplayFixture(t))
 	if err != nil {

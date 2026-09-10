@@ -114,9 +114,7 @@ func RunMemoryForget(ctx context.Context, out io.Writer, server, id, reason stri
 
 // RunMemorySweep is `quack memory sweep [--dry-run] [--dedupe [--apply]]`:
 // runs the forgetting-rule sweep (default) or, with --dedupe, the per-bucket
-// similarity dedupe sweep (issue #1269) on demand against every store the
-// server has configured. Without --apply, --dedupe only clusters and
-// reports examples - no LLM call, nothing written.
+// similarity dedupe sweep (issue #1269) on demand against every store the server has configured. Without --apply, --dedupe only clusters and reports examples - no LLM call, nothing written.
 func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, dedupe, apply, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {

@@ -110,10 +110,7 @@ type topic struct {
 
 // NewHub returns an empty hub.
 //
-// ponytail: topic structs (not buffers - Close frees those) are retained per
-// chat forever; a live run's buffer is bounded by MaxReplay. Fine for a
-// single self-hosted instance. Upgrade path if it grows: LRU/TTL eviction of
-// done topics, or a shared event bus when running multiple replicas.
+// ponytail: topic structs (not buffers - Close frees those) are retained per chat forever; a live run's buffer is bounded by MaxReplay. Fine for a single self-hosted instance. Upgrade path if it grows: LRU/TTL eviction of done topics, or a shared event bus when running multiple replicas.
 func NewHub() *Hub { return &Hub{topics: map[string]*topic{}} }
 
 // Appends a sequenced event to the chat's topic and fans it to live subscribers. First publish after done starts a fresh topic.
@@ -135,8 +132,7 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 		// Non-blocking: a subscriber too slow to keep up is DROPPED, not
 		// skipped past - skipping an event here would silently lose a
 		// contiguous range the resume cursor can never recover (finding 6).
-		// Closing ends the connection so the client sees the drop and
-		// reconnects, replaying from its last contiguous id.
+		// Closing ends the connection so the client sees the drop and reconnects, replaying from its last contiguous id.
 		select {
 		case ch <- it:
 		default:
@@ -188,9 +184,7 @@ func (h *Hub) closeLocked(key string) {
 
 // Drops the chat's topic so a new run gets a fresh buffer. Publish does the
 // same lazily; call this to attach subscribers before publishing. Closes any
-// live subscribers first - dropping the map entry alone would orphan them
-// with a channel neither fed nor closed (they'd hang until their HTTP
-// connection dies on its own).
+// live subscribers first - dropping the map entry alone would orphan them with a channel neither fed nor closed (they'd hang until their HTTP connection dies on its own).
 func (h *Hub) Reset(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

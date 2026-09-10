@@ -21,9 +21,7 @@ import (
 
 // judgeSessionID: real chat id groups a judge/writer run under the chat that
 // caused it in Langfuse (ADK stamps gen_ai.conversation.id from this session id).
-// Each caller gets its own throwaway InMemoryService per run, so reusing chatID
-// across calls can't leak conversation state between them (only observability
-// grouping is affected). Empty chatID falls back rather than emitting "".
+// Each caller gets its own throwaway InMemoryService per run, so reusing chatID across calls can't leak conversation state between them (only observability grouping is affected). Empty chatID falls back rather than emitting "".
 func judgeSessionID(chatID, fallback string) string {
 	if chatID == "" {
 		return fallback
@@ -35,8 +33,7 @@ func judgeSessionID(chatID, fallback string) string {
 type Config struct {
 	// NodeBaseSHA is the clone's HEAD when THIS node started. Chained nodes share
 	// one clone, so diffing from the reflog's oldest entry shows every sibling's
-	// work too and the change-shape criteria fail on commits this node never made
-	// (#710). Empty ⇒ fall back to the reflog base (single-node plans, no clone).
+	// work too and the change-shape criteria fail on commits this node never made (#710). Empty ⇒ fall back to the reflog base (single-node plans, no clone).
 	NodeBaseSHA          string
 	DeterministicRounds  int     // cheap citation/length check + revise cycles
 	JudgeRounds          int     // model-judge/revise rounds
@@ -49,8 +46,7 @@ type Config struct {
 	Rubric               string  // scoring guide; global default or per-agent override; rendered markdown for the judge prompt
 	// RubricSpecs: per-criterion definition/scale/bands, only when Rubric was
 	// loaded from a rubric.yaml (rubricyaml.go) - nil for a raw prose rubric
-	// override (dag planner / inline GatesConfig.Rubric), which has no
-	// structured criteria to look up (#941).
+	// override (dag planner / inline GatesConfig.Rubric), which has no structured criteria to look up (#941).
 	RubricSpecs map[string]criterionSpec
 	// RubricFixes: declared fix text per deterministic criterion the rubric
 	// names (rubricyaml.go's rubricDocFixes) - nil for a raw prose override.
@@ -60,15 +56,12 @@ type Config struct {
 	IsReviewer       bool // stamped from node agent, never from task wording
 	// ReviewFanout: non-nil only for a reviewer node in a plan with >1
 	// reviewer node (#867). Such a node never delivers its own review -
-	// it stages into ReviewFanout, and the last reviewer node to finish
-	// delivers the merged, worst-of-verdict review exactly once.
+	// it stages into ReviewFanout, and the last reviewer node to finish delivers the merged, worst-of-verdict review exactly once.
 	ReviewFanout *ReviewFanout
 	Artifacts    artifact.Service // nil = read_artifact tool unavailable to this node
 	// RoundCoordsSink: called with fresh round/turn/head-sha/trigger-annotation
 	// at the same two points SetAdvisorThreadRound is (draft seed + every judge
-	// round) - lets a native node's already-built artifact tools (which don't
-	// have an ACP session/AdvisorToken to poll) get restamped by the gate that
-	// actually knows the current round, without vetting importing tools (#1123).
+	// round) - lets a native node's already-built artifact tools (which don't have an ACP session/AdvisorToken to poll) get restamped by the gate that actually knows the current round, without vetting importing tools (#1123).
 	RoundCoordsSink func(round int, turnID, headSHA, triggerAnnotation string)
 	// Ledger: the WAL's fail-closed AppendIntent path. nil = no WAL (no
 	// recording.store configured); recordstore and the gate then write
@@ -132,8 +125,7 @@ type StagedDelivery struct {
 	Body   string
 	// TitleOmitted/BodyOmitted: Kind pull_request via stage_push only - the agent
 	// didn't supply that field, so delivery must PATCH without the key rather
-	// than send an empty string (which would blank it on GitHub). Zero value
-	// (false) matches every other path, which always carries both fields.
+	// than send an empty string (which would blank it on GitHub). Zero value (false) matches every other path, which always carries both fields.
 	TitleOmitted bool
 	BodyOmitted  bool
 	Event        string          // review verdict: approve | request_changes | comment
@@ -142,8 +134,7 @@ type StagedDelivery struct {
 	Recovered    bool            // parsed from answer tail, not tool-staged
 	// Takeaway/Verified/Notes: Kind == "review" only - the raw ingredients
 	// for the code_review record and the fixed-format renderer (one fixed
-	// review format). Body already carries a rendered fallback for when no
-	// code_review artifact backs this delivery.
+	// review format). Body already carries a rendered fallback for when no code_review artifact backs this delivery.
 	Takeaway string
 	Verified []string
 	Notes    []string
@@ -171,13 +162,11 @@ type DeliveryContext struct {
 	PushedSHA string
 	// PushError: non-empty when ensurePush failed before Deliver was called -
 	// Items are still the originally staged set (never attempted). Deliver
-	// implementations should skip attempting them and report this as each
-	// item's failure instead, mirroring the PushedSHA-verify-mismatch path (#1155).
+	// implementations should skip attempting them and report this as each item's failure instead, mirroring the PushedSHA-verify-mismatch path (#1155).
 	PushError string
 	// ChecksSkipNote: non-empty when GatePassed but no build/test check ran
 	// for a reason worth telling the reader (#780). Already worded for
-	// display; "" means say nothing (checks ran, or the reason is operator
-	// config, not a property of the change).
+	// display; "" means say nothing (checks ran, or the reason is operator config, not a property of the change).
 	ChecksSkipNote string
 	// IdempotencyKey: target artifact id + revision (#1093 V4 §4.9) - "" when
 	// this delivery has no backing artifact revision to key on.
@@ -218,8 +207,7 @@ type workerActivity struct {
 
 	// recalled: recall_memory hits a NATIVE worker's own tool call returned
 	// this run (epic #1255 P2) - scanned from session events (see
-	// activityFromSessionAt's "recall_memory" case), since a native worker's
-	// tool calls, unlike an ACP worker's, land in this session directly.
+	// activityFromSessionAt's "recall_memory" case), since a native worker's tool calls, unlike an ACP worker's, land in this session directly.
 	recalled []memory.Delivered
 
 	clonedRepos []string

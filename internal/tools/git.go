@@ -91,7 +91,6 @@ func (b gitBinding) authFor(rawURL string) (*gitAuth, error) {
 	return &gitAuth{cred: *cred, askpass: link}, nil
 }
 
-// GitCredential: per-host HTTPS credential.
 type GitCredential struct {
 	Host     string
 	Username string
@@ -116,7 +115,6 @@ func (b gitBinding) resolve(p string) (string, error) {
 	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
 }
 
-// credentialFor: matches rawURL's host against configured credentials.
 func (b gitBinding) credentialFor(rawURL string) *GitCredential {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
@@ -180,7 +178,6 @@ func gitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
 	return env
 }
 
-// capOutput: truncates to max bytes with a suffix.
 func capOutput(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -188,7 +185,6 @@ func capOutput(s string, max int) string {
 	return s[:max] + "\n... (truncated)"
 }
 
-// runGit: executes git as a subprocess with scrubbed env and capped output.
 func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps, auth *gitAuth) (stdout, stderr string, err error) {
 	bin, err := gitBinaryPath()
 	if err != nil {
@@ -256,7 +252,6 @@ func validateCloneURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// cloneRepo: resolve target, build argv, run clone.
 func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) (gitCloneResult, error) {
 	if err := validateRef(branch, "git_clone"); branch != "" && err != nil {
 		return gitCloneResult{}, err
@@ -306,7 +301,6 @@ func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) 
 	return gitCloneResult{Dir: filepath.ToSlash(relDir), Head: head, DefaultBranch: branch, Cwd: displayCwd(b.cwd)}, nil
 }
 
-// gitHeadInfo: reads short HEAD sha and branch name.
 func gitHeadInfo(dir string, caps workspace.Caps) (head, branch string, err error) {
 	out, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--short", "HEAD"}, caps, nil)
 	if err != nil {

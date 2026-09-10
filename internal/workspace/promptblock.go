@@ -15,13 +15,7 @@ import (
 
 // PromptBlock renders the deployment-constant workspace/toolchain facts
 // injected into every coding agent's system prompt (#663): OS, sandbox mode,
-// toolchains actually present, the check-command allowlist, and the
-// per-process address-space limit. Generated from caps/checkCommands at
-// startup - never hand-written - so it can never claim a toolchain that
-// isn't actually there: presence is PROBED the same way a derived check
-// would resolve it (ResolveExecutable), not trusted from config. A toolchain
-// that fails its probe simply has no line, so an agent that needs it says it
-// could not verify rather than "verifying" against a tool it can't run.
+// toolchains actually present, the check-command allowlist, and the per-process address-space limit. Generated from caps/checkCommands at startup - never hand-written - so it can never claim a toolchain that isn't actually there: presence is PROBED the same way a derived check would resolve it (ResolveExecutable), not trusted from config. A toolchain that fails its probe simply has no line, so an agent that needs it says it could not verify rather than "verifying" against a tool it can't run.
 func PromptBlock(caps Caps, checkCommands []string) string {
 	lines := []string{fmt.Sprintf("%s %s. %s", osName(), archName(), sandboxLine(caps.Sandbox))}
 	if tc := toolchainLine(caps); tc != "" {
@@ -59,8 +53,7 @@ func archName() string {
 
 // sandboxLine states the actual OS boundary (or its absence) rather than the
 // aspirational one - e.g. neither bwrap nor landlock here unshares the
-// network namespace (agents legitimately run `npm ci`/`go mod download`), so
-// this must never claim network denial.
+// network namespace (agents legitimately run `npm ci`/`go mod download`), so this must never claim network denial.
 func sandboxLine(mode SandboxMode) string {
 	switch mode {
 	case SandboxBwrap:
@@ -74,8 +67,7 @@ func sandboxLine(mode SandboxMode) string {
 
 // promptToolchains is the fixed catalog of language runtimes probed on the
 // server's own ambient PATH for the "Toolchains on PATH" line - resolved via
-// ResolveExecutable, the exact lookup a derived check (vetting.toolchainPresent)
-// will use, so this can never list one that a check would then fail to run.
+// ResolveExecutable, the exact lookup a derived check (vetting.toolchainPresent) will use, so this can never list one that a check would then fail to run.
 var promptToolchains = []struct {
 	bin     string
 	argv    []string
@@ -152,9 +144,7 @@ var javaReleaseVersionRe = regexp.MustCompile(`JAVA_VERSION="?(\d+)`)
 
 // javaToolchain reports the JDK found at workspace.env's JAVA_HOME (Gradle's
 // own lookup - config/quack.yaml), via the `release` file every OpenJDK/
-// Adoptium/Zulu distribution ships (JAVA_VERSION="17.0.9…") - deterministic,
-// no subprocess needed. A JAVA_HOME with no release file gets no line: a
-// custom build we can't version is not one we can safely claim either.
+// Adoptium/Zulu distribution ships (JAVA_VERSION="17.0.9…") - deterministic, no subprocess needed. A JAVA_HOME with no release file gets no line: a custom build we can't version is not one we can safely claim either.
 func javaToolchain(caps Caps) string {
 	home := caps.Env["JAVA_HOME"]
 	if home == "" {
@@ -175,9 +165,7 @@ var androidPlatformRe = regexp.MustCompile(`^android-(\d+)$`)
 
 // androidToolchain reports the highest installed platform under
 // workspace.env's ANDROID_HOME (falling back to ANDROID_SDK_ROOT - AGP
-// accepts either, config/quack.yaml sets both to the same path) by reading
-// <home>/platforms - no `sdkmanager` subprocess, which isn't guaranteed
-// present even when the SDK is.
+// accepts either, config/quack.yaml sets both to the same path) by reading <home>/platforms - no `sdkmanager` subprocess, which isn't guaranteed present even when the SDK is.
 func androidToolchain(caps Caps) string {
 	key := "ANDROID_HOME"
 	home := caps.Env[key]

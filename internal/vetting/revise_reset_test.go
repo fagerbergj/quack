@@ -21,12 +21,9 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// #762: an ACP worker commits directly to the clone on disk, outside quack's
-// session ledger - so a rejected round's commit is invisible to everything
+// #762: an ACP worker commits directly to the clone on disk, outside quack's session ledger - so a rejected round's commit is invisible to everything
 // except a probe that reads the clone itself. strayCommitStub reproduces the
-// production sequence: round 0 commits something unrelated to the task and
-// the judge zeroes it, the revise round commits the real task and the judge
-// passes it - all in the SAME clone, exactly as RunGatedRefine drives it.
+// production sequence: round 0 commits something unrelated to the task and the judge zeroes it, the revise round commits the real task and the judge passes it - all in the SAME clone, exactly as RunGatedRefine drives it.
 type strayCommitStub struct {
 	t       *testing.T
 	dir     string
@@ -134,7 +131,7 @@ func runStrayCommitGate(t *testing.T, stub model.LLM, cfg Config) {
 	if err != nil {
 		t.Fatalf("worker: %v", err)
 	}
-	// cfg.NodeBaseSHA mirrors what RunGatedRefine stamps at entry (node.go:206) -
+	// cfg.NodeBaseSHA mirrors what RunGatedRefine stamps at entry -
 	// this test drives RunGatedRefine directly via newTestGatedNode, which does
 	// stamp it, so nothing extra is needed here; kept for documentation.
 	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
@@ -164,11 +161,8 @@ func runStrayCommitGate(t *testing.T, stub model.LLM, cfg Config) {
 }
 
 // TestGate1_RejectedRoundsCommitNeverSurvivesToDelivery is issue #762 test case
-// 1: a rejected round's commit must not still be on the branch once a later
-// round passes and the gate delivers. This FAILS on main - nothing resets the
-// clone between a failed judge round and the revise round it triggers, so the
-// off-task commit from the draft round rides along into the branch the
-// passing revise round delivers.
+// 1: a rejected round's commit must not still be on the branch once a later round passes and the gate delivers. This FAILS on main - nothing resets the
+// clone between a failed judge round and the revise round it triggers, so the off-task commit from the draft round rides along into the branch the passing revise round delivers.
 func TestGate1_RejectedRoundsCommitNeverSurvivesToDelivery(t *testing.T) {
 	cfg, dir := strayCommitTestRepo(t)
 	stub := &strayCommitStub{t: t, dir: dir}
@@ -214,10 +208,8 @@ func TestGate2_NormalRunDeliversOnlyItsOwnCommits(t *testing.T) {
 }
 
 // incompleteOnTaskStub commits real, on-task work in the draft round that the
-// judge rejects for being short of the task (missing .dockerignore, say) -
-// commit_hygiene itself scores fine. The revise round adds a SECOND file/commit
-// rather than redoing the first, the way an ACP worker naturally continues
-// when its own prior commit is still sitting in the clone.
+// judge rejects for being short of the task (missing .dockerignore, say) - commit_hygiene itself scores fine. The revise round adds a SECOND file/commit
+// rather than redoing the first, the way an ACP worker naturally continues when its own prior commit is still sitting in the clone.
 type incompleteOnTaskStub struct {
 	t      *testing.T
 	dir    string
@@ -261,12 +253,9 @@ func (m *incompleteOnTaskStub) GenerateContent(_ context.Context, req *model.LLM
 	}
 }
 
-// TestGate4_IncompleteButOnTaskRoundIsNotReset: the fourth case the
-// coordinator asked for on top of the issue's three - a round rejected for
-// being INCOMPLETE, not off-task, must keep its commit so the revise round
-// builds on it. This fails before the commit_hygiene keying: an unconditional
-// reset on every judge failure wipes the draft's "Add CD publishing to GHCR"
-// commit right along with the (nonexistent, here) contamination.
+// TestGate4_IncompleteButOnTaskRoundIsNotReset: the fourth case the coordinator asked for on top of the issue's three - a round rejected for
+// being INCOMPLETE, not off-task, must keep its commit so the revise round builds on it. This fails before the commit_hygiene keying: an unconditional
+// reset on every judge failure wipes the draft's "Add CD publishing to GHCR" commit right along with the (nonexistent, here) contamination.
 func TestGate4_IncompleteButOnTaskRoundIsNotReset(t *testing.T) {
 	cfg, dir := strayCommitTestRepo(t)
 	git := func(args ...string) {

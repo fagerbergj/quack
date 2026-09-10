@@ -29,10 +29,9 @@ const (
 // has no unwanted side effect (e.g. regenerating an LLM completion).
 type idempotencyKey struct{}
 
-// WithIdempotent marks ctx so a request built from it is retried as freely
-// as GET/HEAD even if its method is POST/PATCH/PUT/DELETE. Use only when a
-// duplicate send is known to be harmless - never for a call that creates or
-// mutates state visible to someone else (a comment, a review, a merge).
+// WithIdempotent lets a POST/PATCH/PUT/DELETE built from this ctx retry as
+// freely as GET/HEAD. Only where a duplicate send is harmless - never for
+// calls that create or mutate state others can see (comment, review, merge).
 func WithIdempotent(ctx context.Context) context.Context {
 	return context.WithValue(ctx, idempotencyKey{}, true)
 }
@@ -58,17 +57,9 @@ type transport struct {
 	maxDelay    time.Duration
 }
 
-// NewTransport wraps next (http.DefaultTransport if nil) with a method-aware
-// retry policy:
-//
-//   - GET/HEAD (or any request marked via WithIdempotent) retry on connection
-//     errors, timeouts, 429, and 5xx.
-//   - Every other method retries only on errors that prove the request never
-//     reached the server (connection refused, DNS failure) - never on a
-//     mid-flight timeout or a 5xx response, since either could mean the
-//     server already processed it.
-//
-// Retry-After is honoured when present. Attempts are bounded.
+// NewTransport wraps next (http.DefaultTransport if nil) with a method-aware retry policy: GET/HEAD (or
+// WithIdempotent) retry on connection errors, timeouts, 429, and 5xx; other methods only on errors
+// proving the request never reached the server (a 5xx/timeout may already have been processed); Retry-After honoured, attempts bounded.
 func NewTransport(next http.RoundTripper, opts ...Option) http.RoundTripper {
 	if next == nil {
 		next = http.DefaultTransport

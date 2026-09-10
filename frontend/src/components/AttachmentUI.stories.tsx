@@ -2,7 +2,6 @@ import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { AttachmentPreviews, AttachmentStrip, type AttachmentItem } from './AttachmentUI'
 
-// ── AttachmentPreviews ────────────────────────────────────────────────────────
 
 const previewMeta: Meta<typeof AttachmentPreviews> = {
   title: 'Chat/AttachmentPreviews',
@@ -44,7 +43,6 @@ export const Empty: PreviewStory = {
   args: { previews: [] },
 }
 
-// ── AttachmentStrip ───────────────────────────────────────────────────────────
 // Rendered with interactive state so add/remove can be exercised in Storybook.
 
 function StripWrapper({ initial }: { initial: AttachmentItem[] }) {

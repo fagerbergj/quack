@@ -22,8 +22,7 @@ import (
 
 // stubPlanJudgeModel is a scripted model.LLM that always calls
 // submit_plan_verdict with the canned accept/reason - proving NewPlanJudge's
-// tool wiring (submit tool built, run isolated, sink read back) without a live
-// model.
+// tool wiring (submit tool built, run isolated, sink read back) without a live model.
 type stubPlanJudgeModel struct {
 	accept bool
 	reason string
@@ -79,11 +78,8 @@ func TestPlanJudge_RequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 }
 
 // loopingPlanJudgeModel streams the same short phrase as many small partial
-// deltas within ONE model call, never calling submit_plan_verdict - the
-// literal #889 incident shape (a single generation that decodes forever
-// instead of stopping), since the plan judge has no other tool available to
-// sustain a multi-turn loop across separate model calls the way the judge
-// tests do with read_file.
+// deltas within ONE model call, never calling submit_plan_verdict - the literal #889 incident shape (a single generation that decodes forever
+// instead of stopping), since the plan judge has no other tool available to sustain a multi-turn loop across separate model calls the way the judge tests do with read_file.
 type loopingPlanJudgeModel struct{ chunks int32 }
 
 func (m *loopingPlanJudgeModel) Name() string { return "looping-plan-judge" }
@@ -106,10 +102,8 @@ func (m *loopingPlanJudgeModel) GenerateContent(_ context.Context, _ *model.LLMR
 }
 
 // TestPlanJudge_RunawayRepeatRoutesToNoVerdict proves #889's repeat guard on
-// the plan judge: a runaway streaming loop is aborted well before the model's
-// own (bounded, in this fake) 500-chunk script would otherwise finish, and
-// the round ends the same "ended without a verdict" way an ordinary no-tool-
-// call reply does.
+// the plan judge: a runaway streaming loop is aborted well before the model's own (bounded, in this fake) 500-chunk script would otherwise finish, and
+// the round ends the same "ended without a verdict" way an ordinary no-tool-call reply does.
 func TestPlanJudge_RunawayRepeatRoutesToNoVerdict(t *testing.T) {
 	m := &loopingPlanJudgeModel{}
 	judge := NewPlanJudge(m, 0, "", nil, nil)
@@ -142,10 +136,8 @@ func (m planPromptCapturingModel) GenerateContent(_ context.Context, req *model.
 }
 
 // TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted covers epic #1255 P2's
-// plan-judge verification: top-k memories for the chat's scope reach the
-// prompt as a delimited section, get logged as memory.recall with source
-// "plan_judge" - and, unlike a worker round, are never voted on (no
-// memory.vote entry, no vote field on planVerdictArgs to carry one).
+// plan-judge verification: top-k memories for the chat's scope reach the prompt as a delimited section, get logged as memory.recall with source
+// "plan_judge" - and, unlike a worker round, are never voted on (no memory.vote entry, no vote field on planVerdictArgs to carry one).
 func TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)
@@ -198,11 +190,9 @@ func TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted(t *testing.T) {
 	}
 }
 
-// TestNewPlanJudge_RepoScopeRecall_NotUserOnly proves the fix for a
-// GitHub-dispatched chat: the plan is known to belong to a repo before it's
+// TestNewPlanJudge_RepoScopeRecall_NotUserOnly proves the fix for a GitHub-dispatched chat: the plan is known to belong to a repo before it's
 // judged (the plan declares setup), so the judge's recall must query the
-// repo bucket - a memory seeded with no user attribution, only a repo key,
-// must still surface, which a user-only scope would miss entirely.
+// repo bucket - a memory seeded with no user attribution, only a repo key, must still surface, which a user-only scope would miss entirely.
 func TestNewPlanJudge_RepoScopeRecall_NotUserOnly(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)
@@ -260,11 +250,9 @@ func TestPlanJudgeErrorsWithoutVerdict(t *testing.T) {
 	}
 }
 
-// TestPlanJudge_ChatEventCarriesCallerCoords pins #617's planner entry point:
-// the plan judge runs its own isolated agent.Run, but never crosses a
+// TestPlanJudge_ChatEventCarriesCallerCoords pins #617's planner entry point: the plan judge runs its own isolated agent.Run, but never crosses a
 // workflow.RunNode boundary - a ChatID stamped on the caller's ctx (as
-// tools.NewPlanTool's handler now does) must reach the judge's OWN "chat"
-// ledger event, not fall back to "unscoped".
+// tools.NewPlanTool's handler now does) must reach the judge's OWN "chat" ledger event, not fall back to "unscoped".
 func TestPlanJudge_ChatEventCarriesCallerCoords(t *testing.T) {
 	capExp := &captureEvalExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -308,8 +296,7 @@ func TestPlanJudge_ChatEventCarriesCallerCoords(t *testing.T) {
 
 // TestPlanJudgeAcceptsCohesiveSingleNodePlan pins the plumbing for the case
 // that motivated the criterion-7 reword: a small, cohesive change (add one
-// reaction to an API) with setup + delivery declared is a ONE-node plan, and
-// must be accepted rather than forced into an API/logic/tests chain.
+// reaction to an API) with setup + delivery declared is a ONE-node plan, and must be accepted rather than forced into an API/logic/tests chain.
 func TestPlanJudgeAcceptsCohesiveSingleNodePlan(t *testing.T) {
 	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0, "", nil, nil)
 	planSummary := "1 node(s):\n" +
@@ -326,11 +313,8 @@ func TestPlanJudgeAcceptsCohesiveSingleNodePlan(t *testing.T) {
 }
 
 // TestPlanRubricCriterion5RequiresSingleNodeForCohesiveWork pins the reworded
-// rubric text against the live over-decomposition bug: the judge rejected a
-// correct single-node plan for splitting "into separate nodes for API
-// implementation, logic implementation, and testing/verification" - activity
-// slicing, not independent-portion slicing. This asserts the instruction text
-// itself so the guidance can't silently regress without a model run.
+// rubric text against the live over-decomposition bug: the judge rejected a correct single-node plan for splitting "into separate nodes for API implementation, logic implementation, and testing/verification" - activity
+// slicing, not independent-portion slicing. This asserts the instruction text itself so the guidance can't silently regress without a model run.
 func TestPlanRubricCriterion5RequiresSingleNodeForCohesiveWork(t *testing.T) {
 	mustContain := []string{
 		"decompose by independent PORTION of work",
@@ -355,11 +339,8 @@ func TestPlanRubricCriterion5ForbidsActivitySplit(t *testing.T) {
 }
 
 // TestPlanRubricRequiresAskScopeFidelity pins the PR-607 fix: a request that
-// explicitly narrows scope (a specific commit, threads, files) must be judged
-// against THAT scope, not the whole PR/repo - so a plan honoring the narrow
-// ask with one small node is not rejected for looking small next to a large
-// diff, and a plan that inflates a narrow ask into the large-diff fan-out
-// pattern is rejected on this criterion.
+// explicitly narrows scope (a specific commit, threads, files) must be judged against THAT scope, not the whole PR/repo - so a plan honoring the narrow
+// ask with one small node is not rejected for looking small next to a large diff, and a plan that inflates a narrow ask into the large-diff fan-out pattern is rejected on this criterion.
 func TestPlanRubricRequiresAskScopeFidelity(t *testing.T) {
 	mustContain := []string{
 		"is sized to the SCOPE the request itself sets",
@@ -374,13 +355,9 @@ func TestPlanRubricRequiresAskScopeFidelity(t *testing.T) {
 	}
 }
 
-// TestPlanRubricRequiresRequestArtifactMatch pins the #634 fix: criterion 1
-// collapsed the old request-type enumeration (which licensed an
-// explorer-shaped "plan") into one generic check - does the plan's TERMINAL
-// node actually produce the artifact the request asked to receive, reasoned
-// from the request itself rather than pattern-matched against a catalogue of
-// request-type shapes. Deliberately loose: the exact prose is free to evolve,
-// only the rule needs to survive.
+// TestPlanRubricRequiresRequestArtifactMatch pins the #634 fix: criterion 1 collapsed the old request-type enumeration (which licensed an
+// explorer-shaped "plan") into one generic check - does the plan's TERMINAL node actually produce the artifact the request asked to receive, reasoned
+// from the request itself rather than pattern-matched against a catalogue of request-type shapes. Deliberately loose: the exact prose is free to evolve, only the rule needs to survive.
 func TestPlanRubricRequiresRequestArtifactMatch(t *testing.T) {
 	mustContain := []string{
 		"does it hand back what the request asked to receive",
@@ -394,15 +371,9 @@ func TestPlanRubricRequiresRequestArtifactMatch(t *testing.T) {
 	}
 }
 
-// TestPlanJudgeRejectsExplorationTerminalForPlanRequest pins the #634 shape
-// itself: a plan-only request ("produce an implementation plan: the
-// approach, the files to change, and how to verify it") whose single
-// terminal node is a code-explorer tasked to "produce a detailed report"
-// must be rejected, with a reason naming the missing plan-producing terminal
-// node - not accepted as a correct "plan-only, stays read-only" shape. The
-// judge's own reasoning runs against a live model; this pins the plumbing
-// (the judge propagates a reject verdict + reason for this exact shape)
-// rather than the model's judgment, which is untestable without one.
+// TestPlanJudgeRejectsExplorationTerminalForPlanRequest pins the #634 shape itself: a plan-only request ("produce an implementation plan: the approach, the files to change, and how to verify it") whose single
+// terminal node is a code-explorer tasked to "produce a detailed report" must be rejected, with a reason naming the missing plan-producing terminal
+// node - not accepted as a correct "plan-only, stays read-only" shape. The judge's own reasoning runs against a live model; this pins the plumbing (the judge propagates a reject verdict + reason for this exact shape) rather than the model's judgment, which is untestable without one.
 func TestPlanJudgeRejectsExplorationTerminalForPlanRequest(t *testing.T) {
 	reason := "add a terminal node that actually writes the plan - the current terminal node only explores and produces a report"
 	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0, "", nil, nil)
@@ -446,10 +417,8 @@ func TestPlanJudgeRejectsExplorationTerminalForImplementRequest(t *testing.T) {
 }
 
 // TestPlanRubricStatesTerminalOutputIsTheAnswer pins the architectural fact the
-// judge twice confabulated away: it accepted a lone code-explorer plan because
-// the findings "will be used to write the plan in the final response". No such
-// step exists - buildPlanGraph enforces one terminal node and its output is
-// delivered verbatim - so the rubric has to say so.
+// judge twice confabulated away: it accepted a lone code-explorer plan because the findings "will be used to write the plan in the final response". No such
+// step exists - buildPlanGraph enforces one terminal node and its output is delivered verbatim - so the rubric has to say so.
 func TestPlanRubricStatesTerminalOutputIsTheAnswer(t *testing.T) {
 	r := planRubricInstruction
 	for _, want := range []string{

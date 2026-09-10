@@ -7,8 +7,7 @@ import (
 
 // duckTheme is a rubber-duck-themed huh theme: a yellow focused border (the
 // duck) with an orange "beak" selector and cursor. Built on ThemeBase so the
-// layout/spacing stays conventional; only the accent colors move. Used by the
-// init wizard so `quack init` reads as on-brand, not a generic form.
+// layout/spacing stays conventional; only the accent colors move.
 func duckTheme() *huh.Theme {
 	t := huh.ThemeBase()
 

@@ -189,10 +189,9 @@ func TestAgentMemoryToolsAndGuidance(t *testing.T) {
 	}
 }
 
-// TestAgentMemoryRealBundle is an end-to-end check that the REAL web-researcher
-// memory.md and the REAL memory tools both render in its prompt - using the same
-// loader (agent.LoadBundleMemory) and tools (stage_memory builtin + ADK
-// load/preload) that buildAgents wires when memory is enabled.
+// TestAgentMemoryRealBundle: the REAL web-researcher memory.md and the REAL
+// memory tools (the same loader and tools buildAgents wires when memory is
+// enabled) both render in its prompt.
 func TestAgentMemoryRealBundle(t *testing.T) {
 	const dir = "../../agents/web-researcher"
 	bundle, err := agent.LoadBundle(dir)
@@ -228,10 +227,9 @@ func TestAgentMemoryRealBundle(t *testing.T) {
 	}
 }
 
-// TestAgentWorkspaceRendered verifies a non-empty workspace block reaches the
-// Environment layer, and that a non-coding agent (workspace == "") never
-// fabricates one - Agent's own callers decide which is which (build.go
-// always passes "", the ACP branch always passes workspace.PromptBlock).
+// TestAgentWorkspaceRendered: a non-empty workspace block reaches the
+// Environment layer; a non-coding agent (workspace == "") never fabricates
+// one - the callers decide (build.go "", ACP workspace.PromptBlock).
 func TestAgentWorkspaceRendered(t *testing.T) {
 	out := promptbuilder.Agent("code-implementer", "implements code", nil, nil, "", "", "Linux x86_64. Sandbox: landlock (…).")
 	if !strings.Contains(out, "## Environment") {
@@ -277,10 +275,9 @@ func TestOrchestratorLayers(t *testing.T) {
 	}
 }
 
-// TestCacheByDayBuildsOnce covers perf audit #14: an agent's
-// InstructionProvider is called once per model request, but every prompt
-// input besides today() is fixed - repeat calls on the same day must reuse
-// the first build instead of re-assembling the whole prompt.
+// TestCacheByDayBuildsOnce (perf audit #14): the InstructionProvider is
+// called once per model request, and every prompt input besides today() is
+// fixed - same-day repeat calls must reuse the first build.
 func TestCacheByDayBuildsOnce(t *testing.T) {
 	var builds int
 	cached := promptbuilder.CacheByDay(func() string {

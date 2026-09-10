@@ -53,11 +53,9 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 			"nodes", paused, "chats", chats, "grace", grace)
 	}
 
-	// Re-reads hub.ActiveChatIDs() on every poll rather than iterating the
-	// snapshot above: a dispatch that checked Draining()==false just before
-	// BeginDraining flipped it registers moments later, for a chat this
-	// snapshot never saw - iterating the frozen ids would make that run
-	// permanently invisible to drain instead of merely late.
+	// Re-reads hub.ActiveChatIDs() on every poll rather than iterating the snapshot above: a
+	// dispatch that checked Draining()==false just before BeginDraining flipped it registers
+	// moments later, for a chat this snapshot never saw - invisible forever, not merely late.
 	waitWhileAnyRegistered(hub, grace)
 
 	remaining := hub.ActiveChatIDs()

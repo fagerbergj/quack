@@ -32,8 +32,7 @@ const (
 
 // skipChecks records that the deterministic checks criterion did not apply.
 // The reason rides back in criterionScore.Reason (ignored by callers that only
-// check ok) so a passing node can still say why nothing was verified - same
-// string the span attribute and metric record (#780).
+// check ok) so a passing node can still say why nothing was verified - same string the span attribute and metric record (#780).
 func skipChecks(ctx context.Context, reason string) (criterionScore, bool) {
 	oteltrace.SpanFromContext(ctx).SetAttributes(attribute.String("skip_reason", reason))
 	otelobs.RecordChecksSkipped(reason)
@@ -42,9 +41,7 @@ func skipChecks(ctx context.Context, reason string) (criterionScore, bool) {
 
 // checksSkipNoteReasons: skip reasons that are a property of the CHANGE
 // (repo state quack could not verify), not operator config - worth
-// surfacing on a passing node. not_configured/no_workspace describe how the
-// operator set the node up, not anything about this change, so they stay
-// silent (#780).
+// surfacing on a passing node. not_configured/no_workspace stay silent (#780).
 var checksSkipNoteReasons = map[string]bool{
 	skipReasonNoRepo:           true,
 	skipReasonNoChecksDerived:  true,
@@ -53,8 +50,7 @@ var checksSkipNoteReasons = map[string]bool{
 
 // checksSkipNote composes the passing-node caveat for a skip reason worth
 // surfacing, or "" when the reason doesn't qualify (or checks ran, reason ==
-// ""). Embeds the exact skip_reason string RecordChecksSkipped records, so
-// the log, the metric, and this note agree.
+// ""). Embeds the exact skip_reason string RecordChecksSkipped records, so the log, the metric, and this note agree.
 func checksSkipNote(reason string) string {
 	if !checksSkipNoteReasons[reason] {
 		return ""
@@ -204,11 +200,9 @@ func checksDir(cfg Config) (string, bool, error) {
 			if berr == nil && repoNameMatches(nodeBare, workdir) {
 				return nodeBare, true, nil
 			}
-			// cfg.Setup is set only when this node has one deterministic
-			// pre-cloned checkout (dag.setupQualifyingAgent) - unlike the
+			// cfg.Setup is set only when this node has one deterministic pre-cloned checkout (dag.setupQualifyingAgent) - unlike the
 			// ambiguous case above, nodeBare is unambiguously the target repo,
-			// so name it for the planner instead of fail-closing on the raw
-			// "workdir does not exist" exec error.
+			// so name it for the planner instead of fail-closing on the raw "workdir does not exist" exec error.
 			if berr == nil && cfg.Setup != nil && isDir(nodeBare) {
 				return "", false, fmt.Errorf("planner set workdir %q; the repo root is %q", workdir, nodeBare)
 			}

@@ -9,9 +9,7 @@ import (
 
 // #1033: newSafeYield used to recover a consumer's loop-body panic and return
 // normally. Go then panics at the RANGE SITE with "range function recovered a
-// loop body panic and did not resume panicking" - which in production lands in
-// startRun's detached goroutine and kills the process. The consumer must see
-// its OWN panic value instead.
+// loop body panic and did not resume panicking" - which in production lands in startRun's detached goroutine and kills the process. The consumer must see its OWN panic value instead.
 func TestSafeYield_ResumesConsumerPanic(t *testing.T) {
 	seq := iter.Seq2[stream.SSEEvent, error](func(yield func(stream.SSEEvent, error) bool) {
 		newSafeYield(yield)(stream.Done(), nil)

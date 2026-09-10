@@ -9,10 +9,8 @@ import (
 )
 
 // TestChangedFilesSection_ReviewNodeGetsDiff pins #498 step 1: a review
-// node's act.written is always empty (read-only), so before this fix the
-// judge's changedFiles slot was empty too and it could only score the
-// review's internal consistency. With cfg.IsReviewer set, changedFilesSection
-// must source the actual base..HEAD diff off the clone instead.
+// node's act.written is always empty (read-only), so before this fix the judge's changedFiles slot was empty too and it could only score the
+// review's internal consistency. With cfg.IsReviewer set, changedFilesSection must source the actual base..HEAD diff off the clone instead.
 func TestChangedFilesSection_ReviewNodeGetsDiff(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = true
@@ -28,11 +26,9 @@ func TestChangedFilesSection_ReviewNodeGetsDiff(t *testing.T) {
 	}
 }
 
-// TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader pins that a
-// non-review node never gets the review-only header/framing, even when a
+// TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader pins that a non-review node never gets the review-only header/framing, even when a
 // setup clone is present - review and implement diffs are framed differently
-// (see TestChangedFilesSection_ImplementNodeGetsDiffAndContent for what an
-// implement node DOES get).
+// (see TestChangedFilesSection_ImplementNodeGetsDiffAndContent for what an implement node DOES get).
 func TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = false
@@ -47,11 +43,9 @@ func TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader(t *testing.T) {
 	}
 }
 
-// TestChangedFilesSection_ImplementNodeGetsDiffAndContent pins the #498
-// residual fix: an implement node with a setup clone gets BOTH the actual
+// TestChangedFilesSection_ImplementNodeGetsDiffAndContent pins the #498 residual fix: an implement node with a setup clone gets BOTH the actual
 // base..HEAD diff (so change-shape criteria like diff_minimality can see what
-// was actually added vs. pre-existing) and the full re-read file content
-// (still needed for whole-file quality criteria) - not one or the other.
+// was actually added vs. pre-existing) and the full re-read file content (still needed for whole-file quality criteria) - not one or the other.
 func TestChangedFilesSection_ImplementNodeGetsDiffAndContent(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = false
@@ -66,11 +60,9 @@ func TestChangedFilesSection_ImplementNodeGetsDiffAndContent(t *testing.T) {
 	}
 }
 
-// TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly pins the
-// fallback: an implement node with no Setup clone (a non-code node, or a
+// TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly pins the fallback: an implement node with no Setup clone (a non-code node, or a
 // worker with no pre-provisioned repo) must keep today's act.written-only
-// behaviour - buildImplementDiffSection degrading to "" must not blank out
-// the section entirely.
+// behaviour - buildImplementDiffSection degrading to "" must not blank out the section entirely.
 func TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = false
@@ -87,10 +79,8 @@ func TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly(t *testing.T) 
 }
 
 // TestChangedFilesSection_CarriesStagedVerdict pins #520: the judge must see
-// the reviewer's STRUCTURED verdict (stage_review's event / the answer's
-// VERDICT: tail, already resolved into act.stagedDelivery["review"]) as a
-// fact, not have to infer it from summary prose the reviewer is told never to
-// restate it in.
+// the reviewer's STRUCTURED verdict (stage_review's event / the answer's VERDICT: tail, already resolved into act.stagedDelivery["review"]) as a
+// fact, not have to infer it from summary prose the reviewer is told never to restate it in.
 func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
 	for _, event := range []string{"approve", "request_changes"} {
 		t.Run(event, func(t *testing.T) {

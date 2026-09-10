@@ -10,17 +10,7 @@ import (
 
 // replayAgentIO stands in for a real subprocess's stdin/stdout pipes when
 // Options.Replay is set (proc.go's startReplay). Read serves the recorded
-// AGENT→CLIENT frames verbatim, in order - the transcript IS the round's
-// response, independent of what quack writes back.
-//
-// Delivery is PACED behind Write, not dumped all at once: a plain buffered
-// reader that hands back everything instantly races the connection's own
-// read loop past EOF before the client has even issued Initialize.
-// Releasing received[i] only once at least min(i+1, len(sent)) requests
-// have been written mirrors the real protocol's shape closely enough, since
-// each RPC writes its request before awaiting a response. Write only counts
-// frames/errors once the live round sends more than the recording did (the
-// ACP twin of replay.MissError's "extra" class).
+// AGENT→CLIENT frames verbatim, in order - the transcript IS the round's response, independent of what quack writes back. Delivery is PACED behind Write, not dumped all at once: a plain buffered reader that hands back everything instantly races the connection's own read loop past EOF before the client has even issued Initialize. Releasing received[i] only once at least min(i+1, len(sent)) requests have been written mirrors the real protocol's shape closely enough, since each RPC writes its request before awaiting a response. Write only counts frames/errors once the live round sends more than the recording did (the ACP twin of replay.MissError's "extra" class).
 type replayAgentIO struct {
 	pr *io.PipeReader
 	pw *io.PipeWriter
@@ -44,11 +34,7 @@ func newReplayAgentIO(sent, received []json.RawMessage) *replayAgentIO {
 
 // pump releases received's frames onto the pipe one at a time, gated by
 // Write's running count - see the type doc for why. Deliberately does NOT
-// close pw once done: an EOF right after the last frame would race the
-// SDK's own async notification-completion bookkeeping (a real subprocess's
-// stdout only EOFs when the process actually exits, not mid-response) -
-// Close (called from procHandle.close, once the round is fully done) is
-// the only thing that ends the pipe.
+// close pw once done: an EOF right after the last frame would race the SDK's own async notification-completion bookkeeping (a real subprocess's stdout only EOFs when the process actually exits, not mid-response) - Close (called from procHandle.close, once the round is fully done) is the only thing that ends the pipe.
 func (p *replayAgentIO) pump(received []json.RawMessage) {
 	for i, l := range received {
 		need := i + 1

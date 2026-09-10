@@ -20,9 +20,8 @@ type commitMemoryArgs struct {
 }
 
 // NewCommitMemoryTool: orchestrator's commit_memory tool - writes directly (no judge
-// gate). chatID/source stamp provenance (see memory.Provenance); built fresh per
-// Orchestrator.Run call, so a plain closure over them is safe (no cross-node reuse
-// like the DAG-node tools that need SetLedgerCoords).
+// gate); chatID/source stamp provenance (see memory.Provenance). Built fresh per
+// Orchestrator.Run call, so a plain closure over them is safe - no SetLedgerCoords cross-node reuse like the DAG-node tools.
 func NewCommitMemoryTool(store *memory.Store, userID, chatID, source string) (tool.Tool, error) {
 	return functiontool.New[commitMemoryArgs, string](
 		functiontool.Config{

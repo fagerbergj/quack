@@ -29,10 +29,7 @@ func emptyReplaySession(t *testing.T) *replay.Session {
 
 // TestFork_MissFallsThroughToARealSubprocess: a coords/agent the recording
 // never made an invoke_agent call for - #604's own TestPlayback_
-// MissingExchangeIsMissError case, but in FORK mode - falls through to a
-// REAL subprocess round instead of failing (#605). The fake command is
-// wired for real (unlike playback_test.go's "/nonexistent/..." binary,
-// which proves playback never spawns) so a live round can actually succeed.
+// MissingExchangeIsMissError case, but in FORK mode - falls through to a REAL subprocess round instead of failing (#605). The fake command is wired for real (unlike playback_test.go's "/nonexistent/..." binary, which proves playback never spawns) so a live round can actually succeed.
 func TestFork_MissFallsThroughToARealSubprocess(t *testing.T) {
 	sess := emptyReplaySession(t)
 	sess.EnableFork("") // fork purely on divergence

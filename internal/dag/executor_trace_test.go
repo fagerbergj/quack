@@ -14,10 +14,7 @@ import (
 
 // TestDagStream_TraceIDFromRealSpan: node_start and worker agent_start must
 // carry the RUN's real trace id (not "", not a stale/unrelated one). One trace
-// covers the whole plan run - every node's span is a child of it - so two
-// nodes in the same run correctly share the SAME trace id; that is not the
-// old bug (the old bug was a stale captured ctx, fixed by resolving the id
-// once at construction instead of storing a context.Context - Finding 4).
+// covers the whole plan run - every node's span is a child of it - so two nodes in the same run correctly share the SAME trace id; that is not the old bug (the old bug was a stale captured ctx, fixed by resolving the id once at construction instead of storing a context.Context - Finding 4).
 func TestDagStream_TraceIDFromRealSpan(t *testing.T) {
 	tp := sdktrace.NewTracerProvider() // no exporter needed; span still records real ids
 	defer func() { _ = tp.Shutdown(context.Background()) }()

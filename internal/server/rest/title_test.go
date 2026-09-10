@@ -74,9 +74,7 @@ func TestGenerateTitle_DialFailureLogsBelowDefaultLevel(t *testing.T) {
 
 // TestSanitizeTitle_RejectsNonCompliantAnswerLikeResponse is #1124's QA
 // evidence, verbatim: a titler that ignores its instruction and answers the
-// underlying question instead of titling it produces a markdown-decorated,
-// multi-line response. sanitizeTitle must reduce it to a short, plain,
-// one-line fragment - never let the full explanation through.
+// underlying question instead of titling it produces a markdown-decorated, multi-line response. sanitizeTitle must reduce it to a short, plain, one-line fragment - never let the full explanation through.
 func TestSanitizeTitle_RejectsNonCompliantAnswerLikeResponse(t *testing.T) {
 	raw := "**Researcher Node:**\nIn a write-ahead-log (WAL) database, a checkpoint is a mechanism that " +
 		"flushes dirty in-memory pages to disk so the log can be truncated, bounding crash-recovery replay time."
@@ -116,11 +114,7 @@ func TestGenerateTitle_NonCompliantTitlerFallsBackShort(t *testing.T) {
 
 // TestRunChat_TitlerFailureFallsBackToShortUserDerivedTitle is #1124's
 // regression guard: a run whose titler is unavailable (nil, here - the same
-// shape as errored/empty in generateTitle) must never leave the chat titled
-// with its own answer, and must never leave it titled at all forever - it
-// gets a short title derived from the user's own request instead.
-// newTestHandlerWithModel wires titler: nil, so generateTitle short-circuits
-// exactly like a real titler failure would.
+// shape as errored/empty in generateTitle) must never leave the chat titled with its own answer, and must never leave it titled at all forever - it gets a short title derived from the user's own request instead. newTestHandlerWithModel wires titler: nil, so generateTitle short-circuits exactly like a real titler failure would.
 func TestRunChat_TitlerFailureFallsBackToShortUserDerivedTitle(t *testing.T) {
 	answer := "# WAL Design Comparison: PostgreSQL vs. SQLite\n\n## Researcher Node A — " +
 		strings.Repeat("detailed findings ", 50)

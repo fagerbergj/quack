@@ -37,10 +37,9 @@ func TestRedact(t *testing.T) {
 			in:   `{"gen_ai.operation.name":"chat","quack.node":"n1"}`,
 			want: `{"gen_ai.operation.name":"chat","quack.node":"n1"}`,
 		},
-		// Every emission seam (inference/tools/acp) hands the ledger complex
-		// payloads pre-marshaled into ONE string attribute value (tool
-		// arguments, ACP frames), not a structured tree - a secret buried in
-		// that JSON-encoded STRING must still be caught.
+		// Every emission seam (inference/tools/acp) hands the ledger complex payloads
+		// pre-marshaled into ONE string attribute (tool arguments, ACP frames), not a
+		// structured tree - a secret buried in that JSON-encoded string must still be caught.
 		{
 			name: "secret nested inside a JSON-encoded string attribute",
 			in:   `{"gen_ai.tool.call.arguments":"{\"headers\":{\"authorization\":\"Bearer sekret\"},\"url\":\"https://x\"}"}`,

@@ -73,19 +73,14 @@ const (
 	quackNodeKey  = QuackNode
 	quackRoundKey = "quack.round"
 
-	// QuackModel carries the model a wrapper span (node, worker round) ran
-	// under. Vendor-namespaced on purpose: Langfuse types any span with a
-	// model-named attribute ("model", gen_ai.request.model, ...) as a
-	// GENERATION, and these spans make no model call (#927).
-	// ponytail: never rename to gen_ai.request.model - ADK's own span already
-	// carries the real GENERATION (model/tokens/cost); renaming this would
-	// double-count both against it.
+	// QuackModel carries the model a wrapper span (node, worker round) ran under. Vendor-namespaced on purpose: Langfuse types any span with a model-named attribute ("model", gen_ai.request.model, ...) as a
+	// GENERATION, and these spans make no model call (#927). ponytail: never
+	// rename to gen_ai.request.model - ADK's own span already carries the real GENERATION (model/tokens/cost); renaming this would double-count both against it.
 	QuackModel = "quack.model"
 
 	// QuackVersion/QuackBundleHash/GenAIUsageCost/GenAIUsageCachedTokens:
 	// llm.call provenance (#1096) - no semconv equivalent exists for any of
-	// these yet (cached tokens are a metric-only dimension in v1.41.0, not a
-	// registered log attribute).
+	// these yet (cached tokens are a metric-only dimension in v1.41.0, not a registered log attribute).
 	QuackVersion           = "quack.version"
 	QuackBundleHash        = "quack.bundle.hash"
 	GenAIUsageCost         = "gen_ai.usage.cost"
@@ -103,8 +98,7 @@ var (
 
 	// gen_ai.token.type values. Only input/output are registered semconv
 	// enums; reasoning/cached are quack-specific (llama.cpp's
-	// prompt_tokens_details.cached_tokens and OpenAI's reasoning_tokens both
-	// need a bucket semconv doesn't yet define).
+	// prompt_tokens_details.cached_tokens and OpenAI's reasoning_tokens both need a bucket semconv doesn't yet define).
 	GenAITokenTypeInput     = semconv.GenAITokenTypeInput.Value.AsString()
 	GenAITokenTypeOutput    = semconv.GenAITokenTypeOutput.Value.AsString()
 	GenAITokenTypeReasoning = "reasoning"

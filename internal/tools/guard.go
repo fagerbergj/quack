@@ -34,7 +34,7 @@ type guardTier struct {
 	Confirm bool
 }
 
-// parseGuardTier: parses guard entry. "" or "none" = unguarded.
+// "" or "none" = unguarded.
 func parseGuardTier(s string) (guardTier, bool) {
 	switch strings.TrimSpace(strings.ToLower(s)) {
 	case "judge":

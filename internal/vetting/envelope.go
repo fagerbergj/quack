@@ -113,8 +113,7 @@ const scoringLowestCriterion = "lowest_criterion"
 
 // criterionText: a criterion's diagnosis text, preferring the new Shortfall
 // field over the deprecated Reason - aggregateVerdict only copies Reason INTO
-// Shortfall, never the reverse, so a judge that submits only `shortfall`
-// (the new schema) must still be readable everywhere that used to read `reason`.
+// Shortfall, never the reverse, so a judge that submits only `shortfall` (the new schema) must still be readable everywhere that used to read `reason`.
 func criterionText(c criterionScore) string {
 	if s := strings.TrimSpace(c.Shortfall); s != "" {
 		return c.Shortfall
@@ -136,8 +135,7 @@ func formatCriteriaDetail(criteria map[string]criterionScore) string {
 
 // buildEnvelope replaces composeFeedback's prose rendering: it turns a
 // verdict into the structured shape #941 specifies. Deterministic failures
-// are named by mergeDeterministic (Deterministic==true); everything else
-// failing below threshold is a judge failure.
+// are named by mergeDeterministic (Deterministic==true); everything else failing below threshold is a judge failure.
 func buildEnvelope(v verdict, threshold float64, round int) verdictEnvelope {
 	env := verdictEnvelope{
 		Passed:    v.Score >= threshold,
@@ -183,22 +181,13 @@ func buildEnvelope(v verdict, threshold float64, round int) verdictEnvelope {
 	return env
 }
 
-// ── Rubric specs (#941) ─────────────────────────────────────────────────
-//
-// #941 redirect: the rubric is authored as YAML (rubricyaml.go) - it IS data,
-// so the envelope reads it directly (rubricDocSpecs) rather than parsing it
-// back out of rendered markdown. applyRubricSpecs stays a name->spec lookup
-// for exactly one reason: a DAG planner can still hand a node a raw,
-// unstructured rubric override at runtime (dag.Node.Rubric, config.go's
-// GatesConfig.Rubric inline string) that was never YAML and has no criterion
-// sections to look up - RubricSpecs is nil in that case, and every criterion
-// silently keeps a zero-value spec (empty definition/bands) rather than
-// failing the round.
+// #941 redirect: the rubric is authored as YAML (rubricyaml.go) - it IS data, so the envelope reads it directly (rubricDocSpecs) rather than parsing it
+// back out of rendered markdown. applyRubricSpecs stays a name->spec lookup for exactly one reason: a DAG planner can still hand a node a raw,
+// unstructured rubric override at runtime (dag.Node.Rubric, config.go's GatesConfig.Rubric inline string) that was never YAML and has no criterion sections to look up - RubricSpecs is nil in that case, and every criterion silently keeps a zero-value spec (empty definition/bands) rather than failing the round.
 
 // applyRubricSpecs fills each judge (non-deterministic) failing/passing
 // criterion's Definition/Scale/Bands from the node's loaded rubric specs, by
-// name. specs nil (no YAML rubric loaded for this node - e.g. a raw planner
-// override) or missing entries leave zero-value spec fields.
+// name. specs nil (no YAML rubric loaded for this node - e.g. a raw planner override) or missing entries leave zero-value spec fields.
 func applyRubricSpecs(v verdict, specs map[string]criterionSpec) verdict {
 	if len(specs) == 0 || len(v.Criteria) == 0 {
 		return v
@@ -217,12 +206,9 @@ func applyRubricSpecs(v verdict, specs map[string]criterionSpec) verdict {
 	return v
 }
 
-// ── Anchor enforcement (#941) ───────────────────────────────────────────
-
 // sanitizeAnchors drops any judge-submitted anchor that fails its gate check
 // (quote not found verbatim in the answer, or path outside the node's clone
-// roots), logging each drop - the judge invented a locatable complaint that
-// isn't actually locatable, not grounds to fail the round.
+// roots), logging each drop - the judge invented a locatable complaint that isn't actually locatable, not grounds to fail the round.
 func sanitizeAnchors(v verdict, answer string, cfg Config) verdict {
 	for name, c := range v.Criteria {
 		if c.Anchor == nil {

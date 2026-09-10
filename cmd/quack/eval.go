@@ -15,9 +15,7 @@ import (
 
 // newEvalCmd re-runs a recorded bundle's user turns LIVE through a fresh
 // in-process server built from the LOCAL quack.yaml, with --role's model
-// swapped in, then compares the fresh run's judge scores against the
-// recording's own. Unlike `quack replay`, every model/tool/agent call is
-// live - only the recorded USER TURNS are consumed from the bundle.
+// swapped in, then compares the fresh run's judge scores against the recording's own. Unlike `quack replay`, every model/tool/agent call is live - only the recorded USER TURNS are consumed from the bundle.
 func newEvalCmd() *cobra.Command {
 	var model, role, sourceServer string
 	var asJSON bool

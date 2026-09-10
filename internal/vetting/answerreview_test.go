@@ -87,9 +87,8 @@ func TestAugmentFromAnswer_WarnsLoudly(t *testing.T) {
 }
 
 // TestAugmentFromAnswer_StagesReview_BareTaskText pins #482: the label-review
-// default (dag.autoReviewTask, "Review this pull request.") has no posting verb
-// at all, so the old task-text gate (demandsPostedReview) left this path dead.
-// The structural signal (IsReviewer) stages it regardless of wording.
+// default (dag.autoReviewTask, "Review this pull request.") has no posting
+// verb at all, so the old task-text gate (demandsPostedReview) left this path dead. The structural signal (IsReviewer) stages it regardless of wording.
 func TestAugmentFromAnswer_StagesReview_BareTaskText(t *testing.T) {
 	cfg := Config{
 		ExternalWorker: true,
@@ -127,10 +126,9 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 		t.Fatal("probe fired for a non-reviewer node")
 	}
 
-	// #471: a NON-read-only implementer whose task merely TALKS about reviews must
-	// NOT stage a review - that review would ride alongside its PR and 404
-	// against the trigger issue number. Now guaranteed structurally: an
-	// implementer node is never IsReviewer, whatever its task says.
+	// #471: a NON-read-only implementer whose task merely TALKS about reviews
+	// must NOT stage a review - that review would ride alongside its PR and 404
+	// against the trigger issue number. Now guaranteed structurally: an implementer node is never IsReviewer, whatever its task says.
 	act = workerActivity{}
 	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: false,
 		Task: "Implement the HITL review flow: change how quack posts a review and open a pull request"}, reviewAnswer)

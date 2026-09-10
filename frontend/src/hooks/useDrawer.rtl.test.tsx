@@ -7,8 +7,7 @@ afterEach(cleanup)
 
 // Owner passes an inline onClose (like NavRail/ChatList both do) - a fresh
 // closure identity on every render of the OWNER (e.g. Chat's 5s chat-list
-// poll, unrelated to the drawer at all) must not tear down/re-run the
-// focus-management effect and steal focus back to the first focusable item.
+// poll, unrelated to the drawer at all) must not tear down/re-run the focus-management effect and steal focus back to the first focusable item.
 function Owner({ tick }: { tick: number }) {
   const panelRef = useDrawer(true, () => {})
   return (

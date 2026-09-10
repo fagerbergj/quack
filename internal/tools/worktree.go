@@ -11,11 +11,7 @@ import (
 
 // SetupWorktree provisions one node's git worktree, linked off the plan's
 // shared setup clone. Idempotent: a resumed run finds its worktree already
-// registered. A gate-failed node's worktree is kept. checkSetup bootstraps
-// the worktree quack-side, before any sandboxed worker starts in it - a
-// read-only worker (reviewer/explorer) can never run it itself, and the
-// shared clone's own bootstrap (SetupClone) is not carried by `worktree add`
-// for untracked state (e.g. an untracked vendor dir).
+// registered; a gate-failed node's worktree is kept. checkSetup bootstraps the worktree quack-side, before any sandboxed worker starts in it - a read-only worker (reviewer/explorer) can never run it itself, and the shared clone's own bootstrap (SetupClone) is not carried by `worktree add` for untracked state (e.g. an untracked vendor dir).
 func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, parentDir, nodeRelDir, branch string, caps workspace.Caps, checkSetup []string) (string, error) {
 	b := gitBinding{userID: userID, jail: jail, caps: caps}
 	b.chatID = chatID

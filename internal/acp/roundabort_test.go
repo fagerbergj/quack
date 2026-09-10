@@ -13,9 +13,7 @@ import (
 
 // TestRound_CancelNodeAbortsMidRound (#1030): a cancel arriving through
 // RegisterRoundAbort - CancelNode's own line into the round, independent of
-// ctx - must reach the subprocess via the same graceful-cancel/abort RPC as
-// ctx.Done() already does, instead of waiting for the round to finish on
-// its own.
+// ctx - must reach the subprocess via the same graceful-cancel/abort RPC as ctx.Done() already does, instead of waiting for the round to finish on its own.
 func TestRound_CancelNodeAbortsMidRound(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -82,8 +80,7 @@ func TestRound_CancelNodeAbortsMidRound(t *testing.T) {
 
 // TestRound_CancelBeforePromptSpawn (#1030 review): a cancel arriving during
 // the spawn/handshake window - before the prompt goroutine ever writes
-// session/prompt - must bail immediately instead of sending session/cancel
-// for a prompt that was never sent and then blocking for cancelGrace.
+// session/prompt - must bail immediately instead of sending session/cancel for a prompt that was never sent and then blocking for cancelGrace.
 func TestRound_CancelBeforePromptSpawn(t *testing.T) {
 	oldGrace := cancelGrace
 	cancelGrace = 3 * time.Second
@@ -122,8 +119,7 @@ func TestRound_CancelBeforePromptSpawn(t *testing.T) {
 
 // TestRound_CancelNodeAbortIdempotent (#1030): a second cancel() call, and a
 // cancel() call after the round already returned, must not panic or block -
-// context.CancelFunc is inherently idempotent, but the registration/cleanup
-// wiring around it must not assume single-call.
+// context.CancelFunc is inherently idempotent, but the registration/cleanup wiring around it must not assume single-call.
 func TestRound_CancelNodeAbortIdempotent(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

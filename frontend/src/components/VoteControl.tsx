@@ -11,11 +11,7 @@ export interface VoteControlProps {
 
 // VoteControl: a Reddit-style up arrow / net score / down arrow (epic #1255
 // P4), shared by the memory page and the chat's per-node memories block.
-// Clicking the currently-active arrow again sends "none" (toggle off);
-// clicking the other arrow switches. The visible score updates optimistically
-// (caller passes the already-mutated `score`/`ownVote` on success) and this
-// component rolls its own local pending state back to the pre-click arrow if
-// onVote rejects, so a failed request never leaves the highlight stuck wrong.
+// Clicking the active arrow again sends "none" (toggle off); the other arrow switches. The score updates optimistically (caller passes the already-mutated `score`/`ownVote` on success) and this component rolls its own local pending state back to the pre-click arrow if onVote rejects, so a failed request never leaves the highlight stuck wrong.
 export function VoteControl({ score, ownVote, onVote, disabled }: VoteControlProps) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState(false)

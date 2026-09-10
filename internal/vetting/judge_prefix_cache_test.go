@@ -1,8 +1,6 @@
-// judge_prefix_cache_test.go: regression test for finding 4 of the agent-efficiency
-// audit (stable-first section ordering in buildJudgePrompt - the answer being judged
-// trails last instead of leading). See revise_prefix_cache_test.go's doc comment for
-// why this matters: a byte stable across rounds and ahead of the first changing byte
-// is a prefill saved under prod's shared vLLM prefix cache.
+// judge_prefix_cache_test.go: regression test for finding 4 of the
+// agent-efficiency audit (stable-first section ordering in buildJudgePrompt - the answer being judged trails last instead of leading). See
+// revise_prefix_cache_test.go for why: a byte stable across rounds and ahead of the first changing byte is a prefill saved under prod's shared vLLM prefix cache.
 package vetting
 
 import (
@@ -12,8 +10,7 @@ import (
 
 // TestJudgePromptSharedPrefixAcrossRounds pins finding 4: on the same node,
 // round 2 (a different answer, same everything else) must share at least 85%
-// of round 1's bytes as a common prefix - the fraction the reorder measured
-// at 91.7% on the audit's synthetic task, comfortably above the pre-fix 7.8%.
+// of round 1's bytes as a common prefix - the reorder measured 91.7% on the audit's synthetic task, above the pre-fix 7.8%.
 func TestJudgePromptSharedPrefixAcrossRounds(t *testing.T) {
 	task := "Review pull request #1304 and post inline findings."
 	question := questionContent("Review PR #1304 in fagerbergj/quack")

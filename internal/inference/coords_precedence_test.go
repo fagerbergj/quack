@@ -28,11 +28,7 @@ func (p *probeLLM) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ b
 
 // #1039: one tracedModel instance is shared by every node using that model -
 // the judge model by definition, since every gated node judges with it. The
-// shared stamp used to OVERWRITE per-call ctx coords, so a caller that had
-// already put the right node in ctx (vetting's judge round does exactly that,
-// via ledger.WithCoords) still got whatever node stamped last. Ledger events,
-// tokens and cost then land on the wrong node. Mutex-guarded, so -race never
-// sees it.
+// shared stamp used to OVERWRITE per-call ctx coords, so a caller that had already put the right node in ctx (vetting's judge round does exactly that, via ledger.WithCoords) still got whatever node stamped last. Ledger events, tokens and cost then land on the wrong node. Mutex-guarded, so -race never sees it.
 func TestTracedModel_CtxCoordsWinOverTheSharedStamp(t *testing.T) {
 	p := &probeLLM{}
 	m := TracedModelForTesting(p, "shared-judge-model")
@@ -73,12 +69,9 @@ func TestTracedModel_StampStillAppliesWhenCtxHasNoCoords(t *testing.T) {
 	}
 }
 
-// The case that let the first attempt through: production NEVER starts from a
-// bare context. The orchestrator stamps partial coords on the run ctx
-// (orchestrator.go:404 - ChatID/User/Source, no node), and those survive down to
-// the model call. An all-or-nothing "does ctx have coords?" check treats that as
-// authoritative and drops node/agent/round on every worker call - attributing to
-// NO node, which is worse than attributing to the wrong one.
+// The case that let the first attempt through: production NEVER starts from
+// a bare context. The orchestrator stamps partial coords on the run ctx
+// (orchestrator.go:404 - ChatID/User/Source, no node), and those survive down to the model call. An all-or-nothing "does ctx have coords?" check treats that as authoritative and drops node/agent/round on every worker call - attributing to NO node, which is worse than attributing to the wrong one.
 func TestTracedModel_OuterRunCoordsDoNotSuppressTheStamp(t *testing.T) {
 	p := &probeLLMFull{}
 	m := TracedModelForTesting(p, "worker-model")

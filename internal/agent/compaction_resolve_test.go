@@ -17,10 +17,9 @@ func (f *fakeLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter
 	return func(func(*model.LLMResponse, error) bool) {}
 }
 
-// ResolveSummarizer must prefer the active run/node's own worker model - that
-// model is already resident, so reusing it for compaction is swap-free by
-// construction - and fall back to the configured model only when no active
-// model is available (e.g. a standalone compaction).
+// ResolveSummarizer must prefer the active run/node's own worker model - it
+// is already resident, so reusing it for compaction is swap-free by
+// construction - and fall back to the configured model only when no active model is available (e.g. a standalone compaction).
 func TestResolveSummarizerPrefersActiveModel(t *testing.T) {
 	active := &fakeLLM{text: "active"}
 	fallback := &fakeLLM{text: "fallback"}

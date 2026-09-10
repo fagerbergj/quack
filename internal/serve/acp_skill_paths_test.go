@@ -26,10 +26,9 @@ func TestAcpSkillPathsBackfillsEmbeddedDotagents(t *testing.T) {
 	}
 }
 
-// TestAcpSkillPathsNoDuplicateWhenOnDisk proves the by-name backfill rule: a
-// plugin root that DOES resolve review-code on disk must not also get the
-// extracted embedded copy appended - opencode's skill loader may error on a
-// duplicate name.
+// TestAcpSkillPathsNoDuplicateWhenOnDisk proves the by-name backfill rule: a plugin root
+// that resolves review-code on disk must not also get the embedded copy appended -
+// opencode's skill loader may error on a duplicate name.
 func TestAcpSkillPathsNoDuplicateWhenOnDisk(t *testing.T) {
 	vendor := t.TempDir()
 	writePluginManifest(t, vendor, "review-code-standin")

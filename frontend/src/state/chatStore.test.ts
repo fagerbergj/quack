@@ -45,10 +45,9 @@ describe('activityFromTurn', () => {
   })
 })
 
-// Minimal SSE stream that closes immediately so the store doesn't hang. Always
-// terminated by `done` - every real completed run ends with one, and the
-// store now treats its absence as a dropped connection worth reconnecting
-// over (see chatStore.test.ts's "reconnect on drop" tests below for that path).
+// Minimal SSE stream that closes immediately so the store doesn't hang.
+// Always terminated by `done` - every real completed run ends with one, and
+// the store treats its absence as a dropped connection worth reconnecting over (see the "reconnect on drop" tests below).
 function makeStream(body: string): Response {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -113,8 +112,7 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
 
   // Regression: the archive GET can race the server's own persistence of the
   // turn that just finished streaming. If the refetch's `turns` doesn't yet
-  // contain that turn, the previous answer must survive (synthesized from the
-  // in-memory `live`) instead of dropping until a manual refresh.
+  // contain that turn, the previous answer must survive (synthesized from the in-memory `live`) instead of dropping until a manual refresh.
   it('keeps the previous answer when the archive refetch omits the just-finished turn', async () => {
     const sse = [
       'event: response_created',
@@ -272,18 +270,15 @@ describe('ChatStore - mid-node steering', () => {
     await store.submit('c', 'go')
     const ns = store.get('c').live?.dag?.nodeStates['a']
     // Regression (#870): onNodeSteered used to set 'queued' - an illegal
-    // running→queued transition per the backend's own state machine - and
-    // nothing ever restored 'running', so the node rendered idle chrome
-    // (no pulse, no spinner, canQueue gone) for the whole steered re-run.
+    // running→queued transition per the backend's state machine - and nothing
+    // ever restored 'running', so the node rendered idle chrome for the whole steered re-run.
     expect(ns?.status).toBe('running')
     expect(ns?.steers).toEqual(['focus on cost'])
   })
 
   // Full steer→resume sequence, observed as it streams (not just at the end):
   // the node must read 'running' (DagNode's running-derived UI -
-  // pulse/spinner/canQueue) at every point between the steer and node_done,
-  // never dropping to 'queued' or idle chrome while the resumed run streams
-  // tokens.
+  // pulse/spinner/canQueue) at every point between the steer and node_done, never dropping to 'queued' or idle chrome while the resumed run streams tokens.
   it('stays running across the full node_steered → agent_start → agent_token → node_done sequence', async () => {
     const encoder = new TextEncoder()
     let controller!: ReadableStreamDefaultController<Uint8Array>
@@ -436,8 +431,7 @@ describe('ChatStore - mid-node steering', () => {
 
     // #696: keeping judge text OUT of the answer must not throw it away - it
     // belongs in the judge's own card. judgePartEmitter only emits
-    // agent_thinking for parts the model marks Thought, and local models
-    // mostly don't, so dropping agent_token discarded nearly all of it.
+    // agent_thinking for parts the model marks Thought (local models mostly don't), so dropping agent_token discarded nearly all of it.
     const judgeRun = store.get('c').live?.dag?.nodeRuns?.['a']?.find(r => r.runId === 'judge-r1')
     expect(judgeRun?.activity).toContainEqual({ kind: 'thinking', text: 'Feedback: needs more sourcing.' })
   })
@@ -466,11 +460,9 @@ describe('ChatStore - mid-node steering', () => {
     expect(rev?.activity).toEqual([])
   })
 
-  // #387: narration a worker emits BEFORE a tool call ("I'll check X first...")
-  // must not render as if it were the answer once the real answer streams in
-  // after the call - mirrors internal/acp/translate.go's per-round reset
-  // (#358), applied here to the live stream (a node's own worker/revise run,
-  // not just the ACP-delivered final text).
+  // #387: narration a worker emits BEFORE a tool call must not render as if
+  // it were the answer once the real answer streams in after the call -
+  // mirrors translate.go's per-round reset (#358), applied to the live stream (a node's own worker/revise run, not just the ACP-delivered final text).
   it("a tool call within a worker run discards narration emitted before it from the node's answer", async () => {
     const sse = [
       'event: dag_plan',
@@ -523,8 +515,7 @@ describe('ChatStore - mid-node steering', () => {
 
   // #422: a second top-level run against the same live turn (e.g. the GitHub
   // dispatch driving the orchestrator twice when its first pass ran no plan)
-  // must not concatenate its answer onto the first run's - the answer bubble
-  // rendered the reply doubled before this reset existed.
+  // must not concatenate its answer onto the first run's - the answer bubble rendered the reply doubled before this reset.
   it('a second top-level run replaces the first run\'s live text instead of appending to it', async () => {
     const sse = [
       'event: agent_start',
@@ -693,9 +684,8 @@ describe('ChatStore - mid-node steering', () => {
   })
 
   // Root cause of the sub-step (worker/judge/revise) timer resetting on page
-  // refresh: agent_start carried no server timestamp, so a replayed run always
-  // anchored to Date.now() at replay time. Mirrors the dag/node test above for
-  // the run level.
+  // refresh: agent_start carried no server timestamp, so a replayed run
+  // always anchored to Date.now() at replay time. Mirrors the dag/node test above.
   it('uses server started_at_ms for a sub-step (agent_start) timer, not replay-time Date.now()', async () => {
     const sse = [
       'event: dag_plan',
@@ -737,12 +727,9 @@ describe('ChatStore - mid-node steering', () => {
     expect(run?.startedAt).toBeLessThanOrEqual(after)
   })
 
-  // Clock-skew: a server clock ahead of the client stores the RAW server
-  // value, unclamped - clamping it to the client's now (a prior version did
-  // this) is what corrupted a finished run's duration (finished_at_ms -
-  // clamped start) whenever the client trailed the server. The "never show a
-  // negative elapsed" guard lives in fmtMs (floors at 0) instead, so a
-  // still-live timer never renders negative even while raw start > client now.
+  // Clock skew: a server clock ahead of the client stores the RAW server
+  // value, unclamped - clamping to the client's now (a prior version did)
+  // corrupted a finished run's duration (finished_at_ms - clamped start). The "never show a negative elapsed" guard lives in fmtMs (floors at 0), so a still-live timer never renders negative even while raw start > client now.
   it('stores a future server started_at_ms (clock skew) unclamped', async () => {
     const future = Date.now() + 60_000
     const sse = [
@@ -763,10 +750,9 @@ describe('ChatStore - mid-node steering', () => {
   })
 })
 
-// agent_complete/node_done/node_failed/node_cancelled now carry a server-clock
+// agent_complete/node_done/node_failed/node_cancelled carry a server-clock
 // finished_at_ms, so a finished run/node's duration comes from two server
-// timestamps - never from Date.now() at whatever moment the client happens to
-// process (or replay) the event.
+// timestamps - never Date.now() at whatever moment the client processes (or replays) the event.
 describe('ChatStore - server-timestamped durations survive replay', () => {
   // One node running worker -> judge(reject) -> revise -> judge(pass) -> done,
   // every agent_start/agent_complete/node_done carrying explicit server
@@ -849,12 +835,9 @@ describe('ChatStore - server-timestamped durations survive replay', () => {
     }
   })
 
-  // Regression: anchorTime used to clamp a run/node/plan's stored startedAt to
-  // min(serverMs, Date.now()) - since finished_at_ms is never clamped, a
-  // client clock trailing the server picked up its OWN (earlier) now as the
-  // start, stretching every finished-start subtraction by the skew. Every
-  // dagSSE() timestamp (1000-25000ms) sits well ahead of this mocked "now"
-  // (500ms), so the old clamp fired on every single one of them.
+  // Regression: anchorTime used to clamp a stored startedAt to
+  // min(serverMs, Date.now()) - since finished_at_ms is never clamped, a client
+  // trailing the server picked up its OWN (earlier) now as the start, stretching every finished-start subtraction by the skew. Every dagSSE() timestamp (1000-25000ms) sits well ahead of this mocked "now" (500ms), so the old clamp fired on every one of them.
   it('a client clock trailing the server does not inflate sub-run or plan durations', async () => {
     const dag = await runDagOnce(500)
     expect(dag.startedAt).toBe(1000)
@@ -1166,10 +1149,9 @@ describe('isTurnInProgress - re-subscribe gate', () => {
   })
 })
 
-// Minimal EventSource stand-in: jsdom has none. Captures listeners so a test can
-// feed the same SSE vocabulary the hub replays, and records close(). emit's
-// optional `id` mirrors the SSE `id:` field - EventSource surfaces it on the
-// MessageEvent as `lastEventId`, which is what a reconnect resumes past.
+// Minimal EventSource stand-in: jsdom has none. Captures listeners so a test
+// can feed the same SSE vocabulary the hub replays, and records close().
+// emit's optional `id` mirrors the SSE `id:` field - EventSource surfaces it as MessageEvent.lastEventId, which a reconnect resumes past.
 class FakeEventSource {
   static last: FakeEventSource | null = null
   url: string
@@ -1242,10 +1224,9 @@ describe('ChatStore.attach - reconnect to a live run', () => {
   })
 })
 
-// Finding 11: switching away from a chat mid-run used to leave it permanently
-// "streaming" - detachStream closed the EventSource but never cleared the
-// flag, so a later attach() (gated on isStreaming) no-op'd forever and
-// submit() refused to send. Reload was the only recovery.
+// Finding 11: switching away from a chat mid-run used to leave it
+// permanently "streaming" - detachStream closed the EventSource but never
+// cleared the flag, so a later attach() (gated on isStreaming) no-op'd forever and submit() refused to send; reload was the only recovery.
 describe('ChatStore.detachStream - leaving mid-run does not strand the chat (finding 11)', () => {
   let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
@@ -1487,9 +1468,7 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
 
 // Finding 6 (stream audit): the hub now drops (closes) a subscriber whose
 // buffer backs up instead of silently skipping an event mid-stream, so the
-// client must detect the resulting id gap itself - an out-of-order id must
-// never just advance the cursor, or the gap is unrecoverable (the resume
-// cursor only replays events after the id it's given).
+// client must detect the resulting id gap itself - an out-of-order id must never just advance the cursor, or the gap is unrecoverable (the resume cursor only replays events after the id it's given).
 describe('ChatStore - resume from the last contiguous id on an id gap (#audit-6)', () => {
   let store: ChatStore
   beforeEach(() => {
@@ -1538,10 +1517,7 @@ describe('ChatStore - resume from the last contiguous id on an id gap (#audit-6)
 
 // #1090 perf audit item 4: a fresh attach still replays from 0 - a real page
 // reload starts a new ChatStore with no memory of what this client already
-// applied, so it has no cursor to resume from (a durable per-chat cursor
-// needs a backend field; not implemented here). The POST-drop handoff
-// (above) is the one case where this client DOES already know how far it
-// got - see the two tests just above this comment.
+// applied, so it has no cursor to resume from (a durable per-chat cursor needs a backend field; not implemented). The POST-drop handoff (above) is the one case where this client DOES already know how far it got - see the two tests just above.
 describe('ChatStore.attach - a fresh attach has no cursor, replays from 0 (#1090)', () => {
   it('attach on a chat this client has never streamed opens /stream with no last_event_id', () => {
     vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
@@ -1553,10 +1529,9 @@ describe('ChatStore.attach - a fresh attach has no cursor, replays from 0 (#1090
   })
 })
 
-// Issue #463: when a fresh dag_plan arrives on a LiveTurn that has accumulated
-// top-level content (from pre-DAG orchestrator narration or replays into an old
-// turn), the stale text/runs bleed into the new DAG scope.  The fix: onDagPlan
-// also resets live.text and live.runs when creating a fresh DAG.
+// Issue #463: when a fresh dag_plan arrives on a LiveTurn that has
+// accumulated top-level content (pre-DAG orchestrator narration, replays
+// into an old turn), the stale text/runs bleed into the new DAG scope. Fix: onDagPlan also resets live.text and live.runs when creating a fresh DAG.
 describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () => {
   let store: ChatStore
   beforeEach(() => {
@@ -1595,8 +1570,7 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
 
   // #463 (part 2): when a run goes active on an already-open chat, the
   // Chat.tsx useEffect fires attach - lifting any history turns into `live`
-  // and opening the /stream subscribe so events start flowing.  Without this
-  // path the chat box stays blank while the Running badge shows.
+  // and opening the /stream subscribe so events start flowing. Without this path the chat box stays blank while the Running badge shows.
   it('attach called on idle chat lifts history into live and starts streaming', () => {
     store.seed('c', [dagTurn('in_progress')])
     expect(store.get('c').live).toBeUndefined()
@@ -1624,13 +1598,9 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
   })
 })
 
-// Issue #463 (part 3, live repro): the hub only publishes NEW events, so a client
-// attaching after a run's events already fired gets no replay at all. attach()
-// used to lift the in-progress turn into a BLANK `live` on that assumption -
-// with nothing ever arriving to fill it, the whole pane rendered empty (not
-// just that turn: earlier history stayed intact, but had nothing to show for
-// the run everyone could see was "Running"). The fix: seed `live` from what
-// GET /chats/{id} already persisted for that turn, so it renders immediately.
+// Issue #463 (part 3, live repro): the hub only publishes NEW events, so a
+// client attaching after a run's events already fired gets no replay at all.
+// attach() used to lift the in-progress turn into a BLANK `live` on that assumption - with nothing ever arriving to fill it, the pane rendered empty (earlier history intact, but nothing to show for the visibly "Running" run). Fix: seed `live` from what GET /chats/{id} already persisted for that turn, so it renders immediately.
 describe('ChatStore.attach - seeds live from persisted output when the hub replays nothing (#463)', () => {
   let store: ChatStore
   beforeEach(() => {
@@ -1671,14 +1641,9 @@ describe('ChatStore.attach - seeds live from persisted output when the hub repla
   })
 })
 
-// #1290: a page reload rebuilt a finished chat's DAG bubble from the persisted
-// node_states rollup alone (dagTurnStateFromItem), which has no per-run
-// breakdown - the judge/revise sub-run cards a live view showed vanished.
-// attach() itself never gated on turn status; the caller (Chat.tsx's getChat
-// effect) did. These guard the store half of the fix: attaching to a chat
-// whose LAST turn is a completed (not just in_progress) DAG still replays
-// chat_events and rebuilds nodeRuns through the same handlers the live path
-// uses - one parser, no separate "history" reconstruction.
+// #1290: a page reload rebuilt a finished chat's DAG bubble from the
+// persisted node_states rollup alone (no per-run breakdown - the judge/revise
+// sub-run cards a live view showed vanished). attach() itself never gated on turn status; the caller (Chat.tsx's getChat effect) did. These guard the store half: attaching to a chat whose LAST turn is a completed (not just in_progress) DAG still replays chat_events and rebuilds nodeRuns through the same handlers the live path uses - one parser, no separate "history" reconstruction.
 describe('ChatStore.attach - rebuilds a finished turn\'s sub-run cards from replay (#1290)', () => {
   let store: ChatStore
   beforeEach(() => {

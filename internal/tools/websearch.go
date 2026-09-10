@@ -26,7 +26,6 @@ type searchResponse struct {
 	Note    string         `json:"note,omitempty"`
 }
 
-// newWebSearch: builds web_search over a config-selected backend.
 func newWebSearch(d Deps) (tool.Tool, error) {
 	searcher, err := newWebSearcher(d.WebSearch.Kind, d.WebSearch.URL, d.WebSearch.Key, d.Client)
 	if err != nil {

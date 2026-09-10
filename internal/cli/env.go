@@ -4,8 +4,7 @@ import "os"
 
 // PrefillFromEnv seeds an InitAnswers from the conventional environment (the
 // shipped config + docker-compose use these same names) so the wizard doesn't
-// re-ask what's already set. Empty env vars leave the field blank for the
-// wizard's heuristics or manual entry to fill.
+// re-ask what's already set. Empty env vars leave the field blank for the wizard's heuristics or manual entry to fill.
 func PrefillFromEnv(a *InitAnswers) {
 	a.Endpoint = os.Getenv("QUACK_LLM_ENDPOINT")
 	a.APIKey = os.Getenv("QUACK_LLM_API_KEY")

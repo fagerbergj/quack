@@ -13,8 +13,7 @@ import (
 
 // fakeOrch stands in for *orchestrator.Orchestrator: the first run() call for a
 // session ends with no token (paused) and pending() reports a question; once
-// answered is set, run() completes with a token derived from the message it
-// was given, and pending() reports no question.
+// answered is set, run() completes with a token derived from the message it was given, and pending() reports no question.
 type fakeOrch struct {
 	question string
 	answered bool
@@ -74,9 +73,7 @@ func textOf(res *mcp.CallToolResult) string {
 
 // TestAskHandler_ManualRoundTrip drives the MRTR round trip by hand (the
 // client's own multi-round-trip middleware disabled), mirroring the go-sdk's
-// TestMultiRoundTrip_ManualRetry: the first call surfaces input_required with
-// the question and an echoable RequestState; the caller retries with the
-// elicitation response.
+// TestMultiRoundTrip_ManualRetry: the first call surfaces input_required with the question and an echoable RequestState; the caller retries with the elicitation response.
 func TestAskHandler_ManualRoundTrip(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -171,10 +168,7 @@ func TestAskHandler_PlainCallUnaffected(t *testing.T) {
 
 // TestAskHandler_NonMRTRClientUnaffected proves a client that never implements
 // the SEP-2322 retry loop itself - just an ElicitationHandler, the pre-MRTR way
-// of answering a server question - still gets one complete answer from a
-// single CallTool call: the go-sdk's default client-side middleware fulfils
-// the elicitation and retries underneath it, so existing callers built against
-// this SDK need no code change to keep working.
+// of answering a server question - still gets one complete answer from a single CallTool call: the go-sdk's default client-side middleware fulfils the elicitation and retries underneath it, so existing callers built against this SDK need no code change to keep working.
 func TestAskHandler_NonMRTRClientUnaffected(t *testing.T) {
 	f := &fakeOrch{question: "which color?"}
 	cs := connect(t, f, &mcp.ClientOptions{
@@ -203,8 +197,7 @@ func TestAskHandler_NonMRTRClientUnaffected(t *testing.T) {
 
 // TestAskHandler_NoElicitationSupport_ErrorsCleanly covers the one client that
 // is NOT unaffected: one with genuinely no way to answer a clarifying question
-// (no ElicitationHandler at all). It gets a clean CallTool error, not a hang or
-// a silently wrong/partial answer - the pre-MRTR failure mode for this case.
+// (no ElicitationHandler at all). It gets a clean CallTool error, not a hang or a silently wrong/partial answer - the pre-MRTR failure mode for this case.
 func TestAskHandler_NoElicitationSupport_ErrorsCleanly(t *testing.T) {
 	f := &fakeOrch{question: "which color?"}
 	cs := connect(t, f, nil)

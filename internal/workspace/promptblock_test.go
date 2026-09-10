@@ -93,9 +93,7 @@ func TestPromptBlockBuildDirsLine(t *testing.T) {
 }
 
 // TestPromptBlockToolchainRemovalRemovesLine is the core #663 assertion: a
-// toolchain absent from what's actually resolvable never appears, and
-// removing it (here: a PATH with no `go` on it) removes exactly its line,
-// nothing else.
+// toolchain absent from what's actually resolvable never appears, and removing it (here: a PATH with no `go` on it) removes exactly its line, nothing else.
 func TestPromptBlockToolchainRemovalRemovesLine(t *testing.T) {
 	dir := t.TempDir()
 	writeFakeBinary(t, dir, "go", "go version go1.24.2 linux/amd64")

@@ -20,8 +20,7 @@ import (
 
 // formatPassLengthCeiling: an answer at or above this size skips the
 // already-structured short-circuit below and always gets the format pass -
-// a big answer is exactly where a second model pass is most likely to
-// actually reorganize something, not just echo the input back (#1283 finding 14).
+// a big answer is exactly where a second model pass is most likely to actually reorganize something, not just echo the input back (#1283 finding 14).
 const formatPassLengthCeiling = 4000
 
 // listItemPattern: a Markdown bullet or ordered-list item at line start.

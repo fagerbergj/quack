@@ -50,9 +50,8 @@ func init() {
 }
 
 // SaveDagPlanRecord writes p as this chat's next dag_plan revision, fail-open
-// like every other episodic write in #1090 (a save error never blocks
-// execution - it's Warn-logged by the caller-shared recordClient pattern).
-// artifacts nil is the pre-#1090 case (no artifact service configured).
+// like every other episodic write in #1090 (a save error never blocks execution -
+// Warn-logged by the caller-shared recordClient pattern). artifacts nil = pre-#1090 (no artifact service).
 func SaveDagPlanRecord(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, turnID string, p Plan) (id string, revision int, err error) {
 	if artifacts == nil || chatID == "" {
 		return "", 0, errors.New("dag: no artifact service configured")

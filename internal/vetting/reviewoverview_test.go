@@ -7,8 +7,7 @@ import (
 
 // TestRenderReviewOverview_Golden pins the fixed review format's rendered
 // output for each verdict/scope shape the design calls out - one fixed
-// format, generated in code, never free text (see reviewoverview.go's doc
-// comment).
+// format, generated in code, never free text (see reviewoverview.go's doc comment).
 func TestRenderReviewOverview_Golden(t *testing.T) {
 	cases := []struct {
 		name string
@@ -43,8 +42,7 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 			},
 			// Every blocking finding is a row; suggestions/nits are counted
 			// in the verdict line but never listed here (findings stay
-			// inline - the Highlights table only surfaces blockers, or
-			// suggestions when there is no blocker at all).
+			// inline - the Highlights table only surfaces blockers, or suggestions when there is no blocker at all).
 			want: "**Verdict: request changes** · 2 blocking · 1 suggestion · 1 nit · head def4567\n\n" +
 				"Scope: first review, whole PR (3 files)\n\n" +
 				"Two blocking issues, both in the fallback path.\n\n" +

@@ -337,8 +337,7 @@ func TestRunMemorySweepPartialFailureJSON(t *testing.T) {
 
 // TestRunMemorySweepAllStoresFail covers the reordering fix: empty Stores
 // with non-empty Errors must print the failures and exit non-zero, not the
-// misleading "No memory stores configured." (that early return only applies
-// when Errors is also empty).
+// misleading "No memory stores configured." (that early return only applies when Errors is also empty).
 func TestRunMemorySweepAllStoresFail(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

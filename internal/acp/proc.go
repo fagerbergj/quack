@@ -29,11 +29,7 @@ type procHandle struct {
 	conn *sdk.ClientSideConnection
 	// updatesMu guards pending/stalled - SessionUpdate must never block (it
 	// runs on the SDK's single notification-processing goroutine; blocking
-	// there backs up the SDK's own bounded notification queue and tears the
-	// connection down, masking a slow downstream consumer as "peer
-	// disconnected" - finding 10). notify is 1-cap: a full buffer just means
-	// the round loop hasn't drained the last signal yet, so this is a
-	// wakeup, not a value queue.
+	// there backs up the SDK's own bounded notification queue and tears the connection down, masking a slow downstream consumer as "peer disconnected" - finding 10). notify is 1-cap: a full buffer just means the round loop hasn't drained the last signal yet, so this is a wakeup, not a value queue.
 	updatesMu sync.Mutex
 	pending   []sdk.SessionUpdate
 	stalled   bool
@@ -52,8 +48,7 @@ type procHandle struct {
 
 // updatesStallThreshold: the old buffered-chan cap SessionUpdate used to
 // block on. Crossing it now means the round loop can't keep up - worth one
-// log line so a torn-down-looking round reads as "slow consumer", not a
-// masked peer disconnect.
+// log line so a torn-down-looking round reads as "slow consumer", not a masked peer disconnect.
 const updatesStallThreshold = 64
 
 // pushUpdate appends u without ever blocking and wakes the round loop.
@@ -100,45 +95,21 @@ func traceparentEnv(ctx context.Context) []string {
 
 // wrappedArgv is the subprocess argv actually exec'd: a.opts.Command wrapped
 // through the SAME sandbox seam every other child runs inside
-// (workspace.WrapArgv) - RW (or RO, per caps.ReadOnly - #754) is cwd's own
-// scope (the node dir), RO adds the skill paths opencode needs to read
-// (ExtraRO) on top of the caps' own system + exec_path grants. landlock
-// applies them as a ruleset, bwrap as identity bind mounts (#921); `none`
-// passes Command through unchanged.
+// (workspace.WrapArgv) - RW (or RO, per caps.ReadOnly - #754) is cwd's own scope (the node dir), RO adds the skill paths opencode needs to read (ExtraRO) on top of the caps' own system + exec_path grants. landlock applies them as a ruleset, bwrap as identity bind mounts (#921); `none` passes Command through unchanged.
 func (a *Agent) wrappedArgv(cwd string, caps workspace.Caps) []string {
 	return workspace.WrapArgv(cwd, a.opts.Command, caps, a.opts.ExtraRO, nil)
 }
 
 // spawnEnv is the subprocess environment: PATH is HERMETIC in every sandbox
 // mode (workspace.ChildPath - the same fixed PATH the gate's own children
-// get), never the server's ambient PATH - the toolchain the agent needs to
-// RUN is covered by Caps.ExtraPath + the system dirs already in ChildPath, so
-// ambient added no reach a leak couldn't also use. caps is THIS round's
-// effective caps (ReadOnly/ScratchDir already resolved by the caller, same as
-// wrappedArgv takes) - TMPDIR must track caps.ScratchDir's per-node grant, not
-// the agent's static opts.Caps, or every round would share one scratch dir.
-//
-// The GIT_* trio strips the child's authority to authenticate to any real
-// remote (#936) - GIT_ASKPASS/GIT_SSH_COMMAND point at /bin/false so an HTTPS
-// or SSH credential prompt fails closed instead of hanging or succeeding, and
-// GIT_TERMINAL_PROMPT=0 kills git's own fallback prompt. `git push` itself
-// stays fully allowed: it works against a local/file:// remote (the test
-// suite's own target) and merely can't authenticate anywhere else. This is
-// independent of internal/vetting's gate-owned push, which builds its own env
-// from scratch (pushGitEnv) and is never touched here.
+// get), never the server's ambient PATH - the toolchain the agent needs to RUN is covered by Caps.ExtraPath + the system dirs already in ChildPath, so ambient added no reach a leak couldn't also use. caps is THIS round's effective caps (ReadOnly/ScratchDir already resolved by the caller, same as wrappedArgv takes) - TMPDIR must track caps.ScratchDir's per-node grant, not the agent's static opts.Caps, or every round would share one scratch dir. The GIT_* trio strips the child's authority to authenticate to any real remote (#936) - GIT_ASKPASS/GIT_SSH_COMMAND point at /bin/false so an HTTPS or SSH credential prompt fails closed instead of hanging or succeeding, and GIT_TERMINAL_PROMPT=0 kills git's own fallback prompt. `git push` itself stays fully allowed: it works against a local/file:// remote (the test suite's own target) and merely can't authenticate anywhere else. This is independent of internal/vetting's gate-owned push, which builds its own env from scratch (pushGitEnv) and is never touched here.
 func (a *Agent) spawnEnv(caps workspace.Caps) []string {
 	return SpawnEnv(a.opts.Home, a.opts.Env, caps)
 }
 
 // start spawns the agent subprocess rooted at cwd and wires the ACP
 // connection - or, when Options.Replay is set, wires the SAME connection
-// machinery against a recorded conversation instead (startReplay): no
-// subprocess, no opencode binary (#604). Fork-replay (#605): when the
-// session is in fork mode and this round's stream goes live (startReplay
-// returns a *replay.ForkSignal), start falls through to startLive - the
-// SAME real-subprocess path a never-replayed round takes, so "live" for ACP
-// needs no separate delegate object, only the opts every round already
-// carries (Command, Env, Caps, ...).
+// machinery against a recorded conversation instead (startReplay): no subprocess, no opencode binary (#604). Fork-replay (#605): when the session is in fork mode and this round's stream goes live (startReplay returns a *replay.ForkSignal), start falls through to startLive - the SAME real-subprocess path a never-replayed round takes, so "live" for ACP needs no separate delegate object, only the opts every round already carries (Command, Env, Caps, ...).
 func (a *Agent) start(ctx context.Context, cwd string, caps workspace.Caps) (*procHandle, error) {
 	if a.opts.Replay != nil {
 		h, err := a.startReplay(ctx)
@@ -167,8 +138,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) 
 	cmd.Env = append(a.spawnEnv(caps), traceparentEnv(ctx)...)
 	// Own process group + group kill + WaitDelay: the exact hang class from the
 	// v0.5.2 run_command incident - a grandchild holding our stdout pipe keeps
-	// Wait blocked forever unless the whole group dies and the pipe is
-	// force-closed (mirrors workspace.newChildCmd).
+	// Wait blocked forever unless the whole group dies and the pipe is force-closed (mirrors workspace.newChildCmd).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = 10 * time.Second
 
@@ -187,8 +157,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) 
 	h.cmd = cmd
 	// Tee the wire: everything quack writes to the subprocess's stdin and
 	// everything it reads back off stdout, for the replay ledger's
-	// invoke_agent event (emit.go) - the ACP conversation itself, not just a
-	// summary of it.
+	// invoke_agent event (emit.go) - the ACP conversation itself, not just a summary of it.
 	teedIn := io.MultiWriter(stdin, h.sent)
 	teedOut := io.TeeReader(stdout, h.received)
 	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, teedIn, teedOut)
@@ -197,10 +166,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) 
 
 // startReplay resolves this round's recorded invoke_agent entry (the SAME
 // ledger.Coords seam inference.NewReplayModel and the tools' replay stubs
-// read - ledger.CoordsFromContext) and wires the ACP connection over a
-// replayAgentIO instead of a real subprocess's pipes: h.cmd stays nil (close
-// then has nothing to kill/wait on), so the gate's view of this round is
-// reproduced with no opencode binary at all.
+// read - ledger.CoordsFromContext) and wires the ACP connection over a replayAgentIO instead of a real subprocess's pipes: h.cmd stays nil (close then has nothing to kill/wait on), so the gate's view of this round is reproduced with no opencode binary at all.
 func (a *Agent) startReplay(ctx context.Context) (*procHandle, error) {
 	sent, received, err := a.opts.Replay.NextInvokeAgent(ledger.CoordsFromContext(ctx), a.name)
 	if err != nil {
@@ -240,7 +206,6 @@ func (h *procHandle) close(log *slog.Logger) {
 	})
 }
 
-// stderrTail renders the captured stderr tail for error messages ("" if empty).
 func (h *procHandle) stderrTail() string {
 	s := strings.TrimSpace(h.stderr.String())
 	if s == "" {
@@ -260,9 +225,7 @@ var _ sdk.Client = (*clientHandler)(nil)
 
 // SessionUpdate must never block: it runs on the SDK's single
 // notification-processing goroutine, and blocking there stalls the SDK's own
-// bounded notification queue, which tears the whole connection down under a
-// slow downstream consumer (finding 10). pushUpdate only ever appends and
-// signals - ctx is unused because there is never anything to wait on.
+// bounded notification queue, which tears the whole connection down under a slow downstream consumer (finding 10). pushUpdate only ever appends and signals - ctx is unused because there is never anything to wait on.
 func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) error {
 	c.h.pushUpdate(n.Update)
 	return nil
@@ -270,11 +233,7 @@ func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) e
 
 // RequestPermission routes the ask to the safety judge (Options.
 // PermissionJudge) - the ACP twin of the native guard ladder's judge tier.
-// The generated permission config already allows everything a round
-// legitimately needs, so an ask is by construction the exceptional case
-// (a directory escape, a .env read, opencode's doom_loop detector); the
-// judge decides it with context. No judge configured ⇒ allow, matching the
-// single-tenant container-is-the-boundary posture.
+// The generated permission config already allows everything a round legitimately needs, so an ask is by construction the exceptional case (a directory escape, a .env read, opencode's doom_loop detector); the judge decides it with context. No judge configured ⇒ allow, matching the single-tenant container-is-the-boundary posture.
 func (c *clientHandler) RequestPermission(ctx contextT, p sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
 	title := ""
 	if p.ToolCall.Title != nil {

@@ -88,9 +88,8 @@ func TestConsultAdvisor_ConcurrentSameThreadDBService(t *testing.T) {
 }
 
 // TestIsSessionConflict pins the transient-conflict detection consultAdvisor
-// retries on: the database service's stale-session error and both databases'
-// unique-violation wordings for the create race. Anything else must NOT be
-// retried (immediate graceful degradation).
+// retries on: the stale-session error and both databases' unique-violation
+// wordings for the create race; anything else must NOT be retried (immediate graceful degradation).
 func TestIsSessionConflict(t *testing.T) {
 	stale := fmt.Errorf("failed to add event to session: %w",
 		errors.New("stale session error: last update time from request (x) is older than in database (y)"))

@@ -20,7 +20,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// The orchestrator's continuation contract (live symptom, 2026-07-13): the
+// The orchestrator's continuation contract: the
 // orchestrator loads its skills, spends the rest of its output budget on
 // reasoning, and ends the invocation with EMPTY content - no plan call, no
 // execute call, no text. ADK reports a clean finish, so the run just stops: no
@@ -90,8 +90,6 @@ func (s *orchStub) sawContinuation() int {
 	}
 	return n
 }
-
-// --- stub plumbing ---
 
 func stubHasTool(req *model.LLMRequest, name string) bool {
 	if req.Config == nil {

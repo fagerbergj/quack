@@ -52,10 +52,9 @@ export const TurnView = memo(function TurnView({
   const turnRuns = activityFromTurn(turn)
   const turnActivity = visibleActivity(turnRuns.flatMap(r => r.activity))
   const turnChoice = pendingChoice(turnRuns)
-  // Attribution for the answer bubble: a DAG turn credits its terminal node
-  // (agent + that node's own model/tokens); a plain reply credits the
-  // orchestrator, with the model persisted on the turn row (turn.model) and
-  // tokens from Turn.usage - history attribution matches the live stream.
+  // Attribution for the answer bubble: a DAG turn credits its terminal
+  // node (agent + that node's own model/tokens); a plain reply credits the
+  // orchestrator, with the model persisted on the turn row (turn.model) and tokens from Turn.usage - history attribution matches the live stream.
   const attribution = dagState ? dagAnswerAttribution(dagState) : plainReplyAttribution(turn)
   // Skip the answer bubble when the turn produced no visible content for it
   // (e.g. a DAG with no text yet, or a plain turn that only held a tool call).

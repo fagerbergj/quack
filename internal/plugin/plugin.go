@@ -1,9 +1,6 @@
-// Package plugin discovers plugins packaged per the Agent Plugins standard
-// (https://agent-plugins.org/) or its Codex predecessor. A resolved root can
-// contribute three things: skills (skills/, spec §7.1), MCP servers
-// (mcp.json, spec §7.2), and quack's own client-extension declarations
-// (plugin.json's extensions[Namespace], spec §8). Distribution is out of
-// scope - trees are vendored in-tree, see .agents/vendor/plugins.yaml.
+// Package plugin discovers plugins packaged per the Agent Plugins standard (https://agent-plugins.org/) or its Codex predecessor. A resolved root can
+// contribute skills (skills/, spec §7.1), MCP servers (mcp.json, spec §7.2),
+// and quack's own client-extension declarations (plugin.json's extensions[Namespace], spec §8). Distribution is out of scope - trees are vendored in-tree, see .agents/vendor/plugins.yaml.
 package plugin
 
 import (
@@ -23,8 +20,7 @@ const Namespace = "io.github.fagerbergj.quack"
 
 // nsSchemaVersion is the only version of the namespace block quack
 // understands. §8 leaves validation inside a namespace to its owner, and a
-// block quack cannot read is declaring compiled-in code, so it is an error
-// rather than a skip.
+// block quack cannot read is declaring compiled-in code, so it is an error rather than a skip.
 const nsSchemaVersion = 1
 
 // Plugin is one resolved plugin root. Every component is optional: §6.2
@@ -78,8 +74,7 @@ type nsBlock struct {
 
 // codexManifest is .codex-plugin/plugin.json: the same identity fields as the
 // Agent Plugins manifest, plus an explicit "skills" path. Its "interface"
-// block (Codex UI metadata) is deliberately not decoded - never read, never a
-// reason to fail.
+// block (Codex UI metadata) is deliberately not decoded - never read, never a reason to fail.
 type codexManifest struct {
 	Name   string `json:"name"`
 	Skills string `json:"skills"`
@@ -105,8 +100,7 @@ func (e *NamespaceError) Unwrap() error { return e.Err }
 // missing plugin never fails the run, it just loses that plugin's components.
 //
 // The one exception is quack's own namespace block: an unreadable one is
-// returned as an error, because it declares compiled-in Go code and silently
-// dropping it would boot a server missing the module it promised.
+// returned as an error, because it declares compiled-in Go code and silently dropping it would boot a server missing the module it promised.
 func Resolve(roots []string) ([]Plugin, error) {
 	var out []Plugin
 	for _, root := range roots {
@@ -157,8 +151,7 @@ func resolveRoot(root string) (*Plugin, error) {
 
 // fromRootManifest reads <root>/plugin.json. A missing file returns a wrapped
 // os.ErrNotExist so the caller falls through to the Codex format; any other
-// failure is terminal for this root - a manifest that exists but is broken is
-// never reinterpreted as merely absent.
+// failure is terminal for this root - a manifest that exists but is broken is never reinterpreted as merely absent.
 func fromRootManifest(abs string) (*Plugin, error) {
 	b, err := os.ReadFile(filepath.Join(abs, "plugin.json"))
 	if err != nil {
@@ -216,8 +209,7 @@ func applyNamespace(p *Plugin, raw json.RawMessage) error {
 
 // fromCodexManifest reads <root>/.codex-plugin/plugin.json. Its "skills"
 // value is plugin-relative and resolved under abs; a value that escapes the
-// root is refused (error, not silently followed). The Codex format predates
-// the extensions field, so it never carries a namespace block.
+// root is refused (error, not silently followed). The Codex format predates the extensions field, so it never carries a namespace block.
 func fromCodexManifest(abs string) (*Plugin, error) {
 	b, err := os.ReadFile(filepath.Join(abs, ".codex-plugin", "plugin.json"))
 	if err != nil {

@@ -50,10 +50,9 @@ func NewRecallMemoryTool(store *memory.Store, sc memory.Scope, led ledger.Ledger
 	)
 }
 
-// coordsBox: mutable ledger.Coords a tool built once (before nodeID is
-// known) can be re-stamped with per dispatch - same need SetLedgerCoords
-// solves for emitTool/guardedTool, extracted here since recallMemoryTool
-// also has to resolve memory.Scope from the same coords, not just log them.
+// coordsBox: a mutable ledger.Coords so a tool built once (before nodeID is
+// known) can be re-stamped per dispatch - the same need SetLedgerCoords solves
+// for emitTool/guardedTool, extracted here since recallMemoryTool also resolves memory.Scope from these coords, not just logs them.
 type coordsBox struct {
 	mu     sync.Mutex
 	coords ledger.Coords
@@ -62,12 +61,9 @@ type coordsBox struct {
 func (b *coordsBox) set(c ledger.Coords) { b.mu.Lock(); b.coords = c; b.mu.Unlock() }
 func (b *coordsBox) get() ledger.Coords  { b.mu.Lock(); defer b.mu.Unlock(); return b.coords }
 
-// recallMemoryTool wraps the functiontool built by newRecallMemory so it can
-// also implement ledger.CoordSetter - ledger.StampCoords (dag/graph.go)
-// restamps every built-in tool with this dispatch's ChatID/Node right before
-// the node runs, the same mechanism artifact tools rely on for identity.
-// Embeds runnableTool (not tool.Tool) so Declaration/Run/ProcessRequest -
-// needed by the rest of Build's wrapper chain - are promoted too.
+// recallMemoryTool wraps the functiontool built by newRecallMemory so it
+// implements ledger.CoordSetter - ledger.StampCoords (dag/graph.go) restamps
+// every built-in tool with this dispatch's ChatID/Node right before the node runs, the same mechanism artifact tools rely on for identity; embeds runnableTool so Declaration/Run/ProcessRequest promote through Build's wrapper chain.
 type recallMemoryTool struct {
 	runnableTool
 	box *coordsBox
@@ -76,11 +72,8 @@ type recallMemoryTool struct {
 func (t *recallMemoryTool) SetLedgerCoords(c ledger.Coords) { t.box.set(c) }
 
 // recallScope mirrors vetting.MemoryScope (role from the agent bundle, repo
-// from the workspace, user from the session) but takes coords directly - the
-// mutable-box re-derivation newRecallMemory does per call, pulled out so a
-// test can assert the bucket list without wiring a whole ADK tool call.
-// Deliberately never sets Legacy: that field is only for pre-scope memories
-// keyed by agent NAME, and a node id never had memories under it (#1262/#1263).
+// from the workspace, user from the session) but takes coords directly, pulled
+// out so a test can assert the bucket list without wiring a whole ADK tool call. Deliberately never sets Legacy: that field is only for pre-scope memories keyed by agent NAME, and a node id never had memories under it (#1262/#1263).
 func recallScope(d Deps, ctx agent.Context, coords ledger.Coords) memory.Scope {
 	sc := memory.Scope{Role: d.MemoryRole}
 	if s := ctx.Session(); s != nil {
@@ -94,14 +87,11 @@ func recallScope(d Deps, ctx agent.Context, coords ledger.Coords) memory.Scope {
 
 // newRecallMemory builds the registry's recall_memory for native DAG
 // workers. Scope mirrors vetting.MemoryScope (role from the agent bundle,
-// repo from the workspace, user from the session) but is re-derived on
-// every call from the mutable coords box instead of vetting.Config, so
-// internal/tools never has to import internal/vetting.
+// repo from the workspace, user from the session) but is re-derived on every call from the mutable coords box instead of vetting.Config, so internal/tools never has to import internal/vetting.
 func newRecallMemory(d Deps) (tool.Tool, error) {
 	// No Memory-nil guard: Store's own methods (RecallForTool/LogRecall) are
 	// nil-receiver safe, same leniency as stage_memory - a caller resolving
-	// tools ahead of the real per-agent Deps (e.g. a grant-check test) must
-	// still get a buildable tool, just one that recalls nothing until wired.
+	// tools ahead of the real per-agent Deps (e.g. a grant-check test) gets a buildable tool that recalls nothing until wired.
 	box := &coordsBox{}
 	inner, err := functiontool.New[recallMemoryArgs, recallMemoryResult](
 		functiontool.Config{Name: "recall_memory", Description: recallMemoryDescription},

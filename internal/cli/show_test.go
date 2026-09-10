@@ -65,8 +65,7 @@ func TestRunChatShow(t *testing.T) {
 
 // chatShowReasoningLeakJSON pins #419: a message item whose content mixes a
 // reasoning part ahead of the output_text part - ReasoningPart and
-// OutputTextPart share the same {text,type} JSON shape, so a naive "does it
-// unmarshal" check on AsOutputTextPart() would let the raw thinking through.
+// OutputTextPart share the same {text,type} JSON shape, so a naive "does it unmarshal" check on AsOutputTextPart() would let the raw thinking through.
 const chatShowReasoningLeakJSON = `{
   "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
   "system_prompt":"","title":"Plan run","status":"completed",
@@ -271,10 +270,7 @@ func TestRunChatShowFollowLive(t *testing.T) {
 
 // TestRunChatShowFollowToolsAndThinking pins #385's CLI half: `chat show -f`
 // used to have no case at all for agent_thinking/agent_tool_call/
-// agent_tool_result - tool calls and reasoning were invisible in the
-// terminal. It now renders a terse, one-line-per-event trace: "thinking…"
-// once per reasoning block (not once per streamed delta), and a "tool: …" /
-// "→ …" pair per call - never a raw JSON dump.
+// agent_tool_result - tool calls and reasoning were invisible in the terminal. It now renders a terse, one-line-per-event trace: "thinking…" once per reasoning block (not once per streamed delta), and a "tool: …" / "→ …" pair per call - never a raw JSON dump.
 func TestRunChatShowFollowToolsAndThinking(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	mux := http.NewServeMux()
@@ -316,10 +312,7 @@ func TestRunChatShowFollowToolsAndThinking(t *testing.T) {
 
 // TestRunChatShowFollowDiscardsPreamble pins #387 in the CLI: the old
 // per-token live print showed narration ahead of a tool call as if it were
-// already the answer, with no way to "un-print" it once a later tool call
-// proved it wasn't. `-f` no longer streams top-level tokens live at all; the
-// corrected (preamble-free) answer prints once, at the end, via the same
-// Report() path `chat send` uses.
+// already the answer, with no way to "un-print" it once a later tool call proved it wasn't. `-f` no longer streams top-level tokens live at all; the corrected (preamble-free) answer prints once, at the end, via the same Report() path `chat send` uses.
 func TestRunChatShowFollowDiscardsPreamble(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	mux := http.NewServeMux()

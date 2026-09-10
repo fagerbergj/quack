@@ -16,10 +16,8 @@ beforeEach(() => {
 })
 
 // #1171: NavRail is a pure drawer at every width - no persistent rail, no
-// hamburger column, no compact/media-query branch, so there is nothing to
-// mock the viewport for. This harness stands in for App.tsx: it owns the
-// open state (always starting closed, remembering nothing) and carries the
-// toggle the drawer's useDrawer focus-return targets.
+// hamburger column, no compact/media-query branch, so nothing to mock the
+// viewport for. This harness stands in for App.tsx: it owns the open state (closed on load, remembering nothing) and carries the toggle the drawer's useDrawer focus-return targets.
 function Harness({ route = 'chat', initialExtensions = [], versionOverride }: { route?: 'chat' | 'memory' | 'ext'; initialExtensions?: ExtensionInfo[]; versionOverride?: string }) {
   const [open, setOpen] = useState(false)
   return (

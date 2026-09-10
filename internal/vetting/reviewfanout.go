@@ -7,13 +7,9 @@ import (
 	"sync"
 )
 
-// ReviewFanout: run-scoped accumulator for a plan with more than one
-// reviewer node (#867). A review VERDICT is semantically run-scoped even
-// though delivery used to be node-scoped: the first reviewer node to finish
-// could post a real APPROVED review while siblings were still running.
-// Reviewer nodes stage into this instead of delivering themselves; the last
-// one to reach a terminal state merges everything staged so far and
-// delivers exactly once.
+// ReviewFanout: run-scoped accumulator for a plan with more than one reviewer node (#867). A review VERDICT is semantically run-scoped even though delivery used to be node-scoped: the first reviewer node to finish
+// could post a real APPROVED review while siblings were still running. Reviewer nodes stage into this instead of delivering themselves; the last
+// one to reach a terminal state merges everything staged so far and delivers exactly once.
 type ReviewFanout struct {
 	mu        sync.Mutex
 	planID    string
@@ -23,8 +19,7 @@ type ReviewFanout struct {
 
 	// A downstream synthesizer node owns the final consolidated review
 	// (#965): delivery waits for it, and its answer becomes the summary
-	// body. On synthesizer failure the merge falls back to the per-node
-	// concatenation so nothing is stranded.
+	// body. On synthesizer failure the merge falls back to the per-node concatenation so nothing is stranded.
 	synthWanted  bool
 	synthDone    bool
 	synthBody    string
@@ -32,16 +27,14 @@ type ReviewFanout struct {
 
 	// cloneURL/branch: the repo a reviewer node actually cloned (#1059). The
 	// synthesizer node that ends up delivering the merged review never
-	// clones anything itself, so it has no clone coordinates of its own -
-	// first reviewer to report one wins, the rest are the same repo/PR.
+	// clones anything itself, so it has no clone coordinates of its own - first reviewer to report one wins, the rest are the same repo/PR.
 	cloneURL string
 	branch   string
 }
 
 // RecordClone captures the repo/branch a reviewer node cloned, first one
 // wins. Called before Finish/FinishSynthesis so the eventual deliverer -
-// possibly a synthesizer node with no clone of its own - has coordinates
-// to deliver against (#1059).
+// possibly a synthesizer node with no clone of its own - has coordinates to deliver against (#1059).
 func (f *ReviewFanout) RecordClone(cloneURL, branch string) {
 	if cloneURL == "" {
 		return
@@ -70,8 +63,7 @@ var reviewFanouts sync.Map // plan ID -> *ReviewFanout
 
 // GetReviewFanout returns the shared fan-in for a plan, creating it on the
 // first call. total is the plan's reviewer-node count. Only called for
-// plans with more than one reviewer node - single-reviewer plans keep
-// today's node-scoped delivery (cfg.ReviewFanout stays nil).
+// plans with more than one reviewer node - single-reviewer plans keep today's node-scoped delivery (cfg.ReviewFanout stays nil).
 func GetReviewFanout(planID string, total int) *ReviewFanout {
 	v, _ := reviewFanouts.LoadOrStore(planID, &ReviewFanout{planID: planID, total: total})
 	return v.(*ReviewFanout)
@@ -92,8 +84,7 @@ func (f *ReviewFanout) forget() {
 
 // SiblingsPending reports whether any reviewer node in the plan, besides
 // whichever one is asking, is still running. Used by the staging seam
-// (ReviewStage.SetVerdict) to refuse an early approve while an
-// early request_changes is still allowed.
+// (ReviewStage.SetVerdict) to refuse an early approve while an early request_changes is still allowed.
 func (f *ReviewFanout) SiblingsPending() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -104,11 +95,8 @@ func (f *ReviewFanout) SiblingsPending() bool {
 }
 
 // Finish records nodeID's terminal outcome. item/ok is this node's own
-// staged review (ok=false if it staged nothing, or aborted before staging).
-// failed marks a node that errored or was cancelled, so it must not block
-// the run forever waiting on it. Once every reviewer node in the plan has
-// called Finish, the caller that completes the set gets deliver=true and
-// the merged review - callers must deliver on that signal exactly once.
+// staged review (ok=false if it staged nothing, or aborted before staging). failed marks a node that errored or was cancelled, so it must not block
+// the run forever waiting on it. Once every reviewer node in the plan has called Finish, the caller that completes the set gets deliver=true and the merged review - callers must deliver on that signal exactly once.
 func (f *ReviewFanout) Finish(nodeID string, item StagedDelivery, ok, failed bool) (merged StagedDelivery, deliver bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -137,12 +125,8 @@ func (f *ReviewFanout) ExpectSynthesis() {
 }
 
 // FinishSynthesis records the synthesizer node's terminal outcome. answer is
-// its consolidated review ("" if it failed or produced nothing - the merge
-// then falls back to the per-node concatenation). verdict is the
-// synthesizer's structured code_review record verdict, "" if it never wrote
-// one - the authoritative event for delivery (#1184); mergeReviews falls
-// back to the answer's VERDICT tail, then the slices' worst-of, only when
-// this is empty. Same exactly-once deliver contract as Finish.
+// its consolidated review ("" if it failed or produced nothing - the merge then falls back to the per-node concatenation). verdict is the synthesizer's structured code_review record verdict, "" if it never wrote
+// one - the authoritative event for delivery (#1184); mergeReviews falls back to the answer's VERDICT tail, then the slices' worst-of, only when this is empty. Same exactly-once deliver contract as Finish.
 func (f *ReviewFanout) FinishSynthesis(answer, verdict string) (merged StagedDelivery, deliver bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -172,11 +156,9 @@ var verdictRank = map[string]int{"comment": 0, "approve": 1, "request_changes": 
 // defense: an early slice request_changes still beats a later synthesizer
 // approve, since worst-of only ever raises the verdict, never lowers it).
 // A slice with no event (V4: slices stage findings only, #1150) doesn't
-// participate in worst-of at all - it used to default to "comment", the
-// exact bug #1184 reports.
+// participate in worst-of at all - it used to default to "comment", the exact bug #1184 reports.
 // Findings are merged and attributed per node regardless of which verdict
-// wins. A failed/cancelled sibling contributes no verdict but is named in
-// the body rather than silently dropped.
+// wins. A failed/cancelled sibling contributes no verdict but is named in the body rather than silently dropped.
 func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody, synthVerdict string) StagedDelivery {
 	ids := make([]string, 0, len(terminal))
 	for id := range terminal {
@@ -218,11 +200,9 @@ func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody, synthVerdict
 			haveVerdict = true
 		}
 	}
-	// The synthesizer's own structured code_review record is authoritative
-	// over its answer-tail parse above, but still worst-of against a slice's
+	// The synthesizer's own structured code_review record is authoritative over its answer-tail parse above, but still worst-of against a slice's
 	// verdict rather than overwriting it outright - #867's defense (an early
-	// slice request_changes must survive a later synthesizer approve) holds
-	// regardless of which form the synthesizer's verdict took.
+	// slice request_changes must survive a later synthesizer approve) holds regardless of which form the synthesizer's verdict took.
 	if synthVerdict != "" && (!haveVerdict || verdictRank[synthVerdict] > verdictRank[verdict]) {
 		verdict = synthVerdict
 		haveVerdict = true

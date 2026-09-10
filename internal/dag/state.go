@@ -15,7 +15,6 @@ const (
 	StatusCancelled  NodeStatus = "cancelled"
 )
 
-// transitions: legal node-status state machine.
 var transitions = map[NodeStatus]map[NodeStatus]bool{
 	StatusQueued: {
 		StatusQueued:    true, // idempotent re-queue (initial persist, retry fan-out)

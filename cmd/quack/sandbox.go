@@ -96,10 +96,9 @@ func sandboxAgentConfig(f sandboxFlags) (config.AgentConfig, error) {
 	return ac, err
 }
 
-// runSandboxInteractive: sh -i through the SAME wrappedArgv/spawnEnv path the
-// ACP child gets (workspace.WrapArgv + cli.SandboxSpawnEnv), with a real pty
-// crossing the sandbox boundary so job control and the prompt work under
-// bwrap/landlock, not just `none`.
+// runSandboxInteractive: sh -i through the SAME wrappedArgv/spawnEnv path
+// the ACP child gets (workspace.WrapArgv + cli.SandboxSpawnEnv), with a real
+// pty crossing the sandbox boundary so job control and the prompt work under bwrap/landlock, not just `none`.
 func runSandboxInteractive(cmd *cobra.Command, f sandboxFlags) error {
 	seat, teardown, err := openSandboxSeat(f)
 	if err != nil {

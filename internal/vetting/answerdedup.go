@@ -1,8 +1,6 @@
 // answerdedup.go: collapses a node's chat-visible answer when it only
 // restates a record the same round already staged (review, PR body, ...) -
-// the fix for the doubled-review-body bug (#1306-ish). Structural, not
-// prompt-dependent: applies to every agent kind that stages via
-// act.stagedDelivery, keyed generically by Kind rather than "review" only.
+// the fix for the doubled-review-body bug. Structural, not prompt-dependent: applies to every agent kind that stages via act.stagedDelivery, keyed generically by Kind rather than "review" only.
 package vetting
 
 import (
@@ -19,13 +17,9 @@ const minDedupBodyLen = 40
 // count as a restatement.
 const overlapThreshold = 0.8
 
-// maxAnswerWordRatio: an answer may carry at most this many times the
-// staged body's word count and still count as "just a restatement". Without
-// this bound, an answer that quotes the body verbatim (or shares most of its
-// words) and then adds a real question, decision, or new finding was being
-// collapsed to the one-line status - losing the very content the reply
-// exists to carry. Ceiling, not exact: a generous preamble/wrapper still
-// passes; substantial added content does not.
+// maxAnswerWordRatio: an answer may carry at most this many times the staged body's word count and still count as "just a restatement". Without
+// this bound, an answer that quotes the body verbatim and then adds a real
+// question, decision, or new finding was being collapsed to the one-line status - losing the very content the reply exists to carry. Ceiling, not exact: a generous preamble/wrapper still passes; substantial added content does not.
 const maxAnswerWordRatio = 1.5
 
 // normalizeForCompare lowercases and collapses whitespace so markdown/
@@ -104,10 +98,7 @@ func summarizeStaged(sd StagedDelivery) string {
 
 // dedupeAnswerAgainstStaged returns answer unchanged unless it substantially
 // restates a record already staged this round, in which case it returns a
-// short status line derived from that record instead. Recovered entries are
-// skipped - their Body was parsed OUT of the answer (no separate staged
-// record to be duplicating), and empty bodies never trigger anything.
-// Applies to any staged Kind (review, pull_request, ...), not review-only.
+// short status line derived from that record instead. Recovered entries are skipped - their Body was parsed OUT of the answer (no separate staged record to be duplicating), and empty bodies never trigger anything. Applies to any staged Kind (review, pull_request, ...), not review-only.
 func dedupeAnswerAgainstStaged(answer string, staged map[string]StagedDelivery) string {
 	// sortedStagedDelivery, not a raw map range: if the answer happens to
 	// restate more than one staged record, which one wins the collapse must

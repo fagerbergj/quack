@@ -16,12 +16,7 @@ import (
 
 // TestOrchestratorRunnerCompactsTheChatSession is a regression test for the
 // ADK audit's A3 finding: orchestrator.go's own runner.Config never set
-// Compaction, so the long-lived chat session (the one that persists across
-// every turn, unlike a worker node's ephemeral one) grew unbounded even with
-// compaction enabled everywhere else. With SetCompaction wired in and
-// CompactionInterval:1, a sliding-window pass must fire and record a
-// compaction event on the session after just one turn that answers directly
-// (no plan/execute round).
+// Compaction, so the long-lived chat session (the one that persists across every turn, unlike a worker node's ephemeral one) grew unbounded even with compaction enabled everywhere else. With SetCompaction wired in and CompactionInterval:1, a sliding-window pass must fire and record a compaction event on the session after just one turn that answers directly (no plan/execute round).
 func TestOrchestratorRunnerCompactsTheChatSession(t *testing.T) {
 	stub := &orchStub{replies: []*model.LLMResponse{stubText("hello there")}}
 	worker, err := llmagent.New(llmagent.Config{

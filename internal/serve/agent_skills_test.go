@@ -21,13 +21,10 @@ var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	root := repoRoot(t)
 
-	// Mirror what actually reaches an agent (internal/serve's newSkillSource):
-	// quack's own skills/, plus each plugin root resolved via internal/plugin
-	// discovery.
-	//
-	// The trees are in-tree, so an unresolvable root is a real breakage. This
-	// used to t.Skip unless BOTH roots resolved, which never happened even with
-	// submodules initialised - so this check has never actually run.
+	// Mirror what reaches an agent (serve's newSkillSource): quack's skills/ plus each
+	// plugin root via internal/plugin discovery. The trees are in-tree, so an unresolvable
+	// root is a real breakage; the old t.Skip (needs BOTH roots) never ran even with
+	// submodules initialised.
 	dotagents := filepath.Join(root, ".agents", "vendor", "dotagents")
 	ponytail := filepath.Join(root, ".agents", "vendor", "ponytail")
 	vendorDirs := resolveSkillDirs([]string{dotagents, ponytail})

@@ -13,8 +13,7 @@ vi.mock('../api', () => ({ api: { listChatArtifacts: (...args: unknown[]) => lis
 
 // ArtifactPanel itself (its dialog, ChatStoreProvider dependency, and REST
 // surface) is covered by ArtifactPanel.rtl.test.tsx - this file only needs
-// proof that a row click resolves to the right node and that node id reaches
-// the panel, so the component is replaced with a prop-recording stub.
+// proof that a row click resolves to the right node and that node id reaches the panel, so the component is replaced with a prop-recording stub.
 const artifactPanelProps = vi.fn()
 vi.mock('./ArtifactPanel', () => ({
   ArtifactPanel: (props: unknown) => { artifactPanelProps(props); return null },
@@ -334,9 +333,7 @@ describe('TriggerMessage', () => {
 
 // renderToStaticMarkup proves the collapsed markup exists; it never runs a
 // click. These mount into real jsdom (Expandable.test.ts's pattern - no
-// testing-library in this repo) and dispatch an actual click on <summary>, so
-// what's asserted is the native <details> `open` toggle actually firing, the
-// same mechanism the browser's UA stylesheet uses to show/hide the content.
+// testing-library in this repo) and dispatch an actual click on <summary>, so what's asserted is the native <details> `open` toggle actually firing - the same mechanism the browser's UA stylesheet uses to show/hide the content.
 describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined

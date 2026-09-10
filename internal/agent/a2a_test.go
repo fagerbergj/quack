@@ -19,9 +19,8 @@ import (
 )
 
 // workerModel is a canned two-turn model: turn 1 emits a thought + a call to the
-// echo tool; once it sees the tool's FunctionResponse it emits the final answer.
-// It lets the spike exercise the full event vocabulary (thinking / tool_call /
-// tool_result / token) across the A2A round-trip with no network or model.
+// echo tool; seeing the tool's FunctionResponse it emits the final answer.
+// It exercises the full event vocabulary (thinking / tool_call / tool_result / token) across the A2A round-trip with no network or model.
 type workerModel struct{}
 
 func (workerModel) Name() string { return "worker-model" }
@@ -111,9 +110,8 @@ func collect(t *testing.T, seq iter.Seq2[*session.Event, error]) (thinking, answ
 }
 
 // TestA2ARoundTripPreservesEventVocabulary is the M1 spike for risk #1: it serves
-// a worker over real ephemeral-loopback A2A, dispatches to it via the remote
-// client, and asserts thinking / tool_call / tool_result / token all survive the
-// round-trip (adka2a DataPart metadata ↔ genai parts).
+// a worker over real ephemeral-loopback A2A, dispatches via the remote client,
+// and asserts thinking / tool_call / tool_result / token all survive the round-trip (adka2a DataPart metadata <-> genai parts).
 func TestA2ARoundTripPreservesEventVocabulary(t *testing.T) {
 	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, nil, Compaction{}, "", nil)
 	if err != nil {
@@ -245,10 +243,8 @@ type branchCtx struct {
 func (b branchCtx) Branch() string { return b.branch }
 
 // TestSanitizePart_DropsForeignBranchEvents: the converter must drop parts of
-// events from a SIBLING node's branch (the shared-session leak: without this,
-// remoteagent's history sweep folds a concurrently-running node's prompt and
-// plumbing into this node's outbound message), while keeping branchless events,
-// the current branch, and ancestors.
+// events from a SIBLING node's branch (without this, remoteagent's history sweep folds a concurrently-running node's prompt and plumbing into this
+// node's outbound message), while keeping branchless events, the current branch, and ancestors.
 func TestSanitizePart_DropsForeignBranchEvents(t *testing.T) {
 	cur := "n1@1.researcher@worker-r0"
 	textPart := &genai.Part{Text: "some content"}
@@ -283,11 +279,9 @@ func TestSanitizePart_DropsForeignBranchEvents(t *testing.T) {
 	}
 }
 
-// TestDescribeEvent_KeepsMediaParts guards the media-reader bug: the gate's
-// prompt-delivery event is authored "quack-gate" (foreign), so scopeMessage
-// renders it via describeEvent. An attached image rides as an InlineData part
-// on that event; describeEvent must carry it across the wire as a raw file
-// part, not silently drop it (which left the vision model blind).
+// TestDescribeEvent_KeepsMediaParts guards the media-reader bug: the gate's prompt-delivery event is authored "quack-gate" (foreign), so scopeMessage
+// renders it via describeEvent; an attached image rides as an InlineData part
+// and must be carried across the wire as a raw file part, not dropped (which left the vision model blind).
 func TestDescribeEvent_KeepsMediaParts(t *testing.T) {
 	imgBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A} // PNG magic
 	ev := &session.Event{}
@@ -372,10 +366,8 @@ func (answerOnlyModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _
 }
 
 // TestCompactionSessionsObservesRealCompaction proves compactionSessions
-// (a2a.go) actually catches a compaction event fired by adk/v2's own
-// runner-level compaction, not one this test hands it - CompactionInterval:1
-// makes adk's real sliding-window compactor fire its own AppendEvent after a
-// single complete invocation, the way the reviewer on #1247 required.
+// (a2a.go) catches a compaction fired by adk/v2's own runner-level compaction, not one this test hands it: with CompactionInterval:1 the real
+// sliding-window compactor fires its own AppendEvent after a single complete invocation, the way the reviewer on #1247 required.
 func TestCompactionSessionsObservesRealCompaction(t *testing.T) {
 	ag, err := llmagent.New(llmagent.Config{
 		Name:        "compaction-worker",

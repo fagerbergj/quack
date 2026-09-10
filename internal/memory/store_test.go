@@ -78,10 +78,9 @@ func TestEmbedMemoizesSingleInputs(t *testing.T) {
 	}
 }
 
-// failEnsureIndex is a minimal index stub whose ensure always errors - the
-// only method newStore reaches before giving up (it returns on ensure's
-// error, never calling backfillTiers or anything else), so embedding a nil
-// index for the rest of the interface is safe.
+// failEnsureIndex is a minimal index stub whose ensure always errors - the only method
+// newStore reaches before giving up (it returns on ensure's error, never calling
+// backfillTiers or anything else), so embedding a nil index for the rest of the interface is safe.
 type failEnsureIndex struct {
 	index
 	err error
@@ -91,11 +90,9 @@ func (f *failEnsureIndex) ensure(context.Context, func() (int, error)) error {
 	return f.err
 }
 
-// TestNewStore_EnsureErrorFailsLoudly is the "fail loudly at boot" half of
-// the timestamp-index startup check (qdrantIndex.ensureTimestampIndex):
-// newStore (called from Open/memory.New on every server boot) must surface
-// an index-setup error to its caller, not swallow it and start up with a
-// broken index.
+// TestNewStore_EnsureErrorFailsLoudly is the "fail loudly at boot" half of the timestamp-index
+// startup check (qdrantIndex.ensureTimestampIndex): newStore (called from
+// Open/memory.New on every server boot) must surface an index-setup error to its caller, not swallow it and start up with a broken index.
 func TestNewStore_EnsureErrorFailsLoudly(t *testing.T) {
 	wantErr := errors.New("timestamp index: boom")
 	_, err := newStore(context.Background(), &failEnsureIndex{err: wantErr}, fakeEmbedder{}, nil, "test_fail_ensure", "task", 5, 0.5)

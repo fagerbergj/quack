@@ -8,16 +8,13 @@ import (
 
 // This file threads the two per-node evidence scopings a GitHub trigger
 // computes (#664, consumer split) from the webhook dispatch boundary to
-// tools.NewPlanTool, the SAME way WithGitHubSetup/WithAllowedDeliveryKinds
-// already do: values the model must never author itself, read exactly once
-// at the top of Orchestrator.Run.
+// tools.NewPlanTool: values the model must never author itself, read exactly once at the top of Orchestrator.Run.
 
 type workerAskContextKey struct{}
 
 // WithWorkerAsk attaches the ask-only text (permissions, deliverable,
 // title/body/comments - never evidence) a GitHub-triggered plan's nodes get
-// as their BACKGROUND, in place of the orchestrator's own full envelope. Call
-// ONLY from the GitHub webhook dispatch boundary.
+// as their BACKGROUND, in place of the orchestrator's full envelope. Call ONLY from the GitHub webhook dispatch boundary.
 func WithWorkerAsk(ctx context.Context, ask string) context.Context {
 	return context.WithValue(ctx, workerAskContextKey{}, ask)
 }
@@ -34,8 +31,7 @@ type contextItemsContextKey struct{}
 
 // WithContextItems attaches a CI-fix run's failing checks, each with its own
 // rendered annotation detail - computed once at dispatch (cifix.go's
-// failingChecks), never re-derived from model output. buildTask hands an
-// item's detail only to the node whose own task names it (dag.ContextItem).
+// failingChecks), never re-derived from model output; buildTask hands an item's detail only to the node whose own task names it (dag.ContextItem).
 func WithContextItems(ctx context.Context, items []dag.ContextItem) context.Context {
 	return context.WithValue(ctx, contextItemsContextKey{}, items)
 }
@@ -51,9 +47,7 @@ type planOnlyContextKey struct{}
 
 // WithPlanOnly attaches whether this run's deliverable is planning-only
 // (#739) - the quack:plan label, never a model's own claim. dag.Plan.PlanOnly
-// carries it from there into buildGateNodes, which forces every node
-// read-only with no delivery target: the structural fix for a plan run whose
-// planner picks a writable agent.
+// carries it into buildGateNodes, which forces every node read-only with no delivery target: the structural fix for a planner that picks a writable agent.
 func WithPlanOnly(ctx context.Context, planOnly bool) context.Context {
 	return context.WithValue(ctx, planOnlyContextKey{}, planOnly)
 }

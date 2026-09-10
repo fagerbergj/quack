@@ -54,8 +54,7 @@ func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.
 // Tolerant wraps src (backed by fsys) so ListFrontmatters skips a single
 // malformed skill instead of failing the whole source (#1080: one plugin's
 // new frontmatter field crash-looped the server at startup). label names
-// fsys in the warning log - a real path, or a descriptive name when fsys has
-// none (an embedded FS).
+// fsys in the warning log - a real path, or a descriptive name when fsys has none (an embedded FS).
 func Tolerant(src skill.Source, fsys fs.FS, label string) skill.Source {
 	return &tolerant{Source: src, fsys: fsys, label: label}
 }

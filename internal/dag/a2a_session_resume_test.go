@@ -21,9 +21,7 @@ import (
 
 // reviseStub drafts once, then (after the judge's fail) revises. Its second
 // draft asserts the remote session CONTINUED: the revise round's request must
-// still carry the first draft, which only happens when the node resumed the SAME
-// remote A2A contextID (multi-turn dispatch). A per-node identity must keep this
-// working - unique across nodes, but stable across a node's rounds.
+// still carry the first draft, which only happens when the node resumed the SAME remote A2A contextID (multi-turn dispatch). A per-node identity must keep this working - unique across nodes, but stable across a node's rounds.
 type reviseStub struct {
 	mu       sync.Mutex
 	calls    int
@@ -73,8 +71,7 @@ func (j *failThenPassJudge) GenerateContent(_ context.Context, _ *model.LLMReque
 
 // TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds: the per-node identity
 // must stay STABLE across a node's judge/revise rounds - the revise dispatch has
-// to land back in the node's own remote A2A session (carrying the draft it is
-// revising), not a fresh one.
+// to land back in the node's own remote A2A session (carrying the draft it is revising), not a fresh one.
 func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
 	sessions := session.InMemoryService()
 	stub := &reviseStub{}

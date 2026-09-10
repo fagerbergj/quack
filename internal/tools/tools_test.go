@@ -181,10 +181,9 @@ func TestCrawl4AIMarkdownFitFallsBackToRaw(t *testing.T) {
 	}
 }
 
-// TestFetchViaRenderFailureDegrades: a crawl4ai 500 on a page the direct GET could
-// reach (but which had no readable text without a browser) must not fail the whole
-// fetch - it degrades to an honest, clearly-marked render-unavailable result, with
-// a WARN logged, so one flaky dynamic page doesn't sink a research node.
+// TestFetchViaRenderFailureDegrades: a crawl4ai 500 on a page the direct GET
+// could reach (but which had no readable text without a browser) must not fail
+// the whole fetch - it degrades to an honest, clearly-marked render-unavailable result with a WARN logged, so one flaky dynamic page doesn't sink a research node.
 func TestFetchViaRenderFailureDegrades(t *testing.T) {
 	render := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "Page.content: page is navigating and changing the content", http.StatusInternalServerError)
@@ -316,9 +315,8 @@ func TestSearchWebParsesResults(t *testing.T) {
 }
 
 // SearXNG answers HTTP 200 even when every upstream engine 429s, listing the
-// failures only in unresponsive_engines. searchWeb must turn an all-failed,
-// zero-result search into an error so the agent sees the rate limit instead of a
-// silently empty list.
+// failures only in unresponsive_engines - searchWeb must turn an all-failed,
+// zero-result search into an error so the agent sees the rate limit instead of a silently empty list.
 func TestSearchWebSurfacesRateLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"results":[],"unresponsive_engines":[

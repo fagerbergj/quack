@@ -49,9 +49,8 @@ export const FlatNonTimeSort: Story = {
 }
 
 // #1266 regression check: at <600px the date gutter collapses (the row's own
-// relative-time chip carries it) and the vote control moves into the
-// metadata row, so the text column isn't squeezed to a couple of words wide.
-// The frame IS the simulated device width, like Composer's MobileViewport.
+// relative-time chip carries it) and the vote control moves into the metadata
+// row, so the text column isn't squeezed to a couple of words wide. The frame IS the simulated device width, like Composer's MobileViewport.
 export const MobileViewport: Story = {
   args: {
     memories: [

@@ -109,13 +109,9 @@ describe('run-model reducers', () => {
     expect(runs).toBe(before)
   })
 
-  // #379: appendRunToolCall/fillRunToolResult/appendRunThinking used to spread
-  // `run.activity` on every single event - O(run length) work per event, O(N²)
-  // over a run of N events. They now mutate the array in place, so the same
-  // array instance is reused across every append/fill rather than a fresh copy
-  // being allocated each time. Pin that directly: the activity array reference
-  // never changes across N events, which is only possible if events are O(1)
-  // amortized (a per-event copy would produce a new array reference each time).
+  // #379: append/fill used to copy `run.activity` on every event - O(N^2)
+  // over a run. They now mutate in place; pin that the array REFERENCE never
+  // changes across N events, which only O(1) per-event work allows (a copy would change it each time).
   it('appends/fills activity in place - no per-event copy of prior entries', () => {
     let runs: AgentRun[] = startRun([], { runId: 'r1', agent: 'w', stage: 'worker' })
     const activityRef = run(runs, 'r1').activity

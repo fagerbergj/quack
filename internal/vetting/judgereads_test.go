@@ -4,9 +4,7 @@ import "testing"
 
 // The bug (#359): a judge scored an exploration answer 100% by rationalizing
 // "the ledger shows they read exa.go" when the ledger was empty and the worker
-// had web_fetched the file instead. A PASS earned without opening anything has
-// verified nothing, so the verdict is discarded and re-judged once. A FAIL
-// without reading is conservative, not dangerous, and is left alone.
+// had web_fetched the file instead. A PASS earned without opening anything has verified nothing, so the verdict is discarded and re-judged once. A FAIL without reading is conservative, not dangerous, and is left alone.
 func TestUnreadPass(t *testing.T) {
 	withTools := func(reads int64) *readCounter {
 		c := &readCounter{hadTools: true}

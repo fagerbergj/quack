@@ -49,8 +49,7 @@ func (h *Handler) sessionUser(ctx context.Context, chatID string) string {
 
 // titleInstruction is deliberately blunt about the failure mode it guards
 // against (#1124): a model given a genuine question as its only input will,
-// left to its own judgment, sometimes just ANSWER it instead of titling it -
-// this is the prompt-side half of the fix; sanitizeTitle is the other half.
+// left to its own judgment, sometimes just ANSWER it instead of titling it - this is the prompt-side half of the fix; sanitizeTitle is the other half.
 const titleInstruction = "Generate a short chat title for the message below - do NOT answer it. " +
 	"At most 8 words, plain text, one line, no markdown (no #, *, `, quotes, or punctuation at the end)."
 
@@ -99,8 +98,7 @@ func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, 
 
 // fallbackTitleWords caps the fallback title (see fallbackTitle) at this
 // many words of the user's own request - short enough to read as a title,
-// long enough to be recognizable. store.UpdateTitle's MaxTitleLen is the
-// last-resort character backstop for whatever this or the titler produces.
+// long enough to be recognizable; store.UpdateTitle's MaxTitleLen is the last-resort character backstop for whatever this or the titler produces.
 const fallbackTitleWords = 8
 
 // fallbackTitle derives a short title straight from what the user asked,
@@ -159,15 +157,12 @@ func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string
 
 // markdownTitleChars are stripped from a titler's raw output - a model that
 // ignores titleInstruction's "no markdown" clause tends to hand back a
-// heading/emphasis-decorated fragment of its own answer (#1124's QA
-// evidence: "**Researcher Node:**\nIn a write-ahead-log...").
+// heading/emphasis-decorated fragment of its own answer (#1124's QA evidence: "**Researcher Node:**\nIn a write-ahead-log...").
 var markdownTitleChars = strings.NewReplacer("#", "", "*", "", "`", "", "_", "")
 
 // sanitizeTitle turns a titler's raw response into something safe to show as
 // a title, or "" if nothing usable survives (the caller then falls back to
-// fallbackTitle - #1124). A model that answers instead of titling produces
-// multiple lines and/or markdown; a compliant one-line, plain-text, ≤8-word
-// response passes through untouched but for whitespace.
+// fallbackTitle - #1124); a model that answers instead of titling produces multiple lines and/or markdown, while a compliant one-line, plain-text, ≤8-word response passes through untouched but for whitespace.
 func sanitizeTitle(raw string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(raw), "\n") // first line only
 	line = strings.TrimSpace(markdownTitleChars.Replace(line))
@@ -193,10 +188,7 @@ var errInvalidStatus = errors.New("invalid status")
 
 // chatsScopeFor reconciles status (the current API, repeatable/multi-select)
 // with the deprecated show_archived bool: status wins when given; otherwise
-// show_archived=true maps to {active,archived} and false/absent to {active},
-// its pre-#809 behavior. Order in the status list is irrelevant - it's
-// collapsed into two flags, so ?status=active&status=archived and the
-// reverse order produce the identical scope (and page token).
+// show_archived=true maps to {active,archived} and false/absent to {active}, its pre-#809 behavior. Order in the status list is irrelevant - it's collapsed into two flags, so ?status=active&status=archived and the reverse order produce the identical scope (and page token).
 func chatsScopeFor(params schema.ListChatsParams) (store.ChatsScope, error) {
 	if params.Status != nil {
 		if len(*params.Status) == 0 {
@@ -223,11 +215,7 @@ func chatsScopeFor(params schema.ListChatsParams) (store.ChatsScope, error) {
 
 // ListChats is a single table read (#738: status is a stamp on the chat row - see
 // store.StampRunOutcome - plus cheap in-memory hub/queue checks, not a per-chat DB read).
-// It's also a conditional GET: an unchanged page costs a 304 with no body, so the SPA's
-// 5s poll is cheap on the wire when nothing changed (still no TTL - every poll reaches
-// this handler and revalidates against the live rows). The ETag is hashed from the
-// marshaled page body, which embeds NextPageToken, so it varies with page token and
-// limit as well as content - a stale ETag from a different page never reads as a match.
+// It's also a conditional GET: an unchanged page costs a 304 with no body, so the SPA's 5s poll is cheap on the wire when nothing changed (still no TTL - every poll reaches this handler and revalidates against the live rows). The ETag is hashed from the marshaled page body, which embeds NextPageToken, so it varies with page token and limit as well as content - a stale ETag from a different page never reads as a match.
 func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schema.ListChatsParams) {
 	limit := 0
 	if params.Limit != nil {
@@ -629,23 +617,17 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 // attachmentArtifactKind is the generic blob kind (#1090 §4.3, already
 // registered by internal/vetting/reviewrecord.go) chat attachments are saved
-// under, so the artifacts API lists them with kind/class/lineage set instead
-// of null (#1126).
+// under, so the artifacts API lists them with kind/class/lineage set instead of null (#1126).
 const attachmentArtifactKind = "bytes"
 
 // attachmentHintPrefix keeps a user-uploaded attachment's id ("bytes:upload-
 // <filename>") out of the dispatch input-artifact namespace ("bytes:<name>",
-// internal/serve/extensions.go's readExtInputArtifact/writeExtInputArtifact)
-// - both share the same "bytes" kind and chat session, so an upload named
-// e.g. "pull" or "files" would otherwise silently collide with (and
-// overwrite) an extension's own dispatch input of the same name (#1208
-// review).
+// internal/serve/extensions.go's readExtInputArtifact/writeExtInputArtifact) - both share the same "bytes" kind and chat session, so an upload named e.g. "pull" or "files" would otherwise silently collide with (and overwrite) an extension's own dispatch input of the same name (#1208 review).
 const attachmentHintPrefix = "upload-"
 
 // saveAttachment durably stores one uploaded file's bytes as a recordstore
 // blob artifact and returns a lightweight reference part
-// (internal/artifactref) - never the bytes - to carry through plans and
-// session events instead.
+// (internal/artifactref) - never the bytes - to carry through plans and session events instead.
 func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, name string, data []byte, mimeType string) (*genai.Part, error) {
 	if h.artifacts == nil {
 		return nil, fmt.Errorf("no artifact service configured")
@@ -661,8 +643,7 @@ func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, na
 
 // recoverRun keeps a panicking run from taking the process with it. All three
 // run goroutines outlive the HTTP request, so chi's Recoverer never sees them -
-// the gap that made #1033 fatal. Registered FIRST so it unwinds LAST, covering
-// panics raised by the cleanup defers themselves.
+// the gap that made #1033 fatal. Registered FIRST so it unwinds LAST, covering panics raised by the cleanup defers themselves.
 func recoverRun(chatID schema.ChatID, turnID string) {
 	if r := recover(); r != nil {
 		slog.Error("chat run panicked; run abandoned, process survives",
@@ -680,7 +661,6 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
 		defer recoverRun(chatID, turnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
@@ -710,9 +690,7 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 		if title == "" {
 			// Titler unavailable/errored/empty (nil model, timeout, a
 			// non-compliant response StripThinking left blank) - never leave
-			// the chat titleless forever, and never let a later fallback
-			// reach for the run's ANSWER (#1124): derive a short title from
-			// what the user actually asked.
+			// the chat titleless forever, and never let a later fallback reach for the run's ANSWER (#1124): derive a short title from what the user actually asked.
 			title = fallbackTitle(message)
 			if title == "" {
 				return
@@ -734,8 +712,7 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 
 	// res.Step is the same per-event bookkeeping runlog.Drive uses for the SDK
 	// extension dispatch path - REST can't range through Drive directly (it
-	// interleaves trySendTitle and aborts immediately on error), so it calls
-	// the shared step function instead of hand-rolling its own copy.
+	// interleaves trySendTitle and aborts immediately on error), so it calls the shared step function instead of hand-rolling its own copy.
 	var res runlog.DriveResult
 	for ev, err := range h.orch.Run(runCtx, h.sessionUser(runCtx, chatID), chatID, orchestrator.SourceApp, message, attachments) {
 		trySendTitle()
@@ -777,9 +754,7 @@ func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, c
 
 // loadPlanNode is the shared prologue for the node lifecycle endpoints:
 // resolve the chat's latest plan, 404 unless nodeID is actually in it
-// (GetDagNode returns (nil, nil) for a missing row, so the row alone cannot
-// prove existence), and read the persisted status (missing row = queued).
-// ok=false means the response has been written.
+// (GetDagNode returns (nil, nil) for a missing row, so the row alone cannot prove existence), and read the persisted status (missing row = queued). ok=false means the response has been written.
 func (h *Handler) loadPlanNode(w http.ResponseWriter, r *http.Request, chatID, nodeID string) (dp *store.DagPlan, dn *store.DagNode, current dag.NodeStatus, ok bool) {
 	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
 	if err != nil || dp == nil {
@@ -907,10 +882,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 	case dag.StatusRunning:
 		// paused → running: a fresh re-run reusing the plan's stored outputs.
 		// A node parked awaiting_input must go through StartNode instead: its
-		// worker's ADK session (internal/agent.WorkerSessionID) survives the
-		// pause on purpose (#A2) with an unanswered function call at its tail,
-		// and retryNodeAsync's fresh dispatch would land in that SAME session
-		// without ever answering it, corrupting the history it appends to.
+		// worker's ADK session (internal/agent.WorkerSessionID) survives the pause on purpose (#A2) with an unanswered function call at its tail, and retryNodeAsync's fresh dispatch would land in that SAME session without ever answering it, corrupting the history it appends to.
 		if current == dag.StatusNeedsInput || (dn != nil && dag.PauseReason(dn.PauseReason) == dag.PauseAwaitingInput) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is awaiting an answer; use the start endpoint with the answer instead of retry",
@@ -951,8 +923,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 
 // StartNode is the explicit per-node "start" transition (#962): queued or
 // paused -> running. For a node paused awaiting_input, body.Content is the
-// answer to its parked question, delivered the same way SendChatMessage
-// delivers a chat-level answer.
+// answer to its parked question, delivered the same way SendChatMessage delivers a chat-level answer.
 func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.NodeStartBody
 	if r.Body != nil {
@@ -1132,23 +1103,8 @@ func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
 }
 
 // startNodeAsync starts (or resumes) nodeID in background via
-// Orchestrator.StartNode - a fresh dispatch from queued, or a re-entry at the
-// node's last gate boundary from paused, delivering message as the parked
-// question's answer when the node paused awaiting_input. Progress publishes
-// through the same hub as retryNodeAsync.
-//
-// Returns whether it dispatched. false means a run is already dispatched for
-// this chat or this node is already live (a pause is cooperative: the
-// persisted row can say "paused" while the first run is still executing) -
-// the caller must 409 rather than double-dispatch. Reset, RegisterRun and
-// MarkRunActive all happen here, synchronously, before returning - like
-// startRun, "so cancel can never miss the run": registering inside the
-// spawned goroutine left a window where a shutdown drain's
-// hub.ActiveChatIDs() snapshot, taken right after this function returns,
-// could run before the goroutine reached RegisterRun and silently never wait
-// for or cancel this dispatch. Reset runs before RegisterRun so a subscriber
-// landing in the start window never reads the previous run's (possibly
-// terminal) events off the hub or the durable log (#audit-5).
+// Orchestrator.StartNode - a fresh dispatch from queued, or a re-entry at the node's last gate boundary from paused, delivering message as the parked question's answer when the node paused awaiting_input. Progress publishes through the same hub as retryNodeAsync.
+// Returns whether it dispatched. false means a run is already dispatched for this chat or this node is already live (a pause is cooperative: the persisted row can say "paused" while the first run is still executing) - the caller must 409 rather than double-dispatch. Reset, RegisterRun and MarkRunActive all happen here, synchronously, before returning - like startRun, "so cancel can never miss the run": registering inside the spawned goroutine left a window where a shutdown drain's hub.ActiveChatIDs() snapshot, taken right after this function returns, could run before the goroutine reached RegisterRun and silently never wait for or cancel this dispatch. Reset runs before RegisterRun so a subscriber landing in the start window never reads the previous run's (possibly terminal) events off the hub or the durable log (#audit-5).
 func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message string) bool {
 	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
 		return false
@@ -1160,7 +1116,6 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
@@ -1213,7 +1168,6 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
@@ -1333,9 +1287,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 
 	// DAG turns: the answer bubble carries the terminal node's OUTPUT - what
 	// the live stream rendered (chatStore's liveDagFinalText) - not the
-	// orchestrator's planning narration. Persisting that narration made a
-	// reload swap the bubble for the chatter the live view already discards,
-	// so a review read differently after refresh than it did live.
+	// orchestrator's planning narration; persisting that narration made a reload swap the bubble for the chatter the live view already discards, so a review read differently after refresh than it did live.
 	bubbleText := tc.AsstText
 	if planOK {
 		if out := terminalNodeOutput(planData, tc.Nodes); out != "" {
@@ -1454,8 +1406,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 
 // Converts persisted store.DagNode into wire DagNodeState. Shared by buildTurn and UpdateNodeStatus.
 // Normalizes the legacy needs_input DB spelling to the one wire vocabulary
-// the SPA sees: paused, with pause_reason awaiting_input - dag.IsPaused
-// covers both spellings; the DB column itself is untouched.
+// the SPA sees: paused, with pause_reason awaiting_input - dag.IsPaused covers both spellings; the DB column itself is untouched.
 func dagNodeState(n store.DagNode) schema.DagNodeState {
 	status := dag.NodeStatus(n.Status)
 	reason := n.PauseReason
@@ -1551,10 +1502,7 @@ func (h *Handler) chatTotalTokens(ctx context.Context, chatID string) int64 {
 
 // Builds a ChatSummary from the chat row alone: queued/running are cheap in-memory checks,
 // everything else is the stamp StampRunOutcome left at the last run's end - no turns/session
-// read per chat (#738; that per-chat read is what GetChat's chatStatus below still does,
-// which is fine there since GetChat already loads turns for the full detail body).
-// totalTokens is the chat's compact token count for the sidebar (see
-// ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
+// read per chat (#738; that per-chat read is what GetChat's chatStatus below still does, which is fine there since GetChat already loads turns for the full detail body). totalTokens is the chat's compact token count for the sidebar (see ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
 func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary {
 	status, pendingQuestion := h.liveOrStampedStatus(c)
 	s := schema.ChatSummary{
@@ -1580,8 +1528,7 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary 
 
 // liveOrStampedStatus resolves queued/running live, else the chat row's stamped outcome.
 // A non-empty ActiveTurnID with no live signal means the run that set it died before
-// StampRunOutcome could clear it - report failed rather than trust a stale idle/needs_input
-// stamp from a run before that one (#738 test 3; single-instance Hub, see stream.NewHub).
+// StampRunOutcome could clear it - report failed rather than trust a stale idle/needs_input stamp from a run before that one (#738 test 3; single-instance Hub, see stream.NewHub).
 func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string) {
 	if h.orch.Queued(c.ID) {
 		return schema.ChatStatusQueued, nil
@@ -1605,8 +1552,7 @@ func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string)
 
 // Computes a chat's LIVE derived status: queued (waiting on max_active_runs), running (hub
 // has a live run), needs_input (prior events end on an unanswered question), failed (last
-// DAG node failed, no answer), or idle. Used by GetChat, which loads turns regardless for
-// the detail body, so this per-chat computation costs nothing extra there.
+// DAG node failed, no answer), or idle. Used by GetChat, which loads turns regardless for the detail body, so this per-chat computation costs nothing extra there.
 func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
 	if h.orch.Queued(chatID) {
 		return schema.ChatStatusQueued, nil
@@ -1630,8 +1576,7 @@ func (h *Handler) terminalStatus(ctx context.Context, chatID string, turns []sto
 
 // stampRunOutcome persists a finished run's terminal status on the chat row so ListChats can
 // read it directly (#738). Call at every run-end path (defer, so it fires on error too) -
-// only a hard process crash skips it, and ActiveTurnID (MarkRunActive) covers that case.
-// Detached from parent so a mid-run cancel can't also cancel the stamp write.
+// only a hard process crash skips it, and ActiveTurnID (MarkRunActive) covers that case. Detached from parent so a mid-run cancel can't also cancel the stamp write.
 func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()

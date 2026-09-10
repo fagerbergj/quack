@@ -9,9 +9,7 @@ import (
 
 // TestUnregisterMemSession_WarnsWhenNeverConnected pins #640's observability
 // requirement: a session that was registered (the surface offered) but never
-// saw a real request (MarkMemSessionConnected never called) must warn loudly
-// on teardown - the silent "offered but unreachable" gap that let the #628
-// rename survive a full day of dogfooding.
+// saw a real request (MarkMemSessionConnected never called) must warn loudly on teardown - the silent "offered but unreachable" gap that let the #628 rename survive a full day of dogfooding.
 func TestUnregisterMemSession_WarnsWhenNeverConnected(t *testing.T) {
 	var buf bytes.Buffer
 	restore := slog.Default()
@@ -48,9 +46,7 @@ func TestUnregisterMemSession_SilentWhenConnected(t *testing.T) {
 
 // TestUnregisterAdvisorThread_FiresNodeSessionClosedHook pins the acp/vetting
 // seam a pinned ACP process's cleanup rides on (#1006 perf): every advisor
-// thread teardown - not just the ones dag/graph.go happens to exercise - must
-// reach NodeSessionClosed with the exact token, or a pinned subprocess for
-// that node leaks forever with nothing left to evict it.
+// thread teardown - not just the ones dag/graph.go happens to exercise - must reach NodeSessionClosed with the exact token, or a pinned subprocess for that node leaks forever with nothing left to evict it.
 func TestUnregisterAdvisorThread_FiresNodeSessionClosedHook(t *testing.T) {
 	old := NodeSessionClosed
 	defer func() { NodeSessionClosed = old }()
@@ -82,9 +78,7 @@ func TestUnregisterAdvisorThread_NilHookDoesNotPanic(t *testing.T) {
 
 // TestUnregisterMemSession_BackstopDoubleCallDoesNotDoubleWarn pins the
 // dag.buildGateNodes pattern: node.go's own explicit unregister plus a
-// deferred backstop call both target the same secret. The second call must
-// be a true no-op, not a second (and misleading, since it always finds the
-// registry already cleared) never-connected warning.
+// deferred backstop call both target the same secret. The second call must be a true no-op, not a second never-connected warning (always finding the registry already cleared).
 func TestUnregisterMemSession_BackstopDoubleCallDoesNotDoubleWarn(t *testing.T) {
 	var buf bytes.Buffer
 	restore := slog.Default()

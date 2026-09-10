@@ -157,8 +157,7 @@ func TestApplyOutcome_Invalidate(t *testing.T) {
 
 // TestApplyOutcome_Reinforce covers design doc §5/§7 case 2 plus the sticky
 // invalidation rule: reinforce bumps unverified→reinforced and 0→1, a second
-// reinforce bumps to ×2, and an already-invalidated memory is skipped even
-// when its id is explicitly named (recalled-set semantics, epic #1255 P1).
+// reinforce bumps to ×2, and an already-invalidated memory is skipped even when its id is explicitly named (recalled-set semantics, epic #1255 P1).
 func TestApplyOutcome_Reinforce(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -368,10 +367,9 @@ func TestApplyVotes_NetScoreInvalidates(t *testing.T) {
 	}
 }
 
-// TestApplyVotes_DuplicateVoteForSameMemoryCollapsesToOne covers the
-// "duplicate votes for the same memory in one round" edge case: a judge
-// that names the same id twice in one submit_verdict call must not double
-// count - only the last vote applies.
+// TestApplyVotes_DuplicateVoteForSameMemoryCollapsesToOne covers the "duplicate votes
+// for the same memory in one round" edge case: a judge that names the same id twice
+// in one submit_verdict call must not double count - only the last vote applies.
 func TestApplyVotes_DuplicateVoteForSameMemoryCollapsesToOne(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -424,14 +422,8 @@ func TestApplyVotes_SkipsAlreadyInvalidated(t *testing.T) {
 	}
 }
 
-// TestApplyOutcome_ReinforceKeepsVoteScoreInvariant covers the #1257 review
-// finding: with a memory already carrying both an upvote and a downvote
-// (vote_score 0), a merged outcome's reinforce must land vote_score at
-// upvotes-downvotes (1), not upvotes+1 (2) or vote_score+1 (1, coincidentally
-// right here - the divergence only shows once downvotes != 0, which this
-// case exercises). reinforcedVoteScore is the one function both backends
-// call for this, so pinning it once here (sqlite) covers both backends
-// without needing the live qdrant harness (qdranttest_test.go, #1268).
+// TestApplyOutcome_ReinforceKeepsVoteScoreInvariant covers the #1257 review finding: with a memory
+// already carrying both an upvote and a downvote (vote_score 0), a merged outcome's reinforce must land vote_score at upvotes-downvotes (1), not upvotes+1 (2) or vote_score+1 (1, coincidentally right here - the divergence only shows once downvotes != 0, which this case exercises). reinforcedVoteScore is the one function both backends call for this, so pinning it once here (sqlite) covers both backends without needing the live qdrant harness (qdranttest_test.go, #1268).
 func TestApplyOutcome_ReinforceKeepsVoteScoreInvariant(t *testing.T) {
 	if got := reinforcedVoteScore(1, 1); got != 1 {
 		t.Fatalf("reinforcedVoteScore(1, 1) = %d, want 1 (upvotes+1 - downvotes)", got)
@@ -514,12 +506,9 @@ func TestApplyOutcome_SkipsVerifiedOnInvalidate(t *testing.T) {
 	}
 }
 
-// TestBackfillTiers_IdempotentAcrossTwoBoots covers epic #1255 P1's
-// migration: a point with reinforcement_count>=1 backfills to tier=verified
-// with upvotes mirroring the count, a point with none backfills to
-// unverified, and a second boot (a fresh OpenSQLite against the same file)
-// touches neither again - a manually-set upvotes value from between boots
-// survives untouched.
+// TestBackfillTiers_IdempotentAcrossTwoBoots covers epic #1255 P1's migration: a point with
+// reinforcement_count>=1 backfills to tier=verified with upvotes mirroring the count, a point
+// with none backfills to unverified, and a second boot (a fresh OpenSQLite against the same file) touches neither again - a manually-set upvotes value from between boots survives untouched.
 func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "mem.db")
@@ -587,15 +576,9 @@ func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
 	}
 }
 
-// TestBackfillTiers_RealPreP1SchemaMigrates covers the #1257 review finding:
-// a genuinely pre-P1 sqlite file (created with raw SQL, none of the P1
-// columns present at all - not just a fresh AutoMigrate'd file with them
-// zero-valued) must migrate cleanly through OpenSQLite's AutoMigrate +
-// backfillTiers, with no NULL-scan error and correct values. AutoMigrate's
-// ADD COLUMN leaves existing rows NULL for a new column with no default;
-// this proves that reads back as the Go zero value, never an error, and
-// that backfill then computes tier/upvotes from reinforcement_count/status
-// exactly as if the row had always had these columns.
+// TestBackfillTiers_RealPreP1SchemaMigrates covers the #1257 review finding: a genuinely
+// pre-P1 sqlite file (created with raw SQL, none of the P1 columns present at all - not just
+// a fresh AutoMigrate'd file with them zero-valued) must migrate cleanly through OpenSQLite's AutoMigrate + backfillTiers, with no NULL-scan error and correct values. AutoMigrate's ADD COLUMN leaves existing rows NULL for a new column with no default; this proves that reads back as the Go zero value, never an error, and that backfill then computes tier/upvotes from reinforcement_count/status exactly as if the row had always had these columns.
 func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "mem.db")
@@ -654,11 +637,9 @@ func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
 	}
 }
 
-// TestInvalidateByID_HumanDelete covers design doc §7 case 5: a human delete
-// via the REST handler invalidates by id (not chat_id, unlike ApplyOutcome),
-// defaults the reason to "manual delete", writes one memory_ops row actor
-// "human" op "invalidate", excludes the point from recall, and is idempotent
-// on a second call against the same (now-invalidated) id.
+// TestInvalidateByID_HumanDelete covers design doc §7 case 5: a human delete via the REST
+// handler invalidates by id (not chat_id, unlike ApplyOutcome), defaults the reason to
+// "manual delete", writes one memory_ops row actor "human" op "invalidate", excludes the point from recall, and is idempotent on a second call against the same (now-invalidated) id.
 func TestInvalidateByID_HumanDelete(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -743,10 +724,9 @@ func TestRecall_PreLifecyclePointsReadAsValidAndUnverified(t *testing.T) {
 	}
 }
 
-// TestApply_ConsolidatorDeleteInvalidatesWithReason covers design doc §4(a):
-// the consolidator's DELETE soft-invalidates (never removes) and carries a
-// reason, and the invalidated point drops out of the reconcile neighbour set
-// so it can never be NOOP'd against or hallucination-targeted again.
+// TestApply_ConsolidatorDeleteInvalidatesWithReason covers design doc §4(a): the
+// consolidator's DELETE soft-invalidates (never removes) and carries a reason, and the
+// invalidated point drops out of the reconcile neighbour set so it can never be NOOP'd against or hallucination-targeted again.
 func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -795,10 +775,9 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 	}
 }
 
-// TestSetHumanVote_ToggleAndSwitch covers epic #1255 P4: an up vote is +1
-// upvote/verified; voting up again is a no-op (not a double-count); "none"
-// removes it back to 0; and switching directly from up to down moves the
-// vote rather than stacking it.
+// TestSetHumanVote_ToggleAndSwitch covers epic #1255 P4: an up vote is +1 upvote/verified;
+// voting up again is a no-op (not a double-count); "none" removes it back to 0; and
+// switching directly from up to down moves the vote rather than stacking it.
 func TestSetHumanVote_ToggleAndSwitch(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()

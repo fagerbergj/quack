@@ -12,9 +12,8 @@ import (
 )
 
 // #1048: emitTool.Run read only the shared stamp (e.coords), overwriting
-// whatever the caller's own ctx carried, unlike traced.go's field-by-field
-// merge (#1047) - a concurrent sibling node's stamp could steal this call's
-// attribution.
+// whatever the caller's own ctx carried, unlike traced.go's field-by-field merge
+// (#1047) - a concurrent sibling node's stamp could steal this call's attribution.
 func TestEmitTool_CtxCoordsWinOverTheSharedStamp(t *testing.T) {
 	capExp := &recordCapture{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))

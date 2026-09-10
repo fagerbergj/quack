@@ -9,8 +9,7 @@ import (
 
 // commitDelivery is the sole enforcement point (#662): a node that stages a
 // review it was never granted must have it refused, loudly - the delivery
-// function must never even see it, and the refusal must surface as a failed
-// delivery_result.
+// function must never even see it, and the refusal must surface as a failed delivery_result.
 func TestCommitDeliveryRefusesUngrantedReview(t *testing.T) {
 	var called int32
 	cfg := Config{
@@ -44,8 +43,7 @@ func TestCommitDeliveryRefusesUngrantedReview(t *testing.T) {
 
 // TestCommitDeliveryRefusesReviewWithNoVerdict is #1198 part C: a staged
 // review with an empty Event (findings/comments but no approve/
-// request_changes/comment) must never reach cfg.Deliver - GitHub has no
-// "no verdict" review, and posting one anyway is the markers-only bug.
+// request_changes/comment) must never reach cfg.Deliver - GitHub has no "no verdict" review, and posting one anyway is the markers-only bug.
 func TestCommitDeliveryRefusesReviewWithNoVerdict(t *testing.T) {
 	var called int32
 	cfg := Config{
@@ -78,11 +76,8 @@ func TestCommitDeliveryRefusesReviewWithNoVerdict(t *testing.T) {
 }
 
 // TestCommitDeliveryRefusesVerdictlessReviewButDeliversSiblingItem is #1198
-// part C's per-item shape (review comment thread 3937400235): a verdict-less
-// review is refused, but a sibling "pr" item staged in the SAME delivery
-// still reaches cfg.Deliver - the same per-item contract
-// TestCommitDeliveryDeliversGrantedItemsAlongsideRefusedOnes pins for the
-// allowed-kinds check.
+// part C's per-item shape (review comment thread 3937400235): a verdict-less review is refused, but a sibling "pr" item staged in the SAME delivery
+// still reaches cfg.Deliver - the same per-item contract TestCommitDeliveryDeliversGrantedItemsAlongsideRefusedOnes pins for the allowed-kinds check.
 func TestCommitDeliveryRefusesVerdictlessReviewButDeliversSiblingItem(t *testing.T) {
 	var got DeliveryContext
 	cfg := Config{

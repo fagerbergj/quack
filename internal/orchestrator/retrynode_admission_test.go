@@ -24,9 +24,7 @@ import (
 
 // TestRetryNodeResumedSkipsRunAdmission pins #1176: a boot resume rides
 // RetryNodeResumed, which must run even while the one run slot is held by
-// another run - the resumed node was already admitted by the process that
-// died, and that reservation is gone, so re-acquiring here would starve new
-// work out of the admission queue forever.
+// another run - the resumed node was already admitted by the process that died, and that reservation is gone, so re-acquiring here would starve new work out of the admission queue forever.
 func TestRetryNodeResumedSkipsRunAdmission(t *testing.T) {
 	o := &Orchestrator{sessions: session.InMemoryService()}
 	o.SetMaxActiveRuns(1)

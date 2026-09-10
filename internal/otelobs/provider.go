@@ -30,8 +30,7 @@ const ServiceName = "quack"
 
 // Resource attributes for "which build, which deployment" - neither has a
 // semconv form quack can use here: v1.26 predates deployment.environment.name,
-// and release is a Langfuse field with no semantic convention at all (its
-// version field reads service.version, its release field only langfuse.release).
+// and release is a Langfuse field with no semantic convention at all (its version field reads service.version, its release field only langfuse.release).
 const (
 	DeploymentEnvironmentName = "deployment.environment.name"
 	langfuseRelease           = "langfuse.release"
@@ -39,8 +38,7 @@ const (
 
 // ChatIDKey is the input-side key callers pass to name the chat/run in scope;
 // sessionAttrs consumes it and exports only gen_ai.conversation.id (what
-// OTel-native tooling, e.g. Langfuse sessions, groups a trace by) - it never
-// reaches the span itself.
+// OTel-native tooling, e.g. Langfuse sessions, groups a trace by) - it never reaches the span itself.
 const ChatIDKey = "chat_id"
 
 // Providers holds the process-wide OTel wiring; emission-only - Grafana owns viewing.
@@ -54,17 +52,9 @@ type Providers struct {
 
 // Init builds tracer+meter+logger providers and installs globals; disabled returns no-ops.
 
-// signalURL pins the signal path instead of leaving it to the exporter's
-// default. otlp*http 1.45 stopped appending it to a path-less endpoint and
-// posts to / instead, which loses telemetry silently - and the deployed
-// endpoint is path-less (http://otel-collector:4318). An endpoint that already
-// names a path is left alone.
-// signalURL appends the OTLP signal path to an endpoint. It appends
-// unconditionally - a base URL that carries a path (Langfuse's
-// /api/public/otel) still needs /v1/traces on the end, and the old
-// path-detection rule made such endpoints unusable for every signal (#1045).
-// An endpoint already ending in the signal path is left alone so an
-// explicitly-specified full URL does not double up.
+// signalURL appends the OTLP signal path to an endpoint, unconditionally:
+// a base URL that already carries a path (Langfuse's /api/public/otel) still
+// needs /v1/traces on the end - the old path-detection rule made such endpoints unusable for every signal (#1045). An endpoint already ending in the signal path is left alone so an explicitly-specified full URL does not double up.
 func signalURL(endpoint, path string) string {
 	trimmed := strings.TrimRight(endpoint, "/")
 	if strings.HasSuffix(trimmed, path) {
@@ -162,11 +152,9 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 // tracer reads otel.GetTracerProvider() lazily so disabled config yields no-ops.
 func tracer() oteltrace.Tracer { return otel.Tracer(tracerName) }
 
-// sessionAttrs adds gen_ai.conversation.id (from the explicit chat_id attr, else
-// ctx coords - the same source EmitLog reads) and user.id, so every quack span
-// carries the session identity OTel consumers resolve traces by. The bare
-// chat_id attr callers pass is consumed here, not re-exported - gen_ai.conversation.id
-// is the one identifier that reaches the span.
+// sessionAttrs adds gen_ai.conversation.id (from the explicit chat_id attr,
+// else ctx coords - the same source EmitLog reads) and user.id, so every
+// quack span carries the session identity OTel consumers resolve traces by. The bare chat_id attr callers pass is consumed here, not re-exported - gen_ai.conversation.id is the one identifier that reaches the span.
 func sessionAttrs(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
 	c := ledger.CoordsFromContext(ctx)
 	chatID := c.ChatID

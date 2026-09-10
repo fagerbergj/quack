@@ -7,8 +7,7 @@ export type AttachmentPreview = { url: string; mime: string; name: string }
 
 // ImageThumbnail (#1138) is the one place an attached image renders: a
 // bounded, object-fit thumbnail that opens the full-size image in a native
-// <dialog> on click - shared by the composer's staged-file strip and the
-// message-bubble preview so both look and behave the same way.
+// <dialog> on click - shared by the composer's staged-file strip and the message-bubble preview so both look and behave the same way.
 function ImageThumbnail({
   src, alt, className = 'h-16 w-16',
 }: {

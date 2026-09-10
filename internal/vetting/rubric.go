@@ -22,8 +22,7 @@ func readWithFallback(path, defaultPath string) ([]byte, error) {
 
 // FromConfig resolves the gates config into a gate Config, loading the
 // constitution (optional global principles) and rubric (scoring guide) from
-// their inline values or files. Validation of the config itself happens in
-// config.validate; this just materialises the text.
+// their inline values or files. Validation of the config itself happens in config.validate; this just materialises the text.
 func FromConfig(c config.GatesConfig) (Config, error) {
 	constitution, err := loadConstitution(c)
 	if err != nil {
@@ -71,8 +70,7 @@ func loadConstitution(c config.GatesConfig) (string, error) {
 
 // loadRubric returns the rendered rubric markdown for the judge prompt, and
 // (when the source was a rubric.yaml, not a raw override) the per-criterion
-// specs the envelope needs. A planner/inline-config rubric override is
-// unstructured prose - specs is nil in that case (#941).
+// specs the envelope needs. A planner/inline-config rubric override is unstructured prose - specs is nil in that case (#941).
 func loadRubric(c config.GatesConfig) (string, map[string]criterionSpec, map[string]string, error) {
 	if r := strings.TrimSpace(c.Rubric); r != "" {
 		return r, nil, nil, nil // raw inline override - unstructured prose, no specs
@@ -110,11 +108,8 @@ func loadRubricFile(path string) (string, map[string]criterionSpec, map[string]s
 }
 
 // LoadBundleRubric looks for a rubric.yaml file in the agent bundle directory
-// and returns its rendered markdown (for callers - guidance prose, judge
-// prompt text - that only want text) plus its structured specs (nil if the
-// bundle has no rubric). "" rendered text ⇒ no per-agent rubric (not an
-// error; caller falls back to the global constitution). Resolved from disk in
-// cwd first, then the embedded copy (so an installed binary works).
+// and returns its rendered markdown (for callers - guidance prose, judge prompt text - that only want text) plus its structured specs (nil if the
+// bundle has no rubric). "" rendered text ⇒ no per-agent rubric (not an error; caller falls back to the global constitution). Resolved from disk in cwd first, then the embedded copy (so an installed binary works).
 func LoadBundleRubric(bundleDir string) (string, error) {
 	rendered, _, _, err := LoadBundleRubricSpecs(bundleDir)
 	return rendered, err

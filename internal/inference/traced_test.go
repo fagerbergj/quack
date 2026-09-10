@@ -109,10 +109,9 @@ func TestTracedModel_GenerateContentStopsEarlyOnConsumerBreak(t *testing.T) {
 	}
 }
 
-// TestTracedModel_GenerateContentRecordsGatewayFailure proves the #1105 wire:
-// a generate() error still reaches the chat+node failure tracker even though
-// ADK's own runner later swallows the returned error into an empty node
-// completion - this is the only place the real cause survives that.
+// TestTracedModel_GenerateContentRecordsGatewayFailure proves the #1105
+// wire: a generate() error still reaches the chat+node failure tracker even
+// though ADK's own runner later swallows the returned error into an empty node completion - this is the only place the real cause survives that.
 func TestTracedModel_GenerateContentRecordsGatewayFailure(t *testing.T) {
 	const chatID, node, agent = "chat-traced-1105", "write-plan", "synthesizer"
 	t.Cleanup(func() { ClearFailure(chatID, node, agent) })
@@ -172,8 +171,7 @@ func (e *usageEmbeddableStub) EmbedWithUsage(ctx context.Context, texts []string
 
 // TestTracedModel_Embed_RecordsTokenUsageInput pins the embeddings shape:
 // only token_type=input is ever recorded (no output/reasoning/cached), and a
-// call with no ctx coords falls back to defaultAgent - the same fallback rule
-// GenerateContent uses.
+// call with no ctx coords falls back to defaultAgent - the same fallback rule GenerateContent uses.
 func TestTracedModel_Embed_RecordsTokenUsageInput(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -258,10 +256,9 @@ func TestTracedModel_Embed_RecordsDuration(t *testing.T) {
 	}
 }
 
-// TestTracedModel_Embed_NoUsage_NoPanic guards the defensive path: a response
-// with no usage (PromptTokens==0, the EmbedUsage zero value) must record no
-// token/cost metric and must not panic - the same "never fabricate a zero"
-// rule recordUsageMetrics follows for a nil UsageMetadata.
+// TestTracedModel_Embed_NoUsage_NoPanic guards the defensive path: a
+// response with no usage (PromptTokens==0, the EmbedUsage zero value) must
+// record no token/cost metric and must not panic - the same "never fabricate a zero" rule recordUsageMetrics follows for a nil UsageMetadata.
 func TestTracedModel_Embed_NoUsage_NoPanic(t *testing.T) {
 	reader := newUsageTestMeter(t)
 

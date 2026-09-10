@@ -229,9 +229,7 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 // sweepAgentHome resets a user's ACP agent home (opencode.db, snapshot,
 // tool-output, log - opencode's private state, never quack's own) whole once
 // it exceeds maxBytes. The home is shared across every one of the user's
-// chats, so it has no TTL of its own; instead this only fires when
-// anyChatActiveForUser proves none of them has a round in flight, the same
-// isActive signal sweepChatScopes trusts to protect a live chat's clone.
+// chats, so it has no TTL of its own; instead this only fires when anyChatActiveForUser proves none of them has a round in flight, the same isActive signal sweepChatScopes trusts to protect a live chat's clone.
 func sweepAgentHome(ctx context.Context, jail *Jail, maxBytes int64, isActive ActiveChatFunc) (reset int, bytes int64) {
 	userEntries, err := os.ReadDir(jail.Root())
 	if err != nil {
@@ -321,12 +319,7 @@ func pruneWorktreesUnder(ctx context.Context, root string, prune WorktreePruner)
 
 // RemoveAllForce deletes path, restoring write permission on directories
 // that deny it before retrying once. Go's module cache marks cached deps
-// 0444 and their parent dirs 0555, so a plain RemoveAll fails with EACCES on
-// unlink - the same reason `go clean -modcache` has to exist. Fast path
-// first: the chmod walk only runs once a plain removal has actually failed.
-// WalkDir never follows symlinks (a symlink's own DirEntry.IsDir() is
-// false), so a symlink inside path is skipped rather than chmod'd through to
-// whatever it points at outside the tree.
+// 0444 and their parent dirs 0555, so a plain RemoveAll fails with EACCES on unlink - the same reason `go clean -modcache` has to exist. Fast path first: the chmod walk only runs once a plain removal has actually failed. WalkDir never follows symlinks (a symlink's own DirEntry.IsDir() is false), so a symlink inside path is skipped rather than chmod'd through to whatever it points at outside the tree.
 func RemoveAllForce(path string) error {
 	err := os.RemoveAll(path)
 	if err == nil {

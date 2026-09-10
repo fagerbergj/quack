@@ -16,11 +16,9 @@ func newCancelGuarded(t *testing.T, cancelled map[string]bool) (*fakeRunnable, *
 	return inner, g.(*cancelGuard)
 }
 
-// TestCancelledNodeToolCallFailsFast is the live bug (2026-07-13): a worker deep
-// in a tool loop never reaches a gate-stage boundary, so a user cancel was
-// indistinguishable from a no-op for many minutes ("cancel and steer is seemingly
-// doing nothing"). The gate check stays the backstop; the TOOL layer is what makes
-// a cancelled node stop within ONE tool call.
+// TestCancelledNodeToolCallFailsFast: a worker deep in a tool loop never
+// reaches a gate-stage boundary, so a cancel looked like a no-op for minutes;
+// the gate check is the backstop - the TOOL layer makes a cancelled node stop within one tool call.
 func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 	cancelled := map[string]bool{}
 	inner, g := newCancelGuarded(t, cancelled)
@@ -58,10 +56,9 @@ func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 	}
 }
 
-// TestCancelGuardIgnoresUngatedCalls: a call with no advisor-thread marker (a
-// direct/un-gated invocation, an MCP call, the judge's own read tools) can't be
-// attributed to a node, so the guard must never block it - even with a predicate
-// that says "cancelled" to everything.
+// TestCancelGuardIgnoresUngatedCalls: a call with no advisor-thread marker
+// (direct/un-gated invocation, MCP, the judge's own read tools) can't be attributed
+// to a node, so the guard must never block it - even with a "cancelled" predicate.
 func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 	inner := &fakeRunnable{}
 	g, err := newCancelGuard(inner, func(string, string) bool { return true })
@@ -77,9 +74,8 @@ func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 }
 
 // TestBuildWrapsEveryToolInTheCancelGuard: the guard is applied at REGISTRATION,
-// once, to every tool a worker holds - not sprinkled through the handlers, where
-// the next tool added would silently miss it. Without Deps.NodeCancelled (an
-// un-gated build, e.g. the judge's read tools) nothing is wrapped.
+// once, to every tool a worker holds - not sprinkled through the handlers, where the
+// next tool added would silently miss it. Without Deps.NodeCancelled (un-gated build, e.g. the judge's read tools) nothing is wrapped.
 func TestBuildWrapsEveryToolInTheCancelGuard(t *testing.T) {
 	names := []string{"current_date", "ask_user"}
 

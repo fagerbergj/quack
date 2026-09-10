@@ -38,8 +38,7 @@ func noopYield(stream.SSEEvent, error) bool { return true }
 
 // TestRunPlanAsGraph_FreshRunResetsStaleReviewFanout pins #1040: an aborted
 // run's partially-populated fan-in must not survive into a later, unrelated
-// run of the same plan ID - it must neither merge the old body nor inherit
-// the old total.
+// run of the same plan ID - it must neither merge the old body nor inherit the old total.
 func TestRunPlanAsGraph_FreshRunResetsStaleReviewFanout(t *testing.T) {
 	planID := "plan-stale-" + t.Name()
 	stale := vetting.GetReviewFanout(planID, 5)
@@ -76,16 +75,12 @@ func TestRunPlanAsGraph_FreshRunResetsStaleReviewFanout(t *testing.T) {
 
 // TestRunPlanAsGraph_ResumeDoesNotResetReviewFanout pins the trap that
 // reverted #1043: a resume must NOT wipe the fan-in, or an already-staged
-// peer reviewer (not a descendant of the resumed node, so it never calls
-// Finish again) gets silently dropped from the merge.
+// peer reviewer (not a descendant of the resumed node, so it never calls Finish again) gets silently dropped from the merge.
 func TestRunPlanAsGraph_ResumeDoesNotResetReviewFanout(t *testing.T) {
 	planID := "plan-resume-" + t.Name()
 	// This test drives Finish directly rather than through the delivery path
-	// that normally calls forget() (deliverMergedReview) or the fresh-run
-	// reset buildGateNodes applies - so once it delivers, the package-level
-	// registry (vetting.reviewFanouts) keeps this exact planID's now-delivered
-	// instance forever, and go test -count>1 reruns this func with the same
-	// t.Name() and so the same planID, colliding with itself.
+	// that normally calls forget() (deliverMergedReview) or the fresh-run reset
+	// buildGateNodes applies - so once it delivers, the package-level registry (vetting.reviewFanouts) keeps this exact planID's now-delivered instance forever, and go test -count>1 reruns this func with the same t.Name() and so the same planID, colliding with itself.
 	t.Cleanup(func() { vetting.ResetReviewFanout(planID) })
 	fanout := vetting.GetReviewFanout(planID, 2)
 	fanout.Finish("r-done", vetting.StagedDelivery{Kind: "review", Event: "approve", Body: "peer already staged"}, true, false)

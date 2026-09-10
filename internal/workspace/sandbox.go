@@ -257,8 +257,7 @@ func isDir(p string) bool {
 
 // sameDevice reports whether a and b live on the same filesystem
 // (syscall.Stat_t.Dev) - the actual invariant a TMPDIR fallback must satisfy,
-// since git's hardlinking operations (clone --local, worktree add) fail with
-// EXDEV across devices. Verifies rather than assumes (#936).
+// since git's hardlinking operations (clone --local, worktree add) fail with EXDEV across devices. Verifies rather than assumes (#936).
 func sameDevice(a, b string) (bool, error) {
 	sa, err := os.Stat(a)
 	if err != nil {
@@ -293,16 +292,7 @@ func tmpArgs(caps Caps) []string {
 
 // homeTmpDir returns caps.ScratchDir (created on demand) when the caller has
 // scoped one - a sandboxed worker's own per-node tmp, see Jail.ScratchDir -
-// else falls back to the shared caps.HomeDir/tmp (created on demand),
-// verified against caps.WorkRoot's device (sameDeviceHook) so a HomeDir that
-// turns out to live on a different filesystem is rejected rather than handed
-// out as TMPDIR (#936). Last resort before "": a scratch dir derived from
-// caps.WorkRoot itself (workRootTmpDir) - same filesystem as the workspace by
-// construction, so hardlinking git ops and exec-from-TMPDIR both work even
-// when HOME lives on another device. "" when nothing usable is derivable -
-// the caller warns and falls back to a shared /tmp. The ScratchDir path is
-// NOT re-verified: it is already the workspace-scoped dir (Jail.ScratchDir
-// under /workspace), so this is the common, already-correct case, unchanged.
+// else falls back to the shared caps.HomeDir/tmp (created on demand), verified against caps.WorkRoot's device (sameDeviceHook) so a HomeDir that turns out to live on a different filesystem is rejected rather than handed out as TMPDIR (#936). Last resort before "": a scratch dir derived from caps.WorkRoot itself (workRootTmpDir) - same filesystem as the workspace by construction, so hardlinking git ops and exec-from-TMPDIR both work even when HOME lives on another device. "" when nothing usable is derivable - the caller warns and falls back to a shared /tmp. The ScratchDir path is NOT re-verified: it is already the workspace-scoped dir (Jail.ScratchDir under /workspace), so this is the common, already-correct case, unchanged.
 func homeTmpDir(caps Caps) string {
 	if caps.ScratchDir != "" {
 		if err := os.MkdirAll(caps.ScratchDir, 0o700); err != nil {
@@ -338,11 +328,7 @@ const workRootTmpDirName = ".quack-tmp"
 
 // workRootTmpDir is homeTmpDir's last resort: a scratch dir INSIDE the
 // node's own work root, on the workspace filesystem by construction. Skipped
-// for a ReadOnly node (its tree must stay wholly immutable - but every ACP
-// node, read-only included, already gets Caps.ScratchDir from resolveNode,
-// so this branch never fires for them). Untracked inside a cloned repo is
-// acceptable: git push moves committed refs only, and the alternative was a
-// shared /tmp that breaks hardlinks (EXDEV) and may be noexec.
+// for a ReadOnly node (its tree must stay wholly immutable - but every ACP node, read-only included, already gets Caps.ScratchDir from resolveNode, so this branch never fires for them). Untracked inside a cloned repo is acceptable: git push moves committed refs only, and the alternative was a shared /tmp that breaks hardlinks (EXDEV) and may be noexec.
 func workRootTmpDir(caps Caps) string {
 	if caps.WorkRoot == "" || caps.ReadOnly {
 		return ""
@@ -482,16 +468,13 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 	}
 	// A linked git worktree (dag's read-only-node isolation) also needs its
 	// parent clone's .git - writable only for its OWN gitdir, read-only for the
-	// shared store (see worktreeGrants). Checked on both work and dir since a
-	// check's workdir can be a subdirectory of the node's own root.
+	// shared store (see worktreeGrants). Checked on both work and dir since a check's workdir can be a subdirectory of the node's own root.
 	wtRW, wtRO := worktreeGrants(work, dir)
 	rw = append(rw, wtRW...)
 	rw = append(rw, landlockTmpDir(caps))
 	// /dev RW (not RO): DAC still governs which device nodes actually do
 	// anything (an agent gains no reach a world-writable /dev/null didn't
-	// already offer), and `go vet` empirically OPENS /dev/null for WRITE
-	// (observed: "go: ... open /dev/null: permission denied" under an RO
-	// grant) - see the shim confinement test.
+	// already offer), and `go vet` empirically OPENS /dev/null for WRITE (observed: "go: ... open /dev/null: permission denied" under an RO grant) - see the shim confinement test.
 	rw = append(rw, "/dev")
 
 	ro = append(ro, wtRO...)
@@ -507,16 +490,7 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 
 // gitignoreDirPatterns parses dir's own .gitignore into the directory-shaped
 // patterns buildDirGrants needs, split by real gitignore matching depth: a
-// line with no embedded "/" (a leading/trailing "/" is stripped first, e.g.
-// "node_modules", "node_modules/", "/node_modules/" all count) matches its
-// name at ANY depth - quack's own .gitignore uses exactly this bare form -
-// so it lands in bare, usable for both a configured entry's base name and
-// the top-level bonus grant. A line with an embedded "/" (e.g.
-// "frontend/dist") is anchored to that one path and lands in anchored,
-// usable only to match a configured entry by its exact relative path -
-// never as a bonus grant, since it does not name a top-level directory. A
-// glob/negated/blank/comment line is skipped rather than guessed at; this is
-// not a full gitignore matcher.
+// line with no embedded "/" (a leading/trailing "/" is stripped first, e.g. "node_modules", "node_modules/", "/node_modules/" all count) matches its name at ANY depth - quack's own .gitignore uses exactly this bare form - so it lands in bare, usable for both a configured entry's base name and the top-level bonus grant. A line with an embedded "/" (e.g. "frontend/dist") is anchored to that one path and lands in anchored, usable only to match a configured entry by its exact relative path - never as a bonus grant, since it does not name a top-level directory. A glob/negated/blank/comment line is skipped rather than guessed at; this is not a full gitignore matcher.
 func gitignoreDirPatterns(dir string) (bare, anchored map[string]bool) {
 	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if err != nil {
@@ -543,17 +517,7 @@ func gitignoreDirPatterns(dir string) (bare, anchored map[string]bool) {
 
 // buildDirGrants resolves configured (workspace.build_dirs, work-tree-
 // relative, e.g. "frontend/dist") against work's own .gitignore: an entry is
-// granted only when the repo already ignores it - by its base name matching
-// a bare pattern ("dist" matches "frontend/dist" too, same as real gitignore
-// semantics) or its full relative path matching an anchored one. Writing
-// real build output into a directory the repo does NOT ignore would pollute
-// `git status` on what is supposed to be an immutable read-only tree, so an
-// ungitignored configured entry is silently skipped (see
-// docs/configuration/workspace/index.md). Any OTHER top-level directory a
-// bare .gitignore pattern names is granted too, unconditionally - the escape
-// hatch that makes a repo with its own build-dir convention work without any
-// workspace.build_dirs config at all. No .gitignore (or none of it matches)
-// grants nothing.
+// granted only when the repo already ignores it - by its base name matching a bare pattern ("dist" matches "frontend/dist" too, same as real gitignore semantics) or its full relative path matching an anchored one. Writing real build output into a directory the repo does NOT ignore would pollute `git status` on what is supposed to be an immutable read-only tree, so an ungitignored configured entry is silently skipped (see docs/configuration/workspace/index.md). Any OTHER top-level directory a bare .gitignore pattern names is granted too, unconditionally - the escape hatch that makes a repo with its own build-dir convention work without any workspace.build_dirs config at all. No .gitignore (or none of it matches) grants nothing.
 func buildDirGrants(work string, configured []string) []string {
 	bare, anchored := gitignoreDirPatterns(work)
 	if len(bare) == 0 && len(anchored) == 0 {
@@ -565,21 +529,13 @@ func buildDirGrants(work string, configured []string) []string {
 		rel = filepath.Clean(rel)
 		// filepath.IsLocal rejects "..", an absolute path, and anything else
 		// that would walk filepath.Join(work, rel) outside work - required
-		// since the bonus loop below feeds this a bare .gitignore line
-		// VERBATIM, and that file is untrusted content in the repo under
-		// review (e.g. a malicious PR branch), not workspace config.
+		// since the bonus loop below feeds this a bare .gitignore line VERBATIM, and that file is untrusted content in the repo under review (e.g. a malicious PR branch), not workspace config.
 		if rel == "." || rel == "" || seen[rel] || !filepath.IsLocal(rel) {
 			return
 		}
 		// A build dir that is ITSELF a symlink (checked out from the repo
 		// under review, or planted by the agent using a prior grant) must
-		// never be granted: landlock resolves the granted path through the
-		// symlink and rw's its target, and bwrap's --bind-try binds the
-		// target's real directory - either way this is a full escape to
-		// wherever the symlink points, proven by
-		// TestBuildDirGrantsRejectsSymlinkedBuildDir. Lstat (not Stat) so the
-		// check itself never follows the link; a missing path is fine (it
-		// gets mkdir'd fresh by PrecreateBuildDirs).
+		// never be granted: landlock resolves the granted path through the symlink and rw's its target, and bwrap's --bind-try binds the target's real directory - either way this is a full escape to wherever the symlink points, proven by TestBuildDirGrantsRejectsSymlinkedBuildDir. Lstat (not Stat) so the check itself never follows the link; a missing path is fine (it gets mkdir'd fresh by PrecreateBuildDirs).
 		if fi, err := os.Lstat(filepath.Join(work, rel)); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 			return
 		}
@@ -605,10 +561,7 @@ func buildDirGrants(work string, configured []string) []string {
 
 // PrecreateBuildDirs makes buildDirs' gitignored entries exist, empty, under
 // dir - a landlock/bwrap RW grant can only cover a path that already exists,
-// and a read-only node can never mkdir them itself once its sandbox applies.
-// Called from tools.SetupClone/SetupWorktree, which always run before any
-// sandboxed worker starts in dir (see their own doc comments) - so this is
-// the one point a still-writable dir tree lets a mkdir land.
+// and a read-only node can never mkdir them itself once its sandbox applies. Called from tools.SetupClone/SetupWorktree, which always run before any sandboxed worker starts in dir (see their own doc comments) - so this is the one point a still-writable dir tree lets a mkdir land.
 func PrecreateBuildDirs(dir string, buildDirs []string) {
 	for _, rel := range buildDirGrants(dir, buildDirs) {
 		if err := os.MkdirAll(filepath.Join(dir, rel), 0o755); err != nil {
@@ -620,19 +573,14 @@ func PrecreateBuildDirs(dir string, buildDirs []string) {
 
 // landlockSystemDirs mirrors bwrapSystemArgs' read-only system view. Unlike
 // bwrap's per-file /etc allowlist, the whole of /etc is granted: Landlock adds
-// restrictions on TOP of ordinary DAC permissions, never loosens them, so
-// /etc/shadow stays unreadable by UID regardless. /proc is granted RO too -
-// empirically, `go build`/`git` don't need it, but Node does: without it
-// `os.cpus()` silently returns an empty array (libuv reads /proc/cpuinfo),
-// which would size npm/webpack/jest's worker pools at zero.
+// restrictions on TOP of ordinary DAC permissions, never loosens them, so /etc/shadow stays unreadable by UID regardless. /proc is granted RO too - empirically, `go build`/`git` don't need it, but Node does: without it `os.cpus()` silently returns an empty array (libuv reads /proc/cpuinfo), which would size npm/webpack/jest's worker pools at zero.
 func landlockSystemDirs() []string {
 	return []string{"/usr", "/bin", "/lib", "/lib64", "/sbin", "/etc", "/proc"}
 }
 
 // toolchainROPaths mirrors toolchainArgs (the bwrap equivalent): the
 // operator's workspace.exec_path entries, plus a bin/ entry's FHS siblings
-// (lib, libexec, share) so a prefix toolchain's binaries and their linked
-// libraries both resolve.
+// (lib, libexec, share) so a prefix toolchain's binaries and their linked libraries both resolve.
 func toolchainROPaths(caps Caps) []string {
 	var out []string
 	for _, p := range caps.ExtraPath {
@@ -653,11 +601,7 @@ func toolchainROPaths(caps Caps) []string {
 
 // landlockTmpDir is the RW tmp grant: caps.HomeDir/tmp when available
 // (homeTmpDir - shared with bwrap's tmpArgs), else the real /tmp - loudly
-// (#936), since a silent /tmp can land TMPDIR on a different device than the
-// workspace and turn into a confusing EXDEV from git much later. Landlock has
-// no mount namespace, so unlike bwrap's private tmpfs fallback this is the
-// SAME /tmp every other process on the host sees - no worse than SandboxNone
-// without an isolated HOME configured, just not private.
+// (#936), since a silent /tmp can land TMPDIR on a different device than the workspace and turn into a confusing EXDEV from git much later. Landlock has no mount namespace, so unlike bwrap's private tmpfs fallback this is the SAME /tmp every other process on the host sees - no worse than SandboxNone without an isolated HOME configured, just not private.
 func landlockTmpDir(caps Caps) string {
 	if tmp := homeTmpDir(caps); tmp != "" {
 		return tmp
@@ -714,12 +658,7 @@ func RunSandboxExecIfInvoked() {
 
 // TMPDIR for subprocesses outside RunArgv/RunPipeline (ACP). Landlock can't
 // remap /tmp so tools must be told; under bwrap the same identity-bound
-// scratch dir is what WrapArgv grants RW, and the server's own ambient TMPDIR
-// would name a path that doesn't exist inside the namespace. SandboxNone has
-// no boundary at all (ResolveSandbox already warns loudly at startup), so
-// os.TempDir() here is the same default an unsandboxed process would use
-// unset - not a hidden fallback, and it must not be swapped for a
-// caps.WorkRoot-derived path that may not exist on a dev machine (#936).
+// scratch dir is what WrapArgv grants RW, and the server's own ambient TMPDIR would name a path that doesn't exist inside the namespace. SandboxNone has no boundary at all (ResolveSandbox already warns loudly at startup), so os.TempDir() here is the same default an unsandboxed process would use unset - not a hidden fallback, and it must not be swapped for a caps.WorkRoot-derived path that may not exist on a dev machine (#936).
 func SandboxTmpDir(caps Caps) string {
 	if EnforcesBoundary(caps.Sandbox) {
 		return landlockTmpDir(caps)
@@ -734,13 +673,7 @@ const preseededGoModCache = "/usr/local/go/pkg/mod"
 
 // EnsureWritableGoModCache returns a writable GOMODCACHE under home, farmed
 // with one symlink per top-level entry of preseededGoModCache the first time
-// it's called for this home dir. GOMODCACHE itself must be writable - Go
-// writes cache/lock (and any module the preseed lacks) even when `go test`
-// downloads nothing - so pointing GOMODCACHE straight at the RO preseed
-// fails; a real writable dir with the preseed farmed in gives both: writes
-// land as real files, reads of already-cached modules hit the real content
-// through the symlinks. Best-effort: no preseed (dev machine) or an already-
-// populated dir is not an error, just fewer/no symlinks added.
+// it's called for this home dir. GOMODCACHE itself must be writable - Go writes cache/lock (and any module the preseed lacks) even when `go test` downloads nothing - so pointing GOMODCACHE straight at the RO preseed fails; a real writable dir with the preseed farmed in gives both: writes land as real files, reads of already-cached modules hit the real content through the symlinks. Best-effort: no preseed (dev machine) or an already-populated dir is not an error, just fewer/no symlinks added.
 func EnsureWritableGoModCache(home string) string {
 	dir := filepath.Join(home, "go", "pkg", "mod")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -793,14 +726,7 @@ func ChildPath(caps Caps) string {
 
 // WrapArgv: the ONE seam for callers outside RunArgv/newChildCmd (e.g. ACP).
 // Deliberately does NOT apply caps.Limits (#798, reverting #646): a one-shot
-// check's ceilings do not transfer to a long-lived agent process. Measured on
-// the live deployment, EACH limit alone stopped opencode reaching its first
-// ACP message - RLIMIT_FSIZE 1024MB against an opencode.db already at 1.27GB
-// (a WAL checkpoint extends the file, so EFBIG), and RLIMIT_AS 8192MB against
-// a V8 process that reserves a huge virtual region before it runs anything.
-// Both surfaced as the same opaque SQLite error. Any fixed FSIZE is a date
-// rather than a bound while the agent's DB grows, so this seam grants no
-// ceiling at all and the container's own quota is the boundary here.
+// check's ceilings do not transfer to a long-lived agent process. Measured on the live deployment, EACH limit alone stopped opencode reaching its first ACP message - RLIMIT_FSIZE 1024MB against an opencode.db already at 1.27GB (a WAL checkpoint extends the file, so EFBIG), and RLIMIT_AS 8192MB against a V8 process that reserves a huge virtual region before it runs anything. Both surfaced as the same opaque SQLite error. Any fixed FSIZE is a date rather than a bound while the agent's DB grows, so this seam grants no ceiling at all and the container's own quota is the boundary here.
 func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) []string {
 	if len(argv) == 0 || !EnforcesBoundary(caps.Sandbox) {
 		if caps.ReadOnly {
@@ -819,19 +745,14 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 
 // EnforcesBoundary reports whether mode gives a WrapArgv'd child an
 // OS-enforced path boundary (work tree per caps.ReadOnly, $HOME/$TMPDIR
-// writable, nothing else reachable). The gate on capabilities that REST on
-// that boundary - acp.allow_clone and the wide external_directory it needs,
-// see serve.opencodeEnv. SandboxNone never qualifies.
+// writable, nothing else reachable). The gate on capabilities that REST on that boundary - acp.allow_clone and the wide external_directory it needs, see serve.opencodeEnv. SandboxNone never qualifies.
 func EnforcesBoundary(mode SandboxMode) bool {
 	return mode == SandboxLandlock || mode == SandboxBwrap
 }
 
 // bwrapWrapArgv gives the ACP child the SAME grants landlockGrants computes,
 // as bwrap mounts: rw as --bind-try, ro as --ro-bind-try, both at IDENTITY
-// paths. Not childArgv's SandboxWorkRoot remap - the ACP child exchanges
-// absolute paths with quack over JSON-RPC (session cwd out, tool-call paths
-// back), so a remapped work tree would make every path either side names
-// meaningless to the other.
+// paths. Not childArgv's SandboxWorkRoot remap - the ACP child exchanges absolute paths with quack over JSON-RPC (session cwd out, tool-call paths back), so a remapped work tree would make every path either side names meaningless to the other.
 func bwrapWrapArgv(dir string, argv []string, caps Caps, rw, ro []string) []string {
 	args := bwrapSystemArgs()
 	args = append(args, tmpArgs(caps)...)
@@ -844,9 +765,7 @@ func bwrapWrapArgv(dir string, argv []string, caps Caps, rw, ro []string) []stri
 
 // identityBinds renders grants as bwrap binds onto their own host paths,
 // SHALLOWEST FIRST: bwrap applies binds in argv order and a later mount on a
-// subpath overlays the earlier one, so ordering by depth is what makes the
-// most specific grant win (a read-only work tree nested inside a writable
-// HOME must stay read-only). -try mirrors landlock's IgnoreIfMissing.
+// subpath overlays the earlier one, so ordering by depth is what makes the most specific grant win (a read-only work tree nested inside a writable HOME must stay read-only). -try mirrors landlock's IgnoreIfMissing.
 func identityBinds(rw, ro []string) []string {
 	type bind struct{ flag, path string }
 	var binds []bind
@@ -879,12 +798,9 @@ func identityBinds(rw, ro []string) []string {
 	return args
 }
 
-// bwrapOwnedMount reports paths bwrapSystemArgs/tmpArgs already mount, which a
-// grant must NOT bind over: /proc and /dev are their own filesystem types
-// there (a host bind would leak the real PID table and device nodes back in),
-// /tmp is the private tmpfs or scratch bind, and the rest are the same
-// read-only system view landlockSystemDirs grants - bwrap's is narrower for
-// /etc (a per-file allowlist), which is stricter, not weaker.
+// bwrapOwnedMount reports paths bwrapSystemArgs/tmpArgs already mount, which
+// a grant must NOT bind over: /proc and /dev are their own filesystem types
+// there (a host bind would leak the real PID table and device nodes back in), /tmp is the private tmpfs or scratch bind, and the rest are the same read-only system view landlockSystemDirs grants - bwrap's is narrower for /etc (a per-file allowlist), which is stricter, not weaker.
 func bwrapOwnedMount(p string) bool {
 	switch p {
 	case "/proc", "/dev", "/tmp":
@@ -897,8 +813,7 @@ var warnReadOnlyUnenforcedOnce sync.Once
 
 // warnReadOnlyUnenforced (#754): a read_only agent's own subprocess (the ACP
 // path WrapArgv wraps) gets a real RO mount under landlock and bwrap (#921) -
-// sandbox: none has no boundary at all. Degrade and say so once, rather than
-// silently leaving the flag as a prompt-only claim.
+// sandbox: none has no boundary at all. Degrade and say so once, rather than silently leaving the flag as a prompt-only claim.
 func warnReadOnlyUnenforced(mode SandboxMode) {
 	warnReadOnlyUnenforcedOnce.Do(func() {
 		slog.Warn("read_only agent's own working directory is NOT read-only enforced at the OS level in this sandbox mode "+

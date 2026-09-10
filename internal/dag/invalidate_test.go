@@ -217,8 +217,7 @@ func TestRefreshedNodeTellsItsWorker(t *testing.T) {
 
 // TestStaleFlagClearedOnFreshRunKeptOnResume: a fresh run clones, so any
 // earlier signal is spent; a resume never clones, so the branch really is
-// still ahead of the tree and the flag has to survive for the first safe
-// node boundary to act on.
+// still ahead of the tree and the flag has to survive for the first safe node boundary to act on it.
 func TestStaleFlagClearedOnFreshRunKeptOnResume(t *testing.T) {
 	stub := &setupStub{}
 	ag, err := llmagent.New(llmagent.Config{Name: implementerAgent, Model: stub, Description: "impl", Instruction: "ROLE Answer."})
@@ -255,8 +254,7 @@ func TestStaleFlagClearedOnFreshRunKeptOnResume(t *testing.T) {
 
 // TestRefreshHeldWhileASiblingNodeRuns: read-only nodes work in worktrees
 // linked off the shared clone, so re-cloning it would pull the gitdir out
-// from under a sibling mid-round. The parent tree reads clean either way -
-// the sibling's edits are in its own worktree.
+// from under a sibling mid-round. The parent tree reads clean either way - the sibling's edits are in its own worktree.
 func TestRefreshHeldWhileASiblingNodeRuns(t *testing.T) {
 	e, cfg, _, calls := newInvalidateFixture(t)
 	staleSetups.Delete("c1")

@@ -5,10 +5,8 @@ interface Props { children: ReactNode }
 interface State { failed: boolean }
 
 // Wraps a React.lazy route (Memory/ExtensionHost in App.tsx): a failed chunk
-// fetch (deploy rolled the asset hashes mid-session, or the tab went
-// offline) otherwise throws past Suspense and white-screens the whole app.
-// Must be a class component - React has no hook equivalent for
-// getDerivedStateFromError/componentDidCatch.
+// fetch (deploy rolled the asset hashes mid-session, tab went offline) otherwise
+// throws past Suspense and white-screens the whole app. Must be a class component - React has no hook equivalent for getDerivedStateFromError/componentDidCatch.
 export class LazyLoadBoundary extends Component<Props, State> {
   state: State = { failed: false }
 

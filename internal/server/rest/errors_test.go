@@ -34,8 +34,7 @@ func (failingLedgerStore) MaxSeq(context.Context, string) (int64, error) {
 
 // TestErrorResponseShape is a table-driven check that every representative
 // 4xx/5xx path emits the same JSON schema.ErrorResponse shape (a non-empty
-// "error" field) with application/json content-type, never http.Error's
-// plain text - the contract finding-1 fixed openapi.yaml to declare.
+// "error" field) with application/json content-type, never http.Error's plain text - the contract finding-1 fixed openapi.yaml to declare.
 func TestErrorResponseShape(t *testing.T) {
 	cases := []struct {
 		name       string

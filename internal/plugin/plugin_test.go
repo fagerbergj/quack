@@ -41,7 +41,7 @@ func pluginRoot(t *testing.T, rootJSON, codexJSON, skillsSubdir string, skills .
 	return root
 }
 
-// Test 1 (DECIDED): root plugin.json present -> skills load from <root>/skills.
+// A root plugin.json present -> skills load from <root>/skills.
 func TestResolveSkillDirs_RootManifest(t *testing.T) {
 	root := pluginRoot(t, `{"$schema":"x","name":"acme"}`, "", "skills", "a", "b")
 	dirs := resolveSkillDirs([]string{root})
@@ -58,7 +58,7 @@ func TestResolveSkillDirs_RootManifest(t *testing.T) {
 	}
 }
 
-// Test 2 (DECIDED): no root manifest, .codex-plugin/plugin.json present with
+// No root manifest, .codex-plugin/plugin.json present with
 // an explicit "skills" field -> skills load from that path.
 func TestResolveSkillDirs_CodexManifest(t *testing.T) {
 	root := pluginRoot(t, "", `{"name":"ponytail","skills":"./skills/","interface":{"displayName":"x","weird":123}}`, "skills", "ponytail")
@@ -69,7 +69,7 @@ func TestResolveSkillDirs_CodexManifest(t *testing.T) {
 	}
 }
 
-// Test 3 (DECIDED): both present -> root plugin.json wins, the Codex manifest
+// Both manifests present -> root plugin.json wins, the Codex manifest
 // is never consulted (proven by pointing it at a skills dir that doesn't exist).
 func TestResolveSkillDirs_RootWinsOverCodex(t *testing.T) {
 	root := pluginRoot(t, `{"$schema":"x","name":"acme"}`, `{"name":"acme","skills":"./nonexistent/"}`, "skills", "a")
@@ -80,9 +80,8 @@ func TestResolveSkillDirs_RootWinsOverCodex(t *testing.T) {
 	}
 }
 
-// Test 4 (DECIDED, and original test 3: a configured root that does not
-// exist): neither manifest present -> skipped with a warning naming the
-// root; other configured plugins still load.
+// A configured root that does not exist, or has neither manifest ->
+// skipped with a warning naming the root; other configured plugins still load.
 func TestResolveSkillDirs_NeitherManifest_SkippedNotOthers(t *testing.T) {
 	bare := t.TempDir() // exists, no manifest of either kind
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
@@ -95,7 +94,7 @@ func TestResolveSkillDirs_NeitherManifest_SkippedNotOthers(t *testing.T) {
 	}
 }
 
-// Test 5 (DECIDED): a Codex skills value escaping the plugin root is refused,
+// A Codex skills value escaping the plugin root is refused,
 // the plugin skipped, not the path followed.
 func TestResolveSkillDirs_CodexSkillsEscapesRoot_Refused(t *testing.T) {
 	root := t.TempDir()
@@ -112,10 +111,9 @@ func TestResolveSkillDirs_CodexSkillsEscapesRoot_Refused(t *testing.T) {
 	}
 }
 
-// Original test 2: malformed plugin.json is skipped with a warning, other
-// configured plugins still load - and does NOT fall through to a
-// .codex-plugin manifest that happens to also be present (an existing but
-// broken root manifest is terminal, not "absent").
+// A malformed plugin.json is skipped with a warning, other configured
+// plugins still load - and does NOT fall through to a .codex-plugin manifest
+// that happens to also be present (an existing but broken root manifest is terminal, not "absent").
 func TestResolveSkillDirs_MalformedRootManifest_SkippedNoFallthrough(t *testing.T) {
 	root := pluginRoot(t, `{not valid json`, `{"name":"x","skills":"./skills/"}`, "skills", "s")
 	good := pluginRoot(t, `{"$schema":"x","name":"good"}`, "", "skills", "s")
@@ -127,7 +125,7 @@ func TestResolveSkillDirs_MalformedRootManifest_SkippedNoFallthrough(t *testing.
 	}
 }
 
-// Original test 4: zero plugins configured -> empty result, no error.
+// Zero plugins configured -> empty result, no error.
 func TestResolveSkillDirs_NoRoots(t *testing.T) {
 	if dirs := resolveSkillDirs(nil); len(dirs) != 0 {
 		t.Fatalf("dirs = %v, want empty", dirs)
@@ -145,10 +143,9 @@ func TestResolveSkillDirs_PreservesOrder(t *testing.T) {
 	}
 }
 
-// Test 6 (DECIDED): ponytail's real checkout resolves, through the Codex
-// branch, to the same skill set .agents/vendor/ponytail/skills yields today -
-// pinning the migration as behaviour-preserving. The tree is vendored in-tree,
-// so a missing skills/ dir is a real breakage, not an uninitialised checkout.
+// Ponytail's real checkout resolves, through the Codex branch, to the same
+// skill set .agents/vendor/ponytail/skills yields today - pinning the
+// migration as behaviour-preserving. The tree is vendored in-tree, so a missing skills/ dir is a real breakage, not an uninitialised checkout.
 func TestResolveSkillDirs_PonytailRealCheckout(t *testing.T) {
 	root := repoRoot(t)
 	ponytail := filepath.Join(root, ".agents", "vendor", "ponytail")

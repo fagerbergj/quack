@@ -1,25 +1,9 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
-// Expandable height-locks long content: it renders its children inside a capped
-// container and, only when they overflow that cap, adds a fade + a Show more /
-// Show less toggle. Content that fits shows no toggle. Used across the DAG view so
-// a long answer, a many-round node, or a big tool body stays scannable instead of
-// walling off the screen.
-//
-// The overflow decision is measured (scrollHeight vs the cap) on the CONTENT box -
-// never on the clamped box. Clamping changes that box's own layout (it becomes a
-// block formatting context and its full height leaves the scrolling ancestor), so
-// measuring the box we clamp feeds the decision back into its own input: measure
-// tall → clamp → measure short → unclamp → … Re-measured on every commit that
-// ping-pong is an unbounded chain of nested updates, and a streaming turn (hundreds
-// of token renders) hits React's guard - "Maximum update depth exceeded" (#185) -
-// which blanks the whole chat tree. The content box is never clamped, so its height
-// is independent of the decision, and one ResizeObserver on it covers both re-measure
-// triggers: streamed content growing, and width changes that rewrap long lines.
-//
-// The `fade` prop matches the underlying background so the gradient reads as a
-// fade-to-nothing rather than a grey bar; default is the card background.
+// Height-locks long content: children in a capped container; fade +
+// Show more / Show less toggle only on overflow (used across the DAG view so a
+// long answer or big tool body stays scannable). The decision is measured (scrollHeight vs the cap) on the CONTENT box, never the clamped box - clamping changes layout, so measuring the clamped box feeds the decision back into its own input, ping-ponging into React's max-update-depth guard on a streaming turn (#185). The content box is never clamped; one ResizeObserver on it covers both re-measure triggers (content growing, width rewrap).
 export function Expandable({
   children,
   maxHeight = 240,

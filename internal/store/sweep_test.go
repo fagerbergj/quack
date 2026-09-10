@@ -13,10 +13,7 @@ import (
 
 // TestSweepOrphanChatRows_SkipsOnceConstraintExists pins perf audit #11: once the
 // chats(id) ON DELETE CASCADE FK exists (every boot after the first), sweepOrphanChatRows
-// must issue no DELETE at all, instead of re-scanning every FK'd table for nothing.
-// Counting via a Raw callback (db.Exec goes through gorm's Raw processor, unlike Query)
-// observes the SQL that actually ran, rather than inferring it from row counts - deleting
-// 0 rows looks identical to never running.
+// must issue no DELETE at all, instead of re-scanning every FK'd table for nothing. Counting via a Raw callback (db.Exec goes through gorm's Raw processor, unlike Query) observes the SQL that actually ran, rather than inferring it from row counts - deleting 0 rows looks identical to never running.
 func TestSweepOrphanChatRows_SkipsOnceConstraintExists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "quack.db")
 	if _, err := New("sqlite", path); err != nil {
@@ -92,12 +89,7 @@ func TestSweepOrphanChatRows_RunsOnFreshDB(t *testing.T) {
 
 // TestSweepOrphanChatRows_Postgres proves HasConstraint's "Chat" field lookup - which
 // resolves to a driver-agnostic generated FK name via GORM's own relationship reflection,
-// not a literal constraint-name string - actually round-trips on Postgres, not only sqlite.
-// A false negative here would only cost the 400-510ms scan; a false positive (constraint
-// reported present when it isn't) means the sweep never runs on a first Postgres boot with
-// real orphans, which is a boot crash loop, not a slow boot (#1307's reviewer flagged this
-// exact risk). Covers both orders: pre-migration (sweep must still run) and post-AutoMigrate
-// (sweep must skip). Skips if Docker isn't reachable.
+// not a literal constraint-name string - actually round-trips on Postgres, not only sqlite: a false negative here would only cost the 400-510ms scan, but a false positive (constraint reported present when it isn't) means the sweep never runs on a first Postgres boot with real orphans, which is a boot crash loop, not a slow boot (#1307's reviewer flagged this exact risk). Covers both orders: pre-migration (sweep must still run) and post-AutoMigrate (sweep must skip); skips if Docker isn't reachable.
 func TestSweepOrphanChatRows_Postgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

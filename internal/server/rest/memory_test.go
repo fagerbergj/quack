@@ -35,10 +35,7 @@ func (fixedEmbedder) Embed(_ context.Context, texts []string) ([][]float32, erro
 
 // echoConsolidator ADDs each staged candidate verbatim as its own point - a
 // stand-in for the real consolidator LLM so Commit can write test fixtures
-// with recognizable, distinct content. Reads only the STAGED CANDIDATES
-// section of the prompt: the EXISTING MEMORIES section commit.go also sends
-// (once a bucket is non-empty) uses the same "- " line prefix, and echoing
-// those back too would re-ADD every prior fact on each subsequent Commit.
+// with recognizable, distinct content. Reads only the STAGED CANDIDATES section of the prompt: the EXISTING MEMORIES section commit.go also sends (once a bucket is non-empty) uses the same "- " line prefix, and echoing those back too would re-ADD every prior fact on each subsequent Commit.
 type echoConsolidator struct{}
 
 func (echoConsolidator) Name() string { return "echo-consolidator" }
@@ -299,10 +296,7 @@ func TestDeleteMemory_CustomReason(t *testing.T) {
 
 // With both taskMem and userMem configured, a listing merges entries from
 // both and orders the COMBINED set by timestamp - not by concatenating one
-// store's page after the other's. The four facts below interleave stores
-// (task, user, task, user) with real time gaps between commits, so a naive
-// concatenation (which would group all of one store's entries before the
-// other's) produces a visibly different order than a correct merge sort.
+// store's page after the other's. The four facts below interleave stores (task, user, task, user) with real time gaps between commits, so a naive concatenation (which would group all of one store's entries before the other's) produces a visibly different order than a correct merge sort.
 func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -388,13 +382,7 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 }
 
 // TestListMemories_SortSpansBothStores (#1266 review): `sort` must order the
-// MERGED set from both configured stores AND survive paging, not just
-// re-sort within whichever store happened to be listed first or only get
-// checked on an unpaged page 0. Timestamps are pinned via memory.SetClockForTest
-// (not the real clock) so `oldest` is unambiguous, and the store listed
-// SECOND (userMem) holds the two oldest facts - a merge that silently fell
-// back to "whichever store's page 0" or ignored sortBy (defaulting to
-// newest) both produce a different, wrong, easily-asserted order here.
+// MERGED set from both configured stores AND survive paging, not just re-sort within whichever store happened to be listed first or only get checked on an unpaged page 0. Timestamps are pinned via memory.SetClockForTest (not the real clock) so `oldest` is unambiguous, and the store listed SECOND (userMem) holds the two oldest facts - a merge that silently fell back to "whichever store's page 0" or ignored sortBy (defaulting to newest) both produce a different, wrong, easily-asserted order here.
 func TestListMemories_SortSpansBothStores(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -581,9 +569,7 @@ func TestSweepMemories_BothStoresOK(t *testing.T) {
 
 // TestSweepMemories_LaterStoreFails covers the review finding: the second
 // (user) store failing during its list phase must not discard the first
-// (task) store's already-applied report, and the response is still 200 with
-// the failure surfaced in errors. Fault injection via Store.SetListErrorForTest,
-// since the index interface is unexported outside internal/memory.
+// (task) store's already-applied report, and the response is still 200 with the failure surfaced in errors. Fault injection via Store.SetListErrorForTest, since the index interface is unexported outside internal/memory.
 func TestSweepMemories_LaterStoreFails(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -689,8 +675,7 @@ func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
 
 // TestSweepMemories_DedupeDryRun covers the REST wiring for issue #1269's
 // on-demand dedupe endpoint: {"dedupe":true} reports clusters (fixedEmbedder
-// gives every commit the same vector, so two distinct facts are still a
-// cosine-1 "duplicate" pair) without applying anything.
+// gives every commit the same vector, so two distinct facts are still a cosine-1 "duplicate" pair) without applying anything.
 func TestSweepMemories_DedupeDryRun(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)

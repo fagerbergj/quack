@@ -84,10 +84,7 @@ func originFilterKeep(c schema.ChatSummary, filter string) bool {
 
 // chatListFilters bundles the `chat list` narrowing flags. Each empty
 // field imposes no constraint; validate() rejects unrecognised values before
-// any of them reach the keep-checks below (mirrors frontend/src/lib/chatFilters.ts's
-// matchesFacets: every active facet must match, no ordering dependency).
-// archived is the odd one out: it picks the server's active/archived scope
-// (the status= query param) rather than a client-side keep-check.
+// any of them reach the keep-checks below (mirrors frontend/src/lib/chatFilters.ts's matchesFacets: every active facet must match, no ordering dependency). archived is the odd one out: it picks the server's active/archived scope (the status= query param) rather than a client-side keep-check.
 type chatListFilters struct {
 	origin   string // "", "all", "github", "direct"
 	status   string // "", or a ChatStatus value
@@ -161,11 +158,7 @@ func (f chatListFilters) keep(c schema.ChatSummary) bool {
 
 // RunChatList is `quack chat list`: a table of chats (id, title, status,
 // origin, ref, updated), or raw JSON with --json. STATUS is one of the five
-// ChatStatus values (queued/running/needs_input/failed/idle) so the row is
-// grep-able (`grep needs_input`); the pending question itself is `chat
-// show`/--json's job - this table stays narrow. filters narrows by origin,
-// status, github repo, and issue/PR type - a chat must pass every active one
-// (mirrors the web sidebar's facet filtering). Empty list points at the next step.
+// ChatStatus values (queued/running/needs_input/failed/idle) so the row is grep-able (`grep needs_input`); the pending question itself is `chat show`/--json's job - this table stays narrow. filters narrows by origin, status, github repo, and issue/PR type - a chat must pass every active one (mirrors the web sidebar's facet filtering). Empty list points at the next step.
 func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool, filters chatListFilters) error {
 	if err := filters.validate(); err != nil {
 		return err
@@ -473,9 +466,7 @@ func AssistantText(items []schema.OutputItem) string {
 		for _, part := range m.Content {
 			// OutputTextPart and ReasoningPart share the same {text, type}
 			// shape, so AsOutputTextPart() unmarshals a reasoning part
-			// without error too - check the discriminator first, or the
-			// orchestrator's raw chain-of-thought leaks in as if it were
-			// the answer (#419).
+			// without error too - check the discriminator first, or the orchestrator's raw chain-of-thought leaks in as if it were the answer (#419).
 			disc, err := part.Discriminator()
 			if err != nil || disc != string(schema.OutputText) {
 				continue

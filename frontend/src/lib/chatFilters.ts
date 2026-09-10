@@ -16,8 +16,7 @@ type FacetKey = (typeof FACET_KEYS)[number]
 
 // LABEL_FACET_PREFIX namespaces facets derived from origin.labels dimensions
 // (extension-supplied, e.g. "tags", "folder") so they can never collide with
-// the fixed FACET_KEYS above - the github-specific repo/type facets survive
-// unchanged until the GitHub extension migrates to stamping origin itself.
+// the fixed FACET_KEYS above - the github-specific repo/type facets survive unchanged until the GitHub extension migrates to stamping origin itself.
 const LABEL_FACET_PREFIX = 'label:'
 
 // originLabelDimensions lists every distinct origin.labels key present
@@ -146,9 +145,7 @@ export function computeFacets(chats: ChatSummary[]): Facet[] {
 
 // matchesFacets: a chat matches when it satisfies every facet that has an
 // active selection (AND across facets); within a facet, any selected value
-// matches (OR). An empty/absent selection for a facet imposes no constraint.
-// Iterates every key actually present in `selected` (not just FACET_KEYS) so
-// a dynamic label:<dimension> selection is enforced too.
+// matches (OR). An empty/absent selection for a facet imposes no constraint. Iterates every key actually present in `selected` (not just FACET_KEYS) so a dynamic label:<dimension> selection is enforced too.
 export function matchesFacets(chat: ChatSummary, selected: SelectedFacets): boolean {
   for (const key of Object.keys(selected)) {
     const values = selected[key]
@@ -178,11 +175,8 @@ export function filterChats(chats: ChatSummary[], state: FilterState): ChatSumma
 }
 
 // parseFilterState / serializeFilterState round-trip the search box + facet
-// selection through the URL query string (?q=…&origin=github&status=running&
-// repo=owner%2Frepo&type=pr&label%3Atags=urgent) so a filtered view is
-// shareable and bookmarkable. label:<dimension> keys are data-driven (an
-// extension's own origin.labels), so they're read/written generically rather
-// than through the fixed FACET_KEYS allowlist.
+// selection through the URL query string
+// (?q=…&origin=github&status=running&repo=owner%2Frepo&type=pr&label%3Atags=urgent) so a filtered view is shareable and bookmarkable. label:<dimension> keys are data-driven (an extension's own origin.labels), so they're read/written generically rather than through the fixed FACET_KEYS allowlist.
 export function parseFilterState(search: string): FilterState {
   const params = new URLSearchParams(search)
   const q = params.get('q') ?? ''

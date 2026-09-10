@@ -1,13 +1,6 @@
 // @vitest-environment jsdom
-//
-// Proves the #1284 fix: memo(TriggerMessage) collapses a live turn's re-renders
-// to a single real invocation of TriggerMessage's function body, as long as its
-// props (crucially `attachments`) stay referentially stable across store
-// updates. Pins the count directly on production TriggerMessage via
-// triggerMessageRenderProbe (PR #1300 review finding 2) rather than inferring
-// it from render timing - AssistantText's own useMemo chain already skips most
-// of the markdown re-parse cost regardless of TriggerMessage's memo, so a
-// duration bound measured under jsdom is too small and noisy to pin reliably.
+// #1284/#1300: memo(TriggerMessage) must collapse a live turn's re-renders to
+// one body call while props (crucially `attachments`) stay referentially stable - pinned via triggerMessageRenderProbe, not duration (jsdom timings too noisy).
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { cleanup, render, act, screen } from '@testing-library/react'
 import { useState, useMemo } from 'react'
@@ -17,10 +10,8 @@ import { AttachmentPreviews } from './components/AttachmentUI'
 afterEach(cleanup)
 beforeEach(() => { triggerMessageRenderProbe.count = 0 })
 
-// Shaped like a real GitHub-trigger PR envelope (see .quack/trigger-prompts-v2.md)
-// without committing real PR/comment text to the repo. Content size doesn't
-// matter for a render-count pin (unlike the old duration-based version), so
-// this stays a single small fixture.
+// Shaped like a real GitHub-trigger PR envelope (.quack/trigger-prompts-v2.md)
+// without committing real PR text; content size is irrelevant to a render-count pin, so one small fixture.
 const ENVELOPE = [
   '<permissions>review, comment</permissions>',
   '<deliverable>a review with inline comments and a verdict</deliverable>',
@@ -75,11 +66,9 @@ describe('TriggerMessage re-render cost (#1284)', () => {
   }, 60000)
 })
 
-// #1300 review: memo(TriggerMessage) does a default shallow prop compare, so
-// it must never hide a real attachments change - only reference equality
-// (via Chat.tsx's useMemo) may suppress a re-render, not the shape/length of
-// the new element. A same-length-but-different-content swap is the case a
-// naive custom comparator would get wrong; this pins the default comparator.
+// #1300 review: memo(TriggerMessage) does a shallow prop compare, so only
+// reference equality (via Chat.tsx's useMemo) may suppress a re-render, not
+// the new element's shape/length. Same-length, different-content swaps are what a naive comparator gets wrong.
 describe('TriggerMessage attachments prop (#1300 review)', () => {
   it('re-renders and shows new attachments when the prop changes, even at the same length', () => {
     const { rerender } = render(

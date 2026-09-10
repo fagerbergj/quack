@@ -67,9 +67,7 @@ func (f *fakeLedger) ReadEntries(_ context.Context, chatID string, fromSeq int64
 
 // metaAwareInMemory implements the optional SaveWithMeta/LoadWithMeta pair
 // over artifact.InMemoryService() so a test can read back real lineage
-// without a database - production always wraps a store that supports these
-// (internal/store.TurnAwareService); plain InMemoryService is a known
-// zero-lineage ceiling (see internal/recordstore's own test copy of this).
+// without a database (production wraps a TurnAwareService; plain InMemoryService is a known zero-lineage ceiling).
 type metaAwareInMemory struct {
 	artifact.Service
 	mu   sync.Mutex
@@ -181,12 +179,9 @@ func TestNewEditArtifactTool_DirectApply(t *testing.T) {
 	}
 }
 
-// TestNewWriteKindTools_EveryKindRegistersWithoutError: the ADK-native mirror
-// of internal/acp's TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning -
-// every kind recordstore.Kinds() currently returns must produce a write_<kind>
-// tool. recordstore.Register now rejects a bad JSONSchema at process startup
-// (TestRegisterPanicsOnInvalidJSONSchema), so this can only regress if a
-// second, un-guarded schema check is reintroduced here (#1108 finding 3).
+// TestNewWriteKindTools_EveryKindRegistersWithoutError: ADK-native mirror of
+// acp's TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning - every
+// recordstore.Kinds() entry must yield a write_<kind> tool; a failure would mean an un-guarded schema check was reintroduced (#1108 finding 3).
 func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
 	toolsList, err := NewWriteKindTools(rc, "n1", &RoundCoords{}, "")
@@ -231,12 +226,9 @@ func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
 	}
 }
 
-// TestNewEditArtifactTool_ConflictIsStructuredSuccess: edit_artifact was
-// already a success (not a tool error) on the ADK surface for a real
-// conflict; this pins the JSON payload shape ({"conflict":true,"revision":N,
-// "content":"..."} - same field names as the MCP surface's
-// editConflictResult) so the two surfaces can't drift apart again
-// (#1108 finding 3).
+// TestNewEditArtifactTool_ConflictIsStructuredSuccess: a real conflict is a
+// structured success, not a tool error; pins the JSON payload shape with the
+// same field names as the MCP surface's editConflictResult so the surfaces can't drift (#1108 finding 3).
 func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
 	svc := artifact.InMemoryService()
 	rc := recordstore.New(svc, "quack", "u1", "chat-a")
@@ -278,11 +270,9 @@ func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
 	}
 }
 
-// TestNewWriteKindTool_WriteCodeReviewUsesSessionHint: the ADK-native mirror
-// of internal/acp's TestWriteCodeReviewMCP_UsesSessionSubjectHint (#1108
-// finding 1) - write_code_review must succeed when given the caller's
-// session-derived hint, and mint exactly the id code_review's Identity
-// (requireHint) plus vetting.SubjectHint produce.
+// TestNewWriteKindTool_WriteCodeReviewUsesSessionHint: ADK-native mirror of
+// acp's TestWriteCodeReviewMCP_UsesSessionSubjectHint (#1108 finding 1) -
+// write_code_review succeeds with the session-derived hint, minting exactly the id from requireHint + vetting.SubjectHint.
 func TestNewWriteKindTool_WriteCodeReviewUsesSessionHint(t *testing.T) {
 	svc := artifact.InMemoryService()
 	chatID := "ext:github:github-owner-repo-42"
@@ -322,10 +312,9 @@ func TestNewWriteKindTool_WriteCodeReviewUsesSessionHint(t *testing.T) {
 	}
 }
 
-// TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds: the ADK-native
-// mirror of TestWriteArtifactMCP_HintRequiringKind (#1108 finding 2) -
-// a hint-requiring blob kind (document) succeeds using the session hint,
-// while a hint-optional kind (text) keeps its content-hash identity.
+// TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds: ADK-native mirror of
+// TestWriteArtifactMCP_HintRequiringKind (#1108 finding 2) - a hint-requiring
+// blob kind (document) uses the session hint; a hint-optional kind (text) keeps its content-hash id.
 func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
 	svc := artifact.InMemoryService()
 	chatID := "ext:github:github-owner-repo-7"
@@ -366,13 +355,9 @@ func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
 	}
 }
 
-// TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds: a native gated
-// node's artifact tools are built ONCE, before its judge/revise loop starts
-// (#1123) - the gate restamps round/turn/head-sha/trigger-annotation onto
-// the SAME *RoundCoords pointer every tool closure shares (mirrors
-// vetting.SetAdvisorThreadRound / ledger.Coords' SetLedgerCoords pattern), so
-// an edit made during round 2 must carry round 2's trigger_annotation (the
-// prior round's judge_round id), not round 1's.
+// TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds: a native gated node's
+// tools are built once, before its judge/revise loop starts (#1123); the gate restamps
+// the shared *RoundCoords pointer, so a round-2 edit must carry round 2's trigger_annotation (the prior round's judge_round id), not round 1's.
 func TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	rc := recordstore.New(svc, "quack", "u1", "chat-a")
@@ -439,12 +424,8 @@ func findKindSpec(t *testing.T, name string) (recordstore.KindSpec, error) {
 }
 
 // TestNewWriteKindTool_ParentRevisionChain: write_<kind> (and write_artifact)
-// build their own recordstore.Lineage with no ParentRevision (#1153) -
-// recordstore.save fills it in from the store's own latest revision, but
-// only when the client is WithLedger-armed, which every worker tool call
-// site used to skip. Two saves through the tool must chain revision 2 to
-// revision 1, both in the returned lineage and in the WAL's own
-// artifact.revision intent (fold's parent-chain oracle, epic #1090 item 1.5).
+// build their Lineage with no ParentRevision (#1153); recordstore.save fills it
+// only from the store's latest revision when WithLedger-armed - two tool saves must chain revision 2 to revision 1, in the returned lineage and the WAL's artifact.revision intent (fold's oracle, epic #1090 item 1.5).
 func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	fl := newFakeLedger()

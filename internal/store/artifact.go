@@ -40,11 +40,7 @@ type Artifact struct {
 	TurnID string `gorm:"column:turn_id;index:idx_artifact_turn"`
 	// Kind/Class/Lineage (#1090 P2): additive columns, nullable/zero-value
 	// for every pre-existing row - AutoMigrate only adds columns, never
-	// backfills or drops, so old revisions keep working with "" everywhere.
-	// Kind = registered record kind ("code_review", "finding", ...); Class =
-	// "structured" or "blob"; Lineage = JSON envelope (node_id, round,
-	// parent_revision, trigger_annotation, head_sha, saved_at, author) -
-	// opaque to SQL, read back only through LoadWithMeta.
+	// backfills or drops, so old revisions keep working with "" everywhere. Kind = registered record kind ("code_review", "finding", ...); Class = "structured" or "blob"; Lineage = JSON envelope (node_id, round, parent_revision, trigger_annotation, head_sha, saved_at, author) - opaque to SQL, read back only through LoadWithMeta.
 	Kind      string `gorm:"column:kind"`
 	Class     string `gorm:"column:class"`
 	Lineage   string `gorm:"column:lineage"`
@@ -209,8 +205,7 @@ type metaLoader interface {
 
 // LoadWithMeta is Load, also returning kind/class/lineage when the wrapped
 // service is the row-backed store; zero values otherwise (#1090 known
-// ceiling: ADK's own interface carries no lineage, so a non-Postgres backend
-// degrades to "no metadata" rather than erroring).
+// ceiling: ADK's own interface carries no lineage, so a non-Postgres backend degrades to "no metadata" rather than erroring).
 func (w *TurnAwareService) LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (resp *artifact.LoadResponse, kind, class string, lineageJSON []byte, err error) {
 	resp, err = w.Service.Load(ctx, req)
 	if err != nil {
@@ -227,10 +222,9 @@ type metaUpdater interface {
 	updateMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error
 }
 
-// UpdateArtifactMeta overwrites one revision's kind/class/lineage - #1101's
-// `quack ledger rebuild` write path, for a backend that can (the row-backed
-// store); errors on artifact.InMemoryService() and similar, which have no
-// row to update.
+// UpdateArtifactMeta overwrites one revision's kind/class/lineage -
+// #1101's `quack ledger rebuild` write path, for a backend that can (the
+// row-backed store); errors on artifact.InMemoryService() and similar, which have no row to update.
 func (w *TurnAwareService) UpdateArtifactMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error {
 	mu, ok := w.Service.(metaUpdater)
 	if !ok {
@@ -278,17 +272,14 @@ var _ sessionArtifactLister = (*gormArtifactService)(nil)
 
 // nameArtifactLister is implemented by gormArtifactService; not by
 // artifact.InMemoryService(). Adversarial-review follow-up (#1094): the
-// artifacts REST API's revisions endpoint used to reuse ListForSession and
-// filter client-side, pulling every artifact + revision in the chat to find
-// one name - this is the narrower query the same WHERE clause supports.
+// artifacts REST API's revisions endpoint used to reuse ListForSession and filter client-side, pulling every artifact + revision in the chat to find one name - this is the narrower query the same WHERE clause supports.
 type nameArtifactLister interface {
 	RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, error)
 }
 
 // RevisionsForName lists one artifact name's revisions (ascending, like
 // ListForSession's per-name slice), or nil for a backend with no such
-// history. ok is false only when the backend doesn't support the query at
-// all (not when the name simply has no revisions - that's an empty slice).
+// history; ok is false only when the backend doesn't support the query at all (not when the name simply has no revisions - that's an empty slice).
 func (w *TurnAwareService) RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, bool, error) {
 	l, ok := w.Service.(nameArtifactLister)
 	if !ok {
@@ -339,21 +330,8 @@ func (s *gormArtifactService) RevisionsByTurn(ctx context.Context, appName, user
 }
 
 // Save implements [artifact.Service]. Version numbering always
-// auto-increments (matches ADK's own services - both ignore an explicit
-// SaveRequest.Version; see inmemory.go/gcsartifact's Save).
-// artifactRevisionLocks serializes MAX(revision)+Create per (app, user,
-// session, name) key within this process - two rounds of the same node, or
-// two nodes, writing the same id can no longer both read the same MAX and
-// have one insert silently fail the unique index (#1090 adversarial review
-// finding #3). recordstore.Client's own per-(chat,id) lock (#1107) is the
-// primary serializer for every write that goes through recordstore; this one
-// is a defensive backstop for a caller that reaches artifact.Service
-// directly, bypassing recordstore entirely (e.g. attachments, REST reads
-// that Save via the raw ADK service) - kept rather than deleted because that
-// path has no other lock at all. ponytail: process-local only, not a real
-// distributed lock (Postgres advisory lock keyed on hashtext(...) would cover
-// multiple replicas too) - the retry loop below is the cross-process safety
-// net for that gap, and quack runs single-instance today.
+// auto-increments (matches ADK's own services - both ignore an explicit SaveRequest.Version; see inmemory.go/gcsartifact's Save).
+// artifactRevisionLocks serializes MAX(revision)+Create per (app, user, session, name) key within this process - two rounds of the same node, or two nodes, writing the same id can no longer both read the same MAX and have one insert silently fail the unique index (#1090 adversarial review finding #3). recordstore.Client's own per-(chat,id) lock (#1107) is the primary serializer for every write that goes through recordstore; this one is a defensive backstop for a caller that reaches artifact.Service directly, bypassing recordstore entirely (e.g. attachments, REST reads that Save via the raw ADK service) - that path has no other lock at all. ponytail: process-local only, not a real distributed lock (Postgres advisory lock keyed on hashtext(...) would cover multiple replicas too) - the retry loop below is the cross-process safety net for that gap, and quack runs single-instance today.
 var artifactRevisionLocks sync.Map // key -> *sync.Mutex
 
 func revisionLockFor(appName, userID, sessionID, name string) *sync.Mutex {
@@ -573,8 +551,7 @@ func (s *gormArtifactService) ListForSession(ctx context.Context, appName, userI
 
 // RevisionsForName lists one artifact name's revisions in the session (same
 // session-or-user-scoped rule as ListForSession), ascending - the WHERE name
-// = ? sibling of ListForSession, for a caller that only wants one artifact's
-// history instead of the whole chat's.
+// = ? sibling of ListForSession, for a caller that only wants one artifact's history instead of the whole chat's.
 func (s *gormArtifactService) RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, error) {
 	var rows []Artifact
 	if err := s.db.WithContext(ctx).
@@ -642,8 +619,6 @@ func (s *gormArtifactService) GetArtifactVersion(ctx context.Context, req *artif
 
 var _ artifact.Service = (*gormArtifactService)(nil)
 
-// --- row backend (sqlite, tests: no large objects available) ---
-
 type rowBlobBackend struct{}
 
 func (rowBlobBackend) migrate(db *gorm.DB) error { return db.AutoMigrate(&ArtifactBlob{}) }
@@ -673,8 +648,6 @@ func (rowBlobBackend) delete(ctx context.Context, db *gorm.DB, a Artifact) error
 	}
 	return db.WithContext(ctx).Delete(&ArtifactBlob{}, *a.RowBlobID).Error
 }
-
-// --- large-object backend (postgres) ---
 
 // loBlobBackend stores payload bytes as Postgres large objects. pgx's
 // LargeObjects API needs a real pgx.Tx, so each op grabs a raw conn via

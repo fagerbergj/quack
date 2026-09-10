@@ -33,10 +33,8 @@ func (planningFailureModel) GenerateContent(_ context.Context, _ *model.LLMReque
 	}
 }
 
-// noopExtWithRunObserver is the minimal extsdk.Extension a dispatch needs to
-// register, plus RunObserver so the test can capture the outcome
-// driveExtensionRunEvents actually produces (mirrors how a real extension -
-// github, remarkable - learns a run's terminal status).
+// noopExtWithRunObserver is the minimal extsdk.Extension a dispatch needs, plus RunObserver
+// so the test can capture the outcome driveExtensionRunEvents actually produces.
 type noopExtWithRunObserver struct {
 	outcomes chan extsdk.RunOutcome
 }

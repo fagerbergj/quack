@@ -33,10 +33,9 @@ func openLedgerSeedDB(tb testing.TB) *gorm.DB {
 	return db
 }
 
-// BenchmarkMemoryStatsOldPerChatLoop is the pre-fix shape memoryLedgerEvents used: a
-// GROUP BY chat_id scan (List()'s own query, inlined here with a string Last column - the
-// driver pair this benchmark runs under can't Scan MAX(at) straight into time.Time) plus
-// one ReadEntriesFiltered per chat (perf audit #12).
+// BenchmarkMemoryStatsOldPerChatLoop is the pre-fix shape memoryLedgerEvents used (perf
+// audit #12): a GROUP BY chat_id scan (List()'s query, inlined with a string Last column - the
+// driver pair can't Scan MAX(at) into time.Time) plus one ReadEntriesFiltered per chat.
 func BenchmarkMemoryStatsOldPerChatLoop(b *testing.B) {
 	db := openLedgerSeedDB(b)
 	s := &PGStore{db: db}

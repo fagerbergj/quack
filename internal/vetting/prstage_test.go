@@ -7,8 +7,7 @@ import (
 
 // TestAugmentFromPRStage_ToolStagedWins proves a stage_pr-staged PR (the
 // implementer authored it via the pr-authoring skill, resolved advisor token →
-// MemSecret → MemSession.PRStage) overrides augmentFromRepo's commit-subject
-// fallback while keeping the branch the disk probe resolved.
+// MemSecret → MemSession.PRStage) overrides augmentFromRepo's commit-subject fallback while keeping the branch the disk probe resolved.
 func TestAugmentFromPRStage_ToolStagedWins(t *testing.T) {
 	secret, err := NewMemSecret()
 	if err != nil {
@@ -66,8 +65,7 @@ func TestAugmentFromPRStage_NoCallKeepsFallback(t *testing.T) {
 
 // TestPRStage_SetPushTracksOmittedFields pins #724: stage_push's optional
 // title/body must reach the gate marked omitted, distinct from an empty
-// string the agent explicitly sent - the two must never read the same, since
-// downstream delivery blanks the field for the latter but not the former.
+// string the agent explicitly sent - the two must never read the same, since downstream delivery blanks the field for the latter but not the former.
 func TestPRStage_SetPushTracksOmittedFields(t *testing.T) {
 	bare := &PRStage{}
 	bare.SetPush("", false, "", false)

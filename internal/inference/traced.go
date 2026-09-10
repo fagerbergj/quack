@@ -112,8 +112,7 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 // splitPromptTokens splits genai's PromptTokenCount (which already includes
 // any cached tokens) into an input/cached pair. Shared by every usage
 // consumer (the otel metric here, the ledger llm.call payload in emit.go) so
-// the split can't drift between them - a duplicated copy is how the ledger
-// payload lost cached_tokens entirely.
+// the split can't drift between them - a duplicated copy is how the ledger payload lost cached_tokens entirely.
 func splitPromptTokens(u *genai.GenerateContentResponseUsageMetadata) (input, cached int64) {
 	cached = int64(u.CachedContentTokenCount)
 	input = int64(u.PromptTokenCount) - cached
@@ -125,12 +124,7 @@ func splitPromptTokens(u *genai.GenerateContentResponseUsageMetadata) (input, ca
 
 // recordUsageMetrics emits gen_ai.client.token.usage (always) and
 // gen_ai.client.cost (only when pricing is configured) from one completed
-// call. genai's PromptTokenCount already includes cached tokens - split the
-// cached subset out so the token_type series never double-count. Cost keeps
-// the raw prompt total: quack has no separate cached-token price tier, so a
-// cached token is billed at the input rate (see the pricing doc comment).
-// defaultAgent fills the agent attribute only when ctx carries none (see
-// tracedModel.defaultAgent) - never overrides a real per-round Coords.Agent.
+// call. genai's PromptTokenCount already includes cached tokens - split the cached subset out so the token_type series never double-counts. Cost keeps the raw prompt total: quack has no separate cached-token price tier, so a cached token is billed at the input rate (see the pricing doc comment). defaultAgent fills the agent attribute only when ctx carries none (see tracedModel.defaultAgent) - never overrides a real per-round Coords.Agent.
 func recordUsageMetrics(ctx context.Context, modelName, defaultAgent string, pricing *config.ModelPricing, resp *model.LLMResponse) {
 	if resp == nil || resp.UsageMetadata == nil {
 		return
@@ -154,14 +148,7 @@ func recordUsageMetrics(ctx context.Context, modelName, defaultAgent string, pri
 
 // Embed delegates to the wrapped model, timing the call into the same
 // quack.model.call.duration histogram GenerateContent uses (an embed call IS
-// a model call, and the dashboard's latency panel already groups by the
-// `model` attribute - an embed model has its own distinct name, so it lands
-// in its own series there without conflating with chat-completion latency; a
-// second instrument would just add a query for no separate signal). When the
-// wrapped model reports token usage (openaimodel's /embeddings response),
-// records gen_ai.client.token.usage/cost the same way GenerateContent does -
-// embeddings have no output/reasoning/cached tokens, so only token_type=input
-// is ever recorded.
+// a model call, and the dashboard's latency panel already groups by the `model` attribute - an embed model has its own distinct name, so it lands in its own series there without conflating with chat-completion latency; a second instrument would just add a query for no separate signal). When the wrapped model reports token usage (openaimodel's /embeddings response), records gen_ai.client.token.usage/cost the same way GenerateContent does - embeddings have no output/reasoning/cached tokens, so only token_type=input is ever recorded.
 func (t *tracedModel) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	t0 := time.Now()
 	defer func() { otelobs.RecordModelCallDuration(t.name, time.Since(t0)) }()
@@ -180,10 +167,10 @@ func (t *tracedModel) Embed(ctx context.Context, texts []string) ([][]float32, e
 	return e.Embed(ctx, texts)
 }
 
-// recordEmbedUsage mirrors recordUsageMetrics for the embeddings shape - see
-// its doc comment for the agent-attribution rule (ctx coords win, defaultAgent
-// fills the gap). A zero PromptTokens (a defensive, usage-less response) records
-// nothing rather than a fabricated zero.
+// recordEmbedUsage mirrors recordUsageMetrics for the embeddings shape -
+// see its doc comment for the agent-attribution rule (ctx coords win,
+// defaultAgent fills the gap). A zero PromptTokens (a defensive, usage-less
+// response) records nothing rather than a fabricated zero.
 func (t *tracedModel) recordEmbedUsage(ctx context.Context, u openaimodel.EmbedUsage) {
 	if u.PromptTokens == 0 {
 		return

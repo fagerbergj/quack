@@ -20,9 +20,8 @@ import (
 )
 
 // PlanRejectedError: the plan judge declined a proposed plan. Reason is the
-// judge's own internal text - callers must never surface it as a user-facing
-// answer (#693); it belongs in logs and the ledger, which judgeRouting already
-// writes it to.
+// judge's internal text - never surface it as a user-facing answer (#693);
+// it belongs in logs and the ledger, which judgeRouting already writes it to.
 type PlanRejectedError struct {
 	Reason string
 }
@@ -156,7 +155,6 @@ func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup,
 	return plan, nil
 }
 
-// judgeRouting: scores plan shape against request via the plan judge.
 func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) error {
 	if p.judge == nil {
 		return nil
@@ -196,7 +194,6 @@ func emitPlanRejectedEvent(ctx context.Context, plan *Plan, reason string) {
 	)
 }
 
-// planSummary: renders the plan for the plan judge.
 func planSummary(p *Plan) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
@@ -292,8 +289,7 @@ func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 
 // AttachmentDesc: description of attachment MIME types for the text-only
 // orchestrator. Attachments are artifactref reference parts (FileData) by
-// the time they reach here, not InlineData - both are checked so this stays
-// correct if a caller ever hands it raw InlineData directly.
+// the time they reach here, not InlineData - both are checked for raw-InlineData callers.
 func AttachmentDesc(parts []*genai.Part) string {
 	if len(parts) == 0 {
 		return ""
@@ -432,10 +428,8 @@ func validateChecks(checks, checkCommands []string) error {
 	return nil
 }
 
-// deliveryKinds: constrained post-gate vocabulary.
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
 
-// validateDelivery: rejects delivery kinds outside the constrained vocabulary.
 func validateDelivery(d *Delivery) error {
 	if d == nil {
 		return nil
@@ -446,7 +440,6 @@ func validateDelivery(d *Delivery) error {
 	return nil
 }
 
-// sortedKeys: stable, compact rendering of a valid-value set for error messages.
 func sortedKeys(m map[string]AgentInfo) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -505,7 +498,6 @@ func min3(a, b, c int) int {
 	return m
 }
 
-// descendants: nodes transitively depending on id (downstream).
 func descendants(nodes []Node, id string) map[string]bool {
 	dependents := map[string][]string{} // dep -> nodes that depend on it
 	for _, n := range nodes {

@@ -38,11 +38,9 @@ func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts arti
 	return n.build(nodeKey, drain, artifacts, appName, userID, chatID, nodeID, sink)
 }
 
-// perNodeServers tracks currently-open per-node A2A servers (nativeAgent.
-// ForNode) so process shutdown can close any whose owning node's release()
-// never ran (an abandoned dynamic node, a crash mid-run) - self-pruning as
-// each node releases normally, so a long-lived server's memory stays bounded
-// by "nodes in flight right now", not "every node ever run".
+// perNodeServers tracks currently-open per-node A2A servers (nativeAgent.ForNode) so process
+// shutdown can close any whose owning node's release() never ran (an abandoned dynamic node, a
+// crash mid-run) - self-pruning as each node releases, so memory stays bounded by nodes in flight.
 type perNodeServers struct {
 	mu   sync.Mutex
 	open map[*agent.A2AServer]struct{}

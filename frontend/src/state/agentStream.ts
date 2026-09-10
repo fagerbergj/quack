@@ -1,7 +1,6 @@
 // Shared event vocabulary and dispatch for the agent SSE stream. Both
-// transports - fetched ReadableStream (chat) and EventSource (job live log) -
-// route events through dispatchAgentEvent so the per-event JSON shape lives
-// in one place.
+// transports - fetched ReadableStream (chat) and EventSource (job live
+// log) - route events through dispatchAgentEvent so the per-event JSON shape lives in one place.
 
 interface ConfirmationRequestPayload {
   callId: string
@@ -45,10 +44,9 @@ interface AgentCompletePayload {
   // summed across tool round trips like totalTokens) - the context meter's
   // live "used" reading.
   contextTokens?: number
-  // finishedAtMs is the server wall-clock (epoch ms) the run closed - lets a
-  // replayed/reconnected client compute this run's duration from two server
-  // timestamps instead of "now" at replay time. Absent from an
-  // older-server event; callers fall back to Date.now() then.
+  // The server wall-clock (epoch ms) the run closed - lets a replayed/reconnected
+  // client compute this run's duration from two server timestamps instead of "now"
+  // at replay time. Absent from an older-server event; callers fall back to Date.now() then.
   finishedAtMs?: number
 }
 
@@ -91,10 +89,9 @@ export interface NodeDoneMeta {
   judgePassed?: boolean
 }
 
-// CompactionPayload is the compaction event payload: a node's worker session
-// was rewritten mid-round by adk's own runner-level compaction. runId is
-// quack's own run_id (stream.RunIDFromBranch) - the same one the round's
-// agent_start carries, so it matches by exact run_id, not a heuristic.
+// The compaction event payload: a node's worker session was rewritten
+// mid-round by adk's own runner-level compaction. runId is quack's own run_id
+// (stream.RunIDFromBranch) - the same one the round's agent_start carries, so it matches by exact run_id, not a heuristic.
 interface CompactionPayload {
   nodeId: string
   runId: string
@@ -114,10 +111,9 @@ interface DagPlanPayload {
   traceId?: string
 }
 
-// DeliveryResultPayload is one staged item's ACTUAL outward-boundary outcome
-// (push + PR/review/comment), as the delivering extension observed it - never
-// the worker's self-report. "none" is the phantom-success class: a
-// judge-passed work-request that recorded no delivery attempt at all.
+// One staged item's ACTUAL outward-boundary outcome (push + PR/review/comment),
+// as the delivering extension observed it - never the worker's self-report.
+// "none" is the phantom-success class: a judge-passed work-request that recorded no delivery attempt at all.
 interface DeliveryResultPayload {
   nodeId: string
   outcome: 'delivered' | 'draft' | 'failed' | 'none'
@@ -458,16 +454,9 @@ function dispatchAgentEvent(
   return false
 }
 
-// readAgentStream parses a fetched SSE ReadableStream (used by the chat send
-// flow, which posts a request body and reads the response stream). Returns
-// whether a `done` event was actually seen before the body ended - the
-// caller's only signal that the stream ended cleanly (vs. a dropped
-// connection worth reconnecting over) is this - plus the highest `id:` line
-// seen, so a dropped-connection handoff can resume past it instead of
-// replaying the whole run (the wire format carries `id:` on every event,
-// same sseWriter as the GET stream; EventSource just parses it for us there).
-// A read error (anything but an intentional abort) is treated the same as the
-// body simply closing: report done=false and let the caller reconnect.
+// Parses a fetched SSE ReadableStream (the chat send flow: request body +
+// response stream). Returns whether a `done` event was actually seen before
+// the body ended - the caller's only signal the stream ended cleanly (vs. a dropped connection worth reconnecting over) - plus the highest `id:` line seen, so a dropped-connection handoff can resume past it instead of replaying the whole run (every event carries `id:`, same sseWriter as the GET stream; EventSource just parses it there). A read error (anything but an intentional abort) is treated the same as the body closing: report done=false and let the caller reconnect.
 export async function readAgentStream(
   body: ReadableStream<Uint8Array>,
   handlers: AgentStreamHandlers,
@@ -478,10 +467,9 @@ export async function readAgentStream(
   let currentEvent = 'message'
   let sawDone = false
   let lastEventId = 0
-  // pendingId is the `id:` line's value for the event currently being
-  // parsed; it only becomes lastEventId once that event's `data:` line
-  // actually dispatches, so a drop between the two (a real TCP boundary,
-  // not a corner case) can't advance past an event never applied.
+  // pendingId is the `id:` line's value for the event currently being parsed;
+  // it only becomes lastEventId once that event's `data:` line actually
+  // dispatches, so a drop between the two (a real TCP boundary) can't advance past an event never applied.
   let pendingId = 0
   while (true) {
     let chunk: ReadableStreamReadResult<Uint8Array>
@@ -518,12 +506,9 @@ export async function readAgentStream(
   return { done: sawDone, lastEventId }
 }
 
-// attachAgentEventSource wires an EventSource (used by the job live log) to
-// the same handler shape readAgentStream consumes. Returns a teardown that
-// closes the EventSource. shouldDispatch, if given, gates each event BEFORE
-// it reaches handlers - e.g. chatStore's id-contiguity check (#audit-6):
-// a gap must never be applied, so the gate has to run ahead of dispatch,
-// not as a second independent listener racing it.
+// Wires an EventSource (the job live log) to the same handler shape
+// readAgentStream consumes; returns a teardown that closes it. shouldDispatch,
+// if given, gates each event BEFORE it reaches handlers - e.g. chatStore's id-contiguity check (#audit-6): a gap must never be applied, so the gate has to run ahead of dispatch, not as a second independent listener racing it.
 export function attachAgentEventSource(
   es: EventSource,
   handlers: AgentStreamHandlers,

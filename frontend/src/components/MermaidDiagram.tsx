@@ -3,21 +3,18 @@ import type { MermaidConfig } from 'mermaid'
 import { CopyablePre } from './CopyablePre'
 import { Icon } from './Icon'
 
-// The mermaid package is large (parser + layout + renderer, ~1MB+ minified)
-// and most chat messages never contain a diagram - load it only when a
-// ```mermaid block actually renders, and only once per page (module-level
-// cache), not once per diagram.
+// The mermaid package is large (~1MB+ minified) and most chat messages never
+// contain a diagram - load it only when a ```mermaid block actually renders,
+// and only once per page (module-level cache), not once per diagram.
 let mermaidPromise: Promise<typeof import('mermaid')> | undefined
 function loadMermaid() {
   mermaidPromise ??= import('mermaid')
   return mermaidPromise
 }
 
-// Mermaid renders SVG generated from model-authored (untrusted) diagram text.
-// 'strict' runs mermaid's own sanitize pass over the generated SVG - script
-// tags, foreignObject, and click/href bindings are stripped - the same trust
-// boundary rehype-sanitize enforces for markdown HTML, just applied to
-// mermaid's own output rather than markup the model supplied directly.
+// Mermaid renders SVG generated from model-authored (untrusted) diagram
+// text. 'strict' runs mermaid's own sanitize pass over the generated SVG -
+// script tags, foreignObject, click/href bindings stripped - the same trust boundary rehype-sanitize enforces for markdown HTML, applied to mermaid's own output.
 const BASE_CONFIG: Partial<MermaidConfig> = { startOnLoad: false, securityLevel: 'strict' }
 
 function useIsDarkMode(): boolean {
@@ -32,12 +29,9 @@ function useIsDarkMode(): boolean {
   return dark
 }
 
-// MermaidDiagram renders one ```mermaid block's source as an SVG diagram.
-// Memoized (React.memo) so an unrelated token arriving elsewhere in a
-// streaming message doesn't re-render or re-parse every diagram already on
-// screen - the render effect below only re-runs when `code` or the theme
-// actually changes. A parse/render failure never throws past this component:
-// it falls back to the plain source (CopyablePre) plus a small inline notice.
+// Memoized so an unrelated token arriving elsewhere in a streaming message
+// doesn't re-render or re-parse every diagram already on screen - the render
+// effect only re-runs when `code` or the theme actually changes. A parse/render failure never throws past this component: it falls back to the plain source (CopyablePre) plus a small inline notice.
 export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) {
   const reactId = useId().replace(/[^a-zA-Z0-9]/g, '')
   const dark = useIsDarkMode()

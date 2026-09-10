@@ -19,8 +19,7 @@ const DefaultSandboxAgent = "code-reviewer"
 
 // sandboxLocalUserID mirrors internal/serve's localUserID: `quack sandbox`
 // mints a jail scope for a synthetic user rather than a real chat, so it
-// stays a plain constant here rather than an import from serve (which pulls
-// in the whole server wiring for one string).
+// stays a plain constant here rather than an import from serve (which pulls in the whole server wiring for one string).
 const sandboxLocalUserID = "local"
 
 // SandboxScratchChat scopes every `quack sandbox` invocation's minted dirs
@@ -61,11 +60,7 @@ func ResolveSandboxAgent(cfg *config.Config, name string) (string, config.AgentC
 
 // SandboxSeat is the resolved jail seat `quack sandbox`'s four subcommands
 // all run against: the exact Caps + cwd an ACP agent would get for this
-// agent, built the same way internal/serve's buildAgents does (workspaceCaps
-// literal + workspace.ResolveSandbox + Jail.HomeDir), so WrapArgv/spawnEnv
-// downstream see what the real agent sees. Not itself a copy of any sandbox
-// enforcement logic - WrapArgv, ChildPath, SandboxTmpDir all stay in
-// internal/workspace and are called, not reimplemented.
+// agent, built the same way internal/serve's buildAgents does (workspaceCaps literal + workspace.ResolveSandbox + Jail.HomeDir), so WrapArgv/spawnEnv downstream see what the real agent sees. Not itself a copy of any sandbox enforcement logic - WrapArgv, ChildPath, SandboxTmpDir all stay in internal/workspace and are called, not reimplemented.
 type SandboxSeat struct {
 	AgentName string
 	ReadOnly  bool
@@ -76,10 +71,7 @@ type SandboxSeat struct {
 
 // ResolveSandboxSeat builds a SandboxSeat for agentName under cfg/jail:
 // --cwd "" mints a fresh node-shaped dir under the jail; --cwd "." jails the
-// current directory (outside the jail root - WrapArgv/landlockGrants already
-// handle a work dir outside caps.WorkRoot, see childArgv's "outside cwd"
-// branch); any other --cwd is used as given. --mode overrides the agent's
-// configured sandbox.
+// current directory (outside the jail root - WrapArgv/landlockGrants already handle a work dir outside caps.WorkRoot, see childArgv's "outside cwd" branch); any other --cwd is used as given. --mode overrides the agent's configured sandbox.
 func ResolveSandboxSeat(cfg *config.Config, jail *workspace.Jail, agentName, cwdFlag, modeFlag string) (SandboxSeat, error) {
 	name, ac, err := ResolveSandboxAgent(cfg, agentName)
 	if err != nil {
@@ -132,8 +124,7 @@ func ResolveSandboxSeat(cfg *config.Config, jail *workspace.Jail, agentName, cwd
 	}
 	// Same ordering real provisioning uses (tools.SetupWorktree/SetupClone):
 	// pre-create before the mode above ever confines dir - a fresh cwd (no
-	// .gitignore) or `--cwd .` on a repo that already has these dirs is a
-	// harmless no-op either way.
+	// .gitignore) or `--cwd .` on a repo that already has these dirs is a harmless no-op either way.
 	workspace.PrecreateBuildDirs(dir, caps.BuildDirs)
 
 	return SandboxSeat{AgentName: name, ReadOnly: readOnly, Dir: dir, FreshDir: fresh, Caps: caps}, nil
@@ -184,9 +175,7 @@ func SandboxPS1(agentName string, readOnly bool) string {
 
 // SandboxSpawnEnv mirrors internal/acp.Agent.spawnEnv (PATH/HOME/TMPDIR/
 // GIT_*/JAVA_TOOL_OPTIONS via workspace.ChildPath/SandboxTmpDir/
-// the agent's real env via acp.SpawnEnv - the SAME function Agent.spawnEnv
-// delegates to, so this cannot drift from what the ACP child gets - plus
-// extra so a caller can layer PS1/other overrides on top.
+// the agent's real env via acp.SpawnEnv - the SAME function Agent.spawnEnv delegates to, so this cannot drift from what the ACP child gets - plus extra so a caller can layer PS1/other overrides on top.
 func SandboxSpawnEnv(caps workspace.Caps, ac config.AgentConfig, extra map[string]string) []string {
 	// The agent's opts.Env is workspace.env merged with its acp.env, in the
 	// same order serve builds it - hand that to the ONE real builder.

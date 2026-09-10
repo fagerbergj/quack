@@ -80,10 +80,7 @@ func TestScanOrphanedRuns_ReSurfacesAlreadyInterrupted(t *testing.T) {
 
 // TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID is #920's compound
 // state: a chat already stamped interrupted (a previous shutdown's drain) that
-// ALSO still carries an ActiveTurnID - the shape a process killed before its
-// stamp landed leaves behind. Both halves must settle in one scan, because a
-// leftover ActiveTurnID is what makes the chat read as permanently busy;
-// recovering it by hand with an UPDATE is not a recovery path.
+// ALSO still carries an ActiveTurnID - the shape a process killed before its stamp landed leaves behind. Both halves must settle in one scan, because a leftover ActiveTurnID is what makes the chat read as permanently busy; recovering it by hand with an UPDATE is not a recovery path.
 func TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID(t *testing.T) {
 	st := newRunStatusTestStore(t)
 	ctx := context.Background()
@@ -115,8 +112,7 @@ func TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID(t *testing.T) {
 
 // TestDeriveTerminalStatus_FailedNodeCarriesItsErrorText is #1105's core
 // contract: a failed node's own error string rides along on the derived
-// status, so a run that died on a repeated gateway error can be reported as
-// such instead of collapsing into the generic silent-gap message.
+// status, so a run that died on a repeated gateway error can be reported as such instead of collapsing into the generic silent-gap message.
 func TestDeriveTerminalStatus_FailedNodeCarriesItsErrorText(t *testing.T) {
 	turns := []TurnContent{{
 		AsstText: "",
@@ -150,9 +146,7 @@ func TestDeriveTerminalStatus_TrueSilentGapStaysUntouched(t *testing.T) {
 
 // TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError is
 // #1109 review finding 2: a failed node whose Error is exactly
-// dag.SilentGapError (the true #568 silent gap, persisted on the DagNode row
-// regardless) must still hand back nodeError == "" - that sentinel is not a
-// real cause to surface downstream as if it were.
+// dag.SilentGapError (the true #568 silent gap, persisted on the DagNode row regardless) must still hand back nodeError == "" - that sentinel is not a real cause to surface downstream as if it were.
 func TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError(t *testing.T) {
 	turns := []TurnContent{{AsstText: "", Nodes: []DagNode{{NodeID: "n1", Status: "failed", Error: dag.SilentGapError}}}}
 	status, _, nodeError := DeriveTerminalStatus("c1", turns, "", false)
@@ -166,11 +160,7 @@ func TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError(t *t
 
 // TestDeriveTerminalStatus_OrchestratorPlanningFailureNoDagNode is #1156: a
 // gateway failure during the orchestrator's own planning turn - before any
-// DAG plan/node exists - has no DagNode.Error to read, but the same
-// inference failure tracker DAG nodes use still holds it (keyed with an
-// empty node/agent, matching the orchestrator's own ledger.Coords). The
-// empty turn must end failed with that classified error, not fall through
-// to the generic silent-gap idle status.
+// DAG plan/node exists - has no DagNode.Error to read, but the same inference failure tracker DAG nodes use still holds it (keyed with an empty node/agent, matching the orchestrator's own ledger.Coords). The empty turn must end failed with that classified error, not fall through to the generic silent-gap idle status.
 func TestDeriveTerminalStatus_OrchestratorPlanningFailureNoDagNode(t *testing.T) {
 	const chatID = "c-planning-1156"
 	t.Cleanup(func() { inference.ClearFailure(chatID, "", "") })
@@ -199,9 +189,7 @@ func TestDeriveTerminalStatus_OrchestratorPlanningFailureNoDagNode(t *testing.T)
 
 // TestDeriveTerminalStatus_StoreFailureNamesDatabaseNoCredentials is #1193: a
 // dial error surviving the pgdial retry (recorded via
-// inference.RecordStoreFailure, as failSoftListArtifacts.List does) must fail
-// the run with a message naming "database", and any DSN credentials in the
-// raw error must never reach the stored/derived text.
+// inference.RecordStoreFailure, as failSoftListArtifacts.List does) must fail the run with a message naming "database", and any DSN credentials in the raw error must never reach the stored/derived text.
 func TestDeriveTerminalStatus_StoreFailureNamesDatabaseNoCredentials(t *testing.T) {
 	const chatID = "c-store-1193"
 	t.Cleanup(func() { inference.ClearStoreFailure(chatID) })
@@ -247,9 +235,7 @@ func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {
 
 // TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle pins perf audit #3's
 // StampTerminalOutcome rewire: loading just the newest turn (GetLastTurnWithContent)
-// instead of the whole chat (GetTurnsWithContent) must still derive idle for a turn with a
-// real, non-empty answer - the common case, not just the empty/failed ones the other
-// DeriveTerminalStatus fixtures cover.
+// instead of the whole chat (GetTurnsWithContent) must still derive idle for a turn with a real, non-empty answer - the common case, not just the empty/failed ones the other DeriveTerminalStatus fixtures cover.
 func TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle(t *testing.T) {
 	st := newRunStatusTestStore(t)
 	ctx := context.Background()

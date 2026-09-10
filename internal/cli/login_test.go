@@ -104,8 +104,7 @@ func newFakeOP(t *testing.T) *fakeOP {
 
 // issueToken mints an access/refresh token pair with no id_token - Login
 // tolerates rp.ErrMissingIDToken from a token response like this one, the
-// same way most fake/minimal OPs in the wild behave for a client that didn't
-// strictly require one.
+// same way most fake/minimal OPs in the wild behave for a client that didn't strictly require one.
 func (op *fakeOP) issueToken(w http.ResponseWriter) {
 	op.mu.Lock()
 	op.accessTokenSeq++
@@ -147,10 +146,7 @@ func simulateBrowser(t *testing.T, authURL string) {
 
 // TestLoginAuthCodePKCE drives the full authorization code + PKCE flow
 // against a fake OP (via a stubbed openBrowser simulating the user) and
-// confirms the resulting tokens land on the registered server, and that the
-// fake OP's token endpoint actually verified the code_verifier against the
-// code_challenge from the authorize step - the PKCE round trip is real, not
-// just plumbed through.
+// confirms the resulting tokens land on the registered server, and that the fake OP's token endpoint actually verified the code_verifier against the code_challenge from the authorize step - the PKCE round trip is real, not just plumbed through.
 func TestLoginAuthCodePKCE(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -291,8 +287,7 @@ func TestEnsureFreshTokenNoAuth(t *testing.T) {
 
 // TestEnsureFreshTokenNotExpiredSkipsRefresh proves a token well inside its
 // expiry is returned as-is - the fake OP's token endpoint would fail this
-// test if hit, since ParseForm on an empty POST won't match any grant type
-// and returns 400.
+// test if hit, since ParseForm on an empty POST won't match any grant type and returns 400.
 func TestEnsureFreshTokenNotExpiredSkipsRefresh(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -362,9 +357,7 @@ func TestEnsureFreshTokenRefreshesNearExpiry(t *testing.T) {
 
 // TestEnsureFreshTokenRefreshSurvivesCallerCancellation pins the fix for the
 // finding that a refresh must not be bound to the caller's own context: the
-// ctx passed in is already cancelled (as if the request that triggered the
-// refresh was aborted), but the refresh - detached via context.WithoutCancel
-// - still completes and persists.
+// ctx passed in is already cancelled (as if the request that triggered the refresh was aborted), but the refresh - detached via context.WithoutCancel - still completes and persists.
 func TestEnsureFreshTokenRefreshSurvivesCallerCancellation(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -431,10 +424,7 @@ func TestEnsureFreshTokenNoRefreshTokenReturnsAsIs(t *testing.T) {
 
 // TestEnsureFreshTokenConcurrentRefreshCoalesces pins review suggestion #3:
 // several goroutines racing the same near-expiry token (e.g. the TUI firing
-// off more than one client call at once) must coalesce into exactly one
-// refresh, with every caller observing the same resulting token - not each
-// independently hitting the token endpoint and risking a rotating-refresh
-// IdP invalidating one of them out from under the other.
+// off more than one client call at once) must coalesce into exactly one refresh, with every caller observing the same resulting token - not each independently hitting the token endpoint and risking a rotating-refresh IdP invalidating one of them out from under the other.
 func TestEnsureFreshTokenConcurrentRefreshCoalesces(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)

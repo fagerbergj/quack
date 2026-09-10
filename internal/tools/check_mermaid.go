@@ -15,9 +15,8 @@ type checkMermaidArgs struct {
 }
 
 // newCheckMermaid builds check_mermaid: pre-flight validation against the SAME
-// mermaid parser the delivery gate runs (vetting.CheckMermaid), so passing this
-// tool means the gate's mermaid_valid criterion will also pass - catch a syntax
-// error here instead of burning a whole regenerate-the-answer cycle on it.
+// mermaid parser the delivery gate runs (vetting.CheckMermaid), so passing the
+// tool means the gate's mermaid_valid criterion passes - no regenerate-the-answer cycle burned on a syntax error.
 func newCheckMermaid(_ Deps) (tool.Tool, error) {
 	return functiontool.New[checkMermaidArgs, string](
 		functiontool.Config{

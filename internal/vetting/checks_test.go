@@ -105,10 +105,7 @@ func TestChecksPassCriterionOutputInReason(t *testing.T) {
 
 // TestChecksPassCriterionSkipReason_RecordsOnSpan guards the telemetry fix
 // for quack's phantom-success history (a fabricated exploration once scored
-// 0.9; a phantom delivery shipped): when checks_pass does not apply at all,
-// "why" must land as a queryable span attribute, not just a slog.Info line
-// invisible in Tempo. An empty Config (no Checks, DeriveChecks off) is the
-// simplest of the four skip paths - see skipChecks in checks.go.
+// 0.9; a phantom delivery shipped): when checks_pass does not apply at all, "why" must land as a queryable span attribute, not just a slog.Info line invisible in Tempo. An empty Config (no Checks, DeriveChecks off) is the simplest of the four skip paths - see skipChecks in checks.go.
 func TestChecksPassCriterionSkipReason_RecordsOnSpan(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
@@ -220,8 +217,7 @@ func TestComposeFeedbackNoFailuresReturnsJudgeFeedbackUnchanged(t *testing.T) {
 
 // TestChecksDirFindsTheNodesOwnRepo: two concurrent nodes each cloned a repo
 // into the same chat scope. Derived checks must find THIS node's repo - a
-// search from the chat root sees two repos, gives up ("no single repo"), and
-// nothing gets gated.
+// search from the chat root sees two repos, gives up ("no single repo"), and nothing gets gated.
 func TestChecksDirFindsTheNodesOwnRepo(t *testing.T) {
 	cfg := testChecksConfig(t, nil, "")
 	cfg.ChatID = "chat-1"
@@ -286,14 +282,9 @@ func writeTestWorktree(t *testing.T, dir, originURL string) {
 	}
 }
 
-// TestChecksDirFallsBackToNodeDirForExplicitChecks pins the "fork/exec
-// /quack" bug: the planner set explicit Checks and a Workdir equal to the
-// repo name, but the clone was provisioned AT the node dir, not below a
-// subdirectory named after the repo. checksDir must fall back to the node's
-// own dir - but only because that dir IS positively identifiable as the repo
-// "quack" named: it's a git repo/worktree whose origin ends in /quack.
-// Worktree is the default case: production gate node dirs are linked
-// worktrees (.git is a pointer file), not plain clones - see quack#1083.
+// TestChecksDirFallsBackToNodeDirForExplicitChecks pins the "fork/exec /quack" bug: the planner set explicit Checks and a Workdir equal to the
+// repo name, but the clone was provisioned AT the node dir, not below a subdirectory named after the repo. checksDir must fall back to the node's
+// own dir - but only because that dir IS positively identifiable as the repo "quack" named: it's a git repo/worktree whose origin ends in /quack. Worktree is the default case: production gate node dirs are linked worktrees (.git is a pointer file), not plain clones - see quack#1083.
 func TestChecksDirFallsBackToNodeDirForExplicitChecks(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -330,11 +321,7 @@ func TestChecksDirFallsBackToNodeDirForExplicitChecks(t *testing.T) {
 
 // TestChecksDirRefusesFallbackToUnrelatedRepo guards the false-pass the
 // reviewer found: a node dir already holds an unrelated buildable module (not
-// the repo the planner's Workdir named), and Workdir names a subdirectory
-// that was never created. checksDir must NOT fall back to the parent - that
-// would silently build the wrong thing and report a false pass. Checked for
-// a plain directory, a plain clone of an unrelated repo, and an unrelated
-// repo checked out as a linked worktree.
+// the repo the planner's Workdir named), and Workdir names a subdirectory that was never created. checksDir must NOT fall back to the parent - that would silently build the wrong thing and report a false pass. Checked for a plain directory, a plain clone of an unrelated repo, and an unrelated repo checked out as a linked worktree.
 func TestChecksDirRefusesFallbackToUnrelatedRepo(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -374,13 +361,9 @@ func TestChecksDirRefusesFallbackToUnrelatedRepo(t *testing.T) {
 	}
 }
 
-// TestChecksDirIgnoresGarbageWorkdirWhenDeriving guards #620: an ACP
-// implement node with a pre-provisioned clone (plan.Setup) derives its
-// checks (cfg.Checks empty, cfg.DeriveChecks true), where Workdir is
-// documented as ignored (dag.Node.Workdir, vetting.Config.Workdir) - but the
-// orchestrator model sometimes fills it in anyway ("/tmp" was observed live).
-// checksDir must still find the node's own clone instead of erroring on an
-// absolute/garbage Workdir it was never meant to consult.
+// TestChecksDirIgnoresGarbageWorkdirWhenDeriving guards #620: an ACP implement node with a pre-provisioned clone (plan.Setup) derives its checks
+// (cfg.Checks empty, cfg.DeriveChecks true), where Workdir is documented as
+// ignored (dag.Node.Workdir, vetting.Config.Workdir) - but the orchestrator model sometimes fills it in anyway ("/tmp" was observed live). checksDir must still find the node's own clone instead of erroring on a garbage Workdir it was never meant to consult.
 func TestChecksDirIgnoresGarbageWorkdirWhenDeriving(t *testing.T) {
 	cfg := testChecksConfig(t, nil, "/tmp")
 	cfg.ChatID = "chat-1"
@@ -407,10 +390,7 @@ func TestChecksDirIgnoresGarbageWorkdirWhenDeriving(t *testing.T) {
 
 // TestChecksDirNamesRealRootWhenSetupKnown covers the prod failure's
 // planner-facing side (quack#1083 follow-up): a setup-qualifying node
-// (cfg.Setup != nil, so there's exactly one deterministic clone for it) got
-// a Workdir the planner guessed wrong. checksDir must reject with an error
-// naming the real repo root, not silently fail closed on the low-level
-// "workdir does not exist" exec error the planner can't act on.
+// (cfg.Setup != nil, so there's exactly one deterministic clone for it) got a Workdir the planner guessed wrong. checksDir must reject with an error naming the real repo root, not silently fail closed on the low-level "workdir does not exist" exec error the planner can't act on.
 func TestChecksDirNamesRealRootWhenSetupKnown(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"go build ./..."}, "review-f65532f/repo")
 	cfg.ChatID = "chat-1"
@@ -438,9 +418,7 @@ func TestChecksDirNamesRealRootWhenSetupKnown(t *testing.T) {
 
 // TestChecksDirFailsClosedGenericallyWithoutSetup: the contrast case - no
 // cfg.Setup (this checksDir test suite's own default), so checksDir cannot
-// know a single clone is authoritative for this node. It must keep the old
-// fail-closed behavior (no guess at a "real root") rather than risk naming
-// an unrelated repo.
+// know a single clone is authoritative for this node. It must keep the old fail-closed behavior (no guess at a "real root") rather than risk naming an unrelated repo.
 func TestChecksDirFailsClosedGenericallyWithoutSetup(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"go build ./..."}, "newservice")
 	cfg.ChatID = "chat-1"
@@ -467,8 +445,7 @@ func TestChecksDirFailsClosedGenericallyWithoutSetup(t *testing.T) {
 
 // A default-ON check_commands allowlist must be safe on a host WITHOUT the
 // toolchain: deriveChecks additionally gates each candidate on its binary
-// existing (toolchainPresent), so a missing `go` derives nothing instead of
-// failing every node with exit 127.
+// existing (toolchainPresent), so a missing `go` derives nothing instead of failing every node with exit 127.
 func TestDeriveChecks_SkipsMissingToolchain(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
@@ -524,8 +501,7 @@ func TestDeriveChecks_SingleEcosystemUnchanged(t *testing.T) {
 
 // #585: in a --depth 1 clone every dependency-needing check fails on the base
 // commit, so all of them are waived and the gate keeps no deterministic teeth -
-// which is how a PR that failed CI's gofmt shipped. gofmt needs no deps, no
-// module cache and no network, so it is the one check that still runs there.
+// which is how a PR that failed CI's gofmt shipped. gofmt needs no deps, no module cache and no network, so it is the one check that still runs there.
 func TestDeriveChecks_IncludesGofmt(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
@@ -543,13 +519,9 @@ func TestDeriveChecks_IncludesGofmt(t *testing.T) {
 	}
 }
 
-// A format check is NOT special-cased past failsAtBase. The first cut of #585
-// marked it never-waivable on the premise that formatting violations cannot
-// pre-exist; they can - `gofmt -l` lists every unformatted file in the tree, so
-// on a repo carrying formatting debt that would gate a worker for someone
-// else's mess, reintroducing exactly what #583 fixed. Waiving is correct there,
-// and on a clean base (the common case) the check passes at base and still
-// gates the worker's own violations.
+// A format check is NOT special-cased past failsAtBase. `gofmt -l` lists
+// every unformatted file in the tree, so on a repo carrying formatting debt
+// that would gate a worker for someone else's mess - reintroducing exactly what #583 fixed. Waiving is correct there; on a clean base (the common case) the check passes at base and still gates the worker's own violations.
 func TestGofmtCheckIsWaivedWhenItAlreadyFailsAtBase(t *testing.T) {
 	cfg, _ := clonedRepoConfig(t, []string{"gofmt -l . | wc -l | grep -q ^0$"}, map[string]string{
 		// Committed unformatted: the debt exists on the base commit.
@@ -563,8 +535,7 @@ func TestGofmtCheckIsWaivedWhenItAlreadyFailsAtBase(t *testing.T) {
 
 // The other half: a violation the worker itself introduced DOES gate, because
 // the check passes on the clean base commit. Without this the feature is a
-// no-op - `gofmt -l` alone always exits 0, so the derived check pipes its count
-// through grep to turn "nothing listed" into the exit status.
+// no-op - `gofmt -l` alone always exits 0, so the derived check pipes its count through grep to turn "nothing listed" into the exit status.
 func TestGofmtCheckGatesAWorkerIntroducedViolation(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"gofmt -l . | wc -l | grep -q ^0$"}, map[string]string{
 		"ok.go": "package x\n\nfunc F() {}\n",
@@ -621,9 +592,7 @@ func TestUnsupportedBuildSystemIsNamed(t *testing.T) {
 }
 
 // TestChecksSkipNote_OnlyChangePropertiesEarnANote pins the #780 scope call:
-// no_repo/no_checks_derived/unsupported_build_system are properties of the
-// change (quack couldn't verify it) and earn a note; not_configured/
-// no_workspace are operator config states and stay silent.
+// change-property skip reasons earn a note, operator-config ones stay silent.
 func TestChecksSkipNote_OnlyChangePropertiesEarnANote(t *testing.T) {
 	cases := map[string]bool{
 		skipReasonNotConfigured:    false,
@@ -648,9 +617,7 @@ func TestChecksSkipNote_OnlyChangePropertiesEarnANote(t *testing.T) {
 
 // TestChecksSkipReason_SameStringAsSpanAndMetric pins #780 test case 4: the
 // reason skipChecks hands to the span attribute (a stand-in for the
-// otelobs.RecordChecksSkipped metric label - both are set from the same
-// `reason` argument) is the identical string checksSkipNote puts in front of
-// a reader, so the log, the metric, and the PR agree.
+// otelobs.RecordChecksSkipped metric label - both set from the same `reason` argument) is the identical string checksSkipNote puts in front of a reader, so the log, the metric, and the PR agree.
 func TestChecksSkipReason_SameStringAsSpanAndMetric(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))

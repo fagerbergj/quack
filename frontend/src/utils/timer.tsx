@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
 
-// fmtMs renders a duration in ms as a compact "1.2s" / "3m 4s" / "1h 2m 3s"
-// string. Floored at 0: a still-ticking timer anchored to an unclamped server
-// start can read momentarily negative against the client's own Date.now()
-// when the client trails the server clock.
+// Renders a duration in ms as a compact "1.2s" / "3m 4s" string. Floored at
+// 0: a still-ticking timer anchored to an unclamped server start can read
+// momentarily negative against the client's own Date.now() when the client trails the server clock.
 export function fmtMs(ms: number): string {
   const s = Math.max(0, ms) / 1000
   if (s < 60) return `${s.toFixed(1)}s`

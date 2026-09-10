@@ -71,9 +71,7 @@ func TestCommitDelivery_RendersReviewFromArtifact(t *testing.T) {
 
 // TestRenderReviewFromArtifact_SeverityFallbackForHighlights is the
 // adversarial-review regression on #3: a write_finding-native finding
-// carries its label in Severity, with a plain Title (no embedded
-// "blocking:" prefix) - without a fallback to Severity, such a finding
-// shows no count on the verdict line and never makes the Highlights table.
+// carries its label in Severity, with a plain Title (no embedded "blocking:" prefix) - without a fallback to Severity, such a finding shows no count on the verdict line and never makes the Highlights table.
 func TestRenderReviewFromArtifact_SeverityFallbackForHighlights(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-46", User: "u1", Artifacts: artifact.InMemoryService()}
 	finding := FindingRecord{Path: "a.go", LineHint: 10, Title: "unchecked error return", Rationale: "err is dropped silently", Severity: "blocking", State: "new"}
@@ -97,8 +95,7 @@ func TestRenderReviewFromArtifact_SeverityFallbackForHighlights(t *testing.T) {
 
 // TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd is #1198: the
 // actual regression, reproduced through the real write site
-// (saveCodeReviewRound) rather than a pre-seeded record - a single-reviewer
-// node's passed round must deliver its own prose, not markers-only.
+// (saveCodeReviewRound) rather than a pre-seeded record - a single-reviewer node's passed round must deliver its own prose, not markers-only.
 func TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-45", User: "u1", Artifacts: artifact.InMemoryService(), NodeID: "n1"}
 	answer := "VERDICT: approve\nTAKEAWAY: Looks good, one nit below.\nFINDINGS:\nCLEAN:\n"

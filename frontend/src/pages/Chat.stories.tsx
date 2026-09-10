@@ -4,13 +4,9 @@ import Chat from './Chat'
 import { ChatStoreProvider, useChatStore } from '../state/ChatStoreProvider'
 import type { ChatSummary, ChatDetail, Turn } from '../generated'
 
-// Chat talks to the real REST client (api.ts) and a ChatStoreProvider context -
-// same stub-global.fetch pattern as ArtifactPanel/Memory (no MSW in this repo),
-// routed on the chat id in the URL. useChatId() reads window.location, so each
-// story also pushes its own /chat/:id path before mounting. attach() derives
-// the "live" turn straight from the last persisted turn (no SSE events needed
-// for a static fixture) but still opens a real EventSource - stubbed here to a
-// no-op so a story never fires an actual network request.
+// Chat talks to the real REST client (api.ts) - same stub-global.fetch
+// pattern as ArtifactPanel/Memory (no MSW), routed on the chat id in the
+// URL. useChatId() reads window.location, so each story pushes its own /chat/:id path before mounting. attach() derives the "live" turn from the last persisted turn (no SSE events needed) but still opens a real EventSource - stubbed here to a no-op so a story never fires an actual network request.
 class FakeEventSource extends EventTarget {
   close() {}
 }
@@ -147,10 +143,9 @@ export const ArchivedChat: Story = {
   ),
 }
 
-// A finished chat with follow-ups queued behind it (Composer's queue chips) -
-// queueTurn is the store's own client-side API (no endpoint involved), so the
-// decorator calls it once after the store mounts rather than reaching past
-// Chat's props into ChatStoreProvider internals.
+// A finished chat with follow-ups queued behind it (Composer's queue chips):
+// queueTurn is the store's own client-side API (no endpoint), so the
+// decorator calls it once after the store mounts rather than reaching past Chat's props into ChatStoreProvider internals.
 export const QueuedFollowUps: Story = {
   args: baseArgs,
   decorators: [

@@ -14,20 +14,17 @@ import (
 	"google.golang.org/genai"
 )
 
-// Candidate is a memory the agent staged (or that the orchestrator wants written
-// directly). Metadata is free-form (e.g. {"kind": "source"}); the schema carries
-// no use-case vocabulary. Metadata["bucket"] (repo|role|user - stage_memory's
-// `bucket` argument) routes the write; anything else takes Scope's default.
+// Candidate is a memory the agent staged (or the orchestrator wants written directly).
+// Metadata is free-form (e.g. {"kind": "source"}); the schema carries no use-case vocabulary.
+// Metadata["bucket"] (repo|role|user - stage_memory's `bucket` argument) routes the write; anything else takes Scope's default.
 type Candidate struct {
 	Content  string
 	Metadata map[string]string
 }
 
-// Provenance identifies the run that mints a memory: which chat, which DAG
-// node (empty for an orchestrator-level commit, e.g. commit_memory), and
-// which delivery source (empty = native quack run, e.g. chat UI/REST/MCP -
-// see Orchestrator.Run's `source` param). Phase 1 of the memory lifecycle
-// (design doc, issue #849): stamped on write, not yet acted on at recall.
+// Provenance identifies the run that mints a memory: which chat, which DAG node (empty for an
+// orchestrator-level commit, e.g. commit_memory), and which delivery source (empty = native quack run).
+// Phase 1 of the memory lifecycle (issue #849): stamped on write, not yet acted on at recall.
 type Provenance struct {
 	ChatID string
 	NodeID string
@@ -46,23 +43,9 @@ func SetClockForTest(now func() string) (restore func()) {
 	return func() { nowRFC3339 = orig }
 }
 
-// Commit vets, extracts, and consolidates memories into this collection,
-// routing each one to the BUCKET it is about (see scope.go), and returns the
-// number of points written or updated. It is the single gated writer: the
-// gate calls it on a judge pass; the orchestrator calls it directly for user
-// facts.
-//
-// Routing is explicit and cheap, never an LLM judgment: a staged candidate
-// names its bucket (Metadata["bucket"]) and sc.writeBucket resolves it to a
-// key, degrading repo → role → user when the caller has no repo context. The
-// source answer's extraction goes to the caller's default bucket.
-//
-// Each bucket is consolidated separately, because a memory only ever
-// competes with others about the SAME subject.
-//
-// ponytail: per-(bucket, collection) commits can race - two parallel commits of
-// the same fact both ADD. Best-effort: the next commit's consolidation reconciles
-// the dup. Add a per-key lock only if duplicate churn proves real.
+// Commit is the single gated writer (the gate on a judge pass; the orchestrator for user facts): it
+// vets, extracts, and consolidates memories, returning the points written or updated. Routing is
+// explicit and cheap, never an LLM judgment - a staged candidate names its bucket and sc.writeBucket resolves it (degrading repo -> role -> user with no repo context); the source answer's extraction goes to the caller's default bucket. Each bucket consolidates separately, since a memory only competes with others about the SAME subject. ponytail: parallel commits of the same fact can race into two ADDs; the next consolidation reconciles the dup - add a per-key lock only if duplicate churn proves real.
 func (s *Store) Commit(ctx context.Context, sc Scope, author string, prov Provenance, staged []Candidate, sourceText string) (int, error) {
 	if s.consolidator == nil {
 		return 0, fmt.Errorf("memory: Commit on a store with no consolidator")
@@ -130,9 +113,8 @@ func (s *Store) commitTo(ctx context.Context, bucket, author string, prov Proven
 	}
 
 	// Only honour an UPDATE/DELETE id the consolidator was actually shown - a
-	// hallucinated id would otherwise upsert an orphan point at an arbitrary id.
-	// Keyed by neighbour (not just bool) so an UPDATE can carry forward its
-	// original mint instead of the current commit's.
+	// hallucinated id would otherwise upsert an orphan point. Keyed by neighbour (not
+	// just bool) so an UPDATE can carry forward its original mint, not the current commit's.
 	valid := make(map[string]neighbour, len(neighbours))
 	for _, n := range neighbours {
 		valid[n.ID] = n
@@ -168,10 +150,9 @@ type neighbour struct {
 	ValidFrom          string
 	ReinforcementCount int
 
-	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s
-	// UPDATE path so a consolidation merge never wipes accumulated votes -
-	// they used to be dropped on every UPDATE (a latent bug this phase
-	// fixes as a prerequisite for absorption inheriting anything real).
+	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s UPDATE path so a
+	// consolidation merge never wipes accumulated votes (they used to be dropped on every
+	// UPDATE - a latent bug this phase fixes as a prerequisite for absorption inheriting anything real).
 	Upvotes, Downvotes, VoteScore int
 	Tier                          string
 	LastUpvotedAt                 string
@@ -180,7 +161,6 @@ type neighbour struct {
 	AbsorbedIDs                   []string
 }
 
-// op is one consolidation decision from the LLM.
 type op struct {
 	Action  string `json:"action"`  // ADD | UPDATE | DELETE | NOOP
 	ID      string `json:"id"`      // existing memory id (UPDATE / DELETE)
@@ -189,18 +169,14 @@ type op struct {
 	Reason  string `json:"reason"`  // DELETE only: why (becomes invalidation_reason)
 }
 
-// maxProbeRunes caps the text embedded to find dedup neighbours. The probe only
-// needs to be representative of the work, not complete - a research answer can be
-// 10k+ chars, and embedding all of it on a CPU model costs seconds for no extra
-// dedup value. The memories actually written are short atomic facts embedded in
-// full.
+// maxProbeRunes caps the text embedded to find dedup neighbours: the probe only needs to be
+// representative of the work, not complete - a research answer can be 10k+ chars, and embedding all
+// of it on a CPU model costs seconds for no extra dedup value. The memories actually written are short atomic facts embedded in full.
 const maxProbeRunes = 2000
 
-// maxCandidatesPerCommit bounds how many staged candidates one node commit
-// (one judge-pass/gate call, issue #1269 item 3) can mint. Ranking them isn't
-// free - it would cost an extra LLM call - so this simply keeps the caller's
-// own priority order (stage_memory's earliest calls survive) rather than
-// asking the consolidation model to pick.
+// maxCandidatesPerCommit bounds how many staged candidates one node commit (one
+// judge-pass/gate call, issue #1269 item 3) can mint. Ranking isn't free (an extra
+// LLM call), so the caller's own priority order survives (stage_memory's earliest calls) rather than asking the consolidation model to pick.
 const maxCandidatesPerCommit = 3
 
 // neighbourProbe builds the (capped) text whose nearest existing memories we
@@ -287,11 +263,8 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 }
 
 // decideDedupe runs the consolidation model over one burst cluster of
-// currently-valid unverified memories (design doc §4(c)) - the periodic
-// sweep's ticker-triggered counterpart to decide's commit-triggered
-// reconcile. Every item in cluster is both candidate and neighbour: there is
-// no separate staged/source text, just the existing memories to dedupe
-// against each other.
+// currently-valid unverified memories (design doc §4(c)) - the periodic sweep's
+// ticker-triggered counterpart to decide's commit-triggered reconcile. Every item is both candidate and neighbour: there is no separate staged/source text, just the existing memories to dedupe against each other.
 func (s *Store) decideDedupe(ctx context.Context, cluster []neighbour) ([]op, error) {
 	sysPrompt, ok := consolidateDedupePrompts[s.domain]
 	if !ok {
@@ -321,10 +294,9 @@ func (s *Store) runConsolidation(ctx context.Context, sysPrompt, userPrompt stri
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + userPrompt}}}},
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: sysPrompt}}},
-			// JSON mode grammar-constrains the model to valid JSON, so a stray escape
-			// (a bare `\s` from a regex/path in a memory) can't crash json.Unmarshal
-			// with "invalid character 's' in string escape code". The prompt already
-			// says "Reply with ONLY JSON", satisfying json_object mode's require-json rule.
+			// JSON mode grammar-constrains the model to valid JSON, so a stray escape (a bare `\s`
+			// from a regex/path in a memory) can't crash json.Unmarshal. The prompt's "Reply with ONLY
+			// JSON" satisfies json_object mode's require-json rule.
 			ResponseMIMEType: "application/json",
 		},
 	}
@@ -350,15 +322,9 @@ func (s *Store) runConsolidation(ctx context.Context, sysPrompt, userPrompt stri
 	return parsed.Ops, nil
 }
 
-// apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE
-// keeps the existing id), DELETE invalidates one in place (soft-delete only - see
-// design doc §4(a)/§8 phase 2), NOOP is skipped. valid is the neighbours the
-// consolidator was shown, keyed by id; an UPDATE/DELETE naming any other id is
-// treated as a hallucination (UPDATE → fresh ADD, DELETE → dropped). prov stamps a
-// fresh ADD; an UPDATE instead carries forward the id's original minted_at/
-// provenance/lifecycle from valid - the memory was minted by its original run, and
-// a wording correction doesn't re-mint it or reset earned trust. Every write and
-// invalidation logs one memory_ops row (actor=consolidator). Returns writes applied.
+// apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE keeps the existing
+// id), DELETE invalidates in place (soft-delete only - design doc §4(a)/§8 phase 2), NOOP is skipped.
+// valid is the neighbours the consolidator was shown, keyed by id; an UPDATE/DELETE naming any other id is a hallucination (UPDATE -> fresh ADD, DELETE -> dropped). prov stamps a fresh ADD; an UPDATE carries forward the id's original minted_at/provenance/lifecycle from valid - a wording correction doesn't re-mint it or reset earned trust. Every write and invalidation logs one memory_ops row (actor=consolidator). Returns writes applied.
 func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenance, ops []op, valid map[string]neighbour) (int, error) {
 	var invalidations []op
 	var writes []op
@@ -472,10 +438,9 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 			if reason == "" {
 				reason = "invalidated by consolidator"
 			}
-			// Epic #1255 P5: a DELETE naming its survivor ("duplicate of <id>")
-			// is a merge, not a bare invalidation - the survivor inherits
-			// absorbed's votes/lineage. Falls through to a plain invalidate if
-			// the named survivor doesn't actually exist (hallucinated id).
+			// Epic #1255 P5: a DELETE naming its survivor ("duplicate of <id>") is a merge, not a bare
+			// invalidation - the survivor inherits absorbed's votes/lineage. Falls through to a plain
+			// invalidate if the named survivor doesn't exist (hallucinated id).
 			if survivorID := parseSurvivorID(reason); survivorID != "" && survivorID != o.ID {
 				ok, err := s.idx.absorb(ctx, survivorID, o.ID, absorbedByReason(survivorID))
 				if err != nil {
@@ -537,13 +502,9 @@ var consolidatePrompts = map[string]string{
 		"Empty ops list if nothing is worth keeping.",
 }
 
-// consolidateDedupePrompts is the periodic sweep's prompt variant (design doc
-// §4(c)): unlike consolidatePrompts, there is no STAGED-vs-EXISTING split -
-// every memory shown is an existing one, minted by the same run within
-// minutes of the others, that may restate the same claim. The taxonomy stays
-// ADD/UPDATE/DELETE/NOOP, but ADD is for a genuinely new synthesis only; the
-// normal case is UPDATE (or NOOP) the id worth keeping and DELETE the rest
-// against it, so "duplicate of <id>" always names a real, still-existing id.
+// consolidateDedupePrompts is the periodic sweep's prompt variant (design doc §4(c)): unlike
+// consolidatePrompts, there is no STAGED-vs-EXISTING split - every memory shown is an existing
+// one, minted by the same run within minutes of the others, that may restate the same claim. The taxonomy stays ADD/UPDATE/DELETE/NOOP, but ADD is for a genuinely new synthesis only; the normal case is UPDATE (or NOOP) the id worth keeping and DELETE the rest against it, so "duplicate of <id>" always names a real, still-existing id.
 var consolidateDedupePrompts = map[string]string{
 	"task": "You maintain a team of agents' SHARED long-term memory about one subject. Below is a BURST of " +
 		"unverified memories minted by the same run within minutes of each other - they may restate the same " +

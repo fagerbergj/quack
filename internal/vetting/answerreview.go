@@ -80,8 +80,7 @@ func parseAnswerReview(answer string) (event string, comments []ReviewComment, o
 
 // ParseAnswerReviewSections is the section-aware parse (VERDICT/FINDINGS/
 // DISMISSED/CLEAN). When a FINDINGS: header is present, findings come only
-// from that section; otherwise the unscoped whole-answer scan is the
-// fallback (today's behavior, kept so unstructured answers still work).
+// from that section; otherwise the unscoped whole-answer scan is the fallback (kept so unstructured answers still work).
 func ParseAnswerReviewSections(answer string) AnswerReview {
 	m := verdictRe.FindStringSubmatch(answer)
 	if m == nil {

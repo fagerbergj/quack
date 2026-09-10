@@ -22,10 +22,9 @@ func acpCaps(t *testing.T, mode SandboxMode, dir string, readOnly bool) Caps {
 	}
 }
 
-// TestWrapArgvBwrapEnforcesGrantsEndToEnd (#921) is the whole point of wrapping
-// the ACP child under bwrap: the grants are enforced by the OS, not asserted by
-// an argv shape. A read_only node's own work tree rejects a write, its $HOME and
-// $TMPDIR accept one, and a file outside every grant is not even readable.
+// TestWrapArgvBwrapEnforcesGrantsEndToEnd (#921) is the whole point of
+// wrapping the ACP child under bwrap: the grants are enforced by the OS, not
+// asserted by an argv shape. A read_only node's own work tree rejects a write, its $HOME and $TMPDIR accept one, and a file outside every grant is not even readable.
 func TestWrapArgvBwrapEnforcesGrantsEndToEnd(t *testing.T) {
 	requireBwrap(t)
 	// A credential outside every grant - the class of file (~/.ssh/id_*,
@@ -88,9 +87,7 @@ func TestWrapArgvBwrapEnforcesGrantsEndToEnd(t *testing.T) {
 
 // TestWrapArgvBwrapMostSpecificGrantWins pins the bind ORDER invariant: bwrap
 // applies binds in argv order and a later mount on a subpath overlays the
-// earlier one, so a read-only work tree nested inside a writable HOME is only
-// read-only if the deeper bind comes last. Landlock's rule union has no such
-// ordering, which is exactly why it needs its own test.
+// earlier one, so a read-only work tree nested inside a writable HOME is only read-only if the deeper bind comes last. Landlock's rule union has no such ordering, which is exactly why it needs its own test.
 func TestWrapArgvBwrapMostSpecificGrantWins(t *testing.T) {
 	requireBwrap(t)
 	home := t.TempDir()
@@ -112,12 +109,9 @@ func TestWrapArgvBwrapMostSpecificGrantWins(t *testing.T) {
 	}
 }
 
-// TestWrapArgvReadOnlyBuildDirsWritableEndToEnd is the ACP-subprocess path's
-// version of this fix (#754 read_only reviewers, e.g. code-reviewer): a
-// build dir the repo already gitignores stays writable through the SAME seam
-// internal/acp wraps its child with, under both sandbox modes ("and bwrap
-// for parity" - WrapArgv's bwrap half shares landlockGrants' rw/ro sets via
-// bwrapWrapArgv, so one grant computation covers both).
+// TestWrapArgvReadOnlyBuildDirsWritableEndToEnd is the ACP-subprocess
+// path's version of this fix (#754 read_only reviewers, e.g. code-reviewer):
+// a build dir the repo already gitignores stays writable through the SAME seam internal/acp wraps its child with, under both sandbox modes ("and bwrap for parity" - WrapArgv's bwrap half shares landlockGrants' rw/ro sets via bwrapWrapArgv, so one grant computation covers both).
 func TestWrapArgvReadOnlyBuildDirsWritableEndToEnd(t *testing.T) {
 	for _, mode := range []SandboxMode{SandboxBwrap, SandboxLandlock} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -143,11 +137,8 @@ func TestWrapArgvReadOnlyBuildDirsWritableEndToEnd(t *testing.T) {
 	}
 }
 
-// TestWrapArgvBwrapShape is the argv-assembly half (no bwrap install needed):
-// bwrap leads, the work tree is bound at its IDENTITY path (never childArgv's
-// SandboxWorkRoot remap - the ACP child trades absolute paths with quack over
-// JSON-RPC), read-only per caps.ReadOnly, and the command survives past "--"
-// with no rlimit ceiling (#798).
+// TestWrapArgvBwrapShape is the argv-assembly half (no bwrap install
+// needed): bwrap leads, the work tree is bound at its IDENTITY path (never childArgv's SandboxWorkRoot remap - the ACP child trades absolute paths with quack over JSON-RPC), read-only per caps.ReadOnly, and the command survives past "--" with no rlimit ceiling (#798).
 func TestWrapArgvBwrapShape(t *testing.T) {
 	dir := t.TempDir()
 	argv := []string{"opencode", "acp"}
@@ -193,8 +184,7 @@ func TestWrapArgvBwrapShape(t *testing.T) {
 
 // TestWrapArgvBwrapKeepsOwnMounts: a grant that names a path bwrapSystemArgs
 // (or tmpArgs) already mounts must NOT be bound over it - re-binding the host's
-// /proc under --unshare-pid would leak the real PID table back in, and the host
-// /dev its device nodes. landlockGrants names both (/dev RW, /proc RO).
+// /proc under --unshare-pid would leak the real PID table back in, and the host /dev its device nodes. landlockGrants names both (/dev RW, /proc RO).
 func TestWrapArgvBwrapKeepsOwnMounts(t *testing.T) {
 	dir := t.TempDir()
 	got := WrapArgv(dir, []string{"opencode", "acp"}, Caps{Sandbox: SandboxBwrap, WorkRoot: dir}, nil, nil)

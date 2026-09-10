@@ -48,11 +48,9 @@ describe('AssistantText streaming split (audit finding 2)', () => {
   }
 
   it('streams ~20k chars in small chunks without reprocessing the whole document per chunk', () => {
-    // Build the final text up front, then reveal it in small (~60-char)
-    // chunks like real tokens (audit: ~100 ms apart at 10 tok/s, so every
-    // one gets its own commit) - the shape that made the unsplit render
-    // O(n^2) in the first place. ~340 real React renders (each a real
-    // markdown parse), hence the raised timeout below.
+    // Reveal the full text in small (~60-char) chunks like real tokens
+    // (audit: ~100 ms apart at 10 tok/s, each with its own commit) - the
+    // shape that made the unsplit render O(n^2). ~340 real renders, hence the raised timeout.
     let full = ''
     let i = 0
     while (full.length < 20000) full += block(i++)
@@ -65,10 +63,9 @@ describe('AssistantText streaming split (audit finding 2)', () => {
     }
     const updateCount = Math.ceil(full.length / CHUNK)
 
-    // Every call whose content is prefix-sized (well past the ~2000-char live
-    // tail window) is a settled prefix handed to the memoized
-    // FrozenAssistantDocument - each must appear exactly once across the
-    // whole stream, proving a frozen prefix is never handed back in later.
+    // Every prefix-sized call (well past the ~2000-char live tail window) is
+    // a settled prefix for the memoized FrozenAssistantDocument - each must
+    // appear exactly once across the stream, proving a frozen prefix is never handed back in later.
     const counts = new Map<string, number>()
     for (const c of calls) counts.set(c, (counts.get(c) ?? 0) + 1)
     let prefixCallsSeen = 0
@@ -80,14 +77,9 @@ describe('AssistantText streaming split (audit finding 2)', () => {
     }
     expect(prefixCallsSeen).toBeGreaterThan(0) // the split actually engaged during this stream
 
-    // The real regression guard: total characters ReactMarkdown ever parsed
-    // across the whole stream. Re-parsing the full accumulated text on every
-    // chunk update here would process on the order of
-    // CHUNK * updateCount^2 / 2 characters (quadratic in answer size,
-    // matching the audit's O(n^2) finding); freezing the settled prefix
-    // measurably beats that even though this content's dense blank lines
-    // (every ~120 chars) force more re-freezes than the audit's single-cut
-    // benchmark saw.
+    // Regression guard: total characters ReactMarkdown ever parsed. Unsplit
+    // this is ~CHUNK * updateCount^2 / 2 (quadratic in answer size, per the
+    // audit); the frozen prefix beats it even though dense blank lines force more re-freezes than the audit's benchmark saw.
     const totalCharsProcessed = calls.reduce((sum, c) => sum + c.length, 0)
     const unsplitWouldProcess = CHUNK * updateCount * (updateCount + 1) / 2
     expect(totalCharsProcessed).toBeLessThan(unsplitWouldProcess / 2)

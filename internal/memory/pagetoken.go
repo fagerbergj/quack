@@ -18,10 +18,9 @@ var ErrInvalidPageToken = errors.New("memory: invalid page token")
 
 const pageSortRecencyDesc = "recency_desc"
 
-// pageToken is listMemories' opaque continuation token: an offset anchor
-// (the store's list is already a full scan sorted newest-first, sliced by
-// offset - see qdrantIndex.list/sqliteIndex.list) bound to the bucket filter
-// it was issued under, the same way store.chatsPageToken binds to scope.
+// pageToken is listMemories' opaque continuation token: an offset anchor (the store's
+// list is already a full scan sorted newest-first, sliced by offset - see
+// qdrantIndex.list/sqliteIndex.list) bound to the bucket filter it was issued under, the same way store.chatsPageToken binds to scope.
 type pageToken struct {
 	Sort   string `json:"s"`
 	Bucket string `json:"b"`

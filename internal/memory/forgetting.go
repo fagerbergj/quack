@@ -2,10 +2,9 @@ package memory
 
 import "github.com/fagerbergj/quack/internal/memoryrules"
 
-// Aliases onto internal/memoryrules (moved there to break an import cycle:
-// internal/config needs the parser too, and internal/memory already imports
-// internal/config). Kept here so every existing internal/memory call site
-// is unchanged.
+// Aliases onto internal/memoryrules (moved there to break an import cycle: internal/config needs
+// the parser too, and internal/memory already imports internal/config). Kept here so every
+// existing internal/memory call site is unchanged.
 type Rule = memoryrules.Rule
 type Fields = memoryrules.Fields
 

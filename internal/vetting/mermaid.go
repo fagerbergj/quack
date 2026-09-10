@@ -32,9 +32,7 @@ var mermaidGotTokenRe = regexp.MustCompile(`got '([^']*)'\s*$`)
 
 // mermaidLabelPunctuation maps a jison terminal to the unquoted character
 // that produced it, for the single family of errors this translates: a
-// punctuation character mermaid treats as a label terminator. Confirmed
-// against the live parser (each character here reproduced, and quoting the
-// label fixed, every case below) - not guessed from mermaid's grammar names.
+// punctuation character mermaid treats as a label terminator. Confirmed against the live parser (each character here reproduced, and quoting the label fixed, every case below) - not guessed from mermaid's grammar names.
 var mermaidLabelPunctuation = map[string]string{
 	"PS":            "(",
 	"PE":            ")",
@@ -189,14 +187,9 @@ func warnMermaidValidatorTimeout() {
 		"component", "vetting", "timeout", mermaidValidateTimeout)
 }
 
-// translateMermaidError turns mermaid's raw jison parse error into a message
-// a worker can act on: keep the diagram's own line/column and source excerpt
-// (the caret genuinely points at the offending column), drop the
-// grammar-internal "Expecting '...'" token list, and translate the "got
-// '<TOKEN>'" terminal into a plain-language cause when it's a known
-// unquoted-punctuation case. Parses jison's fixed output structure, never
-// mermaid's English prose (#735) - that changes between mermaid versions,
-// the structure doesn't.
+// translateMermaidError turns mermaid's raw jison parse error into a message a worker can act on: keep the diagram's own line/column and source excerpt
+// (the caret genuinely points at the offending column), drop the grammar-internal "Expecting '...'" token list, and translate the "got
+// '<TOKEN>'" terminal into a plain-language cause when it's a known unquoted-punctuation case. Parses jison's fixed output structure, never mermaid's English prose (#735) - that changes between mermaid versions, the structure doesn't.
 func translateMermaidError(raw string) string {
 	lines := strings.Split(raw, "\n")
 	if len(lines) < 4 {
@@ -230,8 +223,7 @@ func translateMermaidError(raw string) string {
 
 // unrecognizedMermaidError is the fallback for any error shape or "got" token
 // translateMermaidError doesn't recognize: still names where it broke (when
-// jison's structure is present) and a generic quoting hint, and always keeps
-// the raw parser text - never swallowed into a generic message (#735).
+// jison's structure is present) and a generic quoting hint, and always keeps the raw parser text - never swallowed into a generic message (#735).
 func unrecognizedMermaidError(raw string) string {
 	lines := strings.Split(raw, "\n")
 	var located string
@@ -251,9 +243,7 @@ var mermaidLocatedRe = regexp.MustCompile(`^parse error: diagram line (\d+), col
 
 // CheckMermaid validates one mermaid diagram's source (no fence wrapper) via
 // the SAME validator the delivery gate runs (mermaidError) - so a worker
-// calling this tool before submitting gets exactly the gate's verdict, not a
-// second reimplementation that could disagree with it. line/column are 1-based,
-// 0 when the error has no known location.
+// calling this tool before submitting gets exactly the gate's verdict, not a second reimplementation that could disagree with it. line/column are 1-based, 0 when the error has no known location.
 func CheckMermaid(source string) (ok bool, line, column int, message string) {
 	msg := mermaidError(source)
 	if msg == "" {

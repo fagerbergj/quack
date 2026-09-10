@@ -10,14 +10,7 @@ import (
 
 // TestDeleteChat_ReapsPerNodeWorkerSessions is a regression test for the ADK
 // audit's A2 finding: DeleteChat used to reap only the chat's own session
-// under AppName="quack" (chatAppName), leaving every DAG node's own worker
-// session - AppName is whichever agent bundle ran the node, id is
-// "<chatID>:<nodeID>" (internal/agent.WorkerSessionID) - and its retry
-// session ("<chatID>::retry") permanently orphaned. release() now reaps a
-// node's session immediately (internal/serve/nativeagent.go), but this is
-// the backstop for whichever node's release never ran, and for rows already
-// orphaned before that fix landed - DeleteChat/ReapNodeSessions can address
-// them purely by chat id, without knowing which bundle ran which node.
+// under AppName="quack" (chatAppName), leaving every DAG node's own worker session - AppName is whichever agent bundle ran the node, id is "<chatID>:<nodeID>" (internal/agent.WorkerSessionID) - and its retry session ("<chatID>::retry") permanently orphaned. release() now reaps a node's session immediately (internal/serve/nativeagent.go), but this is the backstop for whichever node's release never ran, and for rows already orphaned before that fix - DeleteChat/ReapNodeSessions can address them purely by chat id, without knowing which bundle ran which node.
 func TestDeleteChat_ReapsPerNodeWorkerSessions(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -77,12 +70,7 @@ func TestDeleteChat_ReapsPerNodeWorkerSessions(t *testing.T) {
 
 // TestReapNodeSessions_UnderscoreDoesNotWidenMatch is a regression test for
 // the ADK audit's A2 finding: ReapNodeSessions built its LIKE pattern from
-// the raw chat id, and SQL LIKE treats a bare "_" as "match any one
-// character" - a chat id containing a literal underscore (plausible: GitHub
-// repo names allow them, e.g. "ext:github:owner/my_repo#42") could sweep a
-// different chat's still-live worker session that merely differs by one
-// character at that position. likeEscape backslash-escapes the wildcard
-// before it reaches the query.
+// the raw chat id, and SQL LIKE treats a bare "_" as "match any one character" - a chat id containing a literal underscore (plausible: GitHub repo names allow them, e.g. "ext:github:owner/my_repo#42") could sweep a different chat's still-live worker session that merely differs by one character at that position. likeEscape backslash-escapes the wildcard before it reaches the query.
 func TestReapNodeSessions_UnderscoreDoesNotWidenMatch(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

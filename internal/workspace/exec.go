@@ -184,9 +184,8 @@ func childEnv(dir string, caps Caps) []string {
 		env = append(env, k+"="+caps.Env[k])
 	}
 	// Appended LAST (exec.Cmd.Env: last value wins for a duplicate key) so
-	// these win over caps.Env's GOMODCACHE (the #940 preseed, read-only) - same
-	// reasoning and helper as acp.Agent.spawnEnv (#954): GOMODCACHE must be
-	// writable even for an offline `go test`.
+	// these win over caps.Env's GOMODCACHE (the #940 preseed, read-only) -
+	// same reasoning and helper as acp.Agent.spawnEnv (#954): GOMODCACHE must be writable even for an offline `go test`.
 	env = append(env,
 		"GOMODCACHE="+EnsureWritableGoModCache(childHome(dir, caps)),
 		"GOCACHE="+filepath.Join(childHome(dir, caps), ".cache", "go-build"),
@@ -299,9 +298,7 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 
 // fileSizeLimitNote names workspace.limits when SIGXFSZ killed the child - a
 // bare "signal: file size limit exceeded" reads as the command's own fault
-// (#798, where a limit quack imposed cost four bisect cycles to attribute).
-// Only FSIZE is detectable: exceeding RLIMIT_AS fails an allocation INSIDE the
-// child with ENOMEM, so it surfaces as whatever that child makes of it.
+// (#798, where a limit quack imposed cost four bisect cycles to attribute). Only FSIZE is detectable: exceeding RLIMIT_AS fails an allocation INSIDE the child with ENOMEM, so it surfaces as whatever that child makes of it.
 func fileSizeLimitNote(st *os.ProcessState, lim Limits) string {
 	if st == nil || lim.FileSizeMB <= 0 {
 		return ""

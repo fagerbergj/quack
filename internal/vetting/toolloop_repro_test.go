@@ -73,8 +73,7 @@ func TestWorkerSeesToolError(t *testing.T) {
 
 // toolLoopStub drives ONE worker tool call and records whether the worker's
 // FOLLOW-UP model call actually carried the tool RESULT back (and under what
-// role). This is the empirical test of "are tool results forwarded to the
-// task-mode worker, or ejected/lost so it re-issues the same call forever".
+// role). This is the empirical test of "are tool results forwarded to the task-mode worker, or ejected/lost so it re-issues the same call forever".
 type toolLoopStub struct {
 	workerCalls    int
 	sawProbeResult bool
@@ -112,8 +111,7 @@ func (m *toolLoopStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 
 // TestWorkerSeesItsOwnToolResult is the reproduction: a task-mode worker (built
 // exactly as production builds nodes - unset Mode, wrapped in a workflow node)
-// makes one tool call; its follow-up model call MUST carry that tool's result,
-// or the worker has amnesia and re-issues the same call forever (the #252 loop).
+// makes one tool call; its follow-up model call MUST carry that tool's result, or the worker has amnesia and re-issues the same call forever (the #252 loop).
 func TestWorkerSeesItsOwnToolResult(t *testing.T) {
 	stub := &toolLoopStub{}
 	probe, err := functiontool.New[probeArgs, probeResult](

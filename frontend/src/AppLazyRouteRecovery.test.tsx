@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
-//
-// A React.lazy route that fails once (e.g. a chunk fetch during a bad
-// deploy) must not keep failing forever - navigating to a DIFFERENT lazy
-// route occupies the same JSX slot in App.tsx, so without a per-route key
-// React reuses the LazyLoadBoundary instance and its `failed` state survives
-// the navigation, white-screening a route that never actually broke.
+// A lazy route that fails once (e.g. a bad chunk fetch) must not keep failing:
+// routes share one JSX slot, so React reuses the LazyLoadBoundary and its `failed` state survives navigation, white-screening a never-broken route.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import App from './App'

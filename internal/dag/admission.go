@@ -252,9 +252,8 @@ func (a *Admission) reserve(spec AdmissionSpec) {
 }
 
 // oldestSeqLocked: the lowest (earliest-arrived) currently-waiting seq, or 0 if none.
-// oldestContendingSeqLocked: the oldest waiter competing with spec, itself
-// included. seq breaks ties - two waiters registered in the same instant would
-// otherwise flap on map iteration order.
+// oldestContendingSeqLocked: the oldest waiter competing with spec, itself included.
+// seq breaks ties - same-instant waiters would otherwise flap on map iteration order.
 func (a *Admission) oldestContendingSeqLocked(spec AdmissionSpec) int64 {
 	var oldest int64
 	var oldestT time.Time

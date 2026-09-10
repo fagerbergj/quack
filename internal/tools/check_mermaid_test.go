@@ -16,8 +16,7 @@ func (checkMermaidToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation
 
 // requireNode provisions the SAME scripts/node_modules as vetting's
 // requireMermaidValidator (via vetting.EnsureMermaidValidatorDeps), so the two
-// packages' test binaries - run in parallel by `go test ./...` - don't race
-// each other with independent `npm ci` runs in the same directory.
+// packages' parallel test binaries don't race independent `npm ci` runs in the same directory.
 func requireNode(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("node"); err != nil {

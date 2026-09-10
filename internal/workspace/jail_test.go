@@ -120,12 +120,7 @@ func TestResolveTwoUsersAreIndependent(t *testing.T) {
 
 // TestUserIDValidation guards the jail boundary against attacker-influenced
 // identities (an OIDC subject is external text): a userID containing a
-// separator or dot-traversal would relocate the jail root itself, making the
-// containment check verify against the WRONG root. Both entry points
-// (UserRoot and Resolve) must reject identically with ErrInvalidUserID - a
-// distinct error from ErrEscape, since this is a caller/config bug, not a
-// model-chosen path. Real OIDC-shaped ids (pipes, emails) must PASS: the rule
-// is separator/dot-traversal based, not an alphanumeric allowlist.
+// separator or dot-traversal would relocate the jail root itself, making the containment check verify against the WRONG root. Both entry points (UserRoot and Resolve) must reject identically with ErrInvalidUserID - a distinct error from ErrEscape, since this is a caller/config bug, not a model-chosen path. Real OIDC-shaped ids (pipes, emails) must PASS: the rule is separator/dot-traversal based, not an alphanumeric allowlist.
 func TestUserIDValidation(t *testing.T) {
 	j := newTestJail(t)
 	for _, tc := range []struct {
@@ -241,10 +236,7 @@ func TestResolvePerChatScope(t *testing.T) {
 
 // TestChatIDValidation guards the per-chat segment: a chat id is a
 // system-generated UUID but treated as untrusted here - a separator or
-// dot-traversal must never relocate the scope root and let a path escape the
-// user jail. A malicious id is rejected with ErrInvalidChatID (distinct from
-// ErrInvalidUserID and ErrEscape); an empty id is NOT an error (it is the
-// per-user fallback).
+// dot-traversal must never relocate the scope root and let a path escape the user jail. A malicious id is rejected with ErrInvalidChatID (distinct from ErrInvalidUserID and ErrEscape); an empty id is NOT an error (it is the per-user fallback).
 func TestChatIDValidation(t *testing.T) {
 	j := newTestJail(t)
 	// Make a sibling under alice to prove `../` can't reach it.
@@ -427,9 +419,7 @@ func TestJailScratchDirCreatesDirectory(t *testing.T) {
 
 // TestJailScratchDirPerNodeIsolated pins the actual fix: two different nodes
 // (even in the same chat) get DISTINCT scratch dirs - the pre-fix behavior
-// (TMPDIR = HomeDir/tmp, no node component) shared one scratch dir across
-// every node for the whole user, so one node's mktemp-named files could
-// collide with, or be visible to, a concurrent node's.
+// (TMPDIR = HomeDir/tmp, no node component) shared one scratch dir across every node for the whole user, so one node's mktemp-named files could collide with, or be visible to, a concurrent node's.
 func TestJailScratchDirPerNodeIsolated(t *testing.T) {
 	j := newTestJail(t)
 	a, err := j.ScratchDir("alice", "chat1", "node-a")
@@ -447,8 +437,7 @@ func TestJailScratchDirPerNodeIsolated(t *testing.T) {
 
 // TestJailScratchDirIsSiblingNotNestedInARepo mirrors
 // TestJailHomeDirIsSiblingNotNestedInARepo: scratch lives under HomeDir,
-// never inside the node's own workspace - a read-only node's tree must stay
-// wholly immutable, so its scratch cannot live anywhere under it.
+// never inside the node's own workspace - a read-only node's tree must stay wholly immutable, so its scratch cannot live anywhere under it.
 func TestJailScratchDirIsSiblingNotNestedInARepo(t *testing.T) {
 	j := newTestJail(t)
 	nodeDir, err := j.Resolve("alice", "chat1", NodeDir("node1"))

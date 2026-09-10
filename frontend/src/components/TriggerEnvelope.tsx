@@ -21,20 +21,12 @@ export * from './envelope'
 
 // Test-only render probe (PR #1300 review finding 2): counts every actual
 // invocation of TriggerMessage's function body, so a perf test can pin
-// memo(TriggerMessage) directly instead of inferring it from render timing
-// (unreliable under jsdom - AssistantText's own useMemo chain already
-// prevents most of the markdown re-parse cost the memo used to be gated on).
+// memo(TriggerMessage) directly instead of inferring it from render timing (unreliable under jsdom - AssistantText's own useMemo chain already prevents most of the markdown re-parse cost the memo used to be gated on).
 export const triggerMessageRenderProbe = { count: 0 }
 
-// TriggerMessage renders the user-turn bubble for a GitHub-triggered chat: the
-// XML-ish envelope (design: .quack/trigger-prompts-v2.md) as collapsible
-// structured sections, permissions/deliverable/ask always visible, everything
-// else collapsed. `content` that doesn't parse as an envelope (a plain typed
-// message, or malformed input) renders exactly as it always has - the plain
-// blue bubble, never a blank message (#667).
-// Content is immutable for the life of a run but Chat.tsx re-renders this
-// on every store notification (one per animation frame); memo + a stable
-// `attachments` element keep re-renders from re-parsing the envelope markdown.
+// TriggerMessage renders the user-turn bubble for a GitHub-triggered chat:
+// the XML-ish envelope (design: .quack/trigger-prompts-v2.md) as collapsible
+// structured sections, permissions/deliverable/ask always visible, everything else collapsed. `content` that doesn't parse as an envelope (a plain typed message, or malformed input) renders exactly as it always has - the plain blue bubble, never a blank message (#667). Content is immutable for the life of a run but Chat.tsx re-renders this on every store notification (one per animation frame); memo + a stable `attachments` element keep re-renders from re-parsing the envelope markdown.
 export const TriggerMessage = memo(function TriggerMessage({
   content,
   attachments,
@@ -55,9 +47,7 @@ export const TriggerMessage = memo(function TriggerMessage({
   const blocks = useMemo(() => parseEnvelope(content), [content])
   // The artifact panel opens onto a NODE (resolved from the tapped row's
   // artifact id - see ArtifactsSection.openRow below), with that same
-  // artifact id passed through as a focus hint so the panel shows the
-  // TAPPED artifact as primary, not just whichever of the node's outputs
-  // selectPrimaryOutput would otherwise pick (#1250 review). null means closed.
+  // artifact id passed through as a focus hint so the panel shows the TAPPED artifact as primary, not just whichever of the node's outputs selectPrimaryOutput would otherwise pick (#1250 review). null means closed.
   const [openArtifact, setOpenArtifact] = useState<{ nodeId: string; artifactId: string } | null>(null)
   if (blocks) {
     return (
@@ -134,12 +124,9 @@ function InfoLine({ label, text }: { label: string; text: string }) {
   )
 }
 
-// CollapsibleSection is the shared shell for every collapsed-by-default block
-// - native <details>/<summary>, matching the disclosure pattern already used
-// for tool calls/reasoning (AgentParts) and the DAG "Steps" toggle (TurnView),
-// rather than a second collapse mechanism. Long content inside is separately
-// height-locked with Expandable (below) so a big body can't wall off the page
-// even once opened.
+// CollapsibleSection is the shared shell for every collapsed-by-default
+// block - native <details>/<summary>, matching the disclosure pattern
+// already used for tool calls/reasoning (AgentParts) and the DAG "Steps" toggle (TurnView), rather than a second collapse mechanism. Long content inside is separately height-locked with Expandable (below) so a big body can't wall off the page even once opened.
 function CollapsibleSection({ summary, children }: { summary: ReactNode; children: ReactNode }) {
   return (
     <details className="rounded-lg border border-gray-200 dark:border-gray-700 not-prose">
@@ -168,11 +155,9 @@ function formatTimestamp(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-// AskSection - <issue>/<pull_request>: title as a heading, description as
+// <issue>/<pull_request>: title as a heading, description as
 // markdown. Always visible (not collapsible) - it's the thing being worked
-// on - but a long description is height-locked (#746 item 8): a short one
-// renders whole with no control, a long one collapses to its first lines
-// with a Show more toggle, so it can't push everything else off screen.
+// on - but a long description is height-locked (#746 item 8): a short one renders whole with no control, a long one collapses to its first lines with a Show more toggle, so it can't push everything else off screen.
 function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> }) {
   return (
     <div>
@@ -207,10 +192,9 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-// IncompleteHistoryNotice marks an accumulated comment list this client can't
-// vouch for as complete - no seed turn is visible (a rehydrated store, or a
-// chat opened after reaping), so what follows is only what's been captured
-// since, not the issue's whole thread.
+// IncompleteHistoryNotice marks an accumulated comment list this client
+// can't vouch for as complete - no seed turn is visible (a rehydrated store,
+// or a chat opened after reaping), so what follows is only what's been captured since, not the issue's whole thread.
 function IncompleteHistoryNotice() {
   return (
     <div className="mb-2 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 text-[11px] text-amber-800 dark:text-amber-300">
@@ -221,11 +205,7 @@ function IncompleteHistoryNotice() {
 
 // CommentsSection - the collapsed header always reports THIS turn's own
 // count/delta (what the model actually saw, per envelope.go's commentsBlock);
-// the expanded body renders the running history folded from this turn plus
-// every earlier turn's delta (new appends, edited replaces by id, deleted
-// removes - accumulateComments), not just this trigger's slice (#730).
-// Expandable caps the opened thread's height so a long backlog doesn't wall
-// off the message (#667 test case).
+// the expanded body renders the running history folded from this turn plus every earlier turn's delta (new appends, edited replaces by id, deleted removes - accumulateComments), not just this trigger's slice (#730). Expandable caps the opened thread's height so a long backlog doesn't wall off the message (#667 test case).
 function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBlock, { kind: 'comments' }>; priorContents: string[] }) {
   const acc = useMemo(() => block.comments ? accumulateComments(priorContents, block) : undefined, [block, priorContents])
   return (
@@ -321,8 +301,7 @@ function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'check
 
 // topLevelFields pulls the event JSON's own top-level PRIMITIVE fields
 // (skipping nested objects/arrays, which stay in the full JSON body below) -
-// #746 item 9: a wide pane rendering one "key: value" per line wastes the
-// width it has; a grid puts related fields side by side instead.
+// #746 item 9: a wide pane rendering one "key: value" per line wastes the width it has; a grid puts related fields side by side instead.
 function topLevelFields(pretty: string | null): [string, string][] {
   if (!pretty) return []
   try {
@@ -338,9 +317,7 @@ function topLevelFields(pretty: string | null): [string, string][] {
 
 // EventSection - collapsed, header is the event name; expands to the
 // top-level fields as a responsive grid (#746 item 9), then the full
-// pretty-printed JSON below for anything nested. The JSON is routed through
-// AssistantText's own ```json fence so it gets the same rehype-highlight
-// syntax colouring as any other code block, rather than a second highlighter.
+// pretty-printed JSON below for anything nested. The JSON is routed through AssistantText's own ```json fence so it gets the same rehype-highlight syntax colouring as any other code block, rather than a second highlighter.
 function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event' }> }) {
   const body = block.pretty ?? block.raw
   const fields = topLevelFields(block.pretty)
@@ -404,10 +381,9 @@ function ArtifactIcon({ kindPrefix }: { kindPrefix: string }) {
   )
 }
 
-// ArtifactStatusChip maps an artifact's new/updated/unchanged status onto the
-// same colour tokens ChangedFilesSection already uses for +/- churn - green
-// for new (matches +additions), amber for updated (matches StatusBadge's
-// edited), neutral gray for unchanged (no existing "unchanged" token).
+// ArtifactStatusChip maps an artifact's new/updated/unchanged status onto
+// the same colour tokens ChangedFilesSection already uses for +/- churn -
+// green for new (matches +additions), amber for updated (matches StatusBadge's edited), neutral gray for unchanged (no existing "unchanged" token).
 function ArtifactStatusChip({ status }: { status: string }) {
   const cls =
     status === 'new'
@@ -418,10 +394,9 @@ function ArtifactStatusChip({ status }: { status: string }) {
   return <span className={`px-1 rounded text-[11px] font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
 }
 
-// ArtifactsSection - <artifacts>: one compact row per artifact (icon, name,
-// revision, status chip, summary), tapping a row opens that artifact in the
-// artifact panel (#1250) rather than showing the raw XML that used to fall
-// through to UnknownSection.
+// <artifacts>: one compact row per artifact (icon, name,
+// revision, status chip, summary), tapping a row opens that artifact in
+// the artifact panel (#1250) rather than the raw XML that used to fall through to UnknownSection.
 function ArtifactsSection({
   block,
   chatId,
@@ -432,10 +407,8 @@ function ArtifactsSection({
   onOpenArtifact: (nodeId: string, artifactId: string) => void
 }) {
   // Resolving a row to a node is one API round trip shared by every row in
-  // this block - the artifact panel opens by node id, not artifact id (#1178
-  // removed the id-based picker), so a tap looks up the tapped artifact's
-  // owning node on demand rather than eagerly fetching for a block that's
-  // usually never opened.
+  // this block - the artifact panel opens by node id, not artifact id
+  // (#1178 removed the id-based picker), so a tap looks up the tapped artifact's owning node on demand rather than eagerly fetching for a block that's usually never opened.
   const [pending, setPending] = useState<string | null>(null)
   const openRow = (row: ArtifactRow) => {
     if (!chatId || pending) return
@@ -478,10 +451,9 @@ function ArtifactsSection({
   )
 }
 
-// UnknownSection - a block type this view doesn't recognise renders as a
-// labelled collapsed section with its raw content rather than being dropped
-// (#667's hardest requirement: a viewer silently missing part of the trigger
-// is worse than an ugly one).
+// UnknownSection - a block type this view doesn't recognise renders as
+// a labelled collapsed section with its raw content rather than being
+// dropped (#667's hardest requirement: a viewer silently missing part of the trigger is worse than an ugly one).
 function UnknownSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'unknown' }> }) {
   return (
     <CollapsibleSection summary={<code className="font-mono">{`<${block.tag}>`}</code>}>

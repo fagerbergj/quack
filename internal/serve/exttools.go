@@ -48,11 +48,9 @@ func (r *renamedTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) err
 	return toolutils.PackTool(req, r)
 }
 
-// indexExtTools builds the by-name lookup agents' tools: lists resolve
-// against. Every tool is addressable as <provider>_<name>; the bare name
-// resolves too when exactly one provider supplies it. A collided bare name
-// maps to nil - a sentinel tools.Build turns into an "ambiguous" error - so
-// no provider silently shadows another.
+// indexExtTools builds the by-name lookup agents' tools: lists resolve against. Every tool is
+// addressable as <provider>_<name>; the bare name resolves when exactly one provider supplies it.
+// A collided bare name maps to nil (an "ambiguous" error in tools.Build) so no provider shadows another.
 func indexExtTools(exts []extTool) map[string]tool.Tool {
 	byName := make(map[string]tool.Tool, len(exts))
 	providers := make(map[string][]string) // bare name -> provider names

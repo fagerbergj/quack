@@ -8,9 +8,8 @@ import (
 )
 
 // TestEnableFork_MissForksInsteadOfFailing: strict-mode's exhausted-stream
-// miss becomes a *ForkSignal in fork mode, and is reported under Forked, not
-// Failures - the whole point of fork-replay (.quack/replay-log.md "goes live
-// from the first divergent step").
+// miss becomes a *ForkSignal in fork mode, reported under Forked, not
+// Failures - the point of fork-replay (.quack/replay-log.md).
 func TestEnableFork_MissForksInsteadOfFailing(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		chat(t0(), "node-a", "worker", "worker-r0", "worker-model", nil),
@@ -45,9 +44,8 @@ func TestEnableFork_MissForksInsteadOfFailing(t *testing.T) {
 }
 
 // TestEnableFork_Sticky: once a stream has forked, EVERY later call on it
-// (even one that WOULD have matched a still-unconsumed recorded entry)
-// keeps going live - a round shouldn't flip-flop between recorded and live
-// mid-stream.
+// (even one matching a still-unconsumed recorded entry) keeps going live -
+// no flip-flop between recorded and live mid-round.
 func TestEnableFork_Sticky(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		chat(t0(), "node-a", "worker", "worker-r0", "worker-model", nil),
@@ -75,11 +73,9 @@ func TestEnableFork_Sticky(t *testing.T) {
 	}
 }
 
-// TestEnableFork_ExplicitForkFrom: --fork-from's node boundary forces a
-// stream live from its VERY FIRST call, even when the recording has a
-// perfectly matching entry waiting - verifying a prompt/plan fix needs a
-// real model call, not the old recorded response, regardless of whether the
-// call sequence itself would have diverged.
+// TestEnableFork_ExplicitForkFrom: --fork-from's node boundary forces the
+// stream live from its VERY FIRST call, even with a perfectly matching
+// recorded entry - a prompt/plan fix needs a real model call.
 func TestEnableFork_ExplicitForkFrom(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		chat(t0(), "node-a", "worker", "worker-r0", "worker-model", nil),
@@ -110,10 +106,9 @@ func TestEnableFork_ExplicitForkFrom(t *testing.T) {
 	}
 }
 
-// TestEnableFork_ForkFromScopedToItsOwnNode: --fork-from names ONE node - a
-// different node's stream, with no divergence of its own, keeps replaying
-// normally (fork-replay only forces the NAMED node live; anything else
-// forks only on its own genuine divergence - see forkOrFail).
+// TestEnableFork_ForkFromScopedToItsOwnNode: --fork-from only forces the
+// NAMED node live; a different node's stream, with no divergence of its own,
+// keeps replaying normally (see forkOrFail).
 func TestEnableFork_ForkFromScopedToItsOwnNode(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		chat(t0(), "node-b", "worker", "worker-r0", "worker-model", nil),
@@ -156,10 +151,9 @@ func TestEnableFork_ToolAndAgentStreamsForkToo(t *testing.T) {
 	}
 }
 
-// TestSession_ModeDefaultsStrict pins EnableFork's precondition: a Session
-// nobody calls it on stays ModeStrict (the zero value's meaning), so every
-// existing #603/#604 caller (NewModel's kind:"replay", replaytest, ACP
-// playback) is unaffected by #605's addition.
+// TestSession_ModeDefaultsStrict: a Session nobody calls EnableFork on stays
+// ModeStrict (the zero value), so existing #603/#604 replay callers are
+// unaffected by #605's addition.
 func TestSession_ModeDefaultsStrict(t *testing.T) {
 	sess, err := Load(writeJSONL(t, nil))
 	if err != nil {

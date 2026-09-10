@@ -7,8 +7,7 @@ import (
 
 // nightsOut57Body is the real comment body from #565: the model's raw
 // scratchpad, ending in a broken tool-call fragment, posted verbatim as the
-// NightsOut#57 plan comment. Pinned here so the regression can never
-// silently regress back to "passes the gate."
+// NightsOut#57 plan comment. Pinned here so the regression can never silently regress back to "passes the gate."
 const nightsOut57Body = `The system thinks the user is asking for a code review because of "carry out the review"
 in the frustrated message. But this is NOT a review request — it's a planning-only task.
 Let me just try without setup and delivery, and see if I can get past the errors.

@@ -31,9 +31,7 @@ func newMarkedCtx(prompt string) *markedCtx {
 
 // TestScopeFromContext mirrors guard.go's guardSession derivation: the
 // advisor-thread marker in the worker's prompt keys the registry entry the gate
-// wrote at node entry - the per-chat workspace scope is that entry's ChatID
-// (distinct from SessionID, the ADK session id, which a retry re-derives) and
-// the node's own working dir is its NodeID.
+// wrote at node entry - the per-chat workspace scope is that entry's ChatID (distinct from SessionID, the ADK session id, which a retry re-derives), and the node's working dir is its NodeID.
 func TestScopeFromContext(t *testing.T) {
 	const planID, nodeID = "plan-xyz", "node-1"
 	token := vetting.AdvisorThreadToken(planID, nodeID)

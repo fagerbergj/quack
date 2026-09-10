@@ -1,9 +1,6 @@
-// Package wizard is the interactive `quack init` / `quack server init` surface:
-// Huh forms that collect answers and hand them to internal/cli to emit config
-// or update the client registry. The forms are thin - all logic (model
-// discovery, YAML emit, registry save) lives in cli so it's testable without a
-// terminal. Per the quack-cli skill, you test the emitted YAML, not the
-// keystrokes.
+// Package wizard is the interactive `quack init` / `quack server init` surface: thin Huh forms that
+// hand answers to internal/cli to emit config or update the client registry - all logic lives in cli,
+// testable without a terminal; per the quack-cli skill, tests check the emitted YAML, not keystrokes.
 package wizard
 
 import (
@@ -25,13 +22,9 @@ import (
 // gate. Callers treat it as a clean stop (no error printed, nothing written).
 var ErrAborted = errors.New("init cancelled")
 
-// ServerInit runs the server-config wizard and writes quack.yaml at outPath.
-// It's `quack server init` (and the local branch of `quack init`): LLM provider
-// → endpoint → /models → model roles → optional features → stores. When outPath
-// already exists (and --force wasn't passed) it asks up front whether to keep,
-// overwrite, or write elsewhere - before any wizard questions.
-// local narrows the stores screens to one confirm; wrote tells the caller
-// whether a config was actually written, so it can pick the next-step message.
+// ServerInit runs the server-config wizard (`quack server init`, and `quack init`'s local
+// branch), writing quack.yaml at outPath; an existing outPath without --force is offered
+// keep/overwrite/elsewhere up front. local narrows stores to one confirm; wrote = written.
 func ServerInit(ctx context.Context, outPath string, force, local bool) (wrote bool, err error) {
 	if !force && fileExists(outPath) {
 		switch askExisting(outPath) {
@@ -138,11 +131,9 @@ func askPath(cur string) string {
 	return strings.TrimSpace(p)
 }
 
-// runForm runs a form with the duck theme on a stable alt-screen. Without the
-// alt-screen huh renders inline, so a tall group (a long /models list) scrolls
-// the section title off the top of the terminal. WithProgramOptions *replaces*
-// huh's defaults, so we re-supply stderr output (keeps stdout pipeable) and
-// focus reporting.
+// runForm: duck theme on a stable alt-screen (inline rendering scrolls a tall group's title off
+// the top of the terminal). WithProgramOptions replaces huh's defaults, so we re-supply stderr
+// output (keeps stdout pipeable) and focus reporting.
 func runForm(f *huh.Form) error {
 	return f.WithTheme(duckTheme()).
 		WithProgramOptions(
@@ -152,10 +143,9 @@ func runForm(f *huh.Form) error {
 		).Run()
 }
 
-// reviewGroup is the final screen: the live summary note + the confirm in ONE
-// group, so the answers and the Yes/No sit together. The note recomputes via
-// DescriptionFunc so backing up to change an answer updates the summary; ok
-// stays false unless the user confirms, so the caller can abort.
+// reviewGroup: live summary note + confirm in ONE group. The note recomputes
+// via DescriptionFunc so backing up to change an answer updates the summary;
+// ok stays false unless the user confirms, so the caller can abort.
 func reviewGroup(a *cli.InitAnswers, feats *[]string, outPath string, ok *bool) *huh.Group {
 	return huh.NewGroup(
 		huh.NewNote().DescriptionFunc(func() string { return summarize(a, feats) }, a),
@@ -363,10 +353,9 @@ func featuresGroup(feats *[]string) *huh.Group {
 	).Title("Features").Description("Toggle the tool backends to configure")
 }
 
-// codingGroups: the coder model (defaults to the main model) and the workspace
-// sandbox mode, shown only when the coding feature is selected. The sandbox
-// default is detected: bwrap when bubblewrap is installed, else none (with the
-// caveat in the description).
+// codingGroups: coder model (defaults to the main model) + workspace sandbox
+// mode, shown only when the coding feature is selected. Sandbox default is
+// detected: bwrap if bubblewrap is installed, else none (caveat in description).
 func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.Group {
 	if a.CoderModel == "" {
 		a.CoderModel = suggestModel(models, "coder", "code")
@@ -393,10 +382,9 @@ func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.G
 	return []*huh.Group{model, sandbox}
 }
 
-// storeGroups: session (always), memory (when an embedder is set), search/fetch
-// (when their feature is on). The conditional groups carry WithHideFunc so they
-// appear/disappear live as earlier answers change. Emit gates on the same flags,
-// so a hidden group's default value is never written.
+// storeGroups: session (always), memory (embedder set), search/fetch (feature
+// on) - WithHideFunc makes them appear/disappear live as earlier answers change.
+// Emit gates on the same flags, so a hidden group's default is never written.
 func storeGroups(a *cli.InitAnswers, feats *[]string, local bool) []*huh.Group {
 	session := storeGroup("Session storage", []string{"sqlite", "postgres"}, &a.SessionKind, &a.SessionURL, "sqlite").
 		Description("Where quack keeps its state + tool backends")
@@ -428,11 +416,9 @@ func storeGroups(a *cli.InitAnswers, feats *[]string, local bool) []*huh.Group {
 	return []*huh.Group{confirm, session, memory, search, fetch}
 }
 
-// storeGroup builds one group - its title is the store name (the section header),
-// with a backend select + a url input. The url is left blank: its placeholder
-// tracks the selected kind's default (cli.DefaultBackendURL), and the emitter
-// fills that same default when the field is left empty. So accepting the default
-// is just pressing enter, and the placeholder updates live when you switch kind.
+// storeGroup builds one group: title is the store name (section header), plus a
+// backend select + a url input left blank - its placeholder tracks the selected
+// kind's cli.DefaultBackendURL, which the emitter fills when the field is empty.
 func storeGroup(title string, kinds []string, kind, url *string, defKind string) *huh.Group {
 	*kind = defKind
 	opts := make([]huh.Option[string], 0, len(kinds))
@@ -465,10 +451,9 @@ func modelOptions(models []string) []huh.Option[string] {
 	return opts
 }
 
-// selectOrInput returns a Select field when models were discovered, else an
-// Input field for manual entry. No field title - the group title is the header,
-// and no .Height so the whole option list stays static (the cursor moves through
-// it instead of the list scrolling under a window).
+// selectOrInput: a Select when models were discovered, else an Input for manual
+// entry. No field title (the group title is the header), and no .Height so the
+// whole option list stays static (cursor moves; no windowed scrolling).
 func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Field {
 	if manual || len(opts) == 0 {
 		return huh.NewInput().Value(val)

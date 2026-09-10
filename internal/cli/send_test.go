@@ -143,8 +143,7 @@ func TestDialFailureHint(t *testing.T) {
 
 // TestRunChatSendCompleted_DiscardsPreamble: narration the orchestrator emits
 // before a top-level tool call ("I'll check the plan...") must not survive
-// into the final printed answer - only text after the last tool call does
-// (#387, mirrors internal/acp/translate.go's per-round reset, #358).
+// into the final printed answer - only text after the last tool call does (#387, mirrors internal/acp/translate.go's per-round reset, #358).
 func TestRunChatSendCompleted_DiscardsPreamble(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

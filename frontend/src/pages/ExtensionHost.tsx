@@ -18,12 +18,7 @@ export interface ExtensionHostProps {
 
 // Hosts an extension's own UI inside the SPA shell (#870), routed at
 // /ext/:name - a same-origin iframe in the content pane instead of the rail's
-// old <a href>, which left the app (and its own back-nav) behind entirely.
-// The extension's server-side route (e.g. /usage/) is untouched and still
-// works navigated to directly; this is purely an additional SPA-side wrapper.
-// #1171 gave the route a minimal header bar (the app has no persistent rail
-// anymore): it carries only the NavToggle, and the iframe fills the column
-// below it.
+// old <a href>, which left the app (and its back-nav) behind entirely. The extension's server-side route (e.g. /usage/) is untouched and still works navigated to directly; this is purely an SPA-side wrapper. #1171 gave the route a minimal header carrying only the NavToggle (no persistent rail anymore); the iframe fills the column below it.
 export default function ExtensionHost({ name: nameOverride, initialExtensions, navOpen, onToggleNav }: ExtensionHostProps) {
   const routeName = useExtName()
   const name = nameOverride ?? routeName
@@ -44,8 +39,7 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions, n
 
   // The route's only chrome (#1171): a one-button bar so the drawer stays
   // reachable while an extension's own document (with its own in-iframe
-  // title) fills the column. Omitted outside the app shell (standalone
-  // stories/tests pass no nav props).
+  // title) fills the column. Omitted outside the app shell (no nav props).
   const header = navOpen !== undefined && onToggleNav !== undefined ? (
     <div className="flex-shrink-0 flex items-center gap-2 px-2 py-1 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
       <NavToggle open={navOpen} onToggle={onToggleNav} />

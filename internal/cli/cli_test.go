@@ -358,8 +358,7 @@ func TestEmitFillsBlankBackendURL(t *testing.T) {
 
 // TestEmitServerConfigCoding: the coding feature emits the three coding agents
 // as ACP workers (no tools: list - quack has no native repo/exec tools), the
-// workspace section the ACP children run inside, and loads through the real
-// config loader.
+// workspace section the ACP children run inside, and loads through the real config loader.
 func TestEmitServerConfigCoding(t *testing.T) {
 	t.Setenv("QUACK_LLM_API_KEY", "k")
 	base := InitAnswers{

@@ -36,13 +36,7 @@ func (emptyWorkerModel) GenerateContent(context.Context, *model.LLMRequest, bool
 
 // TestRunBoundPlan_ClearsStalePlanningFailureSoALaterSilentGapStaysASilentGap
 // is #1156's follow-up leak fix: a chat that once failed planning with a
-// gateway error leaves a record under the orchestrator's own empty
-// node/agent key (store.orchestratorGiveUpError's read target).
-// RunBoundPlan makes no orchestrator model call of its own to ever naturally
-// clear that record via RecordCallResult's success path (unlike Run, whose
-// own planning call would) - without clearing it at entry, a LATER bound run
-// that legitimately ends in its own silent gap would have
-// store.DeriveTerminalStatus misreport it as failed, citing the OLD error.
+// gateway error leaves a record under the orchestrator's own empty node/agent key (store.orchestratorGiveUpError's read target). RunBoundPlan makes no orchestrator model call of its own to ever naturally clear that record via RecordCallResult's success path (unlike Run, whose own planning call would) - without clearing it at entry, a LATER bound run that legitimately ends in its own silent gap would have store.DeriveTerminalStatus misreport it as failed, citing the OLD error.
 func TestRunBoundPlan_ClearsStalePlanningFailureSoALaterSilentGapStaysASilentGap(t *testing.T) {
 	const chatID = "chat-stale-1156"
 	inference.RecordCallResult(chatID, "", "", errors.New(`status 502: POST "http://llm-swap:11436/v1/chat/completions": 502 Bad Gateway`))
@@ -74,8 +68,7 @@ func TestRunBoundPlan_ClearsStalePlanningFailureSoALaterSilentGapStaysASilentGap
 
 	// The chat's next turn ends in a TRUE silent gap (no dag node failure
 	// recorded at all) - the exact shape a later bound run's own empty
-	// completion produces. With the stale record cleared, this must derive
-	// idle/"", not resurrect the old 502 via orchestratorGiveUpError.
+	// completion produces. With the stale record cleared, this must derive idle/"", not resurrect the old 502 via orchestratorGiveUpError.
 	turns := []store.TurnContent{{AsstText: ""}}
 	status, _, nodeError := store.DeriveTerminalStatus(chatID, turns, "", false)
 	if status != store.RunStatusIdle || nodeError != "" {

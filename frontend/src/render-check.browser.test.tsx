@@ -5,17 +5,9 @@ import { composeStories, setProjectAnnotations } from '@storybook/react-vite'
 import * as previewAnnotations from '../.storybook/preview'
 import './index.css'
 
-// #1192: two quack-authored PRs passed every gate (tsc/eslint/424 RTL
-// tests/build/knip) yet were unusable in a real browser - a stray `//` in
-// JSX rendered as a visible text node, and a dialog was stacked under a
-// sibling. Neither defect is visible to a query-by-role/label RTL test, so
-// this gate actually mounts every story in a real Chromium (Playwright, via
-// Vitest browser mode) and inspects the rendered DOM instead. Importing
-// index.css here (not just relying on the preview module doing it) makes the
-// intent explicit even though `../.storybook/preview` already pulls it in -
-// without SOME import of it, none of the Tailwind rules the checks below
-// depend on (z-index stacking, overflow-x-auto, dark: variants) would exist
-// in this document at all.
+// #1192: two quack PRs passed every gate (tsc/eslint/RTL/build/knip) yet
+// were unusable in a real browser (a stray `//` JSX text node, a dialog
+// mis-stacked under a sibling) - invisible to RTL, so this gate mounts every story in real Chromium (Playwright browser mode) and inspects the rendered DOM. Importing index.css here makes the Tailwind rules the checks need (z-index stacking, overflow-x-auto, dark: variants) exist in this document.
 const storyModules = import.meta.glob('./**/*.stories.tsx', { eager: true }) as Record<string, Record<string, unknown>>
 
 const VIEWPORTS = [
@@ -24,15 +16,9 @@ const VIEWPORTS = [
 ] as const
 const THEMES = ['light', 'dark'] as const
 
-// Walks every text node in the subtree - a `TreeWalker` is the only DOM API
-// that visits text nodes hidden inside deeply nested markup the way a stray
-// JSX `// comment` would be.
-// Skips text inside <pre>/<code> or a font-mono container - real tool output
-// (grep matches, diffs, source snippets - ToolCallView renders these as plain
-// font-mono <li>/<span>, not <pre>/<code>) legitimately contains lines
-// starting with "//"; the bug class this guards is a STRAY comment-shaped
-// text node loose in ordinary prose JSX children, never intentional
-// code/data content.
+// Walks every text node - TreeWalker is the only DOM API reaching text
+// nodes hidden in deeply nested markup (where a stray JSX `//` lands).
+// Skips <pre>/<code>/font-mono - real tool output legitimately starts lines with "//"; the bug class is a STRAY comment-shaped node loose in prose JSX, never code/data content.
 function insideCodeBlock(node: Node): boolean {
   return !!(node.parentElement?.closest('pre, code, [class*="font-mono"]'))
 }
@@ -65,13 +51,8 @@ function findCoveredDialog(root: Element): string | undefined {
 }
 
 // Waits for the subtree to actually stop changing instead of a fixed sleep:
-// web fonts loaded (layout-affecting), every <img> resolved, then a short
-// idle window after the last DOM mutation. This is what a Mermaid story
-// needs (its diagram arrives via a dynamic import + async render() call,
-// swapping in an <svg> well after mount) without a Mermaid-specific branch -
-// the mutation that adds the <svg> is exactly what resets the idle timer.
-// Bounded overall so a story with a genuinely perpetual mutation (a live
-// "running" spinner, say) can't hang the gate.
+// web fonts loaded, every <img> resolved, then a short idle window after the
+// last DOM mutation - what a Mermaid story needs (its <svg> arrives via dynamic import + async render(), and that mutation resets the idle timer) with no Mermaid-specific branch. Bounded overall so a perpetual mutation (a live spinner) can't hang the gate.
 function waitForSettled(root: Element, { idleMs = 100, maxMs = 3000 } = {}): Promise<void> {
   return new Promise(resolve => {
     let done = false
@@ -99,9 +80,7 @@ async function waitForRenderSettled(root: Element): Promise<void> {
 describe.each(Object.entries(storyModules))('%s', (path, mod) => {
   // Composed once here just to enumerate story names - the per-theme render
   // below recomposes with that theme's project annotations so the preview's
-  // real `withTheme` decorator (not a hand-rolled duplicate of it) drives the
-  // `dark` class, the same mechanism MermaidDiagram's own useIsDarkMode and
-  // the shipped app both rely on.
+  // real `withTheme` decorator (not a hand-rolled duplicate) drives the `dark` class, the same mechanism MermaidDiagram's useIsDarkMode and the shipped app rely on.
   const storyNames = Object.keys(composeStories(mod as never))
 
   describe.each(storyNames)('%s', storyName => {
@@ -116,14 +95,9 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
       // decorator with "system" = headless Chromium's light preference.
       localStorage.setItem('theme', theme)
 
-      // Viewport opt-in: a story's own `parameters.renderCheck.viewports` (or
-      // Storybook's own `parameters.viewport.defaultViewport`, honored as an
-      // equivalent signal) wins when present. Name-matching ("...Mobile...",
-      // matching the codebase's own MobileViewport360/WithJudgeNotesMobile
-      // convention) is only the FALLBACK for stories that haven't opted in
-      // explicitly yet - most existing stories render at a fixed desktop
-      // width with no mobile intent, so checking them at 390px would flag
-      // the story's own width choice, not a component defect.
+      // Viewport opt-in: the story's own `parameters.renderCheck.viewports`
+      // (or Storybook's `parameters.viewport.defaultViewport`) wins when
+      // present. Name-matching ("...Mobile...") is only the FALLBACK for stories not yet opted in - most existing stories render at a fixed desktop width, so checking them at 390px would flag the story's own width choice, not a component defect.
       const renderCheckParams = StoryComp.parameters?.renderCheck as { viewports?: readonly string[]; play?: boolean } | undefined
       const storybookViewport = StoryComp.parameters?.viewport as { defaultViewport?: string } | undefined
       const wantsMobile = renderCheckParams?.viewports
@@ -142,27 +116,17 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
 
         try {
           // Most existing stories render a bare component with no app-shell
-          // frame around it (that frame is normally what bounds width and
-          // provides the "scroll inside your own container" boundary) - a
-          // raw mount would make every such story "overflow" a 390px
-          // viewport regardless of whether the component itself is at
-          // fault. Wrapping every story in a fixed width x height clipped
-          // frame reproduces the real app shell uniformly: a component with
-          // its own internal overflow-x-auto (per the frontend-design
-          // skill's convention) stays within this frame; one that pushes
-          // its own box wider does not.
+          // frame (normally what bounds width), so a raw mount would make every
+          // such story "overflow" a 390px viewport at fault of the viewport, not the component. Wrapping every story in a fixed clipped frame reproduces the shell uniformly: a component with its own overflow-x-auto (frontend-design skill convention) stays within it; one that pushes its own box wider does not.
           const { container } = render(
             <div style={{ width, height, overflow: 'hidden' }}>
               <StoryComp />
             </div>,
           )
           await waitForRenderSettled(container)
-          // Menus and sheets only exist once a story's play() opens them.
-          // Opt-in per story: most existing play() functions assume the
-          // Storybook canvas (args spies, MSW) and fail under this harness.
-          // ponytail: a failing play() only warns - four story files stomp
-          // window.fetch at module scope, so under this eager glob the last
-          // loader wins and fetch-driven plays can't be made reliable here.
+          // Menus and sheets only exist once a story's play() opens them;
+          // opt-in per story, since most play() functions assume the
+          // Storybook canvas and fail here. ponytail: a failing play() only warns - four story files stomp window.fetch at module scope, so under this eager glob the last loader wins and fetch-driven plays can't be made reliable here.
           if (renderCheckParams?.play && StoryComp.play) {
             try {
               await StoryComp.play({ canvasElement: container })

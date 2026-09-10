@@ -117,10 +117,9 @@ export const Windowed: Story = {
   },
 }
 
-// #379: a run with many tool-call events - the case the streaming-update
-// perf fix targets. ActivityList itself already windows to the most recent
-// RECENT items, so this stays cheap to render regardless of count; it's here
-// to make that windowing (and the underlying store fix) visible/verifiable.
+// #379: a run with many tool-call events - the streaming perf fix's target.
+// ActivityList windows to the most recent RECENT items so this stays cheap;
+// it's here to make that windowing (and the store fix) verifiable.
 const manyActivity: Activity[] = Array.from({ length: 60 }, (_, i) => ({
   kind: 'tool' as const,
   tool: { callId: `c${i}`, name: 'web_search', args: { query: `dublin weather query ${i}` }, result: { results: [] }, done: true },
@@ -142,11 +141,9 @@ function buildInterleavedFixture(): Activity[] {
   for (let i = 0; i < fragments.length; i++) {
     runs = appendRunThinking(runs, 'r1', fragments[i])
     const callId = `c${i}`
-    // i===3/7 stand in for calls the ACP relay used to collapse onto the
-    // meaningless name "other" (a bridged MCP call, a third-party tool with
-    // no ACP kind match) - the relay now resolves each to its real name
-    // (internal/acp/translate.go's mapToolCall, #1278), so the fixture never
-    // constructs the literal "other" here either.
+    // i===3/7 stand in for calls the ACP relay used to collapse onto "other"
+    // (bridged MCP / no ACP kind match); it now resolves real names
+    // (internal/acp/translate.go mapToolCall, #1278), so the fixture never builds "other".
     const isBridged = i === 3 || i === 7
     const name = isBridged ? (i === 3 ? 'stage_review' : 'load_skill') : 'read_file'
     runs = appendRunToolCall(runs, 'r1', callId, name, isBridged ? {} : { path: `src/file${i}.go` })
@@ -191,10 +188,9 @@ export const WithCodeBlock: Story = {
   render: () => <AssistantText text={CODE_ANSWER} />,
 }
 
-// #746 item 16 - a single-backtick span should render as a small inline code
-// span (Tailwind Typography's `code` styling), distinct from the fenced block
-// above. Pins the regression: mixes inline code with prose, and follows it
-// with a fenced block on the same page so the two can be compared directly.
+// #746 item 16: a single-backtick span renders as inline `code` styling,
+// distinct from the fenced block above. Pins the regression: mixes inline
+// code with prose, followed by a fenced block so the two compare directly.
 const INLINE_CODE_ANSWER = `Set \`QUACK_LOG_LEVEL\` to \`debug\` in the environment, then restart with \`make docker-up\`. The default is \`info\`.
 
 \`\`\`bash
@@ -205,11 +201,9 @@ export const WithInlineCode: Story = {
   render: () => <AssistantText text={INLINE_CODE_ANSWER} />,
 }
 
-// #746 item 16's actual root cause: not a CSS override (the 3 candidates the
-// issue named were all ruled out) but a CommonMark parsing quirk - a bare
-// backtick used as punctuation earlier in the paragraph defeats the greedy
-// backtick-pairing that inline code spans rely on, so `QUACK_LOG_LEVEL` below
-// would render as literal scrambled text without src/lib/backticks.ts's fix.
+// #746 item 16's root cause: not a CSS override but a CommonMark parsing
+// quirk - a bare punctuation backtick earlier in the paragraph defeats
+// greedy backtick-pairing, scrambling `QUACK_LOG_LEVEL` without backticks.ts's fix.
 export const InlineCodeAfterStrayBacktick: Story = {
   render: () => <AssistantText text={"Don't use a bare ` unless needed. Instead set `QUACK_LOG_LEVEL` to `debug`."} />,
   play: async ({ canvasElement }) => {
@@ -243,9 +237,8 @@ export const MermaidValid: Story = {
 }
 
 // Invalid mermaid never throws or blanks the bubble - it falls back to the
-// same plain code-block rendering as WithCodeBlock, plus a small inline
-// notice explaining why (agents do emit invalid mermaid; this is the path
-// the backend's mermaid validator exists to catch before delivery).
+// same plain code-block rendering as WithCodeBlock plus an inline notice
+// (agents do emit invalid mermaid; the backend validator catches it before delivery).
 const MERMAID_INVALID = `\`\`\`mermaid
 this is not a valid diagram @@@ %%%
 \`\`\``
@@ -259,10 +252,9 @@ export const MermaidInvalid: Story = {
   },
 }
 
-// A ```mermaid fence with no closing fence yet - the state every diagram
-// passes through while streaming in token-by-token. It stays a plain,
-// unhighlighted code block (no mermaid attempt, no error flash) until the
-// closing fence arrives.
+// An unterminated ```mermaid fence - the state every diagram passes through
+// while streaming. Plain, unhighlighted code block (no mermaid attempt, no
+// error flash) until the closing fence arrives.
 const MERMAID_STREAMING = `Here's the request flow:
 
 \`\`\`mermaid
@@ -278,12 +270,9 @@ export const MermaidStreaming: Story = {
   },
 }
 
-// #387 - preamble/reasoning tokens are never the answer. The activity list
-// (collapsed "Thought" + tool calls) is visually distinct FROM and sits ABOVE
-// the answer bubble; narration a worker emitted before its tool call ("Let me
-// check the config first…") never reaches the answer at all - the store
-// resets that accumulator on each tool call (chatStore.ts), so only the text
-// after the last tool call ever renders as "the answer" below.
+// #387: preamble/reasoning tokens are never the answer. Narration a worker
+// emitted before its tool call never reaches it - the store resets the
+// accumulator on each tool call (chatStore.ts), so only text after the last call renders as the answer.
 const preambleActivity: Activity[] = [
   { kind: 'thinking', text: 'The user wants the timeout value - I should read the config rather than guess.' },
   { kind: 'tool', tool: { callId: 'c1', name: 'read_file', args: { path: 'config.yaml' }, result: { content: 'timeout: 30s' }, done: true } },

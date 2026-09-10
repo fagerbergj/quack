@@ -24,10 +24,8 @@ func injectedTexts(req *model.LLMRequest) []string {
 }
 
 // #1029 review: the drain PEEKS, so the same text stays pending across every
-// model call of a round - hence the dedupe. But keying it on the text alone
-// swallowed a REPEATED steer: a user who sends "STOP", sees nothing, and sends
-// "STOP" again got the second one dropped from the live path. An empty drain
-// means the gate consumed the queue, so anything after it is genuinely new.
+// model call of a round - hence the dedupe. Keying it on the text alone swallowed a REPEATED steer: a user who sends "STOP", sees nothing, and
+// sends "STOP" again got the second dropped from the live path. An empty drain means the gate consumed the queue, so anything after it is new.
 func TestSteerCallback_RedeliversTheSameTextAfterTheGateDrains(t *testing.T) {
 	var pending string
 	cb := steerCallback(func() string { return pending })

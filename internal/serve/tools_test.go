@@ -84,11 +84,10 @@ func TestResolveToolNames(t *testing.T) {
 	}
 }
 
-// TestEmitServerConfigToolsBuild runs the `quack init` wizard's own output
-// through the tool resolution the server does at startup (resolveToolNames +
-// tools.Build). The wizard kept emitting the pre-ACP coding toolset
-// (cd/git_clone/run_command/run_code, #343 deleted their constructors), so a
-// freshly initialized config died at boot with `unknown builtin tool "cd"`.
+// TestEmitServerConfigToolsBuild runs the `quack init` wizard's own output through the
+// server's startup tool resolution (resolveToolNames + tools.Build): the wizard kept
+// emitting the pre-ACP toolset (cd/git_clone/run_command/run_code; #343 deleted their
+// constructors), so a fresh config died at boot with `unknown builtin tool "cd"`.
 func TestEmitServerConfigToolsBuild(t *testing.T) {
 	t.Setenv("QUACK_LLM_API_KEY", "k")
 	a := cli.InitAnswers{

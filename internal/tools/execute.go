@@ -27,10 +27,8 @@ type executeResult struct {
 const ExecPlanKey = "orch.exec.plan"
 
 // NewExecuteTool: validates plan_id, provisions its Setup, selects it, ends
-// the llmagent's turn. provision: eager clone+checkout of plan.Setup (nil-safe
-// no-op if unset) - runs HERE, synchronously, so a clone failure is this
-// tool's own error result (the model sees it and can revise the plan) rather
-// than a run-time abort deep inside RunPlanAsGraph (#848).
+// the llmagent's turn. provision is an eager, synchronous, nil-safe clone+checkout of plan.Setup,
+// so a clone failure is this tool's own error result (the model sees it and can revise) rather than a run-time abort deep inside RunPlanAsGraph (#848).
 func NewExecuteTool(cache *PlanCache, provision func(ctx context.Context, userID, chatID string, plan *dag.Plan) error) (tool.Tool, error) {
 	return functiontool.New[executeArgs, executeResult](
 		functiontool.Config{

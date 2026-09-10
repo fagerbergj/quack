@@ -126,13 +126,9 @@ describe('Composer archived placeholder', () => {
   })
 })
 
-// #1174: the auto-grow cap follows the width - 128px (max-h-32) compact,
-// 192px (max-h-48) desktop - so both must be pinned. jsdom reports
-// scrollHeight 0 (no layout), so each test shadows it on the instance. The
-// value is set through the native prototype setter, because React 19
-// defines its own `value` accessor on controlled nodes that keeps the value
-// tracker in step - a plain assignment would register no change to the
-// dispatched `input` event (the same trick user-event uses internally).
+// #1174: both width-variant auto-grow caps must be pinned. jsdom reports
+// scrollHeight 0 (no layout), so each test shadows it on the instance; the
+// value is set through the native prototype setter - React 19 defines its own `value` accessor on controlled nodes that keeps the value tracker in step (a plain assignment registers no change to the dispatched `input` event; the same trick user-event uses internally).
 describe('Composer auto-grow cap', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined

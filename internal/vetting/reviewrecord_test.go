@@ -21,9 +21,7 @@ import (
 
 // metaAwareInMemory implements recordstore's optional SaveWithMeta/
 // LoadWithMeta over artifact.InMemoryService() - production always wraps the
-// real row-backed store, which supports these; this stands in for that in
-// tests so the preload validity path (which reads head_sha from lineage, not
-// the JSON body - #1090 P2) is actually exercised without a real database.
+// real row-backed store, which supports these; this stands in for that in tests so the preload validity path (which reads head_sha from lineage, not the JSON body - #1090 P2) is actually exercised without a real database.
 type metaAwareInMemory struct {
 	artifact.Service
 	mu   sync.Mutex
@@ -160,16 +158,9 @@ CLEAN:
 	}
 }
 
-// TestSaveCodeReviewRound_ToolWriteSkipsTailFallback covers the #1091 gate
-// fallback, exercised as round 1 (the draft phase) - the flow #1108 B2 found
-// broken: a write_code_review call already wrote this round's record
-// directly (simulated the way the real MCP handler does it: SaveStructured
-// then ToolWritten.Add), so saveCodeReviewRound must not also parse the
-// (bogus) answer tail and overwrite it - it just adopts the tool-written
-// revision. st starts fresh (newEpisodicRoundState, reviewRev 0) exactly as
-// round 1 of a real run does - detection must not depend on a baseline
-// loaded after the tool write (#1108 B2), so it goes through toolWritten
-// instead of a revision comparison.
+// TestSaveCodeReviewRound_ToolWriteSkipsTailFallback covers the #1091 gate fallback, exercised as round 1 (the draft phase) - the flow #1108 B2 found
+// broken: a write_code_review call already wrote this round's record directly (simulated the way the real MCP handler does it: SaveStructured then ToolWritten.Add), so saveCodeReviewRound must not also parse the
+// (bogus) answer tail and overwrite it - it just adopts the tool-written revision. st starts fresh (newEpisodicRoundState, reviewRev 0) exactly as round 1 of a real run does - detection must not depend on a baseline loaded after the tool write (#1108 B2), so it goes through toolWritten instead of a revision comparison.
 func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -217,12 +208,9 @@ func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
 	}
 }
 
-// TestSaveCodeReviewRound_ToolWrittenFindingsSkipTailDuplicate covers #1091
-// adversarial review finding #1: a worker that calls write_finding 3 times
+// TestSaveCodeReviewRound_ToolWrittenFindingsSkipTailDuplicate covers #1091 adversarial review finding #1: a worker that calls write_finding 3 times
 // but never write_code_review must not have the tail-parse fallback re-stage
-// (and duplicate, with a fabricated ParentRevision 0) those same 3 findings -
-// only the answer tail's genuinely new 4th finding gets a new revision, and
-// code_review.finding_ids lists all 4.
+// (and duplicate, with a fabricated ParentRevision 0) those same 3 findings - only the answer tail's genuinely new 4th finding gets a new revision, and code_review.finding_ids lists all 4.
 func TestSaveCodeReviewRound_ToolWrittenFindingsSkipTailDuplicate(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -239,9 +227,7 @@ func TestSaveCodeReviewRound_ToolWrittenFindingsSkipTailDuplicate(t *testing.T) 
 
 	// Simulate 3 tool-written findings (as write_finding's MCP handler would
 	// do: SaveStructured directly, then record the id on ToolWritten).
-	// Snippet "" matches what fileLineAtForCfg resolves for a path that
-	// doesn't exist in the probe repo - the tail parse below reads the same
-	// (missing) file, so the hash-derived id lines up with the tool write.
+	// Snippet "" matches what fileLineAtForCfg resolves for a path that doesn't exist in the probe repo - the tail parse below reads the same (missing) file, so the hash-derived id lines up with the tool write.
 	toolFindings := []FindingRecord{
 		{Path: "a.go", Title: "bug one", State: "new"},
 		{Path: "b.go", Title: "bug two", State: "new"},
@@ -331,8 +317,7 @@ FINDINGS:
 
 // TestToolWrittenStageResetsPerRound covers #1108 finding 2: an id written
 // via write_finding in round 1 must not still suppress round N's tail-parse
-// write of the SAME id - the stage scopes to "this round," not the whole node
-// run, so it has to be drained between rounds.
+// write of the SAME id - the stage scopes to "this round," not the whole node run, so it has to be drained between rounds.
 func TestToolWrittenStageResetsPerRound(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -381,10 +366,8 @@ func TestToolWrittenStageResetsPerRound(t *testing.T) {
 }
 
 // TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure covers #1108 finding
-// 3a: when a tool-written id can't be re-read while seeding the round (here,
-// the artifact.Service is swapped out from under the client so every Load
-// fails), the finding must not silently vanish and the tail-parse fallback
-// must not stamp a fabricated ParentRevision for it.
+// 3a: when a tool-written id can't be re-read while seeding the round (here, the artifact.Service is swapped out from under the client so every Load
+// fails), the finding must not silently vanish and the tail-parse fallback must not stamp a fabricated ParentRevision for it.
 func TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -408,8 +391,7 @@ func TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure(t *testing.T) {
 
 	// Simulate the seed re-read failing: swap in an artifact.Service whose
 	// Load always errors, while the id still resolves via the SAME
-	// SubjectHint/kindCodeReview lookup for the early toolRev short-circuit
-	// (which is unaffected since no code_review record exists yet).
+	// SubjectHint/kindCodeReview lookup for the early toolRev short-circuit (which is unaffected since no code_review record exists yet).
 	cfg.Artifacts = &alwaysFailLoadService{}
 
 	st := newEpisodicRoundState()
@@ -423,12 +405,8 @@ func TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure(t *testing.T) {
 }
 
 // TestSaveCodeReviewRound_ToolWroteCodeReviewStillSeedsFindings covers #1108
-// B3, exercised in the revise phase (round 2+, where the toolWroteCodeReview
-// short-circuit fires): a round that tool-writes both write_finding and
-// write_code_review must still refresh st.findingRev for the finding from
-// the seed loop before returning - otherwise a later round's tail-parse
-// write for the same finding stamps a stale ParentRevision, silently
-// skipping the revision the tool wrote in between.
+// B3, exercised in the revise phase (round 2+, where the toolWroteCodeReview short-circuit fires): a round that tool-writes both write_finding and
+// write_code_review must still refresh st.findingRev for the finding from the seed loop before returning - otherwise a later round's tail-parse write for the same finding stamps a stale ParentRevision, silently skipping the revision the tool wrote in between.
 func TestSaveCodeReviewRound_ToolWroteCodeReviewStillSeedsFindings(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -459,8 +437,7 @@ func TestSaveCodeReviewRound_ToolWroteCodeReviewStillSeedsFindings(t *testing.T)
 
 	// Round 2 (revise phase): the worker tool-writes a new revision of the
 	// SAME finding, then write_code_review - the short-circuit this test
-	// targets. The seed loop must still refresh st.findingRev[findingID]
-	// before the early return.
+	// targets. The seed loop must still refresh st.findingRev[findingID] before the early return.
 	fRec := FindingRecord{Path: "a.go", Title: "bug one", State: "new"}
 	_, rev2, err := rc.SaveStructured(context.Background(), kindFinding, fRec, "", recordstore.Lineage{NodeID: cfg.NodeID, Round: 2, ParentRevision: rev1, Author: "worker"})
 	if err != nil {
@@ -514,12 +491,8 @@ func (alwaysFailLoadService) Versions(context.Context, *artifact.VersionsRequest
 }
 
 // TestFindingIdentityMatchesAcrossTailParseAndToolWrite covers #1108 finding
-// 3b: the exact-hash dedup between a tail-parsed finding and its tool-written
-// equivalent only holds if both code paths normalize into the same
-// FindingRecord shape. The tail-parse path (saveCodeReviewRound) splits an
-// answer-tail body via splitFirstSentence into Title/Rationale; a tool call
-// (write_finding) supplies Title/Rationale directly. Same logical finding,
-// same fields, must hash to the same id via recordstore.IdentityFor.
+// 3b: the exact-hash dedup between a tail-parsed finding and its tool-written equivalent only holds if both code paths normalize into the same
+// FindingRecord shape. The tail-parse path (saveCodeReviewRound) splits an answer-tail body via splitFirstSentence into Title/Rationale; a tool call (write_finding) supplies Title/Rationale directly. Same logical finding, same fields, must hash to the same id via recordstore.IdentityFor.
 func TestFindingIdentityMatchesAcrossTailParseAndToolWrite(t *testing.T) {
 	title, rationale := splitFirstSentence("bug one. it breaks things")
 	tailParsed := FindingRecord{Path: "a.go", LineHint: 1, Snippet: "func Foo() {", Title: title, Rationale: rationale, State: "new"}
@@ -540,8 +513,7 @@ func TestFindingIdentityMatchesAcrossTailParseAndToolWrite(t *testing.T) {
 
 // TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode covers #1006 test
 // case 2 / #1090 V4.2 verification #2: the same finding (same path, title,
-// flagged-line text) keeps its id regardless of line number, head SHA, or
-// which node's hint is passed in - findingIdentity ignores hint entirely.
+// flagged-line text) keeps its id regardless of line number, head SHA, or which node's hint is passed in - findingIdentity ignores hint entirely.
 func TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode(t *testing.T) {
 	rec := func(lineHint int, snippet string) FindingRecord {
 		return FindingRecord{Path: "a.go", LineHint: lineHint, Title: "bug one", Snippet: snippet}
@@ -574,8 +546,7 @@ func TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode(t *testing.T) {
 
 // TestGateFailWritesNothing covers #1006 test case 4 at the call-site level:
 // saveEpisodicRound is only ever invoked from inside RunGatedRefine's round
-// loop; calling nothing (the gate-fail-before-any-round path) leaves the
-// store empty.
+// loop; calling nothing (the gate-fail-before-any-round path) leaves the store empty.
 func TestGateFailWritesNothing(t *testing.T) {
 	svc := artifact.InMemoryService()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -653,12 +624,8 @@ FINDINGS:
 }
 
 // TestSecondInvocationSeedsFromStoreAndStampsParent covers #1090 adversarial
-// review findings #1 and #2: a fresh RunGatedRefine invocation (prev state
-// nil, as node.go passes on its very first round) on a chat that already
-// has a code_review record must load it - a repeated finding gets
-// "unchanged" (not "new" again) and a dropped one gets "resolved"; the new
-// code_review revision's parent_revision is the real previous revision, not
-// a fabricated 0.
+// review findings #1 and #2: a fresh RunGatedRefine invocation (prev state nil, as node.go passes on its very first round) on a chat that already
+// has a code_review record must load it - a repeated finding gets "unchanged" (not "new" again) and a dropped one gets "resolved"; the new code_review revision's parent_revision is the real previous revision, not a fabricated 0.
 func TestSecondInvocationSeedsFromStoreAndStampsParent(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -732,11 +699,8 @@ FINDINGS:
 }
 
 // TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads covers #1091
-// adversarial review finding #4: a tool-initiated write, stamped with the
-// AdvisorTask's current Round/HeadSHA (as internal/acp/memorymcp.go's
-// currentRound reads them, refreshed by SetAdvisorThreadRound at the start of
-// the round) gets real lineage instead of Round:0/HeadSHA:"" - and
-// BuildReviewPreload, which drops any finding with an empty HeadSHA, picks it up.
+// adversarial review finding #4: a tool-initiated write, stamped with the AdvisorTask's current Round/HeadSHA (as internal/acp/memorymcp.go's
+// currentRound reads them, refreshed by SetAdvisorThreadRound at the start of the round) gets real lineage instead of Round:0/HeadSHA:"" - and BuildReviewPreload, which drops any finding with an empty HeadSHA, picks it up.
 func TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -790,9 +754,7 @@ func TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads(t *testing.T)
 
 // TestSetAdvisorThreadRound_ToolWriteCarriesTriggerAnnotation covers the
 // #1112 follow-up: a tool-initiated write (write_finding et al, via the
-// registered AdvisorTask) must chain the same trigger_annotation a
-// gate-written artifact gets (the PRIOR round's judge_round id) - not leave
-// it empty just because the write bypassed saveCodeReviewRound.
+// registered AdvisorTask) must chain the same trigger_annotation a gate-written artifact gets (the PRIOR round's judge_round id) - not leave it empty just because the write bypassed saveCodeReviewRound.
 func TestSetAdvisorThreadRound_ToolWriteCarriesTriggerAnnotation(t *testing.T) {
 	token := "tok-1112-trigger"
 	RegisterAdvisorThread(token, AdvisorTask{})
@@ -884,12 +846,8 @@ func TestResumePreloadDropsUnreachableHead(t *testing.T) {
 }
 
 // TestBuildReviewPreloadOneGitDiffSpawn covers perf audit #6: BuildReviewPreload
-// used to run one sandboxed `git diff --quiet` per finding/dismissed/clean
-// entry (valid()); it must now run exactly one `git diff --name-only` for the
-// whole preload, regardless of entry count. Spawns are counted by prepending a
-// counting `git` shim to PATH - the same resolution seam workspace.RunArgv's
-// ResolveExecutable uses (exec.LookPath against the process PATH; caps.Sandbox
-// is unset here so RunArgv never re-execs through bwrap/landlock).
+// used to run one sandboxed `git diff --quiet` per finding/dismissed/clean entry (valid()); it must now run exactly one `git diff --name-only` for the
+// whole preload, regardless of entry count. Spawns are counted by prepending a counting `git` shim to PATH - the same resolution seam workspace.RunArgv's ResolveExecutable uses (exec.LookPath against the process PATH; caps.Sandbox is unset here so RunArgv never re-execs through bwrap/landlock).
 func TestBuildReviewPreloadOneGitDiffSpawn(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -960,9 +918,7 @@ func installCountingGitShim(t *testing.T, logPath string) string {
 
 // TestDocumentStagesShareOneID covers #1006 test case 8 under #1090 V4.2: the
 // document id carries no node segment, so every stage of one chat's
-// dispatch (ocr, summarize, clarify) appends revisions to the SAME id;
-// lineage.NodeID (not the id) is what tells them apart. No retention
-// (design V4.1 #2) - every revision is kept.
+// dispatch (ocr, summarize, clarify) appends revisions to the SAME id; lineage.NodeID (not the id) is what tells them apart. No retention (design V4.1 #2) - every revision is kept.
 func TestDocumentStagesShareOneID(t *testing.T) {
 	svc := artifact.InMemoryService()
 	base := reviewerCfgWithArtifacts(t, svc, true)
@@ -1024,8 +980,7 @@ func gitIn(t *testing.T, dir string, args ...string) {
 
 // TestTextRoundWrite_PlainNodeWritesTextArtifact covers #1095 (#1090 P8): a
 // gated node with no registered structured kind (IsReviewer=false,
-// Artifact="") still gets one revision per round, id "text:<node>", with the
-// same lineage shape code_review uses and a correct parent_revision chain.
+// Artifact="") still gets one revision per round, id "text:<node>", with the same lineage shape code_review uses and a correct parent_revision chain.
 func TestTextRoundWrite_PlainNodeWritesTextArtifact(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	base := reviewerCfgWithArtifacts(t, svc, true)
@@ -1070,15 +1025,9 @@ func TestTextRoundWrite_PlainNodeWritesTextArtifact(t *testing.T) {
 	}
 }
 
-// TestTextRoundWrite_SkippedWhenToolWrote covers #1095 item 3: an implementer/
-// explorer node that already tool-wrote an artifact this round via ANY of the
-// loopback MCP artifact-write tools (write_<kind>, write_artifact,
-// edit_artifact - all three now record into ToolWritten, see
-// internal/acp/artifact_tools_test.go for real-handler coverage of that
-// wiring) must not also get a redundant "text:<node>" fallback write for that
-// round. This test exercises saveTextRound/saveEpisodicRound's consumption of
-// ToolWritten directly (populating the stage the way each of those tools
-// does), not the MCP wiring itself.
+// TestTextRoundWrite_SkippedWhenToolWrote covers #1095 item 3: an implementer/ explorer node that already tool-wrote an artifact this round via ANY of the
+// loopback MCP artifact-write tools (write_<kind>, write_artifact, edit_artifact - all three now record into ToolWritten, see
+// internal/acp/artifact_tools_test.go for real-handler coverage of that wiring) must not also get a redundant "text:<node>" fallback write for that round. This test exercises saveTextRound/saveEpisodicRound's consumption of ToolWritten directly (populating the stage the way each of those tools does), not the MCP wiring itself.
 func TestTextRoundWrite_SkippedWhenToolWrote(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1125,8 +1074,7 @@ func TestTextRoundWrite_SkippedWhenToolWrote(t *testing.T) {
 
 // TestSaveTextRound_TruncatesOversizedAnswer covers #1095 adversarial review
 // finding #3: saveTextRound had no size bound, so an explorer/implementer
-// dump (a full diff, a long file listing) would be written whole. Content
-// over artifactref.InlineMaxBytes must be truncated with a trailing marker.
+// dump (a full diff, a long file listing) would be written whole. Content over artifactref.InlineMaxBytes must be truncated with a trailing marker.
 func TestSaveTextRound_TruncatesOversizedAnswer(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	base := reviewerCfgWithArtifacts(t, svc, true)
@@ -1203,11 +1151,8 @@ func TestSaveCodeReviewRound_TakeawayFromToolStagedFields(t *testing.T) {
 }
 
 // TestSaveCodeReviewRound_BackfillsEmptyToolWrittenTakeaway is #1198's
-// residual markers-only path (review comment thread 3937400238):
-// write_code_review's "takeaway" field is optional, so a compliant tool call
-// can still leave it empty. saveCodeReviewRound must backfill from the
-// findings' titles rather than leave the record - and the delivered body
-// deliveryartifact.go later renders from it - empty.
+// residual markers-only path (review comment thread 3937400238): write_code_review's "takeaway" field is optional, so a compliant tool call
+// can still leave it empty. saveCodeReviewRound must backfill from the findings' titles rather than leave the record - and the delivered body deliveryartifact.go later renders from it - empty.
 func TestSaveCodeReviewRound_BackfillsEmptyToolWrittenTakeaway(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -1252,14 +1197,9 @@ func TestSaveCodeReviewRound_BackfillsEmptyToolWrittenTakeaway(t *testing.T) {
 	}
 }
 
-// TestSaveCodeReviewRound_TwoRoundsClampedTakeawayStillDelivers is the
-// adversarial-review regression on #2: the Recovered/answer-tail path never
-// went through stage_review's CheckCodeReviewCaps, so a second round with a
-// takeaway CheckCodeReviewCaps used to reject (the old multi-sentence
-// heuristic) failed validateCodeReview inside SaveStructured, leaving the
-// record - and the delivery rendered from it - silently stuck on round 1's
-// approve. clampCodeReviewFields must make this round's own SaveStructured
-// call succeed, and the delivery must reflect round 2, not round 1.
+// TestSaveCodeReviewRound_TwoRoundsClampedTakeawayStillDelivers is the adversarial-review regression on #2: the Recovered/answer-tail path never
+// went through stage_review's CheckCodeReviewCaps, so a second round with a takeaway CheckCodeReviewCaps used to reject (the old multi-sentence
+// heuristic) failed validateCodeReview inside SaveStructured, leaving the record - and the delivery rendered from it - silently stuck on round 1's approve. clampCodeReviewFields must make this round's own SaveStructured call succeed, and the delivery must reflect round 2, not round 1.
 func TestSaveCodeReviewRound_TwoRoundsClampedTakeawayStillDelivers(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -1297,12 +1237,8 @@ func TestSaveCodeReviewRound_TwoRoundsClampedTakeawayStillDelivers(t *testing.T)
 }
 
 // TestSaveDocumentRound_TruncatesOversizedAnswer is the same check for the
-// saveDocumentRound path (reviewer/document-kind nodes), which shares
-// truncateForBlob with saveTextRound.
-// TestSaveEpisodicRound_InvalidArtifactFallsBackToText covers #1128: a
-// workflow-config or otherwise unregistered artifact selector must not
-// silently drop the node's output - it falls back to the generic
-// "text:<node>" write, same as the no-selector default branch.
+// saveDocumentRound path (reviewer/document-kind nodes), which shares truncateForBlob with saveTextRound. TestSaveEpisodicRound_InvalidArtifactFallsBackToText covers #1128: a
+// workflow-config or otherwise unregistered artifact selector must not silently drop the node's output - it falls back to the generic "text:<node>" write, same as the no-selector default branch.
 func TestSaveEpisodicRound_InvalidArtifactFallsBackToText(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	base := reviewerCfgWithArtifacts(t, svc, true)

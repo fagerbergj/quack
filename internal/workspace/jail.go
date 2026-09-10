@@ -76,13 +76,9 @@ func (j *Jail) HomeDir(userID string) (string, error) {
 	return home, nil
 }
 
-// ScratchDir is a private, per-node writable tmp dir for a sandboxed worker's
-// own scratch use (mktemp, heredocs, a build's tmp files) - a home for the
-// TMPDIR grant that doesn't collide with, or get swept alongside, another
-// node's. Nested under HomeDir (never inside the node's own workspace: a
-// read-only node's tree must stay wholly immutable), one directory component
-// per node so workspace gc's existing per-entry sweepHomeTmp TTL sweep (see
-// gc.go) reaps it with no changes of its own.
+// ScratchDir is a private, per-node writable tmp dir for a sandboxed
+// worker's own scratch use (mktemp, heredocs, a build's tmp files) - a home
+// for the TMPDIR grant that doesn't collide with, or get swept alongside, another node's. Nested under HomeDir (never inside the node's own workspace: a read-only node's tree must stay wholly immutable), one directory component per node so workspace gc's existing per-entry sweepHomeTmp TTL sweep (see gc.go) reaps it with no changes of its own.
 func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
 	if !isSafePathComponent(chatID) {
 		return "", ErrInvalidChatID
@@ -159,10 +155,9 @@ func isSafePathComponent(id string) bool {
 // Path/shell-hostile runes for a directory name (':' breaks node module resolution and PATH-style parsing).
 var hostileRunes = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
-// ChatDirName maps a chat id to its on-disk directory component. Hostile runes
-// become '-', with a short hash of the raw id appended so rewritten ids can't
-// collide (ext:a:b vs ext-a-b). Clean ids map to themselves. The chat id itself
-// (DB/API/UI) never changes - only the directory name.
+// ChatDirName maps a chat id to its on-disk directory component. Hostile
+// runes become '-', with a short hash of the raw id appended so rewritten ids
+// can't collide (ext:a:b vs ext-a-b). Clean ids map to themselves. The chat id itself (DB/API/UI) never changes - only the directory name.
 func ChatDirName(chatID string) string {
 	clean := hostileRunes.ReplaceAllString(chatID, "-")
 	if clean == chatID {

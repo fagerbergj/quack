@@ -9,10 +9,9 @@ export interface UsageSummaryProps {
   usage?: Usage
 }
 
-// UsageSummary is the chat header's model chip(s) + session token total,
-// expandable (native <details> - no JS state needed) to the
-// input/output/reasoning/cached split and cache-hit rate. Renders nothing
-// for a chat with no run yet (no models, no tokens).
+// The chat header's model chip(s) + session token total, expandable
+// (native <details> - no JS state needed) to the
+// input/output/reasoning/cached split and cache-hit rate. Renders nothing for a chat with no run yet (no models, no tokens).
 export function UsageSummary({ models, usage }: UsageSummaryProps) {
   const total = usage?.total_tokens ?? 0
   if (models.length === 0 && total <= 0) return null

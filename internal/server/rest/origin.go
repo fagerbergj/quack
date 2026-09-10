@@ -10,9 +10,7 @@ import (
 
 // chatOrigin decodes a chat row's opaque Origin JSON (marshaled from
 // *extsdk.ChatOrigin by an extension's Dispatch - see
-// internal/serve/extensions.go's newExtDispatch) into the wire schema. Nil
-// on no origin, a malformed blob, or a missing required field - never a
-// partially-filled chip.
+// internal/serve/extensions.go's newExtDispatch) into the wire schema. Nil on no origin, a malformed blob, or a missing required field - never a partially-filled chip.
 func chatOrigin(originJSON string) *schema.ChatOrigin {
 	if originJSON == "" {
 		return nil
@@ -34,8 +32,7 @@ func chatOrigin(originJSON string) *schema.ChatOrigin {
 	if len(sdkOrigin.Labels) > 0 {
 		// Labels' generated element type is an anonymous struct (oapi-codegen);
 		// go through wireLabelValue (omitempty-tagged) rather than hand-matching
-		// its field order, and so an unset Display/Href lands as absent, not a
-		// pointer to "".
+		// its field order, and so an unset Display/Href lands as absent, not a pointer to "".
 		wire := make(map[string][]wireLabelValue, len(sdkOrigin.Labels))
 		for dim, vals := range sdkOrigin.Labels {
 			values := make([]wireLabelValue, len(vals))

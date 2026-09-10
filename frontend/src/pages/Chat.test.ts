@@ -8,10 +8,8 @@ import type { DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
 
 // The live (streaming) turn's <TriggerMessage> is the exact turn in #1250's
-// screenshot - a full render harness for this page (SSE + chatStore + DAG)
-// doesn't exist here and would be disproportionate to add for one prop, so
-// this is a source-level regression guard: chatId must keep flowing to it,
-// or its <artifacts> rows silently go back to being unclickable (#1252).
+// screenshot - a full render harness (SSE + chatStore + DAG) doesn't exist
+// here and would be disproportionate for one prop, so this is a source-level regression guard: chatId must keep flowing, or its <artifacts> rows silently go back to being unclickable (#1252).
 describe('live-turn TriggerMessage chatId wiring (#1252)', () => {
   it('passes chatId through so live-turn artifact rows can open the panel', () => {
     const idx = chatSrc.indexOf('<TriggerMessage')
@@ -42,11 +40,9 @@ describe('shouldQueueSubmit - Composer send decision', () => {
   })
 })
 
-// Regression: the answer bubble briefly showed the orchestrator's mid-processing
-// narration (top-level `live.text`) before flipping to the terminal node's real
-// answer once it arrived. The fix is that a DAG turn's answer text is ALWAYS the
-// terminal node's nodeAnswer - orchestrator narration must never occupy it, even
-// as a fallback while the node answer is still empty.
+// Regression: the answer bubble briefly showed the orchestrator's
+// mid-processing narration (top-level `live.text`) before flipping to the
+// terminal node's real answer. Fix: a DAG turn's answer text is ALWAYS the terminal node's nodeAnswer - orchestrator narration never occupies it, even as a fallback while the node answer is still empty.
 describe('liveDagFinalText - no mid-stream flip to orchestrator narration', () => {
   it("is empty while the terminal node's answer hasn't arrived yet, even with orchestrator narration present", () => {
     const d = dag({})
@@ -166,11 +162,9 @@ describe('chatGitHubLink', () => {
   })
 })
 
-// EditableChatTitle drives the header's click-to-edit rename affordance
-// (0.9.0): clicking the title swaps in an input; Enter/blur commits a real
-// change via onRename (the caller wires this to api.renameChat + a store
-// update), Escape cancels, and a blank/unchanged draft is a silent no-op -
-// never a rename to an empty title.
+// Drives the header's click-to-edit rename (0.9.0): clicking the title swaps
+// in an input; Enter/blur commits a real change via onRename (the caller wires
+// this to api.renameChat + a store update), Escape cancels, and a blank/unchanged draft is a silent no-op - never a rename to an empty title.
 describe('EditableChatTitle', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined
@@ -259,12 +253,8 @@ describe('EditableChatTitle', () => {
 })
 
 // #736 follow-up: the 5s sidebar poll must never shorten the chat list. A
-// poll that re-requests "however many chats are loaded" comes back clamped
-// to the server's page cap once the user has paged past it (109 chats on
-// the live instance), and replacing the list with that shorter response
-// silently drops the tail. The fix is a poll that only ever fetches the
-// first page and merges it in, rather than requesting-and-replacing at the
-// loaded count.
+// poll that re-requests the loaded count comes back clamped to the server's
+// page cap once the user has paged past it (109 chats on the live instance), and replacing the list with that shorter response silently drops the tail - hence a poll that only ever fetches the first page and merges it.
 describe('mergeChatsPage - poll must never shorten the loaded list', () => {
   it('keeps every already-loaded chat when the polled page is smaller than what is loaded', () => {
     // Stands in for a sidebar paged past the server's page cap (100): the
@@ -295,12 +285,8 @@ describe('mergeChatsPage - poll must never shorten the loaded list', () => {
   })
 
   // Root cause: mergeChatsPage trusts `page` unconditionally (by design - that's
-  // what lets a real status change win). A status=active poll GET that was in
-  // flight when the user archived the open chat can still resolve with the
-  // chat listed as active (server hadn't processed the PATCH yet when the GET
-  // was served) - merged straight in, this undoes the optimistic removal. The
-  // fix is pollPageExcludingPending, applied to the page before it ever reaches
-  // mergeChatsPage - this is exactly what Chat.tsx's poll effect now does.
+  // what lets a real status change win). A status=active poll GET in flight when
+  // the user archives the open chat can resolve still listing it active (server hadn't processed the PATCH yet) - merged straight in, it undoes the optimistic removal. The fix is pollPageExcludingPending, applied to the page before mergeChatsPage - exactly what Chat.tsx's poll effect now does.
   it('a stale in-flight poll page no longer resurrects a chat just optimistically archived', () => {
     const afterOptimisticArchive = [chat({ id: 'c2' })] // c1 removed locally by handleArchiveChat
     const staleActivePage = [chat({ id: 'c1' }), chat({ id: 'c2' })] // server hadn't caught up yet
@@ -322,10 +308,9 @@ describe('pollPageExcludingPending', () => {
   })
 })
 
-// #809 follow-up: archiving a chat before the Archived section has ever been expanded
-// must not seed archivedChats - that flips it from undefined (unfetched) to a partial
-// list, so handleExpandArchived's `archivedChats === undefined` check never fires and
-// the section's real first page (which would include the newly archived chat) never loads.
+// #809 follow-up: archiving a chat before the Archived section has ever been
+// expanded must not seed archivedChats - that flips it from undefined
+// (unfetched) to a partial list, so handleExpandArchived's undefined check never fires and the section's real first page (which would include the newly archived chat) never loads.
 describe('nextArchivedChats - archive/unarchive transitions', () => {
   it('leaves archivedChats undefined when archiving before the section has ever loaded', () => {
     expect(nextArchivedChats(undefined, chat({ id: 'c1' }), true)).toBeUndefined()
@@ -348,9 +333,7 @@ describe('nextArchivedChats - archive/unarchive transitions', () => {
 
 // Root cause of "a focused archived chat appears active": the getChat effect
 // used to add whatever it fetched into the active-scoped `chats` list
-// unconditionally, so opening an archived chat (its own URL, or a click from
-// the Archived section) resurrected it into the sidebar's active groups and
-// the header's active chrome. chatBelongsInActiveList is the fix's gate.
+// unconditionally, so opening an archived chat (its own URL, or a click from the Archived section) resurrected it into the sidebar's active groups and the header's active chrome. chatBelongsInActiveList is the fix's gate.
 describe('chatBelongsInActiveList', () => {
   it('is true for an active chat', () => {
     expect(chatBelongsInActiveList(chat({ id: 'c1', archived: false }))).toBe(true)
