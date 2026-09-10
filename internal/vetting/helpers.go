@@ -145,6 +145,10 @@ type ReviewComment struct {
 	Path string
 	Line int
 	Body string
+	// FindingID: the backing FindingRecord's hash id, when known - lets the
+	// overview renderer dedupe a finding that was both written natively
+	// (write_finding) and staged as an inline comment for the same issue.
+	FindingID string
 }
 
 // DeliveryContext: staged set + clone coordinates for extension delivery.

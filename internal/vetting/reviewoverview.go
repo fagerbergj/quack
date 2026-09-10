@@ -123,6 +123,31 @@ func commentLabel(body string) (label, why string) {
 	return label, firstSentence(remainder)
 }
 
+// dedupeComments drops a repeat of the same finding, keeping the first
+// occurrence - matched by FindingID when both entries carry one, else by
+// path+line (a native write_finding and a staged inline comment for the
+// same issue land at the same line but rarely share an id).
+func dedupeComments(comments []ReviewComment) []ReviewComment {
+	seenIDs := make(map[string]bool, len(comments))
+	seenLines := make(map[string]bool, len(comments))
+	out := make([]ReviewComment, 0, len(comments))
+	for _, c := range comments {
+		if c.FindingID != "" && seenIDs[c.FindingID] {
+			continue
+		}
+		lineKey := fmt.Sprintf("%s:%d", c.Path, c.Line)
+		if seenLines[lineKey] {
+			continue
+		}
+		if c.FindingID != "" {
+			seenIDs[c.FindingID] = true
+		}
+		seenLines[lineKey] = true
+		out = append(out, c)
+	}
+	return out
+}
+
 // countLabels tallies comments by Conventional-Comments label.
 func countLabels(comments []ReviewComment) map[string]int {
 	counts := make(map[string]int, len(reviewLabelOrder))
@@ -177,6 +202,7 @@ const legacySummaryDisplayCap = 320
 // self-contained blocks joined with a single blank line, rather than ad-hoc "\n\n" concatenation, so an empty section can never leave a stray blank line behind (the bug a prior version had between Verified and Notes).
 func renderReviewOverview(in reviewOverviewInput) string {
 	var sections []string
+	comments := dedupeComments(in.Comments)
 
 	// Section 2: verdict line.
 	verdictWord := in.Verdict
@@ -185,7 +211,7 @@ func renderReviewOverview(in reviewOverviewInput) string {
 		verdictWord = "request changes"
 	}
 	parts := []string{"**Verdict: " + verdictWord + "**"}
-	counts := countLabels(in.Comments)
+	counts := countLabels(comments)
 	for _, label := range reviewLabelOrder {
 		if n := counts[label]; n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", n, pluralizeLabel(label, n)))
@@ -239,13 +265,13 @@ func renderReviewOverview(in reviewOverviewInput) string {
 	// Section 6: highlights table - every blocking finding, else the top 2
 	// suggestions, in staged order. Omitted when there's neither.
 	var rows []ReviewComment
-	for _, c := range in.Comments {
+	for _, c := range comments {
 		if label, _ := commentLabel(c.Body); label == "blocking" {
 			rows = append(rows, c)
 		}
 	}
 	if len(rows) == 0 {
-		for _, c := range in.Comments {
+		for _, c := range comments {
 			if label, _ := commentLabel(c.Body); label == "suggestion" {
 				rows = append(rows, c)
 				if len(rows) == 2 {
