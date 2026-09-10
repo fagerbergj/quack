@@ -148,6 +148,7 @@ criteria:
       meaning: "it trusted the description: accepted the claim, the tests' presence, or CI's result without reading closely enough to confirm any of them."
     anchors:
     - quote
+    require_fix_on_fail: true
   frontend_screenshots_reviewed:
     definition: >
       When render-check screenshots are attached to this review (a frontend change, one image per story x viewport x theme), the review actually looks at them for visible defects a human eye would catch - overflow, clipped or truncated text, unreadable contrast, misaligned or overlapping controls - rather than ignoring the images or only restating render-check's own pass/fail (its checks are stray comment-shaped text, covered dialogs, horizontal overflow, and console errors; do not re-derive those here, look for what they don't catch). No images attached means this criterion does not apply.

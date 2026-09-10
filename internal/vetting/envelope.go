@@ -52,6 +52,8 @@ type criterionSpec struct {
 	Definition string     `json:"definition,omitempty"`
 	Scale      *scaleSpec `json:"scale,omitempty"`
 	Bands      []bandSpec `json:"bands,omitempty"`
+	// RequireFixOnFail: judge-orchestration only, never shown to the worker.
+	RequireFixOnFail bool `json:"-"`
 }
 
 // anchorSpec: where in the answer a criticism points. Typed per #941; kind

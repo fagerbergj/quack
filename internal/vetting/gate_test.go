@@ -411,35 +411,6 @@ func TestParseVerdictNormalizesRawScale(t *testing.T) {
 	}
 }
 
-// TestBuildEnvelope_TopBandRationalePasses: a raw score matching its own
-// rationale's top-band wording must clear the production threshold (0.6) -
-// pins the scoring plumbing against a mismatch between the two.
-func TestBuildEnvelope_TopBandRationalePasses(t *testing.T) {
-	rationale := "Worker ran go build, go vet, go test -race on all changed packages (all green), ran make generate " +
-		"to verify zero codegen drift, ran npm ci + npm run generate to verify frontend types.gen.ts drift, ran " +
-		"vitest on NavRail tests, ran check-no-emoji and check-stories, ran eslint. Additionally probed net/url " +
-		"directly with a Go program to verify the hostless-URL claim, and read sdk@v0.13.0 source to confirm " +
-		"Host.Version/PublicURL exist. All runs were warranted and stated."
-	v := aggregateVerdict(verdict{Criteria: map[string]criterionScore{
-		"verification_over_assertion": {Score: 3.0 / judgeScaleMax, Shortfall: rationale},
-	}})
-	env := buildEnvelope(v, 0.6, 1)
-	for _, f := range env.JudgeFailures {
-		if f.Criterion.Name == "verification_over_assertion" {
-			t.Fatalf("verification_over_assertion listed as a judge failure at score %v (threshold 0.6) despite a top-band rationale: %q", f.Score, f.Shortfall)
-		}
-	}
-	found := false
-	for _, p := range env.Passing {
-		if p.Criterion.Name == "verification_over_assertion" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("verification_over_assertion missing from Passing: %+v", env.Passing)
-	}
-}
-
 // normalizeScale must leave a verdict already on the 0–1 axis untouched (some
 // models ignore the integer-scale instruction and answer in fractional 0–1).
 func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {

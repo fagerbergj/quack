@@ -662,18 +662,33 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	return
 }
 
-// finishJudgeRound: a PASS verdict backed by zero judge reads is discarded and re-judged once before
-// being trusted (second offence accepted - one wasted round is the ceiling). No-op otherwise.
+// finishJudgeRound: discards and re-judges once before being trusted (second
+// offence accepted - one wasted round is the ceiling), for either of two
+// self-inconsistent verdicts: a PASS backed by zero judge reads, or a judge-scored criterion below threshold with no `fix` (the prompt requires one only
+// for a genuine failure - see inconsistentJudgeFailures). No-op otherwise.
 func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict, readc *readCounter) verdict {
-	if !unreadPass(readc, v) {
+	switch {
+	case unreadPass(readc, v):
+		slog.Warn("judge passed without reading the repo; re-judging once",
+			"component", "vetting", "agent", cfg.Agent, "score", v.Score)
+		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unreadPassFeedback, changedFiles, known, act, received, emit, v, readc)
+	default:
+		if names := inconsistentJudgeFailures(v, cfg.Threshold, cfg.RubricSpecs); len(names) > 0 {
+			slog.Warn("judge scored below threshold with no fix given; re-judging once",
+				"component", "vetting", "agent", cfg.Agent, "criteria", names)
+			return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+inconsistentFailureFeedback(names), changedFiles, known, act, received, emit, v, readc)
+		}
 		return v
 	}
-	slog.Warn("judge passed without reading the repo; re-judging once",
-		"component", "vetting", "agent", cfg.Agent, "score", v.Score)
-	v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question,
-		fitted+"\n\n"+unreadPassFeedback, changedFiles, known, "", act, received, emit)
+}
+
+// reJudgeOnce re-runs the round with feedback appended to the answer, keeping
+// the original verdict v if the retry itself errors - one wasted round is the
+// ceiling, never an unbounded loop.
+func reJudgeOnce(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict, readc *readCounter) verdict {
+	v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, "", act, received, emit)
 	if err2 != nil {
-		slog.Warn("re-judge failed; keeping the unread verdict", "component", "vetting", "err", err2)
+		slog.Warn("re-judge failed; keeping the original verdict", "component", "vetting", "err", err2)
 		return v
 	}
 	if unreadPass(readc2, v2) {
@@ -681,6 +696,35 @@ func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, que
 			"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
 	}
 	return v2
+}
+
+// inconsistentJudgeFailures: criteria opted into RequireFixOnFail (rubric.yaml)
+// that scored below threshold with an empty Fix - the rubric requires one only
+// for a genuine failure of that criterion, so its absence means the score and
+// the reasoning disagree, not that fix was optional. Opt-in, not a blanket
+// rule: most criteria never require a named fix, and applying this check
+// unconditionally to every below-threshold criterion (deterministic overrides
+// like findingsGroundingCriterion included) re-asks rounds that were never
+// inconsistent in the first place.
+func inconsistentJudgeFailures(v verdict, threshold float64, specs map[string]criterionSpec) []string {
+	var names []string
+	for name, c := range v.Criteria {
+		if c.Deterministic || !specs[name].RequireFixOnFail || c.Score >= threshold || strings.TrimSpace(c.Fix) != "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names) // stable order across runs (map iteration is random)
+	return names
+}
+
+// inconsistentFailureFeedback: appended to the judge prompt on re-run for
+// inconsistentJudgeFailures (states the mechanism, not a repeated instruction).
+func inconsistentFailureFeedback(names []string) string {
+	return fmt.Sprintf("Your previous verdict scored %s below the pass threshold but gave no `fix` for it - "+
+		"a genuine failure always names one. Re-examine %s: if it truly fails, give the concrete fix; if your "+
+		"own reasoning actually described the top band, correct the score to match it.",
+		strings.Join(names, ", "), strings.Join(names, ", "))
 }
 
 // judgeRepeat* tune the runaway-generation guard shared by the judge
