@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -523,12 +524,18 @@ func WriteJSON(out io.Writer, v any) error {
 	return enc.Encode(denullSlices(reflect.ValueOf(v)).Interface())
 }
 
-var jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
+var (
+	jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
+	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
+)
 
 // denullSlices deep-copies v, nil slices to empty; a type with its own
-// MarshalJSON (time.Time, a union wrapper's raw bytes) is left untouched.
+// MarshalJSON or MarshalText (time.Time, a netip.Addr-shaped type with
+// unexported state) is left untouched - a reflection-based deep copy would
+// zero unexported fields a real json.Marshal never touches.
 func denullSlices(v reflect.Value) reflect.Value {
-	if v.Type().Implements(jsonMarshalerType) || reflect.PointerTo(v.Type()).Implements(jsonMarshalerType) {
+	if v.Type().Implements(jsonMarshalerType) || reflect.PointerTo(v.Type()).Implements(jsonMarshalerType) ||
+		v.Type().Implements(textMarshalerType) || reflect.PointerTo(v.Type()).Implements(textMarshalerType) {
 		return v
 	}
 	switch v.Kind() {
