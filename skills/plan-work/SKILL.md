@@ -1,14 +1,14 @@
 ---
 name: plan-work
 description: >
-  How to decompose a request into a DAG of specialist agents and submit it to the
-  plan tool. Load this BEFORE authoring any plan - it holds the common-workflow
-  catalog and the rules for building a correct DAG.
+  How to decompose a request into a DAG of specialist agents and submit it via
+  create_plan/edit_plan, then execute. Load this BEFORE authoring any plan - it
+  holds the common-workflow catalog and the rules for building a correct DAG.
 ---
 
 # Plan Work
 
-You turn a user request into the MINIMAL DAG of agent tasks that fully answers it, then submit it to the `plan` tool as `nodes`. Pick agents by their exact names from the **Agents** list in your system prompt.
+You turn a user request into the MINIMAL DAG of agent tasks that fully answers it, then submit it to `create_plan` as `assignments`. Pick agents by their exact names from the **Agents** list in your system prompt.
 
 **Before submitting, ask this of your own plan: if it runs exactly as written, does it hand back what the request asked to receive?** Name the artifact the request wants, find the node whose own task text actually produces it, and check that node is the plan's TERMINAL (last, undepended-on) node. A terminal node tasked to "explore", "investigate", or "produce a report/findings/analysis" never satisfies a request whose deliverable is a plan, a review, or shipped code, no matter how thorough - exploration may only be a prerequisite feeding the node that produces the real artifact (a live failure: a single `code-explorer` node tasked to "produce a detailed report" was submitted, and accepted, for a request asking for an implementation plan - approach, files to change, how to verify). The reverse fails too: a plan that stops at exploring or reviewing when the request asked for shipped code. The plan judge (`internal/vetting/plan_judge.go`) asks this same question independently before your plan runs - a plan that fails it comes back rejected, wasting a re-plan round, so check it yourself first.
 
@@ -73,7 +73,7 @@ When the request is to **create / add / implement / write / fix / build** code A
 Worked example - input: *"Add a Flappy Bird game to repo R and open it as a PR; it must fit the repo's conventions, pass its checks, and include tests for the game logic."*
 
 - CORRECT - ONE `code-implementer` node (this is a single coherent goal, not several independent ones): task = "Clone R, study its structure and conventions, implement a Flappy Bird game that fits them with tests for the game logic, run the repo's typecheck/lint/tests until green, and commit." - no `checks`/`workdir`: the gate derives the repo's own build/lint/test commands once the node has cloned it. The plan declares `setup: {base_ref: "main", work_branch: "feat/flappy-bird"}` and `delivery: {kind: "pull_request", title: ..., body: ...}` - the harness pushes and opens the PR after the node's commit passes review.
-- WRONG - a lone `web-researcher` node that "analyzes the repo and reports the file tree, technologies, and build/lint/test commands." It fails because the deliverable was the code, not a report; `web-researcher` cannot clone-edit-commit, and the run "completes" having done none of the actual work. (The plan tool rejects a plan like this: an implement-and-deliver request with no `code-implementer` node.)
+- WRONG - a lone `web-researcher` node that "analyzes the repo and reports the file tree, technologies, and build/lint/test commands." It fails because the deliverable was the code, not a report; `web-researcher` cannot clone-edit-commit, and the run "completes" having done none of the actual work. (`execute` rejects a plan like this: an implement-and-deliver request with no `code-implementer` node.)
 - WRONG - the implementer's task says "...and push a branch and open the pull request." Pushing and opening the PR are never a node's job; that instruction is dead weight the node can't act on (its tools don't include a push/PR call) and duplicates what `delivery` already declares.
 
 ## Decomposing implementation into independent, goal-scoped nodes
@@ -94,7 +94,7 @@ Never plan ONE monolithic `code-implementer` node for a feature with several ind
 
 ## Declare setup + delivery
 
-Any plan whose deliverable touches a GitHub repo (implement, review, or a repo-scoped plan/research request) declares BOTH `setup` and `delivery` alongside `nodes` in the `plan` tool call - see the tool's description for the exact shape. These are DECLARATIONS: the harness executes them, deterministically and App-authed, AFTER the trust gate passes. No node ever calls git push, opens a PR, or submits a review itself.
+Any plan whose deliverable touches a GitHub repo (implement, review, or a repo-scoped plan/research request) declares BOTH `setup` and `delivery` alongside `assignments` in the `create_plan` call (or updates them via `edit_plan`) - see the tool's description for the exact shape. These are DECLARATIONS: the harness executes them, deterministically and App-authed, AFTER the trust gate passes. No node ever calls git push, opens a PR, or submits a review itself.
 
 | Request type | `setup` | `delivery.kind` |
 | --- | --- | --- |
@@ -143,7 +143,7 @@ Work through these in order:
 
 3. **Extract shared work.** If two+ nodes would each need the same underlying finding (the same entities, the same background), pull it into its OWN upstream node and have the dependents `depends_on` it - don't repeat it in each.
 
-4. **Wire dependencies.** `depends_on: []` only when nodes are TRULY independent (each answerable without the other's output). Use `depends_on: [id]` when a node needs another's specific output (find which models exist, THEN look up their specs). The `synthesizer` depends on ALL other nodes (the plan tool enforces this, but author it correctly anyway).
+4. **Wire dependencies.** `depends_on: []` only when nodes are TRULY independent (each answerable without the other's output). Use `depends_on: [id]` when a node needs another's specific output (find which models exist, THEN look up their specs). The `synthesizer` depends on ALL other nodes (`execute` enforces this, but author it correctly anyway).
 
 5. **Write self-contained tasks** - the rule that most often breaks plans. Each node is a STATELESS worker that sees ONLY the `task` you write - not this conversation, not the other nodes' work. Resolve every reference ("this", "that", "the above") into explicit content. For a follow-up that transforms a prior answer (clean up, reformat, shorten, translate), QUOTE the relevant prior text inside the task.
 
@@ -158,7 +158,7 @@ Work through these in order:
 Rules:
 
 - **Omit `checks` (and `workdir`) by default.** Set them ONLY when the user explicitly named the commands to run ("make sure `npm run e2e` passes"). A planner-set list is an explicit override and wins over derivation.
-- When you do set them, each check must be exactly one of the allowed prefixes listed in the `plan` tool's description, or extend one with arguments after a space (`go test` → `go test ./...`). Pipes are fine (`go vet ./... | head -50` - run natively, no shell). Anything else a shell would interpret (`& ; $ < > \` ( )`) rejects the whole plan at submission.
+- When you do set them, each check must be exactly one of the allowed prefixes listed in the `create_plan` tool's description, or extend one with arguments after a space (`go test` → `go test ./...`). Pipes are fine (`go vet ./... | head -50` - run natively, no shell). Anything else a shell would interpret (`& ; $ < > \` ( )`) rejects the whole plan at submission.
 - When you set `checks`, also set `workdir` - the workspace-relative directory they run in (e.g. `repo`, matching the `dir` the task tells the node to clone into). Name that directory explicitly in the task text so the node and the checks agree on it. (With no `workdir`, the gate finds the node's repo itself.)
 - Checks - yours or the gate's derived ones - run against a **fresh clone**, which has none of the project's dependencies installed. The node's TASK must tell the implementer to install them first (`npm ci`, `go mod download`, …, whatever the repo uses); skip that and the checks fail closed with "command not found" and the node burns its revise budget on it.
 - Research and synthesis nodes never carry checks.
@@ -175,6 +175,8 @@ The chosen node receives the actual file bytes; write its task as a specific ins
 
 ## Submitting
 
-Call `plan` with `nodes`, each `{id, agent, task, depends_on: [...]}` (optional `rubric`; optional `checks` + `workdir` on a code node - see Code checks), plus `setup`/`delivery` when the plan touches a GitHub repo (see Declare setup + delivery). The tool validates and returns a `plan_id` and a summary - review it, then pass `plan_id` to `execute`. If validation fails, fix the nodes and call again.
+Call `list_nodes` first to see who's already hired in this chat, so a follow-up plan reassigns an existing node instead of hiring a redundant one for the same job.
 
-A node may also set `artifact` - optional, and only ever one of the exact registered recordstore kind names the tool's own description lists (never free text) - to have that node's output saved as a dedicated artifact on gate pass.
+Call `create_plan` with `assignments`, each either `{agent, task, depends_on: [...]}` (hires a new node) or `{node_id, task, depends_on: [...]}` (reassigns a node `list_nodes` showed you) - optional `rubric`; optional `checks` + `workdir` on a code node - see Code checks. Add `setup`/`delivery` when the plan touches a GitHub repo (see Declare setup + delivery). A brand-new sibling has no node id yet, so `depends_on` may name its 0-based position in this same `assignments` array instead. The tool validates, mints an id for every hired node, and returns the plan with a summary for your review - then pass its `plan_id` to `execute`, which runs the plan judge and, if accepted, runs the plan. If `execute` rejects it, call `edit_plan` (not a fresh `create_plan`) to fix the assignments it named, and call `execute` again.
+
+An agent's output artifact kind is declared on the agent's own bundle (agent-card.json), not per assignment - see `docs/configuration/agents.md`.
