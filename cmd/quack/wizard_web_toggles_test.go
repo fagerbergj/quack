@@ -11,8 +11,10 @@ import (
 	"github.com/fagerbergj/quack/internal/serve"
 )
 
-// TestEmitServerConfig_WebTogglesBoot: an agent referencing a tool absent
-// from `tools:` fails at boot, not at validate - every combination must do both.
+// TestEmitServerConfig_WebTogglesBoot: an agent referencing web_search absent
+// from `tools:` fails at boot (it needs a configured backend URL). web_fetch
+// has no such requirement - newFetcher defaults an absent kind to the direct
+// fetcher, so that half is covered by TestEmitServerConfig_WebToggles instead.
 func TestEmitServerConfig_WebTogglesBoot(t *testing.T) {
 	cases := []struct {
 		name                string
