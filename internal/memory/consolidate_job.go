@@ -96,7 +96,7 @@ func (s *Store) consolidateOnce(ctx context.Context) {
 	for _, bucket := range slices.Sorted(maps.Keys(byBucket)) { // deterministic order
 		for _, cluster := range burstClusters(byBucket[bucket]) {
 			clusters++
-			fp := clusterFingerprint(cluster)
+			fp := s.clusterFingerprint(cluster)
 			if clusterFingerprintMatches(cluster, fp) {
 				// Same members, same wording as the sweep that already judged this
 				// burst a pure no-op - re-asking the model can only repeat that answer.
@@ -120,16 +120,30 @@ func (s *Store) consolidateOnce(ctx context.Context) {
 
 // clusterFingerprint must hash exactly what buildDedupePrompt sends
 // (id+content) - a skip is only safe if the model would see the same text.
-func clusterFingerprint(cluster []scored) string {
+// Also salted with the dedupe prompt and model name: unsalted, a prompt or
+// model change on deploy would leave every stamped cluster skipping on the
+// old verdict until membership or content shifts.
+func (s *Store) clusterFingerprint(cluster []scored) string {
 	keys := make([]string, len(cluster))
 	for i, p := range cluster {
 		keys[i] = p.ID + "\x00" + p.Content
 	}
 	sort.Strings(keys)
+	sysPrompt, ok := consolidateDedupePrompts[s.domain]
+	if !ok {
+		sysPrompt = consolidateDedupePrompts["task"]
+	}
+	modelName := ""
+	if s.consolidator != nil {
+		modelName = s.consolidator.Name()
+	}
 	h := sha256.New()
+	h.Write([]byte(sysPrompt))
+	h.Write([]byte{0x01})
+	h.Write([]byte(modelName))
 	for _, k := range keys {
-		h.Write([]byte(k))
 		h.Write([]byte{0x01})
+		h.Write([]byte(k))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

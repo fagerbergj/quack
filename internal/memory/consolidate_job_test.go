@@ -561,3 +561,28 @@ func TestRetentionOnce_PruneMemoryOpsErrorDoesNotAbort(t *testing.T) {
 		t.Fatalf("PruneMemoryOps calls = %d, want 1", len(ops.pruneCalls))
 	}
 }
+
+// TestClusterFingerprint_ContentSensitiveOrderAndMemberInvariant pins the
+// fingerprint's contract: changes with a member's content or the salt,
+// unaffected by member order.
+func TestClusterFingerprint_ContentSensitiveOrderAndMemberInvariant(t *testing.T) {
+	s := newSQLiteStore(t, "task", countingModel{reply: `{"ops":[]}`, calls: new(int)})
+	a := scored{ID: "m1", Content: "the frontend uses vite"}
+	b := scored{ID: "m2", Content: "the backend is written in go"}
+
+	base := s.clusterFingerprint([]scored{a, b})
+	if got := s.clusterFingerprint([]scored{b, a}); got != base {
+		t.Errorf("reordering members changed the fingerprint: %q vs %q", got, base)
+	}
+
+	edited := b
+	edited.Content = "the backend is written in rust"
+	if got := s.clusterFingerprint([]scored{a, edited}); got == base {
+		t.Error("editing a member's content did not change the fingerprint")
+	}
+
+	other := newSQLiteStore(t, "user", countingModel{reply: `{"ops":[]}`, calls: new(int)})
+	if got := other.clusterFingerprint([]scored{a, b}); got == base {
+		t.Error("a different domain (dedupe prompt) did not change the fingerprint")
+	}
+}
