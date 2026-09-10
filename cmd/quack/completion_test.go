@@ -51,9 +51,7 @@ func TestCompleteChatIDs(t *testing.T) {
 }
 
 // TestCompleteChatIDs_UnreachableServerTimesOut: a --server that never
-// responds must not hang tab-complete - completionTimeout bounds the round
-// trip. A handler that blocks past the deadline pins that bound
-// deterministically, unlike relying on the OS to blackhole an unroutable IP.
+// responds must not hang tab-complete.
 func TestCompleteChatIDs_UnreachableServerTimesOut(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -187,10 +185,8 @@ workspace:
 	}
 }
 
-// TestCompleteAgentNames_MissingOrMalformedConfig: the offline completer's
-// invariant that matters most - never crash the shell - needs its own
-// coverage: a missing QUACK_CONFIG path or unparseable YAML must degrade to
-// no completions, not a panic.
+// TestCompleteAgentNames_MissingOrMalformedConfig: an offline completer must
+// never crash the shell, missing or malformed config included.
 func TestCompleteAgentNames_MissingOrMalformedConfig(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
