@@ -683,16 +683,20 @@ var landlockSelfExe = sync.OnceValue(func() string {
 // resolveLandlockSelfExe picks the sidecar next to self when present, else
 // self - split out from landlockSelfExe so the choice is testable without
 // process-wide memoization.
+// No version handshake: the sidecar is assumed to come from the same image
+// build as self (Dockerfile builds and copies both together).
 func resolveLandlockSelfExe(self string) string {
-	if sidecar := filepath.Join(filepath.Dir(self), "quack-sandbox"); fileExists(sidecar) {
+	if sidecar := filepath.Join(filepath.Dir(self), "quack-sandbox"); isExecutableRegularFile(sidecar) {
 		return sidecar
 	}
 	return self
 }
 
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+// isExecutableRegularFile: Lstat (not Stat) so a symlink - which could point
+// anywhere - is never trusted as the sandbox re-exec target.
+func isExecutableRegularFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }
 
 // RunSandboxExecIfInvoked: argv[0] dispatch for Landlock self-exec. Call at top of main() before cobra.

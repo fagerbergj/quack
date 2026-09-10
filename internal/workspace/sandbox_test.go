@@ -506,4 +506,27 @@ func TestResolveLandlockSelfExePrefersSidecar(t *testing.T) {
 	if got := resolveLandlockSelfExe(self); got != self {
 		t.Errorf("resolveLandlockSelfExe() = %q, want self %q when the sidecar path is a directory, not a file", got, self)
 	}
+	if err := os.Remove(sidecar); err != nil {
+		t.Fatal(err)
+	}
+
+	// A non-executable sidecar must not be chosen: it would turn every
+	// sandboxed exec into a confusing "permission denied".
+	if err := os.WriteFile(sidecar, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveLandlockSelfExe(self); got != self {
+		t.Errorf("resolveLandlockSelfExe() = %q, want self %q for a non-executable sidecar", got, self)
+	}
+	if err := os.Remove(sidecar); err != nil {
+		t.Fatal(err)
+	}
+
+	// A symlink must not be trusted either - it could point anywhere.
+	if err := os.Symlink(self, sidecar); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveLandlockSelfExe(self); got != self {
+		t.Errorf("resolveLandlockSelfExe() = %q, want self %q for a symlinked sidecar", got, self)
+	}
 }
