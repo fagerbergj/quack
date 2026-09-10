@@ -95,10 +95,15 @@ type nodeControl struct {
 	// it. nil when the node isn't mid-round.
 	liveSteer func(text string) bool
 
-	// roundAbort aborts the in-flight ACP round via its own session/cancel
-	// RPC (#1030) - cancel only, not pause: pause must keep whatever the
-	// round has accumulated so it can resume, so it never calls this.
+	// roundAbort aborts the in-flight round (ACP session/cancel RPC #1030,
+	// native via graph.go's withRoundAbort) - cancel only, not pause: pause
+	// must keep the round's work so it can resume, so it never calls this.
 	roundAbort context.CancelFunc
+
+	// loopFailure: set by NoteToolLoopFailure on a tool-loop hard stop.
+	// Distinct from cancelled (user-initiated) so it surfaces as a real
+	// failure, not the cancel path's silent empty continue-but-warn.
+	loopFailure string
 
 	// Write-through coordinates; nil store = in-memory only (tests).
 	store          NodeStateStore
@@ -144,6 +149,47 @@ func (c *nodeControl) clearRoundAbort() {
 	c.mu.Lock()
 	c.roundAbort = nil
 	c.mu.Unlock()
+}
+
+// SetRoundAbort/ClearRoundAbort: exported so graph.go's withRoundAbort can
+// register a native round's cancel on the same field an ACP round uses.
+// Firing cancel immediately covers a round that starts after the stop.
+func (c *nodeControl) SetRoundAbort(cancel context.CancelFunc) {
+	c.setRoundAbort(cancel)
+	c.mu.Lock()
+	fire := c.cancelled || c.loopFailure != ""
+	c.mu.Unlock()
+	if fire {
+		cancel()
+	}
+}
+
+func (c *nodeControl) ClearRoundAbort() { c.clearRoundAbort() }
+
+// NoteToolLoopFailure records a tool-call-loop hard stop and aborts the
+// in-flight round so the node's turn actually ends, not hangs.
+func (c *nodeControl) NoteToolLoopFailure(msg string) {
+	c.mu.Lock()
+	if c.loopFailure != "" {
+		c.mu.Unlock()
+		return // already noted for this round - keep the first message
+	}
+	c.loopFailure = msg
+	abort := c.roundAbort
+	c.mu.Unlock()
+	if abort != nil {
+		abort()
+	}
+}
+
+// ToolLoopFailure reports NoteToolLoopFailure's message, if any, and clears
+// it - a one-shot read so the next round (a retry) starts clean.
+func (c *nodeControl) ToolLoopFailure() (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	msg := c.loopFailure
+	c.loopFailure = ""
+	return msg, msg != ""
 }
 
 func (c *nodeControl) Cancelled() bool {
@@ -561,6 +607,17 @@ func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 	return e.controls.wasCancelled(chatID, nodeID)
 }
 
+// NoteToolLoopFailure reaches a live node's control from internal/tools' repeat
+// guard to abort a tool-call-loop round. False if the node isn't running.
+func (e *Executor) NoteToolLoopFailure(chatID, nodeID, msg string) bool {
+	c := e.controls.get(chatID, nodeID)
+	if c == nil {
+		return false
+	}
+	c.NoteToolLoopFailure(msg)
+	return true
+}
+
 // PauseNode suspends a running node at its next gate boundary. reason
 // distinguishes a human pause from a shutdown drain; HITL pauses itself
 // through the same seam (nodeControl.PauseForInput). Empty reason = user.
@@ -614,10 +671,7 @@ func (e *Executor) SetNodeLiveSteer(chatID, nodeID string, f func(text string) b
 // immediately instead of leaving the round to run until its next boundary check.
 func (e *Executor) SetNodeRoundAbort(chatID, nodeID string, cancel context.CancelFunc) {
 	if c := e.controls.get(chatID, nodeID); c != nil {
-		c.setRoundAbort(cancel)
-		if c.Cancelled() {
-			cancel()
-		}
+		c.SetRoundAbort(cancel)
 	}
 }
 

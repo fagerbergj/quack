@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -214,6 +215,78 @@ func TestExecute_CancelDuringJudgeStopsBeforeRevise(t *testing.T) {
 	}
 	if got := nodeEnd(events, "n1"); got != stream.EventNodeCancelled {
 		t.Errorf("n1 ended as %q; want node_cancelled", got)
+	}
+}
+
+// loopFailStub blocks the worker's first model call on ctx (unlike coopStub's
+// plain channel) so a mid-round NoteToolLoopFailure must interrupt it, not
+// just set a flag nobody reads until the round returns on its own.
+type loopFailStub struct {
+	mu      sync.Mutex
+	calls   int
+	started chan struct{}
+}
+
+func (*loopFailStub) Name() string { return "loopFailStub" }
+
+func (s *loopFailStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if gHasTool(req, "submit_verdict") {
+			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			return
+		}
+		s.mu.Lock()
+		s.calls++
+		s.mu.Unlock()
+		select {
+		case s.started <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		yield(nil, ctx.Err())
+	}
+}
+
+func newLoopFailExecutor(t *testing.T, stub *loopFailStub, rounds int) (*Executor, Plan) {
+	t.Helper()
+	ag, err := llmagent.New(llmagent.Config{Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer."})
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: rounds} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
+	return ex, plan
+}
+
+// TestExecute_ToolLoopFailureAbortsNativeRoundAndReportsFailure: the tool
+// layer's hard stop reaches here via Executor.NoteToolLoopFailure and must
+// abort the in-flight model call, not just wait for the round to give up.
+func TestExecute_ToolLoopFailureAbortsNativeRoundAndReportsFailure(t *testing.T) {
+	stub := &loopFailStub{started: make(chan struct{}, 1)}
+	ex, plan := newLoopFailExecutor(t, stub, 1)
+
+	const wantMsg = "tool-call loop: test_tool called identically 4 times; node terminated"
+	go func() {
+		<-stub.started
+		if !ex.NoteToolLoopFailure("chat", "n1", wantMsg) {
+			t.Error("NoteToolLoopFailure returned false for a live node")
+		}
+	}()
+
+	// A single-node plan's sole node is the graph's terminal output, so a
+	// real (non-cancelled) failure surfaces as RunPlanAsGraph's own error too.
+	yield := func(stream.SSEEvent, error) bool { return true }
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: plan.UserMessage}}}
+	_, err := ex.RunPlanAsGraph(t.Context(), plan, "quack", "u", "chat", content, yield, map[string]string{}, nil)
+	if err == nil || !strings.Contains(err.Error(), wantMsg) {
+		t.Fatalf("run error = %v; want it to carry %q", err, wantMsg)
+	}
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.calls != 1 {
+		t.Errorf("worker model called %d times; want 1 (aborted mid-round, no retry)", stub.calls)
 	}
 }
 

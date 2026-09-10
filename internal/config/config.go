@@ -477,6 +477,13 @@ type CompactionConfig struct {
 // (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM the GPU pool doesn't know about.
 const defaultMaxActiveNodes = 32
 
+// defaultToolLoopFailThreshold/SuccessThreshold/MaxCalls: see ToolLoopConfig.
+const (
+	defaultToolLoopFailThreshold    = 3
+	defaultToolLoopSuccessThreshold = 8
+	defaultToolLoopMaxCalls         = 200
+)
+
 // defaultMaxActiveRuns: host disk/CPU ceiling on concurrent run SETUP
 // (clone/jail), which happens before any node reaches the #1007 GPU ledger.
 const defaultMaxActiveRuns = 8
@@ -491,6 +498,28 @@ type DagConfig struct {
 	// gets its own semaphore) as a host-resource guard (jail/clone CPU+RAM),
 	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active (#1007).
 	MaxActiveNodes int `yaml:"max_active_nodes"`
+
+	// ToolLoop bounds a single node's identical-call and total-call budget -
+	// the deterministic backstop for a model that keeps calling a refused (or
+	// even succeeding) tool instead of stopping on its own. 0 = defaults.
+	ToolLoop ToolLoopConfig `yaml:"tool_loop"`
+}
+
+// ToolLoopConfig: internal/tools' repeat guard thresholds. FailThreshold is
+// lower than SuccessThreshold because a call that keeps erroring is far more
+// likely to be a stuck loop than one that keeps succeeding (e.g. polling, or
+// re-reading a file the worker forgot it already has).
+type ToolLoopConfig struct {
+	// FailThreshold: consecutive identical calls whose last outcome was a
+	// refusal/error before the node's turn is force-ended. 0 = 3.
+	FailThreshold int `yaml:"fail_threshold"`
+	// SuccessThreshold: same, for a streak whose last outcome succeeded. 0 = 8.
+	SuccessThreshold int `yaml:"success_threshold"`
+	// MaxCalls: total tool calls (any tool, any args) a single node may make
+	// in one run before it is force-ended - the generous backstop for a loop
+	// the fingerprint check doesn't catch (e.g. varying a harmless argument
+	// each time). 0 = 200.
+	MaxCalls int `yaml:"max_calls"`
 }
 
 type GatesConfig struct {
@@ -1248,6 +1277,24 @@ func (c *Config) validate() error {
 	}
 	if c.Dag.MaxActiveRuns < 1 {
 		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
+	}
+	if c.Dag.ToolLoop.FailThreshold == 0 {
+		c.Dag.ToolLoop.FailThreshold = defaultToolLoopFailThreshold
+	}
+	if c.Dag.ToolLoop.FailThreshold < 1 {
+		return fmt.Errorf("config: dag.tool_loop.fail_threshold must be >= 1")
+	}
+	if c.Dag.ToolLoop.SuccessThreshold == 0 {
+		c.Dag.ToolLoop.SuccessThreshold = defaultToolLoopSuccessThreshold
+	}
+	if c.Dag.ToolLoop.SuccessThreshold < 1 {
+		return fmt.Errorf("config: dag.tool_loop.success_threshold must be >= 1")
+	}
+	if c.Dag.ToolLoop.MaxCalls == 0 {
+		c.Dag.ToolLoop.MaxCalls = defaultToolLoopMaxCalls
+	}
+	if c.Dag.ToolLoop.MaxCalls < 1 {
+		return fmt.Errorf("config: dag.tool_loop.max_calls must be >= 1")
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

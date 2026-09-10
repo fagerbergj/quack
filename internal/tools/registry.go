@@ -36,12 +36,21 @@ type Deps struct {
 	Guards          map[string]string
 	SafetyJudge     SafetyJudge
 	NodeCancelled   func(chatID, nodeID string) bool
-	ExtTools        map[string]tool.Tool
-	Replayer        *replay.Session
-	LedgerCoords    ledger.Coords
-	Memory          *memory.Store      // recall_memory (nil = not offered - see resolveToolNames)
-	MemoryRole      string             // recall_memory's role bucket; empty falls back to repo then user
-	Ledger          ledger.LedgerStore // recall_memory's memory.recall ledger entries
+	// EndNodeTurn force-ends a node's round on a deterministic tool-call
+	// loop (dag.Executor.NoteToolLoopFailure) - nil disables the hard stop,
+	// leaving only the soft refusal (replay/test builds, no live executor).
+	EndNodeTurn func(chatID, nodeID, msg string) bool
+	// ToolLoopFailThreshold/SuccessThreshold/MaxCalls: repeatGuard's
+	// thresholds (config.DagConfig.ToolLoop) - 0 uses repeatguard.go's defaults.
+	ToolLoopFailThreshold    int
+	ToolLoopSuccessThreshold int
+	ToolLoopMaxCalls         int
+	ExtTools                 map[string]tool.Tool
+	Replayer                 *replay.Session
+	LedgerCoords             ledger.Coords
+	Memory                   *memory.Store      // recall_memory (nil = not offered - see resolveToolNames)
+	MemoryRole               string             // recall_memory's role bucket; empty falls back to repo then user
+	Ledger                   ledger.LedgerStore // recall_memory's memory.recall ledger entries
 }
 
 type constructor func(Deps) (tool.Tool, error)
@@ -110,7 +119,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
 			}
 		}
-		if direct, err = repeatWrap(direct, repeats); err != nil {
+		if direct, err = repeatWrap(direct, repeats, d.ToolLoopFailThreshold, d.ToolLoopSuccessThreshold, d.ToolLoopMaxCalls, d.EndNodeTurn); err != nil {
 			return nil, fmt.Errorf("tools: repeat guard %q: %w", name, err)
 		}
 		if direct, err = cancelWrap(direct, name, d); err != nil {

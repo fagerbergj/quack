@@ -69,3 +69,48 @@ export function checkPolicy(toolName, input = {}) {
   if (toolName === "read" && ENV_FILE.test(input.path || "")) return { ask: `read ${input.path}` };
   return null;
 }
+
+// Deterministic tool-call-loop guard - the pi/ACP twin of
+// internal/tools/repeatguard.go's native repeat guard, for quack's
+// MCP-bridged tools (quackmcp_*, registered by pi-acp.mjs's extension).
+export const DEFAULT_LOOP_FAIL_THRESHOLD = 3;
+export const DEFAULT_LOOP_SUCCESS_THRESHOLD = 8;
+
+// streak: fingerprint -> { count, failed } for this process - one shim
+// subprocess per round, so state never needs to survive past it.
+const loopStreaks = new Map();
+
+function loopFingerprint(name, args) {
+  return name + ":" + JSON.stringify(args ?? {});
+}
+
+// checkLoop returns null to run normally, {refuse} to short-circuit without
+// executing, or {stop} once the model repeats an already-refused call.
+export function checkLoop(name, args, failThreshold = DEFAULT_LOOP_FAIL_THRESHOLD, successThreshold = DEFAULT_LOOP_SUCCESS_THRESHOLD) {
+  const fp = loopFingerprint(name, args);
+  const streak = loopStreaks.get(fp) ?? { count: 0, failed: false };
+  streak.count += 1;
+  loopStreaks.set(fp, streak);
+  const threshold = streak.failed ? failThreshold : successThreshold;
+  if (streak.count > threshold) {
+    return { stop: `tool-call loop: ${name} called with identical arguments ${streak.count} consecutive times despite being refused; node terminated` };
+  }
+  if (streak.count === threshold) {
+    return {
+      refuse: `REFUSED: this is the ${streak.count}th consecutive time you issued this exact ${name} call with these exact arguments. ` +
+        `Its result has not changed - it is already in the conversation above. Re-issuing it again will END THIS NODE'S TURN as a ` +
+        `failure. Take a DIFFERENT action: use the result you already have, try a different tool or different arguments, or if you ` +
+        `are finished, stop calling tools and write your final answer now.`,
+    };
+  }
+  return null;
+}
+
+// recordLoopOutcome updates the streak's last-executed outcome (used to pick
+// failThreshold vs successThreshold on the NEXT identical call) - call only
+// after an ACTUALLY-executed call (never after a refusal, which never ran).
+export function recordLoopOutcome(name, args, failed) {
+  const fp = loopFingerprint(name, args);
+  const streak = loopStreaks.get(fp);
+  if (streak) streak.failed = failed;
+}

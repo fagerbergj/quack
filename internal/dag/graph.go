@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -79,6 +80,10 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 			}
 			worker, workerModel, workerTools, setRoundCoords, release = w, m, wt, src, rel
 		}
+		worker, err := withRoundAbort(worker, controls, chatID, n.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dag: node %q: round-abort wrap: %w", n.ID, err)
+		}
 		workerNode, err := vetting.NewWorkerNode(worker)
 		if err != nil {
 			return nil, nil, err
@@ -95,6 +100,42 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup, sessions)
 	}
 	return nodesByID, subAgents, nil
+}
+
+// withRoundAbort wraps the worker so a node cancel or NoteToolLoopFailure can
+// abort its round mid-flight. Must wrap the Agent itself, not ctx deeper in
+// the call chain: workflow.RunNode's scheduler binds the child's context
+// once, at node activation, so only the Agent it calls Run on can inject a
+// cancel that reaches it.
+func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID string) (adkagent.Agent, error) {
+	return adkagent.New(adkagent.Config{
+		Name:        inner.Name(),
+		Description: inner.Description(),
+		Run: func(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
+			return func(yield func(*session.Event, error) bool) {
+				nc := controls.get(chatID, nodeID)
+				if nc == nil {
+					for ev, err := range inner.Run(ctx) {
+						if !yield(ev, err) {
+							return
+						}
+					}
+					return
+				}
+				cctx, cancel := context.WithCancel(ctx)
+				nc.SetRoundAbort(cancel)
+				defer func() {
+					nc.ClearRoundAbort()
+					cancel()
+				}()
+				for ev, err := range inner.Run(ctx.WithContext(cctx)) {
+					if !yield(ev, err) {
+						return
+					}
+				}
+			}
+		},
+	})
 }
 
 // liveSteerDrain: the per-node hook that delivers a steer into a RUNNING round
