@@ -61,6 +61,11 @@ type AgentInfo struct {
 	// ContextWindow: the agent's configured context_window (0 if unset) - carried onto
 	// each node it's assigned to, for the frontend's context meter.
 	ContextWindow int
+	// DefaultArtifact: this agent's bundle-declared default output artifact
+	// kind (agent-card.json's "artifact" field, "" if unset) - a property of
+	// the job, not a per-node override, so assemble() stamps it onto every
+	// node assigned this agent.
+	DefaultArtifact string
 }
 
 // Planner validates an orchestrator-authored DAG and stamps turn context for the executor.
@@ -73,6 +78,7 @@ type Planner struct {
 // NewPlanner: returns a Planner over the agent roster, check prefixes, and plan judge.
 func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJudge) *Planner {
 	SetAgentRoster(agents)
+	SetCheckCommands(checkCommands)
 	return &Planner{agents: agents, checkCommands: checkCommands, judge: judge}
 }
 
@@ -107,6 +113,26 @@ func ArtifactKindNames() []string { return recordstore.ArtifactKindNames() }
 // config's own workflow-node validation calls recordstore directly to avoid
 // an import cycle (dag -> inference -> config).
 func ValidateArtifactKind(kind string) error { return recordstore.ValidateArtifactKind(kind) }
+
+// AssignmentsToRawNodes converts a dag_plan record's assignments into Build's
+// RawNode input, resolving each assignment's agent from nodeAgent (the join
+// a dag_plan record can't make on its own - it only ever stores node ids;
+// execute resolves this from the matching dag_node records before calling
+// Build). Errors when an assignment references a node id with no such entry.
+func AssignmentsToRawNodes(assignments []Assignment, nodeAgent map[string]string) ([]RawNode, error) {
+	out := make([]RawNode, 0, len(assignments))
+	for _, a := range assignments {
+		agent, ok := nodeAgent[a.NodeID]
+		if !ok {
+			return nil, fmt.Errorf("assignments.%s: no dag_node record for this node id", a.NodeID)
+		}
+		out = append(out, RawNode{
+			ID: a.NodeID, Agent: agent, Task: a.Task, Rubric: a.Rubric,
+			DependsOn: a.DependsOn, Checks: a.Checks, Workdir: a.Workdir,
+		})
+	}
+	return out, nil
+}
 
 // Build: validates submitted nodes into a Plan and stamps turn context.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
@@ -349,6 +375,12 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 				return nil, fmt.Errorf("node %q: %w", n.ID, err)
 			}
 		}
+		// n.Artifact (a config-bound workflow node) overrides; otherwise the
+		// agent's own bundle-declared default applies.
+		artifactKind := n.Artifact
+		if artifactKind == "" {
+			artifactKind = agentInfo.DefaultArtifact
+		}
 		ids[n.ID] = true
 		plan.Nodes = append(plan.Nodes, Node{
 			ID:            n.ID,
@@ -359,7 +391,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			Checks:        n.Checks,
 			Workdir:       n.Workdir,
 			ContextWindow: agentInfo.ContextWindow,
-			Artifact:      n.Artifact,
+			Artifact:      artifactKind,
 		})
 	}
 

@@ -10,18 +10,17 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// TestSaveDagPlanRecord covers #1095: an accepted plan writes "dag_plan:main",
-// its content validates against the registered dag_plan schema, and it shows
-// up in a list_artifacts-style listing.
+// TestSaveDagPlanRecord covers #1095: a plan writes "dag_plan:main", its
+// content validates against the registered dag_plan schema, and it shows up
+// in a list_artifacts-style listing.
 func TestSaveDagPlanRecord(t *testing.T) {
 	svc := artifact.InMemoryService()
-	p := Plan{
-		ID:          "plan-1",
-		Nodes:       []Node{{ID: "n1", AgentName: "web-researcher", Task: "look something up"}},
-		UserMessage: "please research this",
+	rec := DagPlanRecord{
+		PlanID:      "plan-1",
+		Assignments: []Assignment{{NodeID: "web-researcher-1", Task: "look something up"}},
 	}
 
-	id, rev, err := SaveDagPlanRecord(context.Background(), svc, "quack", "u1", "chat1", "turn1", p)
+	id, rev, err := SaveDagPlanRecord(context.Background(), svc, "quack", "u1", "chat1", "turn1", rec)
 	if err != nil {
 		t.Fatalf("SaveDagPlanRecord: %v", err)
 	}
@@ -40,12 +39,12 @@ func TestSaveDagPlanRecord(t *testing.T) {
 	if gotRev != 1 {
 		t.Fatalf("Latest revision = %d, want 1", gotRev)
 	}
-	var loaded Plan
+	var loaded DagPlanRecord
 	if err := json.Unmarshal(raw, &loaded); err != nil {
-		t.Fatalf("stored content doesn't unmarshal into Plan: %v", err)
+		t.Fatalf("stored content doesn't unmarshal into DagPlanRecord: %v", err)
 	}
-	if loaded.ID != p.ID || len(loaded.Nodes) != 1 || loaded.Nodes[0].AgentName != "web-researcher" {
-		t.Fatalf("stored plan = %+v, want a round-trip of %+v", loaded, p)
+	if loaded.PlanID != rec.PlanID || len(loaded.Assignments) != 1 || loaded.Assignments[0].NodeID != "web-researcher-1" {
+		t.Fatalf("stored plan = %+v, want a round-trip of %+v", loaded, rec)
 	}
 
 	spec, ok := recordstore.SpecFor(kindDagPlan)
@@ -69,7 +68,37 @@ func TestSaveDagPlanRecord(t *testing.T) {
 // (no artifact service configured): the caller Warn-logs and moves on, never
 // blocking plan acceptance.
 func TestSaveDagPlanRecord_NoArtifactServiceFailsOpen(t *testing.T) {
-	if _, _, err := SaveDagPlanRecord(context.Background(), nil, "quack", "u1", "chat1", "turn1", Plan{ID: "p"}); err == nil {
+	rec := DagPlanRecord{PlanID: "p", Assignments: []Assignment{{NodeID: "n1", Task: "x"}}}
+	if _, _, err := SaveDagPlanRecord(context.Background(), nil, "quack", "u1", "chat1", "turn1", rec); err == nil {
 		t.Fatal("want an error with nil artifacts, so the caller knows to skip rather than silently write to nothing")
+	}
+}
+
+// TestLoadDagPlanRecord_NoneYet covers the ok=false path - a chat that has
+// never called create_plan.
+func TestLoadDagPlanRecord_NoneYet(t *testing.T) {
+	svc := artifact.InMemoryService()
+	_, _, ok, err := LoadDagPlanRecord(context.Background(), svc, "quack", "u1", "chat1")
+	if err != nil {
+		t.Fatalf("LoadDagPlanRecord: %v", err)
+	}
+	if ok {
+		t.Fatal("want ok=false for a chat with no dag_plan record yet")
+	}
+}
+
+// TestLoadDagPlanRecord_RoundTrip covers reading back what SaveDagPlanRecord wrote.
+func TestLoadDagPlanRecord_RoundTrip(t *testing.T) {
+	svc := artifact.InMemoryService()
+	rec := DagPlanRecord{PlanID: "plan-2", Assignments: []Assignment{{NodeID: "n1", Task: "x"}}}
+	if _, _, err := SaveDagPlanRecord(context.Background(), svc, "quack", "u1", "chat1", "turn1", rec); err != nil {
+		t.Fatalf("SaveDagPlanRecord: %v", err)
+	}
+	loaded, rev, ok, err := LoadDagPlanRecord(context.Background(), svc, "quack", "u1", "chat1")
+	if err != nil || !ok {
+		t.Fatalf("LoadDagPlanRecord: ok=%v err=%v", ok, err)
+	}
+	if rev != 1 || loaded.PlanID != rec.PlanID {
+		t.Fatalf("loaded = %+v rev=%d, want %+v rev=1", loaded, rev, rec)
 	}
 }

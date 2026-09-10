@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/bundledir"
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 // Bundle is a declarative agent definition: agent-card.json + prompt.md.
@@ -29,6 +30,11 @@ type Card struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
 	Skills      []Skill `json:"skills,omitempty"`
+	// Artifact: this job's default output kind, one of
+	// recordstore.ArtifactKindNames() - stamped onto every node this agent is
+	// assigned (dag.AgentInfo.DefaultArtifact) as a property of the job, not
+	// a per-assignment override.
+	Artifact string `json:"artifact,omitempty"`
 }
 
 // Skill is one declared capability of an agent.
@@ -57,6 +63,11 @@ func LoadBundle(dir string) (*Bundle, error) {
 	}
 	if strings.TrimSpace(card.Name) == "" {
 		return nil, fmt.Errorf("agent bundle %q: %s has empty name", dir, cardFile)
+	}
+	if card.Artifact != "" {
+		if err := recordstore.ValidateArtifactKind(card.Artifact); err != nil {
+			return nil, fmt.Errorf("agent bundle %q: %s: artifact: %w", dir, cardFile, err)
+		}
 	}
 
 	rawPrompt, err := bundledir.ReadFile(bundledir.PathJoin(dir, promptFile))

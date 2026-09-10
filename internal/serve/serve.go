@@ -746,7 +746,15 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	mediaAgents := make(map[string]bool)
 	for name, c := range clientMap {
 		ac := cfg.Agents[name]
-		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description(), ContextWindow: ac.ContextWindow})
+		// Re-reads a bundle buildAgents already loaded, rather than widen its
+		// already-long return signature for this one optional field.
+		var defaultArtifact string
+		if bundle, err := agent.LoadBundle(ac.Bundle); err != nil {
+			slog.Warn("agent bundle: re-read for default artifact failed", "component", "startup", "agent", name, "err", err)
+		} else {
+			defaultArtifact = bundle.Card.Artifact
+		}
+		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description(), ContextWindow: ac.ContextWindow, DefaultArtifact: defaultArtifact})
 		for _, inp := range ac.Inputs {
 			if inp == "image" || inp == "audio" {
 				mediaAgents[name] = true

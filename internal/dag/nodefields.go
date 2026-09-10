@@ -24,6 +24,21 @@ func SetAgentRoster(agents []AgentInfo) {
 	agentRoster = agents
 }
 
+// AgentInfoFor returns the current roster's entry for name, ok=false if
+// unknown - the display lookup (context window, default artifact kind)
+// create_plan/edit_plan use to build the dag_plan SSE event before execute
+// (and its own Build call) resolves the same values authoritatively.
+func AgentInfoFor(name string) (AgentInfo, bool) {
+	agentRosterMu.RLock()
+	defer agentRosterMu.RUnlock()
+	for _, a := range agentRoster {
+		if a.Name == name {
+			return a, true
+		}
+	}
+	return AgentInfo{}, false
+}
+
 func agentNameList() []string {
 	agentRosterMu.RLock()
 	defer agentRosterMu.RUnlock()
@@ -60,4 +75,35 @@ func ValidateTask(task string) error {
 		return fmt.Errorf("task: must not be empty")
 	}
 	return nil
+}
+
+// checkCommands mirrors the live workspace.check_commands prefix allowlist,
+// the same reason agentRoster exists: ValidateChecks runs inside a
+// recordstore kind's init-time Validate closure, which has no way to reach
+// a live Planner instance.
+var (
+	checkCommandsMu sync.RWMutex
+	checkCommands   []string
+)
+
+// SetCheckCommands stores the prefixes ValidateChecks checks a node's
+// `checks` field against.
+func SetCheckCommands(cmds []string) {
+	checkCommandsMu.Lock()
+	defer checkCommandsMu.Unlock()
+	checkCommands = cmds
+}
+
+func checkCommandsSnapshot() []string {
+	checkCommandsMu.RLock()
+	defer checkCommandsMu.RUnlock()
+	return append([]string(nil), checkCommands...)
+}
+
+// ValidateChecks is the shape-independent half of "checks" validation -
+// reuses the same prefix-allowlist validateChecks already enforces in
+// assemble(), against whatever check commands the current Planner was built
+// with.
+func ValidateChecks(checks []string) error {
+	return validateChecks(checks, checkCommandsSnapshot())
 }
