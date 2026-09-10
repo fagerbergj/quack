@@ -754,6 +754,10 @@ export type DagNodeDef = {
      * The node's declared output artifact kind - the record name its output is saved as on gate pass; absent when the node declares none.
      */
     artifact?: string;
+    /**
+     * The prior node id this node asked to resume, as declared (not whether the executor's eligibility check actually granted it); absent for a fresh node.
+     */
+    continue?: string;
 };
 
 export type DagEdge = {

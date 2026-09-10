@@ -800,10 +800,13 @@ type DagNodeDef struct {
 	Artifact *string `json:"artifact,omitempty"`
 
 	// ContextWindow The assigned agent's configured context_window (0/absent if unset) - the context meter's static limit.
-	ContextWindow *int     `json:"context_window,omitempty"`
-	DependsOn     []string `json:"depends_on"`
-	Id            string   `json:"id"`
-	Task          string   `json:"task"`
+	ContextWindow *int `json:"context_window,omitempty"`
+
+	// Continue The prior node id this node asked to resume, as declared (not whether the executor's eligibility check actually granted it); absent for a fresh node.
+	Continue  *string  `json:"continue,omitempty"`
+	DependsOn []string `json:"depends_on"`
+	Id        string   `json:"id"`
+	Task      string   `json:"task"`
 }
 
 // DagNodeState defines model for DagNodeState.

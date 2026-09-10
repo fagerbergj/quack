@@ -2350,6 +2350,9 @@ components:
         artifact:
           type: string
           description: The node's declared output artifact kind - the record name its output is saved as on gate pass; absent when the node declares none.
+        continue:
+          type: string
+          description: The prior node id this node asked to resume, as declared (not whether the executor's eligibility check actually granted it); absent for a fresh node.
 
     DagEdge:
       type: object

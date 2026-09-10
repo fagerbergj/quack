@@ -620,6 +620,15 @@ export const DagNode = memo(function DagNode({
         />
       </div>
 
+      {/* continue: this node asked to resume a prior turn's node - shown
+          regardless of whether the executor's eligibility check granted it
+          (see stream.NodeDoneData.SessionHandle for the granted case). */}
+      {node.continue && (
+        <div className="flex items-center gap-1 px-4 py-1 text-[11px] text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700" title={`Resumes node ${node.continue}'s agent session`}>
+          <Icon name="history" className="w-3 h-3" /> continues {node.continue}
+        </div>
+      )}
+
       {/* Node summary - click to open the popup (#384): the full prompt
           rendered as a chat-native turn, plus (on a live turn) the message
           queue / prompt editor / pending-question answer - one-click
