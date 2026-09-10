@@ -5,11 +5,20 @@
 import { createServer } from "node:http";
 const port = process.env.PORT || 8091;
 
+// Every request's message list, oldest first - GET /requests exposes it so
+// a resume test can assert round 2's prefix actually carries round 1's turn.
+const requests = [];
+
 createServer((req, res) => {
+  if (req.method === "GET" && req.url === "/requests") {
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify(requests));
+  }
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     const rq = JSON.parse(body);
+    requests.push(rq.messages || []);
     const hasTool = (rq.tools || []).some((t) => t.function?.name === "quackmcp_stage_review");
     const answered = (rq.messages || []).some((m) => m.role === "tool");
     const callTool = hasTool && !answered;

@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createServer } from "node:http";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -103,14 +103,13 @@ const sess = await call("session/new", {
   mcpServers: [{ type: "sse", name: "quackmcp", url: mcpUrl, headers: [] }],
 });
 assert.ok(sess.sessionId);
+// piDir is deterministic (keyed by session id) so session/load can
+// find it again from a fresh shim process - no need to scan tmpdir by mtime.
+const piDir = join(tmpdir(), "pi-acp-" + sess.sessionId);
 
 if (!process.env.ACP_CMD) {
   // the shim materialized skills + bridge into the pi config dir
-  const piDir = readdirSync(tmpdir()).filter((d) => d.startsWith("pi-acp-"))
-    .map((d) => join(tmpdir(), d))
-    .filter((d) => { try { readFileSync(join(d, "extensions", "quackmcp.json")); return true; } catch { return false; } })
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
-  assert.ok(piDir, "no pi config dir with quackmcp bridge found");
+  assert.ok(statSync(piDir).isDirectory(), "no pi config dir for this session id");
   const wantSkills = JSON.parse(env.OPENCODE_CONFIG_CONTENT).skills?.paths;
   if (wantSkills) {
     const settings = JSON.parse(readFileSync(join(piDir, "settings.json"), "utf8"));
@@ -157,6 +156,30 @@ if (!process.env.ACP_CMD) {
   assert.notEqual(btc.kind, "other", "MCP tool call still falls through to kind \"other\"");
   assert.ok(kinds.includes("usage_update"), "usage_update missing - quack metrics would go dark");
 }
+if (process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
+  // Real end-to-end resume proof: round 2 on a FRESH shim process
+  // (session/load, not the pinned-process fast path) must carry round 1's
+  // turn into the model's prefix, not start a blank conversation. Requires
+  // the caller to have OPENCODE_CONFIG_CONTENT's baseURL pointed at a live
+  // tools/pi-acp/mock-openai.mjs, which exposes what it received via GET /requests.
+  const base = new URL(JSON.parse(env.OPENCODE_CONFIG_CONTENT).provider.quack.options.baseURL);
+  const before = await fetch(`${base.origin}/requests`).then((r) => r.json());
+  const { shim: shim2, call: call2 } = connectShim(env);
+  await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  await call2("session/load", {
+    sessionId: sess.sessionId, cwd: process.cwd(),
+    mcpServers: [{ type: "sse", name: "quackmcp", url: mcpUrl, headers: [] }],
+  });
+  const resp2 = await call2("session/prompt", { sessionId: sess.sessionId, prompt: [{ type: "text", text: "What did you just do?" }] });
+  assert.equal(resp2.stopReason, "end_turn");
+  const after = await fetch(`${base.origin}/requests`).then((r) => r.json());
+  assert.ok(after.length > before.length, "round 2 never reached the model");
+  const prefix = JSON.stringify(after[after.length - 1]);
+  assert.ok(prefix.includes("Call the quackmcp_stage_review tool"),
+    "round 2's prefix is missing round 1's turn - session/load did not resume");
+  shim2.stdin.end();
+  await new Promise((r) => shim2.on("exit", r));
+}
 if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   // permission bridge: git push blocked locally (no ask), .env reads asked -
   // one allowed, one denied.
@@ -200,6 +223,62 @@ if (!process.env.ACP_CMD) {
   }
 }
 console.log("ok -", updates.length, "updates,", mcpCalls.length, "mcp call(s),", otlpSpans.length, "otlp span(s)");
+
+// connectShim: a second, independent shim process wired for plain
+// request/response, auto-allowing every permission ask - fake-pi.mjs fires
+// its 3 guarded calls whenever the quackmcp bridge config exists, even with
+// no MCP server configured, so a harness that ignores session/request_permission
+// leaves that fetch() with no reply and the round hangs forever.
+function connectShim(spawnEnv) {
+  const s = spawn(argv[0], argv.slice(1), { env: spawnEnv, stdio: ["pipe", "pipe", "inherit"] });
+  const pend = new Map();
+  let id = 1;
+  createInterface({ input: s.stdout }).on("line", (l) => {
+    if (!l.trim()) return;
+    const m = JSON.parse(l);
+    if (m.method === "session/request_permission") {
+      s.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { outcome: { outcome: "selected", optionId: "allow" } } }) + "\n");
+    } else if (m.id !== undefined && pend.has(m.id)) {
+      const { resolve, reject } = pend.get(m.id);
+      pend.delete(m.id);
+      m.error ? reject(new Error(m.error.message)) : resolve(m.result);
+    }
+  });
+  const call2 = (method, params) => {
+    const rid = id++;
+    s.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: rid, method, params }) + "\n");
+    return new Promise((resolve, reject) => pend.set(rid, { resolve, reject }));
+  };
+  return { shim: s, call: call2 };
+}
+
+// session/new must launch pi with --session-id/--session-dir (not
+// --no-session) so session/load on a FRESH shim process (the common case
+// after a server restart or a dropped pinned process) resumes the same
+// conversation instead of starting a blank one. fake-pi.mjs records one line
+// per prompt into <piDir>/<sessionId>.turns; a second process reusing that
+// file's line count proves it landed in the same session, not a new one.
+// Runs before mcpSrv/otlpSrv close below - shim2's own bridge setup and otel
+// flush still need them live.
+if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
+  const turnsFile = join(piDir, "pi-sessions", sess.sessionId + ".turns");
+  assert.equal(readFileSync(turnsFile, "utf8").trim().split("\n").length, 1, "round 1 did not record a turn");
+
+  const { shim: shim2, call: call2 } = connectShim(env);
+  const init2 = await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  assert.equal(init2.agentCapabilities.loadSession, true, "shim must advertise loadSession for resume to fire");
+  await call2("session/load", { sessionId: sess.sessionId, cwd: process.cwd(), mcpServers: [] });
+  const resp2 = await call2("session/prompt", { sessionId: sess.sessionId, prompt: [{ type: "text", text: "again" }] });
+  assert.equal(resp2.stopReason, "end_turn");
+  assert.equal(readFileSync(turnsFile, "utf8").trim().split("\n").length, 2,
+    "session/load spawned pi against a different session id/dir than session/new used - resume broken");
+  shim2.stdin.end();
+  // otel flush on stdin "end" is async (fire-and-forget from the shim's own
+  // point of view) - wait for the process to actually exit before the
+  // otlpSrv.close() below, or its flush races the server going away.
+  await new Promise((r) => shim2.on("exit", r));
+}
+
 shim.stdin.end();
 mcpSrv.close();
 otlpSrv.close();
@@ -207,15 +286,13 @@ otlpSrv.close();
 // no limit.context configured -> omit contextWindow rather than write 0, so
 // pi keeps its own default instead of tripping provider-composer's reject.
 if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
-  const before = new Set(readdirSync(tmpdir()).filter((d) => d.startsWith("pi-acp-")));
   const noLimitEnv = { ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify({
     provider: { quack: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "unused" }, models: { stub: {} } } },
   }) };
-  const shim2 = spawn(argv[0], argv.slice(1), { env: noLimitEnv, stdio: ["pipe", "ignore", "inherit"] });
-  await new Promise((r) => setTimeout(r, 300));
-  const piDir2 = readdirSync(tmpdir()).filter((d) => d.startsWith("pi-acp-") && !before.has(d))
-    .map((d) => join(tmpdir(), d))[0];
-  const models2 = JSON.parse(readFileSync(join(piDir2, "models.json"), "utf8"));
+  const { shim: shim2, call: call2 } = connectShim(noLimitEnv);
+  await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  const sess2 = await call2("session/new", { cwd: process.cwd(), mcpServers: [] });
+  const models2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "models.json"), "utf8"));
   assert.ok(!("contextWindow" in models2.providers.quack.models[0]), "contextWindow written when unset");
-  shim2.kill();
+  shim2.stdin.end();
 }

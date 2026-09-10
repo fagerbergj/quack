@@ -3,11 +3,33 @@
 // If the shim generated a quackmcp bridge, calls the first bridged tool and
 // runs guarded calls through the SAME policy path the real extension uses.
 import { createInterface } from "node:readline";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { McpClient, checkPolicy } from "./mcp-client.mjs";
 
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+
+// Canary: the shim must never fall back to ephemeral sessions - a
+// silent regression here would otherwise only show up as lost history in prod.
+if (process.argv.includes("--no-session")) {
+  console.error("fake-pi: --no-session must never be passed - session resume regressed");
+  process.exit(1);
+}
+function argFlag(name) {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+const fakeSessionId = argFlag("--session-id");
+const fakeSessionDir = argFlag("--session-dir");
+// One line per prompt processed, appended (not overwritten) to this
+// session-id's own file - test.mjs reads its length to prove a second shim
+// process launched against the same --session-id/--session-dir resumed
+// rather than starting fresh.
+function recordTurn() {
+  if (!fakeSessionDir || !fakeSessionId) return;
+  mkdirSync(fakeSessionDir, { recursive: true });
+  appendFileSync(join(fakeSessionDir, fakeSessionId + ".turns"), "1\n");
+}
 
 function extCfg() {
   try {
@@ -59,6 +81,7 @@ createInterface({ input: process.stdin }).on("line", async (l) => {
     return;
   }
   if (msg.type !== "prompt") return out({ type: "response", command: msg.type, success: true });
+  recordTurn();
   out({ type: "response", command: "prompt", success: true });
   out({ type: "agent_start" });
   out({ type: "message_start", message: { role: "assistant" } });
