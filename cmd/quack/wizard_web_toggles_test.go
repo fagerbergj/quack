@@ -36,6 +36,10 @@ func TestEmitServerConfig_WebTogglesBoot(t *testing.T) {
 				WebFetch:    tc.webFetch,
 				SearchKind:  "exa",
 				FetchKind:   "direct",
+				// Coding is what makes EmitServerConfig emit workspace: at
+				// all; none matches the other in-process boot tests (no bwrap needed).
+				Coding:  true,
+				Sandbox: "none",
 			}
 			t.Setenv("QUACK_LLM_API_KEY", a.APIKey)
 
