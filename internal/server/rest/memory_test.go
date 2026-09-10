@@ -511,6 +511,36 @@ func TestListMemories_PageTokenBucketMismatch400(t *testing.T) {
 	}
 }
 
+// TestListMemories_PageTokenSortMismatch400 mirrors the bucket-mismatch test
+// above for `sort`: TestListMemories_SortSpansBothStores uses one constant
+// sort throughout, so it wouldn't notice if the sort check in
+// DecodePageToken were deleted (review finding).
+func TestListMemories_PageTokenSortMismatch400(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	for i := 0; i < 3; i++ {
+		commitFact(t, h.taskMem, "NightsOut", fmt.Sprintf("fact %d", i))
+	}
+
+	sortA := schema.ListMemoriesParamsSort("oldest")
+	limit := 1
+	w := httptest.NewRecorder()
+	h.ListMemories(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil),
+		schema.ListMemoriesParams{Sort: &sortA, Limit: &limit})
+	var page1 schema.MemoryList
+	if err := json.NewDecoder(w.Body).Decode(&page1); err != nil || page1.NextPageToken == nil {
+		t.Fatalf("seed page1 = %+v (decode err %v), want a next_page_token", page1, err)
+	}
+
+	sortB := schema.ListMemoriesParamsSort("newest")
+	w2 := httptest.NewRecorder()
+	h.ListMemories(w2, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil),
+		schema.ListMemoriesParams{Sort: &sortB, PageToken: page1.NextPageToken})
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (token issued for a different sort); body=%s", w2.Code, w2.Body.String())
+	}
+}
+
 // A memory living only in the second configured store (userMem) must still
 // be found and invalidated - invalidateMemory can't stop at the first store
 // that doesn't have the id.
