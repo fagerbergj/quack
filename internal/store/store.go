@@ -449,6 +449,9 @@ func (s *Store) RecordedQuerySQL() []string {
 // (see internal/serve) and may be a different store than this one's.
 func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 
+// Artifacts returns the wired artifact service, nil if SetArtifactService was never called.
+func (s *Store) Artifacts() artifact.Service { return s.artifacts }
+
 // chatFKTables are the tables gaining the chats(id) ON DELETE CASCADE FK
 // (#1296), in the same order New() migrates them.
 var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints"}

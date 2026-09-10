@@ -1130,7 +1130,7 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 				publish(stream.Errorf(err.Error()))
 				break
 			}
-			runlog.PersistNodeEvent(h.store, dp.ID, ev)
+			runlog.PersistNodeEvent(h.store, chatID, dp.ID, ev)
 			publish(ev)
 		}
 		publish(stream.Done())
@@ -1182,7 +1182,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 				publish(stream.Errorf(err.Error()))
 				break
 			}
-			runlog.PersistNodeEvent(h.store, dp.ID, ev) // update the re-run nodes' persisted state
+			runlog.PersistNodeEvent(h.store, chatID, dp.ID, ev) // update the re-run nodes' persisted state
 			publish(ev)
 		}
 		publish(stream.Done())

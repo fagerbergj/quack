@@ -7,11 +7,15 @@
 package dag
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
@@ -72,6 +76,33 @@ func validateDagNode(raw json.RawMessage) error {
 		return errors.New("node_id: must not be empty")
 	}
 	return ValidateAgentName(rec.Agent)
+}
+
+// UpdateDagNodeStatus advances nodeID's persisted status to match the same
+// lifecycle transition runlog.PersistNodeEvent mirrors onto the DagNode
+// store row. ok=false when this chat has no dag_node record for nodeID (a
+// config-bound workflow node, which never went through create_plan/
+// edit_plan) - a silent no-op, fail-open like every other episodic write.
+func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus) error {
+	if artifacts == nil || chatID == "" || nodeID == "" {
+		return nil
+	}
+	c := recordstore.New(artifacts, appName, userID, chatID)
+	raw, _, ok, err := c.Latest(ctx, kindDagNode+":"+nodeID)
+	if err != nil || !ok {
+		return err
+	}
+	var rec DagNodeRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return fmt.Errorf("dag_node: stored content doesn't unmarshal: %w", err)
+	}
+	if rec.Status == status {
+		return nil
+	}
+	rec.Status = status
+	lineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
+	_, _, err = c.SaveStructured(ctx, kindDagNode, rec, nodeID, lineage)
+	return err
 }
 
 // MintNodeID names the next node id for agent given every node id already

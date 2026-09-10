@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/store"
@@ -227,7 +228,7 @@ func (res *DriveResult) Step(st *store.Store, chatID, turnID string, persist boo
 			}
 		}
 	} else if res.PlanID != "" && persist {
-		PersistNodeEvent(st, res.PlanID, ev)
+		PersistNodeEvent(st, chatID, res.PlanID, ev)
 	}
 	if ev.Name == stream.EventNodeNeedsInput {
 		if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
@@ -293,7 +294,7 @@ func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res 
 // PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal transitions
 // are logged, write proceeds. Synchronous on purpose: one goroutine per event gave
 // no ordering, so a node_done write could be overwritten by an earlier event's later-scheduled goroutine, leaving a finished node stuck at running. Lifecycle events are a handful per node.
-func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
+func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
 	var nodeID string
 	var to dag.NodeStatus
@@ -344,6 +345,13 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	if err := st.UpsertDagNode(ctx, n); err != nil {
 		slog.Warn("persistNodeEvent: upsert failed", "component", "dag",
 			"plan_id", planID, "node_id", nodeID, "err", err)
+	}
+	// Mirrors the same transition onto the dag_node record - list_nodes must
+	// see a finished node's status past "live" (nodeIsRunning goes false the instant a node stops running, success or failure).
+	userID := st.SessionUserForChat(ctx, chatID)
+	if err := dag.UpdateDagNodeStatus(ctx, st.Artifacts(), artifactref.AppName, userID, chatID, nodeID, to); err != nil {
+		slog.Warn("persistNodeEvent: dag_node status update failed", "component", "dag",
+			"chat", chatID, "node_id", nodeID, "err", err)
 	}
 }
 
