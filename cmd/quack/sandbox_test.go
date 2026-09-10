@@ -129,6 +129,11 @@ workspace:
 	if got.Mode != "none" {
 		t.Errorf("mode = %q, want none", got.Mode)
 	}
+	// No ro grants are configured - the nested field must still be `[]`, not
+	// `null` (json.Unmarshal only leaves a slice field nil for JSON null).
+	if got.ROGrants == nil {
+		t.Error("ro_grants decoded as nil - the raw JSON must have been null, not []")
+	}
 	if len(got.Env) == 0 {
 		t.Error("env should not be empty")
 	}

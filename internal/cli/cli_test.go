@@ -368,6 +368,30 @@ func TestEmitServerConfig_WebToggles(t *testing.T) {
 	}
 }
 
+// TestEmitServerConfig_WebToggleBlankKindOmitsTool: a toggle on with no kind
+// chosen must not reference the tool either - it's undefined under `tools:`.
+func TestEmitServerConfig_WebToggleBlankKindOmitsTool(t *testing.T) {
+	a := InitAnswers{
+		Endpoint: "http://x/v1", MainModel: "m", SessionKind: "sqlite",
+		WebSearch: true, WebFetch: true, // SearchKind/FetchKind left blank
+	}
+	t.Setenv("QUACK_LLM_API_KEY", "k")
+	path := filepath.Join(t.TempDir(), "quack.yaml")
+	rendered := EmitServerConfig(a)
+	if err := os.WriteFile(path, []byte(rendered), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfigForTest(path)
+	if err != nil {
+		t.Fatalf("server validate: %v\n---\n%s", err, rendered)
+	}
+	for _, tools := range [][]string{cfg.Agents["web-researcher"].Tools, cfg.Orchestrator.Tools} {
+		if slices.Contains(tools, "web_search") || slices.Contains(tools, "web_fetch") {
+			t.Errorf("tools %v must not reference web_search/web_fetch with no kind chosen", tools)
+		}
+	}
+}
+
 // TestEmitFillsBlankBackendURL: a blank URL for a kind that needs one is filled
 // with that kind's DefaultBackendURL; a kind that needs none (exa) stays bare.
 func TestEmitFillsBlankBackendURL(t *testing.T) {

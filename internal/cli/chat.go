@@ -521,15 +521,71 @@ func nodeErrAs(err error, chatID string) error {
 	return err
 }
 
-// WriteJSON is the one --json encoder every command shares: it normalises a
-// nil top-level slice to `[]`, not `null`, so jq never has to special-case empty.
+// WriteJSON is the one --json encoder every command shares: every nil slice,
+// top-level or nested, encodes `[]` rather than `null`.
 func WriteJSON(out io.Writer, v any) error {
-	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice && rv.IsNil() {
-		v = reflect.MakeSlice(rv.Type(), 0, 0).Interface()
-	}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	if !reflect.ValueOf(v).IsValid() {
+		return enc.Encode(v)
+	}
+	return enc.Encode(denullSlices(reflect.ValueOf(v)).Interface())
+}
+
+var jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
+
+// denullSlices deep-copies v, nil slices to empty; a type with its own
+// MarshalJSON (time.Time, a union wrapper's raw bytes) is left untouched.
+func denullSlices(v reflect.Value) reflect.Value {
+	if v.Type().Implements(jsonMarshalerType) || reflect.PointerTo(v.Type()).Implements(jsonMarshalerType) {
+		return v
+	}
+	switch v.Kind() {
+	case reflect.Ptr:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type().Elem())
+		out.Elem().Set(denullSlices(v.Elem()))
+		return out
+	case reflect.Interface:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type()).Elem()
+		out.Set(denullSlices(v.Elem()))
+		return out
+	case reflect.Slice:
+		if v.IsNil() {
+			return reflect.MakeSlice(v.Type(), 0, 0)
+		}
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(denullSlices(v.Index(i)))
+		}
+		return out
+	case reflect.Map:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeMapWithSize(v.Type(), v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			out.SetMapIndex(iter.Key(), denullSlices(iter.Value()))
+		}
+		return out
+	case reflect.Struct:
+		out := reflect.New(v.Type()).Elem()
+		for i := range v.NumField() {
+			if v.Type().Field(i).PkgPath != "" {
+				continue // unexported: encoding/json never sees it either
+			}
+			out.Field(i).Set(denullSlices(v.Field(i)))
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // errNonInteractive: stdin had no bytes at all, distinct from a blank line

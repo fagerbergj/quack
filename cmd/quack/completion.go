@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -10,16 +11,22 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
+// completionTimeout bounds a completer's own round trip - an unreachable
+// --server must not hang the user's tab-complete.
+const completionTimeout = 2 * time.Second
+
 // completeWithTarget resolves --server, then hands the target to fn; any
 // failure degrades to no completions rather than a shell-visible error.
 func completeWithTarget(cmd *cobra.Command, fn func(ctx context.Context, target string) ([]string, error)) ([]string, cobra.ShellCompDirective) {
+	ctx, cancel := context.WithTimeout(cmd.Context(), completionTimeout)
+	defer cancel()
 	server, _ := cmd.Flags().GetString("server")
-	target, stop, err := resolveTarget(cmd.Context(), server)
+	target, stop, err := resolveTarget(ctx, server)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	defer stop()
-	ids, err := fn(cmd.Context(), target)
+	ids, err := fn(ctx, target)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}

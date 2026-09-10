@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -46,6 +47,22 @@ func TestCompleteChatIDs(t *testing.T) {
 	got, _ = completeChatIDs(cmdWithServer(t, srv.URL), []string{"c1"}, "")
 	if got != nil {
 		t.Errorf("completions with args already filled = %v, want none", got)
+	}
+}
+
+// TestCompleteChatIDs_UnreachableServerTimesOut: an unroutable --server must
+// not hang tab-complete - completionTimeout bounds the whole round trip.
+func TestCompleteChatIDs_UnreachableServerTimesOut(t *testing.T) {
+	start := time.Now()
+	got, directive := completeChatIDs(cmdWithServer(t, "http://10.255.255.1:9999"), nil, "")
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("completeChatIDs took %s, want it bounded by completionTimeout (2s)", elapsed)
+	}
+	if got != nil {
+		t.Errorf("completions = %v, want none", got)
+	}
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Errorf("directive = %v, want NoFileComp", directive)
 	}
 }
 

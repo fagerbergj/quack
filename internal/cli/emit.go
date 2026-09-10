@@ -132,10 +132,10 @@ func EmitServerConfig(a InitAnswers) string {
 	b.WriteString("\n")
 
 	b.WriteString("tools:\n")
-	if a.WebSearch {
+	if toolEnabled(a.WebSearch, a.SearchKind) {
 		emitTool(&b, "web_search", a.SearchKind, a.SearchURL)
 	}
-	if a.WebFetch {
+	if toolEnabled(a.WebFetch, a.FetchKind) {
 		emitTool(&b, "web_fetch", a.FetchKind, a.FetchURL)
 	}
 	if a.EmbedModel != "" {
@@ -253,14 +253,20 @@ func emitModels(b *strings.Builder, a InitAnswers) {
 	b.WriteString("\n")
 }
 
+// toolEnabled mirrors emitTool's own gate: a toggle with no kind chosen
+// emits nothing under `tools:`, so nothing may reference the tool either.
+func toolEnabled(toggle bool, kind string) bool {
+	return toggle && kind != ""
+}
+
 // baseTools is shared by the orchestrator and web-researcher: an agent
 // referencing web_search/web_fetch when `tools:` doesn't define it fails at boot.
 func baseTools(a InitAnswers) []string {
 	var t []string
-	if a.WebSearch {
+	if toolEnabled(a.WebSearch, a.SearchKind) {
 		t = append(t, "web_search")
 	}
-	if a.WebFetch {
+	if toolEnabled(a.WebFetch, a.FetchKind) {
 		t = append(t, "web_fetch")
 	}
 	return append(t, "summarize", "current_date")
