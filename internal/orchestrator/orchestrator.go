@@ -185,14 +185,14 @@ func (o *Orchestrator) SetPlanJudgeCap(roundCap, repeatCap int) {
 }
 
 // planJudgeCapModelName names the synthetic model.LLM capAwareModel routes
-// through inference.TracedModelForTesting once capped, so a short-circuited
+// through inference.Traced once capped, so a short-circuited
 // round still gets a normal llm.call ledger entry, otel duration metric, and
 // RecordCallResult - only the real network call is skipped.
 const planJudgeCapModelName = "plan-judge-cap"
 
 // syntheticPlanCapModel is the fixed empty final response capAwareModel
 // returns once the model's one post-cap grace round is spent - no real
-// backend, so wrapping it in inference.TracedModelForTesting is what gives it ledger/metric coverage.
+// backend, so wrapping it in inference.Traced is what gives it ledger/metric coverage.
 type syntheticPlanCapModel struct{}
 
 func (syntheticPlanCapModel) Name() string { return planJudgeCapModelName }
@@ -742,7 +742,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
 			Model: capAwareModel{
 				LLM: o.model, cache: planCache, graceUsed: &graceUsed,
-				synthetic: inference.TracedModelForTesting(syntheticPlanCapModel{}, planJudgeCapModelName),
+				synthetic: inference.Traced(syntheticPlanCapModel{}, planJudgeCapModelName),
 			},
 			Instruction: o.sysPrompt,
 			Tools:       toolList,

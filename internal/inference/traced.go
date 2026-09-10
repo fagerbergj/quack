@@ -44,9 +44,15 @@ type tracedModel struct {
 	coords ledger.Coords
 }
 
-// TracedModelForTesting wraps m like NewModel does, for tests.
-func TracedModelForTesting(m model.LLM, name string) model.LLM {
+// Traced wraps m in the same instrumentation NewModel gives every configured
+// model, without building a live client - for a caller that already has a model.LLM.
+func Traced(m model.LLM, name string) model.LLM {
 	return &tracedModel{LLM: m, name: name}
+}
+
+// TracedModelForTesting is Traced, kept as a separate name for existing test call sites.
+func TracedModelForTesting(m model.LLM, name string) model.LLM {
+	return Traced(m, name)
 }
 
 // SetDefaultAgent sets the metrics-only agent fallback (see the defaultAgent
