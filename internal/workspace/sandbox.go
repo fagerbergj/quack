@@ -668,12 +668,31 @@ func landlockTmpDir(caps Caps) string {
 	return os.TempDir()
 }
 
-// landlockSelfExe: ResolveSandbox already proved this succeeds. Bare-name fallback keeps the error clear.
-func landlockSelfExe() string {
-	if p, err := os.Executable(); err == nil {
-		return p
+// landlockSelfExe prefers the tiny quack-sandbox sidecar beside the running
+// binary, so a sandboxed child re-execs a few MB instead of the whole
+// server; falls back to self-exec when the sidecar isn't installed (dev,
+// `go test`). Resolved once per process, not per spawn.
+var landlockSelfExe = sync.OnceValue(func() string {
+	self, err := os.Executable()
+	if err != nil {
+		return os.Args[0]
 	}
-	return os.Args[0]
+	return resolveLandlockSelfExe(self)
+})
+
+// resolveLandlockSelfExe picks the sidecar next to self when present, else
+// self - split out from landlockSelfExe so the choice is testable without
+// process-wide memoization.
+func resolveLandlockSelfExe(self string) string {
+	if sidecar := filepath.Join(filepath.Dir(self), "quack-sandbox"); fileExists(sidecar) {
+		return sidecar
+	}
+	return self
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // RunSandboxExecIfInvoked: argv[0] dispatch for Landlock self-exec. Call at top of main() before cobra.
