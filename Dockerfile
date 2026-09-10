@@ -53,7 +53,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # (node was already in the image for mermaid/frontend).
 FROM node:24-bookworm-slim AS pi
 WORKDIR /opt/pi
-RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@0.84.2
+RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@0.85.1
 
 # 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
 # binary, which dynamically links against libcurl/libssl/libpcre2/zlib - those

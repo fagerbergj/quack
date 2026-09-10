@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createInterface } from "node:readline";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -25,28 +25,52 @@ const prov = (() => {
   return { baseUrl: p.options.baseURL, apiKey: p.options.apiKey || "unused", model, contextWindow: p.models[model]?.limit?.context };
 })();
 
-// pi config dir (models.json, settings.json, extensions/) - fresh per run.
-const piDir = mkdtempSync(join(tmpdir(), "pi-acp-"));
-if (prov) {
-  const modelEntry = { id: prov.model };
-  // omit rather than write 0/undefined: pi's provider-composer rejects
-  // contextWindow <= 0 and falls back to its own 128000 default anyway.
-  if (prov.contextWindow > 0) modelEntry.contextWindow = prov.contextWindow;
-  writeFileSync(join(piDir, "models.json"), JSON.stringify({
-    providers: {
-      quack: {
-        baseUrl: prov.baseUrl,
-        api: "openai-completions",
-        apiKey: prov.apiKey,
-        compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-        models: [modelEntry],
-      },
-    },
-  }));
+// PI_ACP_STATE_DIR (quack: Jail.ACPStateDir) keeps pi's session files out of
+// TMPDIR - the round's own documented scratch space, not a session store.
+const stateRoot = process.env.PI_ACP_STATE_DIR || tmpdir();
+
+// pi config+session dir, keyed by ACP session id (not mkdtemp'd) so a fresh
+// shim process on session/load finds the same dir session/new wrote.
+function piDirFor(sessionId) {
+  return join(stateRoot, "pi-acp-" + sessionId);
 }
-// Skills: same roots opencode gets via skills.paths (serve.go acpSkillPaths).
-if (ocCfg.skills?.paths?.length)
-  writeFileSync(join(piDir, "settings.json"), JSON.stringify({ skills: ocCfg.skills.paths }));
+
+// hasExistingSession: pi 0.85.1 writes "<timestamp>_<sessionId>.jsonl" flat
+// into --session-dir - checked before spawning so a stale id fails the load.
+function hasExistingSession(sessionId) {
+  try {
+    return readdirSync(join(piDirFor(sessionId), "pi-sessions")).some((f) => f.endsWith("_" + sessionId + ".jsonl"));
+  } catch {
+    return false;
+  }
+}
+
+let piDir;
+function ensurePiDir(sessionId) {
+  const dir = piDirFor(sessionId);
+  mkdirSync(dir, { recursive: true });
+  if (prov) {
+    const modelEntry = { id: prov.model };
+    // omit rather than write 0/undefined: pi's provider-composer rejects
+    // contextWindow <= 0 and falls back to its own 128000 default anyway.
+    if (prov.contextWindow > 0) modelEntry.contextWindow = prov.contextWindow;
+    writeFileSync(join(dir, "models.json"), JSON.stringify({
+      providers: {
+        quack: {
+          baseUrl: prov.baseUrl,
+          api: "openai-completions",
+          apiKey: prov.apiKey,
+          compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+          models: [modelEntry],
+        },
+      },
+    }));
+  }
+  // Skills: same roots opencode gets via skills.paths (serve.go acpSkillPaths).
+  if (ocCfg.skills?.paths?.length)
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ skills: ocCfg.skills.paths }));
+  return dir;
+}
 
 // Loopback endpoint the generated extension POSTs approval-needed tool calls
 // to; the shim escalates them over ACP session/request_permission - quack's
@@ -173,6 +197,10 @@ let pi = null;            // child process
 let sessionId = null;
 let promptReq = null;     // pending session/prompt JSON-RPC id
 let cancelled = false;
+// Belt-and-suspenders behind hasExistingSession's pre-check - see startPi's
+// stderr watcher and the "session/load did not actually resume" reply below.
+let resumeAttempted = false;
+let resumeFailed = false;
 
 function notify(update) {
   out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
@@ -232,21 +260,27 @@ function onPiEvent(ev) {
     case "agent_settled":
       otel.flush();
       if (promptReq !== null) {
-        out({ jsonrpc: "2.0", id: promptReq, result: { stopReason: cancelled ? "cancelled" : "end_turn" } });
+        if (resumeFailed) {
+          out({ jsonrpc: "2.0", id: promptReq, error: { code: -32000, message: "session/load did not actually resume - pi started a blank session" } });
+        } else {
+          out({ jsonrpc: "2.0", id: promptReq, result: { stopReason: cancelled ? "cancelled" : "end_turn" } });
+        }
         promptReq = null;
         cancelled = false;
+        resumeAttempted = false; // only the first prompt after a load is checked
       }
       break;
   }
 }
 
-function startPi(cwd) {
+function startPi(cwd, sid) {
   otel = new Otel(prov?.model);
   const cmd = process.env.PI_ACP_PI_CMD || "pi";
-  const args = process.env.PI_ACP_PI_CMD
-    ? []
-    : ["--mode", "rpc", "--no-session", "--provider", "quack", "--model", prov.model];
-  pi = spawn(cmd, args, { cwd, env: { ...process.env, PI_CODING_AGENT_DIR: piDir }, stdio: ["pipe", "pipe", "inherit"] });
+  // --session-dir must differ from PI_CODING_AGENT_DIR: equal, pi 0.85.1's
+  // session lookup silently misses on the second launch (verified empirically).
+  const args = ["--mode", "rpc", "--session-id", sid, "--session-dir", join(piDir, "pi-sessions")];
+  if (prov) args.push("--provider", "quack", "--model", prov.model);
+  pi = spawn(cmd, args, { cwd, env: { ...process.env, PI_CODING_AGENT_DIR: piDir }, stdio: ["pipe", "pipe", "pipe"] });
   pi.on("exit", (code) => {
     if (promptReq !== null)
       out({ jsonrpc: "2.0", id: promptReq, error: { code: -32000, message: `pi exited (${code})` } });
@@ -256,6 +290,21 @@ function startPi(cwd) {
     if (!l.trim()) return;
     try { onPiEvent(JSON.parse(l)); } catch { /* non-JSON noise */ }
   });
+  // Piped (not "inherit") so a session/load's "no project session found"
+  // warning is observable here, not just visible to a human at the console.
+  createInterface({ input: pi.stderr }).on("line", (l) => {
+    process.stderr.write(l + "\n");
+    if (resumeAttempted && l.includes("No project session found")) resumeFailed = true;
+  });
+}
+
+// startSession is the shared setup behind session/new and session/load: both
+// stand up the same per-session piDir, MCP bridge, and pi child.
+async function startSession(sid, cwd, mcpServers) {
+  piDir = ensurePiDir(sid);
+  if (!permSrv.listening) await new Promise((r) => permSrv.listen(0, "127.0.0.1", r));
+  await writeExtension(mcpServers);
+  startPi(cwd, sid);
 }
 
 async function handle(msg) {
@@ -266,7 +315,7 @@ async function handle(msg) {
       reply({
         protocolVersion: 1,
         agentCapabilities: {
-          loadSession: false,
+          loadSession: true,
           mcpCapabilities: { http: true, sse: true, acp: false },
           promptCapabilities: { audio: false, embeddedContext: false, image: false },
         },
@@ -274,15 +323,28 @@ async function handle(msg) {
       });
       break;
     case "session/new":
+      sessionId = "pi-" + Math.random().toString(36).slice(2);
       try {
-        await new Promise((r) => permSrv.listen(0, "127.0.0.1", r));
-        await writeExtension(msg.params.mcpServers);
+        await startSession(sessionId, msg.params.cwd, msg.params.mcpServers);
       } catch (e) {
         return fail(`mcp bridge: ${e.message}`);
       }
-      sessionId = "pi-" + Math.random().toString(36).slice(2);
-      startPi(msg.params.cwd);
       reply({ sessionId });
+      break;
+    case "session/load":
+      // No stdout replay of prior turns on a real resume - quack's round()
+      // only waits on this RPC's own response, so that's fine to skip.
+      sessionId = msg.params.sessionId;
+      if (!hasExistingSession(sessionId)) {
+        return fail(`no persisted session for ${sessionId}`);
+      }
+      resumeAttempted = true;
+      try {
+        await startSession(sessionId, msg.params.cwd, msg.params.mcpServers);
+      } catch (e) {
+        return fail(`mcp bridge: ${e.message}`);
+      }
+      reply({});
       break;
     case "session/prompt": {
       promptReq = msg.id;

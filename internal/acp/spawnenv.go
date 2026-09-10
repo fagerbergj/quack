@@ -27,6 +27,9 @@ func SpawnEnv(home string, extra []string, caps workspace.Caps) []string {
 	if opts := workspace.SandboxJavaToolOptions(caps); opts != "" {
 		env = append(env, "JAVA_TOOL_OPTIONS="+opts)
 	}
+	if caps.ACPStateDir != "" {
+		env = append(env, "PI_ACP_STATE_DIR="+caps.ACPStateDir)
+	}
 	env = append(env, extra...)
 	// GOMODCACHE/GOCACHE/GOFLAGS/GOTOOLCHAIN appended LAST: exec.Cmd.Env uses
 	// the last value for a duplicate key, so these win over config's

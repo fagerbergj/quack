@@ -141,14 +141,14 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 // resolveNode derives the node's working directory, memory-MCP credential,
 // and per-node scratch dir from the advisor-thread marker in the prompt
 // (the GitHub context-dir grant this used to also derive is gone - #1010 deleted the mechanism). memSecret is resolved separately in the memSessions registry - the advisor-thread token never doubles as the MCP bearer credential. chatID/nodeID are the advisor thread's own (at.ChatID, at.NodeID) - the executor's controls key (dag's controls.register(chatID, node.ID)), unlike cfg.NodeID (which collapses to the shared workspace scope on a setup chain's writer node) or at.SessionID (the ADK session id, a retry-only alias - see AdvisorTask.ChatID).
-func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, scratchDir string, readOnly bool, chatID, nodeID, token, priorSessionID string, err error) {
+func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, scratchDir, acpStateDir string, readOnly bool, chatID, nodeID, token, priorSessionID string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
-		return "", "", "", false, "", "", "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+		return "", "", "", "", false, "", "", "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
-		return "", "", "", false, "", "", "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
+		return "", "", "", "", false, "", "", "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
 	}
 	chatID, nodeID, priorSessionID = at.ChatID, at.NodeID, at.ACPSessionID
 	if a.opts.Jail != nil {
@@ -157,18 +157,22 @@ func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret,
 		// own tree) - scoped per node so concurrent rounds never collide.
 		scratchDir, err = a.opts.Jail.ScratchDir(a.opts.UserID, at.ChatID, at.WorkspaceNodeID)
 		if err != nil {
-			return "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: scratch dir: %w", err)
+			return "", "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: scratch dir: %w", err)
+		}
+		acpStateDir, err = a.opts.Jail.ACPStateDir(a.opts.UserID, at.ChatID, at.WorkspaceNodeID)
+		if err != nil {
+			return "", "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: state dir: %w", err)
 		}
 	}
 	if at.WorktreeParent != "" {
 		if a.opts.Worktree == nil {
-			return "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
+			return "", "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
 		}
 		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.ChatID, at.WorktreeParent, at.WorkspaceNodeID)
-		return cwd, at.MemSecret, scratchDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
+		return cwd, at.MemSecret, scratchDir, acpStateDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
 	}
 	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.ChatID, workspace.NodeDir(at.WorkspaceNodeID))
-	return cwd, at.MemSecret, scratchDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
+	return cwd, at.MemSecret, scratchDir, acpStateDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
 }
 
 // runPrompt is one full round: spawn, handshake, prompt, stream translation, shutdown.
@@ -178,7 +182,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, scratchDir, readOnly, steerChatID, steerNodeID, advisorToken, priorSessionID, err := a.resolveNode(ctx, prompt)
+		cwd, memSecret, scratchDir, acpStateDir, readOnly, steerChatID, steerNodeID, advisorToken, priorSessionID, err := a.resolveNode(ctx, prompt)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -195,6 +199,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		caps := a.opts.Caps
 		caps.ReadOnly = readOnly
 		caps.ScratchDir = scratchDir
+		caps.ACPStateDir = acpStateDir
 		// Environment block goes AFTER the task: it is regenerated every round
 		// (branch/HEAD/dir listing drift once a round commits anything), so
 		// leading with it broke the prompt-cache prefix from round 2 on.
@@ -249,9 +254,10 @@ type promptDone struct {
 // (draft -> judge -> revise -> ...): the shim holds pi alive for its own
 // stdio session's life, so a second session/prompt on the SAME connection carries history forward with no re-init and no transcript replay (#1006).
 type pinnedProc struct {
-	h         *procHandle
-	sessID    sdk.SessionId
-	toolNames []string
+	h           *procHandle
+	sessID      sdk.SessionId
+	toolNames   []string
+	acpStateDir string
 }
 
 // pinned: advisorToken -> the node's pinned process - shared across every
@@ -259,12 +265,11 @@ type pinnedProc struct {
 // per node instance, vetting.AdvisorThreadToken).
 var pinned sync.Map
 
-// ClosePinnedSession kills and forgets token's pinned process, if any -
-// wired to vetting.NodeSessionClosed (server wiring) since acp cannot
-// import vetting the other way around.
+// ClosePinnedSession kills token's pinned process and removes its ACP state
+// dir - wired to vetting.NodeSessionClosed since acp can't import vetting.
 func ClosePinnedSession(token string) {
 	if v, ok := pinned.LoadAndDelete(token); ok {
-		v.(*pinnedProc).h.close(nil)
+		closePinnedProc(v.(*pinnedProc))
 	}
 }
 
@@ -273,10 +278,17 @@ func ClosePinnedSession(token string) {
 // hook never got the chance to fire.
 func CloseAllPinnedSessions() {
 	pinned.Range(func(k, v any) bool {
-		v.(*pinnedProc).h.close(nil)
+		closePinnedProc(v.(*pinnedProc))
 		pinned.Delete(k)
 		return true
 	})
+}
+
+func closePinnedProc(pp *pinnedProc) {
+	pp.h.close(nil)
+	if pp.acpStateDir != "" {
+		_ = os.RemoveAll(pp.acpStateDir)
+	}
 }
 
 // round drives one subprocess round. Separated from runPrompt for testability.
@@ -333,7 +345,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	var pinOK bool
 	defer func() {
 		if pinOK && advisorToken != "" {
-			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames})
+			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames, acpStateDir: caps.ACPStateDir})
 			return
 		}
 		if advisorToken != "" {

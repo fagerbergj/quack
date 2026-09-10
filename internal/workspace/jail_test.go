@@ -479,6 +479,27 @@ func TestJailScratchDirIsStableAcrossCalls(t *testing.T) {
 	}
 }
 
+// TestJailACPStateDirDistinctFromScratchDir: the ACP shim's session dir must
+// never be the same dir TMPDIR points a sandboxed round's own scratch work at.
+func TestJailACPStateDirDistinctFromScratchDir(t *testing.T) {
+	j := newTestJail(t)
+	scratch, err := j.ScratchDir("alice", "chat1", "node1")
+	if err != nil {
+		t.Fatalf("ScratchDir: %v", err)
+	}
+	state, err := j.ACPStateDir("alice", "chat1", "node1")
+	if err != nil {
+		t.Fatalf("ACPStateDir: %v", err)
+	}
+	if state == scratch || strings.HasPrefix(state, scratch+string(filepath.Separator)) || strings.HasPrefix(scratch, state+string(filepath.Separator)) {
+		t.Errorf("ACPStateDir %q overlaps ScratchDir %q, want disjoint dirs", state, scratch)
+	}
+	info, err := os.Stat(state)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("ACPStateDir did not create %q: %v", state, err)
+	}
+}
+
 // TestJailScratchDirRejectsInvalidIDs mirrors the chatID/userID escape guards
 // elsewhere in this file: a crafted chatID or nodeID can't walk the scratch
 // dir outside the jail.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -61,6 +62,46 @@ func TestSpawnEnvTracksRoundScratchDir(t *testing.T) {
 	want := "TMPDIR=" + roundCaps.ScratchDir
 	if got != want {
 		t.Errorf("spawnEnv(roundCaps) TMPDIR = %q, want %q (the round's scratch dir, not the agent's static caps)", got, want)
+	}
+}
+
+// TestSpawnEnvSetsACPStateDir: PI_ACP_STATE_DIR carries caps.ACPStateDir when
+// set, and is omitted (not sent empty) when it isn't.
+func TestSpawnEnvSetsACPStateDir(t *testing.T) {
+	a := &Agent{opts: Options{Caps: workspace.DefaultCaps(), Home: t.TempDir()}}
+
+	withState := a.opts.Caps
+	withState.ACPStateDir = filepath.Join(t.TempDir(), "acp-state")
+	want := "PI_ACP_STATE_DIR=" + withState.ACPStateDir
+	if !slices.Contains(a.spawnEnv(withState), want) {
+		t.Errorf("spawnEnv(caps.ACPStateDir set) missing %q", want)
+	}
+
+	for _, e := range a.spawnEnv(a.opts.Caps) {
+		if strings.HasPrefix(e, "PI_ACP_STATE_DIR=") {
+			t.Errorf("spawnEnv(caps.ACPStateDir unset) set %q, want it omitted", e)
+		}
+	}
+}
+
+// TestWrappedArgvBwrapACPStateDirRidesHomeDirGrant: ACPStateDir needs no bind
+// of its own - it's nested under HomeDir, already bound RW for the whole tree.
+func TestWrappedArgvBwrapACPStateDirRidesHomeDirGrant(t *testing.T) {
+	cwd := t.TempDir()
+	home := t.TempDir()
+	state := filepath.Join(home, "acp-state", "chat1__node1")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	caps := workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: home, ACPStateDir: state}
+	a := &Agent{opts: Options{Command: []string{"node", "pi-acp.mjs"}, Caps: caps}}
+	argv := a.wrappedArgv(cwd, caps)
+	joined := strings.Join(argv, "\x00")
+	if !strings.Contains(joined, "--bind-try\x00"+home) {
+		t.Fatalf("wrappedArgv bwrap = %v, want HomeDir %q bound RW (ACPStateDir rides this grant)", argv, home)
+	}
+	if strings.Contains(joined, "--bind-try\x00"+state) || strings.Contains(joined, "--ro-bind-try\x00"+state) {
+		t.Errorf("wrappedArgv bwrap = %v, ACPStateDir got its own bind - update this test, the HomeDir-umbrella assumption changed", argv)
 	}
 }
 
