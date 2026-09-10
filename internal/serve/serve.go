@@ -1209,12 +1209,34 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if err != nil {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
 			}
+			// Preloaded skills ride the static ACP preamble instead of the
+			// roster: a load_skill result can never join the prompt-cache
+			// prefix an ACP worker gets re-spawned into every round.
+			var preloaded []promptbuilder.PreloadedSkill
+			if len(bundle.Card.PreloadSkills) > 0 {
+				preload := make(map[string]bool, len(bundle.Card.PreloadSkills))
+				for _, skillName := range bundle.Card.PreloadSkills {
+					preload[skillName] = true
+					body, err := builtinSkillSrc.LoadInstructions(context.Background(), skillName)
+					if err != nil {
+						return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "preload skill %q: %v", skillName, err)
+					}
+					preloaded = append(preloaded, promptbuilder.PreloadedSkill{Name: skillName, Body: body})
+				}
+				kept := skillFms[:0]
+				for _, fm := range skillFms {
+					if !preload[fm.Name] {
+						kept = append(kept, fm)
+					}
+				}
+				skillFms = kept
+			}
 			behaviour := bundle.Prompt
 			if g := strings.TrimSpace(memGuidance); g != "" {
 				behaviour += "\n\n" + g
 			}
 			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
-			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading, wsBlock)
+			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, preloaded, behaviour, grading, wsBlock)
 			env := opencodeEnv(prov, ac, acpSkillPaths(pluginSkillDirs), workspaceCaps)
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)

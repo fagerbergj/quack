@@ -63,6 +63,8 @@ code-implementer:
 
 An ACP agent has **no quack tools at all** — it brings its own (pi's built-in edit/read/shell tools), with the model bound via a generated `OPENCODE_CONFIG_CONTENT` (parsed by the `pi-acp.mjs` shim) and `git push` denied inside the subprocess (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via the env's `skills.paths`, so the same `agents/skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
 
+`agent-card.json`'s optional `preloadSkills` (a list of skill-library names) inlines each one's full `SKILL.md` body directly into the ACP preamble instead of leaving the prompt to tell the agent to `load_skill` it every round: the preamble is the one part of an ACP round that's actually stable across rounds, while a `load_skill` tool result is not. Use it for a skill the agent's own prompt says to follow unconditionally on every round.
+
 Each ACP round's preamble also carries a generated workspace/toolchain block: OS, sandbox mode, available toolchains, the `check_commands` allowlist, and the address-space limit, rendered from the resolved workspace caps at startup. Each toolchain line is probed, not just read from config — an unverifiable toolchain gets no line at all, so the agent reports it couldn't verify something instead of trusting a tool that isn't actually reachable.
 
 Because the gate can't watch an external subprocess's internals, it reads the ACP agent's *work* off disk instead: `augmentFromRepo` reads the commits/changed files straight off the clone to synthesize a staged PR, and `augmentFromAnswer` parses a reviewer's `VERDICT:`/`FINDINGS:` tail into a staged review with inline comments.

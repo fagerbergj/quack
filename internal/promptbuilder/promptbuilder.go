@@ -17,8 +17,15 @@ import (
 //go:embed writing.md
 var writing string
 
+// PreloadedSkill: a skill-library entry whose full body is rendered directly
+// into the Capabilities layer (see Agent), rather than left for load_skill.
+type PreloadedSkill struct {
+	Name string
+	Body string
+}
+
 // Agent: assembles layered system prompt for native or ACP agents.
-func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, behaviour, grading, workspace string) string {
+func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, preloaded []PreloadedSkill, behaviour, grading, workspace string) string {
 	var caps strings.Builder
 	if tl := toolLines(tools); tl != "" {
 		caps.WriteString("### Tools\n\n")
@@ -30,6 +37,12 @@ func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmat
 		}
 		caps.WriteString("### Skills\n\n")
 		caps.WriteString(sl)
+	}
+	for _, p := range preloaded {
+		if caps.Len() > 0 {
+			caps.WriteString("\n")
+		}
+		fmt.Fprintf(&caps, "### Skill: %s (already loaded - do not load_skill it)\n\n%s\n", p.Name, strings.TrimSpace(p.Body))
 	}
 	return layered(fmt.Sprintf("You are Quack's %s. %s", name, description), "Capabilities", caps.String(), behaviour, grading, workspace)
 }

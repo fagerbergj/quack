@@ -29,6 +29,11 @@ type Card struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
 	Skills      []Skill `json:"skills,omitempty"`
+	// PreloadSkills: skill-library names (internal/skillsource) whose full body
+	// gets inlined into this agent's system prompt once, instead of fetched via
+	// load_skill on every round - a tool result can never join the prompt-cache
+	// prefix an ACP worker gets re-spawned into.
+	PreloadSkills []string `json:"preloadSkills,omitempty"`
 }
 
 // Skill is one declared capability of an agent.

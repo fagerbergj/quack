@@ -13,5 +13,6 @@
         "Is this change safe to merge?"
       ]
     }
-  ]
+  ],
+  "preloadSkills": ["review-code"]
 }
