@@ -126,8 +126,10 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
     setAttachments([])
     const result = onSubmit(trimmed, items.map(a => a.file), previews)
     result?.catch(() => {
-      setInput(trimmed)
-      setAttachments(items)
+      // Only restore into a still-empty draft: a slow/failing submit gives
+      // the user seconds to type again, and a blind restore would clobber it.
+      setInput(cur => (cur === '' ? trimmed : cur))
+      setAttachments(cur => (cur.length === 0 ? items : cur))
     })
   }
 

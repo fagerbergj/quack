@@ -101,13 +101,13 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 			// Carried over: referenced by id, not re-posted as a fresh inline
 			// comment (#1093 case 8) - still anchored so GitHub keeps it live.
 			carriedIDs = append(carriedIDs, fid)
-			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint,
+			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid,
 				Body: fmt.Sprintf("(carried over, unchanged since a previous review - %s) %s: %s", fid, f.Title, f.Rationale)})
-			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, Body: highlightBody(f)})
+			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Body: highlightBody(f)})
 		default:
 			newIDs = append(newIDs, fid)
-			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, Body: f.Title + ": " + f.Rationale})
-			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, Body: highlightBody(f)})
+			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Body: f.Title + ": " + f.Rationale})
+			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Body: highlightBody(f)})
 		}
 	}
 

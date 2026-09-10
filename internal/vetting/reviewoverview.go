@@ -123,6 +123,34 @@ func commentLabel(body string) (label, why string) {
 	return label, firstSentence(remainder)
 }
 
+// dedupeComments drops a repeat of the same finding: FindingIDs equal, or
+// one side has none and path+line+label all match - never on line alone.
+func dedupeComments(comments []ReviewComment) []ReviewComment {
+	out := make([]ReviewComment, 0, len(comments))
+	for _, c := range comments {
+		label, _ := commentLabel(c.Body)
+		dup := false
+		for _, seen := range out {
+			if c.FindingID != "" && seen.FindingID != "" {
+				if c.FindingID == seen.FindingID {
+					dup = true
+					break
+				}
+				continue
+			}
+			seenLabel, _ := commentLabel(seen.Body)
+			if c.Path == seen.Path && c.Line == seen.Line && label == seenLabel {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // countLabels tallies comments by Conventional-Comments label.
 func countLabels(comments []ReviewComment) map[string]int {
 	counts := make(map[string]int, len(reviewLabelOrder))
@@ -177,6 +205,7 @@ const legacySummaryDisplayCap = 320
 // self-contained blocks joined with a single blank line, rather than ad-hoc "\n\n" concatenation, so an empty section can never leave a stray blank line behind (the bug a prior version had between Verified and Notes).
 func renderReviewOverview(in reviewOverviewInput) string {
 	var sections []string
+	comments := dedupeComments(in.Comments)
 
 	// Section 2: verdict line.
 	verdictWord := in.Verdict
@@ -185,7 +214,7 @@ func renderReviewOverview(in reviewOverviewInput) string {
 		verdictWord = "request changes"
 	}
 	parts := []string{"**Verdict: " + verdictWord + "**"}
-	counts := countLabels(in.Comments)
+	counts := countLabels(comments)
 	for _, label := range reviewLabelOrder {
 		if n := counts[label]; n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", n, pluralizeLabel(label, n)))
@@ -239,13 +268,13 @@ func renderReviewOverview(in reviewOverviewInput) string {
 	// Section 6: highlights table - every blocking finding, else the top 2
 	// suggestions, in staged order. Omitted when there's neither.
 	var rows []ReviewComment
-	for _, c := range in.Comments {
+	for _, c := range comments {
 		if label, _ := commentLabel(c.Body); label == "blocking" {
 			rows = append(rows, c)
 		}
 	}
 	if len(rows) == 0 {
-		for _, c := range in.Comments {
+		for _, c := range comments {
 			if label, _ := commentLabel(c.Body); label == "suggestion" {
 				rows = append(rows, c)
 				if len(rows) == 2 {

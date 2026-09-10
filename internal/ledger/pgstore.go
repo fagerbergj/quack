@@ -84,11 +84,36 @@ func NewPGStore(db *gorm.DB) (*PGStore, error) {
 	// scan (no index touches kind or at). CONCURRENTLY: a 465k-row ledger must
 	// not block writes for the build; it cannot run inside a transaction, and
 	// NewPGStore's db is never one.
+	if err := recoverInvalidConcurrentIndex(db, idxKindAt); err != nil {
+		return nil, err
+	}
 	if err := db.Exec(fmt.Sprintf(
 		`CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON ledger_entries (kind, at)`, idxKindAt)).Error; err != nil {
 		return nil, fmt.Errorf("ledger: create kind/at index: %w", err)
 	}
 	return &PGStore{db: db}, nil
+}
+
+// recoverInvalidConcurrentIndex: IF NOT EXISTS treats an index Postgres
+// marked invalid (a CONCURRENTLY build killed mid-way) as done forever.
+func recoverInvalidConcurrentIndex(db *gorm.DB, name string) error {
+	var invalid int64
+	if err := db.Raw(
+		`SELECT count(*) FROM pg_index WHERE indexrelid = ?::regclass AND NOT indisvalid`, name,
+	).Scan(&invalid).Error; err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" { // undefined_table: name doesn't exist yet, the common case
+			return nil
+		}
+		return fmt.Errorf("ledger: check %s for an invalid build: %w", name, err)
+	}
+	if invalid == 0 {
+		return nil
+	}
+	if err := db.Exec(fmt.Sprintf(`DROP INDEX CONCURRENTLY IF EXISTS %s`, name)).Error; err != nil {
+		return fmt.Errorf("ledger: drop invalid %s before rebuild: %w", name, err)
+	}
+	return nil
 }
 
 // ensureParentRevisionIndex adds the unique (chat_id, key, parent_revision) index

@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -933,17 +934,29 @@ func newServerListCmd() *cobra.Command {
 			}
 			// One line per server, so keep the version lookup (a live request
 			// per server) to registries small enough to stay within 10 lines.
+			// Concurrent, not sequential: ten dead servers at a 2s timeout each
+			// would otherwise make `server list` take ~20s.
 			withVersions := len(names) <= 10
-			for _, name := range names {
+			versions := make([]string, len(names))
+			if withVersions {
+				var wg sync.WaitGroup
+				for i, name := range names {
+					wg.Add(1)
+					go func(i int, url string) {
+						defer wg.Done()
+						versions[i] = serverVersion(cmd.Context(), url) // each goroutine owns a distinct index - no lock needed
+					}(i, c.Servers[name].URL)
+				}
+				wg.Wait()
+			}
+			for i, name := range names {
 				mark := " "
 				if name == c.Active {
 					mark = "*"
 				}
 				line := fmt.Sprintf("%s %-12s %s", mark, name, c.Servers[name].URL)
-				if withVersions {
-					if v := serverVersion(cmd.Context(), c.Servers[name].URL); v != "" {
-						line += " (" + v + ")"
-					}
+				if versions[i] != "" {
+					line += " (" + versions[i] + ")"
 				}
 				fmt.Fprintln(out, line)
 			}

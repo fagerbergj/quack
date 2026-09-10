@@ -14,7 +14,7 @@ type Story = StoryObj<typeof Sheet>
 export const Centered: Story = {
   args: {
     'aria-label': 'Example',
-    className: 'max-w-2xl medium:max-h-[85vh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-4 space-y-2',
+    className: 'max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-4 space-y-2',
     onClose: () => {},
     children: <p className="text-sm text-gray-700 dark:text-gray-200">Sheet body</p>,
   },

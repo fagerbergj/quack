@@ -128,6 +128,37 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 				"| blocking | internal/parse.go:3 | the a\\|b union type is never checked |",
 		},
 		{
+			// A finding written natively and staged again inline at the
+			// same path+line must count and render once, not twice.
+			name: "native_and_staged_duplicate_collapses",
+			in: reviewOverviewInput{
+				Verdict: "request_changes",
+				Comments: []ReviewComment{
+					{Path: "internal/gate.go", Line: 7, FindingID: "f1", Body: "blocking: leaks on error. Fix the defer."},
+					{Path: "internal/gate.go", Line: 7, Body: "blocking: leaks on error path. Same issue, staged separately."},
+				},
+			},
+			want: "**Verdict: request changes** · 1 blocking\n\n" +
+				"### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n" +
+				"| blocking | internal/gate.go:7 | leaks on error |",
+		},
+		{
+			// Two distinct findings that land on the same line, each with
+			// its own FindingID, must both survive - the path+line fallback
+			// only applies when at least one side has no id.
+			name: "distinct_findings_same_line_not_collapsed",
+			in: reviewOverviewInput{
+				Verdict: "request_changes",
+				Comments: []ReviewComment{
+					{Path: "internal/gate.go", Line: 7, FindingID: "f1", Body: "blocking: nil pointer deref. Crashes on the empty case."},
+					{Path: "internal/gate.go", Line: 7, FindingID: "f2", Body: "suggestion: rename this variable. Reads better as `cfg`."},
+				},
+			},
+			want: "**Verdict: request changes** · 1 blocking · 1 suggestion\n\n" +
+				"### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n" +
+				"| blocking | internal/gate.go:7 | nil pointer deref |",
+		},
+		{
 			name: "legacy_summary_record",
 			in: reviewOverviewInput{
 				Verdict:       "approve",

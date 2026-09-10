@@ -490,6 +490,7 @@ func TestServerPublicURL(t *testing.T) {
 		{`server: { public_url: "https://quack.example.com/" }`, "", true}, // trailing slash rejected
 		{`server: { public_url: "ftp://quack.example.com" }`, "", true},    // non-http(s) scheme rejected
 		{`server: { public_url: "not-a-url" }`, "", true},                  // not absolute
+		{`server: { public_url: "http://:80" }`, "", true},                 // host with no hostname
 	} {
 		c, err := Load(writeTemp(t, baseConfig+tc.yaml))
 		if tc.wantError {

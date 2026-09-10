@@ -578,6 +578,11 @@ func buildDirGrants(work string, configured []string) []string {
 	}
 	for _, d := range configured {
 		rel := filepath.Clean(d)
+		// ".git" is never a build dir - granting it exposes the gitdir
+		// pointer (linked worktree) or the whole metadata dir (shared clone).
+		if filepath.Base(rel) == ".git" {
+			continue
+		}
 		if bare[filepath.Base(rel)] || anchored[filepath.ToSlash(rel)] {
 			add(d)
 		}

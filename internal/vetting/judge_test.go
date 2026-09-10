@@ -1565,3 +1565,128 @@ func TestRunJudgeAgent_ImageStripPersistsAcrossRetries(t *testing.T) {
 		}
 	}
 }
+
+// inconsistentThenFixedJudge: round 1 scores a criterion below threshold with
+// no fix (a self-inconsistent fail); round 2 corrects the score to match its
+// own unchanged rationale. Proves finishJudgeRound's re-ask path.
+type inconsistentThenFixedJudge struct{ calls int32 }
+
+func (j *inconsistentThenFixedJudge) Name() string { return "inconsistent-then-fixed-judge" }
+
+func (j *inconsistentThenFixedJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		score := 0.0
+		if n > 1 {
+			score = 3.0
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{
+			"score": score,
+			"criteria": map[string]any{
+				"verification_over_assertion": map[string]any{
+					"score":     score,
+					"shortfall": "All runs were warranted and stated.",
+					"fix":       "",
+				},
+			},
+			"feedback": "",
+		}), nil)
+	}
+}
+
+// consistentFailJudge scores below threshold but gives a fix, exactly what
+// the prompt asks for on a genuine failure - must never be re-asked.
+type consistentFailJudge struct{ calls int32 }
+
+func (j *consistentFailJudge) Name() string { return "consistent-fail-judge" }
+
+func (j *consistentFailJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		atomic.AddInt32(&j.calls, 1)
+		yield(stubCall(submitVerdictTool, map[string]any{
+			"score": 1.0,
+			"criteria": map[string]any{
+				"verification_over_assertion": map[string]any{
+					"score":     1.0,
+					"shortfall": "trusted the description without reading the tests",
+					"fix":       "read the tests and CI before scoring",
+				},
+			},
+			"feedback": "",
+		}), nil)
+	}
+}
+
+// requireFixOnFailSpecs: verification_over_assertion opted into the
+// inconsistent-failure re-ask, matching agents/code-reviewer/rubric.yaml.
+var requireFixOnFailSpecs = map[string]criterionSpec{
+	"verification_over_assertion": {Name: "verification_over_assertion", RequireFixOnFail: true},
+}
+
+// TestFinishJudgeRound_ReasksOnInconsistentFailure: a criterion scored below
+// threshold with no fix is re-judged once; the corrected score wins.
+func TestFinishJudgeRound_ReasksOnInconsistentFailure(t *testing.T) {
+	judge := &inconsistentThenFixedJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the change."}}}
+	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: requireFixOnFailSpecs}
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 2 {
+		t.Fatalf("judge model called %d times, want 2 (original round + one re-ask)", got)
+	}
+	c, ok := v.Criteria["verification_over_assertion"]
+	if !ok || c.Score != 1.0 {
+		t.Fatalf("verification_over_assertion = %+v, want the re-judged score 1.0 (raw 3/3)", c)
+	}
+}
+
+// TestFinishJudgeRound_NoReaskWhenFixGiven: a genuine failure (fix given)
+// must never trigger the inconsistency re-ask.
+func TestFinishJudgeRound_NoReaskWhenFixGiven(t *testing.T) {
+	judge := &consistentFailJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the change."}}}
+	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: requireFixOnFailSpecs}
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 1 {
+		t.Fatalf("judge model called %d times, want 1 (a fix given makes the fail consistent, no re-ask)", got)
+	}
+	c, ok := v.Criteria["verification_over_assertion"]
+	if !ok || c.Score != 1.0/3.0 {
+		t.Fatalf("verification_over_assertion = %+v, want the original raw 1/3 score", c)
+	}
+}
+
+// TestInconsistentJudgeFailures unit-tests the detection rule directly:
+// deterministic criteria, passing criteria, a fail with a fix, and a fail
+// NOT opted into RequireFixOnFail are all excluded - only an opted-in
+// judge-scored fail with no fix qualifies.
+func TestInconsistentJudgeFailures(t *testing.T) {
+	v := verdict{Criteria: map[string]criterionScore{
+		"deterministic_fail": {Score: 0, Deterministic: true},
+		"passing":            {Score: 0.9},
+		"fail_with_fix":      {Score: 0.2, Fix: "do the thing"},
+		"fail_no_fix":        {Score: 0.2, Shortfall: "looks fine actually"},
+		"fail_not_opted_in":  {Score: 0.2, Shortfall: "committed unrequested work"},
+	}}
+	specs := map[string]criterionSpec{
+		"fail_with_fix": {RequireFixOnFail: true},
+		"fail_no_fix":   {RequireFixOnFail: true},
+		// fail_not_opted_in intentionally has no spec entry - most criteria
+		// (e.g. the codebase's existing commit_hygiene/task_completeness
+		// stubs) never require a named fix, so a below-threshold score with
+		// no fix must not be flagged for them.
+	}
+	got := inconsistentJudgeFailures(v, 0.6, specs)
+	if len(got) != 1 || got[0] != "fail_no_fix" {
+		t.Fatalf("inconsistentJudgeFailures = %v, want [fail_no_fix]", got)
+	}
+}

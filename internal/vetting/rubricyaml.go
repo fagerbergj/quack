@@ -30,6 +30,10 @@ type rubricCriterion struct {
 	Deterministic bool         `yaml:"deterministic,omitempty"`
 	Fix           string       `yaml:"fix,omitempty"` // required when Deterministic
 	Scale         *rubricScale `yaml:"scale,omitempty"`
+	// RequireFixOnFail opts this criterion into inconsistentJudgeFailures
+	// (judge.go): a submission below threshold with no `fix` is treated as
+	// self-inconsistent and re-asked once. Off by default.
+	RequireFixOnFail bool `yaml:"require_fix_on_fail,omitempty"`
 }
 
 // rubricDoc: a whole agents/<kind>/rubric.yaml. Notes is per-agent domain
@@ -213,10 +217,11 @@ func rubricDocSpecs(doc rubricDoc) map[string]criterionSpec {
 			scale = *c.Scale
 		}
 		out[name] = criterionSpec{
-			Name:       name,
-			Definition: c.Definition,
-			Scale:      &scaleSpec{Min: scale.Min, Max: scale.Max},
-			Bands:      c.Bands,
+			Name:             name,
+			Definition:       c.Definition,
+			Scale:            &scaleSpec{Min: scale.Min, Max: scale.Max},
+			Bands:            c.Bands,
+			RequireFixOnFail: c.RequireFixOnFail,
 		}
 	}
 	return out

@@ -556,6 +556,25 @@ func TestBuildDirGrantsSkipsDotGit(t *testing.T) {
 	}
 }
 
+// TestBuildDirGrantsSkipsConfiguredDotGit: the bare-name bonus loop above
+// skips ".git", but a configured build_dirs entry naming it (bare or
+// nested, "sub/.git") went through the other, unguarded loop.
+func TestBuildDirGrantsSkipsConfiguredDotGit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := buildDirGrants(dir, []string{".git", "sub/.git"})
+	for _, rel := range got {
+		if rel == ".git" || rel == filepath.Join("sub", ".git") {
+			t.Fatalf("buildDirGrants(%v) must never grant a configured %q entry", got, rel)
+		}
+	}
+}
+
 // TestBuildDirGrantsRejectsTrackedRegularFile: the symlink guard (Lstat,
 // TestBuildDirGrantsRejectsSymlinkedBuildDir) only covers one escape shape -
 // a repo can also track a plain FILE named like a build dir (gitignore

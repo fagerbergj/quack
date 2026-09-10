@@ -158,7 +158,9 @@ var verdictRank = map[string]int{"comment": 0, "approve": 1, "request_changes": 
 // A slice with no event (V4: slices stage findings only, #1150) doesn't
 // participate in worst-of at all - it used to default to "comment", the exact bug #1184 reports.
 // Findings are merged and attributed per node regardless of which verdict
-// wins. A failed/cancelled sibling contributes no verdict but is named in the body rather than silently dropped.
+// wins. A failed/cancelled sibling contributes no verdict but is named in
+// the body rather than silently dropped. Body renders through
+// renderReviewOverview, the same fixed shape a single-node review uses.
 func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody, synthVerdict string) StagedDelivery {
 	ids := make([]string, 0, len(terminal))
 	for id := range terminal {
@@ -168,36 +170,70 @@ func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody, synthVerdict
 
 	verdict := "comment"
 	haveVerdict := false
-	var sections []string
-	var comments []ReviewComment
-	var notes []string
+	var highlights, ghComments []ReviewComment // highlights: unattributed, for the renderer's label matching; ghComments: attributed, for GitHub's inline posting
+	var verified, notes, legacyParts []string
 	for _, id := range ids {
 		e := terminal[id]
 		if e.failed {
-			notes = append(notes, fmt.Sprintf("- %s: did not complete, excluded from this verdict", id))
+			notes = append(notes, fmt.Sprintf("%s: did not complete, excluded from this verdict", id))
 			continue
 		}
 		if !e.ok {
-			notes = append(notes, fmt.Sprintf("- %s: completed without staging a review", id))
+			notes = append(notes, fmt.Sprintf("%s: completed without staging a review", id))
 			continue
 		}
 		if event := e.item.Event; event != "" && (!haveVerdict || verdictRank[event] > verdictRank[verdict]) {
 			verdict = event
 			haveVerdict = true
 		}
-		if strings.TrimSpace(e.item.Body) != "" {
-			sections = append(sections, fmt.Sprintf("### %s\n%s", id, strings.TrimSpace(e.item.Body)))
+		// A synthesizer, once it produces output, owns the consolidated
+		// prose - a slice's own notes would just repeat what it folded in.
+		if synthBody == "" {
+			// Body (unlike Takeaway) isn't pre-capped, so it goes through
+			// the wider legacy-summary bucket instead of the notes cap.
+			if t := strings.TrimSpace(e.item.Takeaway); t != "" {
+				notes = append(notes, fmt.Sprintf("%s: %s", id, t))
+			} else if b := strings.TrimSpace(e.item.Body); b != "" {
+				legacyParts = append(legacyParts, fmt.Sprintf("%s: %s", id, b))
+			}
+			for _, v := range e.item.Verified {
+				verified = append(verified, fmt.Sprintf("%s: %s", id, v))
+			}
+			for _, n := range e.item.Notes {
+				notes = append(notes, fmt.Sprintf("%s: %s", id, n))
+			}
 		}
 		for _, c := range e.item.Comments {
-			c.Body = fmt.Sprintf("[%s] %s", id, c.Body)
-			comments = append(comments, c)
+			highlights = append(highlights, c)
+			attributed := c
+			attributed.Body = fmt.Sprintf("[%s] %s", id, c.Body)
+			ghComments = append(ghComments, attributed)
 		}
 	}
+
+	var takeaway, legacySummary string
+	if len(legacyParts) > 0 {
+		legacySummary = strings.Join(legacyParts, "\n")
+	}
 	if synthBody != "" {
-		sections = []string{synthBody}
-		if ev := ParseAnswerReviewSections(synthBody).Event; ev != "" && (!haveVerdict || verdictRank[ev] > verdictRank[verdict]) {
-			verdict = ev
-			haveVerdict = true
+		r := ParseAnswerReviewSections(synthBody)
+		switch {
+		case r.OK:
+			if ev := r.Event; ev != "" && (!haveVerdict || verdictRank[ev] > verdictRank[verdict]) {
+				verdict = ev
+				haveVerdict = true
+			}
+			takeaway = r.Takeaway
+			if len(r.Verified) > 0 {
+				verified = r.Verified
+			}
+			if len(r.Notes) > 0 {
+				notes = r.Notes
+			}
+		default:
+			// No structured tail: fold the free prose in like a legacy
+			// summary rather than let it stand in as the whole body.
+			legacySummary = synthBody
 		}
 	}
 	// The synthesizer's own structured code_review record is authoritative over its answer-tail parse above, but still worst-of against a slice's
@@ -210,13 +246,16 @@ func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody, synthVerdict
 	if !haveVerdict {
 		verdict = "comment"
 	}
-	if len(notes) > 0 {
-		sections = append(sections, "### Incomplete\n"+strings.Join(notes, "\n"))
-	}
+
+	takeaway, verified, notes = clampCodeReviewFields(takeaway, verified, notes)
+	body := renderReviewOverview(reviewOverviewInput{
+		Verdict: verdict, Takeaway: takeaway, Verified: verified, Notes: notes,
+		Comments: highlights, LegacySummary: legacySummary,
+	})
 	return StagedDelivery{
 		Kind:     "review",
 		Event:    verdict,
-		Body:     strings.Join(sections, "\n\n"),
-		Comments: comments,
+		Body:     body,
+		Comments: ghComments,
 	}
 }

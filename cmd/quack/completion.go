@@ -17,15 +17,21 @@ const completionTimeout = 2 * time.Second
 
 // completeWithTarget resolves --server, then hands the target to fn; any
 // failure degrades to no completions rather than a shell-visible error.
+// Unlike resolveTarget's other callers, this never boots the duck in-process:
+// a local dev dir with no remote target would pay a full server boot on
+// every <TAB>, eating the completion budget with nothing to show for it.
 func completeWithTarget(cmd *cobra.Command, fn func(ctx context.Context, target string) ([]string, error)) ([]string, cobra.ShellCompDirective) {
-	ctx, cancel := context.WithTimeout(cmd.Context(), completionTimeout)
-	defer cancel()
 	server, _ := cmd.Flags().GetString("server")
-	target, stop, err := resolveTarget(ctx, server)
+	cc, err := cli.LoadClient()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	defer stop()
+	target := cc.ActiveURL(server)
+	if target == "" {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), completionTimeout)
+	defer cancel()
 	ids, err := fn(ctx, target)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp

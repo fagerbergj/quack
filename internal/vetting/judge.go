@@ -60,9 +60,9 @@ const (
 	judgeBehaviourTail = "If an image is attached to this message, you can see it - use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
 		"Do NOT try to verify which URLs were fetched - WEB citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. Local file/code citations (a repo-relative path, `<repo>@path[:lines]`) get NO such deterministic check - verify those yourself per the read-tools instructions above, or judge them on internal consistency alone when you hold no tools. " +
 		"CRITICAL - the leniency below is SCOPED, not a blanket pass for citations: it protects claims about LIVE WEB or EXTERNAL content you have no way to check from here (a fresh article, an external product, a fact outside this repo) and your own world knowledge is stale and incomplete, so NEVER treat such a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training - an unfamiliar title, name, product, or event is NOT evidence of fabrication there. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. This leniency NEVER applies to claims about the workspace/repo: when you hold read tools, verify them per the mandatory instructions above - a citation there is a pointer to go check, not proof, and an unverified in-repo claim scores as unsupported even if it 'sounds right'; when you hold no tools, judge in-repo claims on internal consistency only, same as any other unverifiable claim, without extending web-content leniency to them. " +
-		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign the INTEGER score (0, 1, 2, or 3) whose scoring-band descriptor actually matches the answer. Judge substance, not style: length and fluent prose earn no credit. The answer's overall score is its WEAKEST criterion - a single failing criterion sinks it, however strong the others are. " +
+		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign the INTEGER score (0, 1, 2, or 3) whose scoring-band descriptor actually matches the answer. The number IS the verdict; your reasoning is only there to justify it, so pick the band FIRST by matching its stated meaning against the answer, then write reasoning consistent with that band - never write a top-band justification and then submit a lower number because staying skeptical feels safer. Judge substance, not style: length and fluent prose earn no credit. The answer's overall score is its WEAKEST criterion - a single failing criterion sinks it, however strong the others are. " +
 		"When - and only when - you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {shortfall, fix, anchor, score}), `score` (a fallback the gate uses only if you submit no criteria - with criteria present it derives the overall score from them, so your per-criterion reasoning is the work that counts), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
-		"For a FAILING criterion: `shortfall` names the specific thing that failed - the claim, file, path, link, or command - never a restatement of the score; `fix` is the concrete remedy. Both are handed to the worker verbatim as its brief for the next attempt, so a shortfall that leaves the worker unable to tell WHICH item to fix has told it nothing. " +
+		"`shortfall`/`fix` describe what's MISSING, so they only apply to a criterion that fell short of the top band - a criterion that reached it gets a brief confirmation (or an empty shortfall), never invented ambivalence to match a field named 'shortfall'. For a FAILING criterion: `shortfall` names the specific thing that failed - the claim, file, path, link, or command - never a restatement of the score; `fix` is the concrete remedy. Both are handed to the worker verbatim as its brief for the next attempt, so a shortfall that leaves the worker unable to tell WHICH item to fix has told it nothing. " +
 		"`anchor` is OPTIONAL - where in the answer the criticism points, when it is locatable. Set kind to `quote` with `text` set to the exact offending substring (verbatim, or it will be dropped); `path` with `path` (and optional `line`) for a claim about a specific file in the repo; or `omission` with `expected` describing what should be present but is absent - use omission when nothing in the answer can be quoted or pointed to, never force a quote/path anchor onto an absence. Leave anchor out entirely when no span applies. " +
 		"submit_verdict is the only way to finish: a verdict written as prose or JSON in your reply is never read."
 )
@@ -662,18 +662,33 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	return
 }
 
-// finishJudgeRound: a PASS verdict backed by zero judge reads is discarded and re-judged once before
-// being trusted (second offence accepted - one wasted round is the ceiling). No-op otherwise.
+// finishJudgeRound: discards and re-judges once before being trusted (second
+// offence accepted - one wasted round is the ceiling), for either of two
+// self-inconsistent verdicts: a PASS backed by zero judge reads, or a judge-scored criterion below threshold with no `fix` (the prompt requires one only
+// for a genuine failure - see inconsistentJudgeFailures). No-op otherwise.
 func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict, readc *readCounter) verdict {
-	if !unreadPass(readc, v) {
+	switch {
+	case unreadPass(readc, v):
+		slog.Warn("judge passed without reading the repo; re-judging once",
+			"component", "vetting", "agent", cfg.Agent, "score", v.Score)
+		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unreadPassFeedback, changedFiles, known, act, received, emit, v, readc)
+	default:
+		if names := inconsistentJudgeFailures(v, cfg.Threshold, cfg.RubricSpecs); len(names) > 0 {
+			slog.Warn("judge scored below threshold with no fix given; re-judging once",
+				"component", "vetting", "agent", cfg.Agent, "criteria", names)
+			return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+inconsistentFailureFeedback(names), changedFiles, known, act, received, emit, v, readc)
+		}
 		return v
 	}
-	slog.Warn("judge passed without reading the repo; re-judging once",
-		"component", "vetting", "agent", cfg.Agent, "score", v.Score)
-	v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question,
-		fitted+"\n\n"+unreadPassFeedback, changedFiles, known, "", act, received, emit)
+}
+
+// reJudgeOnce re-runs the round with feedback appended to the answer, keeping
+// the original verdict v if the retry itself errors - one wasted round is the
+// ceiling, never an unbounded loop.
+func reJudgeOnce(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict, readc *readCounter) verdict {
+	v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, "", act, received, emit)
 	if err2 != nil {
-		slog.Warn("re-judge failed; keeping the unread verdict", "component", "vetting", "err", err2)
+		slog.Warn("re-judge failed; keeping the original verdict", "component", "vetting", "err", err2)
 		return v
 	}
 	if unreadPass(readc2, v2) {
@@ -681,6 +696,35 @@ func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, que
 			"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
 	}
 	return v2
+}
+
+// inconsistentJudgeFailures: criteria opted into RequireFixOnFail (rubric.yaml)
+// that scored below threshold with an empty Fix - the rubric requires one only
+// for a genuine failure of that criterion, so its absence means the score and
+// the reasoning disagree, not that fix was optional. Opt-in, not a blanket
+// rule: most criteria never require a named fix, and applying this check
+// unconditionally to every below-threshold criterion (deterministic overrides
+// like findingsGroundingCriterion included) re-asks rounds that were never
+// inconsistent in the first place.
+func inconsistentJudgeFailures(v verdict, threshold float64, specs map[string]criterionSpec) []string {
+	var names []string
+	for name, c := range v.Criteria {
+		if c.Deterministic || !specs[name].RequireFixOnFail || c.Score >= threshold || strings.TrimSpace(c.Fix) != "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names) // stable order across runs (map iteration is random)
+	return names
+}
+
+// inconsistentFailureFeedback: appended to the judge prompt on re-run for
+// inconsistentJudgeFailures (states the mechanism, not a repeated instruction).
+func inconsistentFailureFeedback(names []string) string {
+	return fmt.Sprintf("Your previous verdict scored %s below the pass threshold but gave no `fix` for it - "+
+		"a genuine failure always names one. Re-examine %s: if it truly fails, give the concrete fix; if your "+
+		"own reasoning actually described the top band, correct the score to match it.",
+		strings.Join(names, ", "), strings.Join(names, ", "))
 }
 
 // judgeRepeat* tune the runaway-generation guard shared by the judge
