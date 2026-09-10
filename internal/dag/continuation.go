@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -82,7 +87,9 @@ func short12(sha string) string {
 // behind for a future continue: - the ADK session id (native agents, always
 // the chat's own session) or the ACP protocol session id (external agents,
 // read back from the advisor thread since round() only updates it there).
-func buildSessionHandle(cfg vetting.Config, node Node, token string) SessionHandle {
+// ctx is the node's OWN activation context (post-override if this node
+// itself was a continuation), so Branch/IsolationScope chain forward.
+func buildSessionHandle(ctx adkagent.Context, cfg vetting.Config, node Node, token string) SessionHandle {
 	h := SessionHandle{Agent: node.AgentName, Scope: cfg.NodeID, HeadSHA: vetting.CloneHeadSHA(cfg)}
 	if cfg.ExternalWorker {
 		h.Kind = "acp"
@@ -92,8 +99,51 @@ func buildSessionHandle(cfg vetting.Config, node Node, token string) SessionHand
 	} else {
 		h.Kind = "adk"
 		h.ID = cfg.ChatID
+		h.Branch = ctx.Branch()
+		h.IsolationScope = ctx.IsolationScope()
 	}
 	return h
+}
+
+// resumeADKContext derives a context that runs under the prior node's own
+// branch/isolation scope, so ADK's own history replay (internal/llminternal's
+// ContentsRequestProcessor: branch prefix match + isolation-scope exact
+// match) includes what the prior node said - not a text splice glued onto
+// this node's prompt. "" branch is left alone (a legacy/never-captured
+// handle): overriding to "" would mean universal visibility, not isolation.
+func resumeADKContext(ctx adkagent.Context, c continuation) adkagent.Context {
+	if !c.ok || c.handle.Kind != "adk" || c.handle.Branch == "" {
+		return ctx
+	}
+	branch, scope := c.handle.Branch, c.handle.IsolationScope
+	return ctx.WithDelta(&adkagent.CommonContextDelta{
+		InvocationContextDelta: &adkagent.InvocationContextDelta{Branch: &branch, IsolationScope: &scope},
+	})
+}
+
+// emitPriorAnswer injects the prior node's final answer as a genuine
+// "model" turn on the resumed branch/isolation scope, authored as the SAME
+// agent (resolveContinue already required an agent match) so ADK's contents
+// processor keeps it as the agent's own prior turn rather than converting it
+// to a synthetic "for context: X said" user turn (see ConvertForeignEvent).
+// ADK's own per-round isolation scoping (workflow.WithIsolationScopeFromNodePath,
+// see vetting.runWorkerNode) otherwise hides even same-branch events from a
+// different node's rounds - ONLY this node's OWN rounds (via cfg.ResumedFrom,
+// which makes runWorkerNode inherit this scope instead) end up scoped to
+// match what's emitted here.
+func emitPriorAnswer(ctx adkagent.Context, emit func(*session.Event) error, workerName string, c continuation) {
+	if !c.ok || c.handle.Kind != "adk" || c.handle.Branch == "" || c.priorOutput == "" || emit == nil {
+		return
+	}
+	ev := session.NewEvent(ctx, ctx.InvocationID())
+	ev.Author = workerName
+	ev.Branch = c.handle.Branch
+	ev.IsolationScope = c.handle.IsolationScope
+	ev.LLMResponse.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: c.priorOutput}}}
+	ev.LLMResponse.FinishReason = genai.FinishReasonStop
+	if err := emit(ev); err != nil {
+		slog.Warn("continue: prior-answer event emit failed; node resumes with no prior context", "component", "dag", "err", err)
+	}
 }
 
 // EncodeSessionHandle/DecodeSessionHandle round-trip a handle through the
@@ -118,16 +168,4 @@ func DecodeSessionHandle(raw string) SessionHandle {
 	var h SessionHandle
 	_ = json.Unmarshal([]byte(raw), &h)
 	return h
-}
-
-// continuePreamble prefixes an ADK-native node's first-round prompt with the
-// prior node's final answer, so the model has the conversation it's
-// continuing - native agents have no protocol session to reload (unlike
-// ACP's session/load), so the prior turn's content IS the resume mechanism.
-func continuePreamble(c continuation) string {
-	if !c.ok || c.handle.Kind != "adk" || c.priorOutput == "" {
-		return ""
-	}
-	return "--- Continuing your own prior work on this (from an earlier turn) ---\n\n" +
-		c.priorOutput + "\n\n--- End prior work; continue from here ---\n\n"
 }

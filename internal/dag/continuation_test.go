@@ -3,7 +3,6 @@ package dag
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -104,19 +103,11 @@ func TestResolveContinue_NoRepoBothSidesMatchTrivially(t *testing.T) {
 	}
 }
 
-func TestBuildSessionHandle_ADK(t *testing.T) {
-	cfg := vetting.Config{ChatID: "chat1", NodeID: "n1"}
-	h := buildSessionHandle(cfg, Node{ID: "n1", AgentName: "writer"}, "plan1/n1")
-	if h.Kind != "adk" {
-		t.Fatalf("Kind = %q, want adk", h.Kind)
-	}
-	if h.ID != "chat1" {
-		t.Fatalf("ID = %q, want the chat id (ADK session id == chat id)", h.ID)
-	}
-	if h.Agent != "writer" || h.Scope != "n1" {
-		t.Fatalf("handle = %+v", h)
-	}
-}
+// TestBuildSessionHandle_ADK is TestNewGatedNode_CapturesADKBranchOnFinish
+// (continue_wiring_test.go) - buildSessionHandle's ADK-kind Branch/
+// IsolationScope capture needs a real adkagent.Context (ctx.Branch()/
+// ctx.IsolationScope() are ADK-scheduler-assigned, not hand-mockable), so
+// it's exercised end to end there rather than with a bare struct here.
 
 func TestBuildSessionHandle_ACP(t *testing.T) {
 	token := "plan1/n1-acp-handle-test"
@@ -125,7 +116,7 @@ func TestBuildSessionHandle_ACP(t *testing.T) {
 	vetting.SetAdvisorThreadSessionID(token, "acp-sess-42")
 
 	cfg := vetting.Config{ChatID: "chat1", NodeID: "n1", ExternalWorker: true}
-	h := buildSessionHandle(cfg, Node{ID: "n1", AgentName: "pi"}, token)
+	h := buildSessionHandle(nil, cfg, Node{ID: "n1", AgentName: "pi"}, token)
 	if h.Kind != "acp" {
 		t.Fatalf("Kind = %q, want acp", h.Kind)
 	}
@@ -151,20 +142,26 @@ func TestEncodeDecodeSessionHandle_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestContinuePreamble(t *testing.T) {
-	if p := continuePreamble(continuation{}); p != "" {
-		t.Fatalf("not-ok continuation: want empty preamble, got %q", p)
+// TestResumeADKContext_GuardsAgainstUniversalVisibility pins the one thing
+// resumeADKContext must get right without a real ADK context: it must
+// never hand back an overridden ctx for a case where the override would be
+// empty-branch (which ADK treats as "sees everything", not isolation).
+// The "actually overrides" case needs a real context - see
+// TestNewGatedNode_CapturesADKBranchOnFinish (continue_wiring_test.go).
+func TestResumeADKContext_GuardsAgainstUniversalVisibility(t *testing.T) {
+	cases := []struct {
+		name string
+		c    continuation
+	}{
+		{"not ok", continuation{}},
+		{"acp kind", continuation{ok: true, handle: SessionHandle{Kind: "acp", Branch: "n1"}}},
+		{"adk kind, no captured branch", continuation{ok: true, handle: SessionHandle{Kind: "adk"}}},
 	}
-	acp := continuation{ok: true, handle: SessionHandle{Kind: "acp"}, priorOutput: "prior"}
-	if p := continuePreamble(acp); p != "" {
-		t.Fatalf("acp kind: want no text preamble (session/load carries it), got %q", p)
-	}
-	adk := continuation{ok: true, handle: SessionHandle{Kind: "adk"}, priorOutput: "prior answer text"}
-	p := continuePreamble(adk)
-	if p == "" {
-		t.Fatal("adk kind with prior output: want a non-empty preamble")
-	}
-	if !strings.Contains(p, "prior answer text") {
-		t.Fatalf("preamble %q does not carry the prior output", p)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resumeADKContext(nil, tc.c); got != nil {
+				t.Fatalf("resumeADKContext(nil, %+v) = %v, want nil (unchanged) ctx", tc.c, got)
+			}
+		})
 	}
 }

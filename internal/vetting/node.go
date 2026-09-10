@@ -1451,13 +1451,18 @@ func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any
 	}
 }
 
-func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string, emit func(*session.Event) error) (string, error) {
+func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string, emit func(*session.Event) error, inheritIsolation bool) (string, error) {
 	t0 := time.Now()
 	emitPrompt(ctx, emit, input)
-	// IsolationScopeFromNodePath hides sibling events from concurrent workers (ADK v2.0 pivot scan unfiltered).
-	out, err := workflow.RunNode[string](ctx, workerNode, input,
-		workflow.WithUseSubBranch(), workflow.WithRunID(runID),
-		workflow.WithIsolationScopeFromNodePath())
+	opts := []workflow.RunNodeOption{workflow.WithUseSubBranch(), workflow.WithRunID(runID)}
+	if !inheritIsolation {
+		// IsolationScopeFromNodePath hides sibling events from concurrent workers (ADK v2.0 pivot scan unfiltered).
+		// A continuing node (cfg.ResumedFrom) inherits ctx's scope instead of
+		// deriving its own, so it doesn't isolate itself from what
+		// dag.resumeADKContext/emitPriorAnswer put on the resumed branch.
+		opts = append(opts, workflow.WithIsolationScopeFromNodePath())
+	}
+	out, err := workflow.RunNode[string](ctx, workerNode, input, opts...)
 	if err != nil {
 		return "", err
 	}
@@ -1494,7 +1499,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
 		cs.SetLedgerCoords(coords)
 	}
-	out, err := runWorkerNode(gctx, workerNode, input, runID, emit)
+	out, err := runWorkerNode(gctx, workerNode, input, runID, emit, cfg.ResumedFrom != "")
 	d := ts.End(err)
 	otelobs.RecordRoundDuration(cfg.Agent, modelName(workerModel), stage, d)
 	return out, err

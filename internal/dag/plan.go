@@ -89,6 +89,13 @@ type SessionHandle struct {
 	Agent   string `json:"agent"`
 	Scope   string `json:"scope"`
 	HeadSHA string `json:"head_sha"`
+	// Branch/IsolationScope: the ADK invocation-context coordinates the
+	// node's own events were tagged with ("adk" kind only) - a later
+	// continue: reruns under these exact values so ADK's own history
+	// replay (branch prefix match + isolation-scope exact match) includes
+	// what this node said, instead of a prompt-text splice.
+	Branch         string `json:"branch,omitempty"`
+	IsolationScope string `json:"isolation_scope,omitempty"`
 }
 
 // ResumableNode is one candidate the plan tool surfaces to the orchestrator:

@@ -230,7 +230,6 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if refreshed {
 				prompt += refreshedNote
 			}
-			prompt = continuePreamble(resume) + prompt
 			token := vetting.AdvisorThreadToken(plan.ID, node.ID)
 			task := vetting.AdvisorTask{
 				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,
@@ -312,16 +311,24 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// ACP agents ignore workerModel (never invoked - the subprocess does the
 			// real work), so their gen_ai metrics attribution rides on worker itself.
 			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
+			// runCtx: this node's own activation context, rebased onto the
+			// prior node's branch/isolation scope when continuing an ADK
+			// node - ACP resumes via session/load (task.ACPSessionID above)
+			// and needs no context change.
+			runCtx := resumeADKContext(ctx, resume)
+			if runCtx != ctx {
+				emitPriorAnswer(runCtx, emit, worker.Name(), resume)
+			}
 			// recordHandle captures this node's durable session handle for a
 			// future turn's continue: - every exit except a HITL park, which
 			// leaves the node resumable within THIS run already (#A2's own
 			// session-reap skip above handles that case).
 			recordHandle := func() {
 				if recordSession != nil {
-					recordSession(node.ID, buildSessionHandle(cfg, node, token))
+					recordSession(node.ID, buildSessionHandle(runCtx, cfg, node, token))
 				}
 			}
-			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
+			answer, res, err := vetting.RunGatedRefine(runCtx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				markGateFailed(ctx, node.ID)
 				recordHandle()
