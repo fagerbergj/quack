@@ -28,23 +28,25 @@ type slowWorkerStub struct {
 }
 
 func (s *slowWorkerStub) GenerateContent(ctx context.Context, req *model.LLMRequest, st bool) iter.Seq2[*model.LLMResponse, error] {
-	if !stubHasTool(req, "plan") {
+	if !stubHasTool(req, "create_plan") {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return s.orchStub.GenerateContent(ctx, req, st)
 }
 
+// planFanout: fanN new nodes plus a synthesizer depending on all of them by
+// their 0-based position in this same call's assignments array - node ids
+// are minted, so a brand-new sibling has none yet to reference by name.
 func planFanout() *model.LLMResponse {
-	var nodes, deps []any
+	var assignments, deps []any
 	for i := range fanN {
-		nodes = append(nodes, map[string]any{
-			"id": fmt.Sprintf("n%d", i), "agent": fmt.Sprintf("w%d", i),
-			"task": "do it", "depends_on": []any{},
+		assignments = append(assignments, map[string]any{
+			"agent": fmt.Sprintf("w%d", i), "task": "do it",
 		})
-		deps = append(deps, fmt.Sprintf("n%d", i))
+		deps = append(deps, fmt.Sprintf("%d", i))
 	}
-	nodes = append(nodes, map[string]any{"id": "synth", "agent": "synthesizer", "task": "synth", "depends_on": deps})
-	return stubCall("plan", map[string]any{"nodes": nodes})
+	assignments = append(assignments, map[string]any{"agent": "synthesizer", "task": "synth", "depends_on": deps})
+	return stubCall("create_plan", map[string]any{"assignments": assignments})
 }
 
 // #1033: the run consumer stops ranging mid-run - in REST, runChat returns

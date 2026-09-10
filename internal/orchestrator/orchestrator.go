@@ -596,13 +596,35 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		if s, ok := tools.GitHubSetupFromContext(ctx); ok {
 			githubSetup = &s
 		}
-		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubSetup,
-			tools.AllowedDeliveryKindsFromContext(ctx), tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx), o.artifacts)
+		// The dag_node/dag_plan records ARE the plan's only state, so planning
+		// must still work with no artifact service configured (a test, a degraded deploy).
+		recordSvc := o.artifacts
+		if recordSvc == nil {
+			recordSvc = artifact.InMemoryService()
+		}
+		planRC := recordstore.New(recordSvc, artifactref.AppName, userID, sessionID)
+		if o.ledgerStore != nil {
+			planRC = planRC.WithLedger(o.ledgerStore)
+		}
+		nodeIsRunning := func(nodeID string) bool { return o.executor.NodeIsLive(sessionID, nodeID) }
+		listNodesTool, err := tools.NewListNodesTool(planRC, nodeIsRunning)
 		if err != nil {
-			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
+			yield(stream.Errorf("orchestrator: list_nodes tool: "+err.Error()), nil)
 			return
 		}
-		execTool, err := tools.NewExecuteTool(planCache, o.executor.Provision)
+		createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning)
+		if err != nil {
+			yield(stream.Errorf("orchestrator: create_plan tool: "+err.Error()), nil)
+			return
+		}
+		editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning)
+		if err != nil {
+			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
+			return
+		}
+		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, history, message, attachments,
+			githubSetup, tools.AllowedDeliveryKindsFromContext(ctx),
+			tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx))
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return
@@ -618,7 +640,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			toolsets = []tool.Toolset{o.skillTS}
 		}
 
-		toolList := []tool.Tool{planTool, execTool, choiceTool}
+		toolList := []tool.Tool{listNodesTool, createPlanTool, editPlanTool, execTool, choiceTool}
 		var memSvc adkmemory.Service
 		if o.userMem != nil {
 			commitTool, err := tools.NewCommitMemoryTool(o.userMem, userID, sessionID, source)

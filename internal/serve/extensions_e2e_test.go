@@ -821,9 +821,11 @@ func TestSDKExtensionDispatchPreservesTraceContinuity(t *testing.T) {
 	}
 }
 
-// extAttachStub plays the orchestrator (routes on the "plan" tool), the
-// judge (submit_verdict), and the "media" worker - recording the bytes/mime
-// the worker actually received off req.Contents. Mirrors rest.attachStub (internal/server/rest/attachments_test.go); duplicated rather than exported: package-local test fixture, not API.
+// extAttachStub plays the orchestrator (routes on the "create_plan" tool),
+// the judge (submit_verdict), and the "media" worker - recording the
+// bytes/mime the worker actually received off req.Contents. Mirrors
+// rest.attachStub (internal/server/rest/attachments_test.go); duplicated
+// rather than exported: package-local test fixture, not API.
 type extAttachStub struct {
 	mu          sync.Mutex
 	workerCalls int
@@ -839,7 +841,7 @@ func (s *extAttachStub) GenerateContent(_ context.Context, req *model.LLMRequest
 		case extAttachStubHasTool(req, "submit_verdict"):
 			yield(extAttachStubCall("submit_verdict", map[string]any{"score": 0.95, "feedback": ""}), nil)
 			return
-		case !extAttachStubHasTool(req, "plan"): // no plan tool ⇒ the media worker
+		case !extAttachStubHasTool(req, "create_plan"): // no create_plan tool ⇒ the media worker
 			s.mu.Lock()
 			s.workerCalls++
 			for _, c := range req.Contents {
@@ -861,8 +863,8 @@ func (s *extAttachStub) GenerateContent(_ context.Context, req *model.LLMRequest
 			yield(extAttachStubCall("execute", map[string]any{"plan_id": id}), nil)
 			return
 		}
-		yield(extAttachStubCall("plan", map[string]any{"nodes": []any{map[string]any{
-			"id": "n1", "agent": "media", "task": "describe the attached image", "depends_on": []any{},
+		yield(extAttachStubCall("create_plan", map[string]any{"assignments": []any{map[string]any{
+			"agent": "media", "task": "describe the attached image",
 		}}}), nil)
 	}
 }
@@ -890,7 +892,7 @@ func extAttachStubPlanID(req *model.LLMRequest) (string, bool) {
 			continue
 		}
 		for _, p := range c.Parts {
-			if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != "plan" {
+			if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != "create_plan" {
 				continue
 			}
 			if id, ok := p.FunctionResponse.Response["plan_id"].(string); ok && id != "" {
@@ -1020,8 +1022,12 @@ func TestSDKExtensionDispatch_AttachmentHydratesAndPersistsReferenceOnly(t *test
 }
 
 // planToolProbeModel stands in for the orchestrator's own top-level model,
-// recording whether any call it received offered the "plan" tool - the actual
-// mechanism of "planning" in this codebase. It may still legitimately be called for the unrelated post-execution format pass (finalizeAnswer -> formatAnswer), which never offers tools; only a call that CAN decompose into nodes counts as the planner LLM call this proves is skipped.
+// recording whether any call it received offered the "create_plan" tool -
+// the actual mechanism of "planning" in this codebase. It may still
+// legitimately be called for the unrelated post-execution format pass
+// (finalizeAnswer -> formatAnswer), which never offers tools; only a call
+// that CAN decompose into nodes counts as the planner LLM call this proves
+// is skipped.
 type planToolProbeModel struct{ sawPlanTool atomic.Bool }
 
 func (*planToolProbeModel) Name() string { return "plan-tool-probe-stub" }
@@ -1029,7 +1035,7 @@ func (*planToolProbeModel) Name() string { return "plan-tool-probe-stub" }
 func (m *planToolProbeModel) SawPlanTool() bool { return m.sawPlanTool.Load() }
 
 func (m *planToolProbeModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	if extAttachStubHasTool(req, "plan") {
+	if extAttachStubHasTool(req, "create_plan") {
 		m.sawPlanTool.Store(true)
 	}
 	return func(yield func(*model.LLMResponse, error) bool) {
