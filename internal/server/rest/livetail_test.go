@@ -199,9 +199,15 @@ func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 
 // TestSubscribeCloseRacesActiveRead is the harvest review finding: Active is
 // read before Subscribe, so a Hub.Close landing in that window leaves active
-// stale-true while Subscribe reports done and returns a nil live channel. The
-// handler must trust Subscribe's done, not the stale active, or it blocks
-// forever selecting on that nil channel.
+// stale-true while Subscribe reports done and returns a nil live channel.
+// Falling into the warm path with that nil channel never delivers the
+// buffered replay: the client sees an empty stream (the goroutine itself
+// blocks on the nil channel indefinitely, but nothing more is ever written to
+// the response, so from the caller's side the response is just empty). The
+// discriminating check is the body content, not "did the call return" - a
+// future change could make the buggy path return quickly for an unrelated
+// reason and still drop the replay, and a return-only assertion would miss
+// that.
 func TestSubscribeCloseRacesActiveRead(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -216,7 +222,7 @@ func TestSubscribeCloseRacesActiveRead(t *testing.T) {
 	defer func() { subscribeRaceHook = restore }()
 
 	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
-	rec := httptest.NewRecorder()
+	rec := newSyncRecorder()
 	done := make(chan struct{})
 	go func() {
 		h.SubscribeChatStream(rec, req, chatID)
@@ -225,6 +231,11 @@ func TestSubscribeCloseRacesActiveRead(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("handler hung on a nil live channel when Hub.Close raced the Active read")
+		// The buggy path blocks the goroutine forever on the nil live
+		// channel rather than erroring - fall through to the content check
+		// below, which is what actually distinguishes the two behaviors.
+	}
+	if !strings.Contains(rec.body(), "node_done") {
+		t.Fatalf("Hub.Close racing the Active read dropped the buffered replay; body:\n%q", rec.body())
 	}
 }
