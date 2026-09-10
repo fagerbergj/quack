@@ -941,9 +941,11 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	v, ok := verdictFrom()
 	// #1259: a verdict that reached submit_verdict or the text-JSON fallback
 	// but skipped the required memory votes gets the same one-shot nudge
-	// pattern as a missing verdict, naming the exact ids still owed.
-	if ok && missingMemoryVotes(receivedIDs, v) && nudgeAllowed() {
-		nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeMemoriesNudgeText(receivedIDs)}}}
+	// pattern as a missing verdict, naming the exact ids still owed (not
+	// every id received - a partial vote already recorded some of them).
+	owedIDs := owedMemoryVoteIDs(receivedIDs, v)
+	if ok && len(owedIDs) > 0 && nudgeAllowed() {
+		nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeMemoriesNudgeText(owedIDs)}}}
 		if err := runTurn(nudge); err != nil {
 			return verdict{}, reads, err
 		}

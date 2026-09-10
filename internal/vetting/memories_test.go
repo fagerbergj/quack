@@ -319,3 +319,14 @@ func TestMissingMemoryVotes_PartialVoteStillMissing(t *testing.T) {
 		t.Error("missingMemoryVotes(nil, ...) = true, want false (nothing was owed)")
 	}
 }
+
+// TestMissingMemoryVotes_VoteOutsideRecallSetDoesNotCountAsCoverage pins the
+// case the table above doesn't: a vote on an id that was never received must
+// not cover a different, unvoted received id (review finding) - the loop
+// must key off receivedIDs, not v.Memories.
+func TestMissingMemoryVotes_VoteOutsideRecallSetDoesNotCountAsCoverage(t *testing.T) {
+	v := verdict{Memories: []memoryVerdict{{ID: "m2", Vote: "supported"}}}
+	if !missingMemoryVotes([]string{"m1"}, v) {
+		t.Error("missingMemoryVotes([m1], votes=[m2]) = false, want true (m1 was never voted on)")
+	}
+}
