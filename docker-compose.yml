@@ -78,6 +78,10 @@ services:
       # Empty ⇒ the app defaults to info / text.
       QUACK_LOG_LEVEL: ${QUACK_LOG_LEVEL:-}
       QUACK_LOG_FORMAT: ${QUACK_LOG_FORMAT:-}
+      # This server's externally reachable base URL, no trailing slash (e.g.
+      # https://quack.example.com). Passed to extensions so a posted GitHub
+      # comment/review can link back to the run. Empty = no link.
+      QUACK_PUBLIC_URL: ${QUACK_PUBLIC_URL:-}
       # Reachable from inside the container. Override in .env for your setup;
       # host.docker.internal points at an LLM server running on the host.
       QUACK_LLM_ENDPOINT: ${QUACK_LLM_ENDPOINT:-http://host.docker.internal:11436/v1}

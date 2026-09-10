@@ -82,7 +82,7 @@ func (h *Handler) SetTraceURLTemplate(t string) { h.traceURLTemplate = t }
 
 // GetConfig serves read-only, client-visible server config.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := schema.ClientConfig{}
+	cfg := schema.ClientConfig{Version: strPtr(h.quackVersion)}
 	if h.traceURLTemplate != "" {
 		cfg.OtelTraceUrlTemplate = strPtr(h.traceURLTemplate)
 	}

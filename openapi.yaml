@@ -1875,6 +1875,11 @@ components:
     ClientConfig:
       type: object
       properties:
+        version:
+          type: string
+          description: >
+            quack's build version (e.g. "0.51.26"), or "dev" for an
+            unstamped build. Always present.
         otel_trace_url_template:
           type: string
           description: >

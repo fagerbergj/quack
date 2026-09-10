@@ -126,6 +126,8 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, ev
 			Dispatch:      newExtDispatch(name, orchRef, st, hub, eventLog, &extHolder, shapes, artifacts),
 			Log:           slog.Default().With("component", "ext."+name),
 			DataDir:       dataDir,
+			Version:       Version,
+			PublicURL:     cfg.Server.PublicURL,
 			ReadArtifact:  readExtInputArtifact(st, artifacts),
 			WriteArtifact: writeExtInputArtifact(st, artifacts),
 			ChatUser:      extChatUser(st),

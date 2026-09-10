@@ -132,6 +132,20 @@ func (c *Client) ListRecordings(ctx context.Context) ([]schema.RecordingSummary,
 	return out.Data, nil
 }
 
+// GetVersion fetches the server's build version via GET /api/v1/config, for
+// `quack server list`'s optional version column. "" if the server predates
+// the version field.
+func (c *Client) GetVersion(ctx context.Context) (string, error) {
+	var cfg schema.ClientConfig
+	if err := c.getJSON(ctx, "/api/v1/config", &cfg); err != nil {
+		return "", err
+	}
+	if cfg.Version == nil {
+		return "", nil
+	}
+	return *cfg.Version, nil
+}
+
 // ListChatArtifacts returns every artifact name visible to a chat, each with
 // its full revision history. 404 (unknown chat) surfaces as ErrNotFound.
 func (c *Client) ListChatArtifacts(ctx context.Context, chatID string) ([]schema.ArtifactSummary, error) {
