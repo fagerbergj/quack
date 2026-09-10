@@ -426,14 +426,65 @@ func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
 			t.Fatalf("Items = %+v, want exactly one review item", dc.Items)
 		}
 		item := dc.Items[0]
-		if item.Body != "Consolidated: fix the nil deref, frontend is fine." {
-			t.Fatalf("Body = %q, want the synthesizer's answer, not the raw per-node concatenation", item.Body)
+		// No structured tail: the answer folds into Notes, not the whole body.
+		if !strings.HasPrefix(item.Body, "**Verdict: request changes**") {
+			t.Fatalf("Body = %q, want the fixed-format verdict line, not raw free text", item.Body)
+		}
+		if !strings.Contains(item.Body, "Consolidated: fix the nil deref, frontend is fine.") {
+			t.Fatalf("Body = %q, want the synthesizer's answer preserved", item.Body)
+		}
+		if strings.Contains(item.Body, "## Verdict:") || strings.Contains(item.Body, "### review-backend") {
+			t.Fatalf("Body = %q, must not contain an ad hoc heading bypassing the renderer", item.Body)
 		}
 		if item.Event != "request_changes" {
 			t.Fatalf("Event = %q, want request_changes (worst-of)", item.Event)
 		}
 		if len(item.Comments) != 1 || !strings.Contains(item.Comments[0].Body, "review-backend") {
 			t.Fatalf("Comments = %+v, want the backend finding attributed", item.Comments)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no delivery after the synthesizer finished")
+	}
+}
+
+// A synthesizer that DOES answer in the structured VERDICT/TAKEAWAY tail
+// format must produce the exact same shape a single-node review does -
+// verdict line with counts, a Highlights table for its blocking finding,
+// no ad hoc "## Verdict:"/"### Scope:" headings of its own.
+func TestReviewFanout_SynthesizerStructuredAnswerRendersFixedFormat(t *testing.T) {
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+	fanout := freshFanout(t, 2)
+	fanout.ExpectSynthesis()
+	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
+
+	commitDelivery(context.Background(), nil, cfg, "slice-a", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "request_changes",
+			Comments: []ReviewComment{{Path: "internal/a.go", Line: 12, Body: "blocking: nil deref on the error path. Crashes on a failed lookup."}}}},
+	}, GateResult{Passed: true})
+	commitDelivery(context.Background(), nil, cfg, "slice-b", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve"}},
+	}, GateResult{Passed: true})
+
+	synthCfg := Config{Deliver: deliver, ReviewFanout: fanout}
+	synthAnswer := "VERDICT: request_changes\nTAKEAWAY: One blocking issue across two slices.\n"
+	commitDelivery(context.Background(), nil, synthCfg, "synthesize", workerActivity{answer: synthAnswer}, GateResult{Passed: true})
+
+	select {
+	case dc := <-done:
+		item := dc.Items[0]
+		want := "**Verdict: request changes** · 1 blocking\n\n" +
+			"One blocking issue across two slices.\n\n" +
+			"### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n" +
+			"| blocking | internal/a.go:12 | nil deref on the error path |"
+		if item.Body != want {
+			t.Fatalf("Body =\n%q\nwant:\n%q", item.Body, want)
+		}
+		if len(item.Comments) != 1 || !strings.Contains(item.Comments[0].Body, "slice-a") {
+			t.Fatalf("Comments = %+v, want slice-a's finding attributed for GitHub posting", item.Comments)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no delivery after the synthesizer finished")
