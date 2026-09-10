@@ -95,23 +95,16 @@ type RawNode struct {
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
 	// Artifact: registered recordstore kind this node's output is saved as on
-	// gate pass (#1006). Set either by workflowcatalog.Bind from
-	// config.WorkflowNode.Artifact or directly by the LLM planner - assemble
-	// validates it against ArtifactKindNames() either way (#1128: a planner
-	// once put free text here, which reached SaveBlob and errored unregistered).
+	// gate pass. Set by workflowcatalog.Bind from config.WorkflowNode.Artifact;
+	// assemble validates it, or falls back to the assigned agent's own
+	// bundle-declared default when unset.
 	Artifact string `json:"artifact,omitempty"`
 }
 
-// ArtifactKindNames returns the sorted names of every registered blob-class
-// recordstore kind - the closed set a node's `artifact` field may select,
-// since saveDocumentRound writes it via SaveBlob (#1128).
-func ArtifactKindNames() []string { return recordstore.ArtifactKindNames() }
-
-// ValidateArtifactKind rejects an artifact selector that isn't one of
-// ArtifactKindNames() - the planner-facing guard for #1128. Thin wrapper
-// around recordstore.ValidateArtifactKind, kept here for plan-build callers;
-// config's own workflow-node validation calls recordstore directly to avoid
-// an import cycle (dag -> inference -> config).
+// ValidateArtifactKind rejects an artifact selector outside the registered
+// recordstore kinds. Thin wrapper around recordstore.ValidateArtifactKind,
+// kept here for plan-build callers; config's own workflow-node validation
+// calls recordstore directly to avoid an import cycle (dag -> inference -> config).
 func ValidateArtifactKind(kind string) error { return recordstore.ValidateArtifactKind(kind) }
 
 // AssignmentsToRawNodes converts a dag_plan record's assignments into Build's
