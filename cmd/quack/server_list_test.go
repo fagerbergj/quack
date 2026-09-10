@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/cli"
 )
@@ -131,5 +132,45 @@ func TestServerList_SkipsVersionOverTenServers(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "skipping version lookup") {
 		t.Errorf("output = %q, want a note that version lookup was skipped", out.String())
+	}
+}
+
+// TestServerList_VersionLookupsRunConcurrently: each server's version fetch
+// has its own 2s timeout - sequentially, two unresponsive servers would take
+// ~4s, but they must run in parallel, so wall time stays near one timeout.
+func TestServerList_VersionLookupsRunConcurrently(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	block := make(chan struct{})
+	unresponsive := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block // never responds within the client's 2s timeout
+	}))
+	// close(block) before unresponsive.Close(): Close() waits for every
+	// active handler to return, so it must unblock them first or it hangs.
+	defer unresponsive.Close()
+	defer close(block)
+
+	rc, err := cli.LoadClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.AddServer("a", unresponsive.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.AddServer("b", unresponsive.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	c := newServerListCmd()
+	c.SetOut(&out)
+	start := time.Now()
+	if err := c.Execute(); err != nil {
+		t.Fatalf("server list: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 3*time.Second {
+		t.Errorf("server list took %s, want < 3s (two 2s-timeout lookups must run concurrently, not sequentially)", elapsed)
 	}
 }

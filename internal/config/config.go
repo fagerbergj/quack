@@ -1268,7 +1268,7 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: server.public_url must not have a trailing slash")
 		}
 		parsed, err := url.Parse(u)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Hostname() == "" {
 			return fmt.Errorf("config: server.public_url must be an absolute http(s) URL")
 		}
 	}
