@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { NavRail } from './NavRail'
+import { NavRail, displayVersion } from './NavRail'
 import { client } from '../generated/client.gen'
 import type { ExtensionInfo } from '../api'
 
@@ -154,6 +154,28 @@ describe('NavRail', () => {
   it('renders no extensions section when the list is empty', () => {
     render({ initialExtensions: [] })
     expect(host!.querySelector('a')).toBeNull()
+  })
+
+  // #1326: the footer normalizes whatever the server sends into exactly one
+  // "v" prefix, "dev" untouched.
+  it('normalizes the version display', () => {
+    expect(displayVersion('0.51.26')).toBe('v0.51.26')
+    expect(displayVersion('v0.51.26')).toBe('v0.51.26') // no "vv" duplication
+    expect(displayVersion('dev')).toBe('dev')
+  })
+
+  it('renders the version footer at the bottom, muted, without an icon', () => {
+    render({ versionOverride: '0.51.26' })
+    const footer = Array.from(host!.querySelectorAll('span')).find(s => s.textContent === 'v0.51.26')!
+    expect(footer).toBeTruthy()
+    expect(footer.getAttribute('title')).toBe('0.51.26')
+    expect(footer.querySelector('svg')).toBeNull()
+  })
+
+  it('renders no version footer when the version is unknown', () => {
+    render({ versionOverride: undefined })
+    const versionSpan = Array.from(host!.querySelectorAll('span')).find(s => /^v?\d+\.\d+\.\d+$/.test(s.textContent ?? '') || s.textContent === 'dev')
+    expect(versionSpan).toBeUndefined()
   })
 
   it('fetches GET /api/v1/extensions itself when no seam prop is given', async () => {

@@ -473,6 +473,41 @@ func TestServerTopology(t *testing.T) {
 	}
 }
 
+// TestServerPublicURL: valid absolute http(s) URLs pass and round-trip,
+// a trailing slash and a non-http(s) scheme are rejected, and unset is fine
+// (the field extensions rely on to link a posted comment/review back to the
+// run that made it - see internal/serve/extensions.go's Host.PublicURL).
+func TestServerPublicURL(t *testing.T) {
+	for _, tc := range []struct {
+		yaml      string
+		want      string
+		wantError bool
+	}{
+		{`server: { addr: ":8080" }`, "", false},  // unset ⇒ ""
+		{`server: { public_url: "" }`, "", false}, // explicit empty ⇒ same as unset
+		{`server: { public_url: "https://quack.example.com" }`, "https://quack.example.com", false},
+		{`server: { public_url: "http://localhost:8080" }`, "http://localhost:8080", false},
+		{`server: { public_url: "https://quack.example.com/" }`, "", true}, // trailing slash rejected
+		{`server: { public_url: "ftp://quack.example.com" }`, "", true},    // non-http(s) scheme rejected
+		{`server: { public_url: "not-a-url" }`, "", true},                  // not absolute
+	} {
+		c, err := Load(writeTemp(t, baseConfig+tc.yaml))
+		if tc.wantError {
+			if err == nil {
+				t.Errorf("%q: expected error, got nil", tc.yaml)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: Load: %v", tc.yaml, err)
+			continue
+		}
+		if c.Server.PublicURL != tc.want {
+			t.Errorf("%q: PublicURL = %q, want %q", tc.yaml, c.Server.PublicURL, tc.want)
+		}
+	}
+}
+
 // TestConsolidationSchedule checks schedule is honored when set explicitly
 // (including the "" opt-out), defaults when absent, and rejects a bad cron.
 func TestConsolidationSchedule(t *testing.T) {

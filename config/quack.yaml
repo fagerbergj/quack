@@ -319,6 +319,11 @@ server:
   # grace (docker-compose stop_grace_period, k8s terminationGracePeriodSeconds)
   # must be longer than this, or the platform SIGKILLs before quack finishes draining.
   # shutdown_grace_seconds: 20
+  # public_url: this server's externally reachable base URL, no trailing
+  # slash - passed to extensions (SDK Host.PublicURL) so a posted GitHub
+  # comment/review can link back to the run that made it. Unset env var ⇒ "",
+  # same as leaving this key out entirely (no link).
+  public_url: ${QUACK_PUBLIC_URL}
 
 # OTel tracing/metrics - emission-only (Tempo/Grafana, the home-server
 # monitoring stack, own trace/metric viewing; quack keeps no local store of

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -822,6 +823,11 @@ type ServerConfig struct {
 	// ShutdownGraceSeconds bounds how long SIGTERM waits for in-flight runs
 	// to finish before force-cancelling them (see serve.DrainActiveRuns).
 	ShutdownGraceSeconds int `yaml:"shutdown_grace_seconds"`
+	// PublicURL is this server's externally reachable base URL (e.g.
+	// "https://quack.example.com"), passed to extensions (SDK Host.PublicURL)
+	// so a posted GitHub comment/review can link back to the run that made it.
+	// Empty means quack doesn't know its own public address.
+	PublicURL string `yaml:"public_url"`
 }
 
 const (
@@ -1256,6 +1262,15 @@ func (c *Config) validate() error {
 	case "", TopologyEmbedded, TopologyManaged, TopologyExternal:
 	default:
 		return fmt.Errorf("config: server.topology %q is unknown (use embedded, managed, or external)", c.Server.Topology)
+	}
+	if u := c.Server.PublicURL; u != "" {
+		if strings.HasSuffix(u, "/") {
+			return fmt.Errorf("config: server.public_url must not have a trailing slash")
+		}
+		parsed, err := url.Parse(u)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("config: server.public_url must be an absolute http(s) URL")
+		}
 	}
 	if err := c.Workspace.applyDefaults(); err != nil {
 		return err

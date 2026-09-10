@@ -19,8 +19,6 @@ const ALLOWLIST = new Set([
   'components/Composer.tsx:224', // handled by #1248 (composer rework)
   'components/Composer.tsx:225', // handled by #1248
   'components/Composer.tsx:269', // handled by #1248
-  'components/NavRail.tsx:30',   // comment prose
-  'components/NavRail.tsx:32',   // comment prose
 ])
 
 function walk(dir, out = []) {

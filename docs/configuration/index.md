@@ -19,7 +19,7 @@ agents:         # per-agent bundle bindings (model, tools, acp)
 tools:          # built-in tool configuration
 gates:          # the trust gate: deterministic checks + judge
 dag:            # concurrency caps for the DAG executor
-server:         # listen address + store topology
+server:         # listen address, store topology, public_url
 workspace:      # the agents' filesystem/git/run_command sandbox
 extensions:     # optional bundled integrations (e.g. GitHub App)
 observability:  # otel tracing/metrics/logs emission + the ledger (WAL) store and observation toggle
@@ -50,6 +50,13 @@ Compaction runs on `google.golang.org/adk/v2`'s native runner-level engine (`int
 
 adk's summariser hard-errors past its transcript cap (sized from `context_window`) rather than chunking, unlike a hand-rolled summariser would.
 
+## `server`
+
+- `addr` — listen address (default `:8080`).
+- `topology` — `embedded` (sqlite, default), `managed` (brings up the docker-compose stores), or `external` (you run Postgres/Qdrant yourself).
+- `shutdown_grace_seconds` — how long SIGTERM waits for in-flight runs before force-cancelling them (default 20).
+- `public_url` — this server's externally reachable base URL, e.g. `https://quack.example.com`. Must be an absolute `http(s)` URL with no trailing slash when set. Passed to extensions (SDK `Host.PublicURL`) so a posted GitHub comment/review can link back to the run that made it; unset ⇒ no link. Interpolated from `QUACK_PUBLIC_URL`, which is optional — unset expands to empty, not a validation error.
+
 ## Key environment variables
 
 | Var | Purpose |
@@ -63,6 +70,7 @@ adk's summariser hard-errors past its transcript cap (sized from `context_window
 | `QUACK_QDRANT_URL` | qdrant endpoint (unset ⇒ memory self-disables) |
 | `QUACK_SEARXNG_URL` | SearXNG JSON API endpoint for web search |
 | `QUACK_WORKSPACE_ROOT` | Filesystem sandbox root (default `./workspace`) |
+| `QUACK_PUBLIC_URL` | This server's externally reachable base URL; interpolated into `server.public_url`. Optional — unset ⇒ no link in extension-posted comments/reviews |
 | `QUACK_LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error` |
 | `QUACK_LOG_FORMAT` | slog output: `text` (default) or `json` |
 | `QUACK_CONFIG` | Path to `quack.yaml`, used when `--config` isn't passed |

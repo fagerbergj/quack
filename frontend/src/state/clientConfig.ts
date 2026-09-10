@@ -3,9 +3,10 @@
 import { api } from '../api'
 
 let template: string | undefined
+let version: string | undefined
 let fetched = false
 
-void api.getConfig().then(c => { template = c.otel_trace_url_template }).catch(() => {}).finally(() => { fetched = true })
+void api.getConfig().then(c => { template = c.otel_trace_url_template; version = c.version }).catch(() => {}).finally(() => { fetched = true })
 
 // Renders traceId through the server's otel_trace_url_template, or
 // undefined if either is unset (no link) or the config fetch hasn't
@@ -13,4 +14,10 @@ void api.getConfig().then(c => { template = c.otel_trace_url_template }).catch((
 export function traceUrl(traceId: string | undefined): string | undefined {
   if (!fetched || !template || !traceId) return undefined
   return template.replace('{trace_id}', traceId)
+}
+
+// serverVersion returns the server's build version once the config fetch
+// resolves, else undefined (NavRail renders nothing for that render pass).
+export function serverVersion(): string | undefined {
+  return version
 }

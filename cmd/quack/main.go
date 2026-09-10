@@ -11,11 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -824,6 +826,20 @@ type serverListRow struct {
 	Active bool   `json:"active"`
 }
 
+// serverVersion best-effort fetches a registered server's build version for
+// `server list`; "" (not an error) on any failure - an unreachable or old
+// server just shows no version, same as an empty registry entry.
+func serverVersion(ctx context.Context, url string) string {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	c := &cli.Client{BaseURL: strings.TrimRight(url, "/"), HTTP: &http.Client{Timeout: 2 * time.Second}}
+	v, err := c.GetVersion(ctx)
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
 func newServerListCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
@@ -848,16 +864,29 @@ func newServerListCmd() *cobra.Command {
 				enc.SetIndent("", "  ")
 				return enc.Encode(rows)
 			}
+			out := cmd.OutOrStdout()
 			if len(names) == 0 {
-				fmt.Println("no servers registered - run `quack init` or `quack server add`")
+				fmt.Fprintln(out, "no servers registered - run `quack init` or `quack server add`")
 				return nil
 			}
+			// One line per server, so keep the version lookup (a live request
+			// per server) to registries small enough to stay within 10 lines.
+			withVersions := len(names) <= 10
 			for _, name := range names {
 				mark := " "
 				if name == c.Active {
 					mark = "*"
 				}
-				fmt.Printf("%s %-12s %s\n", mark, name, c.Servers[name].URL)
+				line := fmt.Sprintf("%s %-12s %s", mark, name, c.Servers[name].URL)
+				if withVersions {
+					if v := serverVersion(cmd.Context(), c.Servers[name].URL); v != "" {
+						line += " (" + v + ")"
+					}
+				}
+				fmt.Fprintln(out, line)
+			}
+			if !withVersions {
+				fmt.Fprintf(out, "(skipping version lookup: %d servers registered, only shown for <= 10)\n", len(names))
 			}
 			return nil
 		},

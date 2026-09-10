@@ -87,3 +87,48 @@ func TestBuildSDKExtensions_NoUIDescriptor_NameOnly(t *testing.T) {
 }
 
 func strPtrForTest(s string) *string { return &s }
+
+// fakeHostCaptureExtension captures the Host it's constructed with, so a
+// test can assert what buildSDKExtensions passes into extsdk.Host - here,
+// Version/PublicURL (the comment-footer wiring).
+type fakeHostCaptureExtension struct{}
+
+func (fakeHostCaptureExtension) Tools() []tool.Tool                       { return nil }
+func (fakeHostCaptureExtension) RegisterRoutes(authed, public chi.Router) {}
+
+var capturedHostForTest extsdk.Host
+
+func init() {
+	extsdk.Register("fake-host-capture-test", func(h extsdk.Host, _ []byte) (extsdk.Extension, error) {
+		capturedHostForTest = h
+		return fakeHostCaptureExtension{}, nil
+	})
+}
+
+// TestBuildSDKExtensions_HostCarriesVersionAndPublicURL: the running quack
+// build stamp and server.public_url reach every SDK extension's Host, so an
+// extension (e.g. the GitHub comment footer) can name the run that produced
+// its output without probing quack's own config.
+func TestBuildSDKExtensions_HostCarriesVersionAndPublicURL(t *testing.T) {
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
+
+	origVersion := Version
+	Version = "0.51.26"
+	t.Cleanup(func() { Version = origVersion })
+
+	cfg := noopModulesConfig(t, t.TempDir(), "fake-host-capture-test:\n  enabled: true\n")
+	cfg.Server.PublicURL = "https://quack.example.com"
+
+	if _, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil); err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if capturedHostForTest.Version != "0.51.26" {
+		t.Errorf("Host.Version = %q, want %q", capturedHostForTest.Version, "0.51.26")
+	}
+	if capturedHostForTest.PublicURL != "https://quack.example.com" {
+		t.Errorf("Host.PublicURL = %q, want %q", capturedHostForTest.PublicURL, "https://quack.example.com")
+	}
+}
