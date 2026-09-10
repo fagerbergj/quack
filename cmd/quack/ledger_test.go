@@ -42,3 +42,14 @@ func TestBuildRecovererOrWarn_DryRunSkipsBuild(t *testing.T) {
 		t.Errorf("stderr = %q, want no output under --dry-run", errBuf.String())
 	}
 }
+
+// Flag-registration only: their JSON shape is proven directly against
+// RunLedgerRebuild/RunLedgerRecover's output in internal/cli.
+func TestLedgerRebuildRecover_JSONFlagRegistered(t *testing.T) {
+	if newLedgerRebuildCmd().Flags().Lookup("json") == nil {
+		t.Error("ledger rebuild is missing --json")
+	}
+	if newLedgerRecoverCmd().Flags().Lookup("json") == nil {
+		t.Error("ledger recover is missing --json")
+	}
+}

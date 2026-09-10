@@ -20,7 +20,7 @@ func RunMemoryRescope(ctx context.Context, out io.Writer, server string, apply, 
 		return err
 	}
 	if asJSON {
-		return writeJSON(out, report)
+		return WriteJSON(out, report)
 	}
 	verb := "would move"
 	if report.Applied {

@@ -400,7 +400,7 @@ func TestRunChatDelete(t *testing.T) {
 
 	// yes=true skips the prompt.
 	var out, errOut bytes.Buffer
-	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader(""), srv.URL, "c1", true); err != nil {
+	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader(""), srv.URL, "c1", true, false); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if !deleted {
@@ -411,7 +411,7 @@ func TestRunChatDelete(t *testing.T) {
 	deleted = false
 	out.Reset()
 	errOut.Reset()
-	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader("n\n"), srv.URL, "c1", false); err != nil {
+	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader("n\n"), srv.URL, "c1", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if deleted {
@@ -431,7 +431,7 @@ func TestRunChatDeletePromptOnStderr(t *testing.T) {
 	defer srv.Close()
 
 	var out, errOut bytes.Buffer
-	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader("n\n"), srv.URL, "c1", false); err != nil {
+	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader("n\n"), srv.URL, "c1", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "[y/N]") {
@@ -453,7 +453,7 @@ func TestRunChatDeleteNonInteractiveErrors(t *testing.T) {
 	defer srv.Close()
 
 	var out, errOut bytes.Buffer
-	err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader(""), srv.URL, "c1", false)
+	err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader(""), srv.URL, "c1", false, false)
 	if err == nil {
 		t.Fatal("expected an error on empty/closed stdin without -y")
 	}
@@ -481,7 +481,7 @@ func TestRunNodeStop(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
-	if err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "n2"); err != nil {
+	if err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "n2", false); err != nil {
 		t.Fatal(err)
 	}
 	if hit != "/api/v1/chats/c1/nodes/n2/status" {
@@ -501,7 +501,7 @@ func TestRunNodeStopSurfacesServerMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
-	err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "nope")
+	err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "nope", false)
 	if err == nil {
 		t.Fatal("expected an error on 404")
 	}
@@ -518,7 +518,7 @@ func TestRunNodeStopGenericNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
-	err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "nope")
+	err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "nope", false)
 	if err == nil {
 		t.Fatal("expected an error on 404")
 	}
@@ -655,7 +655,7 @@ func TestRunChatStop(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
-	if err := RunChatStop(context.Background(), &out, srv.URL, "c1"); err != nil {
+	if err := RunChatStop(context.Background(), &out, srv.URL, "c1", false); err != nil {
 		t.Fatal(err)
 	}
 	if !cancelled {
@@ -678,7 +678,7 @@ func TestRunNodePause(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
-	if err := RunNodePause(context.Background(), &out, srv.URL, "c1", "n2"); err != nil {
+	if err := RunNodePause(context.Background(), &out, srv.URL, "c1", "n2", false); err != nil {
 		t.Fatal(err)
 	}
 	if gotBody.Status != schema.NodeStatusPaused {
@@ -704,7 +704,7 @@ func TestRunNodeQueue(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
-	if err := RunNodeQueue(context.Background(), &out, srv.URL, "c1", "n2", "focus on cost"); err != nil {
+	if err := RunNodeQueue(context.Background(), &out, srv.URL, "c1", "n2", "focus on cost", false); err != nil {
 		t.Fatal(err)
 	}
 	if gotBody.Message != "focus on cost" {
@@ -730,7 +730,7 @@ func TestRunNodeRetry(t *testing.T) {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}))
 		var out bytes.Buffer
-		if err := RunNodeRetry(context.Background(), &out, srv.URL, "c1", "n2", guidance); err != nil {
+		if err := RunNodeRetry(context.Background(), &out, srv.URL, "c1", "n2", guidance, false); err != nil {
 			t.Fatal(err)
 		}
 		srv.Close()
@@ -757,7 +757,7 @@ func TestPutStatusSurfaces409Reason(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	err := RunNodePause(context.Background(), io.Discard, srv.URL, "c1", "n2")
+	err := RunNodePause(context.Background(), io.Discard, srv.URL, "c1", "n2", false)
 	if err == nil {
 		t.Fatal("expected an error on 409")
 	}
@@ -765,5 +765,178 @@ func TestPutStatusSurfaces409Reason(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("409 error %q should contain %q", err.Error(), want)
 		}
+	}
+}
+
+// TestActionCommandsJSON asserts the shared nodeActionResult shape: chat
+// stop/delete and all eight chat node verbs.
+func TestActionCommandsJSON(t *testing.T) {
+	cases := []struct {
+		name          string
+		handler       http.HandlerFunc
+		call          func(ctx context.Context, out io.Writer, base string) error
+		wantNodeID    string
+		wantMessageID string
+		wantAction    string
+	}{
+		{
+			name:    "node stop",
+			handler: statusHandler(t, "/api/v1/chats/c1/nodes/n2/status", schema.NodeStatusCancelled),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunNodeStop(ctx, out, base, "c1", "n2", true)
+			},
+			wantNodeID: "n2", wantAction: "stop",
+		},
+		{
+			name:    "node pause",
+			handler: statusHandler(t, "/api/v1/chats/c1/nodes/n2/status", schema.NodeStatusPaused),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunNodePause(ctx, out, base, "c1", "n2", true)
+			},
+			wantNodeID: "n2", wantAction: "pause",
+		},
+		{
+			name:    "node resume",
+			handler: statusHandler(t, "/api/v1/chats/c1/nodes/n2/status", schema.NodeStatusRunning),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunNodeResume(ctx, out, base, "c1", "n2", true)
+			},
+			wantNodeID: "n2", wantAction: "resume",
+		},
+		{
+			name:    "node retry",
+			handler: statusHandler(t, "/api/v1/chats/c1/nodes/n2/status", schema.NodeStatusQueued),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunNodeRetry(ctx, out, base, "c1", "n2", "", true)
+			},
+			wantNodeID: "n2", wantAction: "retry",
+		},
+		{
+			name: "node queue",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/chats/c1/nodes/n2/queue" {
+					_ = json.NewEncoder(w).Encode(schema.QueuedMessage{Id: "q1", Text: "hi"})
+					return
+				}
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunNodeQueue(ctx, out, base, "c1", "n2", "hi", true)
+			},
+			wantNodeID: "n2", wantMessageID: "q1", wantAction: "queue",
+		},
+		{
+			name: "node queue-edit",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPatch && r.URL.Path == "/api/v1/chats/c1/nodes/n2/queue/q1" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunNodeQueueEdit(ctx, out, base, "c1", "n2", "q1", "hi again", true)
+			},
+			wantNodeID: "n2", wantMessageID: "q1", wantAction: "queue-edit",
+		},
+		{
+			name: "node queue-remove",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodDelete && r.URL.Path == "/api/v1/chats/c1/nodes/n2/queue/q1" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunNodeQueueRemove(ctx, out, base, "c1", "n2", "q1", true)
+			},
+			wantNodeID: "n2", wantMessageID: "q1", wantAction: "queue-remove",
+		},
+		{
+			name: "node edit",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPatch && r.URL.Path == "/api/v1/chats/c1/nodes/n2" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunNodeEditTask(ctx, out, base, "c1", "n2", "new task", true)
+			},
+			wantNodeID: "n2", wantAction: "edit",
+		},
+		{
+			name: "chat stop",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/chats/c1":
+					_ = json.NewEncoder(w).Encode(schema.ChatDetail{Turns: []schema.Turn{{Id: "t1"}}})
+				case r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/responses/t1/status":
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+			}),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunChatStop(ctx, out, base, "c1", true)
+			},
+			wantAction: "stopped",
+		},
+		{
+			name: "chat delete",
+			handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}),
+			call: func(ctx context.Context, out io.Writer, base string) error {
+				return RunChatDelete(ctx, out, io.Discard, strings.NewReader(""), base, "c1", true, true)
+			},
+			wantAction: "deleted",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("QUACK_HOME", t.TempDir())
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+
+			var out bytes.Buffer
+			if err := tc.call(context.Background(), &out, srv.URL); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			var got nodeActionResult
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Fatalf("%s: output not valid JSON: %v\n%s", tc.name, err, out.String())
+			}
+			if got.ChatID != "c1" {
+				t.Errorf("%s: chat_id = %q, want c1", tc.name, got.ChatID)
+			}
+			if got.NodeID != tc.wantNodeID {
+				t.Errorf("%s: node_id = %q, want %q", tc.name, got.NodeID, tc.wantNodeID)
+			}
+			if got.MessageID != tc.wantMessageID {
+				t.Errorf("%s: message_id = %q, want %q", tc.name, got.MessageID, tc.wantMessageID)
+			}
+			if got.Action != tc.wantAction {
+				t.Errorf("%s: action = %q, want %q", tc.name, got.Action, tc.wantAction)
+			}
+			if got.Message == "" {
+				t.Errorf("%s: message is empty", tc.name)
+			}
+		})
+	}
+}
+
+// statusHandler stubs one node status PUT, replying with the given status.
+func statusHandler(t *testing.T, path string, status schema.NodeStatus) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == path {
+			_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: status})
+			return
+		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 	}
 }

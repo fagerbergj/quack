@@ -30,7 +30,7 @@ func newLedgerCmd() *cobra.Command {
 // same cli.Recover the server runs at boot: delivery.intent entries with no
 // completing delivery_record revision are checked against the configured extension's DeliveryRecoverer, artifact.revision intents with no store row are marked aborted. Redo stays nil: redoing a delivery needs the live node context this offline command doesn't have. --dry-run reports without calling the extension or writing. A recoverer-build failure degrades to a stderr warning rather than aborting, so a misconfigured extension cannot hide the orphans it might otherwise explain.
 func newLedgerRecoverCmd() *cobra.Command {
-	var dryRun bool
+	var dryRun, asJSON bool
 	c := &cobra.Command{
 		Use:   "recover [chat-id]",
 		Short: "Settle intents whose projection write is missing (a crashed delivery or artifact save)",
@@ -46,11 +46,15 @@ func newLedgerRecoverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return cli.WriteJSON(cmd.OutOrStdout(), sum)
+			}
 			fmt.Fprint(cmd.OutOrStdout(), cli.FormatRecoverSummary(sum))
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "report orphaned intents only; never call the extension or write to the ledger")
+	asJSONFlag(c, &asJSON)
 	return c
 }
 
@@ -136,7 +140,7 @@ func newLedgerShowCmd() *cobra.Command {
 }
 
 func newLedgerRebuildCmd() *cobra.Command {
-	var dryRun bool
+	var dryRun, asJSON bool
 	c := &cobra.Command{
 		Use:   "rebuild <chat-id>",
 		Short: "Reset a chat's projection watermarks and re-fold from the ledger",
@@ -159,7 +163,13 @@ func newLedgerRebuildCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprint(cmd.OutOrStdout(), cli.FormatLedgerRebuildReport(report))
+			if asJSON {
+				if err := cli.WriteJSON(cmd.OutOrStdout(), report); err != nil {
+					return err
+				}
+			} else {
+				fmt.Fprint(cmd.OutOrStdout(), cli.FormatLedgerRebuildReport(report))
+			}
 			if len(report.ArtifactUpdateErrors) > 0 {
 				return fmt.Errorf("ledger rebuild: %d artifact revision(s) failed to update", len(report.ArtifactUpdateErrors))
 			}
@@ -167,6 +177,7 @@ func newLedgerRebuildCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "report what would change without writing")
+	asJSONFlag(c, &asJSON)
 	return c
 }
 

@@ -94,6 +94,31 @@ func TestRunLedgerRebuild_RegeneratesArtifactMeta(t *testing.T) {
 	}
 }
 
+// TestRunLedgerRebuild_JSON asserts the report's shape through the shared
+// WriteJSON writer, distinct from the human FormatLedgerRebuildReport text.
+func TestRunLedgerRebuild_JSON(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, "chat-1", false)
+	if err != nil {
+		t.Fatalf("RunLedgerRebuild: %v", err)
+	}
+	var out bytes.Buffer
+	if err := WriteJSON(&out, report); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if got["chat_id"] != "chat-1" {
+		t.Errorf("chat_id = %v, want chat-1", got["chat_id"])
+	}
+	if _, ok := got["artifact_update_errors"]; ok {
+		t.Errorf("empty artifact_update_errors should be omitted, got %v", got["artifact_update_errors"])
+	}
+}
+
 // TestRunLedgerRebuild_DryRunWritesNothing: --dry-run reports the same
 // counts but leaves the drifted row untouched. Seeds a REAL lineage
 // (Author/NodeID/Round all set) and drifts it to a DIFFERENT real lineage, so this test cannot pass vacuously (an empty-vs-empty lineage comparison would pass even if dry-run silently wrote - #1111 review finding).

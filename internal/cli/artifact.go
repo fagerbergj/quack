@@ -23,7 +23,7 @@ func RunArtifactList(ctx context.Context, out io.Writer, server, chatID string, 
 		return notFoundAs(err, chatID)
 	}
 	if asJSON {
-		return writeJSON(out, artifacts)
+		return WriteJSON(out, artifacts)
 	}
 	if len(artifacts) == 0 {
 		fmt.Fprintln(out, "No artifacts for this chat.")

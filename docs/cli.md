@@ -4,6 +4,10 @@
 
 Every command has its own `--help`; this page is the map.
 
+## Shell completion
+
+`quack completion <bash|zsh|fish|powershell>` generates a completion script. Chat, node, memory, and server ids/names complete dynamically (a live call against the target server or local config); `sandbox --agent` completes from the local `quack.yaml`.
+
 ## Getting configured
 
 | Command | Does |
@@ -11,7 +15,7 @@ Every command has its own `--help`; this page is the map.
 | `quack init` | Onboarding wizard: run a server locally (writes `quack.yaml`; the CLI then runs it in-process, no server registered) or register a remote one someone else runs. |
 | `quack server init` | Just the config wizard - LLM provider, endpoint, model roles, optional features, stores. Writes `quack.yaml` without touching the client registry. `--answers <file.yaml>` skips the wizard entirely for a headless setup (Dockerfile, CI, Ansible) - a YAML file of the same fields the wizard asks for (see `InitAnswers` in `internal/cli/emit.go`); unset fields fall back to the same environment variables the wizard prefills from. |
 | `quack server use <name>` / `add <name> <url>` / `list [--json]` / `remove <name>` | Manage the set of servers this CLI knows about and which one is active. `add` activates the server if it's the first one registered. |
-| `quack server validate` | Load and validate a `quack.yaml` without starting the server. |
+| `quack server validate [--json]` | Load and validate a `quack.yaml` without starting the server. |
 | `quack server login <name> --issuer <url> --client-id <id>` | Log in to a registered server that requires [OIDC auth](configuration/auth.md#cli-login-quack-server-login), via the authorization code flow with PKCE (needs a local browser - doesn't work headless/over SSH). |
 
 Once logged in, `quack chat`/`quack api`/`-p` attach the stored access token to every request against that server automatically (refreshed silently as it nears expiry) - nothing else to pass on the command line.
@@ -39,8 +43,8 @@ A chat is a session; a message on it kicks off a run.
 | `quack chat show <id> [-f]` | Status snapshot - id/title/status/pending question, node table, last answer; `-f` follows a live run. Applies the same 0/1/2 exit-code contract as `chat send`/`-p` (`--json` too). |
 | `quack chat list [--archived exclude\|include\|only]` | List chats with their status. `--archived` defaults to `exclude`; `only` is the CLI's one path to a chat archived in the web UI. |
 | `quack chat export <id>` | Export a chat transcript. |
-| `quack chat stop <id>` | Stop a chat's active run. |
-| `quack chat delete <id>` | Delete a chat (irreversible). The confirmation prompt goes to stderr; a non-interactive stdin without `-y` errors instead of silently declining. |
+| `quack chat stop <id> [--json]` | Stop a chat's active run. |
+| `quack chat delete <id> [--json]` | Delete a chat (irreversible). The confirmation prompt goes to stderr; a non-interactive stdin without `-y` errors instead of silently declining. |
 | `quack chat rename <id> <title>` | Rename a chat. |
 | `quack chat archive <id>` / `unarchive <id>` | Archive or unarchive a chat. |
 | `quack chat artifact list <id>` | List a chat's artifacts and their revision history. |
@@ -48,7 +52,7 @@ A chat is a session; a message on it kicks off a run.
 
 ## Node control
 
-Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-id> <node-id> ...`):
+Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-id> <node-id> ...`); every verb takes `--json`, printing `{"chat_id","node_id","action","message"}`.
 
 | Verb | Does |
 | --- | --- |
@@ -69,8 +73,8 @@ Runs can be recorded to a replay ledger and re-driven later - the basis for regr
 | --- | --- |
 | `quack ledger list` / `export <chat-id>` | List chats with a recording on the server; download one as a bundle for replay or a fixture. |
 | `quack ledger show <chat-id> [--from-seq N]` | Print a chat's raw ledger entries (server-side, from the local quack.yaml's stores). |
-| `quack ledger recover [chat-id] [--dry-run]` | Settle intents whose projection write is missing (the same pass the server runs at boot); `--dry-run` reports only. |
-| `quack ledger rebuild <chat-id> [--dry-run]` | Reconcile a chat's artifact metadata and SSE table against the ledger fold. |
+| `quack ledger recover [chat-id] [--dry-run] [--json]` | Settle intents whose projection write is missing (the same pass the server runs at boot); `--dry-run` reports only. |
+| `quack ledger rebuild <chat-id> [--dry-run] [--json]` | Reconcile a chat's artifact metadata and SSE table against the ledger fold. |
 | `quack replay [--from-server <url>]` | Replay a recorded run offline (strict) or live from a changed node (fork). `--from-server` names where to fetch the recording when the argument is a chat id - distinct from the global `--server` (which this command doesn't otherwise use; the replay itself always runs from your local `quack.yaml`). |
 | `quack eval [--from-server <url>]` | Re-run a recorded conversation live with a swapped model and compare judge scores. Same `--from-server` meaning as `replay`. |
 
@@ -82,7 +86,7 @@ Browse or invalidate what quack has remembered (memory lifecycle design doc); `f
 | --- | --- |
 | `quack memory list [--bucket <b>] [--q <query>] [--tier <t>] [--sort <s>] [--limit N] [--include-invalidated]` | List or (with `--q`) embedding-search memories. With no `--limit`, auto-pages through the whole store rather than stopping at the server's default page. |
 | `quack memory show <memory-id>` | Show one memory's full detail (votes/tier/last-recalled) - `GET /api/v1/memories/{id}`, a direct per-id lookup, not a store-wide scan. |
-| `quack memory forget <memory-id> [--reason <text>]` | Invalidate (soft-delete) one memory. |
+| `quack memory forget <memory-id> [--reason <text>] [--json]` | Invalidate (soft-delete) one memory. |
 | `quack memory sweep [--dry-run]` | Run the forgetting-rule sweep on demand (epic #1255 P3); `--dry-run` reports per-rule matches without invalidating anything. |
 | `quack memory rescope [--apply]` | Move role:\* memories with a resolvable GitHub-origin chat into their repo:\* bucket (#1262); dry run by default. |
 | `quack memory stats [--weeks N]` | Weekly recall precision/support-share/vote/recall counts plus live/invalidated points per scope (epic #1255 P5); defaults to 12 weeks. |
@@ -95,7 +99,7 @@ Browse or invalidate what quack has remembered (memory lifecycle design doc); `f
 | --- | --- |
 | `quack sandbox` | Enter the jail interactively. |
 | `quack sandbox run "CMD ARGS"` | Run one command inside the jail and exit. |
-| `quack sandbox info` | Print the resolved jail (mode, cwd, tmp, home, grants, env) without running anything. |
+| `quack sandbox info [--json]` | Print the resolved jail (mode, cwd, tmp, home, grants, env) without running anything. |
 | `quack sandbox check [--json]` | Run the built-in jail probes; non-zero exit on any FAIL. `--json` emits the same rows as a machine-readable array. |
 
 See [`docs/sandbox-cli.md`](sandbox-cli.md) for the detail.

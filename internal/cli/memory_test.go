@@ -202,7 +202,7 @@ func TestRunMemoryForget(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := RunMemoryForget(context.Background(), &out, srv.URL, "m1", "poisoned"); err != nil {
+	if err := RunMemoryForget(context.Background(), &out, srv.URL, "m1", "poisoned", false); err != nil {
 		t.Fatalf("RunMemoryForget: %v", err)
 	}
 	if gotMethod != http.MethodDelete || gotPath != "/api/v1/memories/m1" {
@@ -216,6 +216,29 @@ func TestRunMemoryForget(t *testing.T) {
 	}
 }
 
+func TestRunMemoryForgetJSON(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemoryForget(context.Background(), &out, srv.URL, "m1", "poisoned", true); err != nil {
+		t.Fatalf("RunMemoryForget: %v", err)
+	}
+	var got memoryForgetResult
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if got.MemoryID != "m1" {
+		t.Errorf("memory_id = %q, want m1", got.MemoryID)
+	}
+	if got.Message == "" {
+		t.Error("message is empty")
+	}
+}
+
 func TestRunMemoryForgetNotFound(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -224,7 +247,7 @@ func TestRunMemoryForgetNotFound(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	err := RunMemoryForget(context.Background(), &out, srv.URL, "missing", "")
+	err := RunMemoryForget(context.Background(), &out, srv.URL, "missing", "", false)
 	if err == nil || !strings.Contains(err.Error(), "memory missing not found") {
 		t.Fatalf("err = %v, want a memory-not-found message", err)
 	}

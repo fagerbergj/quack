@@ -107,12 +107,11 @@ func EmitServerConfig(a InitAnswers) string {
 	emitModels(&b, a)
 
 	b.WriteString("agents:\n")
-	researcherTools := "[web_search, web_fetch, summarize, current_date"
+	researcherTools := baseTools(a)
 	if a.EmbedModel != "" {
-		researcherTools += ", stage_memory"
+		researcherTools = append(researcherTools, "stage_memory")
 	}
-	researcherTools += "]"
-	emitAgent(&b, "web-researcher", a.MainModel, 65536, researcherTools)
+	emitAgent(&b, "web-researcher", a.MainModel, 65536, "["+strings.Join(researcherTools, ", ")+"]")
 	emitAgent(&b, "synthesizer", a.MainModel, 65536, "[]")
 	if a.AudioModel != "" {
 		emitAgent(&b, "media-reader", a.AudioModel, 32768, "[]")
@@ -128,10 +127,10 @@ func EmitServerConfig(a InitAnswers) string {
 	b.WriteString("\n")
 
 	b.WriteString("tools:\n")
-	if a.WebSearch {
+	if toolEnabled(a.WebSearch, a.SearchKind) {
 		emitTool(&b, "web_search", a.SearchKind, a.SearchURL)
 	}
-	if a.WebFetch {
+	if toolEnabled(a.WebFetch, a.FetchKind) {
 		emitTool(&b, "web_fetch", a.FetchKind, a.FetchURL)
 	}
 	if a.EmbedModel != "" {
@@ -246,8 +245,27 @@ func emitModels(b *strings.Builder, a InitAnswers) {
 	b.WriteString("\n")
 }
 
+// toolEnabled mirrors emitTool's own gate: a toggle with no kind chosen
+// emits nothing under `tools:`, so nothing may reference the tool either.
+func toolEnabled(toggle bool, kind string) bool {
+	return toggle && kind != ""
+}
+
+// baseTools is shared by the orchestrator and web-researcher: an agent
+// referencing web_search/web_fetch when `tools:` doesn't define it fails at boot.
+func baseTools(a InitAnswers) []string {
+	var t []string
+	if toolEnabled(a.WebSearch, a.SearchKind) {
+		t = append(t, "web_search")
+	}
+	if toolEnabled(a.WebFetch, a.FetchKind) {
+		t = append(t, "web_fetch")
+	}
+	return append(t, "summarize", "current_date")
+}
+
 func emitOrchTools(b *strings.Builder, a InitAnswers) {
-	tools := []string{"web_search", "web_fetch", "summarize", "current_date"}
+	tools := baseTools(a)
 	if a.EmbedModel != "" {
 		tools = append(tools, "commit_memory")
 	}

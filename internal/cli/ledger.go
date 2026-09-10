@@ -513,7 +513,7 @@ func RunLedgerList(ctx context.Context, out io.Writer, server string, asJSON boo
 		return err
 	}
 	if asJSON {
-		return writeJSON(out, recs)
+		return WriteJSON(out, recs)
 	}
 	if len(recs) == 0 {
 		fmt.Fprintln(out, "No recordings yet.")
