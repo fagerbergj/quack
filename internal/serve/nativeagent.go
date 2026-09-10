@@ -1,13 +1,11 @@
 package serve
 
 import (
-	"context"
 	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 
 	"github.com/fagerbergj/quack/internal/agent"
@@ -24,7 +22,7 @@ import (
 // mutable coordinate field.
 type nativeAgent struct {
 	adkagent.Agent
-	build func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error)
+	build func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID, sessionNodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error)
 }
 
 // ForNode builds this node's list/read/edit/write_<kind> artifact tools
@@ -34,8 +32,8 @@ type nativeAgent struct {
 // sink is grabbed from the caller's ctx at build time (stream.YieldFromContext)
 // and closed over by this node's own A2A server - it can't cross the A2A
 // wire later, so agent.Serve needs it passed in explicitly (see its doc).
-func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
-	return n.build(nodeKey, drain, artifacts, appName, userID, chatID, nodeID, sink)
+func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID, sessionNodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
+	return n.build(nodeKey, drain, artifacts, appName, userID, chatID, nodeID, sessionNodeID, sink)
 }
 
 // perNodeServers tracks currently-open per-node A2A servers (nativeAgent.ForNode) so process
@@ -54,14 +52,12 @@ func newPerNodeServers() *perNodeServers {
 // call more than once; only the first call's argument and effects apply),
 // untracks before closing so a concurrent closeAll sweep can never double-close.
 //
-// release(paused) also deletes the deterministic worker session (sessAppName,
-// sessUserID, sessID) this node's A2A server created (agent.scopeMessage) -
-// otherwise every node execution leaks a Postgres sessions/events row that
-// nothing else ever reaps (#A2). paused=true (a HITL park) skips the delete:
-// a resumed dispatch is a brand new ForNode call to this SAME session id,
-// and must still find its prior history. sessions nil (no persistent store,
-// e.g. tests) also skips it.
-func (p *perNodeServers) track(srv *agent.A2AServer, sessions session.Service, sessAppName, sessUserID, sessID string) func(paused bool) {
+// release only closes this node's own A2A listener now - the worker
+// session it created (agent.scopeMessage) stays in Postgres so a future
+// turn's continue: can still find it; store.ReapNodeSessions, wired to
+// chat archive/delete, is what actually reaps it (#A2's original leak
+// concern is still covered, just at a later trigger).
+func (p *perNodeServers) track(srv *agent.A2AServer) func(paused bool) {
 	p.mu.Lock()
 	p.open[srv] = struct{}{}
 	p.mu.Unlock()
@@ -71,12 +67,11 @@ func (p *perNodeServers) track(srv *agent.A2AServer, sessions session.Service, s
 			p.mu.Lock()
 			delete(p.open, srv)
 			p.mu.Unlock()
+			// Closes only this node's OWN A2A listener, not the underlying
+			// worker session (sessions, unused here now): a future turn's
+			// continue: needs it intact (store.ReapNodeSessions, wired to
+			// chat archive/delete, is the real teardown - see handler.go).
 			_ = srv.Close()
-			if sessions != nil && !paused {
-				_ = sessions.Delete(context.Background(), &session.DeleteRequest{
-					AppName: sessAppName, UserID: sessUserID, SessionID: sessID,
-				})
-			}
 		})
 	}
 }

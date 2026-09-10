@@ -509,7 +509,7 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 			h.hub.CancelResponse(chatID, c.ActiveTurnID)
 		}
 		if *body.Archived {
-			closeNodeSessions(h.jail, chatID)
+			closeNodeSessions(r.Context(), h.store, h.jail, chatID)
 		}
 	}
 
@@ -530,7 +530,7 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 				"component", "rest", "chat", chatID, "err", err)
 		}
 	}
-	closeNodeSessions(h.jail, chatID)
+	closeNodeSessions(r.Context(), h.store, h.jail, chatID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -538,13 +538,18 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 // removes their persisted state - a terminal node's session stays resumable
 // (continue:) while the chat is live, so this only runs at archive/delete,
 // not node-finish (see vetting.UnregisterAdvisorThread).
-func closeNodeSessions(jail *workspace.Jail, chatID string) {
+func closeNodeSessions(ctx context.Context, st *store.Store, jail *workspace.Jail, chatID string) {
 	acp.CloseChatPinnedSessions(chatID)
-	if jail == nil {
-		return
+	if jail != nil {
+		if err := jail.RemoveChatACPState(userID, chatID); err != nil {
+			slog.Warn("acp state cleanup failed", "component", "rest", "chat", chatID, "err", err)
+		}
 	}
-	if err := jail.RemoveChatACPState(userID, chatID); err != nil {
-		slog.Warn("acp state cleanup failed", "component", "rest", "chat", chatID, "err", err)
+	// Native workers' own per-node A2A sessions (internal/agent.WorkerSessionID)
+	// - a continuing node may have pointed a LATER node's session at this
+	// one (dag.buildGateNodes), so they can only be reaped once, here.
+	if err := st.ReapNodeSessions(ctx, chatID); err != nil {
+		slog.Warn("node session cleanup failed", "component", "rest", "chat", chatID, "err", err)
 	}
 }
 

@@ -1,14 +1,26 @@
 package rest
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+func testStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	return st
+}
 
 // TestCloseNodeSessions_RemovesACPState pins the cleanup move: chat
 // archive/delete (DeleteChat/UpdateChat's *body.Archived branch) must
@@ -25,7 +37,7 @@ func TestCloseNodeSessions_RemovesACPState(t *testing.T) {
 		t.Fatalf("ACPStateDir: %v", err)
 	}
 
-	closeNodeSessions(jail, "chat1")
+	closeNodeSessions(context.Background(), testStore(t), jail, "chat1")
 
 	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
 		t.Fatalf("acp state dir %q still exists after closeNodeSessions: %v", stateDir, err)
@@ -35,7 +47,7 @@ func TestCloseNodeSessions_RemovesACPState(t *testing.T) {
 // TestCloseNodeSessions_NilJailNoOp: a server run without workspace
 // configured (nil jail, the default in newTestHandler) must not panic.
 func TestCloseNodeSessions_NilJailNoOp(t *testing.T) {
-	closeNodeSessions(nil, "chat1") // must not panic
+	closeNodeSessions(context.Background(), testStore(t), nil, "chat1") // must not panic
 }
 
 // TestDeleteChat_ClosesNodeSessions is DeleteChat's REST-level assertion:

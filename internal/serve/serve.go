@@ -1383,7 +1383,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 		clientMap[name] = nativeAgent{
 			Agent: protoAgent,
-			build: func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
+			build: func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID, sessionNodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
 				var extraTools []tool.Tool
 				var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 				if artifacts != nil {
@@ -1411,7 +1411,11 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				if err != nil {
 					return nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 				}
-				workerContextID := agent.WorkerSessionID(chatID, nodeID)
+				// sessionNodeID (not nodeID): a continuing node lands on the
+				// prior node's own deterministic worker session - its full
+				// event history included, since runner.Run auto-forces an
+				// unset Mode to ModeChat (see internal/agent.BuildChat's doc).
+				workerContextID := agent.WorkerSessionID(chatID, sessionNodeID)
 				client, err := srv.ClientForNode(nodeKey, workerContextID)
 				if err != nil {
 					_ = srv.Close()
@@ -1420,7 +1424,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				// track's release also reaps the deterministic worker session this node's first dispatch
 				// creates (agent.scopeMessage) - otherwise every node execution leaks a Postgres
 				// sessions/events row forever (#A2).
-				release := nodeServers.track(srv, sessions, wag.Name(), agent.WorkerSessionUser(workerContextID), workerContextID)
+				release := nodeServers.track(srv)
 				return client, wm, builtins, setRoundCoords, release, nil
 			},
 		}

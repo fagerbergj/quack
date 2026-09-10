@@ -3,7 +3,6 @@ package dag
 import (
 	"context"
 	"iter"
-	"strings"
 	"sync"
 	"testing"
 
@@ -96,31 +95,6 @@ func TestNewGatedNode_NoContinueLeavesACPSessionIDEmpty(t *testing.T) {
 	}
 }
 
-// captureReqStub records every LLMRequest's contents text, one call per
-// invocation - the assertion surface for "did this node's model call see
-// prior session events" (ADK's own history replay, not a prompt splice).
-type captureReqStub struct {
-	mu    sync.Mutex
-	texts []string
-}
-
-func (s *captureReqStub) Name() string { return "captureReqStub" }
-
-func (s *captureReqStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		s.mu.Lock()
-		s.texts = append(s.texts, gUserText(req))
-		s.mu.Unlock()
-		yield(gText("ok"), nil)
-	}
-}
-
-func (s *captureReqStub) allText() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return strings.Join(s.texts, "\n")
-}
-
 // TestNewGatedNode_CapturesADKBranchOnFinish runs node n1 for real and
 // checks buildSessionHandle captures its REAL (ADK-scheduler-assigned)
 // branch - the durable coordinate a later turn's continue: reuses (see
@@ -133,7 +107,7 @@ func TestNewGatedNode_CapturesADKBranchOnFinish(t *testing.T) {
 	recordSession := func(nodeID string, h SessionHandle) { captured = h }
 	plan1 := Plan{ID: "t1", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w"}}}
 	cfg1 := vetting.Config{NodeID: "n1"}
-	stub1 := &captureReqStub{}
+	stub1 := okStub{}
 	ag, err := llmagent.New(llmagent.Config{Name: "w", Model: stub1, Description: "w", Instruction: "ROLE:w Answer."})
 	if err != nil {
 		t.Fatal(err)

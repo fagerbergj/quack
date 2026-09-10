@@ -44,7 +44,13 @@ type nodeScopedWorker interface {
 	// session (#A2); paused=true (a HITL park) must leave it so a resumed
 	// dispatch - a brand new ForNode call, but to the SAME deterministic
 	// session id - still finds its prior history.
-	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(paused bool), err error)
+	// sessionNodeID names the node whose deterministic A2A worker session
+	// (internal/agent.WorkerSessionID) this activation's runner.Run lands
+	// on - node.ID for a fresh node; the prior node's own id when this
+	// node continues one, so the SAME session (and its full event
+	// history - runner.Run auto-forces an unset Mode to ModeChat) carries
+	// forward instead of starting a sibling session cold.
+	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID, sessionNodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(paused bool), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
@@ -67,13 +73,38 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 			seenAgent[n.AgentName] = true
 			subAgents = append(subAgents, ag)
 		}
+		node := n
+		// Resolved before ForNode: a continuing native node needs the
+		// verdict to pick which node's A2A worker session to land on
+		// (sessionNodeID below). ag, not the not-yet-built per-node
+		// worker, is fine here - resolveContinue never reads
+		// cfg.DeliverPromptEvent (nodeGateConfig's only worker-dependent
+		// field), which is recomputed against the real worker below.
+		cfg := nodeGateConfig(plan, node, ag, cfgFor, chatID, source)
+		cfg.Artifacts = artifacts
+		cfg.Ledger = walLedger
+		resume := resolveContinue(ctx, node, cfg, nodeLookup, chatID, plan.ID)
+		sessionNodeID := node.ID
+		if resume.ok {
+			// Reuse the prior node's own workspace scope, not this node's -
+			// continuing means picking up the SAME clone/ACP-state directory,
+			// not a fresh one named after this node's own id.
+			cfg.NodeID = resume.handle.Scope
+			cfg.ResumedFrom = node.Continue
+			if resume.handle.Kind != "acp" {
+				sessionNodeID = resume.handle.Scope
+			}
+		} else if resume.fallbackReason != "" {
+			slog.Warn("continue: node starts fresh", "component", "dag", "node", node.ID, "reason", resume.fallbackReason)
+		}
+
 		worker := ag
 		workerModel := models[n.AgentName]
 		var workerTools []tool.Tool
 		var release func(paused bool)
 		var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, src, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
+			w, m, wt, src, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sessionNodeID, sink)
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
@@ -83,24 +114,11 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		if err != nil {
 			return nil, nil, err
 		}
-		node := n
-		cfg := nodeGateConfig(plan, node, worker, cfgFor, chatID, source)
+		cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
+		cfg.RoundCoordsSink = setRoundCoords
 		var spec AdmissionSpec
 		if specFor != nil {
 			spec = specFor(node.AgentName)
-		}
-		cfg.Artifacts = artifacts
-		cfg.Ledger = walLedger
-		cfg.RoundCoordsSink = setRoundCoords
-		resume := resolveContinue(ctx, node, cfg, nodeLookup, chatID, plan.ID)
-		if resume.ok {
-			// Reuse the prior node's own workspace scope, not this node's -
-			// continuing means picking up the SAME clone/ACP-state directory,
-			// not a fresh one named after this node's own id.
-			cfg.NodeID = resume.handle.Scope
-			cfg.ResumedFrom = node.Continue
-		} else if resume.fallbackReason != "" {
-			slog.Warn("continue: node starts fresh", "component", "dag", "node", node.ID, "reason", resume.fallbackReason)
 		}
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup, sessions, resume, recordSession)
 	}
