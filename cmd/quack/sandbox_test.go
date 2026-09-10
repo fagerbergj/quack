@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,5 +70,66 @@ func TestSandboxCheck_JSONFlagRegistered(t *testing.T) {
 	c := newSandboxCheckCmd()
 	if c.Flags().Lookup("json") == nil {
 		t.Error("sandbox check is missing --json")
+	}
+}
+
+func TestSandboxInfo_JSON(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "quack.yaml")
+	cfg := `
+providers:
+  default:
+    kind: openai
+    endpoint: http://localhost:1
+    api_key: x
+orchestrator:
+  provider: default
+  model: m
+models:
+  m:
+    provider: default
+    role: worker
+agents:
+  code-reviewer:
+    bundle: agents/code-reviewer
+    provider: default
+    model: m
+    acp:
+      command: ["opencode", "acp"]
+      read_only: true
+stores:
+  default:
+    kind: sqlite
+    url: ` + filepath.Join(dir, "store.db") + `
+session:
+  store: default
+workspace:
+  root: ` + filepath.Join(dir, "workspace") + `
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("QUACK_CONFIG", cfgPath)
+
+	var out bytes.Buffer
+	c := newSandboxInfoCmd()
+	c.SetOut(&out)
+	c.SetArgs([]string{"--mode", "none", "--json"})
+	if err := c.Execute(); err != nil {
+		t.Fatalf("sandbox info --json: %v\noutput:\n%s", err, out.String())
+	}
+
+	var got sandboxInfo
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if got.Agent != "code-reviewer" {
+		t.Errorf("agent = %q, want code-reviewer", got.Agent)
+	}
+	if got.Mode != "none" {
+		t.Errorf("mode = %q, want none", got.Mode)
+	}
+	if len(got.Env) == 0 {
+		t.Error("env should not be empty")
 	}
 }

@@ -187,7 +187,7 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 	}
 	chats = kept
 	if asJSON {
-		return writeJSON(out, chats)
+		return WriteJSON(out, chats)
 	}
 	if len(chats) == 0 {
 		if hadAny {
@@ -238,7 +238,7 @@ func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON
 		return notFoundAs(err, id)
 	}
 	if asJSON {
-		return writeJSON(out, detail)
+		return WriteJSON(out, detail)
 	}
 	title := chatTitle(detail.Title)
 	fmt.Fprintf(out, "# %s\n\n", title)
@@ -251,32 +251,50 @@ func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON
 	return nil
 }
 
+// nodeActionResult is the shared --json shape for chat stop/delete and the
+// chat node verbs - one struct so every action command's output looks alike.
+type nodeActionResult struct {
+	ChatID    string `json:"chat_id"`
+	NodeID    string `json:"node_id,omitempty"`
+	MessageID string `json:"message_id,omitempty"`
+	Action    string `json:"action"`
+	Message   string `json:"message"`
+}
+
+// reportAction writes r as JSON with --json, else just its message line -
+// the one place these action commands choose their output shape.
+func reportAction(out io.Writer, asJSON bool, r nodeActionResult) error {
+	if asJSON {
+		return WriteJSON(out, r)
+	}
+	fmt.Fprintln(out, r.Message)
+	return nil
+}
+
 // RunChatStop is `quack chat stop <id>`: cancel the active run (no-op if none).
 // Cancelling by response id is the server's only cancel path now, so this
 // looks up the chat's latest turn (the in-progress run, if any) first.
-func RunChatStop(ctx context.Context, out io.Writer, server, id string) error {
+func RunChatStop(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
+	noneActive := nodeActionResult{ChatID: id, Action: "none", Message: fmt.Sprintf("No active run on chat %s.", id)}
 	detail, err := c.GetChat(ctx, id)
 	if err != nil {
 		return notFoundAs(err, id)
 	}
 	if len(detail.Turns) == 0 {
-		fmt.Fprintf(out, "No active run on chat %s.\n", id)
-		return nil
+		return reportAction(out, asJSON, noneActive)
 	}
 	responseID := detail.Turns[len(detail.Turns)-1].Id
 	if err := c.CancelRun(ctx, id, responseID); err != nil {
 		if errors.Is(err, ErrNotFound) {
-			fmt.Fprintf(out, "No active run on chat %s.\n", id)
-			return nil
+			return reportAction(out, asJSON, noneActive)
 		}
 		return err
 	}
-	fmt.Fprintf(out, "Stopped any active run on chat %s.\n", id)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: id, Action: "stopped", Message: fmt.Sprintf("Stopped any active run on chat %s.", id)})
 }
 
 // RunChatRename is `quack chat rename <id> <title>`: PATCH the chat's title.
@@ -311,7 +329,7 @@ func RunChatArchive(ctx context.Context, out io.Writer, server, id string, archi
 
 // RunNodeStop is `quack chat node stop <chat-id> <node-id>`: cancel one running
 // node; the rest of the run continues. No-op if no such node is active.
-func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
+func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -319,13 +337,13 @@ func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID stri
 	if err := c.CancelNode(ctx, chatID, nodeID); err != nil {
 		return nodeErrAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Stopping node %s (chat %s); an in-flight round is being aborted, the rest of the run continues.\n", nodeID, chatID)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "stop",
+		Message: fmt.Sprintf("Stopping node %s (chat %s); an in-flight round is being aborted, the rest of the run continues.", nodeID, chatID)})
 }
 
 // RunNodePause is `quack chat node pause <chat-id> <node-id>`: suspend one
 // RUNNING node at its next turn boundary, keeping its accumulated work.
-func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
+func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -333,14 +351,14 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 	if err := c.PauseNode(ctx, chatID, nodeID); err != nil {
 		return nodeErrAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Pausing node %s (chat %s) at its next turn boundary - resume it with `quack chat node resume %s %s`.\n", nodeID, chatID, chatID, nodeID)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "pause",
+		Message: fmt.Sprintf("Pausing node %s (chat %s) at its next turn boundary - resume it with `quack chat node resume %s %s`.", nodeID, chatID, chatID, nodeID)})
 }
 
 // RunNodeResume is `quack chat node resume <chat-id> <node-id>`: resume a
 // PAUSED node - a fresh re-run (like retry), reusing the rest of the plan's
 // stored outputs. Watch it with `chat show -f`.
-func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
+func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -348,14 +366,14 @@ func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID st
 	if err := c.ResumeNode(ctx, chatID, nodeID); err != nil {
 		return nodeErrAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Resuming node %s (chat %s) - watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "resume",
+		Message: fmt.Sprintf("Resuming node %s (chat %s) - watch it with `quack chat show %s -f`.", nodeID, chatID, chatID)})
 }
 
 // RunNodeQueue is `quack chat node queue <chat-id> <node-id> <message>`:
 // append a message to a RUNNING node's queue, delivered at its next turn
 // boundary (never mid-turn) - replaces the old interrupt-based steer.
-func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, message string) error {
+func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, message string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -364,13 +382,13 @@ func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, me
 	if err != nil {
 		return nodeErrAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Queued message %s for node %s (chat %s) - delivered at its next turn boundary.\n", m.Id, nodeID, chatID)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, MessageID: m.Id, Action: "queue",
+		Message: fmt.Sprintf("Queued message %s for node %s (chat %s) - delivered at its next turn boundary.", m.Id, nodeID, chatID)})
 }
 
 // RunNodeQueueEdit is `quack chat node queue-edit <chat-id> <node-id> <message-id> <text>`:
 // rewrite a not-yet-delivered queued message.
-func RunNodeQueueEdit(ctx context.Context, out io.Writer, server, chatID, nodeID, messageID, text string) error {
+func RunNodeQueueEdit(ctx context.Context, out io.Writer, server, chatID, nodeID, messageID, text string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -378,13 +396,13 @@ func RunNodeQueueEdit(ctx context.Context, out io.Writer, server, chatID, nodeID
 	if err := c.EditQueuedMessage(ctx, chatID, nodeID, messageID, text); err != nil {
 		return nodeErrAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Edited queued message %s for node %s (chat %s).\n", messageID, nodeID, chatID)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, MessageID: messageID, Action: "queue-edit",
+		Message: fmt.Sprintf("Edited queued message %s for node %s (chat %s).", messageID, nodeID, chatID)})
 }
 
 // RunNodeQueueRemove is `quack chat node queue-remove <chat-id> <node-id> <message-id>`:
 // drop a not-yet-delivered queued message.
-func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, nodeID, messageID string) error {
+func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, nodeID, messageID string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -392,14 +410,14 @@ func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, node
 	if err := c.RemoveQueuedMessage(ctx, chatID, nodeID, messageID); err != nil {
 		return nodeErrAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Removed queued message %s for node %s (chat %s).\n", messageID, nodeID, chatID)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, MessageID: messageID, Action: "queue-remove",
+		Message: fmt.Sprintf("Removed queued message %s for node %s (chat %s).", messageID, nodeID, chatID)})
 }
 
 // RunNodeEditTask is `quack chat node edit <chat-id> <node-id> <task>`:
 // replace a not-yet-started node's prompt. Errors (409) once the node has
 // started - its prompt is then immutable.
-func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID, task string) error {
+func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID, task string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -407,14 +425,14 @@ func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID,
 	if err := c.EditNodeTask(ctx, chatID, nodeID, task); err != nil {
 		return nodeErrAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Edited node %s's prompt (chat %s).\n", nodeID, chatID)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "edit",
+		Message: fmt.Sprintf("Edited node %s's prompt (chat %s).", nodeID, chatID)})
 }
 
 // RunNodeRetry is `quack chat node retry <chat-id> <node-id> [--guidance]`:
 // re-queue a finished node (done/failed/cancelled); it and everything
 // downstream re-run, reusing the stored outputs of all other nodes.
-func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, guidance string) error {
+func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, guidance string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -422,13 +440,13 @@ func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, gu
 	if err := c.RetryNode(ctx, chatID, nodeID, guidance); err != nil {
 		return nodeErrAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Retrying node %s (chat %s) - watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "retry",
+		Message: fmt.Sprintf("Retrying node %s (chat %s) - watch it with `quack chat show %s -f`.", nodeID, chatID, chatID)})
 }
 
 // RunChatDelete confirms on errOut (stderr, per house rule); an empty/closed
 // stdin without yes errors rather than silently defaulting to "no".
-func RunChatDelete(ctx context.Context, out, errOut io.Writer, in io.Reader, server, id string, yes bool) error {
+func RunChatDelete(ctx context.Context, out, errOut io.Writer, in io.Reader, server, id string, yes, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -442,15 +460,13 @@ func RunChatDelete(ctx context.Context, out, errOut io.Writer, in io.Reader, ser
 			return err
 		}
 		if !ok {
-			fmt.Fprintln(out, "Cancelled.")
-			return nil
+			return reportAction(out, asJSON, nodeActionResult{ChatID: id, Action: "cancelled", Message: "Cancelled."})
 		}
 	}
 	if err := c.DeleteChat(ctx, id); err != nil {
 		return notFoundAs(err, id)
 	}
-	fmt.Fprintf(out, "Deleted chat %s.\n", id)
-	return nil
+	return reportAction(out, asJSON, nodeActionResult{ChatID: id, Action: "deleted", Message: fmt.Sprintf("Deleted chat %s.", id)})
 }
 
 // chatTitle renders a chat's title, falling back to a placeholder.
@@ -505,9 +521,9 @@ func nodeErrAs(err error, chatID string) error {
 	return err
 }
 
-// writeJSON normalises a nil top-level slice to `[]`, not `null`, so every
-// list command sharing this path doesn't force jq to special-case empty.
-func writeJSON(out io.Writer, v any) error {
+// WriteJSON is the one --json encoder every command shares: it normalises a
+// nil top-level slice to `[]`, not `null`, so jq never has to special-case empty.
+func WriteJSON(out io.Writer, v any) error {
 	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice && rv.IsNil() {
 		v = reflect.MakeSlice(rv.Type(), 0, 0).Interface()
 	}

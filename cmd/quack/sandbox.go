@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +33,7 @@ func addSandboxFlags(c *cobra.Command, f *sandboxFlags) {
 	c.Flags().StringVar(&f.cwd, "cwd", "", "working dir inside the jail (default: a freshly minted node-shaped dir; \".\" jails the current dir)")
 	c.Flags().StringVar(&f.mode, "mode", "", "override the configured sandbox (landlock|bwrap|none)")
 	c.Flags().BoolVar(&f.keep, "keep", false, "skip scratch/cwd teardown on exit")
+	_ = c.RegisterFlagCompletionFunc("agent", completeAgentNames)
 }
 
 // newSandboxCmd: `quack sandbox` - construct the exact jail an ACP agent gets
@@ -303,9 +303,7 @@ func runSandboxCheck(cmd *cobra.Command, f sandboxFlags, asJSON bool) error {
 	runner := cmdSandboxRunner{seat: seat, ac: ac}
 	results := cli.RunSandboxChecks(cmd.Context(), runner, seat.ReadOnly, workspace.EnforcesBoundary(seat.Caps.Sandbox), cfg.Workspace.CheckCommands)
 	if asJSON {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(results)
+		_ = cli.WriteJSON(cmd.OutOrStdout(), results)
 	} else {
 		fmt.Fprint(cmd.OutOrStdout(), cli.FormatSandboxProbeTable(results))
 	}
@@ -320,19 +318,36 @@ func runSandboxCheck(cmd *cobra.Command, f sandboxFlags, asJSON bool) error {
 // home/grants/env, no exec.
 func newSandboxInfoCmd() *cobra.Command {
 	var f sandboxFlags
+	var asJSON bool
 	c := &cobra.Command{
 		Use:   "info",
 		Short: "Print the resolved jail (mode, cwd, tmp, home, grants, env) without running anything",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSandboxInfo(cmd, f)
+			return runSandboxInfo(cmd, f, asJSON)
 		},
 	}
 	addSandboxFlags(c, &f)
+	asJSONFlag(c, &asJSON)
 	return c
 }
 
-func runSandboxInfo(cmd *cobra.Command, f sandboxFlags) error {
+// sandboxInfo is `sandbox info --json`'s shape - the same fields the
+// key/value text prints.
+type sandboxInfo struct {
+	Agent    string   `json:"agent"`
+	ReadOnly bool     `json:"read_only"`
+	Mode     string   `json:"mode"`
+	Cwd      string   `json:"cwd"`
+	Tmp      string   `json:"tmp"`
+	Home     string   `json:"home"`
+	Path     string   `json:"path"`
+	ROGrants []string `json:"ro_grants"`
+	RWGrant  string   `json:"rw_grant"`
+	Env      []string `json:"env"`
+}
+
+func runSandboxInfo(cmd *cobra.Command, f sandboxFlags, asJSON bool) error {
 	seat, teardown, err := openSandboxSeat(f)
 	if err != nil {
 		return err
@@ -343,21 +358,37 @@ func runSandboxInfo(cmd *cobra.Command, f sandboxFlags) error {
 		return err
 	}
 
+	info := sandboxInfo{
+		Agent:    seat.AgentName,
+		ReadOnly: seat.ReadOnly,
+		Mode:     string(seat.Caps.Sandbox),
+		Cwd:      seat.Dir,
+		Tmp:      workspace.SandboxTmpDir(seat.Caps),
+		Home:     seat.Caps.HomeDir,
+		Path:     workspace.ChildPath(seat.Caps),
+		ROGrants: seat.Caps.ExtraRO,
+		RWGrant:  seat.Dir,
+		Env:      cli.SandboxSpawnEnv(seat.Caps, ac, nil),
+	}
+	if asJSON {
+		return cli.WriteJSON(cmd.OutOrStdout(), info)
+	}
+
 	out := cmd.OutOrStdout()
 	readWrite := "rw"
-	if seat.ReadOnly {
+	if info.ReadOnly {
 		readWrite = "ro"
 	}
-	fmt.Fprintf(out, "agent:        %s (%s)\n", seat.AgentName, readWrite)
-	fmt.Fprintf(out, "mode:         %s\n", seat.Caps.Sandbox)
-	fmt.Fprintf(out, "cwd:          %s\n", seat.Dir)
-	fmt.Fprintf(out, "tmp:          %s\n", workspace.SandboxTmpDir(seat.Caps))
-	fmt.Fprintf(out, "home:         %s\n", seat.Caps.HomeDir)
-	fmt.Fprintf(out, "path:         %s\n", workspace.ChildPath(seat.Caps))
-	fmt.Fprintf(out, "ro grants:    %s\n", strings.Join(seat.Caps.ExtraRO, ", "))
-	fmt.Fprintf(out, "rw grants:    %s\n", seat.Dir)
+	fmt.Fprintf(out, "agent:        %s (%s)\n", info.Agent, readWrite)
+	fmt.Fprintf(out, "mode:         %s\n", info.Mode)
+	fmt.Fprintf(out, "cwd:          %s\n", info.Cwd)
+	fmt.Fprintf(out, "tmp:          %s\n", info.Tmp)
+	fmt.Fprintf(out, "home:         %s\n", info.Home)
+	fmt.Fprintf(out, "path:         %s\n", info.Path)
+	fmt.Fprintf(out, "ro grants:    %s\n", strings.Join(info.ROGrants, ", "))
+	fmt.Fprintf(out, "rw grants:    %s\n", info.RWGrant)
 	fmt.Fprintln(out, "env:")
-	for _, kv := range cli.SandboxSpawnEnv(seat.Caps, ac, nil) {
+	for _, kv := range info.Env {
 		fmt.Fprintf(out, "  %s\n", kv)
 	}
 	return nil

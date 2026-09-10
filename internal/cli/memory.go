@@ -25,7 +25,7 @@ func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q, tier, 
 		return err
 	}
 	if asJSON {
-		return writeJSON(out, list)
+		return WriteJSON(out, list)
 	}
 	if len(list.Memories) == 0 {
 		fmt.Fprintln(out, "No memories match.")
@@ -59,7 +59,7 @@ func RunMemoryShow(ctx context.Context, out io.Writer, server, id string, asJSON
 		return err
 	}
 	if asJSON {
-		return writeJSON(out, m)
+		return WriteJSON(out, m)
 	}
 	tier := "unverified"
 	if m.Tier != nil {
@@ -95,9 +95,15 @@ func intOr(p *int) int {
 	return *p
 }
 
+// memoryForgetResult is `memory forget --json`'s shape.
+type memoryForgetResult struct {
+	MemoryID string `json:"memory_id"`
+	Message  string `json:"message"`
+}
+
 // RunMemoryForget is `quack memory forget <memory-id> [--reason text]`:
 // soft-delete (invalidate) one memory.
-func RunMemoryForget(ctx context.Context, out io.Writer, server, id, reason string) error {
+func RunMemoryForget(ctx context.Context, out io.Writer, server, id, reason string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
@@ -107,6 +113,9 @@ func RunMemoryForget(ctx context.Context, out io.Writer, server, id, reason stri
 			return fmt.Errorf("memory %s not found", id)
 		}
 		return err
+	}
+	if asJSON {
+		return WriteJSON(out, memoryForgetResult{MemoryID: id, Message: fmt.Sprintf("invalidated %s", id)})
 	}
 	fmt.Fprintf(out, "invalidated %s\n", id)
 	return nil
@@ -127,7 +136,7 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, d
 		return err
 	}
 	if asJSON {
-		return writeJSON(out, res)
+		return WriteJSON(out, res)
 	}
 	hasErrors := res.Errors != nil && len(*res.Errors) > 0
 	if dedupe {
@@ -209,7 +218,7 @@ func RunMemoryStats(ctx context.Context, out io.Writer, server string, weeks int
 		return err
 	}
 	if asJSON {
-		return writeJSON(out, stats)
+		return WriteJSON(out, stats)
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "WEEK\tRECALLS\tSUPPORTED\tCONTRADICTED\tNOT_RELEVANT\tPRECISION\tSUPPORT_SHARE\tMINTED\tINVALIDATED")

@@ -185,7 +185,7 @@ func send(ctx context.Context, c *Client, chatID, content string, attachPaths []
 // same exit codes either way, so a scripted caller can rely on the code alone.
 func Report(out, errOut io.Writer, chatID string, r SendResult, asJSON bool) int {
 	if asJSON {
-		_ = writeJSON(out, r)
+		_ = WriteJSON(out, r)
 		return exitCode(r.Status)
 	}
 	switch r.Status {

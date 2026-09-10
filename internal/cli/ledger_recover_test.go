@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -207,6 +208,34 @@ func TestRunLedgerRecover_NoRecovererReportsUnresolved(t *testing.T) {
 	}
 	if len(report.Unresolved) != 1 {
 		t.Fatalf("Unresolved = %d, want 1", len(report.Unresolved))
+	}
+}
+
+// TestRunLedgerRecover_JSON asserts `ledger recover --json`'s shape via the
+// shared WriteJSON writer, distinct from FormatRecoverSummary's text.
+func TestRunLedgerRecover_JSON(t *testing.T) {
+	ctx := context.Background()
+	ls := ledgertest.NewMemStore()
+	appendDeliveryIntentForTest(t, ls, "chat5", "document:doc:5@1", "document:doc:5", 1)
+
+	report, err := RunLedgerRecover(ctx, ls, "chat5", Projections{}, true)
+	if err != nil {
+		t.Fatalf("RunLedgerRecover: %v", err)
+	}
+	var out bytes.Buffer
+	if err := WriteJSON(&out, report); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if got["chat_id"] != "chat5" {
+		t.Errorf("chat_id = %v, want chat5", got["chat_id"])
+	}
+	unresolved, ok := got["unresolved"].([]any)
+	if !ok || len(unresolved) != 1 {
+		t.Errorf("unresolved = %v, want one entry", got["unresolved"])
 	}
 }
 

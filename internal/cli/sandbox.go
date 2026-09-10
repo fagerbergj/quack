@@ -42,6 +42,12 @@ func NormalizeSandboxMode(mode string) (workspace.SandboxMode, error) {
 	}
 }
 
+// SandboxAgentNames returns cfg's agent names, sorted - shared by
+// ResolveSandboxAgent's error text and `--agent`'s shell completion.
+func SandboxAgentNames(cfg *config.Config) []string {
+	return slices.Sorted(maps.Keys(cfg.Agents))
+}
+
 // ResolveSandboxAgent looks up name in cfg.Agents, defaulting to
 // DefaultSandboxAgent when name is empty.
 func ResolveSandboxAgent(cfg *config.Config, name string) (string, config.AgentConfig, error) {
@@ -50,7 +56,7 @@ func ResolveSandboxAgent(cfg *config.Config, name string) (string, config.AgentC
 	}
 	ac, ok := cfg.Agents[name]
 	if !ok {
-		names := slices.Sorted(maps.Keys(cfg.Agents))
+		names := SandboxAgentNames(cfg)
 		if len(names) == 0 {
 			return "", config.AgentConfig{}, fmt.Errorf("--agent: %q is not defined in this config's agents: (none configured)", name)
 		}

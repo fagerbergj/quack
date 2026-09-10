@@ -30,7 +30,7 @@ func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, 
 		return 1
 	}
 	if asJSON {
-		_ = writeJSON(out, detail)
+		_ = WriteJSON(out, detail)
 		return exitCode(string(detail.Status))
 	}
 	printChatSnapshot(out, detail)
