@@ -21,12 +21,9 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 )
 
-// Payload keys stored on each Qdrant point. payloadScope holds the BUCKET key
-// (repo:… / role:… / user:… - see scope.go). Its wire name stays "user_id": that is
-// what points written before the bucket model carry (their value being an agent name
-// or a raw user id), and reading them back is exactly what makes the legacy
-// entitlement in Scope.Legacy work without a migration.
-// indexBuildTimeout caps the blocking timestamp-index build at boot.
+// Payload keys stored on each Qdrant point. payloadScope holds the BUCKET key (repo:… / role:… /
+// user:… - see scope.go). Its wire name stays "user_id": that is what points written before the
+// bucket model carry (their value being an agent name or a raw user id), and reading them back is exactly what makes the legacy entitlement in Scope.Legacy work without a migration. indexBuildTimeout caps the blocking timestamp-index build at boot.
 const indexBuildTimeout = 5 * time.Minute
 
 const (
@@ -59,12 +56,9 @@ const (
 	payloadHumanVote   = "human_vote"
 )
 
-// Open connects to Qdrant at addr (host:port gRPC) and returns a memory Store
-// backed by it, ensuring the scope's collection exists (created on first use with
-// a vector size probed from the embedder, so the model's dimension need not be
-// configured). The consolidator LLM drives Commit; pass nil for a recall-only
-// store. domain ("task" | "user") selects the consolidation prompt. minScore drops
-// recall hits below that cosine similarity (0 = no threshold).
+// Open connects to Qdrant at addr (host:port gRPC) and returns a memory Store backed by it,
+// ensuring the scope's collection exists (created on first use with a vector size probed from
+// the embedder, so the model's dimension need not be configured). The consolidator LLM drives Commit; pass nil for a recall-only store. domain ("task" | "user") selects the consolidation prompt. minScore drops recall hits below that cosine similarity (0 = no threshold).
 func Open(ctx context.Context, addr string, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int, minScore float32) (*Store, error) {
 	host, port, err := parseAddr(addr)
 	if err != nil {
@@ -103,12 +97,9 @@ func (x *qdrantIndex) ensure(ctx context.Context, probeDim func() (int, error)) 
 	return x.ensureTimestampIndex(ctx)
 }
 
-// ensureTimestampIndex creates a payload index on `timestamp` if the
-// collection doesn't already have one, idempotently (checked via
-// GetCollectionInfo first so a pre-existing collection - created before this
-// index existed - gets it too, not just brand-new ones). Item 7 of the perf
-// audit: this is what lets list() use Qdrant's native order_by for
-// newest/oldest instead of scrolling the whole collection into Go to sort.
+// ensureTimestampIndex creates a payload index on `timestamp` if the collection doesn't
+// already have one, idempotently (checked via GetCollectionInfo first so a pre-existing
+// collection - created before this index existed - gets it too, not just brand-new ones). Item 7 of the perf audit: this is what lets list() use Qdrant's native order_by for newest/oldest instead of scrolling the whole collection into Go to sort.
 func (x *qdrantIndex) ensureTimestampIndex(ctx context.Context) error {
 	info, err := x.client.GetCollectionInfo(ctx, x.coll)
 	if err != nil {
@@ -118,11 +109,9 @@ func (x *qdrantIndex) ensureTimestampIndex(ctx context.Context) error {
 		return nil
 	}
 	ft := qdrant.FieldType_FieldTypeDatetime
-	// Wait=true: CreateFieldIndexCollection's wait field defaults to false
-	// unset, meaning it returns "Acknowledged" as soon as the build is
-	// queued, not once it's actually usable - list()'s order_by would then
-	// race a startup that returned before the index existed. Blocking here
-	// keeps that race out of every caller instead of every list() call.
+	// Wait=true: CreateFieldIndexCollection's wait field defaults to false unset, meaning it
+	// returns "Acknowledged" as soon as the build is queued, not once it's
+	// actually usable - list()'s order_by would then race a startup that returned before the index existed. Blocking here keeps that race out of every caller instead of every list() call.
 	wait := true
 	// Bounded so a huge pre-existing collection cannot hang boot indefinitely;
 	// on timeout boot fails loud like every other memory startup error.
@@ -187,11 +176,9 @@ func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, scor
 	}
 }
 
-// excludeInvalidated adds a must_not status=invalidated condition to f (or a
-// fresh filter, so this composes with an empty bucket set too). A point
-// minted before the lifecycle fields existed has no status key at all, which
-// never matches a keyword condition - so it passes through as valid, exactly
-// the "missing reads as valid" rule design doc §4(d) calls for.
+// excludeInvalidated adds a must_not status=invalidated condition to f (or a fresh filter,
+// so this composes with an empty bucket set too). A point minted before the lifecycle
+// fields existed has no status key at all, which never matches a keyword condition - so it passes through as valid, exactly the "missing reads as valid" rule design doc §4(d) calls for.
 func excludeInvalidated(f *qdrant.Filter) *qdrant.Filter {
 	if f == nil {
 		f = &qdrant.Filter{}
@@ -206,10 +193,9 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 		CollectionName: x.coll,
 		Query:          qdrant.NewQueryDense(vec),
 		Limit:          &limit,
-		// Recall and the commit-path neighbour query share this: an invalidated
-		// memory must never surface as a candidate to recall OR to reconcile
-		// against (design doc §4(d)) - filtered in the backend query, not a Go
-		// post-filter, so it can't crowd valid points out of the top-k first.
+		// Recall and the commit-path neighbour query share this: an invalidated memory must
+		// never surface as a candidate to recall OR to reconcile against (design
+		// doc §4(d)) - filtered in the backend query, not a Go post-filter, so it can't crowd valid points out of the top-k first.
 		Filter:      excludeInvalidated(bucketFilter(buckets)),
 		WithPayload: qdrant.NewWithPayload(true),
 		// Recall's MMR diversity re-rank (issue #1269) needs each hit's own
@@ -243,18 +229,9 @@ func vectorData(v *qdrant.VectorsOutput) []float32 {
 	return vo.GetDense().GetData()
 }
 
-// list serves one page. newest/oldest (the default and the only sorts the
-// memory-list UI's most common paths use) go through listOrdered, which asks
-// Qdrant's own `timestamp` payload index (ensureTimestampIndex) for the
-// order via order_by, so only offset+limit points ever cross the wire.
-// order_by silently DROPS any point missing the ordered field, unlike the Go
-// sort (which puts an empty timestamp last) - real writes always stamp
-// Timestamp (commit.go), but a point that somehow lacks one would vanish
-// from every page, so a cheap Count guard falls back to the full scan
-// whenever one exists. Qdrant has no server-side way to order by vote
-// counts/recalls, so those sorts (and any offset<=0 request, where nothing
-// is saved by going native) still pull every matching point and sort in Go
-// - fine at memory's documented scale (hundreds-thousands).
+// list serves one page. newest/oldest (the default and the only sorts the memory-list UI's
+// most common paths use) go through listOrdered, which asks Qdrant's own `timestamp`
+// payload index (ensureTimestampIndex) for the order via order_by, so only offset+limit points ever cross the wire. order_by silently DROPS any point missing the ordered field, unlike the Go sort (which puts an empty timestamp last) - real writes always stamp Timestamp (commit.go), but a point that somehow lacks one would vanish from every page, so a cheap Count guard falls back to the full scan whenever one exists. Qdrant has no server-side way to order by vote counts/recalls, so those sorts (and any offset<=0 request, where nothing is saved by going native) still pull every matching point and sort in Go - fine at memory's documented scale (hundreds-thousands).
 func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
@@ -314,12 +291,9 @@ var datetimeRangeAll = &qdrant.DatetimeRange{
 	Lte: timestamppb.New(time.Date(9998, 1, 1, 0, 0, 0, 0, time.UTC)),
 }
 
-// hasMissingTimestamp reports whether any point matching filter has a
-// `timestamp` order_by can't place (missing, empty, or unparseable) -
-// checked as "fails a Range covering all real dates" rather than matching
-// specific bad values, so it catches every shape of bad data, not just
-// empty string. Clones filter before appending so the caller's copy (about
-// to be reused for the ordered scroll) isn't mutated.
+// hasMissingTimestamp reports whether any point matching filter has a `timestamp`
+// order_by can't place (missing, empty, or unparseable) - checked as "fails a Range
+// covering all real dates" rather than matching specific bad values, so it catches every shape of bad data, not just empty string. Clones filter before appending so the caller's copy (about to be reused for the ordered scroll) isn't mutated.
 func (x *qdrantIndex) hasMissingTimestamp(ctx context.Context, filter *qdrant.Filter) (bool, error) {
 	gapFilter, ok := proto.Clone(filter).(*qdrant.Filter)
 	if !ok || gapFilter == nil {
@@ -334,24 +308,8 @@ func (x *qdrantIndex) hasMissingTimestamp(ctx context.Context, filter *qdrant.Fi
 	return n > 0, nil
 }
 
-// listOrdered fetches exactly offset+limit points (not the whole collection)
-// via one Scroll call using order_by on `timestamp`, then slices off the
-// last `limit`. Qdrant's OrderBy has one sort key, no secondary column, and
-// its own docs say so explicitly: "When sorting is based on a non-unique
-// value, it is not possible to rely on an ID offset" - order_by gives no
-// guarantee about which of several equal-timestamp points lands in a
-// `limit`-sized cut, or in what order, so two calls with different limits can
-// disagree about a tied group straddling the cut
-// (https://qdrant.tech/documentation/manage-data/points/#order-points-by-payload-key,
-// go-client v1.19.0 qdrant/points.proto's OrderBy/StartFrom messages - one
-// scalar `key`, no secondary field). resolveTieBoundary fixes membership at
-// that cut by re-fetching the exact-match group in full when Qdrant's
-// truncation might have shortchanged it; qdrantLess's existing `ID`
-// tie-break (the same one the Go-sort path already uses) then makes the
-// whole batch's order deterministic and reproducible across calls.
-// ponytail: deep offsets still pull offset+limit points server-side (no true
-// random-access skip); fine at memory's documented scale, revisit if the UI
-// ever pages past low thousands.
+// listOrdered fetches exactly offset+limit points (not the whole collection) via one
+// Scroll call using order_by on `timestamp`, then slices off the last `limit`. Qdrant's OrderBy has one sort key, no secondary column, and its own docs say so explicitly: "When sorting is based on a non-unique value, it is not possible to rely on an ID offset" - order_by gives no guarantee about which of several equal-timestamp points lands in a `limit`-sized cut, or in what order, so two calls with different limits can disagree about a tied group straddling the cut (https://qdrant.tech/documentation/manage-data/points/#order-points-by-payload-key, go-client v1.19.0 qdrant/points.proto's OrderBy/StartFrom messages - one scalar `key`, no secondary field). resolveTieBoundary fixes membership at that cut by re-fetching the exact-match group in full when Qdrant's truncation might have shortchanged it; qdrantLess's existing `ID` tie-break (the same one the Go-sort path already uses) then makes the whole batch's order deterministic and reproducible across calls. ponytail: deep offsets still pull offset+limit points server-side (no true random-access skip); fine at memory's documented scale, revisit if the UI ever pages past low thousands.
 func (x *qdrantIndex) listOrdered(ctx context.Context, filter *qdrant.Filter, offset, limit int, sortBy string, withVectors bool) ([]scored, error) {
 	dir := qdrant.Direction_Desc
 	if sortBy == SortOldest {
@@ -393,16 +351,9 @@ func (x *qdrantIndex) listOrdered(ctx context.Context, filter *qdrant.Filter, of
 	return full[offset:end], nil
 }
 
-// resolveTieBoundary fixes up batch's trailing group of equal-timestamp
-// points (the value at batch's cut, i.e. the group order_by's `limit` may
-// have truncated arbitrarily) so batch's MEMBERSHIP is correct regardless of
-// which of the tied points Qdrant's Scroll happened to include. Any point in
-// batch with a strictly better timestamp than the last one is guaranteed
-// complete already - it beat the cutoff, so it couldn't have been excluded
-// (order_by ranks by value first). Only the boundary value itself can be a
-// partial slice of a larger group; if a Count for that exact value finds
-// more matches than batch has, this re-fetches the whole group and splices
-// it in, in place of the partial one.
+// resolveTieBoundary fixes up batch's trailing group of equal-timestamp points (the value
+// at batch's cut, i.e. the group order_by's `limit` may have truncated arbitrarily) so
+// batch's MEMBERSHIP is correct regardless of which of the tied points Qdrant's Scroll happened to include. Any point in batch with a strictly better timestamp than the last one is guaranteed complete already - it beat the cutoff, so it couldn't have been excluded (order_by ranks by value first). Only the boundary value itself can be a partial slice of a larger group; if a Count for that exact value finds more matches than batch has, this re-fetches the whole group and splices it in, in place of the partial one.
 func (x *qdrantIndex) resolveTieBoundary(ctx context.Context, filter *qdrant.Filter, batch []scored, withVectors bool) ([]scored, error) {
 	boundary := batch[len(batch)-1].Timestamp
 	inBatch := 0
@@ -425,10 +376,9 @@ func (x *qdrantIndex) resolveTieBoundary(ctx context.Context, filter *qdrant.Fil
 	return append(batch[:len(batch)-inBatch:len(batch)-inBatch], tied...), nil
 }
 
-// countAtTimestamp counts points matching filter with `timestamp` exactly
-// equal to ts (an RFC3339 string already known valid, since it came off a
-// successful order_by result) - an exact keyword match, not the datetime
-// index used for order_by/hasMissingTimestamp, since it only needs equality.
+// countAtTimestamp counts points matching filter with `timestamp` exactly equal to ts (an
+// RFC3339 string already known valid, since it came off a successful order_by result) -
+// an exact keyword match, not the datetime index used for order_by/hasMissingTimestamp, since it only needs equality.
 func (x *qdrantIndex) countAtTimestamp(ctx context.Context, filter *qdrant.Filter, ts string) (int, error) {
 	f, ok := proto.Clone(filter).(*qdrant.Filter)
 	if !ok || f == nil {
@@ -472,12 +422,9 @@ func (x *qdrantIndex) fetchAtTimestamp(ctx context.Context, filter *qdrant.Filte
 	}
 }
 
-// scrollAll walks every point matching includeInvalidated across the WHOLE
-// collection in pages of pageSize, calling fn once per page, using one
-// native ScrollAll iterator for the entire walk. Item 7 of the perf audit:
-// the sweep previously called list() per page, and list() re-ran a full
-// ScrollAll from the start every time - O(N^2) in points. One iterator
-// threads Qdrant's own point-ID cursor across calls instead.
+// scrollAll walks every point matching includeInvalidated across the WHOLE collection in
+// pages of pageSize, calling fn once per page, using one native ScrollAll iterator for
+// the entire walk. Item 7 of the perf audit: the sweep previously called list() per page, and list() re-ran a full ScrollAll from the start every time - O(N^2) in points. One iterator threads Qdrant's own point-ID cursor across calls instead.
 func (x *qdrantIndex) scrollAll(ctx context.Context, includeInvalidated, withVectors bool, pageSize int, fn func([]scored)) error {
 	filter := bucketFilter(nil)
 	if !includeInvalidated {
@@ -524,10 +471,9 @@ func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvali
 	return int(n), nil
 }
 
-// qdrantLess builds sort.Slice's less func for one ListSort value (#1266),
-// mirroring sqliteOrderBy: an `ID` tie-break so paging is stable, and
-// last_recalled treats "" (never recalled) as sorting last, not first (a
-// bare string compare would put "" before any RFC3339 timestamp).
+// qdrantLess builds sort.Slice's less func for one ListSort value (#1266), mirroring
+// sqliteOrderBy: an `ID` tie-break so paging is stable, and last_recalled treats
+// "" (never recalled) as sorting last, not first (a bare string compare would put "" before any RFC3339 timestamp).
 func qdrantLess(all []scored, sortBy string) func(i, j int) bool {
 	switch sortBy {
 	case SortOldest:
@@ -586,12 +532,9 @@ func qdrantLess(all []scored, sortBy string) func(i, j int) bool {
 	}
 }
 
-// tierFilter adds tier's condition to f (or a fresh filter), if any. "" means
-// no filter. "unverified" also matches a point with no tier payload key yet
-// (empty/missing reads as unverified everywhere else in this package,
-// #1265 review finding 10) - a should-match OR between "no tier key" and
-// "tier == unverified", nested as a sub-filter so it composes with the
-// caller's other must/must-not conditions.
+// tierFilter adds tier's condition to f (or a fresh filter), if any. "" means no filter.
+// "unverified" also matches a point with no tier payload key yet (empty/missing reads as
+// unverified everywhere else in this package, #1265 review finding 10) - a should-match OR between "no tier key" and "tier == unverified", nested as a sub-filter so it composes with the caller's other must/must-not conditions.
 func tierFilter(f *qdrant.Filter, tier string) *qdrant.Filter {
 	if tier == "" {
 		return f
@@ -694,17 +637,9 @@ func (x *qdrantIndex) remove(ctx context.Context, ids []string) (int, error) {
 	return len(existing), nil
 }
 
-// idsToPointIDs converts memory ids to the qdrant client's point-id type,
-// dropping any id that isn't a UUID: qdrant.NewID does no client-side
-// validation, and a malformed id (a stale/typo'd REST path segment, or a
-// hallucinated id in a judge's vote) otherwise reaches the server and comes
-// back as a raw "Unable to parse UUID" gRPC error - every real memory id is
-// minted via uuid.NewString() (commit.go), so this can never drop a genuine
-// one. Bug found via #1268's live harness: that raw error broke
-// findMemoryByID/invalidateMemory's try-each-store fallback in
-// internal/server/rest/memory.go, which only treats ErrMemoryNotFound as
-// "try the next store" - on qdrant it aborted with a 500 instead of the
-// clean 404 sqlite's WHERE-clause miss already gave for free.
+// idsToPointIDs converts memory ids to the qdrant client's point-id type, dropping any
+// id that isn't a UUID: qdrant.NewID does no client-side validation, and a malformed
+// id (a stale/typo'd REST path segment, or a hallucinated id in a judge's vote) otherwise reaches the server and comes back as a raw "Unable to parse UUID" gRPC error - every real memory id is minted via uuid.NewString() (commit.go), so this can never drop a genuine one. Bug found via #1268's live harness: that raw error broke findMemoryByID/invalidateMemory's try-each-store fallback in internal/server/rest/memory.go, which only treats ErrMemoryNotFound as "try the next store" - on qdrant it aborted with a 500 instead of the clean 404 sqlite's WHERE-clause miss already gave for free.
 func idsToPointIDs(ids []string) []*qdrant.PointId {
 	pids := make([]*qdrant.PointId, 0, len(ids))
 	for _, id := range ids {
@@ -716,10 +651,9 @@ func idsToPointIDs(ids []string) []*qdrant.PointId {
 	return pids
 }
 
-// invalidateByID soft-invalidates ids in place - a payload-only SetPayload,
-// never a Delete (design doc §4(a): the consolidator's DELETE invalidates,
-// it doesn't remove). A Get precedes it, same as remove, to report how many
-// of ids actually existed (SetPayload itself doesn't say).
+// invalidateByID soft-invalidates ids in place - a payload-only SetPayload, never a Delete
+// (design doc §4(a): the consolidator's DELETE invalidates, it doesn't remove). A Get precedes
+// it, same as remove, to report how many of ids actually existed (SetPayload itself doesn't say).
 func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason string) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -783,12 +717,9 @@ func (x *qdrantIndex) getExisting(ctx context.Context, ids []string) (map[string
 	return out, nil
 }
 
-// updateStatus applies o to every id in ids that isn't already invalidated
-// (sticky - see the index interface doc), and for invalidate, isn't already
-// tier verified (design decision #1255). Reinforcement count/upvotes differ
-// per point, so a bulk SetPayload can't carry it: fetch the candidates once,
-// then reinforce writes one SetPayload per point while invalidate (a
-// uniform payload) writes one call for all of them.
+// updateStatus applies o to every id in ids that isn't already invalidated (sticky - see the
+// index interface doc), and for invalidate, isn't already tier verified (design decision
+// #1255). Reinforcement count/upvotes differ per point, so a bulk SetPayload can't carry it: fetch the candidates once, then reinforce writes one SetPayload per point while invalidate (a uniform payload) writes one call for all of them.
 func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeSignal) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -862,19 +793,9 @@ func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 	return touched, nil
 }
 
-// applyVotes applies each vote to its point, skipping an already-invalidated
-// one (sticky). One SetPayload per point (the delta differs per point).
-// ponytail: read-modify-write, not atomic - two concurrent applyVotes calls
-// against the SAME memory (two rounds voting on one shared point at once)
-// can both read the same upvotes/downvotes and one write clobbers the
-// other, under-counting by the lost vote. This is true on BOTH backends
-// here (sqlite's applyVotes is the same Find-then-Updates shape, see
-// sqlite.go) - only recordRecall's counter differs cross-backend: sqlite
-// increments with an atomic `recalls + 1` SQL expression, qdrant still
-// reads-then-writes (no atomic increment in its payload API). Fine at
-// today's call volume (one gate round at a time per memory in practice); a
-// compare-and-set retry loop is the fix if concurrent votes on one memory
-// ever become real.
+// applyVotes applies each vote to its point, skipping an already-invalidated one (sticky).
+// One SetPayload per point (the delta differs per point). ponytail: read-modify-write, not atomic -
+// two concurrent applyVotes calls against the SAME memory (two rounds voting on one shared point at once) can both read the same upvotes/downvotes and one write clobbers the other, under-counting by the lost vote. This is true on BOTH backends here (sqlite's applyVotes is the same Find-then-Updates shape, see sqlite.go) - only recordRecall's counter differs cross-backend: sqlite increments with an atomic `recalls + 1` SQL expression, qdrant still reads-then-writes (no atomic increment in its payload API). Fine at today's call volume (one gate round at a time per memory in practice); a compare-and-set retry loop is the fix if concurrent votes on one memory ever become real.
 func (x *qdrantIndex) applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error) {
 	if len(votes) == 0 {
 		return nil, nil
@@ -918,10 +839,9 @@ func (x *qdrantIndex) applyVotes(ctx context.Context, votes []Vote, invalidateTh
 	return touched, nil
 }
 
-// setHumanVote reads id's current payload (for its prior human_vote and vote
-// counts), computes the toggle-safe delta, and writes both the vote fields
-// and human_vote in one SetPayload. Same read-modify-write caveat as
-// applyVotes above. Reports false if id doesn't exist or is invalidated.
+// setHumanVote reads id's current payload (for its prior human_vote and vote counts),
+// computes the toggle-safe delta, and writes both the vote fields and human_vote in
+// one SetPayload. Same read-modify-write caveat as applyVotes above. Reports false if id doesn't exist or is invalidated.
 func (x *qdrantIndex) setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error) {
 	existing, err := x.getExisting(ctx, []string{id})
 	if err != nil {

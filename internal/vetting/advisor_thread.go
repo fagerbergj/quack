@@ -24,8 +24,7 @@ func AdvisorThreadToken(planID, nodeID string) string {
 
 // AdvisorSessionApp/AdvisorSessionUser: the fixed ADK session identity every
 // ask_advisor consult (internal/tools.NewAskAdvisorTool) is stored under -
-// exported so a node's own cleanup (dag.newGatedNode) can delete the same
-// row without duplicating this naming.
+// exported so a node's own cleanup (dag.newGatedNode) can delete the same row without duplicating this naming.
 const (
 	AdvisorSessionApp  = "quack-advisor"
 	AdvisorSessionUser = "advisor"
@@ -65,18 +64,14 @@ type AdvisorTask struct {
 	MemSecret       string // unguessable per-node credential for ACP memory
 	ACPSessionID    string // last round's ACP protocol session id, for cross-round resume (judge -> revise -> revise)
 	// Round/TurnID/HeadSHA: the gate's own per-round coordinates, refreshed at
-	// the start of every round (SetAdvisorThreadRound) so a tool-initiated
-	// write (write_finding et al, via the registered MemSession's
-	// AdvisorToken) stamps real lineage instead of Round:0/TurnID:""/
-	// HeadSHA:"" - BuildReviewPreload drops any finding with an empty HeadSHA
-	// (#1091 adversarial review finding #4).
+	// the start of every round (SetAdvisorThreadRound) so a tool-initiated write (write_finding et al, via the MemSession's AdvisorToken) stamps
+	// real lineage instead of Round:0/TurnID:""/HeadSHA:"" - BuildReviewPreload drops any finding with an empty HeadSHA (#1091 adversarial review finding #4).
 	Round   int
 	TurnID  string
 	HeadSHA string
 	// TriggerAnnotation: the prior round's judge_round id, refreshed alongside
 	// Round/TurnID/HeadSHA (SetAdvisorThreadRound) so a tool-initiated write
-	// carries the same trigger_annotation chain as gate-written artifacts
-	// (design V4 §7 case 3, #1092).
+	// carries the same trigger_annotation chain as gate-written artifacts (design V4 §7 case 3, #1092).
 	TriggerAnnotation string
 }
 
@@ -105,14 +100,11 @@ type MemSession struct {
 	NodeID string
 	// AdvisorToken looks up this node's AdvisorTask for its current
 	// Round/TurnID/HeadSHA (SetAdvisorThreadRound) - the MCP handlers stamp
-	// tool-initiated writes with these instead of hardcoding zero values
-	// (#1091 adversarial review finding #4).
+	// tool-initiated writes with these instead of hardcoding zero values (#1091 adversarial review finding #4).
 	AdvisorToken string
 	// ToolWritten records every id written via any loopback MCP artifact-write
 	// tool this round (write_<kind>, write_artifact, edit_artifact), so
-	// saveCodeReviewRound's answer-tail fallback and saveTextRound's
-	// tool-wrote check can both tell a tool-written id apart from one only
-	// known from a tail parse (#1091 finding #1, #1095 review finding #1).
+	// saveCodeReviewRound's answer-tail fallback and saveTextRound's tool-wrote check can both tell a tool-written id apart from one only known from a tail parse (#1091 finding #1, #1095 review finding #1).
 	ToolWritten *ToolWrittenStage
 }
 
@@ -150,9 +142,7 @@ func (s *ToolWrittenStage) Snapshot() map[string]bool {
 
 // Reset returns every id recorded so far and clears the stage - the
 // snapshot-then-drain scoping saveCodeReviewRound needs so an id written in
-// round N doesn't wrongly suppress round N+1's write for the same id
-// (#1108 finding 2: the stage previously had no reset and accumulated for
-// the whole node run despite the doc comments claiming per-round scope).
+// round N doesn't wrongly suppress round N+1's write for the same id (#1108 finding 2: the stage previously had no reset and accumulated for the whole node run).
 func (s *ToolWrittenStage) Reset() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -199,9 +189,7 @@ func NewReviewStage(fanout *ReviewFanout) *ReviewStage {
 
 // IsNonDeliveringSlice reports whether this node feeds a downstream
 // synthesizer (#1148) - mirrors node.go's isNonDeliveringSlice(cfg), the
-// only other place this same fact is derived. Callers use it to withhold
-// the verdict tools (stage_review/write_code_review) instead of registering
-// them and refusing the call.
+// only other place this same fact is derived. Callers use it to withhold the verdict tools (stage_review/write_code_review) instead of registering them and refusing the call.
 func (s *ReviewStage) IsNonDeliveringSlice() bool {
 	return s.fanout != nil && s.fanout.SynthExpected()
 }
@@ -250,14 +238,9 @@ func (s *ReviewStage) RemoveComment(id string) (ok bool) {
 	return ok
 }
 
-// SetVerdict stages the overall event+takeaway/verified/notes. Refuses to
-// stage "approve" while sibling reviewer nodes are still running (#867
-// defense-in-depth) - a request_changes may still stage early, since it can
-// only ever tighten the run's worst-of verdict. The refusal text never says
-// "wait": a model reading it as an instruction is exactly how #1148's
-// sleep-poll loop started. Caps on takeaway/verified/notes are enforced at
-// the tool boundary (reviewmcp.go's stage_review), not here - this is a
-// plain store.
+// SetVerdict stages the overall event+takeaway/verified/notes. Refuses to stage "approve" while sibling reviewer nodes are still running (#867
+// defense-in-depth) - a request_changes may still stage early, since it can only ever tighten the run's worst-of verdict. The refusal text never says
+// "wait": a model reading it as an instruction is exactly how #1148's sleep-poll loop started. Caps on takeaway/verified/notes are enforced at the tool boundary (reviewmcp.go's stage_review), not here - this is a plain store.
 func (s *ReviewStage) SetVerdict(event, takeaway string, verified, notes []string) error {
 	if event == "approve" && s.fanout != nil && s.fanout.SiblingsPending() {
 		return fmt.Errorf("approve cannot be staged while sibling reviewer nodes are running; " +
@@ -285,8 +268,7 @@ func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
 	}
 	// Rendered fallback body: used verbatim only when no code_review
 	// artifact backs this delivery (artifactRenderedDelivery falls back to
-	// this staged text) - no scope/since-last-review info available here,
-	// so those sections are simply omitted (renderReviewOverview).
+	// this staged text) - no scope/since-last-review info available here, so those sections are simply omitted (renderReviewOverview).
 	body := renderReviewOverview(reviewOverviewInput{Verdict: event, Takeaway: s.takeaway, Verified: s.verified, Notes: s.notes, Comments: comments})
 	return StagedDelivery{
 		Kind:     "review",
@@ -301,9 +283,7 @@ func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
 
 // PRStage stages the pull-request delivery item, from either stage_pr (both
 // fields required - opens a new PR) or stage_push (both optional - pushes
-// onto one that's already open). Only one of the two is ever registered for
-// a given node (internal/acp/acp.go's mcpToolNames), so Set/SetPush are never
-// both called in the same run.
+// onto one already open). Only one of the two is ever registered for a given node (internal/acp/acp.go's mcpToolNames), so Set/SetPush are never both called in the same run.
 type PRStage struct {
 	mu           sync.Mutex
 	title        string
@@ -359,8 +339,7 @@ func (s *MemStage) Drain() []memory.Candidate {
 
 // RecallStage: per-node collector for the ACP loopback MCP's recall_memory
 // calls (epic #1255 P2). Unlike MemStage, it's Snapshot-read (not Drain'd):
-// an ACP worker's tool calls are otherwise invisible to this session, so the
-// round loop needs to see hits so far EVERY round, not just once at the end.
+// an ACP worker's tool calls are otherwise invisible to this session, so the round loop needs to see hits so far EVERY round, not just once at the end.
 type RecallStage struct {
 	mu   sync.Mutex
 	hits []memory.Delivered
@@ -472,12 +451,9 @@ func SetAdvisorThreadSessionID(token, sessionID string) {
 	advisorThreads.Store(token, t)
 }
 
-// SetAdvisorThreadRound records the gate's current round/turn/head-sha
-// coordinates on token's AdvisorTask - called at the start of every judge
+// SetAdvisorThreadRound records the gate's current round/turn/head-sha coordinates on token's AdvisorTask - called at the start of every judge
 // round (and once for the draft) so a tool-initiated write made during that
-// round (write_finding et al, looked up via the registered MemSession's
-// AdvisorToken) stamps real lineage instead of zero values (#1091
-// adversarial review finding #4).
+// round (write_finding et al, looked up via the MemSession's AdvisorToken) stamps real lineage instead of zero values (#1091 adversarial review finding #4).
 func SetAdvisorThreadRound(token string, round int, turnID, headSHA, triggerAnnotation string) {
 	v, ok := advisorThreads.Load(token)
 	if !ok {

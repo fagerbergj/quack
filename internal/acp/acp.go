@@ -1,7 +1,6 @@
 // Package acp runs an external coding agent as an ACP subprocess adapted to
 // an ADK agent - one subprocess per NODE, pinned across that node's rounds
-// (draft -> judge -> revise -> ...) and torn down when the node finishes,
-// fails a reuse, or is cancelled (see round's pinnedProc/pinned).
+// (draft -> judge -> revise -> ...) and torn down when the node finishes, fails a reuse, or is cancelled (see round's pinnedProc/pinned).
 package acp
 
 import (
@@ -59,8 +58,7 @@ type Options struct {
 	UnregisterLiveSteer func(chatID, nodeID string)
 	// RegisterRoundAbort/UnregisterRoundAbort let CancelNode reach a running
 	// round's abort RPC directly instead of waiting for the round to end
-	// (#1030). Cancel only - never wired for pause, which must preserve
-	// whatever the round has accumulated so it can resume.
+	// (#1030). Cancel only - never wired for pause, which must preserve whatever the round has accumulated so it can resume.
 	RegisterRoundAbort   func(chatID, nodeID string, cancel context.CancelFunc)
 	UnregisterRoundAbort func(chatID, nodeID string)
 }
@@ -142,14 +140,7 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 
 // resolveNode derives the node's working directory, memory-MCP credential,
 // and per-node scratch dir from the advisor-thread marker in the prompt
-// (the GitHub context-dir grant this used to also derive is gone - #1010
-// deleted the mechanism). memSecret is resolved separately in the memSessions
-// registry - the advisor-thread token never doubles as the MCP bearer
-// credential. chatID/nodeID are the advisor thread's own (at.ChatID,
-// at.NodeID) - the executor's controls key (dag's controls.register(chatID,
-// node.ID)), unlike cfg.NodeID (which collapses to the shared workspace scope
-// on a setup chain's writer node) or at.SessionID (the ADK session id, a
-// retry-only alias - see AdvisorTask.ChatID).
+// (the GitHub context-dir grant this used to also derive is gone - #1010 deleted the mechanism). memSecret is resolved separately in the memSessions registry - the advisor-thread token never doubles as the MCP bearer credential. chatID/nodeID are the advisor thread's own (at.ChatID, at.NodeID) - the executor's controls key (dag's controls.register(chatID, node.ID)), unlike cfg.NodeID (which collapses to the shared workspace scope on a setup chain's writer node) or at.SessionID (the ADK session id, a retry-only alias - see AdvisorTask.ChatID).
 func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, scratchDir string, readOnly bool, chatID, nodeID, token, priorSessionID string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
@@ -256,8 +247,7 @@ type promptDone struct {
 
 // pinnedProc is one node's live ACP subprocess, kept across its rounds
 // (draft -> judge -> revise -> ...): the shim holds pi alive for its own
-// stdio session's life, so a second session/prompt on the SAME connection
-// carries history forward with no re-init and no transcript replay (#1006).
+// stdio session's life, so a second session/prompt on the SAME connection carries history forward with no re-init and no transcript replay (#1006).
 type pinnedProc struct {
 	h         *procHandle
 	sessID    sdk.SessionId
@@ -290,13 +280,7 @@ func CloseAllPinnedSessions() {
 }
 
 // round drives one subprocess round. Separated from runPrompt for testability.
-// caps is the node's EFFECTIVE caps (ReadOnly already resolved by the
-// caller) - the one thing that can legitimately differ per round for an
-// otherwise-static agent (#754).
-// steerChatID/steerNodeID key the live-steer hook: the advisor thread's
-// SessionID/NodeID (round()'s callers resolve these), NOT ledger.Coords -
-// cfg.NodeID collapses to the shared workspace scope for a setup-chain's
-// writer node, which would silently no-op the hook (#998 review).
+// caps is the node's EFFECTIVE caps (ReadOnly already resolved by the caller) - the one thing that can legitimately differ per round for an otherwise-static agent (#754). steerChatID/steerNodeID key the live-steer hook: the advisor thread's SessionID/NodeID (round()'s callers resolve these), NOT ledger.Coords - cfg.NodeID collapses to the shared workspace scope for a setup-chain's writer node, which would silently no-op the hook (#998 review).
 func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace.Caps, outbound string, steerChatID, steerNodeID, advisorToken, priorSessionID string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
@@ -426,10 +410,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 
 	// Live only for this round's duration - nothing to forward into before/after.
 	// CallExtension (an acked request), not NotifyExtension: between the
-	// shim settling and the deferred Unregister below the connection is
-	// still open, so a fire-and-forget notify would report delivered while
-	// the shim silently drops it (promptReq already nil). A failed/errored
-	// call reports false, and enqueue's caller parks it instead (#998 review).
+	// shim settling and the deferred Unregister below the connection is still open, so a fire-and-forget notify would report delivered while the shim silently drops it (promptReq already nil). A failed/errored call reports false, and enqueue's caller parks it instead (#998 review).
 	if a.opts.RegisterLiveSteer != nil && steerChatID != "" && steerNodeID != "" {
 		a.opts.RegisterLiveSteer(steerChatID, steerNodeID, steerForward(h.conn))
 		if a.opts.UnregisterLiveSteer != nil {
@@ -452,8 +433,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	}
 	// A cancel arriving during the spawn/handshake window (RegisterRoundAbort
 	// above, up to StartTimeout) has nothing to cancel yet - session/cancel
-	// for a prompt never sent is a no-op, and waiting on `done` blocks for
-	// the full cancelGrace. Bail before ever sending session/prompt (#1030 review).
+	// for a prompt never sent is a no-op, and waiting on `done` blocks for the full cancelGrace. Bail before ever sending session/prompt (#1030 review).
 	select {
 	case <-ctx.Done():
 		endPrompt(ctx.Err())
@@ -515,8 +495,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 			}
 			// The Prompt RPC returns exactly once per round with its own
 			// (not cumulative) usage - the round's usage is known here, once.
-			// ctx wins per field, the shared stamp only fills blanks (#1048) -
-			// same rule as traced.go's tracedModel and tools/emit.go's emitTool.
+			// ctx wins per field, the shared stamp only fills blanks (#1048) - same rule as traced.go's tracedModel and tools/emit.go's emitTool.
 			recordUsage(a.opts.ModelName, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords), a.opts.Pricing, d.resp.Usage)
 			if d.resp.StopReason == sdk.StopReasonRefusal {
 				refusalErr := errors.New("acp: agent refused the prompt")
@@ -601,13 +580,7 @@ func mcpToolsBlock(names []string) string {
 
 // gracefulCancel sends session/cancel and waits for the prompt goroutine to
 // acknowledge. h.conn.Cancel is a notification write that blocks on the
-// connection's writeMu/pipe with no ctx-awareness of its own (the SDK only
-// checks ctx before attempting the write) - if the child has stopped
-// draining stdin, that write can wedge forever alongside the prompt write
-// already holding writeMu. Running it on its own goroutine and selecting on
-// cctx.Done() here is what makes cancelGrace an actual bound: once this
-// returns, the caller's deferred h.close SIGKILLs the process group, which
-// unblocks the stuck writer(s) via EPIPE.
+// connection's writeMu/pipe with no ctx-awareness of its own (the SDK only checks ctx before attempting the write) - if the child has stopped draining stdin, that write can wedge forever alongside the prompt write already holding writeMu. Running it on its own goroutine and selecting on cctx.Done() here is what makes cancelGrace an actual bound: once this returns, the caller's deferred h.close SIGKILLs the process group, which unblocks the stuck writer(s) via EPIPE.
 func (a *Agent) gracefulCancel(h *procHandle, sessID sdk.SessionId, done <-chan promptDone) {
 	cctx, cancel := context.WithTimeout(context.Background(), cancelGrace)
 	defer cancel()

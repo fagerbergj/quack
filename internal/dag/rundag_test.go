@@ -194,8 +194,7 @@ func TestRetryPlanInNode_ReusesUpstream(t *testing.T) {
 
 // TestPlan_AttachmentsSurviveJSON guards the single-runner media path: the execute
 // tool stashes the plan as JSON in session state (ExecPlanKey) and the execute node
-// unmarshals it, so media attachments (image/audio bytes) must survive that round
-// trip or media nodes silently lose their input.
+// unmarshals it, so media attachments (image/audio bytes) must survive that round trip or media nodes silently lose their input.
 func TestPlan_AttachmentsSurviveJSON(t *testing.T) {
 	plan := Plan{
 		ID: "p", UserMessage: "describe this",

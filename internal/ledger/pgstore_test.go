@@ -14,11 +14,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// newTestPGDB starts a real Postgres container and returns the raw
-// connection, UNMIGRATED - callers that need to migrate onto a pre-existing
-// table (see TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable) need the
-// db before NewPGStore's AutoMigrate ever runs. Skips (not fails) when
-// Docker isn't reachable, matching internal/store's own container tests.
+// newTestPGDB returns a real Postgres container's raw connection, UNMIGRATED -
+// callers migrating onto a pre-existing table need the db before NewPGStore's
+// AutoMigrate runs. Skips (not fails) when Docker isn't reachable.
 func newTestPGDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -62,13 +60,9 @@ func newTestPGStore(t *testing.T) *PGStore {
 	return store
 }
 
-// TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable pins the migration
-// side of idx_ledger_chat_key (#1111 review finding): every other PG test
-// starts from a fresh container, so AutoMigrate always creates the table and
-// index together - the production path (adding the index to an EXISTING
-// ledger_entries table on a deployed database) was otherwise unexercised. A
-// tag-parsing miss on chat_id's two index tags would silently degrade
-// ReadEntriesByKey to a scan with no test to catch it.
+// TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable (#1111 review finding): every other
+// PG test starts from a fresh container, so the production path - adding idx_ledger_chat_key
+// to an EXISTING ledger_entries table - was otherwise unexercised; a tag-parsing miss would silently degrade ReadEntriesByKey to a scan with no test to catch it.
 func TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable(t *testing.T) {
 	t.Parallel()
 	db := newTestPGDB(t)
@@ -293,12 +287,9 @@ func artifactRevPayload(t *testing.T, parent int) json.RawMessage {
 	return b
 }
 
-// TestPGStoreAppendIntent_ParentRevisionConflict is the epic's named
-// verification case for #1144 P4 against a REAL Postgres: two processes
-// (here, two goroutines against one PGStore/database) saving the same
-// artifact id concurrently, both claiming the same parent_revision - exactly
-// one must win, the other must get ErrStaleParent, and neither may silently
-// overwrite the other's WAL entry. Run with -race.
+// TestPGStoreAppendIntent_ParentRevisionConflict (#1144 P4, real Postgres): two
+// goroutines saving the same artifact id, both claiming the same parent_revision -
+// exactly one wins, the other gets ErrStaleParent, neither overwrites the other's WAL entry. Run with -race.
 func TestPGStoreAppendIntent_ParentRevisionConflict(t *testing.T) {
 	t.Parallel()
 	store := newTestPGStore(t)
@@ -374,12 +365,9 @@ func TestPGStoreAppendIntent_IdempotencyKeyIsANoOp(t *testing.T) {
 	}
 }
 
-// TestPGStoreNewMigrate_RefusesDuplicateParentRevisions covers the migration
-// safety the epic calls out explicitly: an existing ledger_entries table
-// that ALREADY violates (chat_id, key, parent_revision) uniqueness (only
-// reachable pre-#1144 P4, since idLocks made it essentially impossible) must
-// not get the new unique index silently skipped or silently created broken -
-// NewPGStore refuses to start instead.
+// TestPGStoreNewMigrate_RefusesDuplicateParentRevisions: an existing ledger_entries table
+// already violating (chat_id, key, parent_revision) uniqueness (only reachable pre-#1144
+// P4, since idLocks made it essentially impossible) must not get the new index silently skipped or created broken - NewPGStore refuses to start instead.
 func TestPGStoreNewMigrate_RefusesDuplicateParentRevisions(t *testing.T) {
 	t.Parallel()
 	db := newTestPGDB(t)
@@ -400,13 +388,9 @@ func TestPGStoreNewMigrate_RefusesDuplicateParentRevisions(t *testing.T) {
 	}
 }
 
-// TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup covers the
-// real production shape: AutoMigrate's ADD COLUMN leaves parent_revision
-// NULL on every row that predates it - Postgres never retrofits existing
-// rows. Two DIFFERENT, legitimate revisions of one id, both left NULL,
-// would otherwise look like a duplicate (GROUP BY folds NULLs together) and
-// wedge the deploy; NewPGStore must backfill from the payload before
-// scanning, so boot succeeds and the real values land in the column.
+// TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup: ADD COLUMN leaves
+// parent_revision NULL on pre-existing rows, and two different revisions both NULL
+// would look like a duplicate (GROUP BY folds NULLs) and wedge the deploy - backfill from the payload first, so boot succeeds.
 func TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup(t *testing.T) {
 	t.Parallel()
 	db := newTestPGDB(t)

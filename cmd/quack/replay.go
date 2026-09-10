@@ -15,12 +15,7 @@ import (
 
 // newReplayCmd: `quack replay <chat-id-or-bundle.zip>` - replay a recorded
 // ledger bundle through a fresh in-process server built from the LOCAL
-// quack.yaml (same default-path resolution as `server run`/`server
-// validate`), with every provider swapped to kind:"replay". Strict by
-// default (hermetic, no live calls); --fork-from switches to fork-replay,
-// going live from that node's boundary using the SAME local config's real
-// provider as the live delegate (internal/inference/factory.go, internal/
-// acp's start/startLive split).
+// quack.yaml (same default-path resolution as `server run`/`server validate`), with every provider swapped to kind:"replay". Strict by default (hermetic, no live calls); --fork-from switches to fork-replay, going live from that node's boundary using the SAME local config's real provider as the live delegate (internal/inference/factory.go, internal/acp's start/startLive split).
 func newReplayCmd() *cobra.Command {
 	var forkFrom, sourceServer string
 	var asJSON bool
@@ -106,8 +101,7 @@ func runReplay(cmd *cobra.Command, target, forkFrom, sourceServer string, asJSON
 
 // resolveBundle resolves target into a local bundle file path: unchanged if
 // it's already a readable file, else fetched as a chat id from
-// sourceServer's recording endpoint (cli.Client.FetchRecording) into a temp
-// file. cleanup removes that temp file; a no-op for an already-local path.
+// sourceServer's recording endpoint (cli.Client.FetchRecording) into a temp file. cleanup removes that temp file; a no-op for an already-local path.
 func resolveBundle(ctx context.Context, sourceServer, target string) (path string, cleanup func(), err error) {
 	noop := func() {}
 	if st, statErr := os.Stat(target); statErr == nil && !st.IsDir() {
@@ -139,13 +133,7 @@ func resolveBundle(ctx context.Context, sourceServer, target string) (path strin
 
 // replayifyProviders mutates cfg IN PLACE into a replay config: every named
 // provider becomes kind:"replay" pointing at bundlePath. forkFromNode == ""
-// is replay-strict (matches .quack/replay-log.md's hermetic guarantee -
-// internal/inference/factory.go's kind switch never builds a live delegate
-// without fork_mode set); non-empty switches every provider to fork mode,
-// carrying the ORIGINAL (real) provider as its `live` delegate - NewModel's
-// kind:"replay" case builds that delegate straight from it, so a fork run
-// needs no separate provider config of its own beyond what quack.yaml
-// already has.
+// is replay-strict (matches .quack/replay-log.md's hermetic guarantee - internal/inference/factory.go's kind switch never builds a live delegate without fork_mode set); non-empty switches every provider to fork mode, carrying the ORIGINAL (real) provider as its `live` delegate - NewModel's kind:"replay" case builds that delegate straight from it, so a fork run needs no separate provider config of its own beyond what quack.yaml already has.
 func replayifyProviders(cfg *config.Config, bundlePath, forkFromNode string) {
 	for name, orig := range cfg.Providers {
 		p := config.ProviderConfig{Kind: "replay", Bundle: bundlePath}

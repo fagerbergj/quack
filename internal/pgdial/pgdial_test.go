@@ -62,11 +62,9 @@ func TestWithDialRetry_GivesUpAfterMaxAttempts(t *testing.T) {
 	}
 }
 
-// TestWithDialRetry_ContextCanceledDuringBackoff proves shutdown is not held
-// up by the backoff: canceling ctx while a retry is sleeping between attempts
-// must return promptly with ctx.Err(), not run out the clock on all attempts
-// or hang (#1200 review: the only branch that matters for a live server had
-// no coverage - both prior tests used context.Background()).
+// TestWithDialRetry_ContextCanceledDuringBackoff: canceling ctx during a
+// retry backoff returns promptly with ctx.Err() - shutdown must not run out
+// the remaining attempts (#1200 review: this branch had no coverage).
 func TestWithDialRetry_ContextCanceledDuringBackoff(t *testing.T) {
 	setRetryBackoff(t, time.Hour) // would hang/timeout the test if cancellation didn't cut it short
 	ctx, cancel := context.WithCancel(context.Background())

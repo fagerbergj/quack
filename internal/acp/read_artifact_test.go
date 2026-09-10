@@ -49,8 +49,7 @@ func TestReadArtifactMCP_ReadsOwnChatArtifact(t *testing.T) {
 
 // TestReadArtifactMCP_CrossSessionDenied is the security property: a node
 // registered for chat-a can never read chat-b's artifact, because the tool's
-// scope (app/user/chat) comes only from the registered session, never from a
-// tool argument - there is no session id in read_artifact's input at all.
+// scope (app/user/chat) comes only from the registered session, never from a tool argument - there is no session id in read_artifact's input at all.
 func TestReadArtifactMCP_CrossSessionDenied(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()

@@ -33,15 +33,9 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// nsBarrierStub answers current_date, then a final answer. Every DRAFT-round
-// call (before current_date's response comes back) rendezvous on a shared
-// 2-party barrier before answering, forcing the two nodes' draft rounds to
-// genuinely overlap in wall-clock time - the condition #609's shared-object
-// bug needed to misattribute. Per-CALL, not per-instance (plain wg.Done/Wait,
-// no sync.Once): the barrier must still pair up correctly when both nodes'
-// calls land on the SAME shared stub instance (nodeScopedStub's share=true
-// case), where a per-instance guard would only ever fire for the first
-// caller and leave the second unpaired.
+// nsBarrierStub answers current_date, then a final answer; every DRAFT-round call rendezvous on a shared
+// 2-party barrier first, forcing the wall-clock overlap #609's shared-object bug needed. Per-CALL, not
+// per-instance: it must still pair when both calls land on the SAME shared stub instance (share=true).
 type nsBarrierStub struct {
 	nodeKey string
 	wg      *sync.WaitGroup
@@ -83,12 +77,10 @@ func (nsJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) i
 	}
 }
 
-// nodeScopedStub is a minimal nodeScopedWorker double for the SAME
-// configured agent used by concurrent plan nodes. share=true simulates the
-// pre-fix shared-object bug: model and tools built ONCE and reused across
-// every ForNode call, even though each node still gets a distinct client
-// identity. Kept here only to prove this test is sensitive to the
-// regression it pins.
+// nodeScopedStub is a minimal nodeScopedWorker double for the SAME configured agent
+// across concurrent plan nodes. share=true simulates the pre-fix shared-object bug:
+// model/tools built ONCE and reused across every ForNode call despite distinct client
+// identities; kept only to prove the test is sensitive to the regression it pins.
 type nodeScopedStub struct {
 	adkagent.Agent // a throwaway prototype (never Run - ForNode always wins)
 	share          bool

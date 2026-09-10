@@ -1,9 +1,6 @@
 // Package cli is the TUI-free surface of the quack client: the server-context
 // registry (which server chat/api/-p talk to), the /models discovery used by
-// `server init`, and the quack.yaml emitter. It imports no bubbletea and no huh
-// - the wizard (internal/wizard) wraps these in forms; print mode and api shell
-// out here directly. Keeping this package terminal-free is what lets the pipe
-// paths stay ANSI-clean and unit-testable with httptest.
+// `server init`, and the quack.yaml emitter. It imports no bubbletea and no huh - the wizard (internal/wizard) wraps these in forms; print mode and api shell out here directly. Keeping this package terminal-free is what lets the pipe paths stay ANSI-clean and unit-testable with httptest.
 package cli
 
 import (
@@ -32,11 +29,7 @@ type ServerRef struct {
 
 // ServerAuth is a server's stored OIDC session (from `quack server login`'s
 // authorization code + PKCE flow): enough for NewClient to attach a bearer
-// token and silently refresh it via the token endpoint when it's near
-// expiry, without re-running the browser flow. ClientID+Scopes+TokenURL are
-// cached from login so a refresh needs no re-discovery. There is no client
-// secret field - the login flow only supports public OIDC clients (PKCE, no
-// secret), so there is never one to persist.
+// token and silently refresh it via the token endpoint when it's near expiry, without re-running the browser flow. ClientID+Scopes+TokenURL are cached from login so a refresh needs no re-discovery. There is no client secret field - the login flow only supports public OIDC clients (PKCE, no secret), so there is never one to persist.
 type ServerAuth struct {
 	Issuer       string    `yaml:"issuer"`
 	ClientID     string    `yaml:"client_id"`
@@ -71,8 +64,7 @@ func LoadClient() (*ClientConfig, error) {
 
 // Save writes the registry, creating the config dir as needed. Both are
 // private (0700/0600) - the registry can hold OIDC access/refresh tokens
-// (ServerAuth) once `quack server login` has run, and this is the cheap way
-// to avoid leaving them in a world-readable file.
+// (ServerAuth) once `quack server login` has run, and this is the cheap way to avoid leaving them in a world-readable file.
 func (c *ClientConfig) Save() error {
 	if err := os.MkdirAll(filepath.Dir(configPath()), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
@@ -138,9 +130,7 @@ func (c *ClientConfig) ActiveURL(override string) string {
 
 // findByURL returns the registered server (name + ref) whose URL matches url
 // (trailing-slash-insensitive) - how NewClient discovers a stored OIDC
-// session for the server it's about to talk to, whether url came from the
-// active registry entry or a literal --server override that happens to name
-// a registered server.
+// session for the server it's about to talk to, whether url came from the active registry entry or a literal --server override that happens to name a registered server.
 func (c *ClientConfig) findByURL(url string) (string, ServerRef, bool) {
 	url = strings.TrimRight(url, "/")
 	for name, ref := range c.Servers {

@@ -1,8 +1,6 @@
-// artifacttools_native_test.go: #1123 regression coverage - a native
-// (non-ACP) gated node's worker must actually be given the ADK-native
-// artifact tools (list/read/edit/write_<kind>), not just check_mermaid/
-// format-markdown, or its revise round has nothing to read/edit its prior
-// revision with.
+// artifacttools_native_test.go: #1123 regression - a native (non-ACP) gated node's worker
+// must be given the ADK-native artifact tools (list/read/edit/write_<kind>), not just
+// check_mermaid/format-markdown, or its revise round has nothing to revise with.
 package serve
 
 import (

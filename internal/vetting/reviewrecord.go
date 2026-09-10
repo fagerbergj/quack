@@ -1,12 +1,6 @@
-// reviewrecord.go: episodic code_review/finding/document records written by
-// the gate (#1090 P2 of the artifact-model epic, github.com/fagerbergj/quack
-// issue #1006). One gate-owned write site (node.go, inside the judge-round
-// loop): every round writes a revision, gate-passed or not - only delivery
-// stays gate-passed-only. Ids are kind:instance (no node segment - node_id
-// is provenance, carried in Lineage, never in the id); each kind's own
-// Identity func derives its instance, registered here, never composed
-// ad hoc elsewhere. Findings hash Sonar-style so an id survives a line
-// shift, a re-review on a new head SHA, and being found by a different node.
+// reviewrecord.go: episodic code_review/finding/document records written by the gate (#1090 P2 of the artifact-model epic, github.com/fagerbergj/quack issue #1006). One gate-owned write site (node.go, inside the judge-round loop): every round writes a revision, gate-passed or not - only delivery
+// stays gate-passed-only. Ids are kind:instance (no node segment - node_id is provenance, carried in Lineage, never in the id); each kind's own Identity func derives its instance, registered here, never composed
+// ad hoc elsewhere. Findings hash Sonar-style so an id survives a line shift, a re-review on a new head SHA, and being found by a different node.
 package vetting
 
 import (
@@ -110,19 +104,15 @@ func init() {
 		JSONSchema: `{"type":"object"}`,
 		Validate:   validateJSONObject[JudgeRoundRecord],
 		// Instance = hint verbatim ("<turn_id>-<node_id>-<round>", #1092 design
-		// V4 §4.1/§4.3) - the gate computes it, never derived from content.
-		// turnID (ctx.InvocationID()) is shared by every node in a run, so
-		// node_id must be in the instance or two fan-out nodes' round 1 both
-		// resolve to the same id and clobber each other's revisions/WAL key.
+		// V4 §4.1/§4.3) - the gate computes it, never derived from content. turnID (ctx.InvocationID()) is shared by every node in a run, so
+		// node_id must be in the instance or two fan-out nodes' round 1 both resolve to the same id and clobber each other's revisions/WAL key.
 		Identity: func(_ []byte, hint string) (string, error) { return requireHint(hint) },
 	})
 }
 
-// judgeRoundHint builds the judge_round identity's instance (#1092 design V4
-// §4.1/§4.3): node_id must be included since turnID alone is shared by every
+// judgeRoundHint builds the judge_round identity's instance (#1092 design V4 §4.1/§4.3): node_id must be included since turnID alone is shared by every
 // node in one run (dag/graph.go's InvocationID), so two fan-out nodes' round
-// 1 would otherwise collide. Shared by the WAL key (node.go) and the record's
-// own identity hint so both point at the same round.
+// 1 would otherwise collide. Shared by the WAL key (node.go) and the record's own identity hint so both point at the same round.
 func judgeRoundHint(turnID, nodeID string, round int) string {
 	return fmt.Sprintf("%s-%s-%d", turnID, nodeID, round)
 }
@@ -162,12 +152,9 @@ func validateFinding(raw json.RawMessage) error {
 	return nil
 }
 
-// CodeReviewRecord: the "code_review" kind's structured body (#1090 §4.3).
-// Findings are their own artifacts, referenced by hash id. Takeaway/Verified/
-// Notes replace the old free-text Summary (one fixed review format, kept
-// only as a read path below): a one-sentence takeaway, a capped list of
-// checks actually performed, and a capped list of free prose that has no
-// line to anchor to - findings themselves stay inline, never re-listed here.
+// CodeReviewRecord: the "code_review" kind's structured body (#1090 §4.3). Findings are their own artifacts, referenced by hash id. Takeaway/Verified/
+// Notes replace the old free-text Summary (one fixed review format, kept only as a read path below): a one-sentence takeaway, a capped list of
+// checks actually performed, and a capped list of free prose that has no line to anchor to - findings themselves stay inline, never re-listed here.
 type CodeReviewRecord struct {
 	Verdict    string           `json:"verdict"`
 	Takeaway   string           `json:"takeaway,omitempty"`
@@ -176,16 +163,9 @@ type CodeReviewRecord struct {
 	FindingIDs []string         `json:"finding_ids"`
 	Dismissed  []DismissedEntry `json:"dismissed"`
 	Clean      []string         `json:"clean"`
-	// Rendered: this round's fixed-format overview markdown
-	// (renderReviewOverview, degraded - no Scope/Since-last-review, which
-	// need a git probe/prior delivery record this save site doesn't have),
-	// computed and stored at write time purely so the artifact panel can
-	// render it directly instead of reimplementing the renderer in
-	// TypeScript. Never read back into a delivery - renderReviewFromArtifact
-	// always renders its own, fully-scoped copy at delivery time. May be
-	// absent (a record from before this field existed, or a native
-	// write_code_review call the gate hasn't backfilled) - the panel falls
-	// back to a plain field view when so.
+	// Rendered: this round's fixed-format overview markdown (renderReviewOverview, degraded - no Scope/Since-last-review, which need a git probe/prior delivery record this save site doesn't have),
+	// computed and stored at write time purely so the artifact panel can render it directly instead of reimplementing the renderer in TypeScript. Never read back into a delivery - renderReviewFromArtifact
+	// always renders its own, fully-scoped copy at delivery time. May be absent (a record from before this field existed, or a native write_code_review call the gate hasn't backfilled) - the panel falls back to a plain field view when so.
 	Rendered string `json:"rendered,omitempty"`
 	// Summary: pre-migration records only. Never written by this codebase
 	// any more - read-only, rendered under Notes (truncated) so old history
@@ -193,8 +173,7 @@ type CodeReviewRecord struct {
 	Summary string `json:"summary,omitempty"`
 }
 
-// Caps enforced on stage_review/write_code_review's takeaway/verified/notes -
-// the same numbers the reviewer prompt states as facts, and the same error
+// Caps enforced on stage_review/write_code_review's takeaway/verified/notes - the same numbers the reviewer prompt states as facts, and the same error
 // text both surfaces (reviewmcp.go's stage_review tool, and validateCodeReview
 // below for write_code_review) produce on a violation.
 const (
@@ -205,17 +184,9 @@ const (
 	reviewNotesMaxLen      = 200
 )
 
-// CheckCodeReviewCaps enforces the fixed review format's caps on
-// takeaway/verified/notes - shared by stage_review's discrete args
-// (reviewmcp.go) and write_code_review's raw JSON (validateCodeReview) so
-// the two surfaces can never drift on what's allowed. takeaway == "" skips
-// the takeaway checks (the caller decides whether an empty takeaway is
-// itself an error - stage_review requires one, write_code_review's schema
-// does not). Length and newline only - no sentence-count heuristic: a
-// period-based "one sentence" check false-positives on "e.g."/"i.e."/"vs."
-// (the same ambiguity firstSentence in reviewoverview.go has to resolve for
-// rendering) and a rejected takeaway is worse than an occasionally
-// two-clause one.
+// CheckCodeReviewCaps enforces the fixed review format's caps on takeaway/verified/notes - shared by stage_review's discrete args (reviewmcp.go) and write_code_review's raw JSON (validateCodeReview) so
+// the two surfaces can never drift on what's allowed. takeaway == "" skips the takeaway checks (the caller decides whether an empty takeaway is itself an error - stage_review requires one, write_code_review's schema does not). Length and newline only - no sentence-count heuristic: a
+// period-based "one sentence" check false-positives on "e.g."/"i.e."/"vs." (the same ambiguity firstSentence in reviewoverview.go has to resolve for rendering) and a rejected takeaway is worse than an occasionally two-clause one.
 func CheckCodeReviewCaps(takeaway string, verified, notes []string) error {
 	if takeaway != "" {
 		if strings.Contains(takeaway, "\n") {
@@ -263,12 +234,9 @@ func capRunes(s string, max int) string {
 	return string(r[:max-1]) + "…"
 }
 
-// clampCodeReviewFields defensively caps gate-parsed takeaway/verified/notes
-// (the Recovered/answer-tail path, which never goes through stage_review's
-// tool-boundary validation) to the same limits CheckCodeReviewCaps enforces -
-// truncating rather than rejecting, so a verbose answer tail still saves and
-// delivers this round instead of silently leaving the record on its PRIOR
-// revision when validateCodeReview would otherwise reject the save.
+// clampCodeReviewFields defensively caps gate-parsed takeaway/verified/notes (the Recovered/answer-tail path, which never goes through stage_review's
+// tool-boundary validation) to the same limits CheckCodeReviewCaps enforces - truncating rather than rejecting, so a verbose answer tail still saves and
+// delivers this round instead of silently leaving the record on its PRIOR revision when validateCodeReview would otherwise reject the save.
 func clampCodeReviewFields(takeaway string, verified, notes []string) (string, []string, []string) {
 	return capRunes(strings.ReplaceAll(takeaway, "\n", " "), reviewTakeawayMaxLen),
 		clampReviewList(verified, reviewVerifiedMaxItems, reviewVerifiedMaxLen),
@@ -313,8 +281,7 @@ type DismissedEntry struct {
 
 // FindingRecord: the "finding" kind's structured body (#1090 §4.3). State is
 // "new" the first round an id appears, "unchanged" while it keeps
-// reappearing, "resolved" the round it stops appearing (V3's critique diff,
-// reframed as a finding state instead of a separate list).
+// reappearing, "resolved" the round it stops appearing (V3's critique diff, reframed as a finding state instead of a separate list).
 type FindingRecord struct {
 	Path      string `json:"path"`
 	LineHint  int    `json:"line_hint"`
@@ -325,16 +292,9 @@ type FindingRecord struct {
 	State     string `json:"state"` // new | unchanged | resolved
 }
 
-// findingIdentity: Sonar's issue-tracking line hash, adapted
-// (docs.sonarsource.com/sonarqube-server/user-guide/issues/solution-overview
-// - matches on rule + line hash, where the line hash is the flagged line's
-// content with whitespace stripped, line numbers never an input, so an
-// issue survives a line shift). Our fields differ (no rule id), so the
-// closest equivalent combines: path (stands in for the rule's file scope),
-// the normalized finding title (stands in for rule+message), and the
-// normalized text of the flagged line (the line-hash input). Line numbers
-// are excluded on purpose, and hint (the reporting node) is ignored
-// entirely - a finding is about the code, not who found it (#1090 V4.2).
+// findingIdentity: Sonar's issue-tracking line hash, adapted (docs.sonarsource.com/sonarqube-server/user-guide/issues/solution-overview - matches on rule + line hash, where the line hash is the flagged line's
+// content with whitespace stripped, line numbers never an input, so an issue survives a line shift). Our fields differ (no rule id), so the closest equivalent combines: path (stands in for the rule's file scope),
+// the normalized finding title (stands in for rule+message), and the normalized text of the flagged line (the line-hash input). Line numbers are excluded on purpose, and hint (the reporting node) is ignored entirely - a finding is about the code, not who found it (#1090 V4.2).
 func findingIdentity(content []byte, _ string) (string, error) {
 	var f FindingRecord
 	if err := json.Unmarshal(content, &f); err != nil {
@@ -368,14 +328,9 @@ var extChatIDRe = regexp.MustCompile(`^ext:[^:]+:(.+)$`)
 // webhook.go sessionID format) - the PR/issue number the run is reviewing.
 var trailingNumberRe = regexp.MustCompile(`-(\d+)$`)
 
-// SubjectHint derives the code_review/write_<kind> tools' identity hint from
-// chatID
-// alone, not from an in-run signal like a staged pull_number: it must be
-// the same value before AND after a round runs, since preload reads it
-// before the worker has said anything this round. One chat = one reviewed
-// subject, so this is stable across every round and a later re-review at a
-// new head SHA - it comes from the registered session scope (the chat), not
-// a tool argument or a node's own state (#1090 §4.1).
+// SubjectHint derives the code_review/write_<kind> tools' identity hint from chatID alone, not from an in-run signal like a staged pull_number: it must be
+// the same value before AND after a round runs, since preload reads it before the worker has said anything this round. One chat = one reviewed
+// subject, so this is stable across every round and a later re-review at a new head SHA - it comes from the registered session scope (the chat), not a tool argument or a node's own state (#1090 §4.1).
 func SubjectHint(chatID string) string {
 	local := chatID
 	if m := extChatIDRe.FindStringSubmatch(chatID); m != nil {
@@ -450,27 +405,9 @@ func fileLineAtForCfg(cfg Config, path string, line int) string {
 	return fileLineAt(dir, checksCaps(cfg), cfg.NodeBaseSHA, path, line)
 }
 
-// saveEpisodicRound writes this round's code_review/finding/document records
-// (#1090 P2): gate-owned, one revision per round regardless of pass/fail -
-// only delivery stays gate-passed-only. nodeID is the stable catalog node id
-// (RunGatedRefine's own nodeID param / node.ID); it is stamped into Lineage
-// as provenance only - never part of an artifact id (#1090 V4.2 point 4: a
-// node config field selects WHICH kind a node writes, not who wrote it in
-// the id). prevFindings threads the previous round's live findings (by hash
-// id) forward so a dropped id gets one final "resolved" revision instead of
-// every round rewriting every finding. Returns this round's live findings,
-// to pass back into the next call.
-// episodicRoundState carries cross-round, and (seeded once per invocation)
-// cross-turn, bookkeeping for the write site below: each finding's live
-// content, state and last-known revision, plus the code_review and document
-// kinds' last-known revisions - so a re-review turn stamps the real
-// parent_revision instead of fabricating round-1 (#1090 adversarial review
-// finding #2), and correctly marks a repeated finding "unchanged" rather
-// than "new" (finding #1). Saves are synchronous (SaveStructured/SaveBlob,
-// not the Async forms) so a node's own rounds for one id can never
-// interleave (finding #3) and so the real assigned revision is available
-// immediately to seed the next round's ParentRevision - still fail-open: a
-// save error is Warned and this round's bookkeeping just doesn't advance.
+// saveEpisodicRound writes this round's code_review/finding/document records (#1090 P2): gate-owned, one revision per round regardless of pass/fail - only delivery stays gate-passed-only. nodeID is the stable catalog node id (RunGatedRefine's own nodeID param / node.ID); it is stamped into Lineage as provenance only - never part of an artifact id (#1090 V4.2 point 4: a node config field selects WHICH kind a node writes, not who wrote it in the id). prevFindings threads the previous round's live findings (by hash id) forward so a dropped id gets one final "resolved" revision instead of every round rewriting every finding. Returns this round's live findings,
+// to pass back into the next call. episodicRoundState carries cross-round, and (seeded once per invocation) cross-turn, bookkeeping for the write site below: each finding's live content, state and last-known revision, plus the code_review and document kinds' last-known revisions - so a re-review turn stamps the real parent_revision instead of fabricating round-1 (#1090 adversarial review
+// finding #2), and correctly marks a repeated finding "unchanged" rather than "new" (finding #1). Saves are synchronous (SaveStructured/SaveBlob, not the Async forms) so a node's own rounds for one id can never interleave (finding #3) and so the real assigned revision is available immediately to seed the next round's ParentRevision - still fail-open: a save error is Warned and this round's bookkeeping just doesn't advance.
 type episodicRoundState struct {
 	findings     map[string]FindingRecord // LIVE findings only, by hash id
 	findingState map[string]string        // every finding id ever seen this chat -> its last WRITTEN state
@@ -479,14 +416,12 @@ type episodicRoundState struct {
 	documentRev  int
 	textRev      int // "text:<node>" fallback kind's last-known revision (#1095)
 	// triggerAnnotation: the PRIOR round's judge_round id (#1092 design V4 §7
-	// case 3) - stamped as this round's writes' lineage.TriggerAnnotation,
-	// then advanced by the caller (node.go) once the round's own judge_round
+	// case 3) - stamped as this round's writes' lineage.TriggerAnnotation, then advanced by the caller (node.go) once the round's own judge_round
 	// record is saved, so round r+1's revisions point back at round r's verdict.
 	triggerAnnotation string
 	// roundWrites: ids+revisions this call to saveEpisodicRound actually
 	// wrote (reset each call) - feeds the judge_round record's own "scored"
-	// field (#1100 scope item 2: "scored" = the code_review/finding ids this
-	// round wrote).
+	// field (#1100 scope item 2: "scored" = the code_review/finding ids this round wrote).
 	roundWrites []ScoredRef
 }
 
@@ -497,12 +432,9 @@ type ScoredRef struct {
 	Revision   int    `json:"revision"`
 }
 
-// JudgeRoundRecord: the "judge_round" kind's structured body (#1092, design
-// V4 §4.3/§4.6) - one per judge round, pass or fail; this record's own
+// JudgeRoundRecord: the "judge_round" kind's structured body (#1092, design V4 §4.3/§4.6) - one per judge round, pass or fail; this record's own
 // artifact.revision save IS the round's WAL entry (#1144 P2). Notes anchor a
-// quoted judge criticism to the exact revision and line it concerns;
-// Evidence carries only what the judge already tracks internally (see
-// NoteRef/JudgeEvidence doc below) - never invented to fill the shape.
+// quoted judge criticism to the exact revision and line it concerns; Evidence carries only what the judge already tracks internally (see NoteRef/JudgeEvidence doc below) - never invented to fill the shape.
 type JudgeRoundRecord struct {
 	Turn     string             `json:"turn"`
 	Round    int                `json:"round"`
@@ -533,21 +465,16 @@ type NoteRef struct {
 
 // JudgeNote: one anchored piece of judge feedback - built only from a
 // criterion whose Anchor was an exact quote (sanitizeAnchors has already
-// dropped an anchor that failed its gate check, so every quote here is
-// verified to appear in the round's answer).
+// dropped an anchor that failed its gate check, so every quote here is verified to appear in the round's answer).
 type JudgeNote struct {
 	Ref       NoteRef `json:"ref"`
 	Text      string  `json:"text"`
 	Criterion string  `json:"criterion"`
 }
 
-// JudgeRoundEvidence: what the judge actually verified this round.
-// ponytail: Reads stays empty - judgereads.go only TALLIES read-tool calls
-// (readCounter.count()), it never records which paths were opened; wiring
-// per-call path capture into countingTool.Run is the upgrade path. Probes
-// and ClaimsChecked ARE populated below, from data the judge already
-// produces (computeDeterministicCriteria's check results, submit_verdict's
-// per-finding verification).
+// JudgeRoundEvidence: what the judge actually verified this round. ponytail: Reads stays empty - judgereads.go only TALLIES read-tool calls (readCounter.count()), it never records which paths were opened; wiring
+// per-call path capture into countingTool.Run is the upgrade path. Probes and ClaimsChecked ARE populated below, from data the judge already
+// produces (computeDeterministicCriteria's check results, submit_verdict's per-finding verification).
 type JudgeRoundEvidence struct {
 	Reads         []JudgeReadRef `json:"reads,omitempty"`
 	Probes        []JudgeProbe   `json:"probes,omitempty"`
@@ -577,21 +504,9 @@ type JudgeClaim struct {
 	Why    string `json:"why,omitempty"`
 }
 
-// buildJudgeRoundRecord assembles this round's judge_round body from the
-// verdict/envelope the gate already computed - no extra reads or judge
-// calls. answer is the round's raw worker output: an anchor's quote is
-// searched there for LineHint since that's what the judge actually quoted
-// from, then attributed to primaryScored (the round's main written
-// artifact - code_review or document) as the closest available revision
-// reference (#1090 §9 note anchoring; a criterion's own finer-grained
-// artifact isn't resolvable from the anchor alone).
-// ponytail: for a review node, primaryScored points at the code_review JSON
-// artifact, but the quote is searched in the raw answer text, not that
-// artifact's own serialized bytes - so review-node snippets are never found
-// there (LineHint stays 0) even when the quote is real. Works for document
-// nodes only, where answer IS the artifact's content. Upgrade path: search
-// the referenced revision's serialized content (fetch it via recordstore)
-// instead of answer.
+// buildJudgeRoundRecord assembles this round's judge_round body from the verdict/envelope the gate already computed - no extra reads or judge calls. answer is the round's raw worker output: an anchor's quote is searched there for LineHint since that's what the judge actually quoted from, then attributed to primaryScored (the round's main written artifact - code_review or document) as the closest available revision
+// reference (#1090 §9 note anchoring; a criterion's own finer-grained artifact isn't resolvable from the anchor alone). ponytail: for a review node, primaryScored points at the code_review JSON artifact, but the quote is searched in the raw answer text, not that artifact's own serialized bytes - so review-node snippets are never found
+// there (LineHint stays 0) even when the quote is real. Works for document nodes only, where answer IS the artifact's content. Upgrade path: search the referenced revision's serialized content (fetch it via recordstore) instead of answer.
 func buildJudgeRoundRecord(turnID string, round int, passed bool, score float64, scored []ScoredRef, v verdict, det map[string]criterionScore, answer string) JudgeRoundRecord {
 	rec := JudgeRoundRecord{Turn: turnID, Round: round, Passed: passed, Score: score, Scored: scored}
 
@@ -638,14 +553,9 @@ func buildJudgeRoundRecord(turnID string, round int, passed bool, score float64,
 	return rec
 }
 
-// saveJudgeRoundRecord writes rec as this round's judge_round revision - the
-// round's ONLY WAL entry when a ledger is configured (#1144 P2: SaveStructured
-// itself appends artifact.revision fail-closed before the row). err is nil
-// with a missing artifact client (no-op, matching every other episodic write
-// in this file); it is non-nil only on a SaveStructured failure. The caller
-// (node.go) fail-closes on a non-nil err ONLY when cfg.Ledger is set, the
-// same scope the old separate judge.round append had - a store-row failure
-// with no WAL configured stays fail-open, as before.
+// saveJudgeRoundRecord writes rec as this round's judge_round revision - the round's ONLY WAL entry when a ledger is configured (#1144 P2: SaveStructured
+// itself appends artifact.revision fail-closed before the row). err is nil with a missing artifact client (no-op, matching every other episodic write
+// in this file); it is non-nil only on a SaveStructured failure. The caller (node.go) fail-closes on a non-nil err ONLY when cfg.Ledger is set, the same scope the old separate judge.round append had - a store-row failure with no WAL configured stays fail-open, as before.
 func saveJudgeRoundRecord(ctx context.Context, cfg Config, nodeID, turnID string, round int, rec JudgeRoundRecord) (id string, revision int, err error) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -739,13 +649,9 @@ func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	return st
 }
 
-// saveTextRound is the generic fallback for a gated node with no
-// cfg.IsReviewer/cfg.Artifact kind (#1095, #1090 P8): id "text:<node>", one
-// revision per round including failed rounds. Skipped when the worker
-// already tool-wrote an artifact this round (any kind, via write_<kind>,
-// write_artifact, or edit_artifact) - reusing the same drain the code_review
-// path uses, so a tool-writing implementer/explorer node doesn't ALSO get a
-// redundant text revision.
+// saveTextRound is the generic fallback for a gated node with no cfg.IsReviewer/cfg.Artifact kind (#1095, #1090 P8): id "text:<node>", one
+// revision per round including failed rounds. Skipped when the worker already tool-wrote an artifact this round (any kind, via write_<kind>,
+// write_artifact, or edit_artifact) - reusing the same drain the code_review path uses, so a tool-writing implementer/explorer node doesn't ALSO get a redundant text revision.
 func saveTextRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) {
 	if toolWritten := resetToolWrittenIDs(cfg); len(toolWritten) > 0 {
 		return
@@ -777,11 +683,9 @@ func truncateForBlob(content, nodeID, kind string) string {
 	return content[:artifactref.InlineMaxBytes] + fmt.Sprintf("\n\n[truncated: %d bytes over the %d byte cap]", over, artifactref.InlineMaxBytes)
 }
 
-// LatestCodeReviewVerdict reads the synthesizer's own structured verdict
-// (the code_review record the gate already wrote from write_code_review or
+// LatestCodeReviewVerdict reads the synthesizer's own structured verdict (the code_review record the gate already wrote from write_code_review or
 // the answer tail, #1090 P2) - the authoritative source for the fan-out's
-// delivered event (#1184), since a native synthesizer's write_code_review
-// leaves no VERDICT tail for mergeReviews' old fallback to find.
+// delivered event (#1184), since a native synthesizer's write_code_review leaves no VERDICT tail for mergeReviews' old fallback to find.
 func LatestCodeReviewVerdict(ctx context.Context, cfg Config) (verdict string, ok bool) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -802,15 +706,9 @@ func LatestCodeReviewVerdict(ctx context.Context, cfg Config) (verdict string, o
 	return rec.Verdict, true
 }
 
-// resetToolWrittenIDs drains the ids written via any loopback MCP
-// artifact-write tool this round (write_<kind>, write_artifact,
-// edit_artifact - ToolWrittenStage, threaded through the registered
-// MemSession), nil if there's no advisor thread/session for this node -
-// saveCodeReviewRound's answer-tail fallback uses it to skip re-staging an id
-// the worker already wrote directly (#1091 adversarial review finding #1).
-// Draining (not just snapshotting) is what makes this "this round" rather
-// than "this node run": an id tool-written in round N must not still be in
-// the stage suppressing round N+1's write for the same id (#1108 finding 2).
+// resetToolWrittenIDs drains the ids written via any loopback MCP artifact-write tool this round (write_<kind>, write_artifact, edit_artifact - ToolWrittenStage, threaded through the registered
+// MemSession), nil if there's no advisor thread/session for this node - saveCodeReviewRound's answer-tail fallback uses it to skip re-staging an id the worker already wrote directly (#1091 adversarial review finding #1). Draining (not just snapshotting) is what makes this "this round" rather
+// than "this node run": an id tool-written in round N must not still be in the stage suppressing round N+1's write for the same id (#1108 finding 2).
 func resetToolWrittenIDs(cfg Config) map[string]bool {
 	if cfg.AdvisorToken == "" {
 		return nil
@@ -827,8 +725,7 @@ func resetToolWrittenIDs(cfg Config) map[string]bool {
 }
 
 // reviewFields resolves this round's takeaway/verified/notes: tool-staged
-// fields directly, or the answer-tail's TAKEAWAY:/VERIFIED:/NOTES: tags on
-// the Recovered (no staging tools) path - never free prose (one fixed
+// fields directly, or the answer-tail's TAKEAWAY:/VERIFIED:/NOTES: tags on the Recovered (no staging tools) path - never free prose (one fixed
 // review format; findings stay inline, never re-derived from answer text here).
 func reviewFields(answer string, staged StagedDelivery) (takeaway string, verified, notes []string) {
 	if !staged.Recovered {
@@ -838,14 +735,9 @@ func reviewFields(answer string, staged StagedDelivery) (takeaway string, verifi
 	return strings.TrimSpace(r.Takeaway), r.Verified, r.Notes
 }
 
-// RenderCodeReviewForWrite computes the fixed format's rendered overview
-// markdown for a native write_code_review call, baked into the SAME
-// revision the call already writes (no extra round-trip) - the ADK-native
-// write_<kind> handler (internal/acp/memorymcp.go) calls this on kind ==
-// "code_review" and sets the result as args["rendered"] before
-// SaveStructured, so the artifact panel never sees a tool-authored record
-// without one. args is the raw JSON object the model sent; finding bodies
-// are resolved from the store the same way delivery does.
+// RenderCodeReviewForWrite computes the fixed format's rendered overview markdown for a native write_code_review call, baked into the SAME
+// revision the call already writes (no extra round-trip) - the ADK-native write_<kind> handler (internal/acp/memorymcp.go) calls this on kind == "code_review" and sets the result as args["rendered"] before
+// SaveStructured, so the artifact panel never sees a tool-authored record without one. args is the raw JSON object the model sent; finding bodies are resolved from the store the same way delivery does.
 func RenderCodeReviewForWrite(ctx context.Context, c *recordstore.Client, args map[string]any) string {
 	verdict, _ := args["verdict"].(string)
 	takeaway, _ := args["takeaway"].(string)
@@ -884,13 +776,9 @@ func stringsFromAny(v any) []string {
 	return out
 }
 
-// codeReviewTakeawayFallback covers the residual markers-only path: a native
-// write_code_review tool call's "takeaway" field is optional, so a
-// spec-compliant call can still leave it empty. Falls back to the findings'
-// own titles, then a plain verdict statement - deliveryartifact.go's render
-// must never see an empty takeaway. Gate-authored, so it's defensively
-// capped rather than validated: truncated to the same length stage_review
-// enforces on a model-supplied takeaway.
+// codeReviewTakeawayFallback covers the residual markers-only path: a native write_code_review tool call's "takeaway" field is optional, so a spec-compliant call can still leave it empty. Falls back to the findings'
+// own titles, then a plain verdict statement - deliveryartifact.go's render must never see an empty takeaway. Gate-authored, so it's defensively
+// capped rather than validated: truncated to the same length stage_review enforces on a model-supplied takeaway.
 func codeReviewTakeawayFallback(findings []FindingRecord, verdict string) string {
 	var t string
 	if len(findings) > 0 {
@@ -910,14 +798,9 @@ func codeReviewTakeawayFallback(findings []FindingRecord, verdict string) string
 	return capRunes(strings.ReplaceAll(t, "\n", " "), reviewTakeawayMaxLen)
 }
 
-// backfillCodeReviewTakeaway patches an empty Takeaway on a code_review
-// record the worker wrote directly via write_code_review this round (#1198).
-// Writes a second revision only when a backfill was actually needed - the
-// common case (a compliant tool call that filled Takeaway in) is a plain
-// read. recover() mirrors latestCodeReviewRevSafe's own guard: LatestWithMeta's
-// error return doesn't cover a service that panics outright (e.g. a
-// nil-embedded artifact.Service in tests), and this must never be the
-// reason a round fails to save.
+// backfillCodeReviewTakeaway patches an empty Takeaway on a code_review record the worker wrote directly via write_code_review this round (#1198). Writes a second revision only when a backfill was actually needed - the
+// common case (a compliant tool call that filled Takeaway in) is a plain read. recover() mirrors latestCodeReviewRevSafe's own guard: LatestWithMeta's error return doesn't cover a service that panics outright (e.g. a
+// nil-embedded artifact.Service in tests), and this must never be the reason a round fails to save.
 func backfillCodeReviewTakeaway(ctx context.Context, c *recordstore.Client, cfg Config, nodeID, turnID string, round int, st *episodicRoundState) {
 	defer func() { recover() }()
 	id, idErr := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
@@ -971,15 +854,9 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	// branch below returns early.
 	toolWritten := resetToolWrittenIDs(cfg)
 
-	// #1091 gate fallback: write_code_review/write_finding (the loopback MCP
-	// tools) let the worker write this round's code_review record directly,
-	// bypassing stage_review_comment/stage_review entirely. Detected via
-	// toolWritten membership, not a revision comparison against st.reviewRev -
-	// that baseline is only ever loaded lazily on this invocation's FIRST
-	// saveEpisodicRound call, which for a reviewer node happens after the
-	// draft round's write_code_review, so the baseline already includes it
-	// and a revision compare never fires in round 1 (#1108 B2). toolWritten
-	// is this round's own drain, so it's correct on round 1 too.
+	// #1091 gate fallback: write_code_review/write_finding (the loopback MCP tools) let the worker write this round's code_review record directly, bypassing stage_review_comment/stage_review entirely. Detected via
+	// toolWritten membership, not a revision comparison against st.reviewRev - that baseline is only ever loaded lazily on this invocation's FIRST
+	// saveEpisodicRound call, which for a reviewer node happens after the draft round's write_code_review, so the baseline already includes it and a revision compare never fires in round 1 (#1108 B2). toolWritten is this round's own drain, so it's correct on round 1 too.
 	codeReviewID, crIDErr := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	toolWroteCodeReview := crIDErr == nil && toolWritten[codeReviewID]
 
@@ -1001,8 +878,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	findingIDs := make([]string, 0, len(findings))
 	seen := make(map[string]bool, len(findings))
 	writeFinding := func(id string, rec FindingRecord) {
-		// Skip a rewrite when the last WRITTEN state already matches -
-		// avoids every intermediate revise round re-persisting "unchanged"
+		// Skip a rewrite when the last WRITTEN state already matches - avoids every intermediate revise round re-persisting "unchanged"
 		// for a finding nothing happened to, while still writing the one
 		// transition (new->unchanged, *->resolved) each state change earns.
 		if st.findingState[id] == rec.State {
@@ -1019,16 +895,9 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev})
 	}
 
-	// Findings the worker already wrote directly via write_finding this
-	// round: seed them into current/findingIDs from the store (no write here -
-	// they're already persisted) so the tail-parse loop below can skip them
-	// instead of minting a duplicate revision with a fabricated
-	// ParentRevision 0 (#1091 adversarial review finding #1). This seed loop
-	// always runs, unconditionally, before the tail-parse skip-decision loop
-	// below reads toolWritten, and before the toolWroteCodeReview short-circuit
-	// further down - a return before this loop would discard the drained ids
-	// and leave st.findingRev stale for a later round's ParentRevision (#1108
-	// B3).
+	// Findings the worker already wrote directly via write_finding this round: seed them into current/findingIDs from the store (no write here - they're already persisted) so the tail-parse loop below can skip them
+	// instead of minting a duplicate revision with a fabricated ParentRevision 0 (#1091 adversarial review finding #1). This seed loop always runs, unconditionally, before the tail-parse skip-decision loop below reads toolWritten, and before the toolWroteCodeReview short-circuit
+	// further down - a return before this loop would discard the drained ids and leave st.findingRev stale for a later round's ParentRevision (#1108 B3).
 	for id := range toolWritten {
 		if id == codeReviewID {
 			continue // not a FindingRecord; handled by toolWroteCodeReview below
@@ -1036,10 +905,8 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
 		if lerr != nil || !ok {
 			// #1108 finding 3a: log instead of silently dropping the finding
-			// from the round. Leave id in toolWritten so the tail-parse loop
-			// below still skips it rather than writing over it with a
-			// ParentRevision from st.findingRev[id] - that value has nothing
-			// to do with this unread revision and would be fabricated.
+			// from the round. Leave id in toolWritten so the tail-parse loop below still skips it rather than writing over it with a
+			// ParentRevision from st.findingRev[id] - that value has nothing to do with this unread revision and would be fabricated.
 			slog.Warn("tool-written finding could not be re-read while seeding the round; it will be missing from this round's code_review", "component", "vetting", "node", nodeID, "id", id, "err", lerr)
 			continue
 		}
@@ -1104,8 +971,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	for _, d := range dismissedComments {
 		dismissed = append(dismissed, DismissedEntry{Path: d.Path, Line: d.Line, Note: d.Body})
 	}
-	// Clamped rather than validated: the Recovered/answer-tail path never
-	// went through stage_review's tool-boundary CheckCodeReviewCaps, so an
+	// Clamped rather than validated: the Recovered/answer-tail path never went through stage_review's tool-boundary CheckCodeReviewCaps, so an
 	// over-cap value here must not make SaveStructured's own validateCodeReview
 	// reject the save and silently leave the record on last round's revision.
 	takeaway, verified, notes := clampCodeReviewFields(reviewFields(answer, staged))
@@ -1123,11 +989,9 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	}
 }
 
-// saveDocumentRound saves one "document" (or other blob-kind) revision per
-// round. No retention: every revision is kept (design V4.1 #2) - GC follows
+// saveDocumentRound saves one "document" (or other blob-kind) revision per round. No retention: every revision is kept (design V4.1 #2) - GC follows
 // the chat's own lifecycle, not a per-artifact policy. Returns false (after
-// logging) on any SaveBlob error, including an unregistered cfg.Artifact
-// kind, so the caller can fall back to a generic text write.
+// logging) on any SaveBlob error, including an unregistered cfg.Artifact kind, so the caller can fall back to a generic text write.
 func saveDocumentRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) bool {
 	c := recordClient(cfg)
 	if c == nil {
@@ -1167,13 +1031,9 @@ type reviewPreload struct {
 	Clean     []string         `json:"clean"`
 }
 
-// BuildReviewPreload loads the latest code_review record and its findings,
-// drops entries whose head_sha (lineage, not the JSON body - #1090 P2) is
-// unreachable from HEAD (force-push) or whose file changed since head_sha
-// (#1006 validity rule), and returns the untrusted-framed block to append to
-// the prompt. "" when there's nothing to preload. nodeID is logging context
-// only - the code_review/finding ids carry no node segment (#1090 V4.2), so
-// resuming under a different node id still finds the same records.
+// BuildReviewPreload loads the latest code_review record and its findings, drops entries whose head_sha (lineage, not the JSON body - #1090 P2) is unreachable from HEAD (force-push) or whose file changed since head_sha
+// (#1006 validity rule), and returns the untrusted-framed block to append to the prompt. "" when there's nothing to preload. nodeID is logging context
+// only - the code_review/finding ids carry no node segment (#1090 V4.2), so resuming under a different node id still finds the same records.
 func BuildReviewPreload(ctx context.Context, cfg Config, nodeID string) string {
 	if !cfg.IsReviewer || cfg.Setup == nil {
 		return ""

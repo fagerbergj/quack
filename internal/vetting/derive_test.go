@@ -11,11 +11,9 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// Regression: the planner cannot know a repo's check
-// commands - it authors the DAG before anything has looked at the repo - so PR
-// #180's "checks are mandatory" backstop forced it to GUESS (`go build` for a
-// JavaScript repo) and rejected 7 plans in a row; zero nodes ever ran. Checks
-// are a property of the REPO and are derived from it here, at gate time.
+// Regression: the planner cannot know a repo's check commands - it authors the
+// DAG before anything has looked at the repo - so PR #180's "checks are
+// mandatory" backstop forced it to guess, and checks are a property of the REPO, derived from it here, at gate time.
 
 func writeRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -179,10 +177,8 @@ func scopeCfg(t *testing.T, workdir string, allow ...string) (Config, string) {
 }
 
 // Regression (live e2e 2026-07-13): the planner set no usable workdir, so the
-// checks dir resolved to the workspace SCOPE ROOT - which holds no package.json.
-// "no checks derived from the repo; skipping checks" ⇒ checks never ran ⇒ code
-// that does not typecheck passed the gate at 0.7. The repo was one level down
-// (<scope>/games), where git_clone put it: SEARCH for it.
+// checks dir resolved to the workspace SCOPE ROOT - which holds no package.json -
+// "no checks derived from the repo; skipping checks" ⇒ checks never ran ⇒ code that does not typecheck passed the gate at 0.7. The repo was one level down (<scope>/games), where git_clone put it: SEARCH for it.
 func TestChecksDirFindsRepoBelowTheScopeRoot(t *testing.T) {
 	for _, workdir := range []string{"", ".", "games"} {
 		t.Run("workdir="+workdir, func(t *testing.T) {

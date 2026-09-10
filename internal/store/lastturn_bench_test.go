@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// prodSeedPath is the perf audit's seeded prod-shaped sqlite DB (93 chats, ~1.35M
-// chat_events, 14,050 ADK session events on chat-0000) - read-only scratch data, not built
-// by this repo. Benchmarks below skip when it's absent, the normal case off the audit's
-// own machine.
+// prodSeedPath is the perf audit's seeded prod-shaped sqlite DB (93 chats,
+// ~1.35M chat_events, 14,050 ADK session events on chat-0000) - read-only
+// scratch data, not built by this repo; benchmarks below skip when it's absent, the normal case off the audit's own machine.
 const prodSeedPath = "/home/jason/workspace/wt/audit/scratch-perf/prod.db"
 
 func openProdSeedStore(tb testing.TB) *Store {
@@ -25,9 +24,8 @@ func openProdSeedStore(tb testing.TB) *Store {
 }
 
 // BenchmarkGetLastTurnWithContent pins perf audit #3's fix: the run-end path
-// (StampTerminalOutcome, stampRunOutcome) must stay cheap on a chat whose session has
-// grown large, unlike GetTurnsWithContent (BenchmarkGetTurnsWithContent below) which
-// decodes and allocates for the whole 14,050-event session every time.
+// (StampTerminalOutcome, stampRunOutcome) must stay cheap on a chat whose
+// session has grown large, unlike GetTurnsWithContent (BenchmarkGetTurnsWithContent below) which decodes and allocates for the whole 14,050-event session every time.
 func BenchmarkGetLastTurnWithContent(b *testing.B) {
 	s := openProdSeedStore(b)
 	ctx := context.Background()

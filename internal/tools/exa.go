@@ -24,10 +24,9 @@ const (
 	exaSnippetMax = 500
 )
 
-// exaSearcher is the WebSearcher adapter for Exa. With an API key it uses the REST
-// API (structured JSON - robust); without one it falls back to Exa's keyless hosted
-// MCP and parses its text output. Either path satisfies the same port, so the
-// agent only ever sees web_search.
+// exaSearcher is the WebSearcher adapter for Exa: with an API key it uses the
+// REST API (structured JSON); without one, Exa's keyless hosted MCP, whose text
+// output it parses. Either path satisfies the same port - the agent only ever sees web_search.
 type exaSearcher struct {
 	apiKey       string
 	client       *http.Client
@@ -144,10 +143,9 @@ func exaText(content []mcp.Content) string {
 // are separated by a line containing only "---".
 var exaRecordSep = regexp.MustCompile(`(?m)^\s*---\s*$`)
 
-// parseExaResults turns web_search_exa's text output into structured hits. Each
-// block is a few "Key: value" lines (Title, URL, Published, …) followed by a
-// "Highlights:" body we keep as the snippet. ponytail: this parses Exa's
-// LLM-formatted text (the keyless MCP surface); the keyed path uses parseExaREST.
+// parseExaResults turns web_search_exa's text output into structured hits:
+// "Key: value" lines (Title, URL, Published, …) followed by a "Highlights:" body kept
+// as the snippet (ponytail: parses Exa's LLM-formatted text; the keyed path uses parseExaREST).
 func parseExaResults(text string) []SearchResult {
 	var out []SearchResult
 	for _, block := range exaRecordSep.Split(text, -1) {

@@ -58,10 +58,7 @@ func newBareRepoFixture(t *testing.T) string {
 	return bare
 }
 
-// ---------------------------------------------------------------------------
-// git_clone: https-only + credential-URL rejection (no network needed - both
-// are rejected before any git process runs).
-// ---------------------------------------------------------------------------
+// git_clone: https-only + credential-URL rejection (no network needed - both are rejected before any git process runs)
 
 func TestGitCloneRejectsNonHTTPS(t *testing.T) {
 	for _, url := range []string{
@@ -120,10 +117,9 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 	}
 	env2 := gitEnv("/home/x", workspace.Caps{}, auth)
 	want := map[string]bool{
-		// GIT_ASKPASS must be EXACTLY the executable symlink path - git execs
-		// the value directly as one program, so any "<path> <arg>" form is a
-		// broken (unexecutable) configuration. This is the regression guard
-		// for the live "cannot exec 'quack git-askpass'" failure.
+		// GIT_ASKPASS must be EXACTLY the executable symlink path - git execs the
+		// value directly as one program, so any "<path> <arg>" form is a broken
+		// (unexecutable) configuration: the regression guard for the live "cannot exec 'quack git-askpass'" failure.
 		"GIT_ASKPASS=/workspace/" + GitAskpassLinkName: false,
 		GitAskpassUserEnv + "=x-access-token":          false,
 		GitAskpassTokenEnv + "=secret":                 false,
@@ -244,9 +240,8 @@ func TestCredentialForMatchesExactHostOnly(t *testing.T) {
 }
 
 // TestRunGitNeutralizesHooks: an executable .git/hooks/post-checkout that
-// writes a marker file must NOT fire when runGit checks out a branch - the
-// escape hatch a sandboxed ACP agent's own commit would otherwise leave
-// behind for this unconfined git binary to trigger.
+// writes a marker file must NOT fire when runGit checks out a branch -
+// otherwise it's an escape hatch a sandboxed ACP agent's own commit could trigger via this unconfined git binary.
 func TestRunGitNeutralizesHooks(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -269,9 +264,6 @@ func TestRunGitNeutralizesHooks(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // git_checkout - the reviewer's path to a PR branch. A shallow clone
-// (--depth 1, which git implies --single-branch for) lands on the default
-// branch ONLY: no other branch is reachable, so a code review of a PR was
-// impossible before this tool existed.
-// ---------------------------------------------------------------------------
+// (--depth 1, which git implies --single-branch for) lands on the default branch
+// ONLY: no other branch is reachable, so a code review of a PR was impossible before this tool existed.

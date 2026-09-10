@@ -16,9 +16,7 @@ import (
 
 // TestPlayback_ReplaysRecordedRoundWithNoSubprocess records one real round
 // through the fake subprocess via the real emission seam, then replays it
-// through Options.Replay - no subprocess, no Command that could even be
-// spawned - and asserts the gate-visible activity (thought, durable
-// run_command tool pair, final answer text) matches the recording (#604).
+// through Options.Replay - no subprocess, no Command that could even be spawned - and asserts the gate-visible activity (thought, durable run_command tool pair, final answer text) matches the recording (#604).
 func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
 	store := ledgertest.NewMemStore()
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
@@ -95,8 +93,7 @@ func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
 
 // TestPlayback_MissingExchangeIsMissError: a coords/agent the recording
 // never made an invoke_agent call for replays as a structured MissError
-// (stream + position), never a bare "not found" or a silent empty round -
-// the ACP twin of replay's model/tool "extra call" acceptance case.
+// (stream + position), never a bare "not found" or a silent empty round - the ACP twin of replay's model/tool "extra call" acceptance case.
 func TestPlayback_MissingExchangeIsMissError(t *testing.T) {
 	store := ledgertest.NewMemStore()
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))

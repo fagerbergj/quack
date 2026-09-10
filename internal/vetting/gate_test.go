@@ -145,8 +145,7 @@ func TestCiteReasonBoundsLongList(t *testing.T) {
 
 // TestCiteReasonSortsWorstFirstBeforeTruncating: answer order lists the
 // least-bad link first and the worst-scored link last - the reported bug
-// truncated to the first 10 in answer order and elided the worst offenders.
-// The fix must sort ascending by score before capping.
+// truncated to the first 10 in answer order and elided the worst offenders. The fix must sort ascending by score before capping.
 func TestCiteReasonSortsWorstFirstBeforeTruncating(t *testing.T) {
 	var details []citationDetail
 	for i := 0; i < 15; i++ {
@@ -178,8 +177,7 @@ func TestCiteReasonSortsWorstFirstBeforeTruncating(t *testing.T) {
 
 // TestCiteReasonNoLongerCarriesLegend is the #941 follow-up: the tier legend
 // moved out of the reason string and into cites_sources's structured bands
-// (citesSourcesBands, node.go) - the reason itself must never emit it again,
-// on any round.
+// (citesSourcesBands, node.go) - the reason itself must never emit it again, on any round.
 func TestCiteReasonNoLongerCarriesLegend(t *testing.T) {
 	const legendFragment = "backing tiers:"
 	unbacked := []citationDetail{
@@ -225,9 +223,7 @@ func TestCitationScoreNoCitations(t *testing.T) {
 
 // TestCitationScoreSkippedWithoutRetrieval is the regression that matters
 // most for this check (removal of local-citation scoring, see judge.go):
-// a code-only node that never fetched or searched the web must cleanly
-// abstain (ok=false, "nothing to grade") rather than scoring 0 and forcing a
-// revision round - even though it cited local files inline.
+// a code-only node that never fetched or searched the web must cleanly abstain (ok=false, "nothing to grade") rather than scoring 0 and forcing a revision round - even though it cited local files inline.
 func TestCitationScoreSkippedWithoutRetrieval(t *testing.T) {
 	answer := "Per quack@internal/foo.go:1-5, [see also](internal/bar.go)."
 	act := workerActivity{clonedRepos: []string{"https://github.com/org/repo"}}
@@ -399,8 +395,7 @@ func TestAggregateVerdictMinAndClamp(t *testing.T) {
 
 // The rubric asks the judge for 0/1/2/3 integers; the pipeline works in 0–1. A
 // verdict on the raw scale (any whole-number score) must be divided by
-// judgeScaleMax, so a perfect criterion (3) becomes 1.0 and the weakest
-// drives the overall.
+// judgeScaleMax, so a perfect criterion (3) becomes 1.0 and the weakest drives the overall.
 func TestParseVerdictNormalizesRawScale(t *testing.T) {
 	input := `{"criteria":{"grounded":{"score":1},"no_fabrication":{"score":3},"answers_question":{"score":3},"internally_consistent":{"score":1},"cites_sources":{"score":0}},"score":1,"passed":true,"feedback":""}`
 	v, err := parseVerdict(input)
@@ -428,8 +423,7 @@ func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {
 
 // A raw verdict where every criterion happens to land on level 1 (a "deny,
 // small issues" band on the 4-level scale) must still be divided by
-// judgeScaleMax, not mistaken for an already-normalized 0–1 verdict - level 1
-// is a legal raw score, not 1.0.
+// judgeScaleMax, not mistaken for an already-normalized 0–1 verdict - level 1 is a legal raw score, not 1.0.
 func TestNormalizeScaleAllOnesIsRawNotNormalized(t *testing.T) {
 	v := verdict{Score: 1, Criteria: map[string]criterionScore{"a": {Score: 1}, "b": {Score: 1}}}
 	normalizeScale(&v)
@@ -441,10 +435,7 @@ func TestNormalizeScaleAllOnesIsRawNotNormalized(t *testing.T) {
 
 // TestFoldDeterministic_RequireRetrievalHardFail: a retrieval agent that did
 // ZERO web_search/web_fetch cannot pass the gate - regression for a live e2e
-// hole where a worker wrote a question to the user as its answer
-// text (no tool calls at all), citationScore abstained (nothing to grade), and
-// the judge waved the "answer" through. Weakest-link must be 0, and the
-// feedback must point at BOTH ways out (retrieve, or ask_user).
+// hole where a worker's question-as-answer text sailed through (citationScore abstained, the judge waved it through). Weakest-link must be 0, and the feedback must point at BOTH ways out (retrieve, or ask_user).
 func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
 	det, _ := computeDeterministicCriteria(context.Background(), "Which city are you moving to?", workerActivity{}, Config{RequireRetrieval: true})

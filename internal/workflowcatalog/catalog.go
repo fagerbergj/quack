@@ -1,10 +1,6 @@
-// Package workflowcatalog composes deployment-defined DAG shapes
-// (config.Config.Workflows, quack.yaml's top-level workflows:) into the
-// plan-work skill's "Common workflows" table (issue #805), so an operator
-// teaches the planner a house-standard shape without forking the shipped
-// skill. Composition happens once, at skill-source construction (startup):
-// the planner always sees one deterministic table, never a mid-plan lookup
-// that can fail or drift between rounds of the same run.
+// Package workflowcatalog composes deployment-defined DAG shapes (config.Config.Workflows) into
+// the plan-work skill's "Common workflows" table (#805) so an operator teaches the planner a house
+// shape without forking the shipped skill - composed once at skill-source construction (startup).
 package workflowcatalog
 
 import (
@@ -27,11 +23,9 @@ const planWorkSkill = "plan-work"
 // row of that table.
 const tableSep = "| --- | --- |"
 
-// Shape is a composed catalog entry with provenance - the record shape a
-// future dynamic store (#806) will persist. Source is always "operator" and
-// Approved always true today because quack.yaml is the only source and being
-// in the file IS the approval; the fields exist now so #806 swaps storage,
-// not the record.
+// Shape is a composed catalog entry with provenance - the record shape a future dynamic store
+// (#806) will persist. Today Source is always "operator" and Approved always true (quack.yaml
+// is the only source; being in the file is the approval) - #806 swaps storage, not the record.
 type Shape struct {
 	Name     string
 	Trigger  string
@@ -40,17 +34,15 @@ type Shape struct {
 	Source   string
 	Version  string
 	Approved bool
-	// Nodes is non-empty only for a bound shape (workflow binding): Bind
-	// renders it into a dag.Plan directly, skipping the planner LLM call
-	// entirely. Empty Nodes means Trigger/DAGShape stay a planner hint only,
-	// exactly like every shape before binding existed.
+	// Nodes is non-empty only for a bound shape: Bind renders it into a dag.Plan
+	// directly, skipping the planner LLM call. Empty means Trigger/DAGShape stay
+	// a planner hint only, exactly like every shape before binding existed.
 	Nodes []config.WorkflowNode
 }
 
-// FromConfig builds provenance-carrying Shapes from config entries.
-// config.Config.validateWorkflows has already dropped malformed entries,
-// confirmed every named agent is configured, and validated any bound node
-// list, so this is a pure mapping.
+// FromConfig maps config entries to provenance-carrying Shapes: validateWorkflows
+// has already dropped malformed entries, confirmed named agents, and validated
+// bound node lists - this is a pure mapping.
 func FromConfig(shapes []config.WorkflowShape, revision string) []Shape {
 	out := make([]Shape, 0, len(shapes))
 	for _, w := range shapes {
@@ -98,11 +90,9 @@ func Bind(shape Shape, ask string) (nodes []dag.RawNode, ok bool) {
 	return out, true
 }
 
-// Wrap returns src unchanged when shapes is empty - the regression guard: a
-// deployment with no custom shapes gets the exact same Source, not a
-// passthrough wrapper around it, so the composed catalog is byte-identical
-// to today's. Otherwise it returns a Source that appends shapes to
-// plan-work's table on every LoadInstructions("plan-work") call.
+// Wrap returns src unchanged when shapes is empty - no custom shapes means the exact same Source,
+// not a passthrough wrapper, so the composed catalog stays byte-identical to today's. Otherwise
+// it returns a Source that appends shapes to plan-work's table on every LoadInstructions call.
 func Wrap(src skill.Source, shapes []Shape) skill.Source {
 	if len(shapes) == 0 {
 		return src
@@ -123,13 +113,9 @@ func (a *augmented) LoadInstructions(ctx context.Context, name string) (string, 
 	return compose(instructions, a.shapes), nil
 }
 
-// compose appends non-colliding shapes directly beneath the shipped table's
-// last row (never as a second table - a model matches the FIRST table it
-// reads as the catalog, so a second one is invisible to routing). A shape
-// whose trigger already matches an existing row (shipped or earlier custom,
-// case/whitespace-insensitive) is refused with a warning naming it, rather
-// than silently winning or losing a race with whichever the model reads
-// first.
+// compose appends non-colliding shapes beneath the shipped table's last row - never a second table
+// (a model matches only the first table it reads, so a second is invisible to routing). A trigger
+// already matched by an existing row (case/whitespace-insensitive) is refused with a warning naming it.
 func compose(instructions string, shapes []Shape) string {
 	lines := strings.Split(instructions, "\n")
 	sepIdx := -1

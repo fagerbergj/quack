@@ -1,12 +1,8 @@
 package dag_test
 
 // Guard-ladder confirm tier over the A2A hop: a guarded tool executes inside
-// the A2A server's own runner session, which holds none of the confirm
-// pause/resume events - scanning it found nothing and re-requested
-// confirmation on every approved re-issue, so the approval could never be
-// consumed. Exercises the full production shape: gated node → A2A
-// client/server → confirm-guarded tool → pause → resume, over the durable
-// DB-backed session service.
+// the A2A server's own runner session, which holds none of the confirm pause/resume events -
+// scanning it found nothing and re-requested confirmation on every approved re-issue, so the approval could never be consumed. Exercises the full production shape: gated node → A2A client/server → confirm-guarded tool → pause → resume, over the durable DB-backed session service.
 
 import (
 	"context"
@@ -98,9 +94,7 @@ func reqHasResolvedGuardResponse(req *model.LLMRequest, name string) bool {
 
 // guardA2ARun bundles the pieces each test drives: a REAL confirm-guarded
 // delete_path (tools.Build with Guards, bound to a temp jail), a worker
-// llmagent served over loopback A2A, and the durable sqlite-backed session
-// service shared by the A2A server, the executor, and the guard (exactly how
-// internal/serve wires st.Sessions everywhere).
+// llmagent served over loopback A2A, and the durable sqlite-backed session service shared by the A2A server, the executor, and the guard (exactly how internal/serve wires st.Sessions everywhere).
 type guardA2ARun struct {
 	stub     *guardA2AStub
 	sessions session.Service
@@ -128,10 +122,8 @@ func newGuardA2ARun(t *testing.T) *guardA2ARun {
 	writeJailFile(t, jail, "u1", "other.txt")
 
 	// delete_path (the fixture's original guarded tool) is deleted with the
-	// native coding toolset - the guard LADDER is not. A test-local ExtTool
-	// with the same observable side effect (removing a jailed file) exercises
-	// the identical confirm-over-A2A path: Build guards ExtTools by name
-	// exactly as it guarded builtins.
+	// native coding toolset - the guard LADDER is not. A test-local ExtTool with
+	// the same observable side effect (removing a jailed file) exercises the identical confirm-over-A2A path: Build guards ExtTools by name exactly as it guarded builtins.
 	wipe, err := functiontool.New[wipeArgs, wipeResult](
 		functiontool.Config{Name: "delete_path", Description: "remove one jailed file"},
 		func(ctx adkagent.Context, a wipeArgs) (wipeResult, error) {
@@ -186,11 +178,9 @@ func newGuardA2ARun(t *testing.T) *guardA2ARun {
 	}
 }
 
-// writeJailFile seeds a fixture the RUN's guarded tools will act on, so it must
-// land in the per-chat scope those tools resolve under (<root>/<userID>/
-// <runGraphChatID>/<rel>) - NOT the per-user root. Seeding the per-user root
-// would leave delete_path pointing at a path that does not exist, and the guard
-// tests would assert against a file the worker never touched.
+// writeJailFile seeds a fixture the RUN's guarded tools will act on, so it
+// must land in the per-chat scope those tools resolve under (<root>/<userID>/
+// <runGraphChatID>/<rel>) - NOT the per-user root: seeding the per-user root would leave delete_path pointing at a path that does not exist, and the guard tests would assert against a file the worker never touched.
 func writeJailFile(t *testing.T, jail *workspace.Jail, userID, rel string) {
 	t.Helper()
 	real, err := jail.Resolve(userID, runGraphChatID, filepath.Join(runGraphNodeID, rel))
@@ -207,8 +197,7 @@ func writeJailFile(t *testing.T, jail *workspace.Jail, userID, rel string) {
 
 // jailFileExists checks the SAME per-chat scope writeJailFile seeded and the
 // run's tools act on - so "the approved delete really happened" is asserted
-// against the file the worker actually resolved, not a same-named path at the
-// per-user root that nothing ever touched.
+// against the file the worker actually resolved, not a same-named path at the per-user root that nothing ever touched.
 func jailFileExists(t *testing.T, jail *workspace.Jail, userID, rel string) bool {
 	t.Helper()
 	real, err := jail.Resolve(userID, runGraphChatID, filepath.Join(runGraphNodeID, rel))
@@ -240,9 +229,7 @@ func confirmResume(interruptID, decision string) *genai.Content {
 
 // TestGuardConfirm_OverA2A_ApprovalConsumed reproduces the LIVE failure: over
 // A2A, an approved same-args re-issue must EXECUTE (consume the pinned
-// approval), not re-request confirmation forever. The old guard scanned the
-// A2A context session (its own ctx coordinates), found no confirm events, and
-// looped.
+// approval), not re-request confirmation forever - the old guard scanned the A2A context session (its own ctx coordinates), found no confirm events, and looped.
 func TestGuardConfirm_OverA2A_ApprovalConsumed(t *testing.T) {
 	h := newGuardA2ARun(t)
 
@@ -283,10 +270,7 @@ func TestGuardConfirm_OverA2A_ApprovalConsumed(t *testing.T) {
 
 // guardReviseA2AStub raises the guard confirmation only during a JUDGE-FAIL
 // REVISION, not the initial draft - reproducing the bug where the gate's
-// pause check ran only after the initial draft, so a confirm-tiered op first
-// proposed during revision never surfaced and sailed to the judge unconfirmed.
-// Shape: draft turn writes plain text (no guarded op) → judge fails →
-// revision turn proposes delete_path (confirm pause) → approval → re-issue.
+// pause check ran only after the initial draft, so a confirm-tiered op first proposed during revision never surfaced and sailed to the judge unconfirmed. Shape: draft turn writes plain text (no guarded op) → judge fails → revision turn proposes delete_path (confirm pause) → approval → re-issue.
 type guardReviseA2AStub struct {
 	mu     sync.Mutex
 	calls  int
@@ -338,11 +322,7 @@ func (s *guardReviseA2AStub) GenerateContent(_ context.Context, req *model.LLMRe
 
 // TestGuardConfirm_OverA2A_RaisedDuringRevision is the regression for the live
 // confirm-pause safety bug: a guard confirmation proposed in a REVISE round (not
-// the initial draft) must still pause the node. Before the fix, the gate scanned
-// for ask/confirm turns only after the initial draft, so a revision's git_push-
-// style confirmation was silently dropped and the incomplete answer completed
-// without human approval. After the fix, run1 pauses; approving it executes the
-// operation exactly once.
+// the initial draft) must still pause the node - before the fix, the gate scanned for ask/confirm turns only after the initial draft, so a revision's git_push-style confirmation was silently dropped and the incomplete answer completed without human approval. After the fix, run1 pauses; approving it executes the operation exactly once.
 func TestGuardConfirm_OverA2A_RaisedDuringRevision(t *testing.T) {
 	stub := &guardReviseA2AStub{}
 
@@ -359,10 +339,8 @@ func TestGuardConfirm_OverA2A_RaisedDuringRevision(t *testing.T) {
 	writeJailFile(t, jail, "u1", "victim.txt")
 
 	// delete_path (the fixture's original guarded tool) is deleted with the
-	// native coding toolset - the guard LADDER is not. A test-local ExtTool
-	// with the same observable side effect (removing a jailed file) exercises
-	// the identical confirm-over-A2A path: Build guards ExtTools by name
-	// exactly as it guarded builtins.
+	// native coding toolset - the guard LADDER is not. A test-local ExtTool with
+	// the same observable side effect (removing a jailed file) exercises the identical confirm-over-A2A path: Build guards ExtTools by name exactly as it guarded builtins.
 	wipe, err := functiontool.New[wipeArgs, wipeResult](
 		functiontool.Config{Name: "delete_path", Description: "remove one jailed file"},
 		func(ctx adkagent.Context, a wipeArgs) (wipeResult, error) {

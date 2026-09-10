@@ -113,10 +113,8 @@ describe('MemoryEntry tier rendering', () => {
 
   it('renders an unrecognized status as its raw value on the lifecycle badge', () => {
     // Row text can legitimately still say "unverified" elsewhere - the
-    // separate vote-based tier badge (epic #1255 P4, memory.tier) defaults
-    // to unverified independent of this lifecycle status; memoryTierLabel's
-    // own unit tests above cover the "never masquerades as unverified" claim
-    // for THIS badge specifically.
+    // separate vote-based tier badge (epic #1255 P4, memory.tier) defaults to
+    // unverified independent of this lifecycle status; memoryTierLabel's unit tests above cover the "never masquerades as unverified" claim for THIS badge specifically.
     const el = render({ ...BASE, status: 'pending_review' as Memory['status'] })
     expect(el.textContent).toContain('pending_review')
   })

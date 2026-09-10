@@ -4,10 +4,9 @@ import { MemoryEntry } from './MemoryEntry'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-// AGE_BANDS is checked in order - the first band whose cutoff the memory's
-// age is under wins. Grouping is by AGE ONLY (#746 item 14): NOT by
-// retrieval usage, which doesn't exist as data yet (that's #747, a separate
-// PR needing a schema field + a write on the recall path).
+// Checked in order - the first band whose cutoff the memory's age is under
+// wins. Grouping is by AGE ONLY (#746 item 14): NOT by retrieval usage,
+// which doesn't exist as data yet (#747 - a separate PR needing a schema field + a write on the recall path).
 const AGE_BANDS: { label: string; underMs: number }[] = [
   { label: 'Today', underMs: DAY_MS },
   { label: 'This week', underMs: 7 * DAY_MS },
@@ -30,10 +29,9 @@ export interface AgeGroup {
   memories: Memory[]
 }
 
-// groupByAge buckets memories (assumed already sorted by the caller) into
-// age bands without breaking up runs of the same band - so old memories stay
-// visibly grouped at the end regardless of the list's overall sort order.
-// Test-only call counter for the useMemo below.
+// Buckets memories (assumed already sorted by the caller) into age bands
+// without breaking up runs of the same band - old memories stay visibly
+// grouped at the end regardless of the list's overall sort order. Test-only call counter for the useMemo below.
 export const groupByAgeProbe = { count: 0 }
 
 export function groupByAge(memories: Memory[], now = Date.now()): AgeGroup[] {
@@ -55,18 +53,14 @@ export interface MemoryTimelineProps {
   // Test/story seam: pins "now" so age-band assignment is deterministic.
   now?: number
   // grouped=false (#1266 review) renders a flat list, no age-band headers.
-  // groupByAge assumes time-ordered input - fed a page sorted by
-  // upvotes/score/downvotes/recalls/last_recalled (ages non-monotonic), it
-  // produces repeating, interleaved "Today...Older...Today" headers. Only
-  // the two time sorts (newest/oldest) are actually time-ordered.
+  // groupByAge assumes time-ordered input - fed a page sorted by upvotes/score/
+  // downvotes/recalls/last_recalled (non-monotonic ages) it produces repeating, interleaved "Today...Older...Today" headers; only the two time sorts (newest/oldest) are actually time-ordered.
   grouped?: boolean
 }
 
-// MemoryTimeline (#746 item 14): a vertical line down the left carries each
-// entry's date, with entries grouped into age bands (Today / This week / This
-// month / Older) so old memories are visibly at the end instead of mixed
-// through a flat list - only meaningful when the caller's sort is time-order
-// (see `grouped` above).
+// (#746 item 14): a vertical line down the left carries each entry's date,
+// with entries grouped into age bands (Today / This week / This month /
+// Older) so old memories are visibly at the end instead of mixed through a flat list - only meaningful when the caller's sort is time-order (see `grouped` above).
 export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true }: MemoryTimelineProps) {
   // groupByAge is O(n) but was rebuilt on every render (any unrelated state
   // change, e.g. a vote) with no memoization - #1286.

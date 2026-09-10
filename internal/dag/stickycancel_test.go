@@ -10,11 +10,7 @@ import (
 
 // TestExecute_RetryClearsStaleCancelSticky: runControls.cancelled is
 // deliberately sticky past unregister (so the stream can label a node
-// "cancelled" instead of "failed"), but nothing on the retry path reset it -
-// register() cleared only the paused sticky. "stop node, then retry node"
-// (cancelled -> queued is the only legal transition) ran the node to
-// completion and then discarded its answer, because the stream still saw
-// the PREVIOUS attempt's cancel flag.
+// "cancelled" instead of "failed"), but nothing on the retry path reset it - register() cleared only the paused sticky. "stop node, then retry node" (cancelled -> queued is the only legal transition) ran the node to completion and then discarded its answer, because the stream still saw the PREVIOUS attempt's cancel flag.
 func TestExecute_RetryClearsStaleCancelSticky(t *testing.T) {
 	const chatID, nodeID = "chat-sticky", "n1"
 	ex := NewExecutor(session.InMemoryService(), nil, nil, nil, nil, nil)

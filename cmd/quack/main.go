@@ -1,10 +1,7 @@
-// Command quack is Quack's one-binary CLI and server. `quack server run` runs the
-// REST + MCP API and the embedded SPA; the other verbs (`chat`, `api`, `server`)
-// drive a running server over HTTP + SSE. There is no TUI: `-p`, `chat send`,
-// and `chat show` are the interface, and their pause/failure exit codes
-// (0/1/2 - see internal/cli's Report) make them pipeable and scriptable. This
-// file is the cobra wiring only - command funcs stay thin and dispatch into
-// internal/cli (see the quack-cli skill).
+// Command quack is Quack's one-binary CLI and server. `quack server run`
+// runs the REST + MCP API and the embedded SPA; the other verbs (`chat`,
+// `api`, `server`) drive a running server over HTTP + SSE. There is no TUI:
+// `-p`, `chat send`, and `chat show` are the interface, and their pause/failure exit codes (0/1/2 - see internal/cli's Report) make them pipeable and scriptable. This file is the cobra wiring only - command funcs stay thin and dispatch into internal/cli (see the quack-cli skill).
 package main
 
 import (
@@ -113,9 +110,7 @@ func newRootCmd() *cobra.Command {
 
 // exitIfNonZero calls os.Exit(code) for a non-zero code - used by the
 // bulletproof-CLI commands (-p, chat send, chat show) whose exit codes (0
-// answered / 1 failed / 2 paused) don't fit cobra's error-only exit(1) model.
-// A zero code returns normally so deferred cleanup (e.g. an in-process
-// server's teardown) still runs.
+// answered / 1 failed / 2 paused) don't fit cobra's error-only exit(1) model. A zero code returns normally so deferred cleanup (e.g. an in-process server's teardown) still runs.
 func exitIfNonZero(code int) {
 	if code != 0 {
 		os.Exit(code)
@@ -249,10 +244,9 @@ func newChatSendCmd() *cobra.Command {
 	return c
 }
 
-// newChatShowCmd: `chat show <id>` - a status snapshot (id/title/status/pending
-// question, the last turn's per-node table, then its answer), or the full
-// ChatDetail with --json. -f/--follow attaches to the live stream after the
-// snapshot (replaces the TUI's live view).
+// newChatShowCmd: `chat show <id>` - a status snapshot (id/title/status/
+// pending question, the last turn's per-node table, then its answer), or the
+// full ChatDetail with --json. -f/--follow attaches to the live stream after the snapshot (replaces the TUI's live view).
 func newChatShowCmd() *cobra.Command {
 	var asJSON, follow bool
 	c := &cobra.Command{
@@ -674,9 +668,7 @@ func newServerCmd() *cobra.Command {
 
 // newServerLoginCmd: `quack server login <name>` - OIDC login against a
 // registered server's IdP. Separate from `server add` (which just records
-// name→url) so a server that needs no auth never has to know about
-// issuer/client-id, and re-login (token lost, revoked, or issuer rotated) is
-// just re-running this one command.
+// name→url) so a server that needs no auth never has to know about issuer/client-id, and re-login (token lost, revoked, or issuer rotated) is just re-running this one command.
 func newServerLoginCmd() *cobra.Command {
 	var scopes []string
 	c := &cobra.Command{
@@ -974,11 +966,9 @@ func defaultConfigPath() string {
 	return "quack.yaml"
 }
 
-// resolveTarget returns the server base URL a client command should talk to, plus
-// a stop func to call when done. If a remote is configured (--server override or
-// an active registry entry) it's used as-is and stop is a no-op. Otherwise the
-// duck is started in-process on a loopback port and stop tears it down - so the
-// CLI works locally with no separate `quack server run`.
+// resolveTarget returns the server base URL a client command should talk to
+// plus a stop func to call when done. If a remote is configured (--server
+// override or an active registry entry) it's used as-is and stop is a no-op. Otherwise the duck is started in-process on a loopback port and stop tears it down - so the CLI works locally with no separate `quack server run`.
 func resolveTarget(ctx context.Context, override string) (string, func(), error) {
 	noop := func() {}
 	cc, err := cli.LoadClient()

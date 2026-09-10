@@ -192,10 +192,7 @@ func TestListArtifactRevisions_NewestFirstWithLineage(t *testing.T) {
 
 // TestListArtifactRevisions_UsesNameScopedQuery is the adversarial-review
 // follow-up (#1094, then #1113): the endpoint must issue RevisionsForName's
-// WHERE name = ? query, not the ListForSession fallback's full-chat scan -
-// asserted on the raw SQL gorm renders, not QueryCount, since both paths
-// issue exactly one SELECT (a bare count can't tell them apart; it only
-// guards against N+1, not against an unscoped single scan).
+// WHERE name = ? query, not the ListForSession fallback's full-chat scan - asserted on the raw SQL gorm renders, not QueryCount, since both paths issue exactly one SELECT (a bare count can't tell them apart; it only guards against N+1, not against an unscoped single scan).
 func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
 	h := newTestHandler(t)
 	h.store.EnableQueryRecording() // off by default in production; this test is the one real consumer

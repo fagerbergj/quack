@@ -66,10 +66,9 @@ func nodeStatus(t *testing.T, st *store.Store, nodeID string) store.DagNode {
 	return *n
 }
 
-// TestShutdownPersistsPausedNodes is the first half of #962's restart
-// acceptance: a drain leaves a done node alone, the running node
-// paused/shutdown on disk, the queued node queued, and the chat NOT
-// interrupted.
+// TestShutdownPersistsPausedNodes is the first half of #962's restart acceptance: a drain
+// leaves the done node alone, the running node paused/shutdown on disk, the queued node
+// queued, and the chat NOT interrupted.
 func TestShutdownPersistsPausedNodes(t *testing.T) {
 	st, chatID := threeNodeChat(t)
 	hub := stream.NewHub()
@@ -238,10 +237,9 @@ func TestBootFailsUnresumableNode(t *testing.T) {
 		t.Fatalf("pause n2: %v", err)
 	}
 
-	// An unresumable node is marked failed before ScanOrphanedRuns runs, so
-	// the chat has no paused node left and lands in `interrupted` - a real
-	// jail here proves removeStaleCloneDir actually fires on that path
-	// (#1213), not just that a nil jail is tolerated.
+	// An unresumable node is marked failed before ScanOrphanedRuns runs, so the chat lands
+	// `interrupted` with no paused node; a real jail proves removeStaleCloneDir fires on that
+	// path (#1213), not just that a nil jail is tolerated.
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)

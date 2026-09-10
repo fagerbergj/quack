@@ -194,9 +194,7 @@ func (o *OpenAIModel) applyDefaultEffort(req *model.LLMRequest) {
 
 // effortThinkingConfig maps models.<name>.effort to genai's enum - the same
 // low/medium/high vocabulary as gates.judge.thinking_level. Config.validate
-// is the gate for "low"/"medium"/"high"/""; an unrecognized value here (this
-// path is unreachable for a validated config) sends no ThinkingConfig rather
-// than silently guessing medium.
+// is the gate for "low"/"medium"/"high"/""; an unrecognized value here (this path is unreachable for a validated config) sends no ThinkingConfig rather than silently guessing medium.
 func effortThinkingConfig(effort string) *genai.ThinkingConfig {
 	switch effort {
 	case "low":
@@ -317,10 +315,9 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 				lastPartIsText = false
 			}
 
-			// Surface reasoning_content as a Thought part so the UI can render thinking.
-			// openai-go marks untyped ExtraFields as status "invalid" (no typed extras
-			// decoder is registered for this struct), so Valid() is always false here -
-			// gate on the raw bytes instead, the way an omitted/null field already does.
+			// Surface reasoning_content as a Thought part so the UI can render
+			// thinking. openai-go marks untyped ExtraFields as status "invalid" (no
+			// typed extras decoder is registered for this struct), so Valid() is always false here - gate on the raw bytes instead, the way an omitted/null field already does.
 			if rc := choice.Delta.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
 				if raw := rc.Raw(); raw != "" && raw != "null" {
 					var text string
@@ -434,12 +431,9 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 	}
 }
 
-// logRequestTail logs, at Debug, the shape of the request the model actually
-// receives: content count and the last 12 entries as role/kind (CALL:name /
-// RESP:name(bytes) / text). This is the ground truth for loop and compaction
-// diagnosis - "is the tool result the model should act on actually IN the
-// request?" - which the #252 investigation could otherwise only answer by
-// shipping a temporary instrumented image. QUACK_LOG_LEVEL=debug turns it on.
+// logRequestTail logs, at Debug, the shape of the request the model
+// actually receives: content count and the last 12 entries as role/kind
+// (CALL:name / RESP:name(bytes) / text). This is the ground truth for loop and compaction diagnosis - "is the tool result the model should act on actually IN the request?" - which the #252 investigation could otherwise only answer by shipping a temporary instrumented image. QUACK_LOG_LEVEL=debug turns it on.
 func logRequestTail(req *model.LLMRequest, modelName string) {
 	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		return
@@ -475,9 +469,7 @@ type toolCallBuilder struct {
 
 // applyFallbackLadder is the recovery ladder shared by both paths: recover
 // tool calls leaked as XML into thinking (llama.cpp#22684) or the answer
-// (#427), then report whether reasoning should be promoted to the answer.
-// Callers log the promotion/empty-turn cases themselves - their log text
-// and whether they log an empty turn at all differ (see golden_ladder_test.go).
+// (#427), then report whether reasoning should be promoted to the answer. Callers log the promotion/empty-turn cases themselves - their log text and whether they log an empty turn at all differ (see golden_ladder_test.go).
 func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.Part, haveToolCalls bool) (result []*genai.Part, hasAnswer, hadThinking bool, promotedChars int) {
 	result = parts
 
@@ -798,10 +790,9 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 		Parts: []*genai.Part{},
 	}
 
-	// Surface reasoning_content as a Thought part (reasoning precedes the answer).
-	// openai-go marks untyped ExtraFields as status "invalid" (no typed extras
-	// decoder is registered for this struct), so Valid() is always false here -
-	// gate on the raw bytes instead, the way an omitted/null field already does.
+	// Surface reasoning_content as a Thought part (reasoning precedes the
+	// answer). openai-go marks untyped ExtraFields as status "invalid" (no
+	// typed extras decoder is registered for this struct), so Valid() is always false here - gate on the raw bytes instead, the way an omitted/null field already does.
 	var reasoningText string
 	if rc := choice.Message.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
 		if raw := rc.Raw(); raw != "" && raw != "null" {
@@ -1063,17 +1054,11 @@ var toolCallRe = regexp.MustCompile(`(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>`
 //	<function=web_fetch>
 //	<parameter=url>
 //	https://…
-//	</parameter>
-//	</function>
 var toolCallXMLRe = regexp.MustCompile(`(?s)<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>`)
 
 // bareFunctionRe matches the same qwen <function=…> shape WITHOUT the
 // <tool_call> wrapper - seen when a call leaks straight into the assistant's
-// content instead of reasoning_content (#427: ask_advisor leaked as literal
-// "<function=ask_advisor>…" text in the answer). Matched blocks are only
-// treated as real calls once their body passes the parameter-block guard in
-// reasoningToolCalls - this regex alone is not enough to avoid misfiring on
-// prose that merely mentions "<function=" in passing.
+// content instead of reasoning_content (#427: ask_advisor leaked as literal "<function=ask_advisor>…" text in the answer). Matched blocks are only treated as real calls once their body passes the parameter-block guard in reasoningToolCalls - this regex alone is not enough to avoid misfiring on prose that merely mentions "<function=" in passing.
 var bareFunctionRe = regexp.MustCompile(`(?s)<function=([^>]+)>(.*?)</function>`)
 
 // paramRe matches one <parameter=name>value</parameter> entry; values may span lines.
@@ -1099,10 +1084,7 @@ func parseXMLParams(body string) map[string]any {
 
 // reasoningToolCalls recovers tool calls a model leaked as literal XML
 // instead of proper delta.tool_calls - Qwen3.x's <tool_call> wrapper and the
-// bare <function=…> form, both left for the client to parse. Handles, in
-// order: Hermes JSON, qwen's wrapped <function>/<parameter> form, and the
-// same form unwrapped. Without this the agent sees no tool call at all.
-// Returns the parsed calls and the text with matched blocks removed.
+// order: Hermes JSON, qwen's wrapped <function>/<parameter> form, and the same form unwrapped. Without this the agent sees no tool call at all. Returns the parsed calls and the text with matched blocks removed.
 func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 	var calls []*genai.FunctionCall
 
@@ -1142,9 +1124,8 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 		name := strings.TrimSpace(bm[1])
 		body := bm[2]
 		// Guard against prose that merely mentions "<function=…>" in passing:
-		// the body must be fully accounted for by <parameter=…> blocks (or
-		// empty) - natural-language text between the tags fails this check
-		// and the block is left untouched as ordinary text.
+		// the body must be fully accounted for by
+		// parameter blocks (or empty) - natural-language text between the tags fails this check and the block is left untouched as ordinary text.
 		if name == "" || strings.TrimSpace(paramRe.ReplaceAllString(body, "")) != "" {
 			return block
 		}

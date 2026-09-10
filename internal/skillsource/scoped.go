@@ -7,14 +7,10 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
-// Scoped restricts src to only the named skills - an agent's declared skill
-// scope (config.AgentConfig.Skills / config.OrchestratorConfig.Skills). A name
-// outside the scope behaves exactly as if it didn't exist (ErrSkillNotFound),
-// so an out-of-scope load_skill fails the same way a typo'd name would.
+// Scoped restricts src to only the named skills - an agent's declared
+// skill scope (config.AgentConfig.Skills / config.OrchestratorConfig.Skills). A name outside the scope behaves exactly as if it didn't exist (ErrSkillNotFound), so an out-of-scope load_skill fails the same way a typo'd name would.
 //
-// Apply Scoped to the BUILT-IN source only, before wrapping it with New - a
-// cloned repo's project skills (arbitrary, unknown at config time) stay fully
-// additive and unrestricted, and built-in still wins any collision.
+// Apply Scoped to the BUILT-IN source only, before wrapping it with New - a cloned repo's project skills (arbitrary, unknown at config time) stay fully additive and unrestricted, and built-in still wins any collision.
 func Scoped(src skill.Source, names []string) skill.Source {
 	allow := make(map[string]bool, len(names))
 	for _, n := range names {

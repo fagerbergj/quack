@@ -13,10 +13,9 @@ interface Props {
   children: ReactNode
 }
 
-// Sheet is the one modal shell for popups and menus (#1131 rule 6): below
-// `medium` a bottom sheet over a scrim, padded past the composer's safe-area
-// gap; at medium+ a centred dialog or an anchored popover. Escape, scrim
-// click, focus trap and focus restore come from useDrawer.
+// Sheet is the one modal shell for popups and menus (#1131 rule 6):
+// below `medium` a bottom sheet over a scrim, padded past the composer's
+// safe-area gap; at medium+ a centred dialog or an anchored popover. Escape, scrim click, focus trap and focus restore come from useDrawer.
 export function Sheet({ onClose, anchored, role = 'dialog', className = '', children, ...aria }: Props) {
   const panelRef = useDrawer(true, onClose)
   return (

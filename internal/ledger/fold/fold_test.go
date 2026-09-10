@@ -65,12 +65,9 @@ func TestFold_SkipsAbortedRevision(t *testing.T) {
 	}
 }
 
-// TestFold_LaterEntryWins pre-#1144-P4 covered a retried save reusing its
-// aborted attempt's revision number and parent; the store-level
-// (chat_id, key, parent_revision) index now rejects that exact retry outright
-// (AppendIntent returns ledger.ErrStaleParent) instead of ever landing a
-// second entry to fold - see recordstore.saveAt's doc for the new,
-// non-self-healing contract. Deleted with the rest of the aborted-retry path.
+// TestFold_LaterEntryWins (pre-#1144-P4: retried save reusing its aborted attempt's
+// revision number) is deleted with the aborted-retry path - the (chat_id, key,
+// parent_revision) index now rejects that retry outright with ErrStaleParent (see recordstore.saveAt's doc).
 
 func TestLastRevision_NoEntries(t *testing.T) {
 	s := newMemStore(t)
@@ -118,13 +115,9 @@ func TestFold_NodeStatesLaterWins(t *testing.T) {
 	}
 }
 
-// TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn is the #1125 review's
-// blocking scenario: a turn is fresh per invocation, node IDs are only
-// unique within one plan, so the SAME node ID legitimately recurs across
-// turns. Turn 1's node N fails; turn 2's N (a later re-run) starts and
-// completes. The fold must report exactly ONE current state for N - the
-// live one - not two states (one per turn) that a consumer could resurrect
-// turn 1's stale failure alongside turn 2's real success.
+// TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn (#1125 review): node IDs are only unique
+// within one plan, so the same ID recurs across turns (turn 1's N fails, turn 2's N
+// completes) - the fold must report exactly ONE current state, not two states resurrecting the stale failure.
 func TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn(t *testing.T) {
 	s := newMemStore(t)
 	append_ := func(turn, kind string) int64 {
@@ -168,9 +161,8 @@ func TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn(t *testing.T) {
 }
 
 // pagingFakeStore wraps MemStore and honors the requested limit exactly (like
-// PGStore's real .Limit(n)), so shrinking fold's pageSize below the fixture
-// count forces Fold through multiple pages, proving paged reads match one
-// unpaged slice.
+// PGStore's real .Limit(n)), so shrinking pageSize below the fixture count forces
+// Fold through multiple pages, proving paged reads match one unpaged slice.
 type pagingFakeStore struct {
 	*ledgertest.MemStore
 }
@@ -215,13 +207,9 @@ func TestFold_PagingMatchesOneSlice(t *testing.T) {
 	}
 }
 
-// TestApplySeeded_FromCheckpointMatchesFromZero is #1144 P5's required
-// proof: a fold seeded from a checkpoint must equal a fold from scratch.
-// Two revisions land and get folded into a checkpoint Result, a third
-// arrives after that fold - ApplySeeded (from the checkpoint) and Apply
-// (always from scratch) must agree. The checkpoint itself is just a
-// *Result value here, same as internal/store.Checkpoint's row holds
-// (#1144 P5 review: it lives in one store row now, not the ledger).
+// TestApplySeeded_FromCheckpointMatchesFromZero (#1144 P5): a fold seeded from a
+// checkpoint must equal a fold from scratch - two revisions are checkpointed, a
+// third arrives, and ApplySeeded and Apply must agree (checkpoint = plain *Result, as store.Checkpoint's row holds).
 func TestApplySeeded_FromCheckpointMatchesFromZero(t *testing.T) {
 	s := newMemStore(t)
 	appendRevision(t, s, "chat1", "id1", 1, 0)
@@ -255,15 +243,9 @@ func TestApplySeeded_FromCheckpointMatchesFromZero(t *testing.T) {
 	}
 }
 
-// TestApplySeeded_StaleCheckpointStillFoldsCorrectly is the concurrent-turn
-// case: a checkpoint whose OWN LastSeq is older than entries that already
-// exist in the ledger by the time it's used (the checkpoint's fold ran
-// before those entries landed; something else appended them, and only then
-// did the checkpoint get read and passed in - the write side of this race
-// is internal/store.Store.WriteCheckpoint's read-fold-write window).
-// ApplySeeded must trust seed.LastSeq, not assume the caller already
-// scoped `from` past every real entry, or it would skip entries that
-// arrived between the fold and the checkpoint's use.
+// TestApplySeeded_StaleCheckpointStillFoldsCorrectly: a checkpoint whose own LastSeq is
+// older than entries already in the ledger (WriteCheckpoint's read-fold-write window)
+// still folds correctly - ApplySeeded trusts seed.LastSeq, not the caller's `from`.
 func TestApplySeeded_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
 	s := newMemStore(t)
 	appendRevision(t, s, "chat1", "id1", 1, 0) // seq 1
@@ -346,10 +328,9 @@ func appendMemoryVoteAs(t *testing.T, s ledger.LedgerStore, chatID, memoryID str
 	}
 }
 
-// TestFold_MemoryRecallAndVoteProjections covers epic #1255 P1's rebuild
-// requirement: a chat's memory.recall/memory.vote entries fold into per-id
-// recall counts and vote tallies, and RecalledIDs names exactly the recalled
-// set (not any minted-but-never-recalled id).
+// TestFold_MemoryRecallAndVoteProjections (epic #1255 P1 rebuild requirement):
+// recall/vote entries fold into per-id counts and tallies, and RecalledIDs names
+// exactly the recalled set, not minted-but-never-recalled ids.
 func TestFold_MemoryRecallAndVoteProjections(t *testing.T) {
 	s := newMemStore(t)
 	appendMemoryRecall(t, s, "chat1", "m1", "m2")
@@ -390,12 +371,9 @@ func TestFold_MemoryRecallAndVoteProjections(t *testing.T) {
 	}
 }
 
-// TestFold_HumanVoteTogglesInsteadOfStacking is #1265 review finding 4: a
-// human's repeated votes on one memory are a toggle, not judge-style
-// additive stacking. up -> none -> down must leave exactly one downvote,
-// never three appended entries' worth of score. A judge vote on a
-// different memory in between stays purely additive, unaffected by the
-// human's toggling.
+// TestFold_HumanVoteTogglesInsteadOfStacking (#1265 review finding 4): a human's
+// repeated votes are a toggle, not judge-style additive stacking - up -> none ->
+// down leaves exactly one downvote; a judge vote in between stays purely additive.
 func TestFold_HumanVoteTogglesInsteadOfStacking(t *testing.T) {
 	s := newMemStore(t)
 	appendMemoryVoteAs(t, s, "chat1", "m1", ledger.MemoryVoteSupported, "human")    // up
@@ -416,13 +394,9 @@ func TestFold_HumanVoteTogglesInsteadOfStacking(t *testing.T) {
 	}
 }
 
-// TestFoldAbsorption_RedirectsVotesAndRecallsToSurvivor is epic #1255 P5's
-// rebuild verification: votes/recalls cast on a memory BEFORE it was
-// consolidation-merged into another must still be attributed to the
-// survivor once absorbedBy (built from the live store's AbsorbedIDs) says
-// so - otherwise a rebuild would "lose" history to an id the store no
-// longer serves. Also covers a chain (dup absorbed by survivor, and
-// dup2 also absorbed by survivor - both must resolve to survivor).
+// TestFoldAbsorption_RedirectsVotesAndRecallsToSurvivor (epic #1255 P5): votes/recalls
+// cast before a consolidation-merge are still attributed to the survivor via
+// absorbedBy (AbsorbedIDs), covering a chain - a rebuild must not lose history to an id the store no longer serves.
 func TestFoldAbsorption_RedirectsVotesAndRecallsToSurvivor(t *testing.T) {
 	s := newMemStore(t)
 	appendMemoryRecall(t, s, "chat1", "dup", "dup2", "survivor")

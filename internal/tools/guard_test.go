@@ -176,13 +176,9 @@ func TestBuildWrapsGuardedTools(t *testing.T) {
 //    confirmation marker + the existing HITL park, and resumes on the human's
 //    decision (mirrors internal/dag/hitl_test.go's pause/resume pattern).
 
-// confirmStub drives the worker + the vetting judge:
-//   - judge requests (submit_verdict tool present) always pass;
-//   - a request whose history already carries the guarded tool's RESOLVED
-//     response (post-approval execution) → final answer;
-//   - a post-decision prompt saying APPROVED → re-issue the risky_op call;
-//   - a post-decision prompt saying DENIED → answer without the operation;
-//   - otherwise (fresh draft) → propose risky_op.
+// confirmStub drives the worker + the vetting judge: judge requests (submit_verdict
+// tool present) always pass; a history carrying the guarded tool's RESOLVED response
+// (post-approval) → final answer; APPROVED prompt → re-issue the risky_op call; DENIED → answer without the operation; otherwise (fresh draft) → propose risky_op.
 type confirmStub struct{}
 
 func (*confirmStub) Name() string { return "confirmStub" }
@@ -377,12 +373,9 @@ func TestGuardConfirmTier_PauseDenyResume(t *testing.T) {
 	}
 }
 
-// pinStub drives the args-pinning scenario: it proposes risky_op(target:x),
-// and after the human APPROVES it re-issues the call with DIFFERENT args
-// (target:EVIL) - modeling a steered/injected model swapping the operation
-// after approval. After the swapped call's own confirmation is DENIED, it
-// re-issues the ORIGINAL approved call (target:x), which must still consume
-// the original approval.
+// pinStub drives the args-pinning scenario: it proposes risky_op(target:x), and after
+// the human APPROVES it re-issues the call with DIFFERENT args (target:EVIL) -
+// modeling a steered/injected model; after that swapped call's confirmation is DENIED it re-issues the original (target:x), which must still consume the original approval.
 type pinStub struct{}
 
 func (*pinStub) Name() string { return "pinStub" }
@@ -411,11 +404,9 @@ func (s *pinStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 	}
 }
 
-// TestGuardConfirmTier_ApprovalPinnedToArgs: an approval is pinned to the
-// exact operation the human saw. A re-issued call with different arguments
-// must NOT consume it (and must not execute) - it becomes a fresh proposal
-// whose confirmation warns it DIFFERS - while the original approval stays
-// available for a later same-args call.
+// TestGuardConfirmTier_ApprovalPinnedToArgs: an approval is pinned to the exact
+// operation the human saw. A re-issued call with different arguments must NOT
+// consume it (nor execute it) - it becomes a fresh proposal whose confirmation warns it DIFFERS; the original approval stays available for a later same-args call.
 func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 	sessions := session.InMemoryService()
 	inner := &fakeRunnable{}

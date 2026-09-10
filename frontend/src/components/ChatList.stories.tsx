@@ -85,18 +85,15 @@ export const Searchable: Story = {
 }
 
 // A mixed list: GitHub-originated rows carry a repo badge and an Issue/PR
-// badge - both link out to GitHub - plus (when not idle) a colored status dot
-// next to the title. Filtering by Origin/Status/Repo/Type lives entirely in
-// the funnel popover.
+// badge - both link out to GitHub - plus (when not idle) a colored status
+// dot. Filtering by Origin/Status/Repo/Type lives entirely in the funnel popover.
 export const MixedOrigin: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
 }
 
 // Non-idle rows (running/failed/needs_input/queued) show a small colored dot
 // right before the title (blue/red/amber/gray); idle rows stay quiet - no dot
-// at all. queued (#417) is gray and non-pulsing - admitted but still waiting
-// on the server's max_active_runs slot, distinct from the pulsing blue
-// running dot for the one chat actually executing.
+// at all. queued (#417) is gray and non-pulsing - admitted but still waiting on the server's max_active_runs slot, distinct from the pulsing blue running dot.
 export const StatusDots: Story = {
   args: {
     chats: [

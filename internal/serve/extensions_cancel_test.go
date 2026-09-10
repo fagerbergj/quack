@@ -106,9 +106,7 @@ var (
 
 // TestDriveExtensionRunEvents_UserCancelReportsRunCancelled proves the
 // seam a user Stop actually goes through: hub.CancelRun (DELETE /chats/{id},
-// and the same runHandle a Stop-button PATCH cancels) reaches the in-flight
-// run as ctx.Canceled, and RunEnded must receive extsdk.RunCancelled - not
-// RunDone with whatever partial answer the run left behind (#879).
+// and the same runHandle a Stop-button PATCH cancels) reaches the in-flight run as ctx.Canceled, and RunEnded must receive extsdk.RunCancelled - not RunDone with whatever partial answer the run left behind (#879).
 func TestDriveExtensionRunEvents_UserCancelReportsRunCancelled(t *testing.T) {
 	st, orch, hub, _, _ := newExtTestStack(t)
 	chatID := "ext:cancel-test:user-stop"

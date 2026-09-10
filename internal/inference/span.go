@@ -49,9 +49,7 @@ func redactedSpanAttr(v any) (string, bool) {
 
 // setRequestSpanAttrs decorates ADK's own generate_content GENERATION span
 // (never opens a competing one - the span in ctx already IS the active one)
-// with request content. Must run before GenerateContent's inner loop yields
-// a response: ADK ends this span synchronously on the first non-partial
-// response, and SetAttributes on an ended span is a silent no-op.
+// with request content. Must run before GenerateContent's inner loop yields a response: ADK ends this span synchronously on the first non-partial response, and SetAttributes on an ended span is a silent no-op.
 func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 	span := oteltrace.SpanFromContext(ctx)
 	if !span.IsRecording() {

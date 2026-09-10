@@ -14,8 +14,7 @@ import (
 
 // newTestMeter builds a fresh SDK MeterProvider backed by a ManualReader and
 // installs its instruments as the package singleton (initMetrics), so the
-// public Record*/Start*/End* functions under test record into THIS reader
-// rather than whatever a prior test (or Init) left wired up.
+// public Record*/Start*/End* functions under test record into THIS reader rather than whatever a prior test (or Init) left wired up.
 func newTestMeter(t *testing.T) *metric.ManualReader {
 	t.Helper()
 	reader := metric.NewManualReader()
@@ -105,8 +104,7 @@ func histogramSumCount(t *testing.T, reader *metric.ManualReader, name string) (
 
 // TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns is #354's
 // core regression guard: quack.runs.active must net back to 0 once every
-// RunStarted has a matching RunFinished, on EVERY exit shape - a plain error,
-// a context-cancellation, and a clean return.
+// RunStarted has a matching RunFinished, on EVERY exit shape - a plain error, a context-cancellation, and a clean return.
 func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -129,8 +127,7 @@ func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) 
 
 // TestRunGauge_CountsARunThatSkippedAdmission pins #1176: RetryNode's boot-
 // resume path (RetryNodeResumed) never calls acquireRun, but must still call
-// RunStarted/RunFinished around its work - quack.runs.active has to count a
-// resumed node the same as any other run, or the metric undercounts load.
+// RunStarted/RunFinished around its work - quack.runs.active has to count a resumed node the same as any other run, or the metric undercounts load.
 func TestRunGauge_CountsARunThatSkippedAdmission(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -146,8 +143,7 @@ func TestRunGauge_CountsARunThatSkippedAdmission(t *testing.T) {
 
 // TestRunQueuedGauge_TracksAdmittedButNotYetExecuting is #417's regression
 // guard: a run admitted (queued) but not yet holding its concurrency slot
-// must show up in quack.runs.queued, NOT quack.runs.active - and the
-// queued→active transition must net runs.queued back to 0 as it does so.
+// must show up in quack.runs.queued, NOT quack.runs.active - and the queued→active transition must net runs.queued back to 0 as it does so.
 func TestRunQueuedGauge_TracksAdmittedButNotYetExecuting(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -183,8 +179,7 @@ func TestRunQueuedGauge_TracksAdmittedButNotYetExecuting(t *testing.T) {
 
 // TestNodeGauge_TracksInFlightThenReturnsToZero exercises concurrency (two
 // nodes in flight at once, mirroring the "4 active with 1 serial run"
-// production report) and confirms the gauge both reflects the in-flight
-// count AND nets to 0 once an errored and a clean node both end.
+// production report) and confirms the gauge both reflects the in-flight count AND nets to 0 once an errored and a clean node both end.
 func TestNodeGauge_TracksInFlightThenReturnsToZero(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -207,9 +202,7 @@ func TestNodeGauge_TracksInFlightThenReturnsToZero(t *testing.T) {
 
 // TestJudgeMetrics_CoverNonExplorerAgents guards #354's item 2: the judge
 // score/verdict series must appear for ANY agent whose node reaches the
-// shared judge loop, not just one. It also exercises the judge-errored path
-// (RecordJudgeUnavailable), which previously left NO metric at all for a
-// round the judge failed to score.
+// shared judge loop, not just one. It also exercises the judge-errored path (RecordJudgeUnavailable), which previously left NO metric at all for a round the judge failed to score.
 func TestJudgeMetrics_CoverNonExplorerAgents(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -239,8 +232,7 @@ func TestJudgeMetrics_CoverNonExplorerAgents(t *testing.T) {
 
 // TestRoundDuration_MatchesTimedSpanWindow guards #354's item 3: the
 // recorded worker-round duration must equal TimedSpan's own window, never a
-// blown-up value from a mismatched/independent timer (the reported symptom
-// was ~31min recorded for rounds Tempo showed as 4-12min).
+// blown-up value from a mismatched/independent timer (the reported symptom was ~31min recorded for rounds Tempo showed as 4-12min).
 func TestRoundDuration_MatchesTimedSpanWindow(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -264,8 +256,7 @@ func TestRoundDuration_MatchesTimedSpanWindow(t *testing.T) {
 
 // TestRecordMemoryCommitFailure guards #436: a fire-and-forget memory-commit
 // error must leave a queryable counter series (reason + agent), not just a
-// WARN log - the gap the owner flagged after ~every node's commit timed out
-// under burst load.
+// WARN log - the gap the owner flagged after ~every node's commit timed out under burst load.
 func TestRecordMemoryCommitFailure(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -433,8 +424,7 @@ func TestRecordCost_ComputesFromConfiguredPricing(t *testing.T) {
 
 // TestJudgeScoreHistogram_HasExplicitBuckets guards #433: a 0-1 score
 // recorded against the OTel default buckets (5, 10, ...) lands entirely in
-// one bucket, making the histogram useless. Explicit sub-1.0 boundaries must
-// spread scores across multiple buckets.
+// one bucket, making the histogram useless. Explicit sub-1.0 boundaries must spread scores across multiple buckets.
 func TestJudgeScoreHistogram_HasExplicitBuckets(t *testing.T) {
 	reader := newTestMeter(t)
 	RecordJudgeVerdict("web-researcher", 0.3, false)

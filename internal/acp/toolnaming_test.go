@@ -15,18 +15,12 @@ import (
 
 // forbiddenToolCheckWording pins #688: no ACP bundle prompt may still tell an
 // agent to check whether its tools exist (a bash probe can never see an MCP
-// tool - see #630).
-// The round preamble now asserts the exact offered names as fact
-// (mcpToolNames/mcpToolsBlock, acp.go), so a prompt reasoning about a naming
-// convention or an existence check is instructing the exact failure mode #688
-// caught in production.
+// tool - see #630). The round preamble now asserts the exact offered names as fact (mcpToolNames/mcpToolsBlock, acp.go), so a prompt reasoning about a naming convention or an existence check is instructing the exact failure mode #688 caught in production.
 var forbiddenToolCheckWording = regexp.MustCompile(`(?i)check your (actual )?tool list|not in your tool list`)
 
 // TestBundlePromptsDoNotAskAgentToCheckToolExistence pins #688: an ACP
 // subprocess cannot prove an MCP tool absent (bash sees nothing; #630's
-// prefix confusion is one way that misfires), so no bundle prompt may invite
-// the agent to self-verify its tool list. The round preamble states the exact
-// offered names as fact instead (mcpToolNames/mcpToolsBlock in acp.go).
+// prefix confusion is one way that misfires), so no bundle prompt may invite the agent to self-verify its tool list. The round preamble states the exact offered names as fact instead (mcpToolNames/mcpToolsBlock in acp.go).
 func TestBundlePromptsDoNotAskAgentToCheckToolExistence(t *testing.T) {
 	for _, bundle := range []string{"agents/code-reviewer", "agents/code-implementer", "agents/code-explorer"} {
 		b, err := agent.LoadBundle(bundle)
@@ -41,8 +35,7 @@ func TestBundlePromptsDoNotAskAgentToCheckToolExistence(t *testing.T) {
 
 // TestMCPToolNamesMatchTheLiveServer proves mcpToolNames (acp.go) - what the
 // round preamble asserts - names exactly the tools memoryMCPHandler actually
-// registers for the SAME session, so a future reviewmcp.go/memorymcp.go
-// rename (#628) can't silently desync the generated preamble from reality.
+// registers for the SAME session, so a future reviewmcp.go/memorymcp.go rename (#628) can't silently desync the generated preamble from reality.
 func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -108,8 +101,7 @@ func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 
 	// Prove the tools genuinely work end to end (the bare name is what THIS
 	// server understands; opencode's client-side rename is a layer quack's
-	// server never sees, so it can't be exercised without a real opencode
-	// round-trip - see the PR body for a live one run against this binary).
+	// server never sees, so it can't be exercised without a real opencode round-trip - see the PR body for a live one run against this binary).
 	call := func(name string, args map[string]any) *mcp.CallToolResult {
 		t.Helper()
 		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})

@@ -23,8 +23,7 @@ type cacheEntry struct {
 
 // URLCache is a thread-safe in-process cache of tool responses keyed by URL,
 // with TTL expiry and a size cap, so web_fetch and web_search skip redundant
-// network requests within a session. Expired entries are evicted lazily on Get
-// and, when the cap is reached, on Set.
+// network requests within a session; expired entries are evicted lazily on Get and, when the cap is reached, on Set.
 type URLCache struct {
 	mu    sync.Mutex
 	items map[string]cacheEntry

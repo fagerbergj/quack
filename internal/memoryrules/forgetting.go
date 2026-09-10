@@ -61,12 +61,9 @@ func ValidateRules(rules []Rule) error {
 	return nil
 }
 
-// Evaluate parses and runs expr against f in one pass - hand-written
-// tokenizer + recursive-descent parser, no external dependency, no
-// reflection. Grammar (lowest to highest precedence): `||`, `&&`, unary `!`,
-// comparison (`== != < <= > >=`), primary (field ident, int/quoted-string
-// literal, parenthesized expr). Comparison operators other than == and !=
-// require both sides numeric; == and != also work on strings.
+// Evaluate runs expr against f (hand-written tokenizer + recursive-descent parser,
+// no dependency). Precedence: `||`, `&&`, `!`, comparison, primary. `==`/`!=` accept
+// strings; other comparisons require numeric on both sides.
 func Evaluate(expr string, f Fields) (bool, error) {
 	if strings.TrimSpace(expr) == "" {
 		return false, fmt.Errorf("when must not be empty")

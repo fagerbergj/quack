@@ -24,14 +24,9 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// TestUserMemoryPreFilter: narrowed to preference-shaped phrases (#1283 audit
-// finding 9) - the old alternation included bare never/always/instead of/
-// don't, which matched 26.1% of a 2,389-paragraph technical-prose corpus
-// (this repo's own commit messages); 91% of those hits came from four
-// keywords that never on their own state a durable preference. The narrowed
-// regex measured 0.3% on the same corpus. Ten preference-shaped sentences
-// must still match; ten ordinary technical sentences using bare never/always/
-// instead of/don't must not.
+// TestUserMemoryPreFilter: narrowed to preference-shaped phrases (#1283
+// audit finding 9) - the old alternation included bare never/always/instead
+// of/don't, which matched 26.1% of a 2,389-paragraph technical-prose corpus (this repo's own commit messages); 91% of those hits came from four keywords that never on their own state a durable preference. The narrowed regex measured 0.3% on the same corpus. Ten preference-shaped sentences must still match; ten ordinary technical sentences using bare never/always/instead of/don't must not.
 func TestUserMemoryPreFilter(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -185,9 +180,7 @@ func TestMineUserMemory(t *testing.T) {
 
 // TestMineUserMemory_DefaultAgentFillsTokenUsage pins serve.go's memory-hook
 // wiring: mineUserMemory runs from a fire-and-forget goroutine after the
-// orchestrator's own turn ends, via its own nested runner.Run, so the memory-hook
-// model's tracedModel needs the SetDefaultAgent("memory-hook") fallback to
-// attribute its token usage at all.
+// orchestrator's own turn ends, via its own nested runner.Run, so the memory-hook model's tracedModel needs the SetDefaultAgent("memory-hook") fallback to attribute its token usage at all.
 func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -263,9 +256,8 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 var stagedCandidateLine = regexp.MustCompile(`(?m)^- (?:\[(\w+)\] )?(.+)$`)
 
 // fakeConsolidator is a model.LLM standing in for the memory store's
-// consolidation model: it turns every staged candidate straight into an ADD op,
-// skipping any real reconciliation - enough to exercise Commit's write path
-// without hitting a real model.
+// consolidation model: it turns every staged candidate straight into an ADD
+// op, skipping any real reconciliation - enough to exercise Commit's write path without hitting a real model.
 type fakeConsolidator struct{}
 
 func (fakeConsolidator) Name() string { return "fake-consolidator" }

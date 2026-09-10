@@ -184,8 +184,7 @@ func TestAttachScreenshotsNoopWhenEmpty(t *testing.T) {
 
 // TestAttachScreenshotsNeverMutatesQuestion proves the judge-only image
 // evidence never leaks into the worker's own question/revision content -
-// attachScreenshots must build a new Content, not append into question.Parts
-// in place (a shared backing array would poison later reads of question).
+// attachScreenshots must build a new Content, not append into question.Parts in place (a shared backing array would poison later reads of question).
 func TestAttachScreenshotsNeverMutatesQuestion(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}
 	shot := &genai.Part{InlineData: &genai.Blob{Data: []byte{1}, MIMEType: "image/png"}}

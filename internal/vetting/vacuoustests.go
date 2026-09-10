@@ -18,10 +18,7 @@ import (
 // contain a token declared in the repo's own non-test source), never a
 // re-run of the worker's own claims, so it can't be gamed the way a
 // worker-chosen mutation could.
-//
-// Flaky-gate rule: prefer false negatives. A file whose language we don't
-// parse, that isn't unambiguously a test (no @Test/func Test.../etc.), or
-// where the repo/diff can't be resolved is SKIPPED, never failed.
+// Flaky-gate rule: prefer false negatives. A file whose language we don't parse, that isn't unambiguously a test (no @Test/func Test.../etc.), or where the repo/diff can't be resolved is SKIPPED, never failed.
 
 // vacuousTestLang: one language's test-file convention, "is this really an
 // executed test" signal, and the regex that finds identifiers declared in
@@ -89,10 +86,8 @@ var vacuousTestSkipDirs = map[string]bool{
 var identTokenRe = regexp.MustCompile(`[A-Za-z_]\w*`)
 
 // vacuousTestsCriterion: added test files that reference no production identifier
-// are vacuous by construction. Runs only against THIS node's own new commits
-// (base = cfg.NodeBaseSHA, same scoping as checksPassCriterion/#710) and only
-// against files git reports as newly ADDED - a pre-existing test edited in
-// place is out of scope, see issue #716.
+// are vacuous by construction. Runs only against THIS node's own new commits (base = cfg.NodeBaseSHA, same scoping as checksPassCriterion/#710) and only
+// against files git reports as newly ADDED - a pre-existing test edited in place is out of scope, see issue #716.
 func vacuousTestsCriterion(cfg Config) (criterionScore, bool) {
 	if cfg.Workspace == nil || cfg.ReadOnly {
 		return criterionScore{}, false

@@ -79,9 +79,7 @@ func TestRunChatList(t *testing.T) {
 
 // TestRunChatListStatuses covers the plan's test case 1: STATUS renders for all
 // five ChatStatus values and each row is uniquely grep-able by its status (e.g.
-// `grep needs_input` matches exactly the c2 row, not c1's "idle" or c4's
-// "failed"). Includes queued (#417): a chat admitted but still waiting on the
-// server's max_active_runs slot, distinct from running.
+// `grep needs_input` matches exactly the c2 row, not c1's "idle" or c4's "failed"). Includes queued (#417): a chat admitted but still waiting on the server's max_active_runs slot, distinct from running.
 func TestRunChatListStatuses(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

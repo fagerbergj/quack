@@ -158,8 +158,7 @@ export const InvalidEventJson: Story = {
 
 // #746 item 9: the event section's TOP-LEVEL primitive fields render as a
 // responsive grid above the full JSON, using the wide pane's width instead of
-// one "key: value" per line - the full payload (with its nested objects) is
-// still there below, just no longer the only view.
+// one "key: value" per line - the full payload (with its nested objects) is still there below, no longer the only view.
 export const EventFieldsGrid: Story = {
   args: {
     content: `<permissions>join_pr_conversation</permissions>
@@ -217,9 +216,7 @@ export const TruncatedTags: Story = {
 
 // #730: a resumed trigger whose <comments> section shows the ISSUE'S RUNNING
 // HISTORY (this turn's delta folded onto every earlier turn it was seeded
-// with), not just what this one trigger's envelope carried. The collapsed
-// header still reports this turn's own delta ("1 new, 0 edited, 0 deleted")
-// - open the section to see all four comments across three triggers.
+// with), not just this trigger's envelope - the collapsed header still reports this turn's own delta ("1 new, 0 edited, 0 deleted"); open the section to see all four comments across three triggers.
 export const AccumulatedCommentHistory: Story = {
   args: {
     content: `<permissions>join_issue_conversation</permissions>
@@ -252,8 +249,7 @@ export const AccumulatedCommentHistory: Story = {
 
 // #730: a chat opened after the run's context was reaped (or a rehydrated
 // store) - the earliest turn this client can see is ITSELF a delta, so there
-// is no seed to accumulate onto. The UI must say so rather than presenting
-// this one comment as if it were the issue's whole thread.
+// is no seed to accumulate onto; the UI must say so rather than presenting this one comment as the issue's whole thread.
 export const IncompleteCommentHistory: Story = {
   args: {
     content: `<permissions>join_pr_conversation</permissions>

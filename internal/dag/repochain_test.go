@@ -51,10 +51,9 @@ func TestWorkspaceNodeID(t *testing.T) {
 	}
 }
 
-// TestWorktreeParentID pins the OTHER half of the picture workspaceNodeID
-// alone doesn't show: a read-only qualifying node's own dir is a git
-// worktree OF the shared clone, named here - "" for a writer (it gets the
-// shared clone directly) and for anything with no plan.Setup.
+// TestWorktreeParentID pins the half workspaceNodeID alone doesn't show: a read-only
+// qualifying node's own dir is a worktree OF the shared clone - named only for a
+// non-writer with plan.Setup; writers get the shared clone directly (parent "").
 func TestWorktreeParentID(t *testing.T) {
 	setup := &Setup{Repo: "r", BaseRef: "main", WorkBranch: "w"}
 	cases := []struct {

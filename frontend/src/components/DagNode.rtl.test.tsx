@@ -26,10 +26,9 @@ async function openArtifacts(user: ReturnType<typeof userEvent.setup>) {
 }
 
 beforeEach(() => {
-  // See ArtifactPanel.rtl.test.tsx for why these stubs are needed: jsdom has
-  // no <dialog> support and no matchMedia at all, and the generated client's
-  // Request construction needs an absolute base to resolve against in a
-  // jsdom document.
+  // See ArtifactPanel.rtl.test.tsx for why: jsdom has no <dialog> support
+  // and no matchMedia at all, and the generated client's Request construction
+  // needs an absolute base to resolve against in a jsdom document.
   HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open') }
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
@@ -74,10 +73,7 @@ describe('DagNode artifacts menu item (#1114)', () => {
 
 // #1178/#1216: the panel reads four narrow fields from the node - its agent
 // label (nodeAgent, the panel heading), its raw task (nodeTask, Details
-// only), its error (nodeError, only on a failed status) and its declared
-// output kind (nodeArtifactKind). These tests drive the panel through its
-// only entry point to prove each field actually crosses the component
-// boundary into the result view.
+// only), its error (nodeError, only on failed), and its declared output kind (nodeArtifactKind). These tests drive the panel through its only entry point to prove each field crosses the component boundary.
 describe('DagNode artifact panel props (#1178)', () => {
   it('shows the node\u2019s agent label as the panel heading, not the raw task or an artifact id', async () => {
     const user = userEvent.setup()

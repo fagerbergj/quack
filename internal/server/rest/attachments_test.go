@@ -195,8 +195,7 @@ var fakePNG = []byte("\x89PNG-fake-pixel-data-0123456789abcdef")
 
 // TestAttachmentRoundTrip is the durability-upgrade proof: an attachment
 // dispatched through SendChatMessage reaches the media worker's model as
-// real bytes, while everything durably persisted (the DAG plan, the ADK
-// session events) carries only a reference - never the bytes themselves.
+// real bytes, while everything durably persisted (the DAG plan, the ADK session events) carries only a reference - never the bytes themselves.
 func TestAttachmentRoundTrip(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	stub := &attachStub{}
@@ -280,8 +279,7 @@ func TestAttachmentRoundTrip(t *testing.T) {
 
 // TestAttachmentRoundTrip_SecondAccessStillHydrates proves hydration isn't a
 // one-shot/turn-scoped effect: loading the SAME artifact revision again
-// (as a later turn's plan would, referencing it by name) still resolves to
-// the original bytes through the model-boundary wrapper.
+// (as a later turn's plan would, referencing it by name) still resolves to the original bytes through the model-boundary wrapper.
 func TestAttachmentRoundTrip_SecondAccessStillHydrates(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	stub := &attachStub{}

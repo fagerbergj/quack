@@ -21,9 +21,7 @@ const inferenceScope = "quack.inference"
 
 // emitChatEvent records one gen_ai.* "chat" log event for a completed model
 // call - the full request and the FINAL assembled response (see the
-// GenerateContent doc comment on why "final", not raw stream chunks).
-// Marshal failures degrade a field to omitted, never abort the whole event -
-// recording must never affect the run.
+// GenerateContent doc comment on why "final", not raw stream chunks). Marshal failures degrade a field to omitted, never abort the whole event - recording must never affect the run.
 func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp *model.LLMResponse, callErr error, pricing *config.ModelPricing) {
 	if !otelobs.LoggingEnabled(inferenceScope) {
 		return // nothing listening - skip building a (potentially large) event nobody reads
@@ -69,9 +67,7 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 
 	// Prompt provenance: bundle id + content hash. The bundle id isn't
 	// visible at this layer (the agent's InstructionProvider already
-	// resolved it into Config.SystemInstruction by the time it reaches a
-	// model call) - the coordinating agent name (ledger.Coords, set by the
-	// vetting gate) is the closest available proxy.
+	// resolved it into Config.SystemInstruction by the time it reaches a model call) - the coordinating agent name (ledger.Coords, set by the vetting gate) is the closest available proxy.
 	c := ledger.CoordsFromContext(ctx)
 	if c.Agent != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
@@ -99,9 +95,7 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 		if u := resp.UsageMetadata; u != nil {
 			// Cost accounting per node/round, and the token/finish parity a
 			// swapped-model eval re-run (#606) needs to compare against a
-			// recording - both free once UsageMetadata is populated. input
-			// excludes cached (splitPromptTokens), matching the otel metric's
-			// convention so a consumer summing input+cached never double-counts.
+			// recording - both free once UsageMetadata is populated. input excludes cached (splitPromptTokens), matching the otel metric's convention so a consumer summing input+cached never double-counts.
 			input, cached := splitPromptTokens(u)
 			if input != 0 {
 				attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageInputTokens, input))
@@ -141,9 +135,7 @@ func marshalAttr(v any) (string, bool) {
 
 // toolNames extracts the sorted tool names offered on the request. req.Tools
 // holds live tool.Tool instances (json:"-" on LLMRequest, deliberately not
-// serializable), so a name list is what gen_ai.tool.definitions carries here -
-// a bundle's full per-tool schema is already visible in gen_ai.input.messages'
-// system instructions and the tool's own execute_tool events.
+// serializable), so a name list is what gen_ai.tool.definitions carries here - a bundle's full per-tool schema is already visible in gen_ai.input.messages' system instructions and the tool's own execute_tool events.
 func toolNames(tools map[string]any) []string {
 	if len(tools) == 0 {
 		return nil

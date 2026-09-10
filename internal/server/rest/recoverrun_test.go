@@ -11,9 +11,7 @@ import (
 
 // #1033: the run goroutines outlive the HTTP request, so chi's Recoverer never
 // covers them - an unrecovered panic there takes the process, not just the run.
-// recoverRun is the only thing standing between a panicking run and process
-// death in the production shape, where the panic surfaces on a node goroutine
-// rather than at the range site.
+// recoverRun is the only thing standing between a panicking run and process death in the production shape, where the panic surfaces on a node goroutine rather than at the range site.
 func TestRecoverRun_ContainsPanicAndLogsIt(t *testing.T) {
 	var buf strings.Builder
 	prev := slog.Default()
@@ -59,8 +57,7 @@ func TestRecoverRun_LeavesCleanupDefersRunning(t *testing.T) {
 
 // The helper tests above pin recoverRun itself; this pins the WIRING. Deleting
 // any `defer recoverRun(...)` line leaves those green but kills the process
-// here, because a panicking run's cleanup defers never run and the hub topic
-// stays open - subscribers hang forever instead of seeing the stream close.
+// here, because a panicking run's cleanup defers never run and the hub topic stays open - subscribers hang forever instead of seeing the stream close.
 func TestRunGoroutinePanic_StillClosesHubTopic(t *testing.T) {
 	dp := &store.DagPlan{ID: "p1", TurnID: "t1"}
 	for _, tc := range []struct {

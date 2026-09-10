@@ -144,9 +144,7 @@ func TestNilJailReturnsBuiltin(t *testing.T) {
 
 // writeUnknownFieldSkill writes a SKILL.md carrying frontmatter keys ADK's
 // strict decoder (KnownFields(true)) doesn't recognize - the #1080 shape: a
-// third-party plugin (ponytail) added `argument-hint`, and ADK's
-// FileSystemSource.ListFrontmatters aborts its ENTIRE listing on the first
-// unparseable skill, crash-looping server startup in production 0.50.0.
+// third-party plugin (ponytail) added `argument-hint`, and ADK's FileSystemSource.ListFrontmatters aborts its ENTIRE listing on the first unparseable skill, crash-looping server startup in production 0.50.0.
 func writeUnknownFieldSkill(t *testing.T, dir, name string) {
 	t.Helper()
 	d := filepath.Join(dir, name)
@@ -160,10 +158,8 @@ func writeUnknownFieldSkill(t *testing.T, dir, name string) {
 	}
 }
 
-// TestTolerantSkipsUnknownFrontmatterField is the #1080 regression: a builtin/
-// plugin source wrapped in Tolerant must still list every OTHER skill when one
-// carries a field ADK's strict decoder rejects, instead of erroring the whole
-// source (the crash-loop root cause - see writeUnknownFieldSkill).
+// TestTolerantSkipsUnknownFrontmatterField is the #1080 regression: a
+// builtin/plugin source wrapped in Tolerant must still list every OTHER skill when one carries a field ADK's strict decoder rejects, instead of erroring the whole source (the crash-loop root cause - see writeUnknownFieldSkill).
 func TestTolerantSkipsUnknownFrontmatterField(t *testing.T) {
 	dir := t.TempDir()
 	writeSkill(t, dir, "good-skill", "a valid skill", "body")
@@ -280,9 +276,7 @@ func TestScopedRestrictsListingAndLoad(t *testing.T) {
 
 // TestScopedPreservesProjectSkillDiscovery proves a cloned repo's own project
 // skills stay fully additive and unrestricted when Scoped is applied to only
-// the built-in layer (the wiring internal/serve/serve.go uses): a web-researcher-
-// shaped scope with NO code-review skills still sees a project skill discovered
-// in the jail, and the built-in library still wins a name collision.
+// the built-in layer (the wiring internal/serve/serve.go uses): a web-researcher-shaped scope with NO code-review skills still sees a project skill discovered in the jail, and the built-in library still wins a name collision.
 func TestScopedPreservesProjectSkillDiscovery(t *testing.T) {
 	j, userRoot, builtin := setup(t, map[string]string{
 		"plan-work":   "builtin body",

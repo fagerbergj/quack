@@ -35,8 +35,7 @@ func TestSendChatMessage_DrainingRejects503(t *testing.T) {
 
 // TestStampRunOutcome_Interrupted proves that once Hub.MarkInterrupted names
 // a chat, stampRunOutcome persists RunStatusPaused - the drain paused its
-// nodes (#962) and boot resumes them - regardless of what the (empty) turn
-// history would otherwise derive.
+// nodes (#962) and boot resumes them - regardless of what the (empty) turn history would otherwise derive.
 func TestStampRunOutcome_Interrupted(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

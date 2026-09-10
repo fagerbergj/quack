@@ -11,9 +11,7 @@ import (
 
 // TestRequireAuthExceptHealthMethodRestricted tests requireAuthExceptHealth
 // in isolation (not through the full chi router, whose own method-not-allowed
-// handling for a path with only a GET handler would mask what this
-// middleware itself decides): only GET/HEAD to /health skip a's auth check;
-// every other method - and every other path - always goes through it.
+// handling for a path with only a GET handler would mask what this middleware itself decides): only GET/HEAD to /health skip a's auth check; every other method - and every other path - always goes through it.
 func TestRequireAuthExceptHealthMethodRestricted(t *testing.T) {
 	a, err := auth.New(&config.InboundAuthConfig{
 		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},

@@ -13,8 +13,7 @@ import (
 
 // TestGenerateTitle_ChatEventCarriesChatID pins #617's titler entry point:
 // the titler calls GenerateContent directly (no ADK runner at all), so its
-// "chat" ledger event must carry the chat's ChatID instead of falling back
-// to "unscoped".
+// "chat" ledger event must carry the chat's ChatID instead of falling back to "unscoped".
 func TestGenerateTitle_ChatEventCarriesChatID(t *testing.T) {
 	capExp := &recordCaptureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))

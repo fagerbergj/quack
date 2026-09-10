@@ -51,9 +51,7 @@ func newTestOrchWithJudge(t *testing.T, stub *orchStub, judge vetting.PlanJudge)
 
 // TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason: the model
 // retries the plan tool against an always-rejecting judge, then gives up and
-// narrates the rejection back in prose (the live NightsOut#97 symptom). The
-// run must post the fixed failure notice instead, and the judge's internal
-// reason text must not appear anywhere in the final answer.
+// narrates the rejection back in prose (the live NightsOut#97 symptom). The run must post the fixed failure notice instead, and the judge's internal reason text must not appear anywhere in the final answer.
 func TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()
@@ -89,10 +87,7 @@ func TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason(t *testing.T)
 
 // TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered pins #760/
 // home-server#3: a reply-only request where the orchestrator over-eagerly
-// tries to plan, the judge correctly rejects the plan for exceeding the
-// deliverable, and the model then pivots to answering the question directly.
-// One rejection is not exhaustion - the model's real answer must be delivered
-// verbatim, not replaced by the fixed notice.
+// tries to plan, the judge correctly rejects the plan for exceeding the deliverable, and the model then pivots to answering the question directly. One rejection is not exhaustion - the model's real answer must be delivered verbatim, not replaced by the fixed notice.
 func TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered(t *testing.T) {
 	const pivotAnswer = "The off-by-one is in the loop bound on line 42."
 	stub := &orchStub{replies: []*model.LLMResponse{
@@ -113,10 +108,7 @@ func TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered(t *testing.T) 
 
 // TestOrchestrator_RejectionDoesNotLeakAcrossTurns proves PlanCache (built
 // fresh per Run() call, tools.NewPlanCache in orchestrator.go) does not carry
-// a rejection recorded in one turn into the next: turn one exhausts (2
-// rejections, fixed notice), turn two in the SAME session answers directly
-// with no plan attempt at all and must deliver normally, not be treated as
-// exhausted leftover from turn one.
+// a rejection recorded in one turn into the next: turn one exhausts (2 rejections, fixed notice), turn two in the SAME session answers directly with no plan attempt at all and must deliver normally, not be treated as exhausted leftover from turn one.
 func TestOrchestrator_RejectionDoesNotLeakAcrossTurns(t *testing.T) {
 	const turnTwoAnswer = "Turn two: a plain answer, no plan involved."
 	stub := &orchStub{replies: []*model.LLMResponse{

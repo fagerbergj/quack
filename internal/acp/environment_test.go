@@ -99,9 +99,7 @@ func TestEnvironmentBlockEmptyDir(t *testing.T) {
 
 // TestEnvironmentBlockDisclosesReadOnly: a read-only round's block names both
 // sides - which path is read-only and which are writable. Naming only the
-// read-only half is what left reviewers either burning a round on an
-// unexplained EACCES or abandoning "run it" entirely. Stays silent when the
-// tree is writable.
+// read-only half is what left reviewers either burning a round on an unexplained EACCES or abandoning "run it" entirely. Stays silent when the tree is writable.
 func TestEnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	dir := t.TempDir()
 

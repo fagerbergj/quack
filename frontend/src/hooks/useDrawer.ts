@@ -2,16 +2,12 @@ import { useEffect, useRef } from 'react'
 
 // useDrawer wires the a11y behavior every off-canvas drawer needs (#1131,
 // MDN's dialogs-become-sheets guidance): Esc closes, focus moves into the
-// panel and is trapped there while open, background scroll is locked, and
-// focus returns to whatever opened it on close. Shared by NavRail's nav
-// drawer and ChatList's mobile drawer so both off-canvas panels behave
-// identically, not just look identical.
+// panel and is trapped there while open, background scroll is locked, and focus returns to whatever opened it on close. Shared by NavRail's nav drawer and ChatList's mobile drawer so both off-canvas panels behave identically, not just look identical.
 export function useDrawer(open: boolean, onClose: () => void) {
   const panelRef = useRef<HTMLDivElement>(null)
   // Both call sites pass an inline closure, so it gets a new identity on
   // every render of the owning component - a ref keeps the effect below
-  // from tearing down/re-running (and re-stealing focus) on every one of
-  // those re-renders (e.g. Chat's 5s chat-list poll) while the drawer is open.
+  // from tearing down/re-running (and re-stealing focus) on every one of those re-renders (e.g. Chat's 5s chat-list poll) while the drawer is open.
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 

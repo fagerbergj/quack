@@ -12,10 +12,9 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// newTestPostgresStore starts a real Postgres container (perf-audit's own
-// methodology: single-row inserts are RTT-bound, so only a real network
-// round trip - not sqlite - reproduces the ceiling being fixed here). Skips
-// when Docker isn't reachable.
+// newTestPostgresStore starts a real Postgres container (perf-audit's own methodology:
+// single-row inserts are RTT-bound, so only a real network round trip - not sqlite -
+// reproduces the ceiling being fixed here). Skips when Docker isn't reachable.
 func newTestPostgresStore(b *testing.B) *store.Store {
 	b.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -45,13 +44,10 @@ func newTestPostgresStore(b *testing.B) *store.Store {
 	return st
 }
 
-// BenchmarkDrainThroughput is the audit's own measurement (perf-audit item
-// 2): single-row INSERT-per-event vs the batched drain, against a real
-// Postgres container. A Benchmark, not a Test, on purpose - throughput is
-// inherently a wall-clock, hardware-dependent number, so it must never run
-// under plain `go test` (including `-count=200`); `go test -bench` opts in.
-// The correctness properties (nothing dropped, nothing duplicated) live in
-// the deterministic tests below instead.
+// BenchmarkDrainThroughput is the audit's own measurement (perf-audit item 2): single-row
+// INSERT-per-event vs the batched drain, against a real Postgres container. A
+// Benchmark, not a Test, on purpose - throughput is inherently a wall-clock,
+// hardware-dependent number, so it must never run under plain `go test` (including `-count=200`); `go test -bench` opts in. The correctness properties (nothing dropped, nothing duplicated) live in the deterministic tests below instead.
 func BenchmarkDrainThroughput(b *testing.B) {
 	st := newTestPostgresStore(b)
 	ctx := context.Background()
@@ -90,12 +86,9 @@ func BenchmarkDrainThroughput(b *testing.B) {
 		beforeRate, beforeElapsed, n, drainBatchSize, afterRate, afterElapsed, n)
 }
 
-// TestExactlyOnceResumeAcrossBatchBoundary proves the durable log has every
-// event exactly once even when a run's events straddle a drain batch
-// boundary - the correctness property batching must not break. sqlite, not
-// postgres: this must run fast and deterministically under -race -count=200
-// without Docker (the throughput comparison above is the only thing that
-// needs a real network round trip).
+// TestExactlyOnceResumeAcrossBatchBoundary proves the durable log has every event
+// exactly once even when a run's events straddle a drain batch boundary - the
+// correctness property batching must not break. sqlite, not postgres: this must run fast and deterministically under -race -count=200 without Docker (the throughput comparison above is the only thing that needs a real network round trip).
 func TestExactlyOnceResumeAcrossBatchBoundary(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -140,22 +133,9 @@ func TestExactlyOnceResumeAcrossBatchBoundary(t *testing.T) {
 	}
 }
 
-// TestFinishRunDeliversBufferedTailBeforeUnregister is the review's
-// correctness follow-up: a run finishing with events still sitting in the
-// batch queue (not yet drained to the DB) must have every one of them
-// durably persisted, AND delivered to an already-live subscriber, by the
-// time the run is unregistered - not merely by the time FinishRun returns.
-//
-// Deterministic by construction, not by timing: FinishRun runs Flush (which
-// blocks on the actual DB write) strictly before Close/cancelRun/Unregister,
-// on a single goroutine. So a concurrent observer that spins on
-// HasRegisteredRun and reads the store the instant it flips false is
-// guaranteed - via plain program order on FinishRun's goroutine, not luck -
-// to see every event already committed. Reordering FinishRun's steps (the
-// bug this test guards against: three of five call sites unregistered
-// before flushing) would make this test observably flaky/failing, exactly
-// the shutdown-drain race (serve.DrainActiveRuns polls HasRegisteredRun to
-// decide a run is safe to consider over).
+// TestFinishRunDeliversBufferedTailBeforeUnregister is the review's correctness
+// follow-up: a run finishing with events still sitting in the batch queue (not yet
+// drained to the DB) must have every one of them durably persisted, AND delivered to an already-live subscriber, by the time the run is unregistered - not merely by the time FinishRun returns. Deterministic by construction, not by timing: FinishRun runs Flush (which blocks on the actual DB write) strictly before Close/cancelRun/Unregister, on a single goroutine. So a concurrent observer that spins on HasRegisteredRun and reads the store the instant it flips false is guaranteed - via plain program order on FinishRun's goroutine, not luck - to see every event already committed. Reordering FinishRun's steps (the bug this test guards against: three of five call sites unregistered before flushing) would make this test observably flaky/failing, exactly the shutdown-drain race (serve.DrainActiveRuns polls HasRegisteredRun to decide a run is safe to consider over).
 func TestFinishRunDeliversBufferedTailBeforeUnregister(t *testing.T) {
 	st := newTestStore(t)
 	hub := stream.NewHub()

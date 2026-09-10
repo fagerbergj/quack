@@ -1,7 +1,6 @@
 // Package auth enforces Quack's inbound request auth: a chi middleware that
 // trusts a forward-auth gateway's headers, or verifies an OIDC bearer token,
-// depending on config.AuthConfig. Unconfigured (nil), it is a no-op — every
-// request passes through unauthenticated, matching pre-auth behavior.
+// depending on config.AuthConfig. Unconfigured (nil), it is a no-op — every request passes through unauthenticated, matching pre-auth behavior.
 package auth
 
 import (
@@ -37,8 +36,7 @@ type Auth struct {
 
 // New builds the enforcement from cfg. A nil cfg returns a nil *Auth
 // (disabled). When cfg.OIDC is set, this fetches discovery (and, unless
-// jwks_url overrides it, the JWKS) synchronously — a bad issuer is a startup
-// error, not a silent 401 factory discovered on the first request.
+// jwks_url overrides it, the JWKS) synchronously — a bad issuer is a startup error, not a silent 401 factory discovered on the first request.
 func New(cfg *config.InboundAuthConfig) (*Auth, error) {
 	if cfg == nil {
 		return nil, nil
@@ -59,10 +57,7 @@ func New(cfg *config.InboundAuthConfig) (*Auth, error) {
 }
 
 // Middleware enforces the configured policy on every request it wraps. A nil
-// *Auth is a no-op passthrough. Per request: a trusted header (if configured
-// and present) wins outright — the gateway already authenticated it; else a
-// configured oidc verifier requires and checks a bearer token; else (auth
-// configured but neither path satisfied) the request is unauthorized.
+// *Auth is a no-op passthrough. Per request: a trusted header (if configured and present) wins outright — the gateway already authenticated it; else a configured oidc verifier requires and checks a bearer token; else (auth configured but neither path satisfied) the request is unauthorized.
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	if a == nil {
 		return next
@@ -77,8 +72,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			if err != nil {
 				// Bearer verification failure is an expected client-side condition
 				// (expired/malformed/wrong-audience token) - detail goes to the log,
-				// never the response, so an unauthenticated caller doesn't learn
-				// anything about the verifier's internals.
+				// never the response, so an unauthenticated caller doesn't learn anything about the verifier's internals.
 				slog.Warn("bearer token rejected", "component", "auth", "err", err)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return

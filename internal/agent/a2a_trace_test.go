@@ -92,11 +92,9 @@ func newProbeWorker(t *testing.T, got *string) adkagent.Agent {
 	return ag
 }
 
-// TestA2APropagatesTraceContext is the reproduction for #1046: a "run" span
-// opened before dispatching to a worker over the loopback A2A boundary must
-// still be the ancestor of spans the worker opens while handling the request.
-// Today it is not - each per-node A2A server starts handling the HTTP request
-// with a bare context, so the worker's spans root a brand new trace.
+// TestA2APropagatesTraceContext is the reproduction for #1046: a "run" span opened before dispatching to a worker over the loopback A2A boundary must
+// still be the ancestor of the worker's handling spans. Today each per-node
+// A2A server starts handling its HTTP request with a bare context, so the worker's spans root a brand new trace.
 func TestA2APropagatesTraceContext(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))

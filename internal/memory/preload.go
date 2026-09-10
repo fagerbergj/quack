@@ -25,15 +25,9 @@ They may be useful for answering the user's current query.
 %s
 </PAST_CONVERSATIONS>`
 
-// oncePreload is a drop-in for ADK's preloadmemorytool that recalls memory
-// ONCE per invocation - at the first model step - instead of on every step
-// of the tool-call loop. ADK documents preload as a turn-boundary action,
-// but the v1.4.0 flow runs every tool's ProcessRequest on every runOneStep,
-// so the stock tool re-searches and re-injects on each tool call. Within one
-// invocation the query is constant, so those repeats are pure waste and, as
-// the store grows, risk context rot from low-relevance hits. We inject the
-// recalled block once; it stays in the system instruction for the rest of
-// the loop, invisible to the model like ADK's version.
+// oncePreload is a drop-in for ADK's preloadmemorytool that recalls memory ONCE per invocation
+// - at the first model step - instead of on every step of the tool-call loop. ADK documents
+// preload as a turn-boundary action, but the v1.4.0 flow runs every tool's ProcessRequest on every runOneStep, so the stock tool re-searches and re-injects on each tool call. Within one invocation the query is constant, so those repeats are pure waste and, as the store grows, risk context rot from low-relevance hits. We inject the recalled block once; it stays in the system instruction for the rest of the loop, invisible to the model like ADK's version.
 type oncePreload struct{}
 
 // NewPreload returns a once-per-invocation preload-memory processor.
@@ -52,12 +46,9 @@ func (oncePreload) ProcessRequest(ctx adkagent.Context, req *model.LLMRequest) e
 	}
 	query := uc.Parts[0].Text
 
-	// First-step guard. ToolContext exposes no session, but req.Contents (built by an
-	// earlier request processor) holds the history. The orchestrator's session is
-	// long-lived, so it also holds prior turns - anchor on the LATEST real user message
-	// (the current turn) and skip if the model already produced output after it. On the
-	// first step there is none, so recall runs exactly once per turn; later tool-loop
-	// steps short-circuit.
+	// First-step guard. ToolContext exposes no session, but req.Contents (built by an earlier
+	// request processor) holds the history. The orchestrator's session is long-lived, so it also
+	// holds prior turns - anchor on the LATEST real user message (the current turn) and skip if the model already produced output after it. On the first step there is none, so recall runs exactly once per turn; later tool-loop steps short-circuit.
 	fs := firstStep(req.Contents)
 	slog.Default().Debug("preload", "component", "memory", "contents", len(req.Contents), "first_step", fs)
 	if !fs {
@@ -79,13 +70,9 @@ func (oncePreload) ProcessRequest(ctx adkagent.Context, req *model.LLMRequest) e
 	return nil
 }
 
-// firstStep reports whether the model has not yet acted on the current turn, given
-// the request's content history. It finds the LATEST real user message - a user-role
-// content that carries text (function responses are also user-role but textless) -
-// and returns true only if nothing follows it. The latest user message is the current
-// turn even in a long-lived session, so this works without matching exact query text
-// (which doesn't survive the A2A boundary byte-for-byte). Empty/no-user-message →
-// assume first step so recall still runs.
+// firstStep reports whether the model has not yet acted on the current turn, given the
+// request's content history. It finds the LATEST real user message - a user-role content that
+// carries text (function responses are also user-role but textless) - and returns true only if nothing follows it. The latest user message is the current turn even in a long-lived session, so this works without matching exact query text (which doesn't survive the A2A boundary byte-for-byte). Empty/no-user-message → assume first step so recall still runs.
 func firstStep(contents []*genai.Content) bool {
 	last := -1
 	for i, c := range contents {
@@ -171,20 +158,17 @@ be stale, so verify anything load-bearing against the code itself.
 %s
 </MEMORY>`
 
-// Recall returns the formatted recall block for query under sc - the gate-side
-// twin of preload_memory for external workers (vetting injects it at the front
-// of the worker prompt). "" when the store is nil, nothing matches, or the
-// embedder is unavailable: recall is best-effort and bounded (Store.recall),
-// so it can never fail or hang a node.
+// Recall is the gate-side twin of preload_memory for external workers (vetting injects the
+// block at the front of the worker prompt). "" when the store is nil, nothing matches, or the
+// embedder is unavailable: recall is best-effort and bounded (Store.recall), so it can never fail or hang a node.
 func (s *Store) Recall(ctx context.Context, sc Scope, query string) string {
 	text, _ := s.RecallWithHits(ctx, sc, query)
 	return text
 }
 
-// Delivered is one memory handed to a worker - the received-set entry the
-// judge is asked to vote on and the ledger's memory.recall entry records.
-// JSON tags let it double as recall_memory's tool-visible output (#1255 P2):
-// a compact id/tier/score/content list the model can cite by id.
+// Delivered is one memory handed to a worker - the received-set entry the judge is asked
+// to vote on and the ledger's memory.recall entry records. JSON tags let it double as
+// recall_memory's tool-visible output (#1255 P2): a compact id/tier/score/content list the model can cite by id.
 type Delivered struct {
 	ID      string  `json:"id"`
 	Tier    string  `json:"tier"`
@@ -192,10 +176,9 @@ type Delivered struct {
 	Content string  `json:"content"`
 }
 
-// RecallWithHits is Recall plus the delivered set (ids/content/score) so a
-// caller can log usage (ledger memory.recall) and hand the same set to the
-// judge for voting (epic #1255 P1). hits is nil, not empty, when nothing
-// was delivered.
+// RecallWithHits is Recall plus the delivered set (ids/content/score) so a caller (the
+// gate, a test) can see exactly what was recalled. "" + nil when the store is nil,
+// nothing matches, or the embedder is unavailable - recall is best-effort. The caller can log usage (ledger memory.recall) and hand the same set to the judge for voting (epic #1255 P1). hits is nil, not empty, when nothing was delivered.
 func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (text string, hits []Delivered) {
 	if s == nil {
 		return "", nil
@@ -225,9 +208,9 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 	return fmt.Sprintf(recallInstructions, text), hits
 }
 
-// TopK is the store's configured recall size - the ceiling recall_memory's
-// own k argument is capped against (epic #1255 P2), so a tool caller can
-// narrow a recall but never widen it past what prefill itself is allowed.
+// TopK is the store's configured recall size - the ceiling recall_memory's own k argument
+// is capped against (epic #1255 P2), so a tool caller can narrow a recall but never
+// widen it past what prefill itself is allowed.
 func (s *Store) TopK() int {
 	if s == nil {
 		return 0
@@ -235,10 +218,9 @@ func (s *Store) TopK() int {
 	return s.topK
 }
 
-// InjectionByteBudget bounds the total Content bytes a single recall_memory
-// call hands back to a worker - shared with prefill's own recall (both read
-// through RecallWithHits/RecallForTool), so a tool call can never inject
-// more than an ordinary prefill already could.
+// InjectionByteBudget bounds the total Content bytes a single recall_memory call hands
+// back to a worker - shared with prefill's own recall (both read through
+// RecallWithHits/RecallForTool), so a tool call can never inject more than an ordinary prefill already could.
 const InjectionByteBudget = 8000
 
 // CapForInjection drops hits from the tail once their cumulative Content
@@ -289,13 +271,9 @@ func FormatForModel(hits []Delivered, truncated bool) string {
 	return b.String()
 }
 
-// LogRecall appends a best-effort memory.recall ledger entry for a
-// recall_memory call and bumps recalls/last_recalled_at - the tool-call twin
-// of vetting's recallLedgerEntry+RecordRecall pair for prefill, shared here
-// so both the native tool and the ACP loopback MCP write identically shaped
-// entries without either depending on package vetting. round is always 0:
-// a tool call has no round of its own to stamp (mirrors prefill's call,
-// which is also always round 0).
+// LogRecall appends a best-effort memory.recall ledger entry for a recall_memory call
+// and bumps recalls/last_recalled_at - the tool-call twin of vetting's
+// recallLedgerEntry+RecordRecall pair for prefill, shared here so both the native tool and the ACP loopback MCP write identically shaped entries without either depending on package vetting. round is always 0: a tool call has no round of its own to stamp (mirrors prefill's call, which is also always round 0).
 func (s *Store) LogRecall(ctx context.Context, led ledger.LedgerStore, chatID, nodeID, source string, hits []Delivered) {
 	if s == nil || led == nil || len(hits) == 0 {
 		return
@@ -319,13 +297,9 @@ func (s *Store) LogRecall(ctx context.Context, led ledger.LedgerStore, chatID, n
 	s.RecordRecall(ctx, ids)
 }
 
-// RecordRecall bumps recalls and last_recalled_at for every id in one
-// batched write - the usage-tracking half of a recall delivery (design
-// decision #1255 P1). Best-effort like Recall itself: a failure is logged,
-// never returned, so usage tracking can never fail or slow a node. Does NOT
-// write a memory_ops row - the ledger's memory.recall entry (appended by the
-// caller) is the audit trail for what a chat retrieved; this only updates
-// the point's own denormalized counters.
+// RecordRecall bumps recalls and last_recalled_at for every id in one batched write -
+// the usage-tracking half of a recall delivery (design decision #1255 P1).
+// Best-effort like Recall itself: a failure is logged, never returned, so usage tracking can never fail or slow a node. Does NOT write a memory_ops row - the ledger's memory.recall entry (appended by the caller) is the audit trail for what a chat retrieved; this only updates the point's own denormalized counters.
 func (s *Store) RecordRecall(ctx context.Context, ids []string) {
 	if s == nil || len(ids) == 0 {
 		return

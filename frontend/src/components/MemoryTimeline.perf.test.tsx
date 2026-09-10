@@ -1,8 +1,6 @@
 // @vitest-environment jsdom
-//
 // #1286: groupByAge and every MemoryEntry were rebuilt on any unrelated
-// parent re-render (e.g. a sibling row's vote). Asserted with render counts,
-// never durations - timing bounds flake under jsdom/CI load.
+// parent re-render (e.g. a sibling row's vote). Asserted with render counts, never durations - timing bounds flake under jsdom/CI load.
 import { describe, it, expect, beforeAll } from 'vitest'
 import { act, createElement, useState } from 'react'
 import { createRoot } from 'react-dom/client'

@@ -21,9 +21,7 @@ func writeTemp(t *testing.T, content string) string {
 
 // TestLoadForSandbox_SkipsRuntimeValidation: a config with every runtime
 // value (endpoint/model/db) left as an unset ${VAR} - e.g. a CI image with
-// no QUACK_*_MODEL/QUACK_DATABASE_URL - loads under LoadForSandbox (the
-// path `quack sandbox` uses) but still fails Load, so nothing that DOES need
-// live inference plumbing accidentally starts on an incomplete config.
+// no QUACK_*_MODEL/QUACK_DATABASE_URL - loads under LoadForSandbox (the path `quack sandbox` uses) but still fails Load, so nothing that DOES need live inference plumbing starts on an incomplete config.
 func TestLoadForSandbox_SkipsRuntimeValidation(t *testing.T) {
 	path := writeTemp(t, `
 providers:
@@ -170,8 +168,7 @@ orchestrator: { provider: default, model: m }
 
 // TestLoadRejectsDeprecatedCompactionEngine pins that session.compaction.engine
 // - the no-op shim removed after #1239 - is now an unknown field like any
-// other, so a stale deployed quack.yaml fails loudly at load instead of
-// silently ignoring the key.
+// other, so a stale deployed quack.yaml fails loudly at load, not silently ignored.
 func TestLoadRejectsDeprecatedCompactionEngine(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
@@ -190,8 +187,7 @@ orchestrator: { provider: default, model: m }
 
 // TestLoadRejectsOverlapWithoutInterval pins that overlap_size without
 // compaction_interval fails at config load - adk's compaction.Config.Validate()
-// rejects that combination at every dispatch of this agent, so this must be
-// caught before the config ever reaches a running node.
+// rejects that combination at every dispatch of this agent, so it must be caught before the config reaches a running node.
 func TestLoadRejectsOverlapWithoutInterval(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
@@ -524,9 +520,8 @@ tools:
 }
 
 // TestLoadRejectsBadForgettingRuleExpression pins that a syntactically bad
-// memory.forgetting.rules[].when expression fails at Load, not just at
-// server startup (regression guard for the internal/config <-> memory
-// import cycle that used to defer this check).
+// memory.forgetting.rules[].when expression fails at Load, not just at server
+// startup (regression guard for the config <-> memory import cycle that deferred this check).
 func TestLoadRejectsBadForgettingRuleExpression(t *testing.T) {
 	const cfg = `
 providers:
@@ -780,10 +775,9 @@ auth:
 	}
 }
 
-// TestLoadOldConfigWithoutPostgresLedgerStillParses guards #1100: a config
-// with no recording block at all (every field pre-dating the Postgres
-// ledger option) must keep parsing - prod's quack.yaml is bind-mounted and
-// STRICT, so an old config can never start failing after this change.
+// TestLoadOldConfigWithoutPostgresLedgerStillParses guards #1100: a config with
+// no recording block at all (every field pre-dating the Postgres ledger
+// option) must keep parsing - prod's quack.yaml is bind-mounted and STRICT, so an old config can never start failing after this change.
 func TestLoadOldConfigWithoutPostgresLedgerStillParses(t *testing.T) {
 	if _, err := Load(writeTemp(t, baseConfig)); err != nil {
 		t.Fatalf("old config without a recording block should still load: %v", err)
@@ -822,8 +816,7 @@ orchestrator: { provider: default, model: m }
 
 // TestRealConfigLoads is a smoke test that the shipped config/quack.yaml parses
 // and validates against the current structs (guards against config drift). Env
-// is set so required URLs are non-empty; QUACK_QDRANT_URL left unset exercises the
-// memory self-disable path.
+// is set so required URLs are non-empty; QUACK_QDRANT_URL unset exercises the memory self-disable path.
 func TestRealConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
@@ -845,11 +838,8 @@ func TestRealConfigLoads(t *testing.T) {
 }
 
 // TestRealConfigWorkersHaveNoDirectGitHubMutation pins the staged-delivery
-// spine's core safety property: git_push and github_pull_request/
-// github_submit_review (the latter isn't even a registered tool anymore - see
-// internal/github/tools.go) must never appear in a worker's tools: list. A
-// worker commits locally and stages; only the trust gate, post judge-pass,
-// pushes and posts.
+// spine's core safety property: git_push and github_pull_request/ github_submit_review (the latter no longer a registered tool, see
+// internal/github/tools.go) must never appear in a worker's tools: list - a worker commits locally and stages; only the trust gate, post judge-pass, pushes and posts.
 func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
@@ -961,10 +951,8 @@ func TestWorkspaceDefaults(t *testing.T) {
 		t.Errorf("CheckCommands = %v, want the default allowlist (checks ON by default; derived checks are toolchain-gated)", w.CheckCommands)
 	}
 	// The child-process sandbox is ON by default: a deployment that says nothing
-	// must get the OS boundary, not the pre-sandbox behaviour where a child (any
-	// `sh -c`, whose text trips no metachar wall) had the server user's whole
-	// filesystem. An unusable bwrap then refuses to START (workspace.ResolveSandbox);
-	// opting out is explicit.
+	// must get the OS boundary, not the pre-sandbox behaviour where a child
+	// (any `sh -c`, whose text trips no metachar wall) had the server user's whole filesystem. An unusable bwrap then refuses to START (workspace.ResolveSandbox); opting out is explicit.
 	if w.Sandbox != "bwrap" {
 		t.Errorf("Sandbox = %q, want bwrap (a config that says nothing must still confine child processes)", w.Sandbox)
 	}
@@ -1088,10 +1076,9 @@ workspace:
 	}
 }
 
-// TestWorkspaceParsesOverrides proves every workspace: field round-trips
-// (the yaml gotcha this guards against: yaml.Unmarshal silently ignores
-// unknown/misspelled keys, so a wrong field name would parse clean but leave
-// the default in place - this test would catch that).
+// TestWorkspaceParsesOverrides proves every workspace: field round-trips (the
+// yaml gotcha this guards against: yaml.Unmarshal silently ignores
+// unknown/misspelled keys, so a wrong field name would parse clean but leave the default in place).
 func TestWorkspaceParsesOverrides(t *testing.T) {
 	t.Setenv("QUACK_WORKSPACE_ROOT", "/data/workspace")
 	c, err := Load(writeTemp(t, baseConfig+`
@@ -1344,10 +1331,8 @@ extensions:
 }
 
 // TestExtensionsGitHubPassesThroughOpaquely pins the GitHub-extension
-// migration's config-surface consequence directly: extensions.github is no
-// longer typed/strict in quack itself (config.GitHubExtensionConfig is
-// gone) - it passes through Modules exactly like any other module, unknown
-// fields included. quack-extensions/github's own Factory validates it now.
+// migration's config-surface consequence: extensions.github is no longer
+// typed/strict in quack itself (config.GitHubExtensionConfig is gone) - it passes through Modules exactly like any other module, unknown fields included; quack-extensions/github's Factory validates it now.
 func TestExtensionsGitHubPassesThroughOpaquely(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 extensions:
@@ -1468,9 +1453,8 @@ gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, context
 }
 
 // TestCoderModelFallsBackToResearcherModel proves agents.code-implementer's
-// model (${QUACK_CODER_MODEL}) resolves to QUACK_RESEARCHER_MODEL's value
-// when QUACK_CODER_MODEL is unset - the documented (config/quack.yaml) but,
-// before this, unenforced fallback; see expandEnv.
+// model (${QUACK_CODER_MODEL}) resolves to QUACK_RESEARCHER_MODEL's value when
+// QUACK_CODER_MODEL is unset - the documented (config/quack.yaml) but, before this, unenforced fallback; see expandEnv.
 func TestCoderModelFallsBackToResearcherModel(t *testing.T) {
 	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
 	// Deliberately NOT setting QUACK_CODER_MODEL.
@@ -1838,8 +1822,7 @@ observability:
 func TestRecordingUnconfiguredStoreDoesNotFailLoad(t *testing.T) {
 	// No observability: section at all - otel and recording both default
 	// enabled, but no store is named. Per the ledger's "off or store error ⇒
-	// zero behavior change" rule, this must degrade at wiring time, not fail
-	// config load.
+	// zero behavior change" rule, this must degrade at wiring time, not fail config load.
 	if _, err := Load(baseObservabilityYAML(t, "")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -1915,10 +1898,9 @@ workflows:
 	}
 }
 
-// TestWorkflowShapeMissingAgentFailsStartup is issue #805 test case 3: a
-// shape naming an agent that isn't configured must fail loudly at startup,
-// naming both the shape and the missing agent - never silently produce a
-// plan the executor can't run.
+// TestWorkflowShapeMissingAgentFailsStartup is issue #805 test case 3: a shape
+// naming an agent that isn't configured must fail loudly at startup, naming
+// both the shape and the missing agent - never silently produce a plan the executor can't run.
 func TestWorkflowShapeMissingAgentFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workflows:
@@ -1969,10 +1951,9 @@ func TestWorkflowShapesDefaultEmpty(t *testing.T) {
 	}
 }
 
-// TestWorkflowShapeBoundNodesValid pins workflow binding: a
-// well-formed nodes: list on a shape survives validation and round-trips
-// verbatim (id/agent/task/depends_on/rubric), so workflowcatalog.Bind has
-// exactly what it needs.
+// TestWorkflowShapeBoundNodesValid pins workflow binding: a well-formed nodes:
+// list on a shape survives validation and round-trips verbatim
+// (id/agent/task/depends_on/rubric), so workflowcatalog.Bind has exactly what it needs.
 func TestWorkflowShapeBoundNodesValid(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -2104,8 +2085,7 @@ workflows:
 
 // TestWorkflowShapeBoundNodeMissingFieldFailsStartup: a bound node missing
 // id/agent/task is a malformed BINDING, not a malformed hint - it fails
-// startup loudly rather than silently dropping (unlike a malformed
-// trigger/shape/agents shape, which is only ever a hint and gets skipped).
+// startup loudly rather than silently dropping (a malformed trigger/shape/agents shape is only ever a hint and gets skipped).
 func TestWorkflowShapeBoundNodeMissingFieldFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -2125,11 +2105,9 @@ workflows:
 	}
 }
 
-// TestRealConfigDocumentIngestWorkflowExampleLoads loads the shipped
-// config/quack.yaml (real agents:, not a throwaway fixture) with an
+// TestRealConfigDocumentIngestWorkflowExampleLoads loads the shipped config/quack.yaml (real agents:, not a throwaway fixture) with an
 // uncommented copy of its own extensions.remarkable + document-ingest
-// workflows: examples appended, proving the example this repo ships actually
-// parses and binds against the real image-reader/synthesizer agents.
+// workflows: examples appended, proving the shipped example actually parses and binds against the real image-reader/synthesizer agents.
 func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
@@ -2243,9 +2221,8 @@ workspace:
 }
 
 // TestModelsRegistry pins the #1007 config-layer prerequisite: the models:
-// registry, its validation rules, and provider derivation. Each case is a
-// full config; failure cases assert both an error and that it names the
-// offender.
+// registry, its validation rules, and provider derivation. Each case is a full
+// config; failure cases assert both an error and that it names the offender.
 func TestModelsRegistry(t *testing.T) {
 	const providers = `
 providers:
@@ -2461,9 +2438,7 @@ orchestrator: { provider: default, model: shared }
 
 // TestModelRegistrationCoversNonAgentRefs pins each of the six non-agent
 // Provider+Model fields (orchestrator, user_memory_hook, gates.judge,
-// session.compaction, store embedder/consolidation) against an unregistered
-// model, one per checkModelRegistered call site - each error must name that
-// field.
+// session.compaction, store embedder/consolidation) against an unregistered model - one per checkModelRegistered call site, each error must name that field.
 func TestModelRegistrationCoversNonAgentRefs(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

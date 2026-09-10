@@ -10,11 +10,9 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestSetupWorktreeCreatesDistinctDirsAndBranches pins the core of worktree-per-node isolation:
-// two read-only qualifying nodes (reviewer, explorer) sharing one plan.Setup
-// clone must each get their OWN directory AND their own branch - git refuses
-// to check the same branch out in two worktrees at once, so a shared branch
-// name would break the second node outright.
+// TestSetupWorktreeCreatesDistinctDirsAndBranches pins the core of worktree-per-node
+// isolation: two read-only qualifying nodes (reviewer, explorer) sharing one
+// plan.Setup clone must each get their OWN directory AND their own branch - git refuses to check the same branch out in two worktrees at once, so a shared branch name would break the second node outright.
 func TestSetupWorktreeCreatesDistinctDirsAndBranches(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -68,8 +66,7 @@ func TestSetupWorktreeCreatesDistinctDirsAndBranches(t *testing.T) {
 
 // TestSetupWorktreeIsIdempotent pins the resumed-run requirement: re-entering
 // the same node calls SetupWorktree again with the same arguments, and that
-// must be a cheap no-op (the SAME worktree, still valid) rather than a
-// disruptive re-link that could clobber files the worker already wrote.
+// must be a cheap no-op (the SAME worktree, still valid) rather than a disruptive re-link that could clobber files the worker already wrote.
 func TestSetupWorktreeIsIdempotent(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -106,8 +103,7 @@ func TestSetupWorktreeIsIdempotent(t *testing.T) {
 
 // TestSetupWorktreeRunsCheckSetup pins the #856 follow-up: a read-only
 // worktree (reviewer/explorer) can never bootstrap itself, so check_setup
-// must run quack-side, in the worktree, before the worker's first round -
-// not only later at gate-check time.
+// must run quack-side, in the worktree, before the worker's first round - not only later at gate-check time.
 func TestSetupWorktreeRunsCheckSetup(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -131,11 +127,7 @@ func TestSetupWorktreeRunsCheckSetup(t *testing.T) {
 
 // TestSetupWorktreeRunsCheckSetupAfterSharedCloneAlreadyDid pins the per-dir
 // cache key: workspace.RunCheckSetup's cache is shared across every caller
-// (SetupClone and SetupWorktree both call into it), so a naive key (e.g. the
-// parent clone's dir, or the node ID alone) would make the shared clone's
-// bootstrap poison a worktree's own - exactly the live failure (a worktree
-// missing scripts/node_modules despite the shared clone having "already run
-// check_setup"). The key must be the worktree's OWN resolved dir.
+// (SetupClone and SetupWorktree both call into it), so a naive key (e.g. the parent clone's dir, or the node ID alone) would make the shared clone's bootstrap poison a worktree's own - exactly the live failure (a worktree missing scripts/node_modules). The key must be the worktree's OWN resolved dir.
 func TestSetupWorktreeRunsCheckSetupAfterSharedCloneAlreadyDid(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)

@@ -53,8 +53,7 @@ Call submit_plan_verdict exactly once with accept (bool) and reason (if rejectin
 
 // NewPlanJudge: builds PlanJudge backed by judgeModel (reuses the trust gate's judge). Isolated in-memory
 // session per call. maxOutputTokens caps the round's own reply tokens; <= 0 leaves it uncapped (#889).
-// thinkingLevel is gates.judge.thinking_level ("", "low", "medium", "high"); "" sends no ThinkingConfig.
-// mem/led are optional (epic #1255 P2): nil skips the project-memory section entirely.
+// thinkingLevel is gates.judge.thinking_level ("", "low", "medium", "high"); "" sends no ThinkingConfig. mem/led are optional (epic #1255 P2): nil skips the project-memory section entirely.
 func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel string, mem *memory.Store, led ledger.LedgerStore) PlanJudge {
 	return func(ctx context.Context, request, planSummary, repoKey string) (bool, string, error) {
 		var memSection string

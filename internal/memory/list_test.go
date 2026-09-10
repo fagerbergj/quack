@@ -10,10 +10,9 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-// upsertTimed writes one point with an explicit timestamp and a vector
-// orthogonal to fakeEmbedder's fixed query vector ([1,0,0,0]) - so an
-// embedding query can never rank it above minScore, but List (no embedding
-// involved) still sees it. That contrast is exactly what TestListIsNotSearch checks.
+// upsertTimed writes one point with an explicit timestamp and a vector orthogonal to
+// fakeEmbedder's fixed query vector ([1,0,0,0]) - so an embedding query can never rank
+// it above minScore, but List (no embedding involved) still sees it. That contrast is exactly what TestListIsNotSearch checks.
 func upsertTimed(t *testing.T, s *Store, id, scope, content, ts string) {
 	t.Helper()
 	if err := s.idx.upsert(context.Background(), []point{{
@@ -188,12 +187,9 @@ func TestListPagingIncludeInvalidated_Mixed(t *testing.T) {
 	}
 }
 
-// TestList_TierFilterSpansPages is #1265 review finding 10: the tier filter
-// is index-level (a WHERE clause / Qdrant condition), not a client-side
-// post-filter over one page - it must apply across a paged List correctly,
-// with total/paging agreeing with the filter. Also covers a legacy point
-// with no tier at all reading as "unverified" under the filter (design doc
-// §3/toMemories' wire mapping rule extended to this filter).
+// TestList_TierFilterSpansPages is #1265 review finding 10: the tier filter is index-level (a
+// WHERE clause / Qdrant condition), not a client-side post-filter over one page - it must apply
+// across a paged List correctly, with total/paging agreeing with the filter. Also covers a legacy point with no tier at all reading as "unverified" under the filter (design doc §3/toMemories' wire mapping rule extended to this filter).
 func TestList_TierFilterSpansPages(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -238,8 +234,7 @@ func TestList_TierFilterSpansPages(t *testing.T) {
 
 // TestGetByID_FindsAcrossBackendsAndTiersInvalidated covers #1268: GetByID is
 // a direct id lookup (not a page scan), and it returns an invalidated point
-// too - the caller decides what an invalidated Status means, unlike List's
-// default exclusion.
+// too - the caller decides what an invalidated Status means, unlike List's default exclusion.
 func TestGetByID_FindsAcrossBackendsAndTiersInvalidated(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -272,23 +267,18 @@ func TestGetByID_FindsAcrossBackendsAndTiersInvalidated(t *testing.T) {
 			t.Fatalf("GetByID(unknown) = %v, want ErrMemoryNotFound", err)
 		}
 
-		// #1268 bug: a malformed (non-UUID) id used to reach qdrant's client
-		// unvalidated and come back as a raw "Unable to parse UUID" gRPC error
-		// instead of ErrMemoryNotFound - breaking findMemoryByID's try-each-store
-		// fallback in internal/server/rest/memory.go. sqlite never had this
-		// failure mode (a WHERE-clause miss on any string), so only the qdrant
-		// subtest actually exercised it before the fix in qdrant.go's
-		// idsToPointIDs.
+		// #1268 bug: a malformed (non-UUID) id used to reach qdrant's client unvalidated and
+		// come back as a raw "Unable to parse UUID" gRPC error instead of
+		// ErrMemoryNotFound - breaking findMemoryByID's try-each-store fallback in internal/server/rest/memory.go. sqlite never had this failure mode (a WHERE-clause miss on any string), so only the qdrant subtest actually exercised it before the fix in qdrant.go's idsToPointIDs.
 		if _, err := s.GetByID(ctx, "not-a-uuid"); !errors.Is(err, ErrMemoryNotFound) {
 			t.Fatalf("GetByID(malformed id) = %v, want ErrMemoryNotFound (not a raw backend error)", err)
 		}
 	})
 }
 
-// TestList_SortSpansPages (#1266): each non-default sort orders the WHOLE
-// matching set, not just whatever page a plain timestamp order would have
-// put first - a limit=1 page 0 under `upvotes` must be the single highest
-// upvote count across all 3 rows, not row 0 of the newest-first order.
+// TestList_SortSpansPages (#1266): each non-default sort orders the WHOLE matching set, not just
+// whatever page a plain timestamp order would have put first - a limit=1 page 0 under `upvotes`
+// must be the single highest upvote count across all 3 rows, not row 0 of the newest-first order.
 func TestList_SortSpansPages(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)

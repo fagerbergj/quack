@@ -21,13 +21,11 @@ import (
 
 // A run is SERVER-SIDE work; an SSE client is just a viewer. These tests pin
 // that: whatever the client does - stops reading (a sleeping laptop), drops the
-// connection (a closed tab, a killed curl) - the run keeps executing to
-// completion. Only the explicit cancel endpoint may kill it.
+// connection (a closed tab, a killed curl) - the run keeps executing to completion. Only the explicit cancel endpoint may kill it.
 
 // gatedModel is a model.LLM whose reply is gated on a channel: it announces the
 // call on started, then waits for unblock (or ctx cancellation, which it
-// reports back as a cancelled call). reply is padded to size bytes so a run can
-// out-write a client that never reads.
+// reports back as a cancelled call); reply is padded to size bytes so a run can out-write a client that never reads.
 type gatedModel struct {
 	started   chan struct{}
 	unblock   chan struct{}
@@ -125,8 +123,7 @@ func watch(t *testing.T, h *Handler, chatID string, d time.Duration) bool {
 
 // TestRunSurvivesClientThatStopsReading: the sleeping-laptop case. The client
 // opens the stream and never reads a byte; the run's reply is far larger than
-// the socket buffers, so writing to that client blocks forever. The run must
-// still finish - it must not be pulled by (and stall behind) the SSE write.
+// the socket buffers, so writing to that client blocks forever. The run must still finish - it must not be pulled by (and stall behind) the SSE write.
 func TestRunSurvivesClientThatStopsReading(t *testing.T) {
 	m := newGatedModel(4 << 20) // 4MB reply: dwarfs any kernel/socket buffer
 	h := newTestHandlerWithModel(t, m)

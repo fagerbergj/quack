@@ -62,11 +62,9 @@ func (e *Executor) SetMaxActive(n int) {
 // separately, at the REST/plan entry boundary (internal/artifactref).
 func (e *Executor) SetArtifacts(svc artifact.Service) { e.artifacts = svc }
 
-// SetWALLedger wires the WAL's fail-closed AppendIntent path into every gate
-// node this executor builds (#1090 §4.9/#1100). Callers must pass nil unless
-// store is a postgres-backed LedgerStore - the filesystem ledger's
-// AppendIntent is best-effort/non-transactional and cannot back the WAL's
-// fail-closed guarantee (see internal/vetting Config.Ledger's doc).
+// SetWALLedger wires the WAL's fail-closed AppendIntent into every gate node
+// this executor builds (#1090 §4.9/#1100). Pass nil unless store is
+// postgres-backed: the FS ledger's AppendIntent is best-effort, not fail-closed (see vetting Config.Ledger doc).
 func (e *Executor) SetWALLedger(store ledger.LedgerStore) { e.walLedger = store }
 
 // ResetNodeCancels: clears user-cancelled node flags for the next turn.
@@ -208,10 +206,9 @@ type gateScore struct {
 	rounds int
 }
 
-// SilentGapError is the true silent-gap message (#568): a node whose output
-// came back empty with no failure on record. store.failedDagNodeError treats
-// this exact string as "nothing to report" rather than a real cause, so it
-// must stay a sentinel other callers can compare against, not a format string.
+// SilentGapError is the true silent-gap message (#568): empty output with no
+// failure on record. store.failedDagNodeError treats this exact string as
+// "nothing to report", so it must stay a comparable sentinel, not a format string.
 const SilentGapError = "produced no answer"
 
 // emptyNodeError names a node's empty completion: a sanitized (no URL/body -
@@ -330,8 +327,7 @@ func newDagStream(traceID, chatID string, agentByID, scopeByID map[string]string
 
 // scope returns node's workspace scope (the failure recorder's real key
 // component), falling back to the raw node id when scopeByID has no entry
-// (e.g. a test harness that never populated it, or a node id that is
-// already its own scope).
+// (e.g. an unpopulated test harness, or a node id that is already its own scope).
 func (s *dagStream) scope(node string) string {
 	if sc, ok := s.scopeByID[node]; ok && sc != "" {
 		return sc

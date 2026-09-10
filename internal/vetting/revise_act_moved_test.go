@@ -18,10 +18,8 @@ import (
 )
 
 // actMovedReviseModel: revise round ends on an empty answer (finalSpec answer_len
-// 0), same as emptyReviseModel, but its LAST act before that empty text is a
-// git_commit tool call - so the delivered activity changed even though the
-// answer bytes didn't. The first judge round fails; the tool call should fix
-// exactly what it complained about, so a second judge round must see it.
+// 0), same as emptyReviseModel, but its LAST act before that empty text is a git_commit tool call - so the delivered activity changed even though the
+// answer bytes didn't. The first judge round fails; the tool call should fix exactly what it complained about, so a second judge round must see it.
 type actMovedReviseModel struct {
 	workerCalls int
 	judgeCalls  int
@@ -55,8 +53,7 @@ func (m *actMovedReviseModel) GenerateContent(_ context.Context, req *model.LLMR
 
 // TestReviseActMovedForcesRejudge proves that an empty revise answer whose
 // round DID stage new activity (here, a git_commit) still gets judged before
-// delivery - node.go's revise guard must compare activity, not just answer
-// text, or a committed fix goes out under the stale pre-commit verdict.
+// delivery - node.go's revise guard must compare activity, not just answer text, or a committed fix goes out under the stale pre-commit verdict.
 func TestReviseActMovedForcesRejudge(t *testing.T) {
 	stub := &actMovedReviseModel{}
 	worker, err := llmagent.New(llmagent.Config{

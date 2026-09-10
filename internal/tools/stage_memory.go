@@ -19,8 +19,7 @@ type stageMemoryArgs struct {
 
 // newStageMemory builds the stage_memory tool. It is a SINK: it records nothing
 // itself - the call (with its args) lands in the worker's session, and the trust
-// gate harvests staged candidates from there, committing them only if the answer
-// passes vetting. So nothing is ever remembered from a failed answer.
+// gate harvests staged candidates from there, committing them only if the answer passes vetting: nothing is ever remembered from a failed answer.
 func newStageMemory(_ Deps) (tool.Tool, error) {
 	return functiontool.New[stageMemoryArgs, string](
 		functiontool.Config{

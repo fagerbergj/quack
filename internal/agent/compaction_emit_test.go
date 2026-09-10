@@ -11,16 +11,9 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestEmitCompactionReachesHub unit-tests emitCompaction's own translation
-// (field mapping, span attributes) against a hand-built Event; the proof that
-// adk's real compactor ever calls compactionSessions.AppendEvent with one is
-// TestCompactionSessionsObservesRealCompaction in a2a_test.go.
-//
-// It also proves the compaction row's run_id is quack's own run id - the
-// same one the node's agent_start event carries for this round (both derive
-// from the "<name>@<runID>" branch via stream.RunIDFromBranch) - not adk's
-// own invocation id, so the frontend can match by exact run_id instead of a
-// "most recent run on this node" heuristic.
+// TestEmitCompactionReachesHub unit-tests emitCompaction's own translation (field mapping, span attributes) against a hand-built Event; the proof that
+// adk's real compactor ever calls compactionSessions.AppendEvent with one is TestCompactionSessionsObservesRealCompaction in a2a_test.go. It also proves the compaction row's run_id is quack's own run id - the same one the node's
+// agent_start event carries (both derive from the branch via stream.RunIDFromBranch) - not adk's invocation id, so the frontend can match by exact run_id instead of a "most recent run on this node" heuristic.
 func TestEmitCompactionReachesHub(t *testing.T) {
 	hub := stream.NewHub()
 	const chatID, nodeID = "chat-1", "node-B"

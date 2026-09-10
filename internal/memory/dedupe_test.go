@@ -8,12 +8,9 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-// TestDedupeSweep_CrossChatClusterMerges covers issue #1269's core gap: two
-// near-duplicate memories minted by DIFFERENT chats (so burstClusters never
-// compares them) still get clustered and merged by DedupeSweep, with P5
-// lineage carrying the absorbed point's votes into the survivor. Run against
-// both backends (#1268's forEachBackend) since clustering now reads each
-// backend's own stored-vector plumbing (qdrant WithVectors / sqlite blob).
+// TestDedupeSweep_CrossChatClusterMerges covers issue #1269's core gap: two near-duplicate
+// memories minted by DIFFERENT chats (so burstClusters never compares them) still get clustered
+// and merged by DedupeSweep, with P5 lineage carrying the absorbed point's votes into the survivor. Run against both backends (#1268's forEachBackend) since clustering now reads each backend's own stored-vector plumbing (qdrant WithVectors / sqlite blob).
 func TestDedupeSweep_CrossChatClusterMerges(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -112,10 +109,9 @@ func TestCosineClusters_BoundedSize(t *testing.T) {
 	}
 }
 
-// TestCosineClusters_SurvivorOrderPrefersHighestVotedThenOldest verifies the
-// per-cluster ordering DedupeSweep relies on: the highest-VoteScore member
-// comes first (a tie-break candidate for the survivor the consolidation
-// prompt is told to prefer), then oldest MintedAt. Pure function, no backend.
+// TestCosineClusters_SurvivorOrderPrefersHighestVotedThenOldest verifies the per-cluster
+// ordering DedupeSweep relies on: the highest-VoteScore member comes first (a tie-break
+// candidate for the survivor the consolidation prompt is told to prefer), then oldest MintedAt. Pure function, no backend.
 func TestCosineClusters_SurvivorOrderPrefersHighestVotedThenOldest(t *testing.T) {
 	pts := []scored{
 		{ID: "newer-high-vote", VoteScore: 3, MintedAt: "2026-09-01T00:00:00Z", Vector: []float32{1, 0, 0, 0}},
@@ -135,13 +131,9 @@ func TestCosineClusters_SurvivorOrderPrefersHighestVotedThenOldest(t *testing.T)
 	}
 }
 
-// TestDedupeSweep_NoEmbedderCalls is the coordinator's correction: DedupeSweep
-// must cluster on each point's already-stored vector (list() with vectors),
-// never re-embed. A countingEmbedder proves zero Embed calls happen during a
-// full apply=true sweep. Sqlite-only: forEachBackend's newStore ctor doesn't
-// take a custom embedder, and the behavior under test (DedupeSweep's Go code
-// never calling s.embed) is backend-independent - it's the same code path
-// regardless of which index answers list().
+// TestDedupeSweep_NoEmbedderCalls is the coordinator's correction: DedupeSweep must cluster on
+// each point's already-stored vector (list() with vectors), never re-embed. A countingEmbedder
+// proves zero Embed calls happen during a full apply=true sweep. Sqlite-only: forEachBackend's newStore ctor doesn't take a custom embedder, and the behavior under test (DedupeSweep's Go code never calling s.embed) is backend-independent - it's the same code path regardless of which index answers list().
 func TestDedupeSweep_NoEmbedderCalls(t *testing.T) {
 	ctx := context.Background()
 	ce := &countingEmbedder{}
@@ -165,9 +157,8 @@ func TestDedupeSweep_NoEmbedderCalls(t *testing.T) {
 }
 
 // TestDedupeSweep_VerifiedPairMergesWithSummedVotes is the coordinator's other
-// correction: a reinforced/verified pair must still be eligible for
-// clustering (not excluded), and P5 lineage sums their votes onto the
-// survivor exactly like an unverified merge.
+// correction: a reinforced/verified pair must still be eligible for clustering (not
+// excluded), and P5 lineage sums their votes onto the survivor exactly like an unverified merge.
 func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -211,10 +202,9 @@ func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 	})
 }
 
-// TestMMRSelect_FiveNearDuplicatesYieldOne is the recall-diversity test
-// (issue #1269 item 4): five near-identical points (mutual cosine >= 0.90)
-// must not all occupy the top-k - at most one should survive mmrSelect.
-// Pure function, no backend.
+// TestMMRSelect_FiveNearDuplicatesYieldOne is the recall-diversity test (issue #1269
+// item 4): five near-identical points (mutual cosine >= 0.90) must not all occupy the
+// top-k - at most one should survive mmrSelect. Pure function, no backend.
 func TestMMRSelect_FiveNearDuplicatesYieldOne(t *testing.T) {
 	pts := make([]scored, 5)
 	for i := range pts {
@@ -244,11 +234,9 @@ func TestMMRSelect_DistinctHitsAllSurvive(t *testing.T) {
 	}
 }
 
-// TestRecall_MMRDropsNearDuplicates is an end-to-end check that Store.recall
-// itself (not just mmrSelect) applies the diversity re-rank: five
-// near-identical points seeded with slightly different vectors, topK=5,
-// should not all come back. Run against both backends since it exercises
-// each backend's own query()-with-vectors plumbing.
+// TestRecall_MMRDropsNearDuplicates is an end-to-end check that Store.recall itself (not
+// just mmrSelect) applies the diversity re-rank: five near-identical points seeded with
+// slightly different vectors, topK=5, should not all come back. Run against both backends since it exercises each backend's own query()-with-vectors plumbing.
 func TestRecall_MMRDropsNearDuplicates(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()

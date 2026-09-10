@@ -51,15 +51,9 @@ func usable(contextWindow int) int {
 	return 0
 }
 
-// emitCompaction publishes ev's compaction record to the chat's hub and opens
-// a paired otel span, or does nothing for a non-compaction event or a nil
-// sink (compaction disabled, or a call site - e.g. tests - with no hub).
-//
-// ctx must be the worker's own per-request context (from compactionSessions'
-// AppendEvent): otelhttp's server handler already parented it from the
-// caller's traceparent header, so the span lands under the dispatching
-// round's trace without the ledger.Coords.SpanContext workaround the old
-// in-process callback needed.
+// emitCompaction publishes ev's compaction record to the chat's hub and opens a paired otel span; no-op for a non-compaction event or a nil sink
+// (compaction disabled, or a call site - e.g. tests - with no hub). ctx must be the worker's own per-request context (from compactionSessions'
+// AppendEvent): otelhttp's server handler already parented it from the caller's traceparent, so the span lands under the dispatching round's trace without the ledger.Coords.SpanContext workaround the old in-process callback needed.
 func emitCompaction(ctx context.Context, sink func(stream.SSEEvent), nodeID string, ev *session.Event) {
 	if sink == nil || ev == nil || ev.Actions.Compaction == nil {
 		return

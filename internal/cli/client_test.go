@@ -324,8 +324,7 @@ func TestSendMessageWithFiles(t *testing.T) {
 
 // TestSubscribeSSEReconnectsWithLastEventID: issue #383 - a dropped
 // subscribe stream (the body closes mid-run, no `done` seen) is retried
-// automatically, resuming past the last event actually delivered via
-// Last-Event-ID, without losing or duplicating any event.
+// automatically, resuming past the last event actually delivered via Last-Event-ID, without losing or duplicating any event.
 func TestSubscribeSSEReconnectsWithLastEventID(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	orig := sseReconnectDelay

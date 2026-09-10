@@ -36,14 +36,9 @@ func TestNewExecuteToolMetadata(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal pins #848: a
-// model-authored Setup naming an unreachable repo used to fail deep inside
-// the run phase, killing the whole turn with a raw git fatal. It must instead
-// fail the execute TOOL CALL - a normal error result the model sees and can
-// revise from (drop setup, or name a reachable repo), never a fatal that ends
-// the turn. Exercises the real dag.Executor.Provision (not a hand-rolled
-// error) through the tool's actual Run path, mirroring dag/setup_test.go's
-// fake-setupFn pattern for the git failure itself.
+// TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal pins #848: an
+// unreachable repo must fail the execute TOOL CALL - a normal error result the
+// model can revise from (drop setup, or name a reachable repo), never a run-phase fatal; exercises the real dag.Executor.Provision through the tool's actual Run (mirroring dag/setup_test.go's fake-setupFn pattern for the git failure).
 func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 	cache := NewPlanCache()
 	plan := dag.Plan{
@@ -91,10 +86,9 @@ func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_ProvisionsSetupBeforeSelecting pins the happy path: the
-// execute tool provisions plan.Setup itself (not just the run phase) before
-// marking the plan selected, and the plan the caller reads back out of the
-// cache carries Setup.Provisioned - so the run phase (runPlanSetup) skips it.
+// TestExecuteTool_ProvisionsSetupBeforeSelecting pins the happy path: the execute
+// tool provisions plan.Setup itself (not just the run phase) before marking the
+// plan selected, and the cached plan read back carries Setup.Provisioned - so the run phase (runPlanSetup) skips it.
 func TestExecuteTool_ProvisionsSetupBeforeSelecting(t *testing.T) {
 	cache := NewPlanCache()
 	plan := dag.Plan{

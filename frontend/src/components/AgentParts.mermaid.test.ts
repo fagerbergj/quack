@@ -4,10 +4,9 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { AssistantText } from './AgentParts'
 
-// jsdom doesn't implement SVG layout (getBBox); mermaid needs it during layout
-// to size text labels - stub a fixed box on every SVG element (not just
-// SVGGraphicsElement - jsdom's SVG class hierarchy is incomplete), we only
-// care that render completes.
+// jsdom doesn't implement SVG layout (getBBox), which mermaid needs to size
+// text labels - stub a fixed box on every SVGElement (jsdom's SVG class
+// hierarchy is incomplete); we only care that render completes.
 ;(SVGElement.prototype as unknown as { getBBox: () => DOMRect }).getBBox = () =>
   ({ x: 0, y: 0, width: 100, height: 20, top: 0, right: 0, bottom: 0, left: 0, toJSON: () => '' }) as DOMRect
 

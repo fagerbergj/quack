@@ -30,8 +30,7 @@ func nodeAOptions() Options {
 
 // TestCase1_RecordedRunReplaysGreen: the harness-regression case. Replaying
 // the fixture unmodified must reproduce the recorded outcome (a revised,
-// judge-passed answer) with a completely clean divergence report - every
-// stream fully consumed, no drift, no structural failures.
+// judge-passed answer) with a completely clean divergence report - every stream fully consumed, no drift, no structural failures.
 func TestCase1_RecordedRunReplaysGreen(t *testing.T) {
 	bundle := buildFixtureBundle(t)
 
@@ -47,10 +46,7 @@ func TestCase1_RecordedRunReplaysGreen(t *testing.T) {
 		t.Errorf("Answer = %q, want the revised answer (matches the recording)", out.Answer)
 	}
 	// The fixture bundle records TWO nodes; this harness drives only
-	// node-a (the documented single-node ceiling - see replaytest.go), so
-	// node-b's streams are legitimately untouched here, not a divergence.
-	// "Zero divergence" for THIS run means: no drift, no structural
-	// failures, and every node-a stream fully consumed.
+	// node-a (the documented single-node ceiling - see replaytest.go), so node-b's streams are legitimately untouched here, not a divergence. "Zero divergence" for THIS run means: no drift, no structural failures, and every node-a stream fully consumed.
 	if len(out.Report.Drift) != 0 || len(out.Report.Failures) != 0 {
 		t.Errorf("Report = %+v, want no drift/failures", out.Report)
 	}
@@ -71,8 +67,7 @@ func TestCase1_RecordedRunReplaysGreen(t *testing.T) {
 
 // TestCase2_PromptEditTolerated: changing the live worker's system
 // instruction must still replay green - the recorded model/judge responses
-// don't depend on it - but the report must list the resulting prompt-hash
-// drift, and ONLY that.
+// don't depend on it - but the report must list the resulting prompt-hash drift, and ONLY that.
 func TestCase2_PromptEditTolerated(t *testing.T) {
 	bundle := buildFixtureBundle(t)
 
@@ -90,8 +85,7 @@ func TestCase2_PromptEditTolerated(t *testing.T) {
 	}
 	// The worker instruction above deliberately differs from the fixture's
 	// own recorded one (fixtureInstruction) - identity (model name) still
-	// matches, so the run replays green; ONLY the prompt-version hash
-	// disagrees, which the report should list as drift, nothing else.
+	// matches, so the run replays green; ONLY the prompt-version hash disagrees, which the report should list as drift, nothing else.
 	if len(out.Report.Drift) == 0 {
 		t.Errorf("Drift is empty, want at least one prompt-version drift record (the worker instruction differs from the recording)")
 	}
@@ -104,11 +98,7 @@ func TestCase2_PromptEditTolerated(t *testing.T) {
 
 // TestCase3_ExtraCallFailsLoudly: the gate demanding a higher score than
 // what was recorded forces a live round the recording never made. Replay
-// must fail at the exact stream + position, with a near-miss diff, never a
-// bare "not found" - captured in the divergence report even though the
-// gate's own graceful-degradation design (a revision-worker failure keeps
-// the PRIOR answer rather than aborting the node) means RunGatedRefine
-// itself returns no error here; the report is what "fails loudly" refers to.
+// must fail at the exact stream + position, with a near-miss diff, never a bare "not found" - captured in the divergence report even though the gate's own graceful-degradation design (a revision-worker failure keeps the PRIOR answer rather than aborting the node) means RunGatedRefine itself returns no error here; the report is what "fails loudly" refers to.
 func TestCase3_ExtraCallFailsLoudly(t *testing.T) {
 	bundle := buildFixtureBundle(t)
 

@@ -25,8 +25,7 @@ func git(t *testing.T, dir string, args ...string) {
 
 // clonedRepoConfig builds a Config whose Workdir is a real CLONE of a source
 // repo - the same shape the worker's git_clone leaves behind, so the baseline
-// (the clone's original HEAD) is genuinely distinct from whatever the worker
-// commits on top. seed writes the source repo's committed content.
+// (the clone's original HEAD) is genuinely distinct from whatever the worker commits on top. seed writes the source repo's committed content.
 func clonedRepoConfig(t *testing.T, checks []string, seed map[string]string) (Config, string) {
 	t.Helper()
 	origin := t.TempDir()
@@ -61,11 +60,8 @@ func clonedRepoConfig(t *testing.T, checks []string, seed map[string]string) (Co
 }
 
 // The bug: the baseline worktree was created under the SERVER's os.TempDir(), but the git that populates it runs as
-// a sandboxed child whose grants cover the node dir, its $HOME and the sandbox's
-// own tmp - not /tmp. So `git worktree add` failed with Permission denied,
-// failsAtBase reported "does not fail at base", and a Go-only change was gated
-// on a frontend build failure it never caused. The baseline dir has to
-// live where the sandbox already lets the child write.
+// a sandboxed child whose grants cover the node dir, its $HOME and the sandbox's own tmp - not /tmp. So `git worktree add` failed with Permission denied and
+// a Go-only change was gated on a frontend build failure it never caused. The baseline dir has to live where the sandbox already lets the child write.
 func TestRunAtBaseUsesTheSandboxTmpDir(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"true"}, map[string]string{"a.txt": "x"})
 	caps := cfg.WorkspaceCaps
@@ -82,8 +78,7 @@ func TestRunAtBaseUsesTheSandboxTmpDir(t *testing.T) {
 	}
 	// runAtBase deletes its scratch dir before returning, so the check itself is
 	// the witness: it runs INSIDE the worktree, so its cwd is that dir. The record
-	// goes under the granted $HOME - anywhere else and the sandbox denies the
-	// write, which is the point of the mode.
+	// goes under the granted $HOME - anywhere else and the sandbox denies the write, which is the point of the mode.
 	record := filepath.Join(caps.HomeDir, "cwd")
 	if _, err := runAtBase(repo, base, "pwd | tee "+record, caps, nil); err != nil {
 		t.Fatalf("runAtBase: %v", err)
@@ -99,10 +94,8 @@ func TestRunAtBaseUsesTheSandboxTmpDir(t *testing.T) {
 }
 
 // The bug (live e2e 2026-07-13): the target repo's `lint` already failed on its
-// base commit (pre-existing eslint errors in a game the worker never touched).
-// The worker's own code was clean, yet the gate failed it 5 rounds running on a
-// check it could not possibly win. A check that already fails at base is repo
-// debt, not a regression - it must not gate the node.
+// base commit (pre-existing eslint errors in a game the worker never touched), and the gate failed the node 5 rounds running on a check it could not
+// possibly win. A check that already fails at base is repo debt, not a regression - it must not gate the node.
 func TestChecksPassPreExistingFailureDoesNotGate(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"ls broken"}, map[string]string{"a.txt": "a"})
 	// The worker's own (unrelated) change.
@@ -153,8 +146,7 @@ func TestChecksPassPassingCheckNeedsNoBaseline(t *testing.T) {
 
 // The dangerous failure mode: baselining must NEVER disturb the worker's tree.
 // Losing its uncommitted work would be catastrophic, so assert the tree is
-// byte-for-byte intact - and that git still sees the worker's changes - after
-// the baseline ran.
+// byte-for-byte intact - and that git still sees the worker's changes - after the baseline ran.
 func TestChecksPassBaselineLeavesWorkerTreeIntact(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"ls broken"}, map[string]string{"a.txt": "a"})
 	if err := os.WriteFile(filepath.Join(repo, "new.txt"), []byte("worker"), 0o644); err != nil {
@@ -186,15 +178,9 @@ func TestChecksPassBaselineLeavesWorkerTreeIntact(t *testing.T) {
 	}
 }
 
-// #839: quack's own repo self-disarms nearly every derived check because they
-// all fail in a fresh clone (embed.go needs `make plugins`, mermaid tests need
-// `npm ci`), so a missing bootstrap gets waived exactly like real repo debt
-// and the gate loses its teeth. check_setup runs a repo-declared bootstrap
-// once, in BOTH the worker's tree and the baseline worktree (runAtBase), so a
-// check that only fails for lack of bootstrapping regains real teeth: the
-// check here can never pass without check_setup (generated.txt never exists
-// anywhere), and the worker's own regression is that its content diverges
-// from the source setup projects it from.
+// #839: quack's own repo self-disarms nearly every derived check because they all fail in a fresh clone (embed.go needs `make plugins`, mermaid tests need
+// `npm ci`), so a missing bootstrap gets waived exactly like real repo debt and the gate loses its teeth. check_setup runs a repo-declared bootstrap
+// once, in BOTH the worker's tree and the baseline worktree (runAtBase), so a check that only fails for lack of bootstrapping regains real teeth: the check here can never pass without check_setup (generated.txt never exists anywhere), and the worker's own regression is that its content diverges from the source setup projects it from.
 func TestCheckSetupMakesABaseFailingCheckGateAgain(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"grep -q hello generated.txt"}, map[string]string{"src.txt": "hello"})
 	cfg.CheckSetup = []string{"cp src.txt generated.txt"}

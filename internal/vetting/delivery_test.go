@@ -115,9 +115,7 @@ func TestDeliveryCriterionNamesOnlyWhatIsMissing(t *testing.T) {
 
 // Regression (live, 2026-07-13): a code REVIEW of PR #4 on branch
 // `add-flappy-bird-openhands` was classified as implement-and-deliver - the impl
-// verb matched only INSIDE the branch name (\b sits on the hyphen) - so the
-// planner's routing backstop demanded a code-implementer node for a read-only
-// review and rejected the plan 8 times in a row, burning the whole re-plan budget.
+// verb matched only INSIDE the branch name (\b sits on the hyphen) - so the planner's routing backstop demanded a code-implementer node for a read-only review and rejected the plan 8 times, burning the re-plan budget.
 const reviewPrompt = "Review pull request #4 on the GitHub repository https://github.com/fagerbergj/games " +
 	"(branch add-flappy-bird-openhands). Clone the repo, check out the PR branch, and review the change " +
 	"thoroughly. Post your findings as inline review comments, then submit the review with an overall verdict."
@@ -152,8 +150,7 @@ func TestImplementationIntent(t *testing.T) {
 
 // TestDeliveryCriterionNamesTheOfferedTool pins #724: a run only ever has
 // stage_pr XOR stage_push (internal/acp/acp.go's mcpToolNames), so the
-// guidance text must name whichever one it actually has - never the other,
-// which the agent has no way to call.
+// guidance text must name whichever one it actually has - never the other, which the agent has no way to call.
 func TestDeliveryCriterionNamesTheOfferedTool(t *testing.T) {
 	got, ok := deliveryCriterion(prTask, workerActivity{committed: true}, false)
 	if !ok {
@@ -199,10 +196,7 @@ func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 
 // Regression (#764, live on quack#723): a non-terminal repo-chain node has no
 // delivery target (dag/graph.go clears cfg.Deliver for it) but is not
-// read-only either - it writes code. The old guard only checked ReadOnly, so
-// this node fell into a delivery_complete criterion it structurally could not
-// satisfy (no stage_pr/stage_push tool was ever offered) and burned every
-// revise round on a task-level PR demand that wasn't its job to fulfil.
+// read-only either - it writes code. The old guard only checked ReadOnly, so this node fell into a delivery_complete criterion it structurally could not satisfy (no stage_pr/stage_push tool was ever offered) and burned every revise round on a task-level PR demand that wasn't its job to fulfil.
 func TestIncompleteCriteria_NonTerminalChainNodeSkipsDeliveryDemand(t *testing.T) {
 	act := workerActivity{written: []string{"a.ts"}, committed: true}
 	crit := incompleteCriteria(prTask, act, false /* not read-only */, false /* no delivery target */, false, false)
@@ -240,9 +234,7 @@ func TestIncompleteCriteria_ReadOnlyNodeUnaffectedByDeliverTarget(t *testing.T) 
 
 // Regression (#764, TC4): the continuation loop (workIncomplete) must not
 // burn rounds re-asking a non-terminal node to deliver work it has no tool
-// to deliver - the live log showed exactly this: "work not finished;
-// continuing the worker with its tools ... committed=true pushed=false" on
-// a node with no delivery target.
+// to deliver - the live log showed exactly this: "work not finished; continuing the worker with its tools ... committed=true pushed=false" on a node with no delivery target.
 func TestWorkIncomplete_NonTerminalChainNodeNotHeldToDelivery(t *testing.T) {
 	act := workerActivity{written: []string{"a.ts"}, committed: true}
 	answer := "I implemented the change and committed it. This node does not deliver; a later node in the chain does."
@@ -286,9 +278,7 @@ func TestReviewCriterionPassesWhenReviewSubmitted(t *testing.T) {
 
 // TestReviewCriterionDistinguishesRecoveredFromStaged pins #688: a review
 // recovered from the answer's VERDICT/FINDINGS tail must not read identically
-// to one staged via the review MCP tools, in the gate criteria - both are a
-// real pass (the fallback keeps the node moving), but the Reason must say
-// which path produced it.
+// to one staged via the review MCP tools, in the gate criteria - both are a real pass (the fallback keeps the node moving), but the Reason must say which path produced it.
 func TestReviewCriterionDistinguishesRecoveredFromStaged(t *testing.T) {
 	staged := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"review": {Kind: "review", Event: "approve", Recovered: false},
@@ -318,8 +308,7 @@ func TestReviewCriterionDistinguishesRecoveredFromStaged(t *testing.T) {
 
 // TestReviewCriterionDirectSubmitReasonDiffersFromStaging proves the three
 // review_posted paths (direct github_submit_review, tool-staged, tail-
-// recovered) each carry their own Reason text - never collapsed to one
-// "submitted (or staged for delivery)" wording that can't tell them apart.
+// recovered) each carry their own Reason text - never collapsed to one "submitted (or staged for delivery)" wording that can't tell them apart.
 func TestReviewCriterionDirectSubmitReasonDiffersFromStaging(t *testing.T) {
 	direct, _ := reviewCriterion(reviewTask, workerActivity{reviewSubmitted: true}, true)
 	staged, _ := reviewCriterion(reviewTask, workerActivity{stagedDelivery: map[string]StagedDelivery{
@@ -406,8 +395,7 @@ func TestActivityFromSessionRecordsReview(t *testing.T) {
 
 // A read-only reviewer (ReadOnly=true - no commit/push tools) must NOT be held to a
 // delivery demand read off a task polluted with the PR's own "Add …/open a PR"
-// wording. It CANNOT commit, so demanding it loops forever; its completion is
-// review_posted, not delivery.
+// wording - it CANNOT commit, so demanding it loops forever; its completion is review_posted, not delivery.
 func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 	pollutedTask := "Review PR #5, whose own description says: open a pull request and push the branch to Add a Flappy Bird game. " +
 		"Read the diff and post inline review comments; submit the review."
@@ -437,8 +425,7 @@ func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 
 // behaviour_verified: a code review must EXECUTE the change, not just read
 // it - reading alone once missed a bug a probe on an earlier run had caught.
-// Prompt guidance alone is a coin flip; execution is now a deterministic
-// requirement.
+// Prompt guidance alone is a coin flip; execution is now a deterministic requirement.
 
 func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	// Only reads: exactly the run that missed the bug.

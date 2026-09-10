@@ -58,10 +58,9 @@ func isRepo(dir string) bool {
 	return err == nil
 }
 
-// RepoKey: the chat's shared memory bucket key, keyed by origin identity not
-// repo count - worktree-per-node means a clone plus N linked worktrees of the
-// SAME origin all resolve to one bucket. "" when no repo, no origin, or the
-// found repos genuinely disagree (don't guess).
+// RepoKey: the chat's shared memory bucket key, keyed by origin identity
+// not repo count - worktree-per-node means a clone plus N linked worktrees
+// of the SAME origin all resolve to one bucket. "" when no repo, no origin, or the found repos genuinely disagree (don't guess).
 func (j *Jail) RepoKey(userID, chatID string) string {
 	root, err := j.Resolve(userID, chatID, "")
 	if err != nil {
@@ -121,8 +120,7 @@ func RepoIdentity(dir string) string {
 
 // NormalizeRepoURL collapses git@/https:///ssh:// forms to one key:
 // "github.com/owner/repo". Exported so callers with a raw clone URL (e.g. a
-// dispatch's dag.Setup.Repo) but no cloned worktree can derive the same
-// memory.Scope.Repo key RepoIdentity computes from an actual clone's origin.
+// dispatch's dag.Setup.Repo) but no cloned worktree can derive the same memory.Scope.Repo key RepoIdentity computes from an actual clone's origin.
 func NormalizeRepoURL(raw string) string {
 	u := strings.TrimSpace(raw)
 	if u == "" {

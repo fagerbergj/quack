@@ -16,8 +16,7 @@ type Caps struct {
 	HomeDir        string
 	// ScratchDir is a per-node writable tmp dir (Jail.ScratchDir) that TMPDIR
 	// points at for a sandboxed worker's own scratch use. "" falls back to the
-	// shared HomeDir/tmp (see homeTmpDir) - callers that don't scope scratch
-	// per node (the gate's own one-shot check commands, tests).
+	// shared HomeDir/tmp (see homeTmpDir) - callers that don't scope scratch per node (the gate's own one-shot check commands, tests).
 	ScratchDir string
 	WorkRoot   string
 	Sandbox    SandboxMode
@@ -28,9 +27,7 @@ type Caps struct {
 	ReadOnly bool
 	// BuildDirs (workspace.build_dirs) names work-tree-relative build-output
 	// dirs (e.g. "node_modules", "frontend/dist") that stay writable on a
-	// ReadOnly node PROVIDED the repo's own .gitignore already ignores them
-	// (see buildDirGrants) - lets a read-only reviewer run `npm test`/`vite
-	// build` in place instead of copying the tree to a writable TMPDIR.
+	// ReadOnly node PROVIDED the repo's own .gitignore already ignores them (see buildDirGrants) - lets a read-only reviewer run `npm test`/`vite build` in place instead of copying the tree to a writable TMPDIR.
 	BuildDirs []string
 }
 

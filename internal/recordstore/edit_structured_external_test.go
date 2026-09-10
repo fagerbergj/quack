@@ -1,7 +1,6 @@
 // edit_structured_external_test.go lives in package recordstore_test (not
 // recordstore) so it can import vetting/dag - real callers of Client.Edit -
-// and prove the fix against their actual registered Kinds, not just the
-// package-internal test.structured stand-in.
+// and prove the fix against their actual registered Kinds, not just the package-internal test.structured stand-in.
 package recordstore_test
 
 import (
@@ -23,11 +22,8 @@ func newClient(t *testing.T) *recordstore.Client {
 }
 
 // TestEditArtifactStructuredFields is the regression test for the reported
-// bug: edit_artifact did a raw byte search/replace on the serialized JSON,
-// so a New containing a raw newline, quote, or backslash corrupted the
-// record. Every Kind with a write_* tool shares this one Edit path
-// (Client.Edit -> tryEdit -> applyStructuredEdits for Class == Structured),
-// so one table covering a few real Kinds proves the fix generally, not per-agent.
+// bug: edit_artifact did a raw byte search/replace on the serialized JSON, so
+// a New containing a raw newline, quote, or backslash corrupted the record. Every Kind with a write_* tool shares this one Edit path (Client.Edit -> tryEdit -> applyStructuredEdits for Class == Structured), so one table covering a few real Kinds proves the fix generally, not per-agent.
 func TestEditArtifactStructuredFields(t *testing.T) {
 	ctx := context.Background()
 

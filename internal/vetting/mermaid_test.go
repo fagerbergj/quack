@@ -11,9 +11,7 @@ import (
 
 // requireMermaidValidator provisions scripts/node_modules (npm ci, shared
 // with internal/tools via EnsureMermaidValidatorDeps) so the tests just work
-// on a fresh clone, and skips rather than fail meaninglessly when node/npm is
-// absent or the install can't run (e.g. offline) - mirrors sandbox_test.go's
-// posture for a missing bubblewrap.
+// on a fresh clone, and skips rather than fail meaninglessly when node/npm is absent or the install can't run (e.g. offline) - mirrors sandbox_test.go's posture for a missing bubblewrap.
 func requireMermaidValidator(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("node"); err != nil {
@@ -66,9 +64,7 @@ func TestFindInvalidMermaid_MissingHeaderDetected(t *testing.T) {
 
 // #574's own named case: a bracket label containing a bare double-quote,
 // unquoted - GitHub's real parser rejects this outright (a genuine parse
-// error), which is what retired the old quotedLabelIssue supplement (that
-// existed only because mermaid-check, the Go reimplementation, parsed and
-// strictly validated this clean).
+// error), which is what retired the old quotedLabelIssue supplement (that existed only because mermaid-check, the Go reimplementation, parsed and strictly validated this clean).
 func TestFindInvalidMermaid_QuoteInUnquotedLabelDetected(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
@@ -131,8 +127,7 @@ func TestFindInvalidMermaid_QuotedBraceLabelPasses(t *testing.T) {
 
 // A literal `\n` (two characters, not a real line break) inside an unquoted
 // label is NOT rejected by the real parser - it renders the literal text
-// rather than breaking the line. A natural rule to hand-code wrongly; pinned
-// here so nobody "fixes" this into a false positive.
+// rather than breaking the line. A natural rule to hand-code wrongly; pinned here so nobody "fixes" this into a false positive.
 func TestFindInvalidMermaid_LiteralBackslashNPasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
@@ -153,8 +148,7 @@ func TestFindInvalidMermaid_UnknownSequenceArrowDetected(t *testing.T) {
 
 // BLOCKING regression: a ```mermaid-looking fence quoted INSIDE an unrelated
 // fence's body (a ```go block whose content merely mentions "```mermaid",
-// e.g. in a comment demonstrating markdown) must never be treated as a real
-// mermaid opener.
+// e.g. in a comment demonstrating markdown) must never be treated as a real mermaid opener.
 func TestFindInvalidMermaid_NestedFenceIgnored(t *testing.T) {
 	md := "Example:\n\n```go\n" +
 		"// Here's how you'd write a bad diagram:\n" +
@@ -431,9 +425,7 @@ func TestTranslateMermaidError_UnstructuredErrorKeepsRawText(t *testing.T) {
 
 // A node with no mermaid at all is untouched whether or not the validator is
 // available - and a node WITH a diagram derives nothing (no false failure)
-// rather than crash when the validator can't be found. Deliberately not
-// t.Parallel(): it rebinds the package-level mermaidValidatorPath that the
-// parallel tests read.
+// rather than crash when the validator can't be found. Deliberately not t.Parallel(): it rebinds the package-level mermaidValidatorPath that the parallel tests read.
 func TestMermaidCriterion_NoOpWhenValidatorUnavailable(t *testing.T) {
 	old := mermaidValidatorPath
 	mermaidValidatorPath = "/nonexistent/mermaid-validate.mjs"
@@ -450,8 +442,7 @@ func TestMermaidCriterion_NoOpWhenValidatorUnavailable(t *testing.T) {
 
 // mermaid 11.17.1's expanded shape catalog (person/folder/bucket/etc, unified
 // @{ shape: ... } syntax) and collapsible subgraphs (@{ view: collapsed })
-// parse clean - since the gate defers to the real mermaid.js parser, this
-// just proves the upgraded dependency didn't regress either.
+// parse clean - since the gate defers to the real mermaid.js parser, this just proves the upgraded dependency didn't regress either.
 func TestFindInvalidMermaid_NewShapeSyntaxPasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
@@ -470,13 +461,9 @@ func TestFindInvalidMermaid_CollapsedSubgraphPasses(t *testing.T) {
 	}
 }
 
-// A validator that outruns its deadline must not report a VALID diagram as
-// invalid: CommandContext's kill surfaces as an ExitError, which used to fall
+// A validator that outruns its deadline must not report a VALID diagram as invalid: CommandContext's kill surfaces as an ExitError, which used to fall
 // through to "unreadable output" and fail the gate on a slow box. Drives the
-// real mermaidError path (not a standalone stdlib probe) so reverting the
-// ctx.Err() guard in mermaidError fails this test. Deliberately not
-// t.Parallel(): it rebinds the package-level mermaidValidatorPath and
-// mermaidValidateTimeout that the parallel tests read.
+// real mermaidError path (not a standalone stdlib probe) so reverting the ctx.Err() guard in mermaidError fails this test. Deliberately not t.Parallel(): it rebinds the package-level mermaidValidatorPath and mermaidValidateTimeout that the parallel tests read.
 func TestMermaidValidate_TimeoutIsNotAnInvalidDiagram(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node unavailable in this environment")

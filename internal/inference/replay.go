@@ -14,15 +14,8 @@ import (
 )
 
 // replayModel answers GenerateContent from a loaded replay.Session instead
-// of a live endpoint - kind "replay" (NewModel). It resolves its stream from
-// the SAME ledger.Coords a live worker/judge round stamps onto ctx, so no
-// call site elsewhere needs to know replay is active. A structural miss
-// (replay.MissError) is yielded as the call's own error - replay-strict
-// never falls back to a live call.
-//
-// live is fork-replay's escape hatch: when the session hands back a
-// *replay.ForkSignal instead of a recorded response, the call is answered
-// live instead - nil in strict mode, where a ForkSignal never occurs.
+// of a live endpoint - kind "replay" (NewModel). It resolves its stream
+// from the SAME ledger.Coords a live worker/judge round stamps onto ctx, so no call site elsewhere needs to know replay is active. A structural miss (replay.MissError) is yielded as the call's own error - replay-strict never falls back to a live call. live is fork-replay's escape hatch: when the session hands back a *replay.ForkSignal instead of a recorded response, the call is answered live instead - nil in strict mode, where a ForkSignal never occurs.
 type replayModel struct {
 	name    string
 	session *replay.Session
@@ -31,20 +24,14 @@ type replayModel struct {
 
 // NewReplayModel builds a replay-backed model.LLM over an already-loaded
 // Session. NewModel's kind "replay" case uses this internally; a caller
-// managing its OWN Session (replaytest, so one Session's divergence report
-// covers every model AND tool a node uses) should call it directly instead
-// of NewModel, to avoid loading the same bundle once per model.
+// managing its OWN Session (replaytest, so one Session's divergence report covers every model AND tool a node uses) should call it directly instead of NewModel, to avoid loading the same bundle once per model.
 func NewReplayModel(sess *replay.Session, name string) model.LLM {
 	return &tracedModel{LLM: &replayModel{name: name, session: sess}, name: name}
 }
 
-// NewReplayModelFork is NewReplayModel with a live fallback: NewModel's kind
-// "replay" + fork_mode: fork case uses this, live built from the provider's
-// `live` config (the SAME factory, NewModel again - see factory.go). Every
-// OTHER caller (replaytest, ACP playback, NewReplayModel itself) keeps
-// getting live == nil, so a ForkSignal there surfaces as a plain error
-// rather than silently reaching the network - fork-replay only activates
-// where the caller deliberately opted in.
+// NewReplayModelFork is NewReplayModel with a live fallback: NewModel's
+// kind "replay" + fork_mode: fork case uses this, live built from the
+// provider's `live` config (the SAME factory, NewModel again - see factory.go). Every OTHER caller (replaytest, ACP playback, NewReplayModel itself) keeps getting live == nil, so a ForkSignal there surfaces as a plain error rather than silently reaching the network - fork-replay only activates where the caller deliberately opted in.
 func NewReplayModelFork(sess *replay.Session, name string, live model.LLM) model.LLM {
 	return &tracedModel{LLM: &replayModel{name: name, session: sess, live: live}, name: name}
 }

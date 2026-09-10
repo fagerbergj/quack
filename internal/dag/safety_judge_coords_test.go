@@ -1,7 +1,6 @@
 // Package dag_test: measures what ledger.CoordsFromContext(ctx) actually
 // contains when runSafetyJudge fires inside a guarded tool call on a real
-// worker node. See internal/dag/ledger_coords_test.go's header for why this
-// lives in the external test package.
+// worker node. See internal/dag/ledger_coords_test.go's header for why this lives in the external test package.
 package dag_test
 
 import (
@@ -44,8 +43,7 @@ func (sjStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) 
 
 // TestSafetyJudgeCoords_MeasuredAtCallTime drives a real gated node through
 // dag.Executor.RunPlanAsGraph with current_date wrapped as a judge-tier
-// guarded tool, and records verbatim what ledger.CoordsFromContext(ctx)
-// contains at the moment runSafetyJudge's judge func fires.
+// guarded tool, and records verbatim what ledger.CoordsFromContext(ctx) contains at the moment runSafetyJudge's judge func fires.
 func TestSafetyJudgeCoords_MeasuredAtCallTime(t *testing.T) {
 	stub := sjStub{}
 	workerModel := inference.TracedModelForTesting(stub, "sj-coords-model")

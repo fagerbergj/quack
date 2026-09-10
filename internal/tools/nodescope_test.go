@@ -14,8 +14,7 @@ import (
 
 // gatedCtx is a worker's tool-call context INSIDE a gated DAG node: a durable
 // session state (the `cd` cwd) plus the advisor-thread marker in the prompt -
-// the one identity channel the workspace tools recover the chat scope AND the
-// node scope from (see scopeFromContext).
+// the one identity channel the workspace tools recover chat AND node scope from (see scopeFromContext).
 type gatedCtx struct {
 	fakeCtx
 	prompt string
@@ -36,10 +35,8 @@ func newGatedCtx(t *testing.T, planID, nodeID, chatID string) *gatedCtx {
 }
 
 // TestConcurrentNodesEachSeeOnlyTheirOwnClone is the bug: two nodes of the SAME
-// plan run concurrently in the SAME chat, each clones a DIFFERENT repo, and each
-// must see ONLY its own clone. Before per-node scoping both clones landed in the
-// one per-chat dir, so `list_dir .` showed both - and a research node happily
-// read the other node's repo (live: the OpenHands explorer grepping goose's src).
+// plan run concurrently in the SAME chat, each cloning a DIFFERENT repo, and each
+// must see ONLY its own clone (pre-per-node scoping both landed in the one per-chat dir, and a research node read the other's repo live).
 func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -103,9 +100,8 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 	}
 
 	// "/" is the node's OWN root, not the chat root: it is NOT a way out into a
-	// sibling's tree. (It used to be. Nothing used it, and it was the last path by
-	// which one node could read another's clone - see the sandbox's OS boundary,
-	// which stops a run_command child doing the same thing.)
+	// sibling's tree - the last path by which one node could read another's clone
+	// (the sandbox's OS boundary stops a run_command child doing the same).
 	if _, err := fb.withCwd(gooseCtx).readFile(readFileArgs{Path: "/openhands_research/openhands/README.md"}); err == nil {
 		t.Error("a \"/\"-prefixed path reached a SIBLING node's clone; \"/\" must mean the node's own root")
 	}

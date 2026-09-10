@@ -13,9 +13,7 @@ type Story = StoryObj<typeof NavRail>
 
 // #1171: NavRail is a pure overlay drawer at every width - open mounts the
 // fixed panel, closed renders nothing. The trigger lives in each page's
-// header leading slot (NavToggle), not in this component, so these stories
-// drive the drawer through its open prop. The fixed inset-0 overlay floats
-// over the Storybook frame, which stands in for the app.
+// header leading slot (NavToggle), not here, so these stories drive the drawer through its open prop. The fixed inset-0 overlay floats over the Storybook frame, which stands in for the app.
 
 // Chats highlighted as the active route (#746 item 1: Memory is a peer of
 // Chats, no overflow menu).
@@ -77,10 +75,9 @@ export const Open: Story = {
   },
 }
 
-// Extension nav entries (#/api/v1/extensions): a module with a UI descriptor
-// (href) gets a nav entry that navigates client-side to this app's own
-// /ext/:name host page (#870) - one without an href renders nothing at all,
-// not an inert placeholder (see the 'github' entry here, which is absent).
+// Extension nav entries: a module with a UI descriptor (href) gets a nav
+// entry navigating client-side to this app's /ext/:name host page (#870) -
+// one without an href renders nothing at all, not an inert placeholder (see the absent 'github' entry here).
 export const WithExtensions: Story = {
   args: {
     route: 'chat',

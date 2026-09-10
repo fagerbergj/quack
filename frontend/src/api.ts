@@ -1,7 +1,6 @@
-// Quack REST client. Types and the request SDK are generated from the single
-// source of truth, ../../openapi.yaml (see `npm run generate`); this module is a
-// thin ergonomic wrapper that unwraps the generated result objects and throws on
-// error. The streaming responses endpoint is handled directly by the chat store.
+// Quack REST client. Types and the request SDK are generated from
+// ../../openapi.yaml (`npm run generate`); this module only unwraps the
+// generated results and throws on error. Streaming is handled by the chat store.
 import {
   listChats as sdkListChats,
   createChat as sdkCreateChat,
@@ -48,11 +47,8 @@ function unwrap<T>(r: Result<T>): T {
 }
 
 export const api = {
-  // page_token is opaque - pass back exactly what a previous response's
-  // next_page_token gave, never parsed or constructed here. status is a
-  // multi-select (default ['active']); order doesn't matter, but a token is
-  // only valid against the exact status set it was issued for, so switching
-  // it starts a fresh page walk. An explicitly empty array is a 400.
+  // page_token is opaque - pass back exactly what next_page_token gave.
+  // status is a multi-select (default ['active']); a token is only valid against the exact set it was issued for, so switching restarts the walk. An explicitly empty array is a 400.
   listChats: async (opts?: { limit?: number; page_token?: string; status?: Array<'active' | 'archived'> }): Promise<ChatList> =>
     unwrap(await sdkListChats({ query: opts })),
 
@@ -121,12 +117,9 @@ export const api = {
   listArtifactRevisions: async (chatId: string, artifactName: string): Promise<ArtifactRevisionList> =>
     unwrap(await sdkListArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName } })),
 
-  // Returns the raw unified diff text (endpoint answers text/plain, not JSON).
-  // Unlike the other unwrap() callers this keeps the HTTP status on the
-  // thrown error: the artifact panel disables the Diff toggle with its own
-  // display reason for the two server rejections (413 over the 256KB bound,
-  // 415 binary) - the 413 body embeds the artifact's id, which the panel
-  // must not render outside its Details disclosure (#1178).
+  // Raw unified diff text (text/plain, not JSON); unlike the other unwrap()
+  // callers this keeps the HTTP status on the thrown error - the panel maps
+  // 413 (>256KB) / 415 (binary) itself. The 413 body embeds the artifact's id; never render it outside Details (#1178).
   diffArtifactRevisions: async (chatId: string, artifactName: string, from: number, to: number): Promise<string> => {
     const r = await sdkDiffArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName }, query: { from, to } })
     if (!r.response || !r.response.ok || r.error !== undefined) {
@@ -141,10 +134,8 @@ export const api = {
     return r.data as string
   },
 
-  // Plain fetch, not the generated client: getChatArtifact's response is
-  // application/octet-stream (any mime), and the panel only ever wants it as
-  // text (markdown/JSON revisions) - a Blob round-trip would just get
-  // .text()'d right back.
+  // Plain fetch, not the generated client: the response is
+  // application/octet-stream (any mime) and the panel only wants text - a Blob round-trip would just get .text()'d.
   getArtifactText: async (chatId: string, artifactName: string, revision?: number): Promise<string> => {
     const res = await fetch(artifactUrl(chatId, artifactName, revision))
     if (!res.ok) throw new Error(`Fetch artifact failed (${res.status})`)

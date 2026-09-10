@@ -15,10 +15,9 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// fakeUIExtension implements extsdk.Extension + extsdk.UI - a stand-in for
-// a real SDK module (like the future reMarkable one) so the UI-descriptor
-// type assertion in buildSDKExtensions can be tested without a real
-// registered module implementing it (noop predates sdk.UI).
+// fakeUIExtension implements extsdk.Extension + extsdk.UI - a stand-in for a real SDK
+// module, so buildSDKExtensions' sdk.UI type assertion is testable without a registered
+// module (noop predates sdk.UI).
 type fakeUIExtension struct{}
 
 func (fakeUIExtension) Tools() []tool.Tool                       { return nil }
@@ -33,10 +32,9 @@ func init() {
 	})
 }
 
-// TestBuildSDKExtensions_UIDescriptorCaptured proves buildSDKExtensions
-// type-asserts sdk.UI at build time and extensionDescriptors surfaces it -
-// the wiring GET /api/v1/extensions depends on for a module WITH a UI
-// descriptor.
+// TestBuildSDKExtensions_UIDescriptorCaptured proves buildSDKExtensions type-asserts sdk.UI
+// at build time and extensionDescriptors surfaces it - the wiring GET /api/v1/extensions
+// depends on for a module WITH a UI descriptor.
 func TestBuildSDKExtensions_UIDescriptorCaptured(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]

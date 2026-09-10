@@ -23,9 +23,7 @@ import (
 
 // TestSessionUser: the ADK session identity resolves from the chat's recorded
 // store.Chat.SessionUser (#512: the commenter's login for a GitHub-dispatched
-// chat) when present, falling back to the id-shape default (github-prefixed
-// -> "github", legacy fallback constant; anything else -> the first-party
-// local user) for chats that predate that column.
+// chat) when present, falling back to the id-shape default (github-prefixed -> "github", legacy fallback constant; anything else -> the first-party local user) for chats that predate that column.
 func TestSessionUser(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -52,10 +50,7 @@ func TestSessionUser(t *testing.T) {
 
 // TestGetChat_GithubSessionUser pins the bug in #352 (and its #512
 // read/write-asymmetry follow-up): a GitHub-dispatched chat's turns are
-// written to its ADK session under the commenter's own login, not a
-// hardcoded constant. GetChat must resolve turns under the SAME user the
-// webhook wrote them under, or the chat renders with no content even though
-// the run completed and the events exist.
+// written to its ADK session under the commenter's own login, not a hardcoded constant. GetChat must resolve turns under the SAME user the webhook wrote them under, or the chat renders with no content even though the run completed and the events exist.
 func TestGetChat_GithubSessionUser(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -171,8 +166,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 
 // TestChatStatusRunning: the hub having a live topic for the chat wins over
 // needs_input/failed/idle (checked before them; queued, checked before running,
-// is orchestrator-only state this test's chat never enters - see
-// TestQueuedReportsAdmittedButNotAcquired in the orchestrator package).
+// is orchestrator-only state this test's chat never enters - see TestQueuedReportsAdmittedButNotAcquired in the orchestrator package).
 func TestChatStatusRunning(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -207,10 +201,7 @@ func getChatStatus(t *testing.T, h *Handler, chatID string) (schema.ChatStatus, 
 
 // TestChatStatusNeedsInput: a pending get_user_choice clarification in the
 // chat's session - the SAME scan Run's resume dispatch uses
-// (orchestrator.LatestPendingQuestion) - surfaces as needs_input with the
-// question text. GetChat derives this live (it loads turns for the detail body
-// regardless); toSummary's fast path only sees it once a run stamps it (#738,
-// see TestToSummaryReadsStampedOutcome).
+// (orchestrator.LatestPendingQuestion) - surfaces as needs_input with the question text. GetChat derives this live (it loads turns for the detail body regardless); toSummary's fast path only sees it once a run stamps it (#738, see TestToSummaryReadsStampedOutcome).
 func TestChatStatusNeedsInput(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -280,9 +271,7 @@ func TestChatStatusFailed(t *testing.T) {
 
 // TestBuildTurnUsage covers PR2 item 2: buildTurn must populate Turn.usage from
 // the orchestrator's own accumulated token counts (store.TurnContent, itself
-// summed from stored ADK session events - see store.groupSessionEvents).
-// input_tokens = prompt; output_tokens folds candidates + reasoning together
-// (schema.Usage has no separate reasoning field).
+// summed from stored ADK session events - see store.groupSessionEvents). input_tokens = prompt; output_tokens folds candidates + reasoning together (schema.Usage has no separate reasoning field).
 func TestBuildTurnUsage(t *testing.T) {
 	tc := store.TurnContent{
 		ID:               "t1",
@@ -313,8 +302,7 @@ func TestBuildTurnUsage(t *testing.T) {
 
 // TestBuildTurnUsageNilWhenAbsent covers a DAG-only turn: the orchestrator itself
 // recorded no tokens (all the work happened in gated nodes, surfaced separately
-// via DagNodeState) - Turn.usage must stay nil, not a zero-valued struct, so the
-// frontend can tell "no data" from "genuinely zero usage".
+// via DagNodeState) - Turn.usage must stay nil, not a zero-valued struct, so the frontend can tell "no data" from "genuinely zero usage".
 func TestBuildTurnUsageNilWhenAbsent(t *testing.T) {
 	tc := store.TurnContent{ID: "t2", CreatedAt: time.Now(), UserText: "research X", AsstText: "The vetted answer."}
 
@@ -601,9 +589,7 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 
 	// Exact comparison, not truncated to the Unix second - the guarantee is that
 	// archiving never writes updated_at at all, not merely that it lands in the
-	// same second (a truncated comparison would flake whenever the two DB writes
-	// straddle a second boundary, and would silently pass even if this DID
-	// rewrite updated_at to a value that rounds to the same second).
+	// same second (a truncated comparison would flake whenever the two DB writes straddle a second boundary, and would silently pass even if this DID rewrite updated_at to a value that rounds to the same second).
 	if !saved.UpdatedAt.Equal(before) {
 		t.Errorf("updated_at after archive changed from %v to %v; want unchanged", before, saved.UpdatedAt)
 	}
@@ -626,8 +612,7 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 
 // TestUpdateChat_ArchiveAndTitleTogether: updating both title and archived in one
 // PATCH should set the new title, toggle archived, and still NOT touch updated_at
-// because there's no title that would otherwise trigger it. (Archived wins: updateAt
-// is forced to false when hasArchived is true regardless of hasTitle.)
+// because there's no title that would otherwise trigger it. (Archived wins: updateAt is forced to false when hasArchived is true regardless of hasTitle.)
 func TestUpdateChat_ArchiveAndTitleTogether(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -729,8 +714,7 @@ func waitFor(t *testing.T, timeout time.Duration, msg string, cond func() bool) 
 
 // TestUpdateChat_ArchiveCancelsQueuedRun pins the fix for "archived chats
 // remain in the queue": archiving a chat whose run is still waiting behind
-// max_active_runs cancels it via the same hub path a user Stop uses, and the
-// chat's status settles away from queued/running rather than firing later.
+// max_active_runs cancels it via the same hub path a user Stop uses, and the chat's status settles away from queued/running rather than firing later.
 func TestUpdateChat_ArchiveCancelsQueuedRun(t *testing.T) {
 	bm := &blockingModel{entered: make(chan struct{}, 1), unblock: make(chan struct{})}
 	h := newTestHandlerWithModel(t, bm)

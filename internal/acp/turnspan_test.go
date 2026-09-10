@@ -64,9 +64,7 @@ func attrsOf(s tracetest.SpanStub) map[string]string {
 
 // TestRound_ToolSpansEndInsideTheRound is #924: an ACP round that runs for two
 // hours must not export its first span two hours in. The per-tool-call child
-// spans end as their session updates are handled, so they flush while the
-// round is still running - which the exporter records as an end time strictly
-// earlier than the prompt and round spans that enclose them.
+// spans end as their session updates are handled, so they flush while the round is still running - which the exporter records as an end time strictly earlier than the prompt and round spans that enclose them.
 func TestRound_ToolSpansEndInsideTheRound(t *testing.T) {
 	exp := withTestTracer(t)
 	a := testAgent(t, "happy")
@@ -157,8 +155,7 @@ func TestTurnSpans_ToolCallDetailAttributes(t *testing.T) {
 
 // TestTurnSpans_ToolCallDetailAbsentByDefault: with capture off (the deploy
 // default), tool call arguments/output never reach the span, even though it
-// is recording - ACP does most of the tool-calling in this codebase, so this
-// is the invariant that actually matters.
+// is recording - ACP does most of the tool-calling in this codebase, so this is the invariant that actually matters.
 func TestTurnSpans_ToolCallDetailAbsentByDefault(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")
@@ -228,10 +225,7 @@ func TestTurnSpans_MCPCallNeverSpanNamedOther(t *testing.T) {
 
 // TestTurnSpans_UnresolvedKindSpanStaysBounded: a genuinely unclassifiable
 // call (no MCP identity, kind "other") must NOT explode the span name into
-// the agent-supplied title - that's an unbounded, arbitrary string, and
-// unlike translate.go's persisted tool NAME, a span name is a cardinality
-// dimension in the tracing backend. The title still rides the tool_title
-// attribute for identification.
+// the agent-supplied title - that's an unbounded, arbitrary string, and unlike translate.go's persisted tool NAME, a span name is a cardinality dimension in the tracing backend. The title still rides the tool_title attribute for identification.
 func TestTurnSpans_UnresolvedKindSpanStaysBounded(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")

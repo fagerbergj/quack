@@ -1,8 +1,6 @@
 // renderscreenshots.go: hands render-check's per-story screenshots to the
 // judge as `bytes:` artifacts (#1211, follow-up to #1192). The trigger is an
-// explicit `npm run render-check` entry in the node's own `checks:` list -
-// deriveChecks never emits it, so this never fires implicitly on frontend
-// nodes.
+// explicit `npm run render-check` entry in the node's own `checks:` list - deriveChecks never emits it, so this never fires implicitly on frontend nodes.
 package vetting
 
 import (
@@ -35,18 +33,12 @@ const renderCheckScreenshotDir = "render-check"
 
 // frontendScreenshotsCriterion is the rubric criterion name that scores
 // attached screenshots (agents/code-reviewer/rubric.yaml). Only nodes whose
-// resolved rubric declares it get screenshots - an implementer's rubric has
-// no such criterion, so attaching there would only cost tokens for nothing.
+// resolved rubric declares it get screenshots - an implementer's rubric has no such criterion, so attaching there would only cost tokens for nothing.
 const frontendScreenshotsCriterion = "frontend_screenshots_reviewed"
 
-// renderScreenshotEvidence returns this round's render-check PNGs as
-// judge-ready image parts, saving each as a `bytes:` artifact scoped to
-// nodeID. checksRan gates the whole path (computeDeterministicCriteria
-// already knows whether checks executed this round) so a node whose checks
-// were skipped never touches the filesystem here. Re-derives the checks
-// list itself (cheap: cfg.Checks, or a filesystem stat via deriveChecks)
-// rather than threading a new return value through checksPassCriterion's
-// dozen existing call sites for one extra bit of information.
+// renderScreenshotEvidence returns this round's render-check PNGs as judge-ready image parts, saving each as a `bytes:` artifact scoped to
+// nodeID. checksRan gates the whole path (computeDeterministicCriteria already knows whether checks executed this round) so a node whose checks
+// were skipped never touches the filesystem here. Re-derives the checks list itself (cheap: cfg.Checks, or a filesystem stat via deriveChecks) rather than threading a new return value through checksPassCriterion's dozen existing call sites for one extra bit of information.
 func renderScreenshotEvidence(ctx context.Context, cfg Config, nodeID string, checksRan bool, act workerActivity) []*genai.Part {
 	if !checksRan || cfg.Workspace == nil {
 		return nil
@@ -125,8 +117,7 @@ func stripInlineData(question *genai.Content) *genai.Content {
 
 // selectScreenshots picks at most maxJudgeScreenshots PNGs from dir,
 // deterministically: screenshots whose filename references a story/component
-// this round actually changed come first, then the rest are strided evenly
-// so the sample spans the whole suite rather than just its alphabetic head.
+// this round actually changed come first, then the rest are strided evenly so the sample spans the whole suite rather than just its alphabetic head.
 func selectScreenshots(dir string, written []string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

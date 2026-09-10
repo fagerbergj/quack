@@ -17,11 +17,9 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-// pdfMaxPages bounds how many leading pages of a PDF attachment get rendered
-// (document-ingest inputs can run long); var so tests can shrink it without a
-// giant fixture. pdfRenderDPI: ~150 is enough for OCR/handwriting - 300 balloons
-// image size for no legibility gain on a scanned page.
-// Not safe for concurrent modification - pdfToImageParts calls are sequential today.
+// pdfMaxPages bounds how many leading pages of a PDF attachment get
+// rendered (document-ingest inputs can run long); var so tests can shrink
+// it without a giant fixture. pdfRenderDPI: ~150 is enough for OCR/handwriting - 300 balloons image size for no legibility gain on a scanned page. Not safe for concurrent modification - pdfToImageParts calls are sequential today.
 var pdfMaxPages = 20
 
 const pdfRenderDPI = 150
@@ -29,11 +27,9 @@ const pdfConvertTimeout = 60 * time.Second
 
 var pdfInfoPagesRe = regexp.MustCompile(`(?m)^Pages:\s*(\d+)`)
 
-// pdfToImageParts renders a PDF's pages to PNG (via poppler's pdftoppm) and
-// returns one image content part per page, so vision models can consume a
-// document directly instead of the "unsupported PDF MIME type" rejection
-// (#829). Degrades LOUDLY: a missing pdftoppm or a failed render returns an
-// error naming the cause - a document is never silently dropped.
+// pdfToImageParts renders a PDF's pages to PNG (via poppler's pdftoppm)
+// and returns one image content part per page, so vision models can
+// consume a document directly instead of the "unsupported PDF MIME type" rejection (#829). Degrades LOUDLY: a missing pdftoppm or a failed render returns an error naming the cause - a document is never silently dropped.
 func pdfToImageParts(data []byte) ([]openai.ChatCompletionContentPartUnionParam, error) {
 	if _, err := exec.LookPath("pdftoppm"); err != nil {
 		return nil, fmt.Errorf("openaimodel: pdftoppm (poppler-utils) is required to read PDF attachments and was not found on PATH: %w", err)

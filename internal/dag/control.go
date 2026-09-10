@@ -12,10 +12,8 @@ import (
 )
 
 // NodeStateStore is the write-through seam for the node state machine: every
-// pause/start/stop and every steer-queue edit lands here before it is acted
-// on, so a kill can't lose it. Stringly typed on purpose - internal/store
-// imports internal/dag, so it cannot take dag types in its signatures.
-// Implemented by *store.Store (SetNodeStatusForChat/SetNodeQueue/GetNodeState).
+// pause/start/stop and steer-queue edit lands here before it is acted on, so a
+// kill can't lose it. Stringly typed (internal/store imports internal/dag); *store.Store implements it.
 type NodeStateStore interface {
 	SetNodeStatusForChat(ctx context.Context, chatID, nodeID, status, pauseReason, pendingQuestion string) error
 	SetNodeQueue(ctx context.Context, chatID, nodeID, queueJSON string) error
@@ -494,10 +492,9 @@ func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, boo
 // machine. Nil (the default) keeps every control in memory only.
 func (e *Executor) SetNodeStateStore(s NodeStateStore) { e.controls.store = s }
 
-// NodeIsLive reports whether nodeID already has a registered control - i.e. a
-// dispatch is already running it. Used to refuse a second concurrent
-// dispatch of the same node (resuming a paused node while its cooperative
-// pause hasn't landed yet).
+// NodeIsLive reports whether nodeID already has a registered control (a
+// dispatch running it). Used to refuse a second concurrent dispatch of the
+// same node (resuming a paused node before its cooperative pause lands).
 func (e *Executor) NodeIsLive(chatID, nodeID string) bool {
 	return e.controls.get(chatID, nodeID) != nil
 }
@@ -540,10 +537,8 @@ func (e *Executor) PauseNode(chatID, nodeID string, reason PauseReason) bool {
 }
 
 // StartNode clears a node's pause so its graph can be re-entered (the
-// re-entry itself is the orchestrator's - see Orchestrator.StartNode).
-// Returns the reason it was paused for, so the caller knows whether the
-// incoming message is an answer to a question (awaiting_input) or nothing at
-// all (user/shutdown).
+// re-entry itself is the orchestrator's - see Orchestrator.StartNode). Returns the pause
+// reason: awaiting_input = the message answers a question, else (user/shutdown) nothing at all.
 func (e *Executor) StartNode(chatID, nodeID string) (PauseReason, bool) {
 	reason := e.NodePauseReason(chatID, nodeID)
 	if c := e.controls.get(chatID, nodeID); c != nil {
@@ -573,10 +568,9 @@ func (e *Executor) SetNodeLiveSteer(chatID, nodeID string, f func(text string) b
 	}
 }
 
-// SetNodeRoundAbort registers the in-flight round's cancel func (#1030). If
-// the node was already cancelled before the round reached this point, fires
-// it immediately instead of leaving the round to run until its next
-// boundary check.
+// SetNodeRoundAbort registers the in-flight round's cancel func (#1030); if
+// the node was already cancelled before the round reached this point, fires it
+// immediately instead of leaving the round to run until its next boundary check.
 func (e *Executor) SetNodeRoundAbort(chatID, nodeID string, cancel context.CancelFunc) {
 	if c := e.controls.get(chatID, nodeID); c != nil {
 		c.setRoundAbort(cancel)

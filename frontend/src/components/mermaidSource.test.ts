@@ -72,10 +72,7 @@ describe('lastSafeSplitOffset', () => {
 
   // A blank line followed by an indented line is a lazy continuation (a
   // footnote definition's second paragraph, or an indented code block's
-  // internal blank line) - not a real block boundary. Splitting there hands
-  // the frozen prefix and the live tail to two independent parses that each
-  // lose the shared context (AgentParts.splitBoundary.rtl.test.tsx has the
-  // rendered-HTML regression for this).
+  // internal blank line) - not a real block boundary. Splitting there hands the frozen prefix and the live tail to two independent parses that each lose the shared context (AgentParts.splitBoundary.rtl.test.tsx has the rendered-HTML regression for this).
   it("never lands inside a footnote definition's multi-paragraph continuation", () => {
     const text = 'See note.[^1]\n\n[^1]: First paragraph.\n\n    Second paragraph.\n\nMore text.'
     const innerBlank = text.indexOf('First paragraph.') + 'First paragraph.'.length

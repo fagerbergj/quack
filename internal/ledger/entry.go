@@ -13,21 +13,17 @@ const (
 	// makes a phantom parent unclaimable instead); kept so fold still reads
 	// pre-P4 rows correctly.
 	KindArtifactRevisionAborted = "artifact.revision.aborted"
-	// KindDeliveryIntent's completion is a delivery_record artifact.revision,
-	// not a second ledger entry (#1144 P2 - one representation per fact).
-	// Judge rounds likewise have no dedicated entry kind: they ARE a
-	// judge_round artifact.revision, folded via ArtifactRevision.Kind.
+	// delivery.intent's completion is a delivery_record artifact.revision, not a second
+	// ledger entry (#1144 P2: one representation per fact) - judge rounds likewise fold
+	// via ArtifactRevision.Kind, not a dedicated entry kind.
 	KindDeliveryIntent = "delivery.intent"
 	KindNodeStarted    = "node.started"
 	KindNodeDone       = "node.done"
 	KindNodeFailed     = "node.failed"
 
-	// KindMemoryRecall/KindMemoryVote (epic #1255 P1): best-effort like
-	// node.*, not fail-closed - memory recall/voting must never fail a
-	// node. The ledger is the source of truth for what a chat recalled;
-	// recalls/last_recalled_at on the point are projections folded from
-	// memory.recall, and memory.vote is likewise projected onto upvotes/
-	// downvotes/score/tier (see internal/ledger/fold and memory.Store).
+	// KindMemoryRecall/KindMemoryVote (epic #1255 P1): best-effort like node.* -
+	// memory recall/voting must never fail a node. The ledger is the source of truth;
+	// point recalls/last_recalled_at and upvotes/downvotes/score/tier are folds of these.
 	KindMemoryRecall = "memory.recall"
 	KindMemoryVote   = "memory.vote"
 
@@ -44,16 +40,14 @@ const (
 	KindEvalScore   = "eval.score"
 )
 
-// EntrySchemaVersion is the current Entry payload shape's version. A row
-// written before this field existed reads back as 0; MigrateEntry treats
-// that as version 1, not a migration failure - no backfill needed on an
-// existing Postgres.
+// EntrySchemaVersion is the current Entry payload shape's version. Rows
+// written before it read back as 0, which MigrateEntry treats as version 1
+// (not a failure) - no backfill needed on an existing Postgres.
 const EntrySchemaVersion = 1
 
-// MigrateEntry upgrades e to EntrySchemaVersion in place, one hook for
-// every store's read path (PGStore.pgRowsToEntries, MemStore.ReadEntries)
-// to share. Nothing to upgrade yet - the hook exists so a future payload
-// shape change has exactly one place to add a case, not one per reader.
+// MigrateEntry upgrades e to EntrySchemaVersion in place - the one hook every store's read
+// path shares. Nothing to upgrade yet: a future payload shape change gets exactly one place
+// to add a case, not one per reader.
 func MigrateEntry(e Entry) Entry {
 	if e.SchemaVersion == 0 {
 		e.SchemaVersion = 1
@@ -71,15 +65,9 @@ func IsObservation(kind string) bool {
 	return false
 }
 
-// Entry is the WAL envelope: an intent appended before it is acted on, or an
-// observation appended after the fact. Seq is allocated by the store on
-// AppendIntent and ignored on input. Key (an artifact id, or a delivery
-// idempotency key) makes an intent idempotent on replay. NodeID/Agent/Round
-// are the replay stream identity, stamped onto each record by the emitting
-// object (SetLedgerCoords on the traced model/tools/ACP client) - a ctx value
-// set inside a node body never crosses the RunNode scheduling boundary.
-// IdempotencyKey, when set, is unique per chat at the store level (#1144 P4):
-// a repeat writes nothing and returns *DuplicateIntentError instead.
+// Entry is the WAL envelope: intents appended before they are acted on, observations after the fact.
+// Seq is store-allocated; Key/IdempotencyKey make repeats idempotent per chat (#1144 P4: *DuplicateIntentError).
+// NodeID/Agent/Round are the replay stream identity - a ctx value set inside a node body never crosses the RunNode scheduling boundary.
 type Entry struct {
 	Seq            int64           `json:"seq"`
 	ChatID         string          `json:"chat_id"`
@@ -125,11 +113,9 @@ type LLMCallPayload struct {
 	Input              string `json:"input,omitempty"`
 	Output             string `json:"output,omitempty"`
 	Error              string `json:"error,omitempty"`
-	// QuackVersion/BundleHash/CostUSD: provenance added for #1096 - which
-	// build and agent bundle produced this call, and what it cost. CostUSD
-	// is a pointer so an actual $0 call (a priced model with free tokens)
-	// stays distinguishable from "no config.ModelPricing entry" (nil, key
-	// omitted) - a plain float with omitempty would conflate the two.
+	// QuackVersion/BundleHash/CostUSD: provenance added for #1096 - which build and agent
+	// bundle produced this call, and what it cost. CostUSD is a pointer so an actual $0 call
+	// stays distinguishable from "no config.ModelPricing entry" (nil) - a float+omitempty would conflate the two.
 	QuackVersion string   `json:"quack_version,omitempty"`
 	BundleHash   string   `json:"bundle_hash,omitempty"`
 	CostUSD      *float64 `json:"cost_usd,omitempty"`
@@ -167,10 +153,9 @@ type MemoryRecallEntry struct {
 	Score float32 `json:"score,omitempty"`
 }
 
-// MemoryRecallPayload is a KindMemoryRecall entry's payload: every memory
-// one injection delivered to a node, so a chat outcome can later target
-// exactly the recalled set (design decision #1255: recall-based, not
-// birth-based, reinforcement).
+// MemoryRecallPayload: every memory one injection delivered to a node, so a
+// chat outcome can later target exactly the recalled set (design decision
+// #1255: recall-based, not birth-based, reinforcement).
 type MemoryRecallPayload struct {
 	Source  string              `json:"source"` // "prefill" | "tool"
 	Round   int                 `json:"round,omitempty"`

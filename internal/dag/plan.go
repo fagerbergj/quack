@@ -27,8 +27,7 @@ type Plan struct {
 	ContextItems         []ContextItem
 	// PlanOnly: this run's deliverable is a plan, not a change (#739). Stamped
 	// by the harness from the triggering label, never model-authored - forces
-	// every node read-only with no delivery target regardless of which agent
-	// the planner picked (buildGateNodes).
+	// every node read-only with no delivery target regardless of agent (buildGateNodes).
 	PlanOnly bool
 }
 
@@ -47,10 +46,9 @@ type Setup struct {
 
 	CheckoutExistingHead bool `json:"-"`
 
-	// Provisioned: set once Executor.Provision has cloned this Setup - makes
-	// a second Provision/runPlanSetup call (execute tool, then the run phase)
-	// a no-op instead of a double clone. Never round-trips through the
-	// resume-plan JSON; that's fine, setup never runs again on resume anyway.
+	// Provisioned: set once Executor.Provision has cloned this Setup - makes a
+	// second Provision/runPlanSetup call (execute tool, then run phase) a no-op
+	// instead of a double clone. Skips resume-plan JSON: setup never re-runs on resume anyway.
 	Provisioned bool `json:"-"`
 }
 

@@ -47,12 +47,9 @@ func planFanout() *model.LLMResponse {
 	return stubCall("plan", map[string]any{"nodes": nodes})
 }
 
-// #1033: the run consumer stops ranging mid-run - in REST, runChat returns on
-// an error event (handler.go:657) while sibling nodes are still live. yield
-// then returns false while node goroutines still hold the ctx-stored yield.
-// Pre-fix the next node emit tripped "range function continued iteration after
-// function for loop body returned false", safeYield recovered it without
-// resuming, and Go killed the process at the range site.
+// #1033: the run consumer stops ranging mid-run - in REST, runChat returns
+// on an error event (handler.go:657) while sibling nodes are still live.
+// yield then returns false while node goroutines still hold the ctx-stored yield. Pre-fix the next node emit tripped "range function continued iteration after function for loop body returned false", safeYield recovered it without resuming, and Go killed the process at the range site.
 func TestRun_ConsumerStopsRangingMidRun_ProcessSurvives(t *testing.T) {
 	stub := &slowWorkerStub{orchStub: orchStub{replies: []*model.LLMResponse{planFanout()}}}
 	agents := map[string]adkagent.Agent{}

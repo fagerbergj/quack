@@ -178,10 +178,9 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sessions session.Service) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
-			// paused stays false on every path except the HITL-park return
-			// below - it tells release() and the ask_advisor cleanup further
-			// down whether this is the node truly finishing (reap its
-			// sessions) or only parking (a resume needs them intact).
+			// paused stays false on every path except the HITL-park return below:
+			// it tells release() and the ask_advisor cleanup further down whether
+			// the node is truly finishing (reap its sessions) or only parking (a resume needs them intact).
 			paused := false
 			if release != nil {
 				defer func() { release(paused) }()

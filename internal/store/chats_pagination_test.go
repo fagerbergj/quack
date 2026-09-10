@@ -28,8 +28,7 @@ func seedChats(t *testing.T, st *Store, n int) []string {
 
 // seedChatsScoped is seedChats plus an explicit archived flag per row, letting
 // a fixture interleave archived and active rows in updated_at order - the
-// shape that filtering archived out of an already-fetched page corrupts.
-// Returns ids oldest-to-newest.
+// shape that filtering archived out of an already-fetched page corrupts. Returns ids oldest-to-newest.
 func seedChatsScoped(t *testing.T, st *Store, archived []bool) []string {
 	t.Helper()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -81,8 +80,7 @@ func TestListChatsDefaultPageSize(t *testing.T) {
 
 // Test case 2: paging through in fixed steps yields every chat exactly once.
 // The token is round-tripped as an opaque string - never decoded or
-// inspected by the caller - proving pagination doesn't secretly depend on
-// the caller understanding it.
+// inspected by the caller - proving pagination doesn't secretly depend on the caller understanding it.
 func TestListChatsPagingIsExhaustiveAndDedup(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -151,8 +149,7 @@ func TestListChatsTokenStableAcrossConcurrentUpdate(t *testing.T) {
 	}
 	// ids[0] jumped above the token's boundary captured at page1 and is
 	// excluded from page2 (it would reappear at the top of a fresh page1,
-	// not retroactively inside an in-flight page walk). The remaining
-	// order (ids[2], ids[1]) must come through with no skip or repeat.
+	// not retroactively inside an in-flight page walk); the remaining order (ids[2], ids[1]) must come through with no skip or repeat.
 	if len(page2) != 2 || page2[0].ID != ids[2] || page2[1].ID != ids[1] {
 		t.Fatalf("page2 = %v, want [%s %s] (no skip/repeat despite ids[0]'s update)", ids2(page2), ids[2], ids[1])
 	}
@@ -194,10 +191,7 @@ func TestListChatsFewerThanPageSize(t *testing.T) {
 
 // TestListChatsTokenIssuedForWrongSortRejected pins the contract: a token
 // carries the ordering it was issued under, and replaying it against a
-// different one is an error, never silently honored. chatsSort has exactly
-// one value today, so this is exercised by hand-forging a token under a
-// different (hypothetical) sort - the shape a future second ordering would
-// produce.
+// different one is an error, never silently honored. chatsSort has exactly one value today, so this is exercised by hand-forging a token under a different (hypothetical) sort - the shape a future second ordering would produce.
 func TestListChatsTokenIssuedForWrongSortRejected(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -248,9 +242,7 @@ func TestListChatsScopeActiveReturnsFullPageDespiteArchived(t *testing.T) {
 
 // #809 test case 2 (the one that matters): archived and active rows interleave
 // in updated_at order - a fixture with archived rows clustered at one end
-// would pass even with the old bug, since it never had to skip past a
-// discarded archived row mid-page. Paging the active scope to exhaustion must
-// see every active chat exactly once and no archived chat at all.
+// would pass even with the old bug, since it never had to skip past a discarded archived row mid-page. Paging the active scope to exhaustion must see every active chat exactly once and no archived chat at all.
 func TestListChatsScopeActiveNeverSkipsOrRepeatsAcrossInterleavedArchived(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -370,8 +362,7 @@ func TestListChatsScopeMismatchRejected(t *testing.T) {
 
 // TestListChatsTokenWithoutScopeDefaultsToActive pins the old-token decision:
 // a token minted before scoping existed (zero-value Scope) is treated as
-// {Active: true}, the pre-#809 default, rather than rejected outright - a
-// cursor a client is already holding does not 500 on the next release.
+// {Active: true}, the pre-#809 default, rather than rejected outright - a cursor a client is already holding does not 500 on the next release.
 func TestListChatsTokenWithoutScopeDefaultsToActive(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

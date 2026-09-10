@@ -30,11 +30,7 @@ func (m neverCalledModel) GenerateContent(context.Context, *model.LLMRequest, bo
 
 // TestRunBoundPlan_UnreachableRepoAbortsWithHumanErrorBeforeAnyNodeRuns pins
 // #848's "bound workflows too" edge: a dispatch-bound plan skips the
-// orchestrator LLM turn entirely (BuildBoundPlan -> RunBoundPlan), so there is
-// no execute tool call to fail into. RunBoundPlan must provision the Setup
-// itself, up front, and turn a clone failure into a human stream error -
-// never a raw git dump, and never by letting a node start against an
-// unprovisioned clone.
+// orchestrator LLM turn entirely (BuildBoundPlan -> RunBoundPlan), so there is no execute tool call to fail into. RunBoundPlan must provision the Setup itself, up front, and turn a clone failure into a human stream error - never a raw git dump, and never by letting a node start against an unprovisioned clone.
 func TestRunBoundPlan_UnreachableRepoAbortsWithHumanErrorBeforeAnyNodeRuns(t *testing.T) {
 	stub := neverCalledModel{t: t}
 	ag, err := llmagent.New(llmagent.Config{

@@ -50,10 +50,9 @@ func ev(path string, parts ...*genai.Part) *session.Event {
 	return e
 }
 
-// TestDagStream_WorkerActivityAndNodeDone: a worker run's thinking/tool/token
-// activity is translated to SSE under the plan node, bracketed by agent_start/
-// agent_complete, and the node's output event yields node_done with the judge
-// score from state.
+// TestDagStream_WorkerActivityAndNodeDone: a worker run's thinking/tool/token activity is
+// translated to SSE under the plan node, bracketed by agent_start/agent_complete, and the
+// node's output event yields node_done with the judge score from state.
 func TestDagStream_WorkerActivityAndNodeDone(t *testing.T) {
 	const wpath = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
 	const npath = "quack-dag-p@1/n1@rr"
@@ -192,12 +191,10 @@ func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
 	}
 }
 
-// TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer is the
-// #1109 re-review finding: for an implementer node in a setup/repo-chain
-// plan, the recorder keys generate() calls under cfg.NodeID =
-// workspaceNodeID(plan, node) = workspace.SharedRepoScope ("quack-shared-repo"),
-// NOT the plan node id. Executor.NewDagStream must resolve the SAME scope so
-// emptyNodeError actually finds the record the recorder wrote.
+// TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer is the #1109 re-review
+// finding: for a setup/repo-chain implementer node the recorder keys generate() calls under
+// workspace.SharedRepoScope ("quack-shared-repo"), not the plan node id; NewDagStream must
+// resolve the same scope so emptyNodeError finds the record the recorder wrote.
 func TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer(t *testing.T) {
 	const chatID, agent = "chat-1105-setup", implementerAgent
 	scope := "quack-shared-repo" // workspace.SharedRepoScope, avoiding an import cycle-prone dependency in the test

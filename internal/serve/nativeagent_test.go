@@ -56,10 +56,9 @@ func TestPerNodeServersTrackReapsWorkerSession(t *testing.T) {
 	release(false)
 }
 
-// TestPerNodeServersTrackKeepsSessionOnPause is a regression test for the
-// HITL-park case: release(true) must close the A2A server (a resume gets a
-// fresh one anyway) but leave the deterministic worker session alone, so a
-// resumed dispatch to the SAME session id still finds its prior history.
+// TestPerNodeServersTrackKeepsSessionOnPause is the HITL-park regression: release(true)
+// closes the A2A server (a resume gets a fresh one) but leaves the deterministic worker
+// session alone, so a resumed dispatch to the SAME session id finds its prior history.
 func TestPerNodeServersTrackKeepsSessionOnPause(t *testing.T) {
 	ctx := context.Background()
 	sessions := session.InMemoryService()

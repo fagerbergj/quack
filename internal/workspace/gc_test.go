@@ -155,10 +155,7 @@ func TestSweepHomeTmpTTLBoundaryLeavesCachesAlone(t *testing.T) {
 
 // TestSweepHomeTmpReapsScratchDirEntries proves the ACTUAL Jail.ScratchDir
 // output - not a hand-rolled path - is swept the same way as any other
-// .quack-home/tmp entry: no gc.go change was needed for the per-node scratch
-// fix, because ScratchDir names one flat, single-component directory per
-// (chatID, nodeID) under tmp/, exactly the granularity sweepHomeTmp already
-// walks.
+// .quack-home/tmp entry: no gc.go change was needed for the per-node scratch fix, because ScratchDir names one flat, single-component directory per (chatID, nodeID) under tmp/, exactly the granularity sweepHomeTmp already walks.
 func TestSweepHomeTmpReapsScratchDirEntries(t *testing.T) {
 	jail := newTestJail(t)
 	old := time.Now().Add(-12 * time.Hour)
@@ -228,8 +225,7 @@ func TestSweepAgentHomeResetsPastQuotaWhenIdle(t *testing.T) {
 
 // TestSweepAgentHomeSkipsLiveChat is issue #800 test case 1 (the live half):
 // the SAME isActive signal that protects a live chat's clone in
-// sweepChatScopes must also keep the shared home untouched while that chat
-// has a round in flight, even though it's well past HomeMaxBytes.
+// sweepChatScopes must also keep the shared home untouched while that chat has a round in flight, even though it's well past HomeMaxBytes.
 func TestSweepAgentHomeSkipsLiveChat(t *testing.T) {
 	jail := newTestJail(t)
 	growHome(t, jail, "alice", "opencode.db", 100)
@@ -414,10 +410,7 @@ func initGitRepo(t *testing.T, dir string) {
 
 // TestSweepBaselineWorktreeReapingKeepsParentConsistent proves the CRITICAL
 // worktree case: an orphaned baseline worktree (internal/vetting/baseline.go's
-// os.MkdirTemp("", "quack-base-") scratch, never cleaned up because the
-// process crashed mid-check) is reaped WITHOUT leaving the parent clone's
-// `git worktree` bookkeeping wedged - the parent can add a worktree at the
-// same path again afterward, proving nothing stale survived.
+// os.MkdirTemp("", "quack-base-") scratch, never cleaned up because the process crashed mid-check) is reaped WITHOUT leaving the parent clone's `git worktree` bookkeeping wedged - the parent can add a worktree at the same path again afterward, proving nothing stale survived.
 func TestSweepBaselineWorktreeReapingKeepsParentConsistent(t *testing.T) {
 	jail := newTestJail(t)
 	parent := filepath.Join(jail.Root(), "alice", "chat1", "quack-shared-repo")
@@ -488,9 +481,7 @@ func TestSweepBaselineWorktreeReapingKeepsParentConsistent(t *testing.T) {
 
 // TestRemoveAllReclaimsReadOnlyModuleCache is the production failure: GC's
 // quota reset died with `unlinkat .../go/pkg/mod/dario.cat/mergo@v1.0.2/
-// issue131_test.go: permission denied` because Go writes cached deps 0444
-// inside 0555 parents, and you cannot unlink out of a directory you cannot
-// write. First half proves the tree really does defeat os.RemoveAll.
+// issue131_test.go: permission denied` because Go writes cached deps 0444 inside 0555 parents, and you cannot unlink out of a directory you cannot write. First half proves the tree really does defeat os.RemoveAll.
 func TestRemoveAllReclaimsReadOnlyModuleCache(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the write bit; the failure this test reproduces cannot happen")

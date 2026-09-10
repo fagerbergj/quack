@@ -10,10 +10,7 @@ import (
 
 // TestJudgeSystemPromptRoundInvariant proves submit_verdict's description (and
 // so the judge's whole system prompt, built once per round by promptbuilder)
-// stays byte-identical whether or not this round's recall_memory hits added a
-// new id - the ids belong in the per-round user prompt's trailing
-// receivedMemoriesSection, not the system prompt, so a fresh memory id never
-// evicts the system-prompt prefix cache mid-node.
+// stays byte-identical whether or not this round's recall_memory hits added a new id - the ids belong in the per-round user prompt's trailing receivedMemoriesSection, not the system prompt, so a fresh memory id never evicts the system-prompt prefix cache mid-node.
 func TestJudgeSystemPromptRoundInvariant(t *testing.T) {
 	var sink verdict
 	build := func(ids []string) string {

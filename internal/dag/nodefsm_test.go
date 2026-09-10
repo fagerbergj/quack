@@ -193,8 +193,7 @@ func TestQueuedSteerSurvivesRestart(t *testing.T) {
 
 // TestResumedNodeActuallyRuns: pause a live node (row lands paused/user),
 // throw the executor away (restart), re-run the plan against the same store -
-// the re-registered node must clear the persisted pause and do real work, not
-// rehydrate the pause and re-park itself before its first worker round.
+// the re-registered node must clear the persisted pause and do real work, not rehydrate the pause and re-park itself before its first worker round.
 func TestResumedNodeActuallyRuns(t *testing.T) {
 	fake := newFakeNodeStore()
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}

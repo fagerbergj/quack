@@ -26,9 +26,7 @@ func commitRoleFact(t *testing.T, s *memory.Store, chatID, content string) {
 
 // TestRescopeMemories_DryRunThenApply seeds a role:coding memory whose chat
 // has a GitHub origin (owner/repo) alongside one with no origin, dry-runs the
-// rescope (tallies but writes nothing), then applies it and confirms the
-// point actually moved to repo:github.com/acme/games and the untethered one
-// stayed in role:coding.
+// rescope (tallies but writes nothing), then applies it and confirms the point actually moved to repo:github.com/acme/games and the untethered one stayed in role:coding.
 func TestRescopeMemories_DryRunThenApply(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHandler(t)

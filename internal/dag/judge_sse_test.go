@@ -13,9 +13,7 @@ import (
 
 // TestExecute_JudgeStreamsAsStageJudge verifies the judge - which runs in an
 // isolated runner OFF the workflow event stream - is surfaced to the SSE client
-// as stage:judge agent runs (start + complete with the score), for every node,
-// on the real Execute path. Run with -race: the fan-out nodes stream their judge
-// concurrently through the executor's shared (mutex-guarded) yield sink.
+// as stage:judge agent runs (start + complete with the score), for every node, on the real Execute path. Run with -race: the fan-out nodes stream their judge concurrently through the executor's shared (mutex-guarded) yield sink.
 func TestExecute_JudgeStreamsAsStageJudge(t *testing.T) {
 	stub := stubG{}
 	mk := func(name, role string) adkagent.Agent {

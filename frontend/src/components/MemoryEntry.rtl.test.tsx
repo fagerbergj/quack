@@ -50,11 +50,8 @@ describe('MemoryEntry vote control', () => {
 })
 
 // #1300 review: mintedTimeRelative was memoized on [memory.timestamp] - a
-// value that never changes for a given memory - so it froze at whatever
-// wall-clock time it was first computed. A refetch that hands the row a new
-// Memory object (same timestamp, different reference - exactly what a real
-// store update looks like) DOES pass memo(MemoryEntry)'s shallow prop check
-// and re-render the row, but the frozen memo hid the correct new label.
+// value that never changes for a given memory - so it froze at the first
+// computed wall-clock time. A refetch handing the row a new Memory object (same timestamp, different reference - what a real store update looks like) passes memo(MemoryEntry)'s shallow prop check and re-renders, but the frozen memo hid the correct new label.
 describe('MemoryEntry minted-time freshness (#1300 review)', () => {
   it('reflects the current time on a re-render with a new memory object, not a cached one', () => {
     vi.useFakeTimers()

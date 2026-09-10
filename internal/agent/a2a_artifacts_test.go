@@ -18,11 +18,9 @@ import (
 
 type saveArtifactArgs struct{}
 
-// saveArtifactResult never surfaces a Go error to the tool framework (whose
-// own error wire-shape isn't this test's concern) - OK/Text is checked
-// directly out of the FunctionResponse by artifactWorkerModel below, so a
-// nil ctx.Artifacts() (Artifacts() returning nil, or a nil-interface panic
-// from calling a method on it) is unambiguously distinguishable from success.
+// saveArtifactResult never surfaces a Go error to the tool framework; OK/Text is
+// read straight out of the FunctionResponse by artifactWorkerModel below, so a
+// nil ctx.Artifacts() is unambiguously distinguishable from success.
 type saveArtifactResult struct {
 	OK   bool
 	Text string
@@ -97,12 +95,9 @@ func (m *artifactWorkerModel) GenerateContent(_ context.Context, req *model.LLMR
 	}
 }
 
-// TestServeSetsWorkerArtifactService is a regression test for the ADK
-// audit's A7 finding: agent.Serve set SessionService/MemoryService/
-// Compaction on the worker's RunnerConfig but never ArtifactService, so
-// ctx.Artifacts() was nil in every worker tool/callback even when the
-// caller (internal/serve) had a live artifact.Service to give it - the DAG
-// and orchestrator runners already got one (nativegraph.go, orchestrator.go).
+// TestServeSetsWorkerArtifactService is a regression test for the ADK audit's A7 finding: Serve set SessionService/MemoryService/Compaction on
+// the worker's RunnerConfig but never ArtifactService, so ctx.Artifacts()
+// was nil in every worker tool/callback even though the caller had a live service to give it (DAG and orchestrator runners already got one).
 func TestServeSetsWorkerArtifactService(t *testing.T) {
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "artifact-worker", Description: "w", Model: &artifactWorkerModel{},

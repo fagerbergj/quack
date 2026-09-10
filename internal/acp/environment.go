@@ -13,18 +13,12 @@ import (
 
 // maxEnvironmentEntries bounds the top-level entry listing in the environment
 // block - a pathological directory (an agent that wrote thousands of files at
-// its root) must never blow the round's context window just to say "here's
-// your cwd".
+// its root) must never blow the round's context window just to say "here's your cwd".
 const maxEnvironmentEntries = 200
 
 // environmentBlock renders a FACTUAL, Codex-CLI-style <environment_context>
 // grounding the round's prompt: absolute cwd, whether it's a git repo (branch
-// + short HEAD sha when so), and the top-level entries. Observation, not
-// instruction - this is what replaces the old "do not clone the repo, it's
-// already here" prose (agents/code-explorer/prompt.md): prose asserting
-// where the repo is competes with a task naming one and loses; a plain fact
-// about the actual filesystem does not compete with anything. Deterministic
-// given (cwd, repo state), so it costs nothing to include on every round.
+// + short HEAD sha when so), and the top-level entries. Observation, not instruction - this is what replaces the old "do not clone the repo, it's already here" prose (agents/code-explorer/prompt.md): prose asserting where the repo is competes with a task naming one and loses; a plain fact about the actual filesystem does not compete with anything. Deterministic given (cwd, repo state), so it costs nothing to include on every round.
 func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) string {
 	var b strings.Builder
 	b.WriteString("<environment_context>\n")
@@ -50,8 +44,7 @@ func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) stri
 	if caps.ReadOnly {
 		// landlock and bwrap both enforce this. Name which paths, not what to do
 		// with them: an agent told only "read-only" either burns a round on
-		// EACCES or gives up on running the change. Naming the writable paths is
-		// what makes "run it" achievable here.
+		// EACCES or gives up on running the change. Naming the writable paths is what makes "run it" achievable here.
 		fmt.Fprintf(&b, "filesystem: read-only (OS-enforced, EACCES on write): %s\n", cwd)
 		writable := []string{workspace.SandboxTmpDir(caps)}
 		if caps.HomeDir != "" {
@@ -60,9 +53,7 @@ func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) stri
 		fmt.Fprintf(&b, "filesystem: writable: %s\n", strings.Join(writable, ", "))
 		// `cp -a`, not `git clone --local`: clone is denied for every ACP agent
 		// without acp.allow_clone (opencodeEnv), which is all of them but the
-		// explorer - so naming clone here hands the reviewer advice its own
-		// permissions reject. A copy is allowed everywhere and carries go.mod
-		// just the same.
+		// explorer - so naming clone here hands the reviewer advice its own permissions reject. A copy is allowed everywhere and carries go.mod just the same.
 		b.WriteString("reads and execution work anywhere; in-tree writes (npm install, go build artifacts, file edits) fail. To run code against this tree, copy it into a writable path first (`cp -a \"$PWD\" \"$TMPDIR/probe\"`) - the copy carries go.mod, so language-level rules like Go's internal/ visibility still resolve.\n")
 	}
 	b.WriteString("</environment_context>")
@@ -71,10 +62,7 @@ func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) stri
 
 // gitInfo reports cwd's current branch and short HEAD sha via the SAME
 // sandboxed git path every other repo read uses (workspace.RunArgv) - so a
-// linked worktree gets the same landlock/bwrap grants as any other
-// git command run there. ok=false for a non-repo cwd (the common case for a
-// non-code node) or any git failure - the block degrades to "git: no" rather
-// than failing the round over a cosmetic line.
+// linked worktree gets the same landlock/bwrap grants as any other git command run there. ok=false for a non-repo cwd (the common case for a non-code node) or any git failure - the block degrades to "git: no" rather than failing the round over a cosmetic line.
 func gitInfo(ctx context.Context, cwd string, caps workspace.Caps) (branch, sha string, ok bool) {
 	if _, err := os.Stat(filepath.Join(cwd, ".git")); err != nil {
 		return "", "", false

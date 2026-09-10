@@ -1,13 +1,8 @@
 package agent
 
-// These prompts follow GOOSE, not opencode: opencode blanks an old tool
-// result in place and keeps the call, which works when a huge-context
-// frontier model rarely triggers prune - on quack's 65k local-model window it
-// fired constantly and the agent kept re-reading the same files. goose and
-// OpenHands instead DROP old turns and replace them with one knowledge-dense
-// summary, framed explicitly as a handoff to the agent itself: "ALL
-// TECHNICAL CONTENT" preserved, files/code state kept in full, "OK to make it
-// MUCH LONGER than a normal summary". These prompts follow that framing.
+// These prompts follow GOOSE/OpenHands, not opencode: opencode blanks an old tool result in place and keeps the call, which works when a huge-context
+// frontier model rarely triggers prune - on quack's 65k local-model window it fired constantly and the agent kept re-reading the same files. Instead, DROP old turns and replace them with one knowledge-dense summary framed as
+// a handoff to the agent itself: "ALL TECHNICAL CONTENT" preserved, files/code state kept in full, "OK to make it MUCH LONGER than a normal summary".
 const compactionSystemPrompt = `You are compacting the context of a coding/research session.
 
 The conversation history you are given is being REMOVED from the agent's context and replaced by what you write. The only reader is THE AGENT ITSELF, continuing this same session - write a handoff to yourself, not a report for a human.

@@ -53,9 +53,7 @@ func TestListChats_NoParams(t *testing.T) {
 
 // TestListChats_PageTokenIsOpaqueRoundTrip proves the query params reach the
 // store AND that the page_token is genuinely opaque to the caller: this test
-// never decodes it, never inspects its shape, only ever passes back byte-for-
-// byte what the previous response gave it - exactly the contract a real
-// client follows - and pagination still lands on every chat exactly once.
+// never decodes it, never inspects its shape, only ever passes back byte-for-byte what the previous response gave it - exactly the contract a real client follows - and pagination still lands on every chat exactly once.
 func TestListChats_PageTokenIsOpaqueRoundTrip(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -274,8 +272,7 @@ func TestListChats_TokenScopeMismatch400(t *testing.T) {
 
 // TestListChats_StatusOrderInvariant is the coordinator-requested regression:
 // ?status=active&status=archived and the reverse order must mint the
-// identical page token and page the identical rows - the multi-select
-// collapses to two flags, so list order carries no meaning.
+// identical page token and page the identical rows - the multi-select collapses to two flags, so list order carries no meaning.
 func TestListChats_StatusOrderInvariant(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

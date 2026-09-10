@@ -23,9 +23,7 @@ const (
 
 // MCPServer is one stdio entry from mcp.json, still carrying its
 // ${PLUGIN_ROOT}/${PLUGIN_DATA} placeholders. Only the stdio transport is
-// modelled: §7.2.3 requires supporting at least one of stdio/streamable-http,
-// and §7.2.2 rule 4 makes skipping an unsupported transport the conformant
-// response rather than a failure.
+// modelled: §7.2.3 requires supporting at least one of stdio/streamable-http, and §7.2.2 rule 4 makes skipping an unsupported transport the conformant response, not a failure.
 type MCPServer struct {
 	Command string
 	Args    []string
@@ -131,16 +129,13 @@ func parseMCPEntry(raw json.RawMessage) (*MCPServer, error) {
 }
 
 // Launch expands this server's placeholders against the plugin root and its
-// client-managed data directory (§9), and resolves command and cwd to
-// absolute, contained paths. env is returned as KEY=VALUE overlay entries
-// with the two reserved variables appended last, as §9.1 requires.
+// client-managed data directory (§9), resolving command and cwd to absolute,
+// contained paths; env comes back as KEY=VALUE overlay entries with the two
+// reserved variables appended last, as §9.1 requires.
 //
-// cwd is always inside PLUGIN_DATA. §7.2.1 defaults it to the plugin root and
-// allows ${PLUGIN_ROOT}-rooted values, but a sandboxed child's own working
-// directory is necessarily writable, and a server that can rewrite its root
-// can rewrite the skills/ that reach agent prompts. quack keeps the root
-// read-only and diverges here on purpose - the root stays readable, so ./bin
-// commands and ${PLUGIN_ROOT} references are unaffected.
+// cwd is always inside PLUGIN_DATA, not the plugin root (§7.2.1's default): a
+// sandboxed child's own working directory is necessarily writable, and a
+// server that can rewrite its root can rewrite the skills/ that reach agent prompts. quack keeps the root read-only and diverges here on purpose - the root stays readable, so ./bin commands and ${PLUGIN_ROOT} references are unaffected.
 func (s MCPServer) Launch(root, data string) (argv []string, env []string, cwd string, err error) {
 	expand := strings.NewReplacer("${"+envPluginRoot+"}", root, "${"+envPluginData+"}", data).Replace
 

@@ -1,14 +1,9 @@
 import { useState } from 'react'
 import { Icon } from './Icon'
 
-// CopyButton is a small icon-style button that copies text to the clipboard,
-// flashing a brief check mark for confirmation. It's the escape hatch every
-// tool call carries (#404): whatever the rendered view above it does or
-// doesn't show, the raw input/output JSON is always one click away - styled
-// to match the codebase's other small icon buttons (ChatList's delete ×,
-// AttachmentUI's remove ×): a bare glyph, muted, no border. The icon is the
-// standard Material Design "content-copy" glyph (unambiguous at 12px, unlike
-// a pencil).
+// Small icon-style copy button flashing a brief check mark. It's the escape
+// hatch every tool call carries (#404): whatever the rendered view above it
+// does or doesn't show, the raw input/output JSON is always one click away. Styled to match the codebase's other small icon buttons (ChatList's delete ×, AttachmentUI's remove ×): a bare muted glyph, no border; Material "content-copy" (unambiguous at 12px, unlike a pencil).
 export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = (e: React.MouseEvent) => {

@@ -16,11 +16,9 @@ type ScopeStats struct {
 	Invalidated int
 }
 
-// Snapshot walks every point once (paged, includeInvalidated=true) and
-// returns per-scope live/invalidated tallies plus absorbedBy: every
-// absorbed id currently listed in some memory's AbsorbedIDs, mapped to that
-// memory's id - the input FoldAbsorption and stats weekly folding need to
-// attribute a since-merged memory's history to its survivor.
+// Snapshot walks every point once (paged, includeInvalidated=true) and returns per-scope
+// live/invalidated tallies plus absorbedBy: every absorbed id currently listed in some
+// memory's AbsorbedIDs, mapped to that memory's id - the input FoldAbsorption and stats weekly folding need to attribute a since-merged memory's history to its survivor.
 func (s *Store) Snapshot(ctx context.Context) ([]ScopeStats, map[string]string, error) {
 	byScope := map[string]*ScopeStats{}
 	absorbedBy := map[string]string{}
@@ -96,13 +94,9 @@ func isoWeekKey(t time.Time) string {
 	return fmt.Sprintf("%04d-W%02d", y, w)
 }
 
-// ComputeStats buckets votes/recalls/ops into the `weeks` ISO weeks (UTC)
-// ending on now's week, oldest first - a week with no activity still
-// appears, zeroed, so a caller can chart a continuous series. A vote/recall
-// counts once per week regardless of which memory id it names, so a
-// same-week consolidation merge doesn't change the total; per-memory
-// attribution across a merge is fold.Result.FoldAbsorption's job, not this
-// aggregate view's.
+// ComputeStats buckets votes/recalls/ops into the `weeks` ISO weeks (UTC) ending on now's
+// week, oldest first - a week with no activity still appears, zeroed, so a caller can
+// chart a continuous series. A vote/recall counts once per week regardless of which memory id it names, so a same-week consolidation merge doesn't change the total; per-memory attribution across a merge is fold.Result.FoldAbsorption's job, not this aggregate view's.
 func ComputeStats(now time.Time, weeks int, votes []VoteEvent, recalls []RecallEvent, ops []OpEvent) []WeekStats {
 	if weeks <= 0 {
 		weeks = 1

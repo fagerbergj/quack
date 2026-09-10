@@ -6,10 +6,8 @@ import (
 )
 
 // A read-only node must not be held to a delivery its own task never asked
-// for: the continuation loop once tested completion against the WHOLE worker
-// prompt (which carries the user's verbatim request as background) rather
-// than the node's own task, so a read-only explorer with no commit/push
-// tools was judged incomplete forever and never reached a judge round.
+// for: the continuation loop must test completion against the NODE'S OWN task,
+// not the whole worker prompt (which carries the user's verbatim request as background) - a read-only explorer with no commit/push tools was judged incomplete forever and never reached a judge round.
 func TestReadOnlyNodeIsNotHeldToTheUserRequestsDelivery(t *testing.T) {
 	// The node's OWN task: read-only. This is what cfg.Task carries.
 	const explorerTask = "Clone https://github.com/aaif-goose/goose (shallow) and read the ACTUAL SOURCE " +
@@ -56,13 +54,9 @@ func TestImplementerIsStillHeldToItsDelivery(t *testing.T) {
 	}
 }
 
-// The JUDGE must score a node against its own task too - the same contamination, one
-// stage later. It is handed the worker's full prompt as "the user's question", and that
-// prompt carries the whole request as background. A judge scoring a read-only explorer
-// against "commit, push, open a PR" fails it for work that was never its to do.
-//
-// No explorer had ever REACHED the judge (the continuation loop hung them all first), so
-// this had never fired. It was the next wall.
+// The JUDGE must score a node against its own task too - the same
+// contamination, one stage later: it is handed the worker's full prompt as
+// "the user's question", which carries the whole request as background. A judge scoring a read-only explorer against "commit, push, open a PR" fails it for work that was never its to do.
 func TestJudgeIsScopedToTheNodesOwnTask(t *testing.T) {
 	const explorerTask = "Clone goose and read how it exposes tools. Cite the files you read."
 	const fullPrompt = "BACKGROUND - the user's full request.\nImplement code mode in quack. " +

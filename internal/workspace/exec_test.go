@@ -156,8 +156,7 @@ func TestRunArgvMissingDirNamesTheDirectory(t *testing.T) {
 
 // TestRunArgvResolvesRepoRelativeExecutable pins #638: a plain exec.LookPath
 // on "./gradlew" resolves against THIS PROCESS's cwd (the package dir), not
-// dir - so without ResolveExecutable, a repo-relative wrapper is never found
-// unless the test happens to run from the repo itself.
+// dir - so without ResolveExecutable, a repo-relative wrapper is never found unless the test happens to run from the repo itself.
 func TestRunArgvResolvesRepoRelativeExecutable(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "gradlew")
@@ -209,9 +208,7 @@ func TestChildHomeUsesCapsHomeDirWhenSet(t *testing.T) {
 
 // TestRunArgvHomeIsolatedFromCwd is the regression test for the live bug: a
 // coding task's cwd IS the target repo, so HOME must NEVER default to it once
-// Caps.HomeDir is wired up - otherwise a child tool (npm, pip, …) writing its
-// own cache to $HOME writes it straight into the repo, where git_commit's
-// add_all can sweep it up.
+// Caps.HomeDir is wired up - otherwise a child tool (npm, pip, …) writing its own cache to $HOME writes it straight into the repo, where git_commit's add_all can sweep it up.
 func TestRunArgvHomeIsolatedFromCwd(t *testing.T) {
 	repoDir := t.TempDir()
 	homeDir := t.TempDir()
@@ -435,13 +432,9 @@ func TestChildEnvIncludesWorkspaceEnv(t *testing.T) {
 	}
 }
 
-// TestChildEnvTmpdirTracksScratchDirUnderLandlock pins the RunArgv/RunPipeline
-// seam (the gate's own check commands - internal/vetting/checks.go's
-// checksCaps - and every other RunArgv/RunPipeline caller) to the same
-// ScratchDir-preferring TMPDIR internal/acp's spawnEnv already gets: a check
-// command's own tmp use (a test binary's t.TempDir(), `git worktree add`'s
-// mkdtemp) must land on the SAME device as the checked-out tree, or rename-
-// based git ops fail EXDEV against the host's real /tmp.
+// TestChildEnvTmpdirTracksScratchDirUnderLandlock pins the
+// RunArgv/RunPipeline seam (the gate's own check commands -
+// internal/vetting/checks.go's checksCaps - and every other RunArgv/RunPipeline caller) to the same ScratchDir-preferring TMPDIR internal/acp's spawnEnv already gets: a check command's own tmp use (a test binary's t.TempDir(), `git worktree add`'s mkdtemp) must land on the SAME device as the checked-out tree, or rename-based git ops fail EXDEV against the host's real /tmp.
 func TestChildEnvTmpdirTracksScratchDirUnderLandlock(t *testing.T) {
 	scratch := t.TempDir()
 	caps := Caps{Sandbox: SandboxLandlock, HomeDir: t.TempDir(), ScratchDir: scratch}
@@ -494,11 +487,9 @@ func TestRunArgvEnvReachesChild(t *testing.T) {
 	}
 }
 
-// TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout pins the v0.5.2 plan-run
-// hang: a shell child can background a grandchild that inherits the stdout pipe,
-// so without a WaitDelay backstop cmd.Wait() blocks until that child exits (or
-// forever). WaitDelay must let the call return promptly with the foreground
-// output while the lingering child is left orphaned.
+// TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout pins the v0.5.2
+// plan-run hang: a shell child can background a grandchild that inherits the
+// stdout pipe, so without a WaitDelay backstop cmd.Wait() blocks until that child exits (or forever). WaitDelay must let the call return promptly with the foreground output while the lingering child is left orphaned.
 func TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout(t *testing.T) {
 	old := childWaitDelay
 	childWaitDelay = 300 * time.Millisecond

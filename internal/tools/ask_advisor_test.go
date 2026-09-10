@@ -69,17 +69,13 @@ func atAllText(req *model.LLMRequest) string {
 	return b.String()
 }
 
-// harness: a gated dynamic node running a real worker AgentNode (with the
-// real ask_advisor tool attached) inside a minimal one-node graph, mirroring
-// the shape dag.newGatedNode builds in production (gated node → RunNode'd
-// worker): the advisor-thread marker in the prompt + the registered
-// task/rubric are how the tool resolves its thread and seed.
+// harness: a gated dynamic node running a real worker AgentNode (with the real
+// ask_advisor tool) in a minimal one-node graph, mirroring dag.newGatedNode's shape;
+// the prompt's advisor-thread marker + registered task/rubric are how the tool resolves its thread and seed.
 
-// runAdvisorHarness runs one turn: a worker (using workerModel) calling into
-// the REAL ask_advisor tool bound to an advisor (using advisorModel) and the
-// given session.Service. task/rubric are registered under the node's
-// advisor-thread token and the marker stamped into the prompt, exactly as
-// dag.newGatedNode does. Returns the worker's final answer text.
+// runAdvisorHarness runs one turn: a worker (workerModel) calling the REAL
+// ask_advisor bound to an advisor (advisorModel) on the given session.Service;
+// task/rubric are registered under the node's advisor-thread token and the marker stamped into the prompt exactly as dag.newGatedNode does. Returns the worker's final answer text.
 func runAdvisorHarness(t *testing.T, workerModel, advisorModel model.LLM, sessions session.Service, nodeID, task, rubric string) string {
 	t.Helper()
 
@@ -204,10 +200,8 @@ func (s *recordingAdvisor) GenerateContent(_ context.Context, req *model.LLMRequ
 }
 
 // TestAskAdvisor_MentorMemoryWithinOneDraft: a worker consults ask_advisor
-// twice in one draft. The advisor's SECOND LLM request must carry both the
-// first request text AND the advisor's own first reply - native ADK session
-// memory (a persistent session + a plain runner.Run, unlike agenttool's
-// cold-session-per-call - see NewAskAdvisorTool's doc comment).
+// twice in one draft; the advisor's SECOND LLM request must carry the first
+// request text AND its own first reply - native ADK session memory, not agenttool's cold-session-per-call (see NewAskAdvisorTool's doc).
 func TestAskAdvisor_MentorMemoryWithinOneDraft(t *testing.T) {
 	advisor := &recordingAdvisor{replyFor: func(n int) string {
 		if n == 1 {
@@ -264,9 +258,7 @@ func (s *oneConsultWorker) GenerateContent(_ context.Context, req *model.LLMRequ
 
 // TestAskAdvisor_SeededWithTaskAndRubric: the advisor's FIRST LLM request
 // (on a brand-new per-node session) must contain the node's task + acceptance
-// rubric - seeded from session state written by dag.newGatedNode (mirrored
-// here by the harness) via dag.NodeTaskStateKey/NodeRubricStateKey - so the
-// mentor knows the desired outcome from its very first reply.
+// rubric, seeded via dag.NodeTaskStateKey/NodeRubricStateKey as dag.newGatedNode does - so the mentor knows the desired outcome from its first reply.
 func TestAskAdvisor_SeededWithTaskAndRubric(t *testing.T) {
 	advisor := &recordingAdvisor{}
 	sessions := session.InMemoryService()
@@ -305,9 +297,8 @@ func (usageAdvisor) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bo
 }
 
 // TestAskAdvisor_DefaultAgentFillsTokenUsage pins serve.go's advisor wiring:
-// ask_advisor runs the advisor via its own nested runner.Run, whose ctx never
-// carries the worker's node coords, so the advisor's tracedModel needs the
-// SetDefaultAgent("advisor") fallback to attribute its token usage at all.
+// the advisor's nested runner.Run ctx never carries the worker's node coords,
+// so its tracedModel needs the SetDefaultAgent("advisor") fallback to attribute its token usage at all.
 func TestAskAdvisor_DefaultAgentFillsTokenUsage(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -354,12 +345,9 @@ func TestAskAdvisor_DefaultAgentFillsTokenUsage(t *testing.T) {
 
 // Test 5: advisor error → empty advice, worker completes normally
 
-// brokenAdvisorSessions wraps a real session.Service but fails every
-// Get/Create scoped to the advisor's own AppName - simulating a broken
-// advisor session store while the MAIN workflow session (a different
-// AppName) keeps working normally, so this exercises consultAdvisor's OWN
-// error handling (runner.Run failing against the store) rather than
-// anything upstream of it.
+// brokenAdvisorSessions wraps a real session.Service but fails every Get/Create
+// scoped to the advisor's AppName - the MAIN workflow session (a different AppName)
+// keeps working, so this exercises consultAdvisor's own error handling (runner.Run failing against the store), not anything upstream.
 type brokenAdvisorSessions struct {
 	session.Service
 }
@@ -422,9 +410,8 @@ func (s *adviceCapturingWorker) GenerateContent(_ context.Context, req *model.LL
 }
 
 // TestAskAdvisor_RunnerErrorYieldsEmptyAdvice: a broken session store makes
-// consultAdvisor's isolated runner error. The tool must swallow that error
-// (best-effort), return empty advice, log a warning, and - critically - never
-// fail or block the calling worker.
+// consultAdvisor's isolated runner error; the tool must swallow it (best-effort),
+// return empty advice, log a warning, and - critically - never fail or block the calling worker.
 func TestAskAdvisor_RunnerErrorYieldsEmptyAdvice(t *testing.T) {
 	var logBuf bytes.Buffer
 	prevLogger := slog.Default()

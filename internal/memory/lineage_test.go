@@ -197,10 +197,9 @@ func TestSQLiteAbsorb_AlreadyInvalidatedIsNoop(t *testing.T) {
 	}
 }
 
-// TestApplyVotes_DropsForAlreadyAbsorbedID: a vote arriving for an id that
-// was already absorbed (invalidated) is dropped, not redirected to the
-// survivor - the same sticky "already invalidated" rule every vote/outcome
-// path already applies.
+// TestApplyVotes_DropsForAlreadyAbsorbedID: a vote arriving for an id that was already
+// absorbed (invalidated) is dropped, not redirected to the survivor - the same
+// sticky "already invalidated" rule every vote/outcome path already applies.
 func TestApplyVotes_DropsForAlreadyAbsorbedID(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)

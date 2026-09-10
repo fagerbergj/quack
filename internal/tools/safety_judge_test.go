@@ -69,14 +69,8 @@ func TestSafetyJudgeNoVerdictIsError(t *testing.T) {
 }
 
 // TestSafetyJudgeInstructionCalibration pins the system prompt's load-bearing
-// content in BOTH directions.
-//
-// The prompt used to describe a run_command tool (a real shell child process)
-// that no longer exists - the ACP pivot deleted the write-side toolset and left
-// the registry read-only (read_file/list_dir/glob/grep, web_search/web_fetch,
-// summarize, current_date, stage_memory, ask_user, ask_advisor). A judge told
-// about a shell it can no longer be asked to guard wastes its calibration on
-// the wrong threat; the must-NOT-contain half guards against that regressing.
+// content in BOTH directions: the prompt must not describe a run_command
+// (shell) tool that no longer exists - a judge told about a shell it can no longer be asked to guard wastes its calibration on the wrong threat; the must-NOT-contain half guards against that regressing.
 func TestSafetyJudgeInstructionCalibration(t *testing.T) {
 	for _, want := range []string{
 		// What actually holds - stated as narrowly as it is true.

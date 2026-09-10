@@ -34,9 +34,7 @@ func settledGoroutines(t *testing.T) int {
 
 // TestDriveExtensionRunEvents_SharesEventLogAcrossRuns is the regression test
 // for the leak fixed alongside #1292: runlog.NewEventLog per dispatched run
-// each spun up a drain goroutine that FinishRun never stops, since EventLog
-// has no Close. Dispatching many runs against one EventLog (as serve.Run's
-// single bootEventLog does in production) must not multiply that goroutine.
+// each spun up a drain goroutine that FinishRun never stops, since EventLog has no Close. Dispatching many runs against one EventLog (as serve.Run's single bootEventLog does in production) must not multiply that goroutine.
 func TestDriveExtensionRunEvents_SharesEventLogAcrossRuns(t *testing.T) {
 	st := newShutdownTestStore(t)
 	hub := stream.NewHub()

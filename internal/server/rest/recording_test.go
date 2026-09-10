@@ -116,8 +116,7 @@ func TestGetChatRecordingNoSession(t *testing.T) {
 
 // TestGetChatRecordingNoSession_PostgresStore mirrors
 // TestGetChatRecordingNoSession against the Postgres ledger store - a chat
-// with zero rows must 404, not 200 with an
-// empty ZIP (openapi.yaml promises 404 for never-recorded/GC'd/disabled).
+// with zero rows must 404, not 200 with an empty ZIP (openapi.yaml promises 404 for never-recorded/GC'd/disabled).
 func TestGetChatRecordingNoSession_PostgresStore(t *testing.T) {
 	h := newTestHandler(t)
 	h.ledgerStore = newTestPGLedgerStore(t)

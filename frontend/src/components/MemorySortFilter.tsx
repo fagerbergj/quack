@@ -33,12 +33,9 @@ export interface MemorySortFilterProps {
   scopes?: MemoryScopeStats[]
 }
 
-// MemorySortFilter (#746 items 11/15) combines sort and the bucket filter in
-// one dialog, matching the disclosure pattern the chat sidebar's FilterPanel
-// already uses (an icon button that opens a popover, closed on outside click
-// or Escape) rather than inventing a second idiom. The bucket filter is a
-// dropdown here (item 11), not the free-text input it used to be - it takes
-// no horizontal space in the toolbar until opened.
+// (#746 items 11/15) combines sort and the bucket filter in one dialog,
+// matching the disclosure pattern the chat sidebar's FilterPanel already
+// uses (icon button -> popover, closed on outside click or Escape) rather than a second idiom. The bucket filter is a dropdown here (item 11), not the free-text input it used to be - no horizontal space in the toolbar until opened.
 export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange, tier, onTierChange, scopes }: MemorySortFilterProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)

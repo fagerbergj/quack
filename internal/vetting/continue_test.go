@@ -18,11 +18,9 @@ import (
 	"google.golang.org/genai"
 )
 
-// The continuation contract: a worker that ends a
-// turn with no answer text is almost always MID-TASK - it spent its output budget
-// on reasoning - not done. The gate must CONTINUE it (tools intact, own session)
-// rather than hand a tool-less writer the job of summarizing half-finished work.
-// The same applies to a worker whose task demanded a commit/push it never made.
+// The continuation contract: a worker that ends a turn with no answer text is
+// almost always MID-TASK (it spent its output budget on reasoning), not done.
+// The gate must CONTINUE it (tools intact, own session) rather than hand a tool-less writer the job of summarizing half-finished work - same for a worker whose task demanded a commit/push it never made.
 
 // noopDeliver stands in for a node with a real delivery target; these
 // continuation tests only assert on worker/writer call counts, never on
@@ -41,8 +39,7 @@ func (m *contStub) Name() string { return "contStub" }
 
 // GenerateContent routes by request shape: a submit_verdict tool ⇒ the judge; NO
 // tools at all ⇒ the tool-less finalize writer; otherwise the worker. The worker
-// returns an EMPTY draft first (the failure mode), then - once it sees the
-// continuation directive - calls its git_commit tool and writes up what it did.
+// returns an EMPTY draft first (the failure mode), then - once it sees the continuation directive - calls its git_commit tool and writes up what it did.
 func (m *contStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		text := stubAllText(req)
@@ -71,8 +68,7 @@ func (m *contStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 
 // stubHasResponse reports whether the request carries a tool RESULT for name -
 // how a stub model tells "my tool call already ran" from "I still have to make
-// it". (Getting this wrong loops the agent forever: ADK's llmagent has no
-// iteration cap, so a model that keeps re-calling the same tool never stops.)
+// it". (ADK's llmagent has no iteration cap, so a model that keeps re-calling the same tool never stops.)
 func stubHasResponse(req *model.LLMRequest, name string) bool {
 	for _, c := range req.Contents {
 		if c == nil {
@@ -161,8 +157,7 @@ const implTask = "Add a game to the repo, commit it, push the branch and open a 
 
 // TestEmptyDraft_ContinuesWorkerWithTools: the worker's first turn returns no
 // answer. The gate must re-invoke the WORKER (tools intact, own session) with an
-// explicit continuation directive delivered as a session event - not summarize
-// its half-finished work with the tool-less writer.
+// explicit continuation directive delivered as a session event - not summarize its half-finished work with the tool-less writer.
 func TestEmptyDraft_ContinuesWorkerWithTools(t *testing.T) {
 	stub := &contStub{}
 	// A node with a delivery target (Deliver set) - the demand in implTask applies to it.
@@ -276,16 +271,12 @@ func TestNonEmptyDraft_NoContinuation(t *testing.T) {
 
 // TestUndeliveredDraft_ContinuesWorker: the completion signal is the WORK being
 // done, not the model emitting text. A worker that writes a plausible draft for an
-// implement-and-deliver task but never committed gets another TOOL-BEARING turn
-// (goose-style loop) instead of its half-finished draft sailing to the judge
-// (live run v4: judge passed it at 0.7 with zero git_commit calls in the session).
+// implement-and-deliver task but never committed gets another TOOL-BEARING turn (goose-style loop) instead of its half-finished draft sailing to the judge (live run v4: judge passed it at 0.7 with zero git_commit calls in the session).
 func TestUndeliveredDraft_ContinuesWorker(t *testing.T) {
 	stub := &nonEmptyStub{}
 	// The demand lives on the NODE'S OWN task (cfg.Task), which is where the gate reads
 	// it. It is deliberately NOT read off the worker prompt: that prompt also carries the
-	// user's verbatim request as background, and keying on it held every read-only
-	// explorer in the plan to a commit it could never make (see explorer_completion_test).
-	// A node with a delivery target (Deliver set) - the demand in implTask applies to it.
+	// user's verbatim request as background, and keying on it held every read-only explorer in the plan to a commit it could never make (see explorer_completion_test). A node with a delivery target (Deliver set) - the demand in implTask applies to it.
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", Task: implTask, Deliver: noopDeliver}
 	runContGate(t, stub, cfg, implTask)
 

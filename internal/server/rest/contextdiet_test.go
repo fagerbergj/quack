@@ -32,14 +32,7 @@ func injectEvent(t *testing.T, h *Handler, chatID, author, branch string, conten
 
 // TestOrchestratorContextDiet: after a heavy plan run, a follow-up turn's LLM
 // request must contain the CONVERSATION - the previous user message, the
-// orchestrator's own reply, and the delivered plan answer - and NONE of the
-// run's internals. Regression for a context overflow: the ModeChat
-// orchestrator rebuilt its request from session history, and a coding run's
-// worker/gate/relay events inflated the next turn's request past the model's
-// context window. ADK's own filters can't exclude them (its branch filter
-// passes every branchless event, and foreign-authored events are CONVERTED
-// into "for context" text rather than dropped); the fix is the
-// conversationSessions view (internal/orchestrator/sessionfilter.go).
+// orchestrator's own reply, and the delivered plan answer - and NONE of the run's internals. Regression for a context overflow: the ModeChat orchestrator rebuilt its request from session history, and a coding run's worker/gate/relay events inflated the next turn's request past the model's context window. ADK's own filters can't exclude them (its branch filter passes every branchless event, and foreign-authored events are CONVERTED into "for context" text rather than dropped); the fix is the conversationSessions view (internal/orchestrator/sessionfilter.go).
 func TestOrchestratorContextDiet(t *testing.T) {
 	m := &recallModel{}
 	h := newTestHandlerWithModel(t, m)

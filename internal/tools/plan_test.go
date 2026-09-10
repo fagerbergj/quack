@@ -57,10 +57,8 @@ func implementNode() []map[string]any {
 }
 
 // TestPlanToolStampsPlanOnly pins #739's plumbing half: the plan tool stamps
-// dag.Plan.PlanOnly from the harness-computed flag it's constructed with,
-// never from anything the model submits - the same way it already stamps
-// WorkerBackground/ContextItems. This is what carries the quack:plan label's
-// intent down to buildGateNodes, which is what actually enforces it.
+// dag.Plan.PlanOnly from the harness-computed flag it's constructed with, never
+// from anything the model submits (same as WorkerBackground/ContextItems) - carrying the quack:plan label's intent down to buildGateNodes, which enforces it.
 func TestPlanToolStampsPlanOnly(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	cache := NewPlanCache()
@@ -109,9 +107,8 @@ func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
 }
 
 // TestGitHubSetupWholesaleReplacesPlannerSetup is issue #661's second test
-// case, the PR-scoped half: a planner-supplied setup (repo/base_ref/branch
-// all different from the trigger's) must not survive - the trigger's values
-// win entirely, and the existing-PR-head override still lands on top of them.
+// case, the PR-scoped half: a planner-supplied setup (repo/base_ref/branch all
+// different from the trigger's) must not survive - the trigger's values win entirely, with the existing-PR-head override still landing on top.
 func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{
@@ -244,13 +241,8 @@ func TestEmitPlanEvent_ProducesWellFormedEvent(t *testing.T) {
 }
 
 // TestEmitPlanEvent_RecordsInputMessages is issue #635: replaying a planning
-// decision needs the ask alongside the plan it produced, not just the plan.
-// Asserts the real fields Planner.Build stamped onto the plan (History,
-// UserMessage) round-trip into gen_ai.input.messages - not a reconstruction
-// of the ask from the plan's nodes. Also covers an inline-data attachment
-// (e.g. an image on the planning turn): the input field must carry its mime
-// type, never its raw bytes - an oversized gen_ai.input.messages value risks
-// OTel silently dropping or truncating the whole attribute.
+// decision needs the ask alongside the plan - asserts the real Planner.Build
+// fields (History, UserMessage) round-trip into gen_ai.input.messages, not a reconstruction from the plan's nodes; an inline-data attachment carries its mime type, never raw bytes (oversized gen_ai.input.messages risks OTel dropping the whole attribute).
 func TestEmitPlanEvent_RecordsInputMessages(t *testing.T) {
 	capExp := &recordCapture{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -335,9 +327,8 @@ func TestDagPlanEventCarriesContextWindow(t *testing.T) {
 }
 
 // TestDagPlanEventCarriesArtifact pins the #1178 wire path: DagPlanEvent must
-// forward each node's declared output artifact kind (dag.Node.Artifact) onto
-// the wire DagNodeDef so the frontend can pick the node's primary output
-// artifact exactly; a node that declares none carries an empty field.
+// forward each node's declared output artifact kind (dag.Node.Artifact) onto the
+// wire DagNodeDef so the frontend can pick the node's primary output exactly; a node declaring none carries an empty field.
 func TestDagPlanEventCarriesArtifact(t *testing.T) {
 	p := dag.Plan{ID: "p1", Nodes: []dag.Node{
 		{ID: "a", AgentName: "code-explorer", Artifact: "text"},
@@ -362,9 +353,7 @@ func TestDagPlanEventCarriesArtifact(t *testing.T) {
 
 // TestReviewDispatchSetupSatisfiesExistingHead pins the v0.29.0 cutover
 // regression: a review-only dispatch declares its existing PR head via Setup
-// (sdk ExistingHeadRef -> CheckoutExistingHead), the old WithGitHubPR ctx
-// stamp no longer exists - the plan tool must take the head from the Setup,
-// not reject every plan with "needs the PR's real head branch".
+// (sdk ExistingHeadRef -> CheckoutExistingHead), so the plan tool must take the head from the Setup, not reject every plan with "needs the PR's real head branch".
 func TestReviewDispatchSetupSatisfiesExistingHead(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	githubSetup := &dag.Setup{
@@ -379,12 +368,8 @@ func TestReviewDispatchSetupSatisfiesExistingHead(t *testing.T) {
 }
 
 // TestPlanTool_OriginFallbackSetupSatisfiesExistingHead is #1180's second
-// defect: a nudge/retry dispatch carries no Run.Setup of its own, so
-// internal/serve's mergeExtOrigin resolves the chat's stored origin into a
-// dag.Setup and hands it to tools.WithGitHubSetup exactly as if this dispatch
-// had carried it. From here at the plan tool the two are indistinguishable -
-// this pins that a setup arriving via the fallback path is accepted the same
-// way TestReviewDispatchSetupSatisfiesExistingHead pins for a fresh dispatch.
+// defect: a nudge/retry dispatch carries no Run.Setup of its own, so serve's
+// mergeExtOrigin resolves the chat's stored origin into a dag.Setup via WithGitHubSetup - indistinguishable at the plan tool; pins that the fallback path is accepted as TestReviewDispatchSetupSatisfiesExistingHead pins the fresh path.
 func TestPlanTool_OriginFallbackSetupSatisfiesExistingHead(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	// Stands in for what mergeExtOrigin(storedOriginJSON, nil, nil) returns

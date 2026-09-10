@@ -191,11 +191,9 @@ func TestTracedModel_EmitsProvenance(t *testing.T) {
 	}
 }
 
-// TestTracedModel_EmitsCachedTokens pins the llm.call payload's cached_tokens
-// field (was silently dropped: emitChatEvent used genai's raw PromptTokenCount
-// for input_tokens and never read CachedContentTokenCount at all). input_tokens
-// must exclude the cached count, matching recordUsageMetrics' otel-metric split
-// (splitPromptTokens), so a consumer summing input+cached never double-counts.
+// TestTracedModel_EmitsCachedTokens pins the llm.call payload's
+// cached_tokens field (was silently dropped: emitChatEvent used genai's raw
+// PromptTokenCount for input_tokens and never read CachedContentTokenCount at all). input_tokens must exclude the cached count, matching recordUsageMetrics' otel-metric split (splitPromptTokens), so a consumer summing input+cached never double-counts.
 func TestTracedModel_EmitsCachedTokens(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))

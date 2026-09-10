@@ -12,9 +12,7 @@ import (
 
 // refStringValues is an independent, recursive-descent reference walk over
 // the same token stream stringLeaves consumes. It never collapses duplicate
-// object keys the way decoding into map[string]any would, so it stays a
-// fair oracle even on JSON that (however unlikely from our own Marshal)
-// repeats a key.
+// object keys the way decoding into map[string]any would, so it stays a fair oracle even on JSON that (however unlikely from our own Marshal) repeats a key.
 func refStringValues(t *testing.T, content []byte) []string {
 	t.Helper()
 	dec := json.NewDecoder(bytes.NewReader(content))
@@ -66,10 +64,7 @@ func refStringValuesTok(t *testing.T, dec *json.Decoder, tok json.Token) []strin
 
 // FuzzApplyStructuredEdits proves stringLeaves' byte-offset bookkeeping and
 // applyStructuredEdits' splice against every JSON string edge case: escaped
-// quotes/backslashes, unicode and surrogate-pair escapes, raw non-ASCII,
-// strings containing JSON syntax characters, empty strings, keys shaped
-// like values, nested arrays, scalars adjacent to strings, and pretty vs
-// compact spacing.
+// quotes/backslashes, unicode and surrogate-pair escapes, raw non-ASCII, strings containing JSON syntax characters, empty strings, keys shaped like values, nested arrays, scalars adjacent to strings, and pretty vs compact spacing.
 func FuzzApplyStructuredEdits(f *testing.F) {
 	seeds := []struct{ content, newVal string }{
 		{`{"a":"say \"hi\" now"}`, "ok"},

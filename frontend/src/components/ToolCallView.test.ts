@@ -4,10 +4,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ToolCallView } from './ToolCallView'
 import type { ToolCall } from './messageParts'
 
-// Structural assertions on the static markup - no testing-library in this repo, so
-// we render each tool view to HTML and check the load-bearing shape (a diff for
-// edit_file, a formatted-not-raw fallback, etc.). Effects don't run under
-// renderToStaticMarkup, which is fine: these views have no measured state.
+// Structural assertions on the static markup - no testing-library in this
+// repo, so we render each tool view to HTML and check the load-bearing
+// shape (a diff for edit_file, a formatted-not-raw fallback, etc.). Effects don't run under renderToStaticMarkup, which is fine: these views have no measured state.
 function html(tool: ToolCall): string {
   return renderToStaticMarkup(createElement(ToolCallView, { tool }))
 }
@@ -104,9 +103,7 @@ describe('ToolCallView - fallback', () => {
 
   // A row persisted before #1278 (translate.go named every bridged MCP call
   // literally "other", stuffing the real identity into args.title) must still
-  // render readably on replay - the identity never lived in the now-deleted
-  // ToolCall.title field, only in args, so dropping that field plumbing
-  // doesn't blank out old history.
+  // render readably on replay - the identity never lived in the now-deleted ToolCall.title field, only in args, so dropping that field plumbing doesn't blank out old history.
   it('renders a pre-#1278 persisted "other" row via args.title, not blank', () => {
     const out = html({
       callId: 'c', name: 'other', done: true,

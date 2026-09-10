@@ -68,8 +68,7 @@ func newFailingPathTool(t *testing.T, calls *int, fail func(pathArgs) bool) runn
 
 // Semantic churn: consecutive calls against the same path, each with a
 // different `note` (never byte-identical args, so the exact-match guard never
-// trips), all fail - once pathFailThreshold (3) of them have run and failed,
-// the next attempt is refused before the tool even runs.
+// trips); all fail, and once pathFailThreshold (3) have run and failed the next attempt is refused before the tool even runs.
 func TestRepeatGuardCatchesSemanticChurn(t *testing.T) {
 	calls := 0
 	g, err := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), newRepeatStates())

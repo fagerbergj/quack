@@ -16,8 +16,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 // #1171: NavRail is a pure drawer - the open state is owned by the caller
 // (App.tsx) and never persisted, so these tests drive it via the open prop
-// and assert the key the rail used to persist (navRailCollapsed) is neither
-// read nor written.
+// and assert the old navRailCollapsed key is neither read nor written.
 
 describe('NavRail', () => {
   let root: ReturnType<typeof createRoot> | undefined
@@ -112,9 +111,7 @@ describe('NavRail', () => {
 
   // Defensive read of a field not yet in the generated ExtensionInfo type
   // (wire schema addition landing separately). A Material icon name renders
-  // as that icon; an inline `<svg>` renders as-is; anything else (including
-  // a raw emoji - the legacy shape) falls back to the generic "extension"
-  // glyph rather than rendering arbitrary plugin-supplied emoji.
+  // as that icon; an inline <svg> renders as-is; anything else (including a raw emoji - the legacy shape) falls back to the generic "extension" glyph rather than rendering arbitrary plugin-supplied emoji.
   it('accepts a Material icon name or inline SVG, and falls back to the generic glyph', () => {
     render({
       initialExtensions: [
@@ -134,8 +131,7 @@ describe('NavRail', () => {
 
   // quack-extensions#70: extensions now send real Material Symbols names
   // (e.g. "draw", "monitoring") that must render as their own icon, not the
-  // generic fallback; a name the local map doesn't know still degrades to
-  // the fallback glyph, visibly, with a one-time console warning.
+  // generic fallback; a name the local map doesn't know still degrades to the fallback glyph, visibly, with a one-time console warning.
   it('renders a known Material icon name and warns once for an unknown one', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {

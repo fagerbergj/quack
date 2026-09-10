@@ -12,16 +12,9 @@ import {
   type DiffLine,
 } from './toolFormat'
 
-// ToolCallView renders a tool call's body with a per-tool rich view, keyed by
-// tool name, falling back to a tidy formatted view (never a raw JSON blob) for
-// tools without one. The flagship is edit_file → a before→after diff. Long bodies
-// are wrapped in Expandable so a big file / diff / output can't wall off the node.
-// Every native quack tool (internal/tools/*) and every name internal/acp/
-// translate.go remaps an ACP call onto (edit_file/write_file/read_file/
-// run_command/web_fetch) has a case here; anything else - an ACP tool kind we
-// don't specially map, or a tool added after this file was last updated -
-// falls to GenericView, which is still formatted (key→value / pretty JSON),
-// never a raw blob.
+// Per-tool rich body keyed by tool name, falling back to a tidy formatted
+// view (never a raw JSON blob); the flagship is edit_file → a before→after
+// diff. Long bodies are wrapped in Expandable so a big file/diff/output can't wall off the node. Every native quack tool (internal/tools/*) and every name internal/acp/translate.go remaps an ACP call onto has a case here; anything else - an ACP kind we don't specially map, or a tool added after this file was last updated - falls to GenericView, which is still formatted (key→value / pretty JSON), never a raw blob.
 export function ToolCallView({ tool }: { tool: ToolCall }) {
   switch (tool.name) {
     case 'edit_file': return <EditFileView tool={tool} />
@@ -436,10 +429,9 @@ function StageMemoryView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// LoadMemoryView - recalled memory entries as short prose snippets. ADK's
-// native result shape (`memories: [{content: {parts: [{text}]}, author}]`) is
-// read defensively - memoryText tries a few known shapes and falls back to
-// FormattedValue rather than assume the exact schema.
+// Recalled memory entries as short prose snippets. ADK's native result shape
+// (`memories: [{content: {parts: [{text}]}, author}]`) is read defensively -
+// memoryText tries a few known shapes and falls back to FormattedValue rather than assume the exact schema.
 function memoryText(entry: unknown): string {
   const content = entry && typeof entry === 'object' ? (entry as Record<string, unknown>).content : undefined
   const parts = content && typeof content === 'object' ? (content as Record<string, unknown>).parts : undefined

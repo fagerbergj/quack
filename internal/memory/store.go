@@ -25,76 +25,53 @@ type index interface {
 	ensure(ctx context.Context, probeDim func() (int, error)) error
 	// query returns up to k points in any of the given buckets, nearest by cosine.
 	query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error)
-	// list returns up to `limit` points in any of the given buckets (all buckets if
-	// empty), newest first by Timestamp, skipping `offset`. limit<=0 means no cap.
-	// includeInvalidated=false excludes status=invalidated points, matching the
-	// query()/recall filter (design doc §4(d) extended to the browse surface, phase 3).
-	// tier=="" means no tier filter; "unverified" also matches a point that
-	// predates the tier field (empty/missing tier reads as unverified
-	// everywhere else in this package - #1265 review finding 10). withVectors
-	// populates each result's Vector from the already-stored embedding
-	// (DedupeSweep's clustering, issue #1269) - never a re-embed, both
-	// backends already have it on hand at list time; false everywhere else to
-	// skip the extra payload. sortBy is variadic (#1266) so every existing
-	// caller's positional call keeps compiling unchanged past this second
-	// added parameter: sortBy[0], if given and non-empty, is one of the
-	// ListSort constants below and orders the WHOLE matching set (index-side
-	// for sqlite, in-Go for qdrant which already fetches everything) before
-	// offset/limit slice it, so a sort spans pages correctly.
+	// list returns up to `limit` points in any of the given buckets (all if empty), newest first by Timestamp,
+	// skipping `offset`. limit<=0 means no cap. includeInvalidated=false excludes status=invalidated points,
+	// matching the query()/recall filter (design doc §4(d) extended to the browse surface, phase 3). tier=="" means no tier filter; "unverified" also matches a point that predates the tier field (empty/missing tier reads as unverified everywhere else in this package - #1265 review finding 10). withVectors populates each result's Vector from the already-stored embedding (DedupeSweep's clustering, issue #1269) - never a re-embed, both backends already have it on hand at list time; false everywhere else to skip the extra payload. sortBy is variadic (#1266) so every existing caller's positional call keeps compiling unchanged past this second added parameter: sortBy[0], if given and non-empty, is one of the ListSort constants below and orders the WHOLE matching set (index-side for sqlite, in-Go for qdrant which already fetches everything) before offset/limit slice it, so a sort spans pages correctly.
 	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error)
-	// scrollAll walks every point across ALL buckets in pages of pageSize,
-	// calling fn once per page until exhausted, visiting each point exactly
-	// once - the sweep jobs' access pattern, which doesn't need sorted order.
-	// Unlike calling list() in an offset loop, an implementation can thread a
-	// single native cursor across the whole walk (see qdrantIndex.scrollAll).
+	// scrollAll walks every point across ALL buckets in pages of pageSize, calling fn once
+	// per page until exhausted, visiting each point exactly once - the sweep jobs'
+	// access pattern, which doesn't need sorted order. Unlike calling list() in an offset loop, an implementation can thread a single native cursor across the whole walk (see qdrantIndex.scrollAll).
 	scrollAll(ctx context.Context, includeInvalidated, withVectors bool, pageSize int, fn func([]scored)) error
 	// count returns how many points match buckets (all buckets if empty), under the
 	// same includeInvalidated/tier filter as list.
 	count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error)
 	upsert(ctx context.Context, pts []point) error
-	// getByID fetches one point by id, including an invalidated one (the
-	// caller decides what to do with that) - a direct lookup, not a
-	// list-and-scan, so it's correct past whatever page size list()/List()
-	// cap at. ok=false if id doesn't exist in this collection.
+	// getByID fetches one point by id, including an invalidated one (the caller decides
+	// what to do with that) - a direct lookup, not a list-and-scan, so it's
+	// correct past whatever page size list()/List() cap at. ok=false if id doesn't exist in this collection.
 	getByID(ctx context.Context, id string) (pt scored, ok bool, err error)
 	// remove deletes the named ids and reports how many actually existed.
 	remove(ctx context.Context, ids []string) (int, error)
 	// invalidateByID soft-invalidates the named ids in place (status=invalidated,
-	// invalidated_at=now, invalidation_reason=reason) - the consolidator's DELETE
-	// and the human-delete REST path, neither of which ever removes a point
-	// (design doc §4(a)/(b), soft-delete only). Reports how many ids actually existed.
+	// invalidated_at=now, invalidation_reason=reason) - the consolidator's DELETE and the
+	// human-delete REST path, neither of which ever removes a point (design doc §4(a)/(b), soft-delete only). Reports how many ids actually existed.
 	invalidateByID(ctx context.Context, ids []string, reason string) (int, error)
-	// updateStatus applies an outcome to every id in ids that is not already
-	// invalidated (sticky) and, for OutcomeInvalidated, not already tier
-	// "verified" (design decision #1255: a verified memory recalled into a
-	// closed-unmerged chat gets no vote, not an invalidation). Returns the
-	// ids actually touched - a payload-only mutation, no re-embed.
+	// updateStatus applies an outcome to every id in ids that is not already invalidated
+	// (sticky) and, for OutcomeInvalidated, not already tier "verified" (design
+	// decision #1255: a verified memory recalled into a closed-unmerged chat gets no vote, not an invalidation). Returns the ids actually touched - a payload-only mutation, no re-embed.
 	updateStatus(ctx context.Context, ids []string, o OutcomeSignal) ([]string, error)
-	// applyVotes applies each vote to its memory id (skipping an
-	// already-invalidated one, sticky) and returns the ids touched. A
-	// net score <= invalidateThreshold invalidates the memory (reason
-	// OutcomeReasonNetScore), same soft-invalidate as everything else.
+	// applyVotes applies each vote to its memory id (skipping an already-invalidated one,
+	// sticky) and returns the ids touched. A net score <= invalidateThreshold
+	// invalidates the memory (reason OutcomeReasonNetScore), same soft-invalidate as everything else.
 	applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error)
 	// recordRecall bumps recalls and stamps last_recalled_at for ids, one
 	// batched write - the usage-tracking half of a recall delivery.
 	recordRecall(ctx context.Context, ids []string) error
-	// backfillTiers is the one-time migration (epic #1255 P1) for every
-	// point with no tier yet: verified (upvotes=reinforcement_count) if
-	// reinforcement_count >= 1, else unverified. Idempotent - a point that
-	// already carries a tier is left alone, so a second boot touches none.
+	// backfillTiers is the one-time migration (epic #1255 P1) for every point with no tier
+	// yet: verified (upvotes=reinforcement_count) if reinforcement_count >= 1, else
+	// unverified. Idempotent - a point that already carries a tier is left alone, so a second boot touches none.
 	backfillTiers(ctx context.Context) (int, error)
 	// updateBucket moves a single point to a new bucket key (#1262's
 	// `quack memory rescope`) - a payload/column-only mutation, no re-embed.
 	updateBucket(ctx context.Context, id, bucket string) error
-	// absorb folds absorbedID's votes/timestamps/lineage into survivorID
-	// (epic #1255 P5 consolidation merge) and invalidates absorbedID with
-	// reason. Returns false (no-op) if either id doesn't exist, or absorbedID
-	// is already invalidated (sticky - the first invalidation wins).
+	// absorb folds absorbedID's votes/timestamps/lineage into survivorID (epic #1255 P5
+	// consolidation merge) and invalidates absorbedID with reason. Returns false
+	// (no-op) if either id doesn't exist, or absorbedID is already invalidated (sticky - the first invalidation wins).
 	absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error)
-	// setHumanVote sets the caller's own vote ("up"/"down"/"none") on id,
-	// re-deriving upvotes/downvotes/vote_score/tier from the transition away
-	// from the point's PRIOR human_vote (so a toggle or a flip never double
-	// counts). Reports whether id existed (and wasn't already invalidated).
+	// setHumanVote sets the caller's own vote ("up"/"down"/"none") on id, re-deriving
+	// upvotes/downvotes/vote_score/tier from the transition away from the
+	// point's PRIOR human_vote (so a toggle or a flip never double counts). Reports whether id existed (and wasn't already invalidated).
 	setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error)
 }
 
@@ -119,11 +96,9 @@ type scored struct {
 	ReinforcementCount int
 	Score              float32
 
-	// Vote fields (epic #1255 P1): Upvotes/Downvotes/VoteScore are the
-	// judge's (or a human's) accumulated votes on this memory, independent
-	// of Score (cosine rank). Tier is "verified" once Upvotes >= 1, else
-	// "unverified" - never demoted by a downvote alone (only net<=-2
-	// invalidates, via Status).
+	// Vote fields (epic #1255 P1): Upvotes/Downvotes/VoteScore are the judge's (or a
+	// human's) accumulated votes on this memory, independent of Score (cosine
+	// rank). Tier is "verified" once Upvotes >= 1, else "unverified" - never demoted by a downvote alone (only net<=-2 invalidates, via Status).
 	Upvotes        int
 	Downvotes      int
 	VoteScore      int
@@ -140,10 +115,9 @@ type scored struct {
 	// "" = none) - epic #1255 P4, distinct from Upvotes/Downvotes which mix
 	// judge and human votes together. Toggling re-derives the delta from this.
 	HumanVote string
-	// Vector is populated by query() only (list()/getByID leave it nil) - the
-	// MMR diversity re-rank in recall (issue #1269) needs each hit's own
-	// embedding to compute inter-hit cosine, which the query score alone
-	// (similarity to the QUERY, not to other hits) can't give it.
+	// Vector is populated by query() only (list()/getByID leave it nil) - the MMR
+	// diversity re-rank in recall (issue #1269) needs each hit's own embedding
+	// to compute inter-hit cosine, which the query score alone (similarity to the QUERY, not to other hits) can't give it.
 	Vector []float32
 }
 
@@ -184,10 +158,9 @@ const (
 	maxRecallRunes = 2000
 	// recallEmbedTimeout bounds how long recall waits before degrading to no-recall.
 	recallEmbedTimeout = 30 * time.Second
-	// recallFetchMultiplier: recall fetches this many times topK from the index
-	// so mmrSelect (issue #1269) has enough candidates to pick a diverse top-K
-	// from, instead of only ever seeing exactly topK (no room to swap a
-	// near-duplicate for the next-best distinct hit).
+	// recallFetchMultiplier: recall fetches this many times topK from the index so
+	// mmrSelect (issue #1269) has enough candidates to pick a diverse top-K from,
+	// instead of only ever seeing exactly topK (no room to swap a near-duplicate for the next-best distinct hit).
 	recallFetchMultiplier = 2
 	// recallDiversityThreshold: mmrSelect drops a candidate whose cosine to an
 	// already-selected hit is at or above this - the same near-duplicate bar
@@ -195,14 +168,9 @@ const (
 	recallDiversityThreshold float32 = dedupeCosineThreshold
 )
 
-// mmrSelect greedily picks up to k of pts (already sorted best-first by the
-// index) such that no two selected points are mutual near-duplicates: a
-// candidate is skipped if its cosine similarity to any already-selected
-// point is >= threshold. This is deliberately not full MMR (no relevance/
-// diversity tradeoff parameter) - the goal is only to stop near-identical
-// hits from crowding out a distinct one, not to optimize diversity for its
-// own sake. A point with no Vector (e.g. an index/test double that never
-// populates it) can never be judged a duplicate of anything and is kept.
+// mmrSelect greedily picks up to k of pts (already sorted best-first by the index) such
+// that no two selected points are mutual near-duplicates: a candidate is skipped if its
+// cosine similarity to any already-selected point is >= threshold. This is deliberately not full MMR (no relevance/diversity tradeoff parameter) - the goal is only to stop near-identical hits from crowding out a distinct one, not to optimize diversity for its own sake. A point with no Vector (e.g. an index/test double that never populates it) can never be judged a duplicate of anything and is kept.
 func mmrSelect(pts []scored, k int, threshold float32) []scored {
 	if k <= 0 || len(pts) == 0 {
 		return nil
@@ -242,18 +210,14 @@ type Store struct {
 	listErrForTest error  // test-only fault injection, see SetListErrorForTest
 }
 
-// SetListErrorForTest forces every forEachSweepPage (and so ForgetSweep) call
-// on this store to fail with err (sticky - persists until reset), without
-// touching the real index - used by REST/CLI tests one layer up that can't
-// reach the unexported index interface to simulate a later store's list-phase
-// failure.
+// SetListErrorForTest forces every forEachSweepPage (and so ForgetSweep) call on this store
+// to fail with err (sticky - persists until reset), without touching the real index -
+// used by REST/CLI tests one layer up that can't reach the unexported index interface to simulate a later store's list-phase failure.
 func (s *Store) SetListErrorForTest(err error) { s.listErrForTest = err }
 
-// SetOpsLog wires the memory_ops audit sink. internal/memory can't import
-// internal/store (dependency direction runs the other way) - the server
-// bootstrap (internal/serve) constructs a store-backed OpsLog and calls this
-// after opening the Store. Unwired (nil) is a valid, silent no-op - tests and
-// a recall-only Store don't need an audit trail.
+// SetOpsLog wires the memory_ops audit sink. internal/memory can't import internal/store
+// (dependency direction runs the other way) - the server bootstrap (internal/serve)
+// constructs a store-backed OpsLog and calls this after opening the Store. Unwired (nil) is a valid, silent no-op - tests and a recall-only Store don't need an audit trail.
 func (s *Store) SetOpsLog(l OpsLog) { s.opsLog = l }
 
 // newStore wraps a backend, probing the embedder for vector dimension.
@@ -293,11 +257,9 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 // AddSessionToMemory is a deliberate no-op; writes go through the explicit gated commit.
 func (s *Store) AddSessionToMemory(ctx context.Context, _ session.Session) error { return nil }
 
-// recall embeds the query and returns top-K memories across the caller's
-// buckets, plus the backing scored point for each returned entry, SAME
-// ORDER and length as resp.Memories - adkmemory.Entry (ADK's own type) has
-// no Score field, so a caller that needs the cosine score (RecallWithHits,
-// for the ledger's memory.recall entry) can't get it from resp alone.
+// recall embeds the query and returns top-K memories across the caller's buckets, plus
+// the backing scored point for each returned entry, SAME ORDER and length as resp.Memories
+// - adkmemory.Entry (ADK's own type) has no Score field, so a caller that needs the cosine score (RecallWithHits, for the ledger's memory.recall entry) can't get it from resp alone.
 func (s *Store) recall(ctx context.Context, buckets []string, query string) (resp *adkmemory.SearchResponse, hits []scored, err error) {
 	if len(buckets) == 0 || strings.TrimSpace(query) == "" {
 		return &adkmemory.SearchResponse{}, nil, nil
@@ -318,7 +280,8 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (res
 		return &adkmemory.SearchResponse{}, nil, nil
 	}
 	// Fetch 2*topK so the MMR re-rank below has enough candidates to pick a
-	// diverse top-K from, then apply minScore in Go so the threshold is observable.
+	// diverse top-K from, then apply minScore in Go so the threshold is
+	// observable in the returned score.
 	pts, qerr := s.idx.query(ctx, buckets, vecs[0], s.topK*recallFetchMultiplier)
 	if qerr != nil {
 		return nil, nil, fmt.Errorf("memory: query %q: %w", s.coll, qerr)
@@ -388,11 +351,9 @@ func firstSort(sortBy []string) string {
 	return SortNewest
 }
 
-// SortMemories orders a merged, in-Go []Memory (the REST handler's two-store
-// merge path, #1266) by the same ListSort vocabulary each index.list applies
-// server-side for a single store - so a deployment with both task and user
-// memory enabled sorts identically to one with either alone, not just by
-// timestamp regardless of the requested sort.
+// SortMemories orders a merged, in-Go []Memory (the REST handler's two-store merge path,
+// #1266) by the same ListSort vocabulary each index.list applies server-side for a single
+// store - so a deployment with both task and user memory enabled sorts identically to one with either alone, not just by timestamp regardless of the requested sort.
 func SortMemories(mems []Memory, sortBy string) {
 	less := func(i, j int) bool {
 		switch sortBy {
@@ -466,17 +427,8 @@ type Memory struct {
 	HumanVote   string // "up" | "down" | "" (epic #1255 P4)
 }
 
-// List returns entries in the given buckets (every bucket if empty), newest
-// first, paged by offset/limit (limit<=0 defaults to DefaultListLimit), plus
-// the total count matching the same filter. includeInvalidated=false (the
-// default listing) excludes status=invalidated entries from both the page and
-// the total, matching query()/recall's backend-level filter (design doc §4(d)).
-// tier=="" means no tier filter; "unverified"/"verified" filter server-side
-// (index-level, not a post-fetch Go filter) so it spans pages correctly
-// (#1265 review finding 10) instead of only ever seeing whatever's on the
-// current page. Unlike Search/recall, this never falls back to embedding
-// search and never degrades on a failure - an unreachable index is returned
-// as an error, not an empty or partial result.
+// List returns entries in the given buckets (every bucket if empty), newest first, paged by
+// offset/limit (limit<=0 defaults to DefaultListLimit), plus the total count matching the same filter. includeInvalidated=false (the default listing) excludes status=invalidated entries from both the page and the total, matching query()/recall's backend-level filter (design doc §4(d)). tier=="" means no tier filter; "unverified"/"verified" filter server-side (index-level, not a post-fetch Go filter) so it spans pages correctly (#1265 review finding 10) instead of only ever seeing whatever's on the current page. Unlike Search/recall, this never falls back to embedding search and never degrades on a failure - an unreachable index is returned as an error, not an empty or partial result.
 func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]Memory, int, error) {
 	if limit <= 0 {
 		limit = DefaultListLimit
@@ -495,10 +447,9 @@ func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, i
 	return toMemories(pts), total, nil
 }
 
-// GetByID fetches one memory directly by id (including an invalidated one -
-// callers that care about status check Memory.Status themselves), not by
-// paging through List - correct regardless of how many memories exist or
-// which page id would land on. ErrMemoryNotFound if this store doesn't have it.
+// GetByID fetches one memory directly by id (including an invalidated one - callers
+// that care about status check Memory.Status themselves), not by paging through
+// List - correct regardless of how many memories exist or which page id would land on. ErrMemoryNotFound if this store doesn't have it.
 func (s *Store) GetByID(ctx context.Context, id string) (Memory, error) {
 	pt, ok, err := s.idx.getByID(ctx, id)
 	if err != nil {
@@ -552,11 +503,8 @@ func (s *Store) Forget(ctx context.Context, id string) error {
 	return nil
 }
 
-// InvalidateByID soft-invalidates one memory by id directly - the human-delete
-// REST path (design doc §4(b)), which targets a specific point rather than
-// matching by provenance chat_id like ApplyOutcome. Writes one memory_ops row
-// (op=invalidate) under the given actor. ErrMemoryNotFound if id isn't in the
-// index (invalidating an already-invalidated id is idempotent, not an error).
+// InvalidateByID soft-invalidates one memory by id directly - the human-delete REST path
+// (design doc §4(b)), which targets a specific point rather than matching by provenance chat_id like ApplyOutcome. Writes one memory_ops row (op=invalidate) under the given actor. ErrMemoryNotFound if id isn't in the index (invalidating an already-invalidated id is idempotent, not an error).
 func (s *Store) InvalidateByID(ctx context.Context, id, reason string, actor OpsLogActor) error {
 	id = strings.TrimSpace(id)
 	if id == "" {

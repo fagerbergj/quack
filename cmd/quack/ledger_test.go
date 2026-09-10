@@ -8,10 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// buildRecovererOrWarn must never abort `ledger recover` on a build failure -
-// it degrades to nil (every orphan reported Unresolved) and warns on stderr
-// instead, since this is a diagnostics command and a misconfigured extension
-// must not hide the orphans it might otherwise explain.
+// buildRecovererOrWarn must never abort `ledger recover` on a build
+// failure - it degrades to nil (every orphan reported Unresolved) and warns
+// on stderr instead, since this is a diagnostics command and a misconfigured extension must not hide the orphans it might otherwise explain.
 func TestBuildRecovererOrWarn_ConfigLoadFailureDegrades(t *testing.T) {
 	t.Setenv("QUACK_CONFIG", t.TempDir()+"/does-not-exist.yaml")
 	var errBuf bytes.Buffer

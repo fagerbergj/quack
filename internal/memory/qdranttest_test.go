@@ -18,11 +18,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// qdrantTestAddr starts ONE Qdrant container for the whole `go test` process
-// (fresh collections per test give isolation - a container per test would make
-// this package the slowest thing in the suite) and returns its gRPC address.
-// Skips (not fails) when Docker isn't reachable, matching the ledger's
-// postgres container tests (#1237, internal/ledger/pgstore_test.go).
+// qdrantTestAddr starts ONE Qdrant container for the whole `go test` process (fresh
+// collections per test give isolation - a container per test would make this package
+// the slowest thing in the suite) and returns its gRPC address. Skips (not fails) when Docker isn't reachable, matching the ledger's postgres container tests (#1237, internal/ledger/pgstore_test.go).
 var (
 	qdrantAddrOnce sync.Once
 	qdrantAddr     string
@@ -35,13 +33,9 @@ func qdrantTestAddr(t *testing.T) string {
 	qdrantAddrOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		// Pinned to match prod's server exactly (v1.19.1) - a too-old server
-		// (was v1.12.4) sends the legacy VectorOutput.Data wire shape and
-		// can't catch a client that only reads the new Dense oneof arm, or
-		// vice versa (#1269/#1268). Raise the container's nofile ulimit above
-		// Docker's 1024 default: RocksDB opens several file handles per
-		// collection, and this suite creates one collection per converted
-		// test on a single shared container.
+		// Pinned to match prod's server exactly (v1.19.1) - a too-old server (was v1.12.4)
+		// sends the legacy VectorOutput.Data wire shape and can't catch a client
+		// that only reads the new Dense oneof arm, or vice versa (#1269/#1268). Raise the container's nofile ulimit above Docker's 1024 default: RocksDB opens several file handles per collection, and this suite creates one collection per converted test on a single shared container.
 		ctr, err := tcqdrant.Run(ctx, "qdrant/qdrant:v1.19.1",
 			testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
 				hc.Ulimits = []*container.Ulimit{{Name: "nofile", Soft: 65536, Hard: 65536}}
@@ -64,10 +58,9 @@ func qdrantTestAddr(t *testing.T) string {
 	return qdrantAddr
 }
 
-// newQdrantStore builds a Store against the shared test container, on a fresh
-// collection per call - qdrantCollSeq (not t.Name()) because forEachBackend
-// subtests share one process-wide counter and a name alone can collide across
-// t.Run("qdrant", ...) call sites using the same domain.
+// newQdrantStore builds a Store against the shared test container, on a fresh collection
+// per call - qdrantCollSeq (not t.Name()) because forEachBackend subtests share one
+// process-wide counter and a name alone can collide across t.Run("qdrant", ...) call sites using the same domain.
 func newQdrantStore(t *testing.T, domain string, consolidator model.LLM) *Store {
 	t.Helper()
 	addr := qdrantTestAddr(t)
@@ -79,11 +72,9 @@ func newQdrantStore(t *testing.T, domain string, consolidator model.LLM) *Store 
 	return s
 }
 
-// TestQdrant_ListWithVectorsReturnsNonEmptyVector is the regression guard for
-// #1268/#1269: a v1.19 server answers with the newer VectorOutput.Dense oneof
-// arm, not the deprecated top-level Data field vectorData used to read alone,
-// which silently made every retrieved vector nil (cosine 0 everywhere, so
-// DedupeSweep and the MMR re-rank never found any pair similar).
+// TestQdrant_ListWithVectorsReturnsNonEmptyVector is the regression guard for #1268/#1269:
+// a v1.19 server answers with the newer VectorOutput.Dense oneof arm, not the
+// deprecated top-level Data field vectorData used to read alone, which silently made every retrieved vector nil (cosine 0 everywhere, so DedupeSweep and the MMR re-rank never found any pair similar).
 func TestQdrant_ListWithVectorsReturnsNonEmptyVector(t *testing.T) {
 	ctx := context.Background()
 	s := newQdrantStore(t, "task", nil)
@@ -101,15 +92,9 @@ func TestQdrant_ListWithVectorsReturnsNonEmptyVector(t *testing.T) {
 	}
 }
 
-// TestQdrant_ListPagingTiesExactlyOnce is the adversarial-review regression
-// for listOrdered: Qdrant's order_by has one sort key and no secondary
-// column, and its own docs warn ties on a non-unique field give no ID-offset
-// guarantee - a naive per-call Scroll(limit=offset+limit) can include a
-// different, unstable subset of a tied group each time it's called. Seeds a
-// group that all share ONE timestamp (bigger than one page) and pages
-// through with independent List calls - each its own fresh Scroll, exactly
-// how a real "next page" click works, not a shared cursor - checking every
-// point surfaces exactly once.
+// TestQdrant_ListPagingTiesExactlyOnce is the adversarial-review regression for
+// listOrdered: Qdrant's order_by has one sort key and no secondary column, and its
+// own docs warn ties on a non-unique field give no ID-offset guarantee - a naive per-call Scroll(limit=offset+limit) can include a different, unstable subset of a tied group each time it's called. Seeds a group that all share ONE timestamp (bigger than one page) and pages through with independent List calls - each its own fresh Scroll, exactly how a real "next page" click works, not a shared cursor - checking every point surfaces exactly once.
 func TestQdrant_ListPagingTiesExactlyOnce(t *testing.T) {
 	ctx := context.Background()
 	s := newQdrantStore(t, "task", nil)
@@ -146,11 +131,9 @@ func TestQdrant_ListPagingTiesExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestQdrant_ListPagingLargeTieExactlyOnce is the 500-point scale variant of
-// the tie-group regression above: a tie group larger than resolveTieBoundary's
-// typical case (23) by an order of magnitude, still on a small page size, so
-// nearly every page triggers the full-group refetch. Confirms the refetch
-// stays correct (exactly once, no omissions) at this scale, not just small n.
+// TestQdrant_ListPagingLargeTieExactlyOnce is the 500-point scale variant of the tie-group
+// regression above: a tie group larger than resolveTieBoundary's typical case (23) by an
+// order of magnitude, still on a small page size, so nearly every page triggers the full-group refetch. Confirms the refetch stays correct (exactly once, no omissions) at this scale, not just small n.
 func TestQdrant_ListPagingLargeTieExactlyOnce(t *testing.T) {
 	ctx := context.Background()
 	s := newQdrantStore(t, "task", nil)
@@ -187,21 +170,16 @@ func TestQdrant_ListPagingLargeTieExactlyOnce(t *testing.T) {
 	}
 }
 
-// testID maps a readable test fixture name (e.g. "m1", "verified-old") to a
-// stable UUID: production memory ids are always uuid.NewString() (commit.go),
-// and Qdrant's point-id wire type rejects anything that doesn't parse as a
-// UUID or uint64 ("Unable to parse UUID") - sqlite has no such constraint, so
-// this only bites once a test runs against both backends via forEachBackend.
-// Deterministic (uuid.NewSHA1) so failure messages built from the name still
-// read the same across runs.
+// testID maps a readable test fixture name (e.g. "m1", "verified-old") to a stable UUID:
+// production memory ids are always uuid.NewString() (commit.go), and Qdrant's point-id
+// wire type rejects anything that doesn't parse as a UUID or uint64 ("Unable to parse UUID") - sqlite has no such constraint, so this only bites once a test runs against both backends via forEachBackend. Deterministic (uuid.NewSHA1) so failure messages built from the name still read the same across runs.
 func testID(name string) string {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
 }
 
-// forEachBackend runs run against a fresh Store on both the sqlite and qdrant
-// indexes, as a subtest per backend - the shared Store logic (votes, tiers,
-// absorption, rescope, forgetting, recall) is index-agnostic and #1268 wants it
-// proved against both, not just the always-on sqlite path.
+// forEachBackend runs run against a fresh Store on both the sqlite and qdrant indexes,
+// as a subtest per backend - the shared Store logic (votes, tiers, absorption,
+// rescope, forgetting, recall) is index-agnostic and #1268 wants it proved against both, not just the always-on sqlite path.
 func forEachBackend(t *testing.T, run func(t *testing.T, newStore func(domain string, consolidator model.LLM) *Store)) {
 	t.Helper()
 	backends := []struct {
@@ -219,12 +197,9 @@ func forEachBackend(t *testing.T, run func(t *testing.T, newStore func(domain st
 	}
 }
 
-// TestQdrant_EnsureTimestampIndex_AddsToPreexistingCollection is the startup
-// half of the order_by fix: a collection created before ensureTimestampIndex
-// existed (or by any other client) has no payload index on `timestamp`, and
-// order_by needs one. ensure() must add it on the pre-existing-collection
-// branch, not just the brand-new-collection one, and calling it again on an
-// already-indexed collection must stay a no-op.
+// TestQdrant_EnsureTimestampIndex_AddsToPreexistingCollection is the startup half of the
+// order_by fix: a collection created before ensureTimestampIndex existed (or by any
+// other client) has no payload index on `timestamp`, and order_by needs one. ensure() must add it on the pre-existing-collection branch, not just the brand-new-collection one, and calling it again on an already-indexed collection must stay a no-op.
 func TestQdrant_EnsureTimestampIndex_AddsToPreexistingCollection(t *testing.T) {
 	addr := qdrantTestAddr(t)
 	host, port, err := parseAddr(addr)

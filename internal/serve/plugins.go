@@ -44,10 +44,9 @@ func checkPluginModules(plugins []plugin.Plugin) error {
 	return nil
 }
 
-// checkPluginConfig enforces the namespace block's config: "required". A
-// module that is not configured at all stays dormant, exactly as before; one
-// whose extensions: block is present but empty fails the boot here with the
-// plugin named, rather than deeper inside its own factory.
+// checkPluginConfig enforces the namespace block's config: "required". A module that is not
+// configured at all stays dormant, exactly as before; one whose extensions: block is present but
+// empty fails the boot here with the plugin named, rather than deeper inside its own factory.
 func checkPluginConfig(plugins []plugin.Plugin, modules map[string]yaml.Node) error {
 	for _, p := range plugins {
 		if !p.ConfigRequired {
@@ -81,11 +80,9 @@ func pluginSpawnCaps(cfg *config.Config, jail *workspace.Jail) (workspace.Caps, 
 	return workspace.Caps{Sandbox: sandbox, ExtraPath: cfg.Workspace.ExecPath, HomeDir: home}, nil
 }
 
-// pluginMCPTools starts every stdio MCP server declared in a plugin's
-// mcp.json and returns its tools for the agents' shared tool set. Servers run
-// out of process through the SAME sandbox seam ACP workers use
-// (workspace.WrapArgv), and a server that fails to start, connect, or list
-// tools costs only its own tools (spec §7.2.2 rule 5) - never the boot.
+// pluginMCPTools starts every stdio MCP server declared in a plugin's mcp.json and returns its
+// tools for the agents' shared tool set, out of process through the SAME sandbox seam ACP workers
+// use (workspace.WrapArgv); a failed server costs only its own tools (spec §7.2.2 rule 5) - never the boot.
 func pluginMCPTools(ctx context.Context, plugins []plugin.Plugin, dataRoot string, caps workspace.Caps) []extTool {
 	var out []extTool
 	for _, p := range plugins {
@@ -153,10 +150,9 @@ func mcpServerTools(ctx context.Context, p plugin.Plugin, s plugin.MCPServer, da
 	return ts.Tools(bootToolCtx{enumCtx})
 }
 
-// bootToolCtx satisfies agent.ReadonlyContext for the one call that needs it:
-// quack selects tools per node BY NAME (extToolsByName), so an MCP server's
-// tools have to be enumerated once at boot, before any invocation exists.
-// Every accessor is zero-valued; the real agent.Context arrives at call time.
+// bootToolCtx satisfies agent.ReadonlyContext for the one call that needs it: quack selects tools
+// per node BY NAME (extToolsByName), so an MCP server's tools have to be enumerated once at boot,
+// before any invocation exists. Every accessor is zero-valued; the real agent.Context arrives at call time.
 type bootToolCtx struct{ context.Context }
 
 func (bootToolCtx) UserContent() *genai.Content          { return nil }

@@ -1,7 +1,6 @@
 // push.go: the gate-owned push (moved from internal/github's App.Deliver,
 // which had no business running quack's own sandboxed git exec). The git
-// plumbing is duplicated from internal/tools/git.go, not imported - tools
-// already imports vetting, so the reverse import would cycle.
+// plumbing is duplicated from internal/tools/git.go, not imported - tools already imports vetting, so the reverse import would cycle.
 package vetting
 
 import (

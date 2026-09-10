@@ -33,11 +33,7 @@ type Client struct {
 
 // NewClient resolves the server URL (override → active registry → localhost)
 // and returns a ready client. override is the --server flag value ("" to use
-// the active server from ~/.quack/servers.yaml). If the resolved URL matches
-// a registered server that has a stored OIDC session (`quack server login`),
-// every request attaches its access token as a Bearer credential - refreshed
-// first if it's at or near expiry. ctx bounds that refresh call only; it does
-// not outlive NewClient.
+// the active server from ~/.quack/servers.yaml). If the resolved URL matches a registered server that has a stored OIDC session (`quack server login`), every request attaches its access token as a Bearer credential - refreshed first if it's at or near expiry. ctx bounds that refresh call only; it does not outlive NewClient.
 func NewClient(ctx context.Context, override string) (*Client, error) {
 	cc, err := LoadClient()
 	if err != nil {
@@ -231,8 +227,7 @@ func (c *Client) ForgetMemory(ctx context.Context, memoryID, reason string) erro
 
 // SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand,
 // dryRun reporting without mutating anything. dedupe switches to the
-// per-bucket similarity dedupe sweep instead (issue #1269); apply then
-// controls whether it writes merges or only reports clusters.
+// per-bucket similarity dedupe sweep instead (issue #1269); apply then controls whether it writes merges or only reports clusters.
 func (c *Client) SweepMemories(ctx context.Context, dryRun, dedupe, apply bool) (schema.SweepMemoriesResult, error) {
 	var out schema.SweepMemoriesResult
 	err := c.postJSON(ctx, "/api/v1/memories/sweep", schema.SweepMemoriesBody{DryRun: &dryRun, Dedupe: &dedupe, Apply: &apply}, &out)
@@ -288,12 +283,7 @@ func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
 
 // PauseNode suspends one running node at its next turn boundary, keeping its
 // accumulated work (resumable). No-op if no such node is active.
-//
-// ponytail note: pause is a real, working feature (not a stub), but resume is
-// a FRESH re-run (like retry), not a literal frozen-thread checkpoint - ADK
-// v2's static workflow graph needs the node to return to unblock its
-// dependents, so there is no way to freeze it mid-tool-call the way an
-// ask_user HITL pause does. See dag.Executor.PauseNode's own note.
+// ponytail note: pause is a real, working feature (not a stub), but resume is a FRESH re-run (like retry), not a literal frozen-thread checkpoint - ADK v2's static workflow graph needs the node to return to unblock its dependents, so there is no way to freeze it mid-tool-call the way an ask_user HITL pause does. See dag.Executor.PauseNode's own note.
 func (c *Client) PauseNode(ctx context.Context, chatID, nodeID string) error {
 	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused})
@@ -308,8 +298,7 @@ func (c *Client) ResumeNode(ctx context.Context, chatID, nodeID string) error {
 
 // QueueNodeMessage appends a message to a running node's queue, delivered at
 // its next turn boundary (never mid-turn) - replaces the old interrupt-based
-// SteerNode. Returns the created queued message (its id, for later editing or
-// removal). 404 if the node isn't currently running.
+// SteerNode. Returns the created queued message (its id, for later editing or removal). 404 if the node isn't currently running.
 func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text string) (schema.QueuedMessage, error) {
 	var out schema.QueuedMessage
 	b, _ := json.Marshal(schema.QueueMessageBody{Message: text})
@@ -474,10 +463,7 @@ func readAll(r io.Reader) []byte {
 
 // FetchRecording downloads a chat's replay-ledger recording bundle (ZIP) -
 // the fetch endpoint GET /api/v1/chats/{chat_id}/recording (#601). `quack
-// replay <chat-id>` (#605) is the one caller today: it resolves a chat id
-// into a local bundle file this way before driving a replayed run.
-// ErrNotFound when the chat has no recording (never recorded, GC'd by
-// retention, or recording disabled).
+// replay <chat-id>` (#605) is the one caller today: it resolves a chat id into a local bundle file this way before driving a replayed run. ErrNotFound when the chat has no recording (never recorded, GC'd by retention, or recording disabled).
 func (c *Client) FetchRecording(ctx context.Context, chatID string) ([]byte, error) {
 	status, body, err := c.Request(ctx, http.MethodGet, "/api/v1/chats/"+chatID+"/recording", nil)
 	if err != nil {
@@ -562,8 +548,7 @@ type SSEEvent struct {
 
 // Reconnect tuning for subscribeSSE's dropped-connection retry: capped
 // exponential backoff so a dead server/proxy isn't hammered, bounded so a
-// permanently unreachable server eventually surfaces as an error instead of
-// retrying forever.
+// permanently unreachable server eventually surfaces as an error instead of retrying forever.
 const (
 	maxSSEReconnectAttempts = 6
 	sseReconnectBaseDelay   = time.Second
@@ -582,8 +567,7 @@ var sseReconnectDelay = func(attempt int) time.Duration {
 
 // Subscribe attaches to a chat's live (or just-finished) run via the standalone
 // GET stream endpoint - for resuming a run started elsewhere, or by this client
-// before a reconnect. The hub replays the events so far, then tails live. Same
-// channel contract as Stream.
+// before a reconnect. The hub replays the events so far, then tails live. Same channel contract as Stream.
 func (c *Client) Subscribe(ctx context.Context, chatID string) <-chan SSEEvent {
 	return c.streamChan(ctx, func(onEvent func(SSEEvent) error) error {
 		return c.subscribeSSE(ctx, chatID, onEvent)
@@ -618,11 +602,7 @@ func (c *Client) streamChan(ctx context.Context, run func(onEvent func(SSEEvent)
 
 // subscribeSSE GETs the chat's stream endpoint and dispatches each SSE event to
 // onEvent until the stream ends normally (a `done` event was seen) or ctx is
-// cancelled. A connection dropped mid-run - no `done` seen, whether the body
-// just closed or the request itself failed - is retried with capped
-// exponential backoff, resuming past the last event actually delivered via
-// Last-Event-ID (the server's durable event log, M8), so `chat show -f`
-// recovers from a transient break without the caller doing anything.
+// cancelled. A connection dropped mid-run - no `done` seen, whether the body just closed or the request itself failed - is retried with capped exponential backoff, resuming past the last event actually delivered via Last-Event-ID (the server's durable event log, M8), so `chat show -f` recovers from a transient break without the caller doing anything.
 func (c *Client) subscribeSSE(ctx context.Context, chatID string, onEvent func(SSEEvent) error) error {
 	var lastID string
 	var lastErr error
@@ -702,8 +682,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string, onEven
 
 // SendMessageWithFiles posts content plus file attachments (image/audio) as
 // multipart/form-data (field "content" + repeated "files") and streams the SSE
-// response. The per-file Content-Type is inferred from the extension so the
-// server threads the right MIME to a media-capable node. Used by `-p --attach`.
+// response. The per-file Content-Type is inferred from the extension so the server threads the right MIME to a media-capable node. Used by `-p --attach`.
 func (c *Client) SendMessageWithFiles(ctx context.Context, chatID, content string, filePaths []string, onEvent func(SSEEvent) error) error {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -783,8 +762,7 @@ func (c *Client) reachErr(err error) error {
 
 // parseSSE reads an SSE body and dispatches each event to onEvent. Framing:
 // `event:`/`id:`/`data:` lines, events separated by a blank line; multiple
-// data lines join with newlines (per the SSE spec); `:` comment lines are
-// ignored.
+// data lines join with newlines (per the SSE spec); `:` comment lines are ignored.
 func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // a tool_result event can be large

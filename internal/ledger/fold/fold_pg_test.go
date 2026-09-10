@@ -12,10 +12,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// newTestPGStore mirrors internal/ledger's own container test helper (kept
-// package-local here since fold needs the REAL PGStore, not MemStore, to
-// exercise ReadEntriesPage's paging). Skips (not fails) when Docker isn't
-// reachable.
+// newTestPGStore mirrors internal/ledger's container test helper (fold needs
+// the REAL PGStore, not MemStore, to exercise ReadEntriesPage's paging); skips
+// (not fails) when Docker isn't reachable.
 func newTestPGStore(t *testing.T) *ledger.PGStore {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -55,11 +54,9 @@ func newTestPGStore(t *testing.T) *ledger.PGStore {
 // (ReadEntriesPage), proving LastRevision and Fold agree with each other
 // against a real database, not just MemStore's in-memory scan.
 func TestFold_Postgres_KeyIndexAndPaging(t *testing.T) {
-	// No t.Parallel(): this test mutates the package-level pageSize var, as
-	// does TestFold_PagingMatchesOneSlice - running both non-parallel is what
-	// keeps that shared mutation race-free (#1111 review finding). Add
-	// t.Parallel() back only after threading the page limit into readAll
-	// instead of sharing pageSize.
+	// No t.Parallel(): this test and TestFold_PagingMatchesOneSlice both mutate the
+	// package-level pageSize var (#1111 review finding); add t.Parallel() back only
+	// after threading the page limit into readAll instead of sharing pageSize.
 	store := newTestPGStore(t)
 	ctx := context.Background()
 	const chatID = "chat-fold-pg"

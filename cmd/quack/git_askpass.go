@@ -15,9 +15,7 @@ import (
 // (the busybox pattern): the git tools maintain a symlink
 // <workspace root>/.quack-askpass -> the quack binary and set
 // GIT_ASKPASS=<that symlink>; main() sees isGitAskpassInvocation() and lands
-// here BEFORE cobra. Required because git execs $GIT_ASKPASS DIRECTLY as one
-// program path with the prompt as its single argument - no shell splitting,
-// so a "<binary> <subcommand>" value is unexecutable.
+// here BEFORE cobra. Required because git execs $GIT_ASKPASS DIRECTLY as one program path with the prompt as its single argument - no shell splitting, so a "<binary> <subcommand>" value is unexecutable.
 func gitAskpassMain(args []string, out io.Writer) {
 	prompt := ""
 	if len(args) > 1 {

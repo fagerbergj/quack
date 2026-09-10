@@ -13,13 +13,9 @@ export interface MemoryEntryProps {
 
 export type MemoryTier = 'unverified' | 'reinforced' | 'invalidated' | 'unknown'
 
-// memoryTier maps a memory's status (Memory['status'], openapi.yaml) to a
-// display tier. Missing/empty status is a pre-lifecycle memory (design doc
-// §3) and reads as unverified, by design - not "unknown". Every other value
-// is switched on exhaustively: adding a status to the generated enum without
-// a case here is a compile error (the `never` assignment below fails to
-// type-check), not a badge silently relabeling an unrecognized status
-// "unverified".
+// Maps a memory's status (Memory['status'], openapi.yaml) to a display tier.
+// Missing/empty status is a pre-lifecycle memory (design doc §3) and reads as
+// unverified, by design - not "unknown". Every other value is switched on exhaustively: adding a status to the generated enum without a case here is a compile error (the `never` assignment below fails to type-check), not a badge silently relabeling an unrecognized status "unverified".
 export function memoryTier(memory: Pick<Memory, 'status'>): MemoryTier {
   const status = memory.status
   if (!status) return 'unverified'
@@ -44,11 +40,9 @@ export function memoryTierLabel(memory: Pick<Memory, 'status' | 'reinforcement_c
   return tier
 }
 
-// memoryTierBadgeClass mirrors originBadgeClass's palette (ChatList.tsx) for
-// the memory lifecycle tiers (memory-lifecycle.md §8 step 6): green for
-// reinforced, red for invalidated, neutral gray for unverified AND for any
-// status this build doesn't recognize (never a color the reader would read
-// as a claim about a tier we didn't actually verify).
+// Mirrors originBadgeClass's palette (ChatList.tsx) for the memory lifecycle
+// tiers (memory-lifecycle.md §8 step 6): green for reinforced, red for
+// invalidated, neutral gray for unverified AND any unrecognized status - never a color the reader would read as a claim about a tier we didn't actually verify.
 export function memoryTierBadgeClass(tier: MemoryTier): string {
   switch (tier) {
     case 'reinforced': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
@@ -72,10 +66,9 @@ function TierBadge({ memory }: { memory: Memory }) {
   )
 }
 
-// VoteTierBadge - the vote-based tier (epic #1255 P4, memory.tier). Only
-// rendered for 'verified' (#1266): 'unverified' duplicates the lifecycle
-// TierBadge's default label, so the caller skips it in that case instead of
-// showing two chips that both say "unverified".
+// VoteTierBadge - the vote-based tier (epic #1255 P4, memory.tier). Rendered
+// only for 'verified' (#1266): 'unverified' duplicates the lifecycle
+// TierBadge's default label, so the caller skips it rather than showing two chips that both say "unverified".
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   return (
     <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
@@ -84,11 +77,9 @@ function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   )
 }
 
-// Pill - a category-coloured pill (#746 item 13): the colour is deterministic
+// A category-coloured pill (#746 item 13): the colour is deterministic
 // (hashed from the label itself, not assignment order) and always rendered
-// WITH the label text - colour is never the only signal. `neutral` opts out
-// of the hash (#1266): a node id used as provenance can hash to red, which
-// reads as an error rather than "this node wrote it".
+// WITH the label text - colour is never the only signal. `neutral` opts out of the hash (#1266): a node id used as provenance can hash to red, which reads as an error rather than "this node wrote it".
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
   const cls = neutral ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300' : paletteClasses(seed)
   return (
@@ -181,12 +172,9 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
   )
 }
 
-// One memory row: vote control, content + bucket/author/kind pills, tier
-// badges (lifecycle status + vote-based tier), last-upvote/last-recall
-// relative times, recall count, and the kebab menu for Forget.
-// memo: a page is 20 rows and a vote only changes one, so without this every
-// row re-renders (and re-formats its dates, #1286) on any sibling's vote.
-// Test-only render counter: the memo test asserts on counts, never on timings.
+// One memory row. memo: a page is 20 rows and a vote only changes one, so
+// without this every row re-renders (and re-formats its dates, #1286) on any
+// sibling's vote. Test-only render counter: the memo test asserts on counts, never on timings.
 export const memoryEntryRenderProbe = { count: 0 }
 
 export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
@@ -196,10 +184,8 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
   const lastRecalled = relativeTime(memory.last_recalled_at)
 
   // Not memoized on memory.timestamp: that value never changes for a given
-  // memory, so caching on it froze the label at whatever wall-clock time it
-  // was first computed, even across a legitimate re-render (#1300 review).
-  // memo(MemoryEntry) above already skips the whole row when memory is
-  // unchanged - this recompute only runs when the row actually re-renders.
+  // memory, so caching on it froze the label at first computation even across
+  // a legitimate re-render (#1300 review). memo(MemoryEntry) already skips the row when memory is unchanged - this recompute only runs when the row actually re-renders.
   const mintedTime = new Date(memory.timestamp)
   const mintedTimeText = Number.isNaN(mintedTime.getTime()) ? memory.timestamp : mintedTime.toLocaleString()
   const mintedTimeRelative = relativeTime(memory.timestamp) ?? mintedTimeText

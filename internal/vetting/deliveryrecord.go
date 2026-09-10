@@ -1,8 +1,6 @@
-// deliveryrecord.go: the "delivery_record" kind (#1093, P6/P10 of the
-// artifact-model epic #1090) - one id per subject (delivery_record:<subject>),
-// one revision per delivery, appended via the normal SaveStructured
-// revision-append mechanism (recordstore's save() always appends the next
-// revision under a lock - the same one code_review uses).
+// deliveryrecord.go: the "delivery_record" kind (#1093, P6/P10 of epic #1090) -
+// one id per subject (delivery_record:<subject>), one revision per delivery,
+// appended via the normal SaveStructured revision-append mechanism.
 package vetting
 
 import (
@@ -30,8 +28,7 @@ func init() {
 		Validate:   validateJSONObject[DeliveryRecord],
 		// Instance = hint verbatim, the subject (e.g. "pr:123") - one id per
 		// subject, ALL delivered revisions of it living as that id's own
-		// revision history (§4.9's history read = list this one id's
-		// revisions, not scan-by-prefix across many ids).
+		// revision history (§4.9's history read = list this one id's revisions, not scan-by-prefix across many ids).
 		Identity:     func(_ []byte, hint string) (string, error) { return requireHint(hint) },
 		RequiresHint: true,
 	})
@@ -39,8 +36,7 @@ func init() {
 
 // DeliveryRecord: the "delivery_record" kind's body (#1090 §4.3/§9, minimal
 // shape). RemoteURL alone (not a decomposed review_id/comment_id/pr_number)
-// is what every extension's DeliveryItemOutcome already reports today;
-// PRNumber is derived from dc.IssueNumber, which core already has.
+// is what every extension's DeliveryItemOutcome already reports today; PRNumber is derived from dc.IssueNumber, which core already has.
 type DeliveryRecord struct {
 	TargetID          string    `json:"target_id"`
 	DeliveredRevision int       `json:"delivered_revision"`
@@ -53,8 +49,7 @@ type DeliveryRecord struct {
 	GatePassed bool `json:"gate_passed"`
 	// RenderedFromStaged: true when no artifact-backed render existed and
 	// the worker's own staged text was posted instead (finding 2) - such a
-	// delivery must never be confused with an artifact-backed one when
-	// diffing carried-over/resolved findings later.
+	// delivery must never be confused with an artifact-backed one when diffing carried-over/resolved findings later.
 	RenderedFromStaged bool `json:"rendered_from_staged,omitempty"`
 	// Error: non-empty on a failed delivery attempt (e.g. gate push failure,
 	// #1155) - kept in the history so a later revision isn't mistaken for
@@ -92,9 +87,7 @@ func saveDeliveryRecord(ctx context.Context, cfg Config, nodeID string, rec Deli
 
 // SaveDeliveryRecord writes rec as its subject's next delivery_record
 // revision - the WAL's completion for a delivery.intent (#1144 P2: one
-// representation per fact, no separate delivery.done entry). Exported for
-// `quack ledger recover`/boot recovery, which reconstruct a *recordstore.Client
-// directly rather than a full vetting.Config. nil client is a no-op.
+// representation per fact, no separate delivery.done entry). Exported for `quack ledger recover`/boot recovery, which reconstruct a *recordstore.Client directly rather than a full vetting.Config. nil client is a no-op.
 func SaveDeliveryRecord(ctx context.Context, c *recordstore.Client, nodeID string, rec DeliveryRecord) error {
 	if c == nil {
 		return nil
@@ -105,12 +98,8 @@ func SaveDeliveryRecord(ctx context.Context, c *recordstore.Client, nodeID strin
 }
 
 // DeliveryRecorded reports whether ANY revision in targetID's delivery_record
-// history is a successful (no Error) record of revision - the recovery read
-// that replaces the deleted delivery.done ledger entry. Must walk the whole
-// history, not just Latest: the record is one id per SUBJECT with one
-// revision per delivery (listDeliveryRecords's doc), so a subject delivered
-// more than once has an older settled intent whose revision is no longer the
-// latest one - a Latest-only check would re-flag it as unsettled forever.
+// history is a successful (no Error) record of revision - the recovery read that replaces the deleted delivery.done ledger entry. Must walk the whole
+// history, not just Latest: the record is one id per SUBJECT with one revision per delivery (listDeliveryRecords's doc), so a subject delivered more than once has an older settled intent whose revision is no longer the latest - a Latest-only check would re-flag it as unsettled forever.
 func DeliveryRecorded(ctx context.Context, c *recordstore.Client, targetID string, revision int) (bool, error) {
 	if c == nil {
 		return false, nil
@@ -138,8 +127,7 @@ func DeliveryRecorded(ctx context.Context, c *recordstore.Client, targetID strin
 
 // DeliveryProjections builds the checker/recorder pair boot recovery and
 // `quack ledger recover` need to read and write delivery_record completions
-// (#1144 P2) without a live vetting.Config - userFor resolves the chat's
-// owning user the same way ArtifactRowChecker does.
+// (#1144 P2) without a live vetting.Config - userFor resolves the chat's owning user the same way ArtifactRowChecker does.
 func DeliveryProjections(artifacts artifact.Service, ledgerStore ledger.LedgerStore, userFor func(ctx context.Context, chatID string) string) (
 	checker func(ctx context.Context, chatID, targetID string, revision int) (bool, error),
 	recorder func(ctx context.Context, chatID, nodeID, targetID string, revision int, remoteURL string) error,
@@ -170,9 +158,7 @@ func DeliveryProjections(artifacts artifact.Service, ledgerStore ledger.LedgerSt
 
 // latestDeliveryRecord loads the most recent delivery_record revision for
 // targetID's subject - the PRIOR review's delivery, since this round's own
-// delivery_record is written only after Deliver runs (node.go's
-// commitDelivery), strictly after the render this feeds. false when none
-// exists yet (a first-ever review of this subject).
+// delivery_record is written only after Deliver runs (node.go's commitDelivery), strictly after the render this feeds. false when none exists yet (a first-ever review of this subject).
 func latestDeliveryRecord(ctx context.Context, cfg Config, targetID string) (DeliveryRecord, bool) {
 	c := recordClient(cfg)
 	if c == nil {

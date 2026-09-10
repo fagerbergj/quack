@@ -10,15 +10,9 @@ const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'system', label: 'System' },
 ]
 
-// ChatMenu is the chat header's ⋯ overflow menu (#746 items 2/3): per-chat
-// actions that aren't worth permanent header real estate. Today that's
-// Download Logs (the `⬇ recording` link, relabelled and moved here - it stays
-// a plain link to the same endpoint, only label and placement change), plus -
-// on compact width (#1136) - the token/model usage summary that the header
-// itself hides there to give the title its width back. It does NOT hold
-// Memory - Memory is a NavRail peer of Chats, not a per-chat action. Same
-// disclosure pattern as DagNode's NodeMenu: a button that toggles a
-// role="menu" popover, closed on outside click or Escape.
+// The chat header's ⋯ overflow menu (#746 items 2/3): per-chat actions not
+// worth permanent header real estate. Today: Download Logs (still a plain
+// link to the same endpoint) and, at compact width (#1136), the token/model usage summary the header hides there to give the title its width back. It does NOT hold Memory - Memory is a NavRail peer of Chats, not a per-chat action. Same disclosure pattern as DagNode's NodeMenu: a button toggling a role="menu" popover, closed on outside click or Escape.
 export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSummaryProps }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)

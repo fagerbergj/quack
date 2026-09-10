@@ -8,11 +8,9 @@ import type { DagNodeDef } from '../state/agentStream'
 import type { NodeState } from '../state/chatStore'
 import type { AgentRun, Activity } from './messageParts'
 
-// Structural assertions on the static markup - no testing-library in this repo
-// (see ToolCallView.test.ts), so we render to HTML and check the load-bearing
-// shape: collapsed-by-default one-line previews (the popup itself only opens
-// on click, which needs a DOM - that's a Storybook play-function concern, see
-// DagNode.stories.tsx's *Popup stories), and the deterministic-retry merge.
+// Structural assertions on the static markup - no testing-library in this
+// repo (see ToolCallView.test.ts), so we render to HTML and check the
+// load-bearing shape: collapsed-by-default one-line previews (the popup itself only opens on click, which needs a DOM - a Storybook play-function concern, see DagNode.stories.tsx's *Popup stories) and the deterministic-retry merge.
 
 const node: DagNodeDef = { id: 'r1', agent: 'web-researcher', task: 'Research Dublin.', depends_on: [] }
 

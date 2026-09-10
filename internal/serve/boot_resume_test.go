@@ -216,13 +216,10 @@ func TestBoundedGoRun_CapsConcurrency(t *testing.T) {
 	}
 }
 
-// TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore pins finding 1: with
-// more resumable chats than max_active_runs, boundedGoRun must dispatch every
-// id and return without waiting for any run to finish - it is called
-// synchronously from buildFromConfig, before srv.ListenAndServe, so blocking
-// here means the HTTP listener never opens. A real driveResume takes minutes
-// to hours, so the semaphore must be acquired inside each goroutine, not
-// before spawning it.
+// TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore pins finding 1: beyond max_active_runs,
+// boundedGoRun must dispatch every id and return without waiting - it runs synchronously from
+// buildFromConfig before ListenAndServe, so blocking means the HTTP listener never opens and
+// the semaphore must be acquired inside each goroutine (a driveResume takes minutes to hours).
 func TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore(t *testing.T) {
 	const maxConcurrent = 6 // prod cfg.Dag.MaxActiveRuns
 	ids := []string{"c1", "c2", "c3", "c4", "c5", "c6", "c7"}

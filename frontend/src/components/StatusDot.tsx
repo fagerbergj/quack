@@ -1,11 +1,8 @@
 import type { ChatStatus, NodeStatus } from '../generated'
 
-// StatusDot is the app's single "state at a glance" indicator, shared by the
-// chat list (ChatList) and DAG nodes (DagNode). The chat variant is a bare dot
-// that stays quiet for idle/done so a long list only flags what needs
-// attention; the node variant always pairs the dot with the state's name, so
-// a card's state is never colour-only (WCAG 1.4.1) and queued/done/idle are
-// visibly distinct rather than blank.
+// The app's single "state at a glance" indicator, shared by the chat list
+// (ChatList) and DAG nodes (DagNode). The chat variant is a bare dot that
+// stays quiet for idle/done so a long list only flags what needs attention; the node variant always pairs the dot with the state's name, so a card's state is never colour-only (WCAG 1.4.1) and queued/done/idle are visibly distinct rather than blank.
 export type DotStatus = ChatStatus | NodeStatus
 
 const COLOR: Record<DotStatus, string> = {

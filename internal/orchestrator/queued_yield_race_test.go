@@ -29,9 +29,8 @@ func (s *slowOrchStub) GenerateContent(ctx context.Context, req *model.LLMReques
 }
 
 // planCallQueueing authors 3 web-researcher nodes (no deps) fanning into a
-// synthesizer - the live incident's shape (chat 65974150-3efd-439a-8186-
-// b4a93ad59d7a): 3 ready nodes against an admission cap of 2, so one MUST
-// queue while its siblings are still running.
+// synthesizer - the live incident's shape (chat
+// 65974150-3efd-439a-8186-b4a93ad59d7a): 3 ready nodes against an admission cap of 2, so one MUST queue while its siblings are still running.
 func planCallQueueing() *model.LLMResponse {
 	return stubCall("plan", map[string]any{"nodes": []any{
 		map[string]any{"id": "qualities", "agent": "web-researcher", "task": "research qualities", "depends_on": []any{}},
@@ -41,22 +40,9 @@ func planCallQueueing() *model.LLMResponse {
 	}})
 }
 
-// TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield reproduces #1021/
-// #1027's remaining bug: onQueued (dag/graph.go) grabs the ctx-stored yield
-// directly and calls it from the queuing node's own goroutine, bypassing
-// newSafeYield's mutex. Orchestrator.Run wires that ctx BEFORE safeYield
-// exists and with the unwrapped yield (every other entrypoint - RunBoundPlan,
-// startNodeRun, RetryNode - wires it correctly). With 3 ready web-researcher
-// nodes against a 2-session admission cap, the 3rd node's onQueued fires
-// concurrently with the admitted siblings' own SSE events reaching this same
-// consumer, from a different goroutine, with no synchronization between them.
-//
-// The consumer below appends to a plain, unguarded slice - exactly what
-// production's REST handler and this package's own runTurn helper already do
-// (internal/server/rest/handler.go's `res.Step`/`publish`, and
-// internal/orchestrator/continue_test.go's runTurn). Run this under -race:
-// present bug => data race; fixed => none, because every write funnels
-// through newSafeYield's mutex.
+// TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield reproduces
+// #1021/#1027's remaining bug: onQueued (dag/graph.go) grabs the ctx-stored
+// yield directly and calls it from the queuing node's own goroutine, bypassing newSafeYield's mutex. Orchestrator.Run wires that ctx BEFORE safeYield exists and with the unwrapped yield (every other entrypoint - RunBoundPlan, startNodeRun, RetryNode - wires it correctly). With 3 ready web-researcher nodes against a 2-session admission cap, the 3rd node's onQueued fires concurrently with the admitted siblings' own SSE events reaching this same consumer, from a different goroutine, with no synchronization between them. The consumer below appends to a plain, unguarded slice - exactly what production's REST handler and this package's own runTurn helper already do (internal/server/rest/handler.go's `res.Step`/`publish`, and internal/orchestrator/continue_test.go's runTurn). Run this under -race: present bug => data race; fixed => none, because every write funnels through newSafeYield's mutex.
 func TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield(t *testing.T) {
 	stub := &slowOrchStub{orchStub{replies: []*model.LLMResponse{planCallQueueing()}}}
 

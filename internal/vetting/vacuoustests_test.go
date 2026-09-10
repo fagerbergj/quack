@@ -170,13 +170,9 @@ func TestVacuousTestsCriterion_SkipsUnknownLanguage(t *testing.T) {
 	}
 }
 
-// Shallow-clone / unparseable-source case (blocking review comment on PR #721,
-// see issue #585 for the same failure mode in checksPassCriterion): if the repo
-// has NO production Go files the declaration regex can find anything in - e.g.
-// a shallow clone that never fetched them, or a language that legitimately has
-// only test files right now - productionIdentifiers comes back empty. That is
-// US failing to parse, not evidence the test is vacuous, so the file must PASS
-// even though its body never references anything (it can't, there IS nothing).
+// Shallow-clone / unparseable-source case (blocking review comment on PR #721, see issue #585 for the same failure mode in checksPassCriterion): if the repo
+// has NO production Go files the declaration regex can find anything in - e.g. a shallow clone that never fetched them, or a language that legitimately has
+// only test files right now - productionIdentifiers comes back empty. That is US failing to parse, not evidence the test is vacuous, so the file must PASS even though its body never references anything (it can't, there IS nothing).
 func TestVacuousTestsCriterion_EmptyProductionIdentifiersSkipsRatherThanFails(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, nil, map[string]string{"go.mod": "module example.com/x\n\ngo 1.24\n"})
 	selfReferential := "package mathutil\n\n" +

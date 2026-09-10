@@ -12,8 +12,7 @@ import (
 
 // runPlanSSE runs a plan the way the orchestrator does now - as a native
 // first-class-node graph (RunPlanAsGraph) - and returns the SSE the DagStream
-// emits plus the captured node outputs. chatID keys BOTH the run session and the
-// per-node control registry (CancelNode/SteerNode), matching production.
+// emits plus the captured node outputs. chatID keys BOTH the run session and the per-node control registry (CancelNode/SteerNode), matching production.
 func runPlanSSE(t *testing.T, ex *Executor, plan Plan, chatID string) ([]stream.SSEEvent, map[string]string) {
 	t.Helper()
 	outputs := map[string]string{}

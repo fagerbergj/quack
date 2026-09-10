@@ -240,8 +240,7 @@ func TestListNodeMemories_UnknownChat404(t *testing.T) {
 
 // TestVoteMemory_FindsMemoryPastFirstListPage is #1265 review finding 1: a
 // direct GetByID lookup, not a paged List scan, so voting on a memory older
-// than one List page still finds it. Seeds DefaultListLimit+1 memories and
-// votes on the one that would land past page 0 in a newest-first list.
+// than one List page still finds it. Seeds DefaultListLimit+1 memories and votes on the one that would land past page 0 in a newest-first list.
 func TestVoteMemory_FindsMemoryPastFirstListPage(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)

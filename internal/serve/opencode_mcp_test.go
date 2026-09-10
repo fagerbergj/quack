@@ -9,11 +9,9 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// opencodeEnv must emit an acp mcp_servers URL in opencode's KEYED mcp map shape
-// - {name:{type:"remote",url,enabled}}, the form opencode.json uses - not
-// {"servers":[...]}, which opencode silently ignores (the server would never
-// load, so the tools never reach the agent). Regression for #250: the first
-// implementation compiled and passed the gate but used the ignored shape.
+// opencodeEnv must emit the acp mcp_servers URL in opencode's KEYED mcp map shape -
+// {name:{type:"remote",url,enabled}} - not {"servers":[...]}, which opencode silently ignores
+// (tools never reach the agent). #250 regression: the first implementation used that shape.
 func TestOpencodeEnvMcpServersShape(t *testing.T) {
 	env := opencodeEnv(config.ProviderConfig{}, config.AgentConfig{
 		Model: "m",
@@ -92,10 +90,9 @@ func assertClosedShape(t *testing.T, bash, extDir map[string]string) {
 	}
 }
 
-// TestOpencodeEnvDeniesClone pins the clone-deny half of the worktree-isolation
-// follow-up for every agent that can WRITE code: cloning is unnecessary now that the
-// environment block (internal/acp's environmentBlock) shows the agent what's already
-// on disk. No sandbox mode changes this for an agent without allow_clone.
+// TestOpencodeEnvDeniesClone pins clone-deny for every code-WRITE agent: cloning is
+// unnecessary once the environment block shows what's on disk. No sandbox mode changes
+// this without allow_clone.
 func TestOpencodeEnvDeniesClone(t *testing.T) {
 	for _, mode := range sandboxModes {
 		t.Run(string(mode), func(t *testing.T) {

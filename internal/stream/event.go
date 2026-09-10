@@ -1,8 +1,6 @@
 // Package stream defines Quack's wire-level event vocabulary and translates the gate's ADK session events into it.
 // Shared by REST and MCP. See frontend/src/state/agentStream.ts for the client contract.
-//
-// The model is flat: each node runs a sequence of agent invocations (worker, judge, revise), delimited by
-// agent_start/agent_complete with run_id + stage. Activity references that run_id. Client groups by node, pairs tools by call_id.
+// The model is flat: each node runs a sequence of agent invocations (worker, judge, revise), delimited by agent_start/agent_complete with run_id + stage. Activity references that run_id. Client groups by node, pairs tools by call_id.
 package stream
 
 import (
@@ -57,16 +55,13 @@ const (
 	EventNodeSteered    = "node_steered"
 
 	// EventDeliveryResult reports one staged item's outward-boundary outcome
-	// (push + PR/review/comment) - durable, independent of the judge verdict,
-	// so a phantom "the gate passed" success is distinguishable from an actual
-	// delivery failure. See DeliveryResultData.
+	// (push + PR/review/comment) - durable, independent of the judge verdict, so a
+	// phantom "the gate passed" success is distinguishable from an actual delivery failure. See DeliveryResultData.
 	EventDeliveryResult = "delivery_result"
 
 	// EventCompaction reports a worker node's session being compacted by
 	// adk/v2's native runner-level compaction (internal/agent's Compaction) -
-	// observed by decorating the node's session.Service, since neither native
-	// strategy ever yields the summary into the runner's event stream (see
-	// internal/agent/a2a.go's compactionSessions).
+	// observed by decorating the node's session.Service, since neither native strategy ever yields the summary into the runner's event stream (see internal/agent/a2a.go's compactionSessions).
 	EventCompaction = "compaction"
 
 	// EventArtifactRevision reports one artifact revision written by a judge
@@ -373,8 +368,7 @@ type ChatTitleData struct {
 
 // CompactionData: `compaction` event payload. Fields are exactly what
 // adk/v2's session.EventCompaction and the summarizer's UsageMetadata expose
-// on the compaction Event itself - no invented before/after conversation size
-// (adk does not report that; see internal/agent/compaction.go).
+// on the compaction Event itself - no invented before/after conversation size (adk does not report that; see internal/agent/compaction.go).
 type CompactionData struct {
 	NodeID string `json:"node_id,omitempty"`
 	// RunID is the adk invocation that triggered the compaction, not a quack
@@ -388,12 +382,10 @@ type CompactionData struct {
 
 // Compaction builds a compaction event. start/end zero values are omitted
 // rather than sent as the epoch, and likewise for zero token counts - adk
-// leaves both unset when it has nothing to report (see
-// internal/telemetry/compaction.go in the vendored module).
+// leaves both unset when it has nothing to report (see internal/telemetry/compaction.go in the vendored module).
 // RunIDFromBranch extracts quack's run id from an ADK branch segment of the
 // form "<name>@<runID>" (workflow.WithUseSubBranch's shape) - the one
-// producer both dag.segRun and compaction event-emission key off of, so a
-// compaction row's run id always matches its round's agent_start run id.
+// producer both dag.segRun and compaction event-emission key off of, so a compaction row's run id always matches its round's agent_start run id.
 func RunIDFromBranch(branch string) string {
 	if i := strings.Index(branch, "@"); i >= 0 {
 		return branch[i+1:]
@@ -531,10 +523,8 @@ type Translator struct {
 }
 
 // SeenCalls tracks call_ids already emitted as agent_tool_call, so a stream
-// translator can collapse ACP's start+completion FunctionCall parts into one
-// event per call. Empty IDs are never deduped: genai.FunctionCall.ID can be
-// empty, and the frontend treats callId=="" as its own non-upsertable case -
-// deduping on "" would drop distinct legitimate empty-id calls.
+// translator can collapse ACP's start+completion FunctionCall parts into one event per call.
+// Empty IDs are never deduped: genai.FunctionCall.ID can be empty, and the frontend treats callId=="" as its own non-upsertable case - deduping on "" would drop distinct legitimate empty-id calls.
 type SeenCalls map[string]bool
 
 // Add records callID and reports whether it was already seen (so the caller

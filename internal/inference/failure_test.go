@@ -94,11 +94,7 @@ func (a fakeAddr) String() string  { return string(a) }
 
 // TestSanitizeStoreError_NeverLeaksDSNFragments covers the two exotic DSN
 // shapes the #1200 review flagged: a single-quoted password containing an
-// @, and a raw user@host embedded inside a DSN. Both are baked into the
-// wrapped error's text (as a real pgconn/gorm error might carry), proving
-// SanitizeStoreError's structured-field-only approach never echoes them -
-// unlike the prior regex approach, which matched only up to the first @ or
-// unquoted whitespace and leaked the remainder.
+// @, and a raw user@host embedded inside a DSN. Both are baked into the wrapped error's text (as a real pgconn/gorm error might carry), proving SanitizeStoreError's structured-field-only approach never echoes them - unlike the prior regex approach, which matched only up to the first @ or unquoted whitespace and leaked the remainder.
 func TestSanitizeStoreError_NeverLeaksDSNFragments(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -19,12 +19,9 @@ import { MermaidDiagram } from './MermaidDiagram'
 import { isTrailingMermaidFenceOpen, lastSafeSplitOffset } from './mermaidSource'
 import { StatusDot, type DotStatus } from './StatusDot'
 
-// Answer text is Markdown that may embed a little raw HTML - notably the
-// collapsible `<details><summary>Sources</summary>…</details>` block the
-// researcher/synthesizer emit. react-markdown drops raw HTML by default, so we
-// enable rehype-raw to parse it; because the text is model-authored (and shaped
-// by fetched web content), we then run rehype-sanitize to strip anything unsafe,
-// allowing only <details>/<summary> on top of the default-safe element set.
+// Answer text is Markdown with a little raw HTML - the collapsible
+// `<details><summary>Sources</summary>` block the researcher/synthesizer emit.
+// rehype-raw parses it; rehype-sanitize (model-authored, web-shaped text) strips everything but <details>/<summary>.
 const mdSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), 'details', 'summary'],
@@ -38,22 +35,18 @@ export * from './messageParts'
 // ones fold into a "⋯ N earlier" toggle so a long run stays scannable.
 const RECENT = 3
 
-// ACP_AGENTS mirrors config/quack.yaml's acp-bound bundles (code-implementer,
-// code-reviewer, code-explorer) - the only agents whose tool calls arrive over
-// the Agent Client Protocol, remapped by internal/acp/translate.go rather than
-// invoked as a native quack tool. There's no per-call wire marker (#404) - the
-// agent name is already threaded onto every run and ACP/native bundles never
-// overlap, so it's a clean, no-backend-change signal for the "ACP" badge.
+// Mirrors config/quack.yaml's acp-bound bundles - the only agents whose tool
+// calls arrive over ACP, remapped by internal/acp/translate.go. No per-call
+// wire marker (#404); the agent name is threaded onto every run and ACP/native bundles never overlap.
 const ACP_AGENTS = new Set(['code-implementer', 'code-reviewer', 'code-explorer'])
 
 export function isAcpAgent(agent?: string): boolean {
   return !!agent && ACP_AGENTS.has(agent)
 }
 
-// mermaidLang reads a hast <pre><code class="language-mermaid"> node's info
-// string directly off the AST, independent of how react-markdown/rehype-highlight
-// render its children - robust regardless of highlighting behavior for a
-// language highlight.js doesn't know.
+// Reads the <code class="language-mermaid"> info string straight off the AST,
+// independent of how rehype-highlight renders children - robust for a language
+// highlight.js doesn't know.
 function mermaidLang(preNode: Element | undefined): boolean {
   const code = preNode?.children.find((c): c is Element => c.type === 'element' && c.tagName === 'code')
   const classNames = code?.properties?.className
@@ -67,25 +60,9 @@ function hastText(node: Element | undefined): string {
   return node.children.map(c => (c.type === 'text' ? c.value : hastText(c as Element))).join('')
 }
 
-// AssistantDocument is one markdown parse of `text` end to end - what
-// AssistantText used to do unconditionally on every token (audit finding 2:
-// remark/rehype re-parsing + rebuilding the whole document past ~20k chars
-// costs 65+ ms/token and stalls typing, since the Composer shares the commit).
-//
-// A ```mermaid block renders as a diagram once (and only once) its closing
-// fence has arrived. During streaming, the last fence in `text` may still be
-// growing token-by-token (CommonMark: an unterminated fence swallows the rest
-// of the document, so at most one can ever be open, and it's always the
-// last one) - trying to parse a partial diagram would flash errors on every
-// token, so that block stays a plain code block until it closes.
-// `node.position.end.offset` (present because remark/rehype retain source
-// positions by default) tells us whether THIS block reaches the literal end
-// of `text`, i.e. whether it's the one that could still be open; comparing it
-// against `isTrailingMermaidFenceOpen(text)` (computed once per text change,
-// not per keystroke) gives a stable answer without depending on render order.
-// rehypeHighlightSubset runs LAST so its hljs classes/spans aren't stripped
-// by rehype-sanitize (the code's `language-*` class survives sanitize, so
-// highlight still detects the language).
+// One markdown parse of `text` (audit finding 2: re-parsing the whole doc
+// past ~20k chars cost 65+ ms/token). A ```mermaid block renders as a diagram only
+// once its closing fence arrives - an unterminated fence swallows the doc tail, so at most one can be open (the last block); node.position.end.offset vs isTrailingMermaidFenceOpen(text) is the stable open-test. rehypeHighlightSubset runs LAST, so sanitize keeps its hljs classes.
 function AssistantDocument({ text }: { text: string }) {
   const trailingOpen = useMemo(() => isTrailingMermaidFenceOpen(text), [text])
   const docEnd = useMemo(() => text.replace(/\s+$/, '').length, [text])
@@ -107,10 +84,9 @@ function AssistantDocument({ text }: { text: string }) {
       return <div className="overflow-x-auto"><table {...rest} /></div>
     },
   }), [trailingOpen, docEnd])
-  // Memoize the parsed output itself, not just its props: ReactMarkdown
-  // re-parses on every call regardless of prop equality, and this component's
-  // parent (a streaming bubble, or FrozenAssistantDocument's memo wrapper)
-  // re-renders far more often than `text`/`components` actually change.
+  // Memoize the parsed output itself: ReactMarkdown re-parses on every call
+  // regardless of prop equality, and the parent (a streaming bubble) re-renders
+  // far more often than `text`/`components` actually change.
   return useMemo(() => (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -120,38 +96,27 @@ function AssistantDocument({ text }: { text: string }) {
   ), [text, components])
 }
 
-// FrozenAssistantDocument is the settled-prefix half of a streaming split
-// (below): identical string content between renders (JS string equality is
-// value-based) keeps memo's default shallow comparison true, so it renders
-// exactly once per prefix advance rather than once per token.
+// The settled-prefix half of the streaming split: identical string content
+// keeps memo's default shallow comparison true, so it renders exactly once per
+// prefix advance rather than once per token.
 const FrozenAssistantDocument = memo(AssistantDocument)
 
-// How much of the tail stays live/unmemoized while streaming. Measured
-// (src/perf/split.bperf.test.tsx, audit finding 2): 17k frozen + 2k live cut
-// the whole-document re-render from 65.6 ms/token to 5.7 ms/token at 19k
-// chars total - most of a long answer's length no longer re-parses per token.
+// How much of the tail stays live/unmemoized. Measured (src/perf/split.bperf.test.tsx,
+// audit finding 2): 17k frozen + 2k live cut whole-document re-render from
+// 65.6 to 5.7 ms/token at 19k chars - most of a long answer no longer re-parses per token.
 const LIVE_TAIL_CHARS = 2000
 
-// AssistantText renders model text as markdown. While `streaming`, it splits
-// at the last safe CommonMark block boundary (a blank line outside any open
-// fence - lastSafeSplitOffset, mermaidSource.ts) before the live tail: the
-// settled prefix renders through the memoized FrozenAssistantDocument and only
-// the short tail re-parses per token. Once the stream ends (`streaming`
-// false, the default), the whole text renders through ONE AssistantDocument -
-// a table, footnote, or link reference spanning where the split used to be
-// must resolve as a single document, not two halves.
+// Renders model text as markdown. While `streaming`, splits at the last safe
+// CommonMark block boundary (a blank line outside any open fence - lastSafeSplitOffset)
+// before the live tail: the prefix renders through the memoized FrozenAssistantDocument, only the short tail re-parses per token. Once the stream ends, the whole text renders through ONE AssistantDocument - a table, footnote, or link reference spanning the old split must resolve as a single document, not two halves.
 export function AssistantText({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  // #746 item 16: a stray punctuation backtick earlier in the text can defeat
-  // CommonMark's greedy backtick pairing for every inline code span after it -
-  // fix that before parsing, never inside a fenced block. Offsets below are
-  // derived from THIS fixed string (what's actually handed to ReactMarkdown),
-  // not the original, since escaping shifts everything after it.
+  // #746 item 16: a stray punctuation backtick earlier in the text defeats
+  // CommonMark's greedy backtick pairing for every later inline code span -
+  // fix it before parsing, never inside a fenced block. Offsets below derive from THIS fixed string (escaping shifts everything after it).
   const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
-  // The frozen boundary only ever advances forward, and only once the live
-  // tail would exceed LIVE_TAIL_CHARS - re-freezing costs O(prefix length)
-  // each time (react-markdown re-parses the whole prefix, not just the new
-  // delta), so advancing every ~2000 chars instead of every paragraph keeps
-  // total streaming cost close to linear in answer length, not quadratic.
+  // The frozen boundary only advances forward, and only once the live tail
+  // would exceed LIVE_TAIL_CHARS: re-freezing re-parses the WHOLE prefix
+  // (O(prefix)), so ~2000-char steps keep total streaming cost near-linear, not quadratic.
   const frozenCutRef = useRef(0)
   if (!streaming) {
     frozenCutRef.current = 0
@@ -174,13 +139,9 @@ export function AssistantText({ text, streaming = false }: { text: string; strea
   )
 }
 
-// BubbleHeader is the compact author line atop an assistant bubble: who produced
-// it, what model, and how many tokens it cost. Shared by the answer bubble (a DAG
-// turn's terminal node, or the orchestrator's own plain reply) - real usage only,
-// no estimate: model/tokens are simply omitted when not (yet) known. `status`
-// is optional (#416): the live orchestrator card passes it to show a StatusDot
-// to the left of the name, matching DagNode's header - omitted for completed
-// turns and DAG-terminal-node attribution, which have no live status to show.
+// Compact author line atop an assistant bubble: real usage only, no
+// estimate - model/tokens omitted when not (yet) known. `status` is optional (#416):
+// only the live orchestrator card shows a StatusDot by the name (matching DagNode's header) - completed turns and DAG-terminal attribution have no live status.
 export function BubbleHeader({ agent, model, tokens, status }: { agent: string; model?: string; tokens?: number; status?: DotStatus }) {
   return (
     <div className="flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
@@ -224,11 +185,9 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
   )
 }
 
-// LiveStatusLine is the RUNNING substitute for ActivityList (#725): a full
-// activity list re-renders (markdown, Expandable, ToolCallView) on every
-// streamed SSE event, which is what locks the tab on a busy node. This only
-// ever renders two short lines - current thinking state + most recent tool
-// call - however long the run has been going or however much it's done.
+// The RUNNING substitute for ActivityList (#725): a full activity list
+// re-renders markdown/Expandable/ToolCallView on every streamed SSE event,
+// which locks the tab on a busy node; this renders two short lines (current thinking + latest tool call) no matter how long the run.
 export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   const { thinking, tool, compacted } = liveStatusLine(activity)
   if (!thinking && !tool && !compacted) return null
@@ -244,11 +203,9 @@ export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   )
 }
 
-// ThoughtIcon is a crisp inline SVG (currentColor, so it inherits the
-// muted text colour and stays legible in both themes) - replaces an earlier
-// emoji glyph that rendered pixelated/mismatched-colour on a dark background,
-// since emoji are drawn from the platform's colour-emoji font rather than the
-// surrounding text style.
+// Inline SVG with currentColor so it inherits the muted text colour in both
+// themes - replaces an earlier emoji glyph, which the platform colour-emoji
+// font rendered pixelated/mismatched on a dark background.
 function ThoughtIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16" className="shrink-0 w-3 h-3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -260,13 +217,9 @@ function ThoughtIcon() {
   )
 }
 
-// ThinkBlock renders reasoning as a single-line, collapsed-by-default summary
-// (an icon + "Thought" + a truncated preview of the text) that expands to the
-// full chain-of-thought - Open WebUI's cleaner ethos (#385): scannable at a
-// glance, full detail on demand rather than a standing wall of text. Long
-// reasoning is height-locked (Expandable) once expanded so it still can't wall
-// off the node. A thin left rail (not a boxed card) keeps it visually
-// subordinate to the tool calls it sits beside.
+// Reasoning as a single-line, collapsed-by-default summary that expands to the
+// full chain-of-thought on demand (#385). Long reasoning is height-locked
+// (Expandable) once expanded so it can't wall off the node; a thin left rail (not a boxed card) keeps it visually subordinate to tool calls.
 function ThinkBlock({ text }: { text: string }) {
   return (
     <details className="group my-0.5 not-prose">
@@ -284,11 +237,9 @@ function ThinkBlock({ text }: { text: string }) {
   )
 }
 
-// CompactionBlock is a one-line inline row marking a mid-round history
-// rewrite - same collapsed-summary ethos as ThinkBlock/ToolBlock, but never
-// expands. adk reports no before/after conversation-size total (unlike the
-// pre-#1239 quack engine), so this shows the summarizer's own spend when
-// known and falls back to a bare label when it isn't.
+// One-line inline row marking a mid-round history rewrite; never expands.
+// adk reports no before/after conversation-size total (unlike the pre-#1239
+// quack engine), so this shows the summarizer's own spend when known and falls back to a bare label otherwise.
 function CompactionBlock({ summaryInputTokens, summaryOutputTokens }: { summaryInputTokens?: number; summaryOutputTokens?: number }) {
   const hasTokens = !!summaryInputTokens || !!summaryOutputTokens
   return (
@@ -305,11 +256,9 @@ function CompactionBlock({ summaryInputTokens, summaryOutputTokens }: { summaryI
   )
 }
 
-// AcpBadge marks a tool call that arrived over the Agent Client Protocol
-// (an external code-implementer/-reviewer/-explorer subprocess, #404): its
-// payload shapes aren't fully ours to control, so ToolCallView renders it
-// best-effort - the badge sets that expectation, and the copy button (always
-// present) is the escape hatch for whatever doesn't render nicely.
+// Marks a tool call that arrived over the Agent Client Protocol (an external
+// code-implementer/-reviewer/-explorer subprocess, #404): its payload shapes
+// aren't fully ours to control, so ToolCallView renders it best-effort and the always-present copy button is the escape hatch.
 export function AcpBadge() {
   return (
     <span
@@ -321,18 +270,9 @@ export function AcpBadge() {
   )
 }
 
-// ToolBlock renders a tool call as a single-line, collapsed-by-default summary
-// - a status icon, the tool name, and a truncated representative arg - that
-// expands to a per-tool rich view (ToolCallView): a diff for edit_file, a
-// formatted view for the other common tools, a tidy fallback otherwise.
-// Refined toward the same compact, low-noise ethos as ThinkBlock (#385): a
-// thin left rail on expand instead of a bordered card, and a check/cross
-// status icon (done vs failed) rather than the "working" dots once settled.
-  // The copy button sits in a sibling header row layered over the summary's
-  // right edge (#435), not nested inside the `<summary>` itself: a `<summary>`
-// is already the disclosure's own interactive control, and a button nested
-// inside it is invalid HTML that breaks keyboard use (Enter/Space on the
-// summary vs. the nested button conflict).
+// A single-line, collapsed-by-default tool-call summary expanding to a per-tool
+// rich view (ToolCallView: a diff for edit_file, formatted views otherwise);
+// #385 styling: thin left rail on expand, check/cross status icon instead of "working" dots once settled. The copy button sits in a sibling header row, not nested inside the <summary> (#435): a button inside a summary is invalid HTML that breaks keyboard use (Enter/Space conflict).
 export function ToolBlock({ tool }: { tool: ToolCall }) {
   // #1312 made the relay carry the real MCP tool name instead of "other",
   // so name alone is always meaningful now.
@@ -354,10 +294,9 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
   )
 }
 
-// ToolStatusIcon is the compact status marker heading a tool-call summary
-// line: the "working" dots while in flight, a check once it completed, a
-// cross when its result carried an error - status conveyed by icon+colour
-// together (WCAG 1.4.1), not colour alone.
+// Compact status marker heading a tool-call summary line: "working" dots in
+// flight, a check once it completed, a cross on error - status conveyed by
+// icon+colour together (WCAG 1.4.1), not colour alone.
 function ToolStatusIcon({ tool }: { tool: ToolCall }) {
   if (!tool.done) return <Dots variant="compact" size="w-1 h-1" />
   return toolFailed(tool.result)
@@ -365,15 +304,9 @@ function ToolStatusIcon({ tool }: { tool: ToolCall }) {
     : <Icon name="check" className="w-3 h-3 text-green-600 dark:text-green-400 shrink-0" />
 }
 
-// Dots is the "working" indicator. Two variants (#421): the chat-level answer
-// bubble's loading state ('chat', the default) keeps the three staggered
-// `animate-bounce` dots, gray to match the rest of the UI's muted status
-// chrome - count is deliberate there, confirmed elsewhere (#424) not to
-// shrink to one. The 'compact' variant (a single blue `animate-pulse` dot)
-// is for tight, high-multiplicity spots - a tool call's status icon, where a
-// chat can have several of these mounted at once and three independent
-// bounce timelines apiece added up to real animation cost without the
-// horizontal room three dots need anyway. `size` is a Tailwind w/h class pair.
+// The "working" indicator. Two variants (#421): 'chat' = three staggered
+// bounce dots - the count is deliberate, do not shrink to one (#424); 'compact'
+// = a single pulse dot for high-multiplicity spots where three independent bounce timelines are real animation cost. `size` is a Tailwind w/h class pair.
 export function Dots({ className = '', size = 'w-1.5 h-1.5', variant = 'chat' }: { className?: string; size?: string; variant?: 'chat' | 'compact' }) {
   if (variant === 'compact') {
     return (

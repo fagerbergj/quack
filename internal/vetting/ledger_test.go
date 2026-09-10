@@ -282,8 +282,7 @@ func TestBuildChangedFilesSectionCoverageOverCap(t *testing.T) {
 
 // TestBuildChangedFilesSectionUsesPerChatScope pins the coupling with per-chat
 // isolation: the worker writes into <root>/<user>/<chatID>/, so the judge must
-// re-read from the SAME per-chat dir. Reading from the per-user root (chatID
-// "") finds nothing - the exact silent no-op the chatID param prevents.
+// re-read from the SAME per-chat dir. Reading from the per-user root (chatID "") finds nothing - the exact silent no-op the chatID param prevents.
 func TestBuildChangedFilesSectionUsesPerChatScope(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -336,12 +335,9 @@ func TestActivityWrittenTracksCwd(t *testing.T) {
 	}
 }
 
-// TestGitCloneCountsAsRetrieval reenacts the live routing-failure's second
-// half (2026-07-10): a node following the research-git-repos flow CLONES a
+// TestGitCloneCountsAsRetrieval reenacts the live routing-failure's second half (2026-07-10): a node following the research-git-repos flow CLONES a
 // repo instead of web-fetching it, and grounded_in_retrieval fired because
-// git_clone landed in neither fetched nor seen. A successful clone must enter
-// act.clonedRepos/clonedDirs and satisfy the retrieval check, and the ledger
-// entry is unchanged.
+// git_clone landed in neither fetched nor seen. A successful clone must enter act.clonedRepos/clonedDirs and satisfy the retrieval check, and the ledger entry is unchanged.
 func TestGitCloneCountsAsRetrieval(t *testing.T) {
 	svc := session.InMemoryService()
 	ctx := context.Background()
@@ -435,9 +431,7 @@ func TestGitCloneFailureGetsNoRetrievalCredit(t *testing.T) {
 
 // TestJudgeRereadsFilesWrittenUnderTheNodeDir pins the judge's changed-file
 // re-read to the PER-NODE scope: a worker's relative write lands under
-// <chat>/<nodeID>/ (the node's default cwd), so the replay must start from the
-// node dir - otherwise the judge resolves against the chat root, reads nothing,
-// and its "read the real files" behaviour silently degrades to a no-op.
+// <chat>/<nodeID>/ (the node's default cwd), so the replay must start from the node dir - otherwise the judge resolves against the chat root, reads nothing, and its "read the real files" behaviour silently degrades to a no-op.
 func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -457,9 +451,7 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 
 	// The worker cd'd into its clone and wrote. `cd` reports its new dir
 	// NODE-relative ("repo", not "<nodeID>/repo"): the node dir is an invisible
-	// root the model never sees, so the replay must re-apply it - otherwise the
-	// judge resolves the write against the chat root, reads NOTHING, and silently
-	// degrades to trusting the answer's self-report.
+	// root the model never sees, so the replay must re-apply it - otherwise the judge resolves the write against the chat root, reads NOTHING, and silently degrades to trusting the answer's self-report.
 	sess := newTestSession(t,
 		fnCall("c1", "cd", map[string]any{"dir": "repo"}),
 		fnResp("c1", "cd", map[string]any{"dir": "repo"}),
@@ -477,8 +469,7 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 
 // TestWebFetchEntersWorkspaceLedger pins the grounding trace: a worker that web-fetches repo
 // files instead of reading the local clone must leave a visible ledger trace
-// (previously ZERO - the judge had nothing to catch it with), while still
-// feeding the existing citation-backing bookkeeping (recordFetch) unchanged.
+// while still feeding the existing citation-backing bookkeeping (recordFetch) unchanged.
 func TestWebFetchEntersWorkspaceLedger(t *testing.T) {
 	const url = "https://raw.githubusercontent.com/example/repo/main/internal/tools/exa.go"
 	sess := newTestSession(t,

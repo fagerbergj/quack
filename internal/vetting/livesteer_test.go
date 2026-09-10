@@ -119,8 +119,7 @@ func newLookUpTool(t *testing.T) tool.Tool {
 
 // #1029: a steer queued while a NATIVE (non-ACP) node is running must reach
 // the model. Live steering is registered only on the ACP path, so for the four
-// native agents the message sits in the queue until the next gate boundary -
-// minutes away, or never. It must land on the round's next model call.
+// native agents the message sits in the queue until the next gate boundary - minutes away, or never. It must land on the round's next model call.
 func TestRunGatedRefine_SteerReachesRunningNativeNode(t *testing.T) {
 	ctrl := &steerCtrl{}
 	stub := &steerStub{ctrl: ctrl}

@@ -14,10 +14,7 @@ import (
 
 // TestResumePausedDagNodes_DoesNotTouchLiveInstanceNodes is issue #683's core
 // repro: a second Store opened against the same database (a CLI subcommand's
-// startup, sharing QUACK_DATABASE_URL with a running server) must not fail a
-// node a live instance owns, even without #683's other fix (InProcess never
-// calling FailStaleDagNodes at all) - this proves the reconciliation query
-// itself is safe.
+// startup, sharing QUACK_DATABASE_URL with a running server) must not fail a node a live instance owns, even without #683's other fix (InProcess never calling FailStaleDagNodes at all) - this proves the reconciliation query itself is safe.
 func TestResumePausedDagNodes_DoesNotTouchLiveInstanceNodes(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()
@@ -157,8 +154,7 @@ func TestResumePausedDagNodes_ConcurrentServersDontFailEachOther(t *testing.T) {
 
 // TestResumePausedDagNodes_ReconcilesPreMigrationRows proves an existing
 // database upgrades cleanly: a row written before InstanceID existed (empty
-// column, simulated here by inserting outside UpsertDagNode's stamping)
-// must not be read as "belongs to some other instance" and become immortal.
+// column, simulated here by inserting outside UpsertDagNode's stamping) must not be read as "belongs to some other instance" and become immortal.
 func TestResumePausedDagNodes_ReconcilesPreMigrationRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()
@@ -193,9 +189,7 @@ func TestResumePausedDagNodes_ReconcilesPreMigrationRows(t *testing.T) {
 
 // TestResumePausedDagNodes_MigratesExistingDatabaseCleanly is the literal
 // upgrade case: a dag_nodes table that predates the InstanceID/UpdatedAt
-// columns, with a row already stuck in "running". AutoMigrate must add the
-// columns without erroring on the existing row, and that row must not
-// become unreconcilable (immortal) just because it belongs to nobody.
+// columns, with a row already stuck in "running". AutoMigrate must add the columns without erroring on the existing row, and that row must not become unreconcilable (immortal) just because it belongs to nobody.
 func TestResumePausedDagNodes_MigratesExistingDatabaseCleanly(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()
@@ -242,8 +236,7 @@ func TestResumePausedDagNodes_MigratesExistingDatabaseCleanly(t *testing.T) {
 
 // TestResumePausedDagNodes_StaleNodeCeilingCatchesPermanentOrphan is the
 // dead-man's-switch: a node whose owning instance never comes back (its
-// persisted identity file lost, e.g. a fresh volume) must still get cleaned
-// up eventually rather than staying in-flight forever.
+// persisted identity file lost, e.g. a fresh volume) must still get cleaned up eventually rather than staying in-flight forever.
 func TestResumePausedDagNodes_StaleNodeCeilingCatchesPermanentOrphan(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()

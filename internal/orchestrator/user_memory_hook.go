@@ -19,10 +19,7 @@ import (
 
 // userMemoryPreFilter: cheap gate on whether a message might state a
 // preference. Narrowed to preference-shaped phrases (#1283 audit finding 9):
-// bare never/always/instead of/don't fired on 26.1% of a 2,389-paragraph
-// technical-prose corpus (this repo's commit messages) - four keywords alone
-// were 91% of those hits. This alternation measured 0.3% on the same corpus
-// while still matching "always use tabs".
+// bare never/always/instead of/don't fired on 26.1% of a 2,389-paragraph technical-prose corpus (this repo's commit messages) - four keywords alone were 91% of those hits. This alternation measured 0.3% on the same corpus while still matching "always use tabs".
 var userMemoryPreFilter = regexp.MustCompile(`(?i)\b(from now on|going forward|by default|as a rule|remember that|for me|i (prefer|like|want|need|hate|love)|(please )?(always|never) (use|do|write|make|include|add|call|run|reply|respond|ask|prefer))\b`)
 
 // memoryAgentAppName/etc: throwaway in-memory session per call, isolated by a

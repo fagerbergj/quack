@@ -20,9 +20,8 @@ import (
 )
 
 // PlanRejectedError: the plan judge declined a proposed plan. Reason is the
-// judge's own internal text - callers must never surface it as a user-facing
-// answer (#693); it belongs in logs and the ledger, which judgeRouting already
-// writes it to.
+// judge's internal text - never surface it as a user-facing answer (#693);
+// it belongs in logs and the ledger, which judgeRouting already writes it to.
 type PlanRejectedError struct {
 	Reason string
 }
@@ -290,8 +289,7 @@ func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 
 // AttachmentDesc: description of attachment MIME types for the text-only
 // orchestrator. Attachments are artifactref reference parts (FileData) by
-// the time they reach here, not InlineData - both are checked so this stays
-// correct if a caller ever hands it raw InlineData directly.
+// the time they reach here, not InlineData - both are checked for raw-InlineData callers.
 func AttachmentDesc(parts []*genai.Part) string {
 	if len(parts) == 0 {
 		return ""
