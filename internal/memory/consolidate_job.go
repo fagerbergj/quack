@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"slices"
@@ -96,19 +98,69 @@ func (s *Store) consolidateOnce(ctx context.Context) {
 		s.log.Warn("consolidation sweep: list failed", "err", err)
 		return
 	}
-	clusters, applied := 0, 0
+	clusters, skipped, called, applied := 0, 0, 0, 0
 	for _, bucket := range slices.Sorted(maps.Keys(byBucket)) { // deterministic order
 		for _, cluster := range burstClusters(byBucket[bucket]) {
 			clusters++
+			fp := clusterFingerprint(cluster)
+			if clusterFingerprintMatches(cluster, fp) {
+				// Same members, same wording as the sweep that already judged this
+				// burst a pure no-op - re-asking the model can only repeat that answer.
+				skipped++
+				continue
+			}
+			called++
 			n, err := s.consolidateCluster(ctx, bucket, cluster)
 			if err != nil {
 				s.log.Warn("consolidation sweep: cluster failed", "bucket", bucket, "err", err)
 				continue
 			}
 			applied += n
+			if n == 0 {
+				s.stampClusterNoChange(ctx, cluster, fp)
+			}
 		}
 	}
-	s.log.Info("consolidation sweep", "clusters", clusters, "ops_applied", applied)
+	s.log.Info("consolidation sweep", "clusters", clusters, "skipped", skipped, "called", called, "ops_applied", applied)
+}
+
+// clusterFingerprint hashes a burst's sorted member ids+content; any
+// membership or wording change yields a different value next sweep.
+func clusterFingerprint(cluster []scored) string {
+	keys := make([]string, len(cluster))
+	for i, p := range cluster {
+		keys[i] = p.ID + "\x00" + p.Content
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{0x01})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// clusterFingerprintMatches reports whether the last sweep already judged
+// this exact burst (same fp) a pure no-op.
+func clusterFingerprintMatches(cluster []scored, fp string) bool {
+	for _, p := range cluster {
+		if p.ConsolidateFP != fp {
+			return false
+		}
+	}
+	return true
+}
+
+// stampClusterNoChange records fp after a writes=0 result - apply() never
+// touches a NOOP'd point, so nothing else persists this.
+func (s *Store) stampClusterNoChange(ctx context.Context, cluster []scored, fp string) {
+	ids := make([]string, len(cluster))
+	for i, p := range cluster {
+		ids[i] = p.ID
+	}
+	if err := s.idx.stampConsolidateFP(ctx, ids, fp); err != nil {
+		s.log.Warn("consolidation sweep: fingerprint stamp failed", "err", err)
+	}
 }
 
 // burstClusters groups pts (already one bucket, already filtered to

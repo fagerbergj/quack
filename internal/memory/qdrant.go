@@ -57,6 +57,9 @@ const (
 	// payloadAbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
 	payloadAbsorbedIDs = "absorbed_ids"
 	payloadHumanVote   = "human_vote"
+
+	// payloadConsolidateFP: see scored.ConsolidateFP.
+	payloadConsolidateFP = "consolidate_fp"
 )
 
 // Open connects to Qdrant at addr (host:port gRPC) and returns a memory Store
@@ -183,6 +186,7 @@ func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, scor
 		LastRecalledAt:     payloadString(payload, payloadLastRecalledAt),
 		AbsorbedIDs:        splitIDs(payloadString(payload, payloadAbsorbedIDs)),
 		HumanVote:          payloadString(payload, payloadHumanVote),
+		ConsolidateFP:      payloadString(payload, payloadConsolidateFP),
 		Score:              score,
 		Vector:             vec,
 	}
@@ -1039,6 +1043,25 @@ func (x *qdrantIndex) updateBucket(ctx context.Context, id, bucket string) error
 		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{id})}}},
 	}); err != nil {
 		return fmt.Errorf("memory: set payload rescope: %w", err)
+	}
+	return nil
+}
+
+// stampConsolidateFP sets consolidate_fp on every id in one SetPayload call -
+// a bulk payload-only mutation, no re-embed, no per-id round trip.
+func (x *qdrantIndex) stampConsolidateFP(ctx context.Context, ids []string, fp string) error {
+	pids := idsToPointIDs(ids)
+	if len(pids) == 0 {
+		return nil
+	}
+	wait := true
+	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll,
+		Wait:           &wait,
+		Payload:        qdrant.NewValueMap(map[string]any{payloadConsolidateFP: fp}),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: pids}}},
+	}); err != nil {
+		return fmt.Errorf("memory: set payload consolidate fingerprint: %w", err)
 	}
 	return nil
 }
