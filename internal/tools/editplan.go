@@ -33,9 +33,9 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				"`agent` hires a new node, `node_id` from list_nodes reassigns one) keyed by node_id, drop " +
 				"assignments by node_id with `remove`, and/or update `setup`/`delivery`. Assignments not named " +
 				"here are left exactly as they are. Errors name the field and the fix: unknown agent, unknown " +
-				"depends_on id, a dependency cycle, an empty task, or a node currently running. Call after " +
-				"create_plan to correct or extend a plan before execute; call list_nodes first to reuse a node " +
-				"instead of hiring a new one.",
+				"depends_on id, a dependency cycle, an empty task, a node currently running, the same node_id " +
+				"twice in one call, or a `remove` id not in the current plan. Call after create_plan to correct " +
+				"or extend a plan before execute; call list_nodes first to reuse a node instead of hiring a new one.",
 		},
 		func(tc agent.Context, a editPlanArgs) (planUpsertResult, error) {
 			current, _, ok, err := loadDagPlan(tc, c)
@@ -49,7 +49,10 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				return planUpsertResult{}, fmt.Errorf("edit_plan: plan_id %q is stale - the current plan is %q", a.PlanID, current.PlanID)
 			}
 
-			remaining := removeAssignments(current.Assignments, a.Remove)
+			remaining, err := removeAssignments(current.Assignments, a.Remove)
+			if err != nil {
+				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
+			}
 
 			existingNodes, err := listDagNodeRecords(tc, c)
 			if err != nil {
@@ -85,16 +88,18 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				rec.Delivery = a.Delivery
 			}
 
+			// dag_plan (which validates) saves before any minted dag_node, so a
+			// rejected call leaves no orphan "hired" node behind for list_nodes.
 			now := time.Now().UTC()
-			for _, n := range minted {
-				lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
-				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, lineage); err != nil {
-					return planUpsertResult{}, fmt.Errorf("edit_plan: save dag_node %s: %w", n.NodeID, err)
-				}
-			}
 			lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
 			if _, _, err := c.SaveStructured(tc, "dag_plan", rec, "", lineage); err != nil {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
+			}
+			for _, n := range minted {
+				nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
+				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
+					return planUpsertResult{}, fmt.Errorf("edit_plan: save dag_node %s: %w", n.NodeID, err)
+				}
 			}
 
 			if yieldFn, ok := stream.YieldFromContext(tc); ok {
@@ -109,13 +114,24 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 }
 
 // removeAssignments drops every assignment whose node_id is in remove.
-func removeAssignments(assignments []dag.Assignment, remove []string) []dag.Assignment {
+// Errors on a remove id naming no current assignment - a typo must not
+// silently no-op.
+func removeAssignments(assignments []dag.Assignment, remove []string) ([]dag.Assignment, error) {
 	if len(remove) == 0 {
-		return assignments
+		return assignments, nil
 	}
 	drop := make(map[string]bool, len(remove))
 	for _, id := range remove {
 		drop[id] = true
+	}
+	present := make(map[string]bool, len(assignments))
+	for _, a := range assignments {
+		present[a.NodeID] = true
+	}
+	for _, id := range remove {
+		if !present[id] {
+			return nil, fmt.Errorf("remove: unknown node id %q - not in the current plan", id)
+		}
 	}
 	out := make([]dag.Assignment, 0, len(assignments))
 	for _, a := range assignments {
@@ -123,7 +139,7 @@ func removeAssignments(assignments []dag.Assignment, remove []string) []dag.Assi
 			out = append(out, a)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // mergeAssignments upserts upserts into current by node_id, preserving

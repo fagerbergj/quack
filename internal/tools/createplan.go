@@ -73,16 +73,18 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 				nodeAgent[n.NodeID] = n.Agent
 			}
 
+			// dag_plan (which validates) saves before any minted dag_node, so a
+			// rejected call leaves no orphan "hired" node behind for list_nodes.
 			now := time.Now().UTC()
-			for _, n := range minted {
-				lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
-				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, lineage); err != nil {
-					return planUpsertResult{}, fmt.Errorf("create_plan: save dag_node %s: %w", n.NodeID, err)
-				}
-			}
 			lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
 			if _, _, err := c.SaveStructured(tc, "dag_plan", rec, "", lineage); err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
+			}
+			for _, n := range minted {
+				nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
+				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
+					return planUpsertResult{}, fmt.Errorf("create_plan: save dag_node %s: %w", n.NodeID, err)
+				}
 			}
 
 			if yieldFn, ok := stream.YieldFromContext(tc); ok {

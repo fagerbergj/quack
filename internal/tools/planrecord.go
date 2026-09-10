@@ -172,6 +172,14 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 		}
 	}
 
+	seenNodeID := make(map[string]int, len(nodeIDs))
+	for i, id := range nodeIDs {
+		if j, dup := seenNodeID[id]; dup {
+			return nil, nil, fmt.Errorf("assignments[%d].node_id: %q is already assignments[%d] in this call - one assignment per node per plan", i, id, j)
+		}
+		seenNodeID[id] = i
+	}
+
 	assignments := make([]dag.Assignment, len(inputs))
 	for i, in := range inputs {
 		dependsOn := make([]string, len(in.DependsOn))
