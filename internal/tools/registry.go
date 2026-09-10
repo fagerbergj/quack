@@ -128,6 +128,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		if direct, err = emitWrap(direct, d.LedgerCoords); err != nil {
 			return nil, fmt.Errorf("tools: emit wrap %q: %w", name, err)
 		}
+		direct = newCtxBoundTool(direct)
 		out = append(out, direct)
 	}
 	return out, nil

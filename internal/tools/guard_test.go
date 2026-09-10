@@ -146,11 +146,16 @@ func TestBuildWrapsGuardedTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Build's outermost layer is now emitWrap (registry.go); the repeat guard
-	// (repeatguard.go) sits just inside it, and the guard-ladder wrapper inside that.
-	et0, ok := tools[0].(*emitTool)
+	// Build's outermost layer is now ctxBoundTool, then emitWrap (registry.go);
+	// the repeat guard (repeatguard.go) sits just inside that, and the
+	// guard-ladder wrapper inside that.
+	bt0, ok := tools[0].(*ctxBoundTool)
 	if !ok {
-		t.Fatalf("ask_user = %T, want *emitTool(outer)", tools[0])
+		t.Fatalf("ask_user = %T, want *ctxBoundTool(outer)", tools[0])
+	}
+	et0, ok := bt0.inner.(*emitTool)
+	if !ok {
+		t.Fatalf("ask_user = %T, want *emitTool", bt0.inner)
 	}
 	rg0, ok := et0.inner.(*repeatGuard)
 	if !ok {
@@ -159,9 +164,13 @@ func TestBuildWrapsGuardedTools(t *testing.T) {
 	if _, ok := rg0.inner.(*guardedTool); !ok {
 		t.Errorf("ask_user (guards: judge) inner = %T, want *guardedTool", rg0.inner)
 	}
-	et1, ok := tools[1].(*emitTool)
+	bt1, ok := tools[1].(*ctxBoundTool)
 	if !ok {
-		t.Fatalf("current_date = %T, want *emitTool(outer)", tools[1])
+		t.Fatalf("current_date = %T, want *ctxBoundTool(outer)", tools[1])
+	}
+	et1, ok := bt1.inner.(*emitTool)
+	if !ok {
+		t.Fatalf("current_date = %T, want *emitTool", bt1.inner)
 	}
 	rg1, ok := et1.inner.(*repeatGuard)
 	if !ok {

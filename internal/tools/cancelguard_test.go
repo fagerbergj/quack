@@ -84,9 +84,13 @@ func TestBuildWrapsEveryToolInTheCancelGuard(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	for i, tl := range guarded {
-		// emitWrap is now the true outermost layer (registry.go's Build) - unwrap
-		// it before checking for the cancel guard underneath.
-		et, ok := tl.(*emitTool)
+		// ctxBoundTool → emitTool is the true outermost pair (registry.go's
+		// Build) - unwrap both before checking for the cancel guard underneath.
+		bt, ok := tl.(*ctxBoundTool)
+		if !ok {
+			t.Fatalf("tool %q is not ctx-bound", names[i])
+		}
+		et, ok := bt.inner.(*emitTool)
 		if !ok {
 			t.Fatalf("tool %q is not emit-wrapped", names[i])
 		}
@@ -104,7 +108,11 @@ func TestBuildWrapsEveryToolInTheCancelGuard(t *testing.T) {
 		t.Fatalf("Build (no predicate): %v", err)
 	}
 	for i, tl := range plain {
-		et, ok := tl.(*emitTool)
+		bt, ok := tl.(*ctxBoundTool)
+		if !ok {
+			t.Fatalf("tool %q is not ctx-bound", names[i])
+		}
+		et, ok := bt.inner.(*emitTool)
 		if !ok {
 			t.Fatalf("tool %q is not emit-wrapped", names[i])
 		}
