@@ -62,10 +62,10 @@ func eligiblePlan() dag.Plan {
 	return dag.Plan{Nodes: []dag.Node{{ID: "a", AgentName: "code-explorer"}}}
 }
 
-// TestNeedsFormatPass_StructuredShortAnswerSkipsPass: #1283 finding 14 - a
-// short answer that already has Markdown structure is a near-identity
-// transform for the format pass, so it's skipped.
-func TestNeedsFormatPass_StructuredShortAnswerSkipsPass(t *testing.T) {
+// TestNeedsFormatPass_StructuredAnswerSkipsPass: an answer that already has
+// Markdown structure is a near-identity transform for the format pass, so
+// it's skipped regardless of length.
+func TestNeedsFormatPass_StructuredAnswerSkipsPass(t *testing.T) {
 	tests := []struct {
 		name   string
 		answer string
@@ -74,31 +74,23 @@ func TestNeedsFormatPass_StructuredShortAnswerSkipsPass(t *testing.T) {
 		{"heading further down", "Some intro.\n\n## Steps\n\n1. First\n2. Second"},
 		{"two-plus bullet items", "- First finding\n- Second finding\n- Third finding"},
 		{"two-plus numbered items", "1. First step\n2. Second step"},
+		{"long heading", "# Heading\n\n" + strings.Repeat("word ", 1200)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if needsFormatPass(eligiblePlan(), tt.answer) {
-				t.Errorf("needsFormatPass(%q) = true, want false (already structured and short)", tt.answer)
+				t.Errorf("needsFormatPass(%q) = true, want false (already structured)", tt.answer)
 			}
 		})
 	}
 }
 
 // TestNeedsFormatPass_UnstructuredLongAnswerNeedsPass: an answer with no
-// heading/list structure still needs the pass regardless of length, and a
-// long answer needs it even if it happens to contain some structure, since formatPassLengthCeiling gates the short-circuit.
+// heading/list structure still needs the pass regardless of length.
 func TestNeedsFormatPass_UnstructuredLongAnswerNeedsPass(t *testing.T) {
-	longUnstructured := strings.Repeat("word ", formatPassLengthCeiling/4)
+	longUnstructured := strings.Repeat("word ", 1200)
 	if !needsFormatPass(eligiblePlan(), longUnstructured) {
 		t.Error("a long unstructured answer must still get a format pass")
-	}
-
-	longStructured := "# Heading\n\n" + strings.Repeat("word ", formatPassLengthCeiling/4)
-	if len(longStructured) < formatPassLengthCeiling {
-		t.Fatalf("test fixture too short: %d bytes", len(longStructured))
-	}
-	if !needsFormatPass(eligiblePlan(), longStructured) {
-		t.Error("a structured answer at or above the length ceiling must still get a format pass")
 	}
 }
 
