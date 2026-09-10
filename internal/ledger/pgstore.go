@@ -94,17 +94,18 @@ func NewPGStore(db *gorm.DB) (*PGStore, error) {
 	return &PGStore{db: db}, nil
 }
 
-// recoverInvalidConcurrentIndex drops name if a prior CREATE INDEX
-// CONCURRENTLY died mid-build (OOM, process killed): Postgres marks such an
-// index invalid, and IF NOT EXISTS then treats "exists" as done forever.
+// recoverInvalidConcurrentIndex: IF NOT EXISTS treats an index Postgres
+// marked invalid (a CONCURRENTLY build killed mid-way) as done forever.
 func recoverInvalidConcurrentIndex(db *gorm.DB, name string) error {
 	var invalid int64
 	if err := db.Raw(
 		`SELECT count(*) FROM pg_index WHERE indexrelid = ?::regclass AND NOT indisvalid`, name,
 	).Scan(&invalid).Error; err != nil {
-		// The index may simply not exist yet (regclass cast fails) - that's
-		// the common case, not a failure to recover from.
-		return nil
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" { // undefined_table: name doesn't exist yet, the common case
+			return nil
+		}
+		return fmt.Errorf("ledger: check %s for an invalid build: %w", name, err)
 	}
 	if invalid == 0 {
 		return nil

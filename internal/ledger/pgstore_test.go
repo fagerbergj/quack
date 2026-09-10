@@ -417,10 +417,8 @@ func TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup(t *testing.T) 
 	}
 }
 
-// TestRecoverInvalidConcurrentIndex_DropsAndAllowsRebuild reproduces an
-// invalid index the same way Postgres itself produces one (a unique index
-// built concurrently over duplicate data always fails mid-build), then
-// checks recoverInvalidConcurrentIndex drops it so a rebuild can succeed.
+// TestRecoverInvalidConcurrentIndex_DropsAndAllowsRebuild: a unique index
+// built concurrently over duplicate data reproduces Postgres' real invalid-index shape without synthesizing one.
 func TestRecoverInvalidConcurrentIndex_DropsAndAllowsRebuild(t *testing.T) {
 	t.Parallel()
 	db := newTestPGDB(t)
