@@ -85,9 +85,11 @@ func ClearFailure(chatID, node, agent string) {
 	failuresMu.Unlock()
 }
 
-// toolRejectionsMu/toolRejections track the last `plan` tool rejection per
-// chat (#1180): a planner turn whose plan calls were all rejected and that
-// ends with no plan and no answer needs the same terminal-failure path as a gateway outage during planning, but the rejection text is quack's own dag.PlanRejectedError.Reason - never sanitized like a gateway error.
+// toolRejectionsMu/toolRejections track the last `execute` tool rejection per
+// chat: a planner turn whose execute calls were all rejected and that ends
+// with no plan and no answer needs the same terminal-failure path as a
+// gateway outage during planning, but the rejection text is quack's own
+// dag.PlanRejectedError.Reason - never sanitized like a gateway error.
 var (
 	toolRejectionsMu sync.Mutex
 	toolRejections   = map[string]string{}
