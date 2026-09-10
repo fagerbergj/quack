@@ -453,3 +453,59 @@ func TestLandlockTmpDirWarnsBeforeFallingBackToSharedTmp(t *testing.T) {
 		t.Errorf("expected a WARN log for the silent-fallback case, got: %s", out)
 	}
 }
+
+// TestResolveLandlockSelfExePrefersSidecar covers both branches: the sidecar
+// next to self when present, self when it isn't (dev/go test) or when the
+// name is taken by something other than a regular file.
+func TestResolveLandlockSelfExePrefersSidecar(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "quack")
+	if err := os.WriteFile(self, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolveLandlockSelfExe(self); got != self {
+		t.Errorf("resolveLandlockSelfExe() = %q, want self %q with no sidecar installed", got, self)
+	}
+
+	sidecar := filepath.Join(dir, "quack-sandbox")
+	if err := os.WriteFile(sidecar, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveLandlockSelfExe(self); got != sidecar {
+		t.Errorf("resolveLandlockSelfExe() = %q, want sidecar %q once it exists beside self", got, sidecar)
+	}
+
+	if err := os.Remove(sidecar); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sidecar, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveLandlockSelfExe(self); got != self {
+		t.Errorf("resolveLandlockSelfExe() = %q, want self %q when the sidecar path is a directory, not a file", got, self)
+	}
+	if err := os.Remove(sidecar); err != nil {
+		t.Fatal(err)
+	}
+
+	// A non-executable sidecar must not be chosen: it would turn every
+	// sandboxed exec into a confusing "permission denied".
+	if err := os.WriteFile(sidecar, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveLandlockSelfExe(self); got != self {
+		t.Errorf("resolveLandlockSelfExe() = %q, want self %q for a non-executable sidecar", got, self)
+	}
+	if err := os.Remove(sidecar); err != nil {
+		t.Fatal(err)
+	}
+
+	// A symlink must not be trusted either - it could point anywhere.
+	if err := os.Symlink(self, sidecar); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveLandlockSelfExe(self); got != self {
+		t.Errorf("resolveLandlockSelfExe() = %q, want self %q for a symlinked sidecar", got, self)
+	}
+}

@@ -73,6 +73,9 @@ type memoryRow struct {
 	// AbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
 	AbsorbedIDs string
 
+	// ConsolidateFP: see scored.ConsolidateFP.
+	ConsolidateFP string
+
 	Vector []byte
 }
 
@@ -131,6 +134,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			LastRecalledAt:     r.LastRecalledAt,
 			AbsorbedIDs:        splitIDs(r.AbsorbedIDs),
 			HumanVote:          r.HumanVote,
+			ConsolidateFP:      r.ConsolidateFP,
 			Score:              cosine(vec, rowVec),
 			Vector:             rowVec,
 		})
@@ -191,7 +195,7 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 			InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
 			Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
 			LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
-			AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote,
+			AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote, ConsolidateFP: r.ConsolidateFP,
 		}
 		if withVectors {
 			out[i].Vector = bytesToVec(r.Vector) // already loaded on the row; no extra query
@@ -218,7 +222,7 @@ func (x *sqliteIndex) getByID(ctx context.Context, id string) (scored, bool, err
 		InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
 		Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
 		LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
-		AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote,
+		AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote, ConsolidateFP: r.ConsolidateFP,
 	}, true, nil
 }
 
@@ -524,6 +528,19 @@ func (x *sqliteIndex) updateBucket(ctx context.Context, id, bucket string) error
 		Where("collection = ? AND id = ?", x.coll, id).
 		Update("scope", bucket).Error; err != nil {
 		return fmt.Errorf("memory: sqlite rescope: %w", err)
+	}
+	return nil
+}
+
+// stampConsolidateFP sets consolidate_fp on every id in one UPDATE.
+func (x *sqliteIndex) stampConsolidateFP(ctx context.Context, ids []string, fp string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND id IN ?", x.coll, ids).
+		Update("consolidate_fp", fp).Error; err != nil {
+		return fmt.Errorf("memory: sqlite stamp consolidate fingerprint: %w", err)
 	}
 	return nil
 }
