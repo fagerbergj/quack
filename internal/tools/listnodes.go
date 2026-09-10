@@ -19,21 +19,23 @@ type nodeSummary struct {
 	NodeID    string   `json:"node_id"`
 	Agent     string   `json:"agent"`
 	Status    string   `json:"status"`
+	ContextID string   `json:"context_id,omitempty"`
 	LastTask  string   `json:"last_task,omitempty"`
 	Artifacts []string `json:"artifacts,omitempty"`
 }
 
 // NewListNodesTool: this chat's nodes - people already hired to do an
-// agent's job, with id, agent, live status, the first line of their latest
-// assignment, and the artifacts they've written. nodeIsRunning is nil-safe.
+// agent's job, with id, agent, live status, A2A context_id, the first line
+// of their latest assignment, and the artifacts they've written.
+// nodeIsRunning is nil-safe.
 func NewListNodesTool(c *recordstore.Client, nodeIsRunning func(nodeID string) bool) (tool.Tool, error) {
 	return functiontool.New[listNodesArgs, string](
 		functiontool.Config{
 			Name: "list_nodes",
 			Description: "List this chat's nodes: people already hired to do an agent's job, with their id, " +
-				"agent, live status, the first line of their current assignment, and the artifacts they've " +
-				"written. Call before create_plan/edit_plan to reuse an existing node instead of hiring a new " +
-				"one for the same job.",
+				"agent, live status, A2A context_id, the first line of their current assignment, and the " +
+				"artifacts they've written. Call before create_plan/edit_plan to reuse an existing node instead " +
+				"of hiring a new one for the same job.",
 		},
 		func(ctx agent.Context, _ listNodesArgs) (string, error) {
 			summaries, err := buildNodeSummaries(ctx, c, nodeIsRunning)
@@ -70,7 +72,10 @@ func buildNodeSummaries(ctx context.Context, c *recordstore.Client, nodeIsRunnin
 			status = "running"
 		}
 		arts, _ := nodeArtifactIDs(ctx, c, n.NodeID)
-		out = append(out, nodeSummary{NodeID: n.NodeID, Agent: n.Agent, Status: status, LastTask: lastTask[n.NodeID], Artifacts: arts})
+		out = append(out, nodeSummary{
+			NodeID: n.NodeID, Agent: n.Agent, Status: status, ContextID: n.ContextID,
+			LastTask: lastTask[n.NodeID], Artifacts: arts,
+		})
 	}
 	return out, nil
 }
