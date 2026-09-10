@@ -19,8 +19,7 @@ func (p *parkCtrl) MarkDelivered()         {}
 
 // TestParkForInput: a worker question folds into the one pause path -
 // markPaused(awaiting_input) with the question - and returns ErrNodePaused,
-// the single sentinel quack code checks. ADK's own ErrNodeInterrupted stays
-// in the chain because the engine keys the park off it.
+// the single sentinel quack code checks. ADK's own ErrNodeInterrupted stays in the chain because the engine keys the park off it.
 func TestParkForInput(t *testing.T) {
 	ctrl := &parkCtrl{}
 	err := parkForInput(ctrl, "which region?", workflow.ErrNodeInterrupted)

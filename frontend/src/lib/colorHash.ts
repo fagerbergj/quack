@@ -1,14 +1,10 @@
 // Deterministic colour coding (#746 items 10/13): a repo badge or a memory
-// pill (bucket/author/kind) gets the same colour every time, derived from its
-// own label - not assignment order - so it survives a reload and is
-// identical across chats. Colour is always paired with the label text; it
-// is never the only signal (WCAG 1.4.1, and this tool's terminal-adjacent
-// audience includes colour-blind readers).
+// pill (bucket/author/kind) gets the same colour every time, derived from
+// its own label - not assignment order - so it survives a reload and is identical across chats. Colour is always paired with the label text; it is never the only signal (WCAG 1.4.1, and this tool's terminal-adjacent audience includes colour-blind readers).
 
 // A fixed, named palette - every class below is a literal string so
 // Tailwind's scanner generates the CSS; hashPalette only ever SELECTS one of
-// these, never constructs a class name at runtime. Each entry pairs a light
-// and dark background with a same-hue text colour chosen for contrast.
+// these, never constructs a class name at runtime. Each entry pairs a light and dark background with a same-hue text colour chosen for contrast.
 const PALETTE = [
   'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
   'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',

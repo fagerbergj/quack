@@ -12,8 +12,7 @@ import (
 
 // TestSendChatMessage_UnknownChat404 pins finding 2: an unknown chat_id must
 // 404 BEFORE the SSE stream opens - never an in-stream error event.
-// TestSendChatMessage_ResponseCreatedFirst (nodestatus_test.go) already
-// covers the happy-path stream for a real chat.
+// TestSendChatMessage_ResponseCreatedFirst (nodestatus_test.go) already covers the happy-path stream for a real chat.
 func TestSendChatMessage_UnknownChat404(t *testing.T) {
 	h := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chats/no-such-chat/responses", strings.NewReader(`{"content":"hi"}`))

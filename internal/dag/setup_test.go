@@ -58,11 +58,7 @@ func TestSetupQualifyingNodes(t *testing.T) {
 
 // TestIsReviewOnlySetup pins the full truth table from #555: an explorer can
 // no more create a branch than a reviewer can, so it must not flip
-// review-only to false, but an implementer anywhere in the set always does.
-// An explorer-only plan is NOT review-only: that is the plan-only/research
-// shape run against an ISSUE, which has no PR head to check out. Classifying
-// it as a review made OverrideExistingPRHead demand a head ref that never
-// exists there, and the planner thrashed against the error (NightsOut#57).
+// review-only to false, but an implementer anywhere in the set always does. An explorer-only plan is NOT review-only: that is the plan-only/research shape run against an ISSUE, which has no PR head to check out - classifying it as a review made OverrideExistingPRHead demand a head ref that never exists there, and the planner thrashed against the error (NightsOut#57).
 func TestIsReviewOnlySetup(t *testing.T) {
 	tests := []struct {
 		name string
@@ -101,9 +97,8 @@ func TestIsReviewOnlySetup(t *testing.T) {
 }
 
 // TestOverrideExistingPRHead pins #520: a review of a PR with head
-// "feat/oidc-auth" must end up with Setup.WorkBranch == "feat/oidc-auth", not
-// whatever the planner invented (e.g. "quack-auto-review/review-pr-520",
-// which doesn't exist as a remote ref and fatals the setup fetch).
+// "feat/oidc-auth" must end up with Setup.WorkBranch == "feat/oidc-auth",
+// not whatever the planner invented (e.g. "quack-auto-review/review-pr-520", which doesn't exist as a remote ref and fatals the setup fetch).
 func TestOverrideExistingPRHead(t *testing.T) {
 	reviewPlan := func(workBranch string) *Plan {
 		return &Plan{
@@ -140,9 +135,7 @@ func TestOverrideExistingPRHead(t *testing.T) {
 
 	// #625: an implementer node used to leave WorkBranch (and
 	// CheckoutExistingHead) untouched even when the run is bound to a real
-	// existing PR head - runPlanSetup then did `checkout -b` off base, and
-	// delivery's force-push overwrote the PR branch, destroying its commits
-	// (observed live on NightsOut#92: original commit 6abb8ef gone).
+	// existing PR head - runPlanSetup then did `checkout -b` off base, and delivery's force-push overwrote the PR branch, destroying its commits (observed live on NightsOut#92: original commit 6abb8ef gone).
 	t.Run("implement plan bound to an existing PR: forced onto that head, not the planner's new-branch name", func(t *testing.T) {
 		p := implementPlan("quack/new-feature")
 		if err := OverrideExistingPRHead(p, "feat/oidc-auth"); err != nil {
@@ -179,10 +172,7 @@ func TestOverrideExistingPRHead(t *testing.T) {
 
 // TestRunPlanSetup_PassesThroughCheckoutExistingHead pins #625: runPlanSetup
 // must pass Setup.CheckoutExistingHead to setupFn EXACTLY as
-// OverrideExistingPRHead already decided it, for every node composition -
-// never recompute it from the plan's nodes (the bug: "reviewer-only" true,
-// "any implementer" always false, regardless of whether the run is actually
-// bound to an existing PR head).
+// OverrideExistingPRHead already decided it, for every node composition - never recompute it from the plan's nodes (the bug: "reviewer-only" true, "any implementer" always false, regardless of whether the run is actually bound to an existing PR head).
 func TestRunPlanSetup_PassesThroughCheckoutExistingHead(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -246,12 +236,7 @@ func TestProvision_MarksProvisionedAndSkipsOnSecondCall(t *testing.T) {
 
 // TestProvision_ClonefailureIsHumanReadable pins #848's other half: a clone
 // failure must read as "plan setup failed: repository ... is unreachable
-// (fatal: ...)" - the git STDERR reason is kept (it's the useful part), but
-// runGit's leading "git clone --quiet ...: " argv dump is stripped, since
-// that's what "the raw git fatal in chat" actually meant live: the full
-// invocation, not just the reason. Also must still satisfy errors.Is against
-// the underlying cause, so callers that inspect it (e.g. RunPlanAsGraph's
-// error wrapping) keep working.
+// (fatal: ...)" - the git STDERR reason is kept (it's the useful part), but runGit's leading "git clone --quiet ...: " argv dump is stripped, since that's what "the raw git fatal in chat" actually meant live: the full invocation, not just the reason. Also must still satisfy errors.Is against the underlying cause, so callers that inspect it (e.g. RunPlanAsGraph's error wrapping) keep working.
 func TestProvision_ClonefailureIsHumanReadable(t *testing.T) {
 	// Mirrors runGit's actual error shape (internal/tools/git.go): "git
 	// <argv...>: <stderr>" - this IS what SetupClone returns on a real
@@ -294,8 +279,7 @@ func (e *fakeCleanupError) LocalCleanupFailure() {}
 
 // TestProvision_LocalCleanupFailureIsNeverWordedUnreachable is #1213: a
 // stale-clone removal failure is local disk cleanup, not a fetch failure -
-// it must surface verbatim, never wrapped into the "repository is
-// unreachable" text real fetch failures use.
+// it must surface verbatim, never wrapped into the "repository is unreachable" text real fetch failures use.
 func TestProvision_LocalCleanupFailureIsNeverWordedUnreachable(t *testing.T) {
 	cause := &fakeCleanupError{msg: "setup: could not clear stale clone dir /workspace/local/x/quack-shared-repo: permission denied"}
 	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error { return cause }}
@@ -347,8 +331,7 @@ func TestRunPlanSetup_NoQualifyingNodeIsNoOp(t *testing.T) {
 
 // TestRunPlanSetup_ExplorerOnlyProvisionsClone pins #555: a plan whose ONLY
 // repo-touching node is an explorer must still provision the shared clone -
-// before the fix, setupQualifyingNodes excluded explorers entirely, so
-// runPlanSetup no-op'd and the explorer ran in an empty directory.
+// before the fix, setupQualifyingNodes excluded explorers entirely, so runPlanSetup no-op'd and the explorer ran in an empty directory.
 func TestRunPlanSetup_ExplorerOnlyProvisionsClone(t *testing.T) {
 	called := false
 	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error {
@@ -536,10 +519,7 @@ func (c *int32Counter) get() int { c.mu.Lock(); defer c.mu.Unlock(); return c.n 
 
 // TestOverrideExistingPRHeadIgnoresExplorerOnlyPlan pins the NightsOut#57
 // regression: a plan-only run on an ISSUE (explorers grounding a plan, no
-// reviewer, no implementer) has no PR and so no head ref. Once explorers
-// became setup-qualifying nodes (#556), "no implementer" alone read as
-// review-only and this errored out - the planner then thrashed against the
-// failure and posted its raw reasoning as the plan.
+// reviewer, no implementer) has no PR and so no head ref. Once explorers became setup-qualifying nodes (#556), "no implementer" alone read as review-only and this errored out - the planner then thrashed against the failure and posted its raw reasoning as the plan.
 func TestOverrideExistingPRHeadIgnoresExplorerOnlyPlan(t *testing.T) {
 	p := &Plan{
 		Nodes: []Node{{ID: "explore", AgentName: explorerAgent}},

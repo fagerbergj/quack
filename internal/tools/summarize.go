@@ -41,7 +41,6 @@ func newSummarize(d Deps) (tool.Tool, error) {
 	)
 }
 
-// summarizeText runs one model round-trip to condense text, optionally focused.
 func summarizeText(ctx context.Context, m model.LLM, text, focus string) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {

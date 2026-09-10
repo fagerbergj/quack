@@ -8,9 +8,8 @@ import (
 )
 
 // writableGateCfg mimics a real code-implementer's startup-time config
-// (internal/serve/serve.go's perAgentGateCfg): ACP-backed, writable, with a
-// delivery target wired - the shape a plan run's cfgFor hands back
-// regardless of what the run itself asked for.
+// (serve.go's perAgentGateCfg): ACP-backed, writable, delivery target wired -
+// the shape a plan run's cfgFor hands back regardless of the run's ask.
 func writableGateCfg() vetting.Config {
 	return vetting.Config{
 		ExternalWorker: true,
@@ -106,10 +105,9 @@ func TestPlanOnlyImplementerNodeHasNoWritableCapability(t *testing.T) {
 	}
 }
 
-// TestNodeGateConfig_CarriesSource pins the token-metrics attribution
-// plumbing: nodeGateConfig's source parameter (extracted from the run's
-// ledger coords by RunPlanAsGraph/RetryPlanInNode, before any RunNode
-// scheduling) must land on cfg.Source, exactly like chatID lands on cfg.ChatID.
+// TestNodeGateConfig_CarriesSource pins token-metrics attribution: nodeGateConfig's source
+// parameter (extracted from the run's ledger coords by RunPlanAsGraph/RetryPlanInNode,
+// before any RunNode scheduling) must land on cfg.Source, like chatID on cfg.ChatID.
 func TestNodeGateConfig_CarriesSource(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(string) vetting.Config { return writableGateCfg() }
@@ -123,10 +121,9 @@ func TestNodeGateConfig_CarriesSource(t *testing.T) {
 	}
 }
 
-// TestReviewPlanWiresSynthesizerIntoFanout pins the #965 wiring: in a
-// two-reviewer + synthesizer plan, all three nodes share the run's
-// ReviewFanout, so the reviewers stage without delivering and the
-// synthesizer's answer becomes the one submitted review.
+// TestReviewPlanWiresSynthesizerIntoFanout pins the #965 wiring: reviewers and synthesizer
+// share the run's ReviewFanout, so reviewers stage without delivering and the synthesizer's
+// answer becomes the one submitted review.
 func TestReviewPlanWiresSynthesizerIntoFanout(t *testing.T) {
 	plan := Plan{ID: t.Name(), Nodes: []Node{
 		{ID: "review-backend", AgentName: reviewerAgent},

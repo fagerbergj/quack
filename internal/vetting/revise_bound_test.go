@@ -39,8 +39,7 @@ func TestBoundExcerpt(t *testing.T) {
 
 // A pathological revise input (huge original prompt embedding upstream outputs,
 // huge previous answer, huge activity ledger, huge feedback) must not produce an
-// unbounded contents[0]. The composed prompt stays within a documented cap and
-// carries truncation markers; small inputs pass through verbatim.
+// unbounded contents[0]. The composed prompt stays within a documented cap and carries truncation markers; small inputs pass through verbatim.
 func TestBuildRevisionContentBounded(t *testing.T) {
 	huge := func(c byte, n int) string { return strings.Repeat(string(c), n) }
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: huge('Q', 200_000)}}}

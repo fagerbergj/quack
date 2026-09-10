@@ -133,10 +133,7 @@ func mergeMemoryHits(base, add []memory.Delivered) []memory.Delivered {
 
 // recallLedgerEntry appends a best-effort memory.recall ledger entry for one
 // injection (design decision #1255 P1: the ledger is the source of truth for
-// what a chat retrieved). Best-effort, unlike memory.vote below: it records
-// a delivery that already happened, and nothing is projected from it in the
-// hot path (recalls/last_recalled_at are bumped directly by the caller,
-// independent of this entry) - same observational pattern as appendNodeEvent.
+// what a chat retrieved). Best-effort, unlike memory.vote below: it records a delivery that already happened, and nothing is projected from it in the hot path (recalls/last_recalled_at are bumped directly by the caller, independent of this entry) - same observational pattern as appendNodeEvent.
 func recallLedgerEntry(ctx context.Context, cfg Config, nodeID string, round int, source string, received []memory.Delivered) {
 	if cfg.Ledger == nil || len(received) == 0 {
 		return
@@ -151,8 +148,7 @@ func recallLedgerEntry(ctx context.Context, cfg Config, nodeID string, round int
 	}
 	// Agent/Round are stamped explicitly from cfg/the round argument, not read
 	// off ctx - a ctx value set inside a node body never crosses the RunNode
-	// scheduling boundary (same SetLedgerCoords discipline as the worker/judge
-	// model stamps; #1259).
+	// scheduling boundary (same SetLedgerCoords discipline as the worker/judge model stamps; #1259).
 	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
 		ChatID: cfg.ChatID, NodeID: nodeID, Agent: cfg.Agent, Round: strconv.Itoa(round),
 		Kind: ledger.KindMemoryRecall, At: time.Now().UTC(), Payload: payload,
@@ -165,12 +161,9 @@ func recallLedgerEntry(ctx context.Context, cfg Config, nodeID string, round int
 // called only after the gate passes (failed rounds record nothing, per
 // #1255 P1). received scopes which ids are even eligible: a vote for an id
 // the worker was never given is dropped rather than trusted blindly.
-//
 // memory.vote is fail-closed, same discipline as artifact.revision: the
 // point mutation (upvotes/score/tier) is a PROJECTION of the ledger entry,
-// so the entry is appended via AppendIntent BEFORE the point is touched. A
-// failed append skips that vote's mutation entirely (logged, not applied) -
-// unlike memory.recall (recallLedgerEntry), nothing else backs this write.
+// so the entry is appended via AppendIntent BEFORE the point is touched - a failed append skips that vote's mutation entirely (logged, not applied), and unlike memory.recall (recallLedgerEntry), nothing else backs this write.
 func applyMemoryVotesOnPass(ctx context.Context, cfg Config, nodeID string, round int, received []memory.Delivered, votes []memoryVerdict) {
 	if cfg.Memory == nil || len(votes) == 0 || len(received) == 0 {
 		return

@@ -17,8 +17,7 @@ var m *metrics
 
 // InitMetricsForTesting installs meter's instruments as the package
 // singleton (test-only) - lets another package's test exercise a Record*
-// call against a real metric.ManualReader, the same way
-// SetLoggerProviderForTesting does for the ledger/log seam.
+// call against a real metric.ManualReader, the same way SetLoggerProviderForTesting does for the ledger/log seam.
 func InitMetricsForTesting(meter metric.Meter) error {
 	return initMetrics(meter)
 }
@@ -45,8 +44,7 @@ type metrics struct {
 
 // initMetrics builds every instrument from meter and installs it as the
 // package singleton. Returns an error if any instrument fails to build (an
-// OTel SDK bug, not an operator error) - callers should log and continue with
-// metrics disabled rather than fail startup over an observability seam.
+// OTel SDK bug, not an operator error) - callers should log and continue with metrics disabled rather than fail startup over an observability seam.
 func initMetrics(meter metric.Meter) error {
 	m2 := &metrics{}
 	var err error
@@ -310,9 +308,7 @@ func RecordRunNoAnswer() {
 
 // RecordTokenUsage records gen_ai.client.token.usage, one data point per
 // non-zero token type. model/agent/user/source empty ⇒ that attribute is
-// omitted (an unattributed call), never stamped with a fabricated value.
-// input MUST already exclude cached tokens (genai's PromptTokenCount
-// includes them) so the four token_type series never double-count.
+// omitted (an unattributed call), never stamped with a fabricated value. input MUST already exclude cached tokens (genai's PromptTokenCount includes them) so the four token_type series never double-count.
 func RecordTokenUsage(model, agent, user, source string, input, output, reasoning, cached int64) {
 	if m == nil {
 		return
@@ -332,8 +328,7 @@ func RecordTokenUsage(model, agent, user, source string, input, output, reasonin
 
 // RecordCost records gen_ai.client.cost (USD) for one completed call.
 // Callers only invoke this when a price is actually configured for the
-// model - there's no "0 means unpriced" here, since a real $0 call would be
-// indistinguishable.
+// model - there's no "0 means unpriced" here, since a real $0 call would be indistinguishable.
 func RecordCost(model, agent, user, source string, usd float64) {
 	if m == nil {
 		return
@@ -343,8 +338,7 @@ func RecordCost(model, agent, user, source string, usd float64) {
 
 // genAIUsageAttrs builds the shared attribute set for token.usage/cost,
 // omitting any empty field rather than stamping a zero-value placeholder.
-// agent stays the bare "agent" label here (not gen_ai.agent.name) - these two
-// instruments already ship with that label and renaming it breaks dashboards.
+// agent stays the bare "agent" label here (not gen_ai.agent.name) - these two instruments already ship with that label and renaming it breaks dashboards.
 func genAIUsageAttrs(model, agent, user, source, tokenType string) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, 5)
 	if model != "" {

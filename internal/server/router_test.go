@@ -48,10 +48,7 @@ func TestRouterHealthAlwaysPublic(t *testing.T) {
 
 // TestRouterHealthNonGetNeverReaches200Unauthenticated is the composed-stack
 // companion to TestRequireAuthExceptHealthMethodRestricted (package server):
-// with only GET registered for /health, a non-GET request never reaches an
-// authenticated 200 without credentials - chi's own method-not-allowed
-// handling covers it, but this pins the observable contract regardless of
-// which layer produces the rejection.
+// with only GET registered for /health, a non-GET request never reaches an authenticated 200 without credentials - chi's own method-not-allowed handling covers it, but this pins the observable contract regardless of which layer produces the rejection.
 func TestRouterHealthNonGetNeverReaches200Unauthenticated(t *testing.T) {
 	a, err := auth.New(&config.InboundAuthConfig{
 		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},
@@ -205,8 +202,7 @@ func TestRouterMountsSDKExtensionAtBareName(t *testing.T) {
 
 // TestRouterServesStaticSPAAssetVerbatim pins the split spaHandler relies
 // on: a real file under the embedded dist (e.g. frontend/public's
-// assets/ext/v1/kit.css, copied through verbatim by Vite) is served as
-// itself, not swallowed by the index.html client-route fallback.
+// assets/ext/v1/kit.css, copied through verbatim by Vite) is served as itself, not swallowed by the index.html client-route fallback.
 func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	spa := fstest.MapFS{
 		"index.html":                 &fstest.MapFile{Data: []byte("<html>spa</html>")},

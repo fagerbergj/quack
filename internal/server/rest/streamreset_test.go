@@ -36,10 +36,7 @@ func seedStaleTerminalRun(t *testing.T, h *Handler, chatID string) {
 
 // assertEventLogAlreadyReset fails if chatID's durable event log still
 // carries the stale marker - the state it must be in the instant a
-// run-starting handler responds, well before its background goroutine gets a
-// chance to run. It does not require the log to be totally empty: the new
-// run's own goroutine may already have raced ahead and appended its own
-// (legitimate) events by the time this runs.
+// run-starting handler responds, well before its background goroutine gets a chance to run. It does not require the log to be totally empty: the new run's own goroutine may already have raced ahead and appended its own (legitimate) events by the time this runs.
 func assertEventLogAlreadyReset(t *testing.T, h *Handler, chatID string) {
 	t.Helper()
 	evs, err := h.eventLog.LoadEvents(context.Background(), chatID, 0)
@@ -58,9 +55,7 @@ func assertEventLogAlreadyReset(t *testing.T, h *Handler, chatID string) {
 
 // TestStartNode_AwaitingInputResetsBeforeResponding pins finding 5: a
 // subscriber landing in a resumed node's start window must never replay the
-// previous run's terminal `done`. startNodeAsync used to reset the durable
-// event log from inside its own spawned goroutine, so a subscriber racing
-// the 200 could read the stale run straight off the durable table.
+// previous run's terminal `done`; startNodeAsync used to reset the durable event log from inside its own spawned goroutine, so a subscriber racing the 200 could read the stale run straight off the durable table.
 func TestStartNode_AwaitingInputResetsBeforeResponding(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"

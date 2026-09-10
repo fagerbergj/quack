@@ -21,7 +21,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// ── unit: parseGuardTier ─────────────────────────────────────────────────────
+// unit: parseGuardTier
 
 func TestParseGuardTier(t *testing.T) {
 	cases := []struct {
@@ -45,8 +45,8 @@ func TestParseGuardTier(t *testing.T) {
 	}
 }
 
-// ── unit: the judge tier (deny short-circuits, allow executes, missing judge
-//    fails closed) ────────────────────────────────────────────────────────────
+// unit: the judge tier (deny short-circuits, allow executes, missing judge
+//    fails closed)
 
 // fakeRunnable is a hand-rolled runnableTool that records executions - used
 // instead of a functiontool so unit tests need no agent.Context plumbing.
@@ -137,7 +137,7 @@ func TestGuardJudgeUnavailableFailsClosed(t *testing.T) {
 	}
 }
 
-// ── unit: Build applies the wrapper at registration time ────────────────────
+// unit: Build applies the wrapper at registration time
 
 func TestBuildWrapsGuardedTools(t *testing.T) {
 	tools, err := Build([]string{"ask_user", "current_date"}, Deps{
@@ -172,17 +172,13 @@ func TestBuildWrapsGuardedTools(t *testing.T) {
 	}
 }
 
-// ── integration: the confirm tier pauses the NODE via the adk_request_
+// integration: the confirm tier pauses the NODE via the adk_request_
 //    confirmation marker + the existing HITL park, and resumes on the human's
-//    decision (mirrors internal/dag/hitl_test.go's pause/resume pattern). ────
+//    decision (mirrors internal/dag/hitl_test.go's pause/resume pattern).
 
-// confirmStub drives the worker + the vetting judge:
-//   - judge requests (submit_verdict tool present) always pass;
-//   - a request whose history already carries the guarded tool's RESOLVED
-//     response (post-approval execution) → final answer;
-//   - a post-decision prompt saying APPROVED → re-issue the risky_op call;
-//   - a post-decision prompt saying DENIED → answer without the operation;
-//   - otherwise (fresh draft) → propose risky_op.
+// confirmStub drives the worker + the vetting judge: judge requests (submit_verdict
+// tool present) always pass; a history carrying the guarded tool's RESOLVED response
+// (post-approval) → final answer; APPROVED prompt → re-issue the risky_op call; DENIED → answer without the operation; otherwise (fresh draft) → propose risky_op.
 type confirmStub struct{}
 
 func (*confirmStub) Name() string { return "confirmStub" }
@@ -377,12 +373,9 @@ func TestGuardConfirmTier_PauseDenyResume(t *testing.T) {
 	}
 }
 
-// pinStub drives the args-pinning scenario: it proposes risky_op(target:x),
-// and after the human APPROVES it re-issues the call with DIFFERENT args
-// (target:EVIL) - modeling a steered/injected model swapping the operation
-// after approval. After the swapped call's own confirmation is DENIED, it
-// re-issues the ORIGINAL approved call (target:x), which must still consume
-// the original approval.
+// pinStub drives the args-pinning scenario: it proposes risky_op(target:x), and after
+// the human APPROVES it re-issues the call with DIFFERENT args (target:EVIL) -
+// modeling a steered/injected model; after that swapped call's confirmation is DENIED it re-issues the original (target:x), which must still consume the original approval.
 type pinStub struct{}
 
 func (*pinStub) Name() string { return "pinStub" }
@@ -411,11 +404,9 @@ func (s *pinStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 	}
 }
 
-// TestGuardConfirmTier_ApprovalPinnedToArgs: an approval is pinned to the
-// exact operation the human saw. A re-issued call with different arguments
-// must NOT consume it (and must not execute) - it becomes a fresh proposal
-// whose confirmation warns it DIFFERS - while the original approval stays
-// available for a later same-args call.
+// TestGuardConfirmTier_ApprovalPinnedToArgs: an approval is pinned to the exact
+// operation the human saw. A re-issued call with different arguments must NOT
+// consume it (nor execute it) - it becomes a fresh proposal whose confirmation warns it DIFFERS; the original approval stays available for a later same-args call.
 func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 	sessions := session.InMemoryService()
 	inner := &fakeRunnable{}
@@ -475,7 +466,7 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 	}
 }
 
-// ── unit: the safety-judge prompt carries every context section ─────────────
+// unit: the safety-judge prompt carries every context section
 
 func TestBuildSafetyJudgePrompt(t *testing.T) {
 	p := buildSafetyJudgePrompt("find the bug", "fix pkg X", "web_fetch", map[string]any{"url": "https://example.com"}, "  - read_file")

@@ -8,16 +8,9 @@ import (
 	"time"
 )
 
-// EnsureMermaidValidatorDeps provisions scripts/node_modules (npm ci) so the
-// mermaid validator tests just work on a fresh clone. Both internal/vetting's
+// EnsureMermaidValidatorDeps provisions scripts/node_modules (npm ci) so the mermaid validator tests just work on a fresh clone. Both internal/vetting's
 // and internal/tools' tests call this SAME function - they used to run their
-// own `npm ci` independently, which raced when go test ran both packages'
-// binaries in parallel against the same scripts/ directory.
-//
-// An flock-style lockfile serializes the provisioning across the separate OS
-// processes go test spawns per package (a sync.Once only dedupes within one
-// process). A stale lock (holder crashed mid-install) is reclaimed after
-// lockStaleAfter rather than wedging the suite forever.
+// own `npm ci` independently, which raced when go test ran both packages' binaries in parallel against the same scripts/ directory. An flock-style lockfile serializes the provisioning across the separate OS processes go test spawns per package (a sync.Once only dedupes within one process). A stale lock (holder crashed mid-install) is reclaimed after lockStaleAfter rather than wedging the suite forever.
 func EnsureMermaidValidatorDeps() error {
 	dir := filepath.Dir(mermaidValidatorPath)
 	if mermaidDepsPresent(dir) {
@@ -64,8 +57,7 @@ const (
 
 // acquireLock is an O_EXCL-based mutex across processes (not goroutines -
 // separate `go test` binaries per package can't share a Go-level lock). A
-// lock file older than lockStaleAfter is assumed abandoned by a crashed
-// holder and reclaimed, so a dead process can't wedge the suite forever.
+// lock file older than lockStaleAfter is assumed abandoned by a crashed holder and reclaimed, so a dead process can't wedge the suite forever.
 func acquireLock(path string, timeout time.Duration) (release func(), err error) {
 	deadline := time.Now().Add(timeout)
 	for {

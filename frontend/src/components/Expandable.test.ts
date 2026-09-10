@@ -7,8 +7,7 @@ import { Expandable } from './Expandable'
 
 // renderToStaticMarkup doesn't run layout effects, so the measured `overflows`
 // state is false - the initial (server) render shows the children uncapped with
-// NO toggle and NO clamp. This pins the fits-content path; the overflow path
-// (fade + Show more) is measured-DOM behaviour, covered visually in the stories.
+// NO toggle and NO clamp. This pins the fits-content path; the overflow path (fade + Show more) is measured-DOM behaviour, covered visually in the stories.
 describe('Expandable', () => {
   it('renders children and shows no toggle before measuring (content-fits path)', () => {
     const out = renderToStaticMarkup(
@@ -20,23 +19,9 @@ describe('Expandable', () => {
   })
 })
 
-// Regression: the collapse decision must not depend on the collapse itself.
-//
-// Collapsing changes the box's own layout - `overflow-hidden` + `max-height`
-// makes it a block formatting context and drops its full height from the
-// scrolling ancestor - so a clamped box does not necessarily measure the same
-// as an unclamped one. If the component measures the box it clamps, the
-// decision feeds back into its own input: measure tall → clamp → measure short
-// → unclamp → measure tall → … Re-measuring on every commit (a layout effect
-// with no dependency array) turns that into an unbounded chain of nested
-// updates, and a streaming turn - hundreds of token renders - walks straight
-// into React's guard: "Maximum update depth exceeded" (#185), after which the
-// chat tree renders nothing at all.
-//
-// jsdom has no layout, so scrollHeight is stubbed to model exactly that: a
-// clamped element (one carrying an inline max-height) measures under the cap,
-// an unclamped one over it. Whatever the component measures, it must never be
-// the element it clamps.
+// Regression: the collapse decision must not depend on the collapse itself
+// - clamping changes the box's own layout, so a clamped box measures
+// differently: measure the box we clamp and it ping-pongs (measure tall → clamp → measure short → …) into React's "Maximum update depth exceeded" guard on a streaming turn (#185). jsdom has no layout, so scrollHeight is stubbed: a clamped element (inline max-height) measures under the cap, an unclamped one over; whatever the component measures, it must never be the element it clamps.
 describe('Expandable (streaming re-measure)', () => {
   const cap = 100
   let root: ReturnType<typeof createRoot> | undefined

@@ -4,8 +4,7 @@ import "testing"
 
 // TestBuildActivitySectionDeterministic proves buildActivitySection renders
 // act.fetched (a map) in a stable order - a random map iteration order would
-// relocate the cache-divergence point in the revise/continuation/finalize
-// prompts on every call even when nothing about the activity changed.
+// relocate the cache-divergence point in the revise/continuation/finalize prompts on every call even when nothing about the activity changed.
 func TestBuildActivitySectionDeterministic(t *testing.T) {
 	act := workerActivity{fetched: map[string]struct{}{
 		"https://api.github.com/repos/x/y/pulls/1304":     {},

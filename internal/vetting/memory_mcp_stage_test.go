@@ -22,8 +22,7 @@ import (
 
 // fakeMemEmbedder returns a fixed unit vector for every text, so any recall
 // query matches any stored point (cosine = 1) - the round-trip is exercised
-// through the SCOPE filter, not embedding similarity (mirrors internal/memory's
-// own fakeEmbedder).
+// through the SCOPE filter, not embedding similarity (mirrors internal/memory's own fakeEmbedder).
 type fakeMemEmbedder struct{}
 
 func (fakeMemEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -76,8 +75,7 @@ func (m fixedScoreModel) GenerateContent(_ context.Context, req *model.LLMReques
 
 // runStagedMemoryNode drives one gated node whose prompt carries token's
 // advisor-thread marker, with memStage pre-loaded exactly like the ACP memory
-// MCP's stage_memory handler would leave it mid-round, and returns the gate's
-// final verdict.
+// MCP's stage_memory handler would leave it mid-round, and returns the gate's final verdict.
 func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeScore float64) GateResult {
 	t.Helper()
 	m := fixedScoreModel{score: judgeScore}
@@ -114,9 +112,7 @@ func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeSc
 
 // TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass pins the ACP memory MCP
 // surface's staging contract (#344): a candidate the stage_memory tool appended
-// to the node's MemStage lands in commitMemoryOnPass's input, and - exactly like
-// a native agent's stage_memory tool call - is only ever written to shared
-// memory when the gate's judge round PASSES.
+// to the node's MemStage lands in commitMemoryOnPass's input, and - exactly like a native agent's stage_memory tool call - is only ever written to shared memory when the gate's judge round PASSES.
 func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMemEmbedder{}, echoConsolidator{}, "test_stage", "task", 5, 0)

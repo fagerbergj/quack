@@ -156,14 +156,7 @@ func TestDrainActiveRuns_ForceCancelsPastGrace(t *testing.T) {
 }
 
 // TestDrainActiveRuns_CatchesRunRegisteredAfterSnapshot pins finding 14:
-// DrainActiveRuns snapshots hub.ActiveChatIDs() once, right after
-// BeginDraining. A run for a chat NOT in that snapshot - registered a moment
-// later, the exact race a dispatch entrypoint that checked Draining() just
-// before it flipped can hit - must still be waited for and eventually
-// force-cancelled, not silently invisible to drain for the rest of the
-// process's life. chat-known starts registered so the wait loop has
-// something to poll on, then unregisters on its own (an unrelated run
-// finishing) - it must not let the loop exit before it notices chat-late.
+// DrainActiveRuns snapshots hub.ActiveChatIDs() once, right after BeginDraining. A run for a chat NOT in that snapshot - registered a moment later, the exact race a dispatch entrypoint that checked Draining() just before it flipped can hit - must still be waited for and eventually force-cancelled, not silently invisible to drain for the rest of the process's life. chat-known starts registered so the wait loop has something to poll on, then unregisters on its own (an unrelated run finishing) - it must not let the loop exit before it notices chat-late.
 func TestDrainActiveRuns_CatchesRunRegisteredAfterSnapshot(t *testing.T) {
 	hub := stream.NewHub()
 	hub.RegisterRun("chat-known", "turn-known", func() {})

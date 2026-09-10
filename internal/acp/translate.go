@@ -18,9 +18,7 @@ type eventSpec struct {
 
 // Thinking deltas arrive one per streamed token - raw, that's a DB row per
 // token. Coalesce into batches flushed on whichever limit hits first; the
-// flush check only runs when the next update arrives (acp.go's select loop
-// isn't ours to add a ticker to), so a round that ends mid-batch with no
-// further updates drops the trailing partial thought.
+// flush check only runs when the next update arrives (acp.go's select loop isn't ours to add a ticker to), so a round that ends mid-batch with no further updates drops the trailing partial thought.
 const (
 	thinkFlushElapsed = 1500 * time.Millisecond
 	thinkFlushBytes   = 750
@@ -174,8 +172,7 @@ const mcpMetaKey = "quack_mcp_tool"
 
 // mcpIdentity resolves an ACP tool call back to the real quack MCP tool name.
 // pi-acp sets _meta[mcpMetaKey] directly; an agent that can't touch _meta
-// (e.g. opencode) still registers the tool as "<mcpServerName>_<tool>" and
-// surfaces that as its title, so stripping the prefix there works too.
+// (e.g. opencode) still registers the tool as "<mcpServerName>_<tool>" and surfaces that as its title, so stripping the prefix there works too.
 func mcpIdentity(meta map[string]any, title string) (string, bool) {
 	if v, _ := meta[mcpMetaKey].(string); v != "" {
 		return v, true
@@ -231,8 +228,7 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 	case sdk.ToolKindSearch:
 		// ACP's "search" kind covers both content search and filename glob -
 		// the protocol carries no tool-identity field to split them, so both
-		// land on grep's arg/result shape; a glob-shaped output (no "matches")
-		// still renders via GenericView instead of the richer GrepView.
+		// land on grep's arg/result shape; a glob-shaped output (no "matches") still renders via GenericView instead of the richer GrepView.
 		args := map[string]any{}
 		if pattern, _ := in["pattern"].(string); pattern != "" {
 			args["pattern"] = pattern
@@ -251,8 +247,7 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 	}
 	// A genuinely unknown kind (a third-party tool ACP has no enum slot for,
 	// including the literal "other") is named after its title, never the
-	// meaningless literal "other" - the frontend used to paper over this
-	// (#959) but a name the UI never has to special-case is the real fix.
+	// meaningless literal "other" - the frontend used to paper over this (#959) but a name the UI never has to special-case is the real fix.
 	name := string(p.kind)
 	useTitle := name == "" || p.kind == sdk.ToolKindOther
 	if useTitle {

@@ -40,10 +40,9 @@ func (c echoToolConsolidator) GenerateContent(_ context.Context, _ *model.LLMReq
 	}
 }
 
-// TestNewRecallMemory_LogsLedgerEntryWithCoords covers epic #1255 P2's native-
-// worker verification: a call appends one memory.recall ledger entry with
-// source "tool" and the coords ledger.StampCoords restamped onto the tool
-// after Build (dag/graph.go), not the zero value.
+// TestNewRecallMemory_LogsLedgerEntryWithCoords covers epic #1255 P2's
+// native-worker verification: a call appends one memory.recall ledger entry
+// with source "tool" and the coords ledger.StampCoords restamped onto the tool after Build (dag/graph.go), not the zero value.
 func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "the build uses bazel"}, "test_recall_tool", "task", 5, 0)
@@ -104,9 +103,7 @@ func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 
 // TestRecallScope_NoNodeIDLegacyBucket: #1262/#1263 - recallScope's bucket
 // list is exactly [role:..., ...], never a Legacy bucket keyed by the raw
-// node id. Asserts the Scope directly (Commit never routes a Legacy-only
-// scope to a real bucket, so a round-trip-through-Commit test here would be
-// vacuous - it would pass even with Legacy: coords.Node reintroduced).
+// node id; asserts the Scope directly, since Commit never routes a Legacy-only scope to a real bucket (a round-trip-through-Commit test would be vacuous).
 func TestRecallScope_NoNodeIDLegacyBucket(t *testing.T) {
 	sc := recallScope(Deps{MemoryRole: "task"}, newFakeCtx(), ledger.Coords{ChatID: "chat1", Node: "node1"})
 	want := []string{"role:task"}
@@ -134,9 +131,8 @@ func TestNewRecallMemory_EmptyQueryRejected(t *testing.T) {
 }
 
 // TestNewRecallMemory_NilStoreIsSafe matches stage_memory's own leniency: a
-// Deps with no Memory store still builds (a tools.Build caller may resolve
-// tool names ahead of the real per-agent wiring - see
-// TestNoNativeAgentGrantedGitHubWriteTool), and simply recalls nothing.
+// Deps with no Memory store still builds (a tools.Build caller may resolve tool
+// names ahead of the real per-agent wiring - see TestNoNativeAgentGrantedGitHubWriteTool), and simply recalls nothing.
 func TestNewRecallMemory_NilStoreIsSafe(t *testing.T) {
 	tl, err := newRecallMemory(Deps{})
 	if err != nil {

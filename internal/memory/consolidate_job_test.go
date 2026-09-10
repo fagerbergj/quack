@@ -42,9 +42,8 @@ func (e *errIndex) remove(ctx context.Context, ids []string) (int, error) {
 }
 
 // countingErrModel is a consolidator stub that always replies with malformed
-// JSON (so decideDedupe's parse fails) and counts how many times it was
-// called - proves a cluster's error doesn't stop the sweep from attempting
-// the next cluster.
+// JSON (so decideDedupe's parse fails) and counts its calls - proves a cluster's
+// error doesn't stop the sweep from attempting the next cluster.
 type countingErrModel struct{ calls *int }
 
 func (countingErrModel) Name() string { return "fake-erroring-consolidator" }
@@ -56,14 +55,9 @@ func (m countingErrModel) GenerateContent(_ context.Context, _ *model.LLMRequest
 	}
 }
 
-// TestConsolidateOnce_BurstDedupe covers design doc §7 case 4: 3 unverified
-// memories from one chat_id, minted within the clustering window, near-
-// identical claims. The (faked) consolidation model keeps one via UPDATE and
-// deletes the other two, reason "duplicate of <id>" - decide()/apply()'s
-// normal op taxonomy, applied from the sweep's ticker trigger instead of a
-// commit. Epic #1255 P5: a "duplicate of <id>" DELETE is a lineage-recording
-// absorption, so the applied invalidation_reason is normalized to
-// "absorbed by <id>" and the survivor's absorbed_ids records both merged ids.
+// TestConsolidateOnce_BurstDedupe covers design doc §7 case 4: 3 unverified memories from one
+// chat_id, minted within the clustering window, near-identical claims. The (faked) consolidation
+// model keeps one via UPDATE and deletes the other two, reason "duplicate of <id>" - decide()/apply()'s normal op taxonomy, applied from the sweep's ticker trigger instead of a commit. Epic #1255 P5: a "duplicate of <id>" DELETE is a lineage-recording absorption, so the applied invalidation_reason is normalized to "absorbed by <id>" and the survivor's absorbed_ids records both merged ids.
 func TestConsolidateOnce_BurstDedupe(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -169,13 +163,8 @@ func TestBurstClusters_WithinWindowChains(t *testing.T) {
 	}
 }
 
-// TestBurstClusters_UnparsableMintedAtFlushesAndSkips covers a malformed
-// MintedAt (data migration, corruption): the point can't be placed in time,
-// so it's dropped rather than guessed into a cluster, and whatever chained
-// before it still flushes as its own cluster instead of being discarded too.
-// The bad row's MintedAt is chosen to sort (lexicographically, same as
-// burstClusters itself sorts) between b and c, so it actually interrupts the
-// chain rather than landing at either end.
+// TestBurstClusters_UnparsableMintedAtFlushesAndSkips covers a malformed MintedAt (data migration,
+// corruption): the point can't be placed in time, so it's dropped rather than guessed into a cluster, and whatever chained before it still flushes as its own cluster instead of being discarded too. The bad row's MintedAt is chosen to sort (lexicographically, same as burstClusters itself sorts) between b and c, so it actually interrupts the chain rather than landing at either end.
 func TestBurstClusters_UnparsableMintedAtFlushesAndSkips(t *testing.T) {
 	pts := []scored{
 		{ID: "a", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z"},
@@ -189,11 +178,9 @@ func TestBurstClusters_UnparsableMintedAtFlushesAndSkips(t *testing.T) {
 	}
 }
 
-// TestConsolidateOnce_SkipsReinforcedAndInvalidatedNeighbours covers design
-// doc §7's implicit rule: a reinforced memory (earned trust) and an already-
-// invalidated one, both sharing the dedupe-eligible pair's chat_id/time
-// window, never enter the candidate set - neither is named in an op, and
-// both survive with their status unchanged.
+// TestConsolidateOnce_SkipsReinforcedAndInvalidatedNeighbours covers design doc §7's implicit
+// rule: a reinforced memory (earned trust) and an already-invalidated one, both sharing the
+// dedupe-eligible pair's chat_id/time window, never enter the candidate set - neither is named in an op, and both survive with their status unchanged.
 func TestConsolidateOnce_SkipsReinforcedAndInvalidatedNeighbours(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -378,6 +365,9 @@ func TestConsolidateOnce_StaysSkippedAfterVoteOnlyChange(t *testing.T) {
 // invalidated point older than retentionDays is hard-removed, a recently
 // invalidated one survives, and a currently-valid point is never a candidate
 // regardless of age.
+// TestRetentionOnce_RemovesExpiredKeepsFreshAndValid covers design doc §6: an invalidated point
+// older than retentionDays is hard-removed, a recently invalidated one survives, and a
+// currently-valid point is never a candidate regardless of age.
 func TestRetentionOnce_RemovesExpiredKeepsFreshAndValid(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -478,12 +468,9 @@ func TestRunConsolidationSweep_InvalidScheduleIsNoop(t *testing.T) {
 	s.RunConsolidationSweep(ctx, "not a cron", 30) // must return, not panic or hang
 }
 
-// TestConsolidateOnce_ClusterErrorContinuesToNextCluster covers the sweep's
-// warn-and-continue contract: one cluster's decideDedupe/apply failure (a
-// malformed consolidation reply) must not stop consolidateOnce from
-// attempting the rest - two independent bursts (different chat_ids) both get
-// a call to the consolidator, and neither's points are touched since both
-// calls fail to parse.
+// TestConsolidateOnce_ClusterErrorContinuesToNextCluster covers the sweep's warn-and-continue
+// contract: one cluster's decideDedupe/apply failure (a malformed consolidation reply) must not
+// stop consolidateOnce from attempting the rest - two independent bursts (different chat_ids) both get a call to the consolidator, and neither's points are touched since both calls fail to parse.
 func TestConsolidateOnce_ClusterErrorContinuesToNextCluster(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -548,10 +535,9 @@ func TestRetentionOnce_RemoveErrorContinuesToPrune(t *testing.T) {
 	}
 }
 
-// TestRetentionOnce_PruneMemoryOpsErrorDoesNotAbort covers the sweep's
-// warn-and-continue contract from the opsLog side: PruneMemoryOps failing
-// must not undo or block the point removal that already happened, and must
-// not panic or propagate - retentionOnce has no error return.
+// TestRetentionOnce_PruneMemoryOpsErrorDoesNotAbort covers the sweep's warn-and-continue
+// contract from the opsLog side: PruneMemoryOps failing must not undo or block the point removal
+// that already happened, and must not panic or propagate - retentionOnce has no error return.
 func TestRetentionOnce_PruneMemoryOpsErrorDoesNotAbort(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)

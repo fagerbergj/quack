@@ -62,12 +62,8 @@ func postMessage(t *testing.T, h *Handler, chatID, content string) {
 }
 
 // TestOrchestratorRemembersConversation: the SECOND turn's LLM request must
-// contain the first turn's user message AND the orchestrator's own first reply.
-// Regression for the amnesia bug (live e2e 2026-07-05): the orchestrator
-// llmagent runs wrapped in a workflow AgentNode, which forces an UNSET mode to
-// ModeSingleTurn - discarding all session history - so one turn after
-// delivering a plan it answered "I don't see a previously created plan in our
-// conversation". llmagent.Config now pins Mode: ModeChat.
+// contain the first turn's user message AND the orchestrator's own first
+// reply. Regression for the amnesia bug: the orchestrator llmagent runs wrapped in a workflow AgentNode, which forces an UNSET mode to ModeSingleTurn - discarding all session history - so one turn after delivering a plan it answered "I don't see a previously created plan in our conversation". llmagent.Config now pins Mode: ModeChat.
 func TestOrchestratorRemembersConversation(t *testing.T) {
 	m := &recallModel{}
 	h := newTestHandlerWithModel(t, m)

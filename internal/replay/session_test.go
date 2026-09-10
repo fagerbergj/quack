@@ -171,10 +171,9 @@ func writeZip(t *testing.T, entries []entry, manifest ledger.Manifest) string {
 
 func t0() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
-// TestChatEntry_ToResponse_ReconstructsRawPromptFromCachedSplit: the ledger
-// payload's InputTokens excludes CachedTokens (inference.splitPromptTokens) -
-// toResponse must add it back so a replayed UsageMetadata.PromptTokenCount
-// matches what the live call actually reported, not an undercount.
+// TestChatEntry_ToResponse_ReconstructsRawPromptFromCachedSplit: the ledger payload's
+// InputTokens excludes CachedTokens (inference.splitPromptTokens) - toResponse adds it
+// back so a replayed PromptTokenCount matches the live call, not an undercount.
 func TestChatEntry_ToResponse_ReconstructsRawPromptFromCachedSplit(t *testing.T) {
 	ce := chatEntry{LLMCallPayload: ledger.LLMCallPayload{InputTokens: 70, CachedTokens: 30, OutputTokens: 5}}
 	resp := ce.toResponse()
@@ -502,11 +501,9 @@ func TestContentHash(t *testing.T) {
 	}
 }
 
-// TestUserTurns_MultiTurn: a 2-turn conversation - each root-stream chat call
-// carries the full history so far - returns both turns, oldest first, and
-// does not repeat turn 1 just because it reappears in turn 2's context.
-// Node-level (non-root) chat calls, which carry a role:user task prompt of
-// their own, must NOT be picked up as an end-user turn.
+// TestUserTurns_MultiTurn: each root-stream chat call carries the full history so far -
+// return both turns, oldest first, not repeating turn 1 from turn 2's context; node-level
+// (non-root) role:user task prompts must NOT be picked up as end-user turns.
 func TestUserTurns_MultiTurn(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		rootChat(t0(), "orch-model", map[string]any{
@@ -569,8 +566,7 @@ func TestFinalAnswer(t *testing.T) {
 
 // TestEvaluationResults: evaluation.result events carry no
 // gen_ai.operation.name and no stream identity replay matches on - they must
-// come back from EvaluationResults regardless, oldest first, without
-// polluting Report()'s stream accounting.
+// come back oldest-first, without polluting Report()'s stream accounting.
 func TestEvaluationResults(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		evalResult(t0().Add(time.Second), "node-a", "judge-r1", "judge-r1", "accuracy", 0.9),

@@ -34,8 +34,7 @@ func hasTool(tools []tool.Tool, name string) bool {
 
 // TestBuildExtToolsOptIn guards the fix for the force-injection design bug: an
 // extension tool (Deps.ExtTools) reaches an agent ONLY when that agent's own
-// config tools: list names it - same resolution path as any builtin - never
-// because the extension happens to be configured at all.
+// config tools: list names it - same resolution path as any builtin, never because the extension happens to be configured.
 func TestBuildExtToolsOptIn(t *testing.T) {
 	ext := map[string]tool.Tool{
 		"github_add_review_comment": stubExtTool(t, "github_add_review_comment"),

@@ -8,8 +8,7 @@ import (
 
 // TestNodeGateConfig_MultiReviewerPlanGetsSharedFanout pins #867: a plan with
 // more than one code-reviewer node stamps every reviewer node's cfg with the
-// SAME ReviewFanout instance (they must all fan into one accumulator) -
-// non-reviewer nodes (explorer, implementer) never get one.
+// SAME ReviewFanout instance (they must all fan into one accumulator) - non-reviewer nodes (explorer, implementer) never get one.
 func TestNodeGateConfig_MultiReviewerPlanGetsSharedFanout(t *testing.T) {
 	plan := Plan{ID: "plan-867", Nodes: []Node{
 		{ID: "impl", AgentName: implementerAgent},

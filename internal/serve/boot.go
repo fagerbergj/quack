@@ -79,10 +79,9 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 	return rep.Start
 }
 
-// removeStaleCloneDir clears an interrupted chat's shared-repo clone (#1213)
-// so the retry's setup step never inherits a read-only Go module cache left
-// by a killed `go mod download`. Best-effort: a missing/never-provisioned
-// dir is not an error.
+// removeStaleCloneDir clears an interrupted chat's shared-repo clone (#1213) so the retry's setup
+// step never inherits a read-only Go module cache left by a killed `go mod download`. Best-effort:
+// a missing/never-provisioned dir is not an error.
 func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
 	if jail == nil {
 		return
@@ -115,10 +114,9 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 		}
 		byChat[n.ChatID] = append(byChat[n.ChatID], n)
 	}
-	// Reset synchronously, before any resume's goroutine is dispatched, so a
-	// subscriber that reaches the API before its own resume's first publish
-	// never reads the previous run's (possibly terminal) events off the hub
-	// or the durable log (#audit-5).
+	// Reset synchronously, before any resume's goroutine is dispatched, so a subscriber that
+	// reaches the API before its own resume's first publish never reads the previous run's
+	// (possibly terminal) events off the hub or the durable log (#audit-5).
 	for _, chatID := range order {
 		hub.Reset(chatID)
 		eventLog.Reset(ctx, chatID)
@@ -149,10 +147,9 @@ func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 	}
 }
 
-// driveResume re-enters one chat's resumable nodes. Each node goes through
-// the same scoped subset path as a REST retry (RetryNode → runDAGSubset:
-// node + descendants, siblings seeded from their stored outputs) - a fresh
-// full-plan run would re-execute done nodes.
+// driveResume re-enters one chat's resumable nodes. Each node goes through the same scoped subset
+// path as a REST retry (RetryNode → runDAGSubset: node + descendants, siblings seeded from their
+// stored outputs) - a fresh full-plan run would re-execute done nodes.
 func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {

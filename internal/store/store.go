@@ -84,9 +84,8 @@ type ChatTurn struct {
 	TotalTokens      int32 `json:"total_tokens,omitempty"`
 	CachedTokens     int32 `json:"cached_tokens,omitempty"`
 	// UserText is the turn's own copy of the user's message, independent of
-	// the ADK session events GetTurnsWithContent otherwise reads it from.
-	// A ResetHistory dispatch (#1226) deletes the whole session, which would
-	// otherwise strand every earlier turn with no content to render.
+	// the ADK session events GetTurnsWithContent otherwise reads it from:
+	// a ResetHistory dispatch (#1226) deletes the whole session, which would otherwise strand every earlier turn with no content to render.
 	UserText string `json:"-"`
 }
 
@@ -147,8 +146,7 @@ type ChatEvent struct {
 
 // ProjectionWatermark tracks how far one chat's projection (sse, artifact,
 // node) has folded the WAL (#1144 P3): the projection writer advances
-// FoldedSeq in the same transaction as its own write, so a restart resumes
-// the fold from here instead of a full re-fold or a diff-against-drift guess.
+// FoldedSeq in the same transaction as its own write, so a restart resumes the fold from here instead of a full re-fold or a diff-against-drift guess.
 type ProjectionWatermark struct {
 	ChatID string `gorm:"column:chat_id;primaryKey" json:"chat_id"`
 	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
@@ -189,8 +187,7 @@ type DagNode struct {
 	TraceIDSet bool `gorm:"-" json:"-"`
 	// Lifecycle columns below are written only by SetNodeStatus/SetNodeQueue;
 	// UpsertDagNode omits them so a stream-driven upsert can never blank a
-	// pause a resume depends on.
-	// Why a paused node is paused: user | shutdown | awaiting_input.
+	// pause a resume depends on. Why a paused node is paused: user | shutdown | awaiting_input.
 	PauseReason string `gorm:"column:pause_reason" json:"pause_reason,omitempty"`
 	// HITL question this node is parked on (node-scoped; chats.pending_question is the legacy chat-scoped copy).
 	PendingQuestion string `gorm:"column:pending_question" json:"pending_question,omitempty"`
@@ -246,9 +243,7 @@ const orchestratorAuthor = "orchestrator"
 
 // Per-turn content extracted from a session's events.
 // userText/asstText/asstThink are strings.Builder, not string: a turn assembled from
-// streamed events otherwise appends with += for every chunk, copying the whole
-// accumulated text each time - O(n^2) in events per turn (perf audit #4, 197 MB for
-// one 2,000-event turn; strings.Builder measured at 5.6 MB for 50x280).
+// streamed events otherwise appends with += for every chunk, copying the whole accumulated text each time - O(n^2) in events per turn (perf audit #4: 197 MB for one 2,000-event turn; strings.Builder measured at 5.6 MB for 50x280).
 type turnGroup struct {
 	userText, asstText, asstThink                                              strings.Builder
 	toolCalls                                                                  []ToolCallRecord
@@ -349,14 +344,7 @@ type Store struct {
 	queryCount atomic.Int64
 	// Records each SELECT's raw SQL - test instrumentation for asserting WHICH
 	// query ran, not just how many (#1113 review: QueryCount alone can't tell
-	// a name-scoped query apart from an unscoped full-table scan that happens
-	// to also issue exactly one SELECT). Off by default (queryRecordingEnabled):
-	// the callback that appends to querySQL is registered unconditionally in
-	// New() below, so without a gate it would record every SELECT a live
-	// server ever issues, forever (#1113 second review - a real production
-	// memory leak, not just a test concern). EnableQueryRecording turns it on
-	// for the lifetime of one *Store, test-only; querySQLCap bounds it even
-	// then, so a long test run can't grow it unbounded either.
+	// a name-scoped query apart from an unscoped full-table scan that happens to also issue exactly one SELECT). Off by default (queryRecordingEnabled): the callback that appends to querySQL is registered unconditionally in New() below, so without a gate it would record every SELECT a live server ever issues, forever (#1113 second review - a real production memory leak, not just a test concern). EnableQueryRecording turns it on for the lifetime of one *Store, test-only; querySQLCap bounds it even then, so a long test run can't grow it unbounded either.
 	queryRecordingEnabled atomic.Bool
 	querySQLMu            sync.Mutex
 	querySQL              []string
@@ -364,27 +352,18 @@ type Store struct {
 	artifacts artifact.Service
 	// walLedger: the WAL's fail-closed AppendIntent path (#1144 P5), covering
 	// the direct-write projections P1-P4 left alone (chat/turn creation,
-	// plan). nil = no WAL, same as before P5 - CreateChat/SaveTurn/SaveDagPlan
-	// behave exactly as they did.
+	// plan); nil = no WAL, same as before P5 - CreateChat/SaveTurn/SaveDagPlan behave exactly as they did.
 	walLedger ledger.LedgerStore
 }
 
 // SetWALLedger wires the WAL's fail-closed AppendIntent path into
 // CreateChat/SaveTurn/SaveDagPlan (#1144 P5). Callers must pass nil unless
-// store is a postgres-backed LedgerStore - same restriction as
-// dag.Executor.SetWALLedger/recordstore.WithLedger.
+// store is a postgres-backed LedgerStore - same restriction as dag.Executor.SetWALLedger/recordstore.WithLedger.
 func (s *Store) SetWALLedger(store ledger.LedgerStore) { s.walLedger = store }
 
 // Checkpoint is chatID's last folded ledger state - ONE row, replaced every
 // turn end, not an entry in the WAL (#1144 P5 review: a checkpoint is
-// derived state, not a fact the ledger recorded, so it doesn't belong in an
-// append-only log; storing it as entries made per-chat ledger storage grow
-// O(turns x state size) with no GC left once the retention sweep was
-// deleted). LastSeq is denormalized from Payload for cheap inspection
-// (`SELECT last_seq FROM ledger_checkpoints`) without deserializing it -
-// fold.ApplySeeded still trusts Payload's own LastSeq, never this column,
-// so a torn write here is still safe to fold from (same invariant the
-// stale-checkpoint test proves).
+// derived state, not a fact the ledger recorded, so it doesn't belong in an append-only log; storing it as entries made per-chat ledger storage grow O(turns x state size) with no GC left once the retention sweep was deleted). LastSeq is denormalized from Payload for cheap inspection (`SELECT last_seq FROM ledger_checkpoints`) without deserializing it - fold.ApplySeeded still trusts Payload's own LastSeq, never this column, so a torn write here is still safe to fold from (same invariant the stale-checkpoint test proves).
 type Checkpoint struct {
 	ChatID string `gorm:"column:chat_id;primaryKey"`
 	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
@@ -397,13 +376,9 @@ type Checkpoint struct {
 
 func (Checkpoint) TableName() string { return "ledger_checkpoints" }
 
-// loadCheckpointSeed reads chatID's checkpoint row, if any. Any problem (no
-// row, a bad payload) returns nil - the safe fallback is always "fold from
-// scratch", never an error, since a checkpoint is purely an optimization.
-// fold.ApplySeeded reads the seed's OWN LastSeq to decide how far it
-// covers - callers pass 0 as their own baseline `from`, not this seed's
-// LastSeq, or ApplySeeded's "only seed if it's newer than what I already
-// have" guard skips seeding entirely.
+// loadCheckpointSeed reads chatID's checkpoint row, if any. Any problem
+// (no row, a bad payload) returns nil - the safe fallback is always "fold
+// from scratch", never an error, since a checkpoint is purely an optimization. fold.ApplySeeded reads the seed's OWN LastSeq to decide how far it covers - callers pass 0 as their own baseline `from`, not this seed's LastSeq, or ApplySeeded's "only seed if it's newer than what I already have" guard skips seeding entirely.
 func (s *Store) loadCheckpointSeed(ctx context.Context, chatID string) *fold.Result {
 	var row Checkpoint
 	if err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error; err != nil {
@@ -425,22 +400,9 @@ func (s *Store) upsertCheckpoint(ctx context.Context, chatID string, lastSeq int
 	}).Create(&row).Error
 }
 
-// WriteCheckpoint folds chatID from its last checkpoint (or from scratch, if
-// it has none) and replaces the checkpoint row with the result (#1144 P5),
-// so the next fold starts here instead of reading the chat's entire
-// history. Called at every turn-end path: rest.Handler.stampRunOutcome
-// (both its WasInterrupted and normal branches) and both exits of
-// internal/serve/extensions.go's driveExtensionRunEvents - a no-op without
-// a WAL. Best-effort: a failed write only costs a slower fold later, never
-// correctness.
-//
-// NOT covered by boot recovery: unlike artifact revisions and delivery
-// intents, an orphaned chat.created/turn.created/plan.saved row (WAL
-// append succeeded, the projection write it preceded never landed) is not
-// checked by cli.RunLedgerRecover or counted in quack_ledger_unresolved_intents
-// - out of scope for P5 (see internal/store/wal_intents_test.go's kill-9
-// test, which proves the invariant a recoverer WOULD rely on, not that one
-// exists). `quack ledger show`/`list` still see every entry regardless.
+// WriteCheckpoint folds chatID from its last checkpoint (or from scratch,
+// if it has none) and replaces the checkpoint row with the result (#1144 P5),
+// so the next fold starts here instead of reading the chat's entire history. Called at every turn-end path: rest.Handler.stampRunOutcome (both its WasInterrupted and normal branches) and both exits of internal/serve/extensions.go's driveExtensionRunEvents - a no-op without a WAL. Best-effort: a failed write only costs a slower fold later, never correctness. NOT covered by boot recovery: unlike artifact revisions and delivery intents, an orphaned chat.created/turn.created/plan.saved row (WAL append succeeded, the projection write it preceded never landed) is not checked by cli.RunLedgerRecover or counted in quack_ledger_unresolved_intents - out of scope for P5 (see internal/store/wal_intents_test.go's kill-9 test, which proves the invariant a recoverer WOULD rely on, not that one exists); `quack ledger show`/`list` still see every entry regardless.
 func (s *Store) WriteCheckpoint(ctx context.Context, chatID string) error {
 	if s.walLedger == nil {
 		return nil
@@ -470,8 +432,7 @@ func (s *Store) QueryCount() int64 { return s.queryCount.Load() }
 
 // EnableQueryRecording turns on RecordedQuerySQL's capture for this Store.
 // Test-only: call it right after store.New() in a test that needs to assert
-// which query ran, not just how many - production code never calls this, so
-// the record_sql callback is a no-op append for every real server process.
+// which query ran, not just how many - production code never calls this, so the record_sql callback is a no-op append for every real server process.
 func (s *Store) EnableQueryRecording() { s.queryRecordingEnabled.Store(true) }
 
 // RecordedQuerySQL returns the raw SQL of the last querySQLCap SELECTs
@@ -504,16 +465,7 @@ var chatFKModels = map[string]any{
 
 // sweepOrphanChatRows deletes rows whose chat_id has no matching chats row,
 // before AutoMigrate below adds the ON DELETE CASCADE FK. A pre-existing
-// orphan - a chat hard-deleted by raw SQL before this FK existed - makes the
-// ALTER TABLE ADD CONSTRAINT (Postgres) or table-rebuild (SQLite) that
-// follows fail outright, and the orphan survives a restart, so that's a
-// crash loop rather than a one-time failure. No-op on a fresh DB (no chats
-// table yet) or once every table is already clean.
-//
-// Once the FK exists it makes new orphans impossible, so every boot after
-// the first paid for a full anti-join scan for nothing (perf audit #11:
-// 400-510ms over 1.35M chat_events, deleting 0 rows) - skip a table the
-// moment its constraint is in place.
+// orphan - a chat hard-deleted by raw SQL before this FK existed - makes the ALTER TABLE ADD CONSTRAINT (Postgres) or table-rebuild (SQLite) that follows fail outright, and the orphan survives a restart, so that's a crash loop rather than a one-time failure. No-op on a fresh DB (no chats table yet) or once every table is already clean; once the FK exists it makes new orphans impossible, so every boot after the first paid for a full anti-join scan for nothing (perf audit #11: 400-510ms over 1.35M chat_events, deleting 0 rows) - skip a table the moment its constraint is in place.
 func sweepOrphanChatRows(db *gorm.DB) error {
 	if !db.Migrator().HasTable(&Chat{}) {
 		return nil
@@ -557,11 +509,7 @@ func New(kind, url string) (*Store, error) {
 	}
 	// database.NewSessionService below calls gorm.Open again against the SAME
 	// gormCfg pointer - gorm.Open reinitializes Config.Callback when it opens
-	// a *second* DB against a shared Config, silently replacing db's callback
-	// processor out from under it (found chasing #1113's SQL-capture test:
-	// count_queries/record_sql registered before this point simply never
-	// fired - QueryCount had been a silent no-op the whole time). Registering
-	// AFTER every gorm.Open() that shares gormCfg is done keeps them live.
+	// a *second* DB against a shared Config, silently replacing db's callback processor out from under it (found chasing #1113's SQL-capture test: count_queries/record_sql registered before this point simply never fired - QueryCount had been a silent no-op the whole time). Registering AFTER every gorm.Open() that shares gormCfg is done keeps them live.
 	sessions, err := database.NewSessionService(dialector(), gormCfg)
 	if err != nil {
 		return nil, err
@@ -695,18 +643,14 @@ var ErrInvalidPageToken = errors.New("invalid page token")
 
 // chatsSort names the ordering a page token was issued under. ListChats
 // supports exactly one ordering today; this exists so a future second
-// ordering gets its own value here instead of a token silently being
-// replayed against an ordering it wasn't issued for.
+// ordering gets its own value here instead of a token silently being replayed against an ordering it wasn't issued for.
 type chatsSort string
 
 const chatsSortUpdatedAtDesc chatsSort = "updated_at_desc"
 
 // ChatsScope selects which chats ListChats considers, pushed into the SQL
 // predicate so a page never fetches rows the caller can't see. Two
-// independent flags, not a 3-valued enum - "all" was never a chat status,
-// just "don't filter". The zero value (both false) defaults to Active-only.
-// Both true means no archived predicate at all (not archived IN (true,false)),
-// so the planner sees a plain scan.
+// independent flags, not a 3-valued enum - "all" was never a chat status, just "don't filter"; the zero value (both false) defaults to Active-only, and both true means no archived predicate at all (not archived IN (true,false)), so the planner sees a plain scan.
 type ChatsScope struct {
 	Active   bool `json:"a"`
 	Archived bool `json:"r"`
@@ -714,14 +658,7 @@ type ChatsScope struct {
 
 // chatsPageToken is ListChats' opaque continuation token. The caller-visible
 // contract is just "an anchor under a named ordering and scope": ID anchors
-// it because ID is immutable, unlike UpdatedAt, which churns under an active
-// run. UpdatedAt still rides along inside the token - resolving an ID anchor
-// back to its position in an updated_at-sorted list needs the value it was
-// last seen at, so the token carries it as its own implementation detail,
-// not as part of the contract a caller is meant to understand. Scope is a
-// struct of independent flags rather than an ordered list, so encoding it is
-// inherently canonical - {active,archived} and {archived,active} collapse to
-// the identical Go value (and therefore identical JSON) with no sort step.
+// it because ID is immutable, unlike UpdatedAt, which churns under an active run. UpdatedAt still rides along inside the token - resolving an ID anchor back to its position in an updated_at-sorted list needs the value it was last seen at, so the token carries it as its own implementation detail, not as part of the contract a caller is meant to understand. Scope is a struct of independent flags rather than an ordered list, so encoding it is inherently canonical - {active,archived} and {archived,active} collapse to the identical Go value (and therefore identical JSON) with no sort step.
 type chatsPageToken struct {
 	Sort      chatsSort  `json:"s"`
 	Scope     ChatsScope `json:"sc"`
@@ -736,8 +673,7 @@ func encodeChatsPageToken(t chatsPageToken) string {
 
 // decodeChatsPageToken validates the token was issued for the sort and scope
 // it's being replayed against. A token minted before scoping existed carries
-// a zero-value Scope ({false false}) - treated as {Active: true}, the
-// pre-existing default behavior, rather than rejected outright.
+// a zero-value Scope ({false false}) - treated as {Active: true}, the pre-existing default behavior, rather than rejected outright.
 func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 	var t chatsPageToken
 	b, err := base64.RawURLEncoding.DecodeString(s)
@@ -761,15 +697,8 @@ func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 }
 
 // ListChats returns up to limit chats within scope, most-recently-updated
-// first, starting after pageToken ("" for the first page). It returns the
-// opaque token for the next page, or "" if this page was the last. limit <= 0
-// becomes ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped.
-// The zero-value scope (both flags false) defaults to {Active: true}.
-//
-// This is keyset (not offset) pagination: see chatsPageToken. The scope
-// predicate is applied in SQL, not filtered from an already-fetched page, so
-// a page always returns exactly limit rows (or fewer only at the true end of
-// that scope) and the cursor never advances past a row the caller never saw.
+// first, starting after pageToken ("" for the first page); returns the
+// opaque token for the next page, or "" if this page was the last. limit <= 0 becomes ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped; the zero-value scope (both flags false) defaults to {Active: true}. This is keyset (not offset) pagination (see chatsPageToken): the scope predicate is applied in SQL, not filtered from an already-fetched page, so a page always returns exactly limit rows (or fewer only at the true end of that scope) and the cursor never advances past a row the caller never saw.
 func (s *Store) ListChats(ctx context.Context, limit int, pageToken string, scope ChatsScope) ([]Chat, string, error) {
 	if limit <= 0 {
 		limit = ChatsPageDefaultLimit
@@ -826,8 +755,7 @@ func (s *Store) GetChat(ctx context.Context, id string) (*Chat, error) {
 
 // ChatExists reports whether id has a live chats row - the shared check
 // behind every boot-time resume/recovery pass (#1296), so a chat hard-deleted
-// by raw SQL (bypassing DeleteChat's cascade) is never resumed from its
-// leftover dag_plans/dag_nodes rows.
+// by raw SQL (bypassing DeleteChat's cascade) is never resumed from its leftover dag_plans/dag_nodes rows.
 func (s *Store) ChatExists(ctx context.Context, id string) (bool, error) {
 	var count int64
 	err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Count(&count).Error
@@ -906,29 +834,16 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 	return nil
 }
 
-// ReapNodeSessions deletes every per-DAG-node ADK session this chat owns:
-// each node's A2A worker session (internal/agent.WorkerSessionID,
-// "<chatID>:<nodeID>") and its in-node retry session ("<chatID>::retry"),
-// across whichever agent bundle's AppName ran that node - the ADK schema's
-// session PK is (app_name, user_id, id) with events cascading on delete
-// (google.golang.org/adk/v2/session/database), so one raw sweep on id reaps
-// both tables without knowing which bundle a node used. This is the backstop
-// for a node whose own release() never ran (crash, abandoned dynamic node) -
-// the normal path deletes its session immediately (internal/serve/nativeagent.go
-// perNodeServers.track).
-//
-// It does not reach ask_advisor consult sessions (internal/vetting
-// AdvisorSessionID keys those "<planID>/<nodeID>:advisor" - not chatID
-// prefixed); those are reaped at node-done by internal/dag.newGatedNode.
+// ReapNodeSessions deletes every per-DAG-node ADK session this chat owns: each node's A2A worker session (internal/agent.WorkerSessionID, "<chatID>:<nodeID>") and its in-node retry session ("<chatID>::retry"), across whichever agent bundle's AppName ran that node - the ADK schema's session PK is (app_name, user_id, id) with events cascading on delete (google.golang.org/adk/v2/session/database), so one raw sweep on id reaps both tables without knowing which bundle a node used.
+// This is the backstop for a node whose own release() never ran (crash, abandoned dynamic node) - the normal path deletes its session immediately (internal/serve/nativeagent.go perNodeServers.track).
+// It does not reach ask_advisor consult sessions (internal/vetting AdvisorSessionID keys those "<planID>/<nodeID>:advisor" - not chatID prefixed); those are reaped at node-done by internal/dag.newGatedNode.
 func (s *Store) ReapNodeSessions(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Exec("DELETE FROM sessions WHERE id = ? OR id LIKE ? ESCAPE '\\'",
 		chatID, likeEscape(chatID)+":%").Error
 }
 
 // likeEscape backslash-escapes a LIKE pattern's own wildcards (%, _) so a
-// value used as a literal prefix - a chat id, which can legitimately contain
-// either character (e.g. a GitHub repo name with an underscore) - can't
-// widen the match to another chat's rows. Pair with `ESCAPE '\'` in the query.
+// value used as a literal prefix - a chat id, which can legitimately contain either character (e.g. a GitHub repo name with an underscore) - can't widen the match to another chat's rows. Pair with `ESCAPE '\'` in the query.
 func likeEscape(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
@@ -983,7 +898,6 @@ func (s *Store) SetChatOrigin(ctx context.Context, id, sessionUser, originJSON s
 	}).Create(c).Error
 }
 
-// GetGithubSnapshot returns the stored snapshot JSON, or ("", false, nil) when none exists.
 func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, bool, error) {
 	var row GithubSnapshot
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -996,7 +910,6 @@ func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, b
 	return row.JSON, true, nil
 }
 
-// SetGithubSnapshot upserts the snapshot JSON for the next resume's diff.
 func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) error {
 	row := &GithubSnapshot{ChatID: chatID, JSON: json, UpdatedAt: time.Now().UTC()}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
@@ -1005,7 +918,6 @@ func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) erro
 	}).Create(row).Error
 }
 
-// GetGithubReviewBaseline returns the patch-id list quack last delivered a review at.
 func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (string, bool, error) {
 	var row GithubReviewBaseline
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -1018,7 +930,6 @@ func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (str
 	return row.PatchIDs, true, nil
 }
 
-// SetGithubReviewBaseline upserts the patch-id list (only when a review is delivered).
 func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSON string) error {
 	row := &GithubReviewBaseline{ChatID: chatID, PatchIDs: patchIDsJSON, UpdatedAt: time.Now().UTC()}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
@@ -1027,7 +938,6 @@ func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSO
 	}).Create(row).Error
 }
 
-// GetGithubFixState returns the auto-heal state, or (nil, nil) when none exists.
 func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFixState, error) {
 	var row GithubFixState
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -1040,7 +950,6 @@ func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFi
 	return &row, nil
 }
 
-// SetGithubFixState upserts the auto-heal state (persisted before fix run so crash doesn't refund).
 func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error {
 	st.UpdatedAt = time.Now().UTC()
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
@@ -1049,12 +958,10 @@ func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error 
 	}).Create(&st).Error
 }
 
-// DeleteGithubFixState re-arms auto-heal (human re-applied the fix label).
 func (s *Store) DeleteGithubFixState(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubFixState{}).Error
 }
 
-// GetGithubMergeIntent returns the merge authorization, or (nil, nil) when none.
 func (s *Store) GetGithubMergeIntent(ctx context.Context, chatID string) (*GithubMergeIntent, error) {
 	var row GithubMergeIntent
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -1067,7 +974,6 @@ func (s *Store) GetGithubMergeIntent(ctx context.Context, chatID string) (*Githu
 	return &row, nil
 }
 
-// SetGithubMergeIntent upserts the merge authorization (quack:merge label applied).
 func (s *Store) SetGithubMergeIntent(ctx context.Context, chatID, requestedBy string) error {
 	now := time.Now().UTC()
 	row := &GithubMergeIntent{ChatID: chatID, RequestedBy: requestedBy, CreatedAt: now, UpdatedAt: now}
@@ -1077,16 +983,13 @@ func (s *Store) SetGithubMergeIntent(ctx context.Context, chatID, requestedBy st
 	}).Create(row).Error
 }
 
-// DeleteGithubMergeIntent clears the merge authorization (consumed by merge).
 func (s *Store) DeleteGithubMergeIntent(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubMergeIntent{}).Error
 }
 
 // MaxTitleLen caps every persisted chat title, regardless of caller (the
 // generated titler, its failure-path fallback, a user's manual rename, or an
-// extension's origin label) - a single backstop against a titler that
-// ignores its own "3-6 words" instruction and echoes back a long answer
-// verbatim (#1124), enforced once here rather than duplicated per caller.
+// extension's origin label) - a single backstop against a titler that ignores its own "3-6 words" instruction and echoes back a long answer verbatim (#1124), enforced once here rather than duplicated per caller.
 const MaxTitleLen = 80
 
 // UpdateTitle sets the human-readable title for a chat, truncated to
@@ -1115,17 +1018,14 @@ func truncateTitle(title string, maxLen int) string {
 
 // ArchiveChat toggles the archived flag on a chat.
 // Archiving never touches UpdatedAt so that archive/unarchive doesn't reorder
-// the recency-sorted chat list - UpdateColumn (not Update) is required for that:
-// GORM auto-stamps UpdatedAt on any plain Update/Updates call by field-name
-// convention, and only UpdateColumn/UpdateColumns skip that.
+// the recency-sorted chat list - UpdateColumn (not Update) is required for that: GORM auto-stamps UpdatedAt on any plain Update/Updates call by field-name convention, and only UpdateColumn/UpdateColumns skip that.
 func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error {
 	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).UpdateColumn("archived", archived).Error
 }
 
 // SaveTurn persists a new turn at the next available sequence position.
 // userText is stored on the row itself (see ChatTurn.UserText) so the chat
-// view survives a later ResetHistory dispatch wiping the session events it
-// would otherwise read the turn's content from.
+// view survives a later ResetHistory dispatch wiping the session events it would otherwise read the turn's content from.
 func (s *Store) SaveTurn(ctx context.Context, chatID, turnID, userText string) error {
 	var count int64
 	if err := s.db.WithContext(ctx).Model(&ChatTurn{}).Where("chat_id = ?", chatID).Count(&count).Error; err != nil {
@@ -1193,8 +1093,7 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 		}
 		// IdempotencyKey = planID: a boot resume re-yields the same stashed
 		// plan through this path (see doc above) - the DB write is already
-		// skip-if-exists, so the WAL append must be too, or a resumed chat
-		// grows one plan.saved entry per resume forever.
+		// skip-if-exists, so the WAL append must be too, or a resumed chat grows one plan.saved entry per resume forever.
 		_, err = s.walLedger.AppendIntent(ctx, ledger.Entry{
 			ChatID: chatID, TurnID: turnID, Kind: ledger.KindPlanSaved, Key: planID,
 			At: now, Payload: payload, IdempotencyKey: "plan.saved:" + planID,
@@ -1254,9 +1153,7 @@ func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int6
 
 // ChatEventsExist reports whether chatID has ANY row in the SSE table,
 // regardless of seq - runlog.EventLog.LoadEvents' fold-fallback decision
-// (#1101): a chat with rows but none newer than some fromSeq is "caught
-// up", not "table is gone", and must not trigger a resend of the whole
-// reconstructed history.
+// (#1101): a chat with rows but none newer than some fromSeq is "caught up", not "table is gone", and must not trigger a resend of the whole reconstructed history.
 func (s *Store) ChatEventsExist(ctx context.Context, chatID string) (bool, error) {
 	var count int64
 	err := s.db.WithContext(ctx).Model(&ChatEvent{}).Where("chat_id = ?", chatID).Count(&count).Error
@@ -1315,10 +1212,7 @@ func (s *Store) SetProjectionWatermark(ctx context.Context, chatID, projection s
 
 // UpsertNodeTerminalStatusTx sets a node's terminal status (done/failed)
 // inside tx, bypassing SetNodeStatus's transition machine - `quack ledger
-// rebuild`'s node_state reconciliation write (#1144 P3), not a live
-// lifecycle transition. Creates the row if the crash that orphaned this
-// watermark also lost it - same lossy-reconstruction ceiling as
-// fold.NodeState (only status is known, not the row's other columns).
+// rebuild`'s node_state reconciliation write (#1144 P3), not a live lifecycle transition. Creates the row if the crash that orphaned this watermark also lost it - same lossy-reconstruction ceiling as fold.NodeState (only status is known, not the row's other columns).
 func UpsertNodeTerminalStatusTx(tx *gorm.DB, planID, nodeID, status string) error {
 	return tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "plan_id"}, {Name: "node_id"}},
@@ -1334,27 +1228,7 @@ func (s *Store) ResetProjectionWatermark(ctx context.Context, chatID, projection
 }
 
 // SeedProjectionWatermarks marks every chat that already has chat_events
-// rows as caught up through its OWN ledger history, so migrating an existing
-// deployment to watermark-gated folding never replays or duplicates SSE
-// events. It seeds with the ledger's own MAX(seq) for that chat, NOT
-// MAX(chat_events.seq): the table's Seq is a PER-RUN counter that resets on
-// every run while the ledger's Seq is per-chat-LIFETIME (see
-// runlog.LoadEvents's doc for why the two spaces are never comparable) - a
-// literal copy of the table's Seq would seed a lifetime watermark from a
-// per-run number, which is wrong on any chat that has run more than once.
-// "Caught up through the whole ledger so far" is the safe superset: this
-// chat's SSE rows already came from direct live writes, not a fold, so there
-// is nothing for a fold to replay into it. Idempotent (ON CONFLICT DO
-// NOTHING) - safe to call on every boot; a chat that already has a watermark
-// row (seeded before, or written by a real fold/projection write since) is
-// never touched.
-// Same seed shape for "artifact" (already-materialized artifact rows) and
-// "node_state" (already-materialized DagNode rows) as for "sse" - each marks
-// pre-existing data "caught up through the whole ledger so far" so the first
-// watermark-gated write for that projection never re-derives or duplicates
-// it. ledgerStore may be a wholly separate database (Postgres ledger next to
-// a sqlite session store, the only sanctioned topology); it is read through
-// its own Go API, never joined to from this Store's SQL.
+// rows as caught up through its OWN ledger history (same seed shape for "artifact" - already-materialized artifact rows - and "node_state" - already-materialized DagNode rows - so each projection's first watermark-gated write never re-derives, replays, or duplicates its pre-existing data), so migrating an existing deployment to watermark-gated folding never replays or duplicates it. It seeds with the ledger's own MAX(seq) for that chat, NOT MAX(chat_events.seq): the table's Seq is a PER-RUN counter that resets on every run while the ledger's Seq is per-chat-LIFETIME (see runlog.LoadEvents's doc for why the two spaces are never comparable) - a literal copy of the table's Seq would seed a lifetime watermark from a per-run number, wrong on any chat that has run more than once. "Caught up through the whole ledger so far" is the safe superset: pre-existing rows came from direct live writes, not a fold, so there is nothing for a fold to replay. Idempotent (ON CONFLICT DO NOTHING) - safe to call on every boot; a chat that already has a watermark row is never touched. ledgerStore may be a wholly separate database (Postgres ledger next to a sqlite session store, the only sanctioned topology); it is read through its own Go API, never joined to from this Store's SQL.
 func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger.LedgerStore) error {
 	seeds := []struct {
 		projection, listChats string
@@ -1369,8 +1243,7 @@ func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger
 	now := time.Now().UTC()
 	// maxSeqCache: a chat can appear in more than one projection's list
 	// (chat_events + artifacts + dag_nodes), and ledgerStore.MaxSeq is one
-	// per-chat round trip - cache it instead of re-deriving the same number
-	// per projection.
+	// per-chat round trip - cache it instead of re-deriving the same number per projection.
 	maxSeqCache := map[string]int64{}
 	for _, sd := range seeds {
 		var chatIDs []string
@@ -1396,8 +1269,7 @@ func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger
 			}).Create(&ProjectionWatermark{ChatID: chatID, Projection: sd.projection, FoldedSeq: maxSeq, UpdatedAt: now}).Error
 			// artifact/node_state read chat ids from OTHER tables (artifacts,
 			// dag_nodes) that the chats(id) FK (#1296) doesn't cover - a chat_id
-			// with no chats row there is a pre-existing dangling reference, not
-			// a new bug; skip it instead of aborting every other chat's seed.
+			// with no chats row there is a pre-existing dangling reference, not a new bug; skip it instead of aborting every other chat's seed.
 			if errors.Is(err, gorm.ErrForeignKeyViolated) {
 				slog.Warn("projection watermark seed: chat row is gone; skipping", "component", "store", "projection", sd.projection, "chat", chatID)
 				continue
@@ -1455,8 +1327,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 	var nodes []DagNode
 	// IS NULL covers ALTER TABLE ADD COLUMN no-default rows. The ownership
 	// guard applies to both branches: in a shared DB (#683) a booting
-	// instance must not resume a live peer's nodes; a dead peer's nodes are
-	// picked up past staleNodeCeiling.
+	// instance must not resume a live peer's nodes; a dead peer's nodes are picked up past staleNodeCeiling.
 	owned := s.db.Where("instance_id IS NULL OR instance_id = ? OR instance_id = ? OR updated_at < ?", "", s.instanceID, cutoff)
 	err := s.db.WithContext(ctx).Model(&DagNode{}).
 		Where("status IN ?", []string{string(dag.StatusPaused), string(dag.StatusNeedsInput), string(dag.StatusRunning)}).
@@ -1537,7 +1408,6 @@ func (s *Store) failUnresumable(ctx context.Context, n DagNode, why string) Unre
 	return UnresumableNode{PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
 }
 
-// GetDagNodes returns all nodes for a plan.
 func (s *Store) GetDagNodes(ctx context.Context, planID string) ([]DagNode, error) {
 	var nodes []DagNode
 	err := s.db.WithContext(ctx).Where("plan_id = ?", planID).Find(&nodes).Error
@@ -1557,7 +1427,6 @@ func (s *Store) GetDagNode(ctx context.Context, planID, nodeID string) (*DagNode
 	return &n, nil
 }
 
-// GetLatestDagPlan returns the most-recent DAG plan for a chat.
 func (s *Store) GetLatestDagPlan(ctx context.Context, chatID string) (*DagPlan, error) {
 	var p DagPlan
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Order("created_at DESC").First(&p).Error
@@ -1579,10 +1448,8 @@ func (s *Store) CountDagPlans(ctx context.Context, chatID string) (int64, error)
 	return n, err
 }
 
-// buildTurnContent joins one ChatTurn row with its session-derived group (nil if the turn
-// has none - e.g. it fell outside the alignment window, or ResetHistory wiped the session
-// outright, #1226), its DAG plan, and that plan's nodes. Shared by GetTurnsWithContent and
-// GetLastTurnWithContent so the two loaders can't drift on how a turn's content is assembled.
+// buildTurnContent joins one ChatTurn row with its session-derived group
+// (nil if the turn has none - e.g. it fell outside the alignment window, or ResetHistory wiped the session outright, #1226), its DAG plan, and that plan's nodes. Shared by GetTurnsWithContent and GetLastTurnWithContent so the two loaders can't drift on how a turn's content is assembled.
 func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[string][]DagNode) TurnContent {
 	tc := TurnContent{
 		ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model,
@@ -1623,17 +1490,8 @@ func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[s
 const lastTurnWindow = 512
 
 // getLastTurnGroup fetches only enough of the session's tail to derive the newest turn's
-// content, instead of GetTurnsWithContent's whole-session load (perf audit #3 - 278MB/
-// 939k allocs/270-735ms per run end on a 14,050-event session). A window with no user
-// event in view means that turn is bigger than the window, not that the group is
-// incomplete: groupSessionEvents only starts a group at a user event, so a window
-// truncated mid-turn yields zero groups rather than a partial one. Growing the window
-// (not guessing a single large constant) keeps this correct regardless of turn size while
-// still bounding the fetch for the common case.
-//
-// Mirrors GetTurnsWithContent's own tolerance for a missing/unreadable session (no session
-// row yet, or one ResetHistory deleted, #1226): any Sessions.Get error just means no group,
-// not a call failure - the caller falls back to the ChatTurn row's own stored text.
+// content, instead of GetTurnsWithContent's whole-session load (perf audit #3 - 278MB/939k allocs/270-735ms per run end on a 14,050-event session). A window with no user event in view means that turn is bigger than the window, not that the group is incomplete: groupSessionEvents only starts a group at a user event, so a window truncated mid-turn yields zero groups rather than a partial one; growing the window (not guessing a single large constant) keeps this correct regardless of turn size while still bounding the fetch for the common case.
+// Mirrors GetTurnsWithContent's own tolerance for a missing/unreadable session (no session row yet, or one ResetHistory deleted, #1226): any Sessions.Get error just means no group, not a call failure - the caller falls back to the ChatTurn row's own stored text.
 func (s *Store) getLastTurnGroup(ctx context.Context, appName, userID, chatID string) (turnGroup, bool) {
 	for n := lastTurnWindow; ; n *= 8 {
 		resp, err := s.Sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: chatID, NumRecentEvents: n})
@@ -1723,11 +1581,7 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 	}
 
 	// groups can be shorter than turns - a ResetHistory dispatch (#1195) wipes
-	// older session events while every ChatTurn row survives forever, and
-	// only ever removes OLDER events, never reorders what's left. So the
-	// surviving groups always line up with the MOST RECENT len(groups) turns,
-	// never the first: align from the end, not the front, or a reset silently
-	// shifts every later turn's content onto the wrong (earlier) turn.
+	// older session events while every ChatTurn row survives forever, and only ever removes OLDER events, never reorders what's left. So the surviving groups always line up with the MOST RECENT len(groups) turns, never the first: align from the end, not the front, or a reset silently shifts every later turn's content onto the wrong (earlier) turn.
 	offset := len(turns) - len(groups)
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {

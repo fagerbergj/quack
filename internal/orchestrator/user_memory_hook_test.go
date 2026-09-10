@@ -24,16 +24,9 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// --- pre-filter ---
-
-// TestUserMemoryPreFilter: narrowed to preference-shaped phrases (#1283 audit
-// finding 9) - the old alternation included bare never/always/instead of/
-// don't, which matched 26.1% of a 2,389-paragraph technical-prose corpus
-// (this repo's own commit messages); 91% of those hits came from four
-// keywords that never on their own state a durable preference. The narrowed
-// regex measured 0.3% on the same corpus. Ten preference-shaped sentences
-// must still match; ten ordinary technical sentences using bare never/always/
-// instead of/don't must not.
+// TestUserMemoryPreFilter: narrowed to preference-shaped phrases (#1283
+// audit finding 9) - the old alternation included bare never/always/instead
+// of/don't, which matched 26.1% of a 2,389-paragraph technical-prose corpus (this repo's own commit messages); 91% of those hits came from four keywords that never on their own state a durable preference. The narrowed regex measured 0.3% on the same corpus. Ten preference-shaped sentences must still match; ten ordinary technical sentences using bare never/always/instead of/don't must not.
 func TestUserMemoryPreFilter(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -76,8 +69,6 @@ func TestUserMemoryPreFilter(t *testing.T) {
 		})
 	}
 }
-
-// --- mineUserMemory (agent invocation + parsing) ---
 
 // scriptedModel is a model.LLM that always replies with the same scripted text,
 // for driving a memory-agent stand-in without a real model. usage is nil by
@@ -189,9 +180,7 @@ func TestMineUserMemory(t *testing.T) {
 
 // TestMineUserMemory_DefaultAgentFillsTokenUsage pins serve.go's memory-hook
 // wiring: mineUserMemory runs from a fire-and-forget goroutine after the
-// orchestrator's own turn ends, via its own nested runner.Run, so the memory-hook
-// model's tracedModel needs the SetDefaultAgent("memory-hook") fallback to
-// attribute its token usage at all.
+// orchestrator's own turn ends, via its own nested runner.Run, so the memory-hook model's tracedModel needs the SetDefaultAgent("memory-hook") fallback to attribute its token usage at all.
 func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -248,8 +237,6 @@ func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
 	}
 }
 
-// --- commitUserMemory (scoped write) ---
-
 // fakeEmbedder returns a fixed unit vector for every text, matching internal/memory's
 // own test fixture - any query matches any stored point, so only the scope filter
 // decides what recall sees.
@@ -269,9 +256,8 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 var stagedCandidateLine = regexp.MustCompile(`(?m)^- (?:\[(\w+)\] )?(.+)$`)
 
 // fakeConsolidator is a model.LLM standing in for the memory store's
-// consolidation model: it turns every staged candidate straight into an ADD op,
-// skipping any real reconciliation - enough to exercise Commit's write path
-// without hitting a real model.
+// consolidation model: it turns every staged candidate straight into an ADD
+// op, skipping any real reconciliation - enough to exercise Commit's write path without hitting a real model.
 type fakeConsolidator struct{}
 
 func (fakeConsolidator) Name() string { return "fake-consolidator" }
@@ -336,8 +322,6 @@ func TestCommitUserMemoryNoCandidatesIsNoop(t *testing.T) {
 	commitUserMemory(context.Background(), store, "alice", memory.Provenance{}, nil) // must not panic on nil store or empty candidates
 	commitUserMemory(context.Background(), nil, "alice", memory.Provenance{}, []memory.Candidate{{Content: "x"}})
 }
-
-// --- maybeMineUserMemory (gating, async, error-swallowing) ---
 
 // waitFor polls cond until it's true or timeout elapses - standard technique
 // for asserting on a fire-and-forget goroutine's eventual effect.

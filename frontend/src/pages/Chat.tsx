@@ -37,31 +37,24 @@ export function shouldQueueSubmit(streaming: boolean): boolean {
   return streaming
 }
 
-// mergeChatsPage folds a freshly-polled page (server order: most-recently-
-// updated first) into the existing list without ever shortening it: a chat
-// in `page` replaces its stale copy (or is added if new); everything else in
-// `existing` - beyond what a bounded page can cover - is left untouched.
-// Safe to concatenate in this order: `page` is exactly the current top N by
-// updated_at, so nothing left in `existing` can outrank it (#736 - the poll
-// must never truncate a sidebar the user has paged past the page cap).
+// Folds a freshly-polled page (server order: most-recently-updated first)
+// into the existing list without ever shortening it: a chat in `page` replaces
+// its stale copy (or is added if new); everything else in `existing` - beyond what a bounded page can cover - is left untouched. Safe in this order: `page` is exactly the current top N by updated_at, so nothing left in `existing` can outrank it (#736 - the poll must never truncate a sidebar paged past the page cap).
 export function mergeChatsPage(existing: ChatSummary[], page: ChatSummary[]): ChatSummary[] {
   const pageIds = new Set(page.map(c => c.id))
   return [...page, ...existing.filter(c => !pageIds.has(c.id))]
 }
 
-// pollPageExcludingPending drops ids from a freshly-polled active page before it reaches
-// mergeChatsPage. Without this, a status=active poll GET in flight when the user archives
-// the open chat can resolve after the optimistic removal but still list the chat as
-// active (the server hadn't processed the archive PATCH yet when it served the GET) -
-// mergeChatsPage trusts `page` unconditionally, so that stale entry undoes the archive.
+// Drops ids from a freshly-polled active page before it reaches mergeChatsPage.
+// Without this, a status=active poll GET in flight when the user archives the
+// open chat can resolve still listing it active (server hadn't processed the archive PATCH yet) - mergeChatsPage trusts `page` unconditionally, so that stale entry would undo the archive.
 export function pollPageExcludingPending(page: ChatSummary[], pendingIds: Set<string>): ChatSummary[] {
   return pendingIds.size === 0 ? page : page.filter(c => !pendingIds.has(c.id))
 }
 
-// nextArchivedChats computes the Archived section's list after an archive/unarchive move.
-// Archiving into an unloaded section (`current === undefined`) must not seed it - that
-// would flip archivedChats from undefined to a partial list, and undefined is exactly how
-// handleExpandArchived knows the real first page still needs to be fetched (#809).
+// The Archived section's list after an archive/unarchive move. Archiving into
+// an unloaded section (`current === undefined`) must not seed it - undefined is
+// exactly how handleExpandArchived knows the real first page still needs to be fetched (#809).
 export function nextArchivedChats(current: ChatSummary[] | undefined, item: ChatSummary, archived: boolean): ChatSummary[] | undefined {
   if (archived) return current === undefined ? undefined : [item, ...current]
   return current?.filter(c => c.id !== item.id)
@@ -74,18 +67,16 @@ export function chatBelongsInActiveList(detail: ChatSummary): boolean {
   return !detail.archived
 }
 
-// resolveActiveChat is the focused chat's metadata: `chats` (the active-scoped,
-// live-polled list) first, else the one-shot GetChat snapshot kept for a chat
-// that must stay out of that list (archived) - never both, never neither once
-// GetChat has resolved.
+// The focused chat's metadata: `chats` (the active-scoped, live-polled list)
+// first, else the one-shot GetChat snapshot kept for a chat that must stay out
+// of that list (archived) - never both, never neither once GetChat has resolved.
 export function resolveActiveChat(chats: ChatSummary[], activeChatId: string | null, detail: ChatSummary | null): ChatSummary | undefined {
   return chats.find(s => s.id === activeChatId) ?? (detail?.id === activeChatId ? detail : undefined)
 }
 
-// pollWhileVisible calls `poll` on an interval, but only while the document is visible - a
-// backgrounded tab has nothing to show, so it costs nothing (#738). Becoming visible again
-// fires `poll` immediately rather than waiting out the rest of the interval. Returns a
-// cleanup function that stops the interval and removes the listener.
+// Calls `poll` on an interval, but only while the document is visible - a
+// backgrounded tab has nothing to show, so it costs nothing (#738); becoming
+// visible fires `poll` immediately rather than waiting out the interval. Returns a cleanup that stops the interval and removes the listener.
 export function pollWhileVisible(poll: () => void, intervalMs: number): () => void {
   function tick() {
     if (!document.hidden) poll()
@@ -98,10 +89,9 @@ export function pollWhileVisible(poll: () => void, intervalMs: number): () => vo
   }
 }
 
-// chatGitHubLink (#382) extracts the header's back-link target from a chat's
-// summary: present only for a GitHub-originated chat (github_url set by the
-// webhook at dispatch time), null for a direct chat - so the header renders
-// nothing extra for local chats.
+// (#382) the header's back-link target from a chat's summary: present only
+// for a GitHub-originated chat (github_url set by the webhook at dispatch
+// time), null for a direct chat - the header renders nothing extra for local chats.
 export function chatGitHubLink(chat: ChatSummary | undefined): { url: string; repo?: string } | null {
   if (!chat?.github_url) return null
   return { url: chat.github_url, repo: chat.github_repo }
@@ -113,10 +103,9 @@ export interface EditableChatTitleProps {
   onRename: (title: string) => void
 }
 
-// EditableChatTitle is the header's click-to-edit title: a click (when
-// `editable`, i.e. a chat is active) swaps the heading for a text input;
-// Enter/blur commits, Escape cancels. `onRename` fires only for an actual
-// change - a blank or unchanged draft is a silent no-op, not a rename to ''.
+// The header's click-to-edit title: a click (when `editable`, i.e. a chat is
+// active) swaps the heading for a text input; Enter/blur commits, Escape
+// cancels. `onRename` fires only for an actual change - a blank or unchanged draft is a silent no-op, not a rename to ''.
 export function EditableChatTitle({ title, editable, onRename }: EditableChatTitleProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -212,10 +201,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // resurrecting one via a stale in-flight GET that raced the archive PATCH.
   const archivingIdsRef = useRef<Set<string>>(new Set())
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
-  // Set once GET /chats/{id} has seeded this chat's turns - gates the status-
-  // triggered re-attach below so it can never fire ahead of seed() (#463: the
-  // sidebar's poll can mark a chat 'running' before its own getChat resolves,
-  // and an early attach() makes seed() a no-op, permanently dropping history).
+  // Set once GET /chats/{id} has seeded this chat's turns - gates the
+  // status-triggered re-attach below so it can never fire ahead of seed()
+  // (#463: the poll can mark a chat 'running' before its own getChat resolves, and an early attach() makes seed() a no-op, permanently dropping history).
   const [seededChatId, setSeededChatId] = useState<string | null>(null)
   // A focused chat GetChat has resolved but that must stay out of the active-
   // scoped `chats` list (archived) - see the getChat effect below.
@@ -247,8 +235,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   // #1138: turn_id -> image previews, from this chat's own artifact store -
   // lets a persisted turn show a real thumbnail instead of only the
-  // "[User attached: ...]" text placeholder. Best-effort: an empty/failed
-  // fetch just means no turn gets a thumbnail, never an error state.
+  // "[User attached: ...]" text placeholder. Best-effort: an empty/failed fetch just means no turn gets a thumbnail, never an error state.
   const [turnImages, setTurnImages] = useState<Record<string, { url: string; mime: string; name: string }[]>>({})
 
   // Open a chat scrolled to the latest message (and snap down as turns complete),
@@ -363,26 +350,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
       }
       store.seed(activeChatId, detail.turns, detail.usage)
       setSeededChatId(activeChatId)
-      // Reconnect to a run still in progress (e.g. this browser after a refresh):
-      // the POST body stream is gone, so subscribe to the hub. attach no-ops if
-      // this client already streams (it posted the run) - no double-subscribe.
-      // detail.status is the hub's authoritative "a run is live" signal and is
-      // true through EVERY phase (queued behind max_active_runs, planning,
-      // queued nodes, streaming) - the DAG check alone missed pre-DAG phases (no
-      // quack:dag item persisted yet), so a refresh during planning never
-      // reconnected. queued is included: the run's hub topic is already live
-      // (response_created publishes at admission, before the run slot is
-      // acquired), so a refresh while queued must still attach.
-      //
-      // A FINISHED DAG turn also attaches (#1290): chat_events durably keeps
-      // the last run's events (Reset wipes them at the NEXT run's start, so
-      // this is bounded to one run's worth, not the chat's whole history), and
-      // the cold path in SubscribeChatStream replays them from seq 0. That's
-      // the only record of the judge/revise sub-run cards - node_states (what
-      // seed() renders from) has no per-run breakdown, only the node's final
-      // rollup - so without this a reload loses the judge/revise cards a live
-      // view showed. Same handlers as the live path, so one parser.
-      // Archived stays detached - read-only focus, regardless of status.
+      // Reconnect to a run still in progress (this browser after a refresh): the
+      // POST body stream is gone, so subscribe to the hub while detail.status is running/queued - the hub's authoritative "a run is live", true through EVERY phase (the DAG check alone misses pre-DAG phases; queued counts because response_created publishes at admission); attach no-ops if this client already streams.
+      // A FINISHED DAG turn also attaches (#1290): chat_events durably keeps the last run's events (bounded to one run, wiped at the NEXT run's start) and replays them from seq 0 through the same handlers - one parser. It is the only record of the judge/revise sub-run cards (node_states has no per-run breakdown); without this a reload loses them. Archived stays detached - read-only focus.
       const lastTurn = detail.turns[detail.turns.length - 1]
       if (chatBelongsInActiveList(detail) && (detail.status === 'running' || detail.status === 'queued' || (lastTurn && dagFromTurn(lastTurn) != null))) {
         store.attach(activeChatId)
@@ -394,14 +364,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     }
   }, [activeChatId])
 
-  // #1138: fetch this chat's artifact list to build the turn -> image-
-  // thumbnail map. Re-fetches on every new archived turn (state.turns.length),
-  // not just on chat open - a turn just sent with an attachment archives into
-  // state.turns as soon as the NEXT turn is sent (see the live path below),
-  // and without this the map is stale for it: the thumbnail vanishes and the
-  // bubble falls back to the "[User attached: ...]" text placeholder, the
-  // exact bug this fixes. Separate from the getChat effect above - this is a
-  // nice-to-have preview, not something a failure should block seeding turns on.
+  // #1138: fetches this chat's artifact list to build the turn -> thumbnail
+  // map; re-fetches on every new archived turn (state.turns.length), not just
+  // on chat open - an attachment turn archives as soon as the NEXT turn is sent, and without this the map is stale for it and the bubble falls back to the "[User attached: ...]" placeholder (the bug this fixes). Separate from the getChat effect: a nice-to-have preview whose failure must not block seeding.
   useEffect(() => {
     setTurnImages({})
     if (!activeChatId) return
@@ -412,21 +377,16 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     return () => { cancelled = true }
   }, [activeChatId, state.turns.length])
 
- // #499/#738: poll the chat list so the sidebar stays current without a refresh. Skipped
-  // while the tab is hidden (a backgrounded tab has nothing to show anyway) and resumed
-  // immediately on refocus rather than waiting out the rest of the interval - a GitHub-webhook-triggered
-  // run has no client action to hang off, so this stays a poll, not push-on-navigate.
+  // #499/#738: poll the chat list so the sidebar stays current without a
+  // refresh. Skipped while the tab is hidden (a backgrounded tab has nothing
+  // to show) and resumed immediately on refocus - a GitHub-webhook-triggered run has no client action to hang off, so this stays a poll, not push-on-navigate.
   useEffect(() => {
     let cancelled = false
     async function doPoll() {
       try {
         // Always just the first (default-size) page, merged into whatever's
         // already loaded - never re-requested at the loaded count, which
-        // above the server's page cap would silently come back shorter than
-        // what's on screen (#736). Chats are updated_at-sorted, so anything
-        // that just changed is in this page regardless of how far the user
-        // has paged; the pagination token is left untouched here. Active
-        // scope only (#809) - the Archived section isn't live-polled.
+        // above the server's page cap would come back shorter than what's on screen (#736); updated_at-sorted, so anything that just changed is in this page regardless of paging. The pagination token is untouched here; active scope only (#809) - the Archived section isn't live-polled.
         const result = await api.listChats({ status: ['active'] })
         // Exclude ids this client is mid-archive on - see pollPageExcludingPending.
         if (!cancelled) setChats(prev => mergeChatsPage(prev, pollPageExcludingPending(result.data, archivingIdsRef.current)))
@@ -442,11 +402,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
 
   // #463: when a run goes active on an already-open chat (e.g. GitHub webhook
   // dispatched while the user views this chat), re-fire attach so the SSE
-  // subscribe stream opens and live events start flowing.  Without it, only
-  // ChatList's Running badge lights up - the chat box stays blank because
-  // the /stream subscription never started for this client.  attach no-ops if
-  // this client already streams (it posted the run) or has an existing
-  // EventSource - no double-subscribe.
+  // subscribe stream opens and live events start flowing. Without it, only ChatList's Running badge lights up - the /stream subscription never started for this client. attach no-ops if this client already streams (it posted the run) or has an existing EventSource.
   useEffect(() => {
     if (!activeChatId || !activeChat?.status || activeChat.archived) return
     if (seededChatId !== activeChatId) return // wait for the getChat effect's own attach - see seededChatId above
@@ -609,10 +565,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     if (activeChatId) store.unqueueTurn(activeChatId, id)
   }, [activeChatId, store])
 
-  // handleChoice answers a get_user_choice clarification by sending the chosen
-  // option as the next message (the backend resumes it as the tool's answer).
-  // Reuses the normal send path. The local guard prevents a double-send during
-  // the brief window before store.submit flips the streaming flag.
+  // Answers a get_user_choice clarification by sending the chosen option as
+  // the next message (the backend resumes it as the tool's answer), reusing
+  // the normal send path. The local guard prevents a double-send during the brief window before store.submit flips the streaming flag.
   const handleChoice = useCallback(async (option: string) => {
     if (!activeChatId || submittingChoice) return
     setSubmittingChoice(true)
@@ -647,12 +602,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     return { turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments: turnImages[turn.id] }
   }), [state.turns, liveUserText, turnImages])
 
-  // Cap how many completed turns actually mount (audit finding 9: a chat with
-  // hundreds of turns pays 2.9 ms + 28 DOM elements each with no bound - 2,000
-  // turns is 5.9 s to first paint). Built from turnViews (not sliced earlier),
-  // so idx/priorContents/choiceAnswer above still see the FULL history - only
-  // which turns actually mount as a <TurnView> is capped. Resets per chat so
-  // an earlier "show more" doesn't carry over to a freshly opened one.
+  // Cap how many completed turns actually mount (audit finding 9: a chat
+  // with hundreds of turns pays 2.9 ms + 28 DOM elements each, unbounded -
+  // 2,000 turns is 5.9 s to first paint). Built from turnViews (not sliced earlier), so idx/priorContents/choiceAnswer above still see the FULL history - only which turns mount as a <TurnView> is capped. Resets per chat so an earlier "show more" doesn't carry over to a freshly opened one.
   const [visibleTurnCount, setVisibleTurnCount] = useState(RENDERED_TURN_TAIL)
   useEffect(() => { setVisibleTurnCount(RENDERED_TURN_TAIL) }, [activeChatId])
   const mountedTurnViews = useMemo(() => turnViews.slice(-visibleTurnCount), [turnViews, visibleTurnCount])
@@ -818,14 +770,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             // Archived is always "done": no active-run chrome even if a run left
             // running through the archive (see liveActive above).
             const liveDone = !liveActive
-            // Which text is the user-facing answer:
-            //  - a DAG ran: the terminal node's answer IS the response (execute always
-            //    delivers from the node now - there's no orchestrator-composed
-            //    "synthesize" mode to prefer instead). liveTopText is the
-            //    orchestrator's OWN narration (planning chatter, reasoning about the
-            //    request) - never the answer when a DAG exists; falling back to it
-            //    only masks a missing/incomplete terminal answer with unrelated text.
-            //  - no DAG: the orchestrator answered directly, so its text IS the reply.
+            // Which text is the user-facing answer: if a DAG ran, the terminal
+            // node's answer IS the response (execute always delivers from the
+            // node now - there's no orchestrator "synthesize" mode to prefer); liveTopText is the orchestrator's OWN narration (planning chatter, reasoning about the request) - never the answer when a DAG exists, falling back to it only masks a missing terminal answer. No DAG: the orchestrator answered directly, so its text IS the reply.
             const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
             // The orchestrator's own activity (deciding to research, plan/execute calls).
             // get_user_choice is surfaced as its own QuestionBubble below, not a raw tool block.
@@ -839,8 +786,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             const nodeQuestion = liveDag && !isArchived ? pendingNodeQuestion(liveDag) : undefined
             // Show spinner while streaming until something VISIBLE arrives (DAG,
             // answer text, or visible activity). Keyed on orchActivity, not run
-            // count - the orchestrator's top-level run is created empty on the
-            // first event, so a run-count check blanks the dots before the plan.
+            // count - the orchestrator's top-level run is created empty on the first event, so a run-count check blanks the dots before the plan.
             const showSpinner = showLiveSpinner({
               streaming: liveActive,
               hasDag: !!liveDag,

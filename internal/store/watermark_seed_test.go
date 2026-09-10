@@ -12,8 +12,7 @@ import (
 
 // TestSeedProjectionWatermarks_SeparateStores proves seeding works across the
 // real deployment topology (session store and ledger store as distinct
-// instances, e.g. sqlite session store + a separate ledger DB) and is a
-// no-op on a second boot.
+// instances, e.g. sqlite session store + a separate ledger DB) and is a no-op on a second boot.
 func TestSeedProjectionWatermarks_SeparateStores(t *testing.T) {
 	ctx := context.Background()
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -30,8 +29,7 @@ func TestSeedProjectionWatermarks_SeparateStores(t *testing.T) {
 	chatID := "c1"
 	// The "sse" seed now lists candidate chats from `chats`, not chat_events
 	// (perf audit #8: chat_events DISTINCT was a 496 MB seq scan on prod) -
-	// a chats row always exists before any chat_events row in the real
-	// CreateChat path, so the fixture needs one too.
+	// a chats row always exists before any chat_events row in the real CreateChat path, so the fixture needs one too.
 	if err := st.db.WithContext(ctx).Create(&Chat{ID: chatID}).Error; err != nil {
 		t.Fatalf("create chat: %v", err)
 	}

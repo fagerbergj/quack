@@ -94,11 +94,34 @@ func TestRunLedgerRebuild_RegeneratesArtifactMeta(t *testing.T) {
 	}
 }
 
+// TestRunLedgerRebuild_JSON asserts the report's shape through the shared
+// WriteJSON writer, distinct from the human FormatLedgerRebuildReport text.
+func TestRunLedgerRebuild_JSON(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, "chat-1", false)
+	if err != nil {
+		t.Fatalf("RunLedgerRebuild: %v", err)
+	}
+	var out bytes.Buffer
+	if err := WriteJSON(&out, report); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if got["chat_id"] != "chat-1" {
+		t.Errorf("chat_id = %v, want chat-1", got["chat_id"])
+	}
+	if _, ok := got["artifact_update_errors"]; ok {
+		t.Errorf("empty artifact_update_errors should be omitted, got %v", got["artifact_update_errors"])
+	}
+}
+
 // TestRunLedgerRebuild_DryRunWritesNothing: --dry-run reports the same
 // counts but leaves the drifted row untouched. Seeds a REAL lineage
-// (Author/NodeID/Round all set) and drifts it to a DIFFERENT real lineage,
-// so this test cannot pass vacuously (an empty-vs-empty lineage comparison
-// would pass even if dry-run silently wrote - #1111 review finding).
+// (Author/NodeID/Round all set) and drifts it to a DIFFERENT real lineage, so this test cannot pass vacuously (an empty-vs-empty lineage comparison would pass even if dry-run silently wrote - #1111 review finding).
 func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -137,12 +160,7 @@ func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 
 // TestRunLedgerRebuild_RegeneratesSSETable is #1121's "missing lifecycle
 // rows are inserted" case (the table starts EMPTY - every row is missing) -
-// and rebuild's honest ceiling: it reconstructs node LIFECYCLE only (which
-// node, which terminal status), never the richer live payload (tokens,
-// output, model) the skinny node.* WAL entry never carried. It asserts the
-// event's actual content (id, node id, name), not just a row count, so a
-// rebuild that silently wrote the wrong node or the wrong terminal state
-// would fail.
+// and rebuild's honest ceiling: it reconstructs node LIFECYCLE only (which node, which terminal status), never the richer live payload (tokens, output, model) the skinny node.* WAL entry never carried. It asserts the event's actual content (id, node id, name), not just a row count, so a rebuild that silently wrote the wrong node or the wrong terminal state would fail.
 func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -217,13 +235,7 @@ func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 
 // TestRunLedgerRebuild_HealthyChatIsANoop is #1121's core regression, updated
 // for #1144 P3: rebuild no longer diffs artifact metadata (that heuristic is
-// deleted - a watermark reset always re-writes every revision it finds), so
-// ArtifactRevisionsChanged now counts revisions PROCESSED, not revisions that
-// differed. What still must hold on a healthy chat is idempotence: the
-// content written is byte-identical to what was already there, and the SSE
-// table's row count and content are completely unchanged (only truly missing
-// lifecycle rows are ever inserted). This is the scenario that used to
-// replace ~4000 chat_events rows with 3 synthesized ones.
+// deleted - a watermark reset always re-writes every revision it finds), so ArtifactRevisionsChanged now counts revisions PROCESSED, not revisions that differed. What still must hold on a healthy chat is idempotence: the content written is byte-identical to what was already there, and the SSE table's row count and content are completely unchanged (only truly missing lifecycle rows are ever inserted). This is the scenario that used to replace ~4000 chat_events rows with 3 synthesized ones.
 func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -311,10 +323,7 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 
 // TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop is the #1125 review's
 // blocking scenario end-to-end: turn 1's node N fails, turn 2's N (a later
-// re-run, fresh turn id) completes - the CURRENT table (per-run) only ever
-// holds turn 2's rows. Rebuild must not resurrect turn 1's stale
-// node_failed (nor insert a second node_start) - it must be a no-op,
-// exactly like a chat with only one turn per node.
+// re-run, fresh turn id) completes - the CURRENT table (per-run) only ever holds turn 2's rows. Rebuild must not resurrect turn 1's stale node_failed (nor insert a second node_start) - it must be a no-op, exactly like a chat with only one turn per node.
 func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -388,9 +397,7 @@ func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
 
 // TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers seeds a table
 // with real observational rows and ONE existing lifecycle row, then folds a
-// WAL with a genuinely missing second node's lifecycle - rebuild must add
-// only that missing row and leave every other row (observational AND the
-// other node's existing lifecycle row) byte-for-byte untouched.
+// WAL with a genuinely missing second node's lifecycle - rebuild must add only that missing row and leave every other row (observational AND the other node's existing lifecycle row) byte-for-byte untouched.
 func TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -461,8 +468,7 @@ func TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers(t *testing.T) {
 
 // TestRunLedgerRebuild_RegeneratesNodeState is #1144 P3's node_state side:
 // a node that reached "done" in the ledger but whose DagNode row still says
-// "running" (a crash between the terminal WAL entry and the row write) gets
-// its row corrected by rebuild, atomically with the node_state watermark.
+// "running" (a crash between the terminal WAL entry and the row write) gets its row corrected by rebuild, atomically with the node_state watermark.
 func TestRunLedgerRebuild_RegeneratesNodeState(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -506,10 +512,7 @@ func TestRunLedgerRebuild_RegeneratesNodeState(t *testing.T) {
 
 // TestRunLedgerRebuild_MultiPlanNodeIDReuse is the two-plans review finding:
 // res.Nodes folds the whole CHAT lifetime keyed by bare node ID, but a node
-// ID (e.g. the auto-appended "synthesize" node) legitimately recurs across
-// plans - rebuild must only write terminal status for node IDs the LATEST
-// plan actually declares, never stomp it with an older plan's re-run of the
-// same ID.
+// ID (e.g. the auto-appended "synthesize" node) legitimately recurs across plans - rebuild must only write terminal status for node IDs the LATEST plan actually declares, never stomp it with an older plan's re-run of the same ID.
 func TestRunLedgerRebuild_MultiPlanNodeIDReuse(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -586,9 +589,7 @@ func seedEvent(t *testing.T, ctx context.Context, st *store.Store, chatID string
 
 // TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce is #1144 P2's ledger-show
 // requirement: a chat with one delivery and one judge round lists each ONE
-// time - no delivery.done/judge.round duplicate entry kind exists to double
-// count them, since both are now just the delivery_record/judge_round
-// artifact.revision they always also wrote.
+// time - no delivery.done/judge.round duplicate entry kind exists to double count them, since both are now just the delivery_record/judge_round artifact.revision they always also wrote.
 func TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce(t *testing.T) {
 	ctx := context.Background()
 	_, ls, artifacts := newTestStack(t)
@@ -642,8 +643,7 @@ func TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce(t *testing.T) {
 
 // TestRunLedgerShow_PrintsJSONLines exercises the JSONL contract `show`
 // advertises across MULTIPLE entries and kinds - each line independently
-// parseable, in seq order, with --from-seq's ">=" boundary honored - not
-// just the one-entry case (#1111 review finding).
+// parseable, in seq order, with --from-seq's ">=" boundary honored - not just the one-entry case (#1111 review finding).
 func TestRunLedgerShow_PrintsJSONLines(t *testing.T) {
 	ctx := context.Background()
 	_, ls, artifacts := newTestStack(t)

@@ -15,9 +15,7 @@ import (
 
 // syncRecorder guards httptest.ResponseRecorder, whose bytes.Buffer is not safe
 // for the concurrent write/read these live-tail tests do (handler goroutine
-// writes while the test polls). Only the live tests need it.
-// Not embedded: promoted Result/Code/Header would bypass mu and race the
-// handler goroutine silently.
+// writes while the test polls). Only the live tests need it. Not embedded: promoted Result/Code/Header would bypass mu and race the handler goroutine silently.
 type syncRecorder struct {
 	mu  sync.Mutex
 	rec *httptest.ResponseRecorder
@@ -76,12 +74,7 @@ func waitForBody(t *testing.T, rec *syncRecorder, want string) {
 
 // TestSubscribeLiveTail is issue #282's core scenario: a node is actively
 // running (events already published, more still to come) and the request must
-// stay open, delivering new events as they land, instead of snapshotting the
-// history so far and closing. Crucially, the run here is published exactly as
-// the GitHub extension does - through the shared hub, with NOTHING registered
-// in the handler's own activeCancels (that map is REST-only; a GitHub-dispatched
-// run registers in the extension's separate map) - so this also pins that
-// "active" is derived from the shared hub, not that REST-only registry.
+// stay open, delivering new events as they land, instead of snapshotting the history so far and closing. Crucially, the run here is published exactly as the GitHub extension does - through the shared hub, with NOTHING registered in the handler's own activeCancels (that map is REST-only; a GitHub-dispatched run registers in the extension's separate map) - so this also pins that "active" is derived from the shared hub, not that REST-only registry.
 func TestSubscribeLiveTail(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -161,8 +154,7 @@ func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 
 // TestSubscribeLiveReconnectByLastEventID: a reconnect mid-run (Last-Event-ID
 // set) must resume past what the client already saw and pick up the live
-// tail without duplicating or dropping events - not just on the cold/durable
-// path (TestSubscribeColdReplay covers that), but on the warm hub path too.
+// tail without duplicating or dropping events - not just on the cold/durable path (TestSubscribeColdReplay covers that), but on the warm hub path too.
 func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)

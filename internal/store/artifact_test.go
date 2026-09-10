@@ -257,8 +257,7 @@ func TestArtifactService_RowBackend_SurvivesRestart(t *testing.T) {
 
 // TestRecordstoreKeepsEveryRevision proves recordstore.Client (#1090 P2)
 // behaves the same over the row-backed store and ADK's in-memory service -
-// no retention call exists (design V4.1 #2), so every save keeps its own
-// revision on both backends.
+// no retention call exists (design V4.1 #2), so every save keeps its own revision on both backends.
 var registerRetentionTestKindOnce = sync.OnceFunc(func() {
 	recordstore.Register("store.retention.test", recordstore.KindSpec{
 		Class:    recordstore.Blob,
@@ -290,8 +289,7 @@ func TestRecordstoreKeepsEveryRevision(t *testing.T) {
 
 // TestSaveWithMetaPersistsLineage proves the row-backed store round-trips
 // kind/class/lineage through SaveWithMeta/LoadWithMeta (#1090 P2) - the
-// in-memory service in bothArtifactServices has no row, so this only runs
-// against the GORM-backed service directly.
+// in-memory service in bothArtifactServices has no row, so this only runs against the GORM-backed service directly.
 func TestSaveWithMetaPersistsLineage(t *testing.T) {
 	st := newTestStore(t)
 	row, err := NewRowArtifactService(st.db)
@@ -323,11 +321,7 @@ func TestSaveWithMetaPersistsLineage(t *testing.T) {
 
 // TestConcurrentSaveSameID_NoLostRevisions covers #1090 adversarial review
 // finding #3: N goroutines saving the same (app,user,session,name) key must
-// come out with revisions exactly 1..N, no error and no two goroutines
-// landing on the same revision - the MAX(revision)+Create race the
-// per-key mutex (and, as a backstop, the unique-violation retry) close.
-// Run under -race; also exercises the row-backed and in-memory backends the
-// same way KeepEveryRevision does.
+// come out with revisions exactly 1..N, no error and no two goroutines landing on the same revision - the MAX(revision)+Create race the per-key mutex (and, as a backstop, the unique-violation retry) close. Run under -race; also exercises the row-backed and in-memory backends the same way KeepEveryRevision does.
 func TestConcurrentSaveSameID_NoLostRevisions(t *testing.T) {
 	for name, svc := range bothArtifactServices(t) {
 		t.Run(name, func(t *testing.T) {

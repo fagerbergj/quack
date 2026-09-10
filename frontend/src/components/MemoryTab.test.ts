@@ -7,9 +7,8 @@ import { api } from '../api'
 import { client } from '../generated/client.gen'
 
 // Node's fetch/Request (unlike a browser's) refuses to build a Request from a
-// relative URL - it has no document to resolve against. Production serves the
-// SPA same-origin so the generated client's relative paths are never an issue
-// there; tests need an absolute base for the same requests to construct at all.
+// relative URL - no document to resolve against. Production serves the SPA
+// same-origin so relative paths are fine there; tests need an absolute base for the same requests to construct at all.
 client.setConfig({ baseUrl: 'http://localhost' })
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -36,8 +35,7 @@ describe('MemoryTab', () => {
     fetchMock = vi.fn()
     // MemoryTab now also fires an independent GET /memories/stats (#1267) on
     // mount; intercept it ahead of fetchMock so every existing test's call
-    // count/indexing still refers only to the memories-list/vote/delete
-    // requests it was written against.
+    // count/indexing still refers only to the memories-list/vote/delete requests.
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.includes('/memories/stats')) {
@@ -208,8 +206,7 @@ describe('MemoryTab', () => {
 
   // #1300 review finding 1: a synchronous throw from voteMemory reaches
   // handleVote's catch before React has flushed the setMemories updater, so
-  // the pre-vote row must come from a ref, not a variable set as a side
-  // effect inside that updater.
+  // the pre-vote row must come from a ref, not a variable set inside that updater.
   it('rolls back the optimistic vote when voteMemory rejects synchronously', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [{ ...MEMORY, vote_score: 0, upvotes: 0 }], total: 1 }))
     await renderAndFlush()

@@ -20,8 +20,7 @@ import (
 
 // checksChatID is the chat id this test runs its plan under - and therefore the
 // per-chat workspace scope the nodes' deterministic checks resolve their workdir
-// through (<root>/<user>/<checksChatID>/…). One constant keeps the fixture dir
-// and the RunPlanAsGraph argument from drifting apart.
+// through (<root>/<user>/<checksChatID>/…). One constant keeps the fixture dir and the RunPlanAsGraph argument from drifting apart.
 const checksChatID = "chat"
 
 // checksJudgeStub always votes the judge's OWN criteria a clean pass
@@ -43,10 +42,7 @@ func (checksJudgeStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 
 // TestRunPlanAsGraphFoldsChecksPass proves the full wiring end to end
 // (buildGateNodes → per-node vetting.Config.Checks/Workdir → RunGatedRefine
-// → foldDeterministic → checksPassCriterion): a node whose configured check
-// FAILS ends up judge_passed=false / judge_final_score=0 even though the
-// judge's own criteria always score 0.9; a node whose check PASSES is
-// unaffected. A node with no Checks at all is untouched by either.
+// → foldDeterministic → checksPassCriterion): a node whose configured check FAILS ends up judge_passed=false / judge_final_score=0 even though the judge's own criteria always score 0.9; a node whose check PASSES is unaffected. A node with no Checks at all is untouched by either.
 func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 	stub := checksJudgeStub{}
 	ag, err := llmagent.New(llmagent.Config{Name: "coder", Model: stub, Description: "coder", Instruction: "ROLE:coder Answer."})
@@ -60,9 +56,7 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 	}
 	// The checks run in the node's PER-CHAT scope (<root>/u/<checksChatID>/,
 	// stamped onto vetting.Config.ChatID by buildGateNodes) - the same tree the
-	// node's own fs/git tools write to. Create THAT dir, not the per-user root:
-	// a check whose cwd does not exist cannot run at all, so even `true` would
-	// fail and passcheck would look like a broken fold.
+	// node's own fs/git tools write to. Create THAT dir, not the per-user root: a check whose cwd does not exist cannot run at all, so even `true` would fail and passcheck would look like a broken fold.
 	root, err := jail.Resolve("u", checksChatID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -81,15 +75,12 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 		vetting.NewJudgeFactory(stub, nil, nil), cfgFor, nil)
 	// One node at a time: the three root nodes share this ONE local llmagent, and a
 	// local llmagent is not safe for concurrent RunNode (production serves agents over
-	// A2A - separate sessions per call - so this only bites the test's local agent).
-	// The checks-folding assertions don't depend on concurrency; serial is deterministic.
+	// A2A - separate sessions per call - so this only bites the test's local agent). The checks-folding assertions don't depend on concurrency; serial is deterministic.
 	ex.SetMaxActive(1)
 
 	// Single-terminal native graph rule (nativegraph.go): the three
 	// independent-checks nodes are roots (no DependsOn between each other -
-	// the realistic shape, since a code-implementer node's checks are its
-	// own); "combine" is a plain downstream fan-in so the plan has exactly
-	// one terminal.
+	// the realistic shape, since a code-implementer node's checks are its own); "combine" is a plain downstream fan-in so the plan has exactly one terminal.
 	plan := Plan{ID: "p", UserMessage: "go", Nodes: []Node{
 		{ID: "failcheck", AgentName: "coder", Task: "do it", Checks: []string{"false"}},
 		{ID: "passcheck", AgentName: "coder", Task: "do it", Checks: []string{"true"}},
@@ -99,11 +90,7 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 
 	// Capture each node's stage:judge agent_complete event directly - it
 	// carries Score/Passed/Feedback in the SSE payload itself (node.go's
-	// emitJudge), independent of the session-state gateScore read-back
-	// (e.Executor.gateScore/node_done) that the live SSE stream ALSO feeds;
-	// asserting on the direct event avoids that separate (and, for a native
-	// multi-root-node graph, currently unreliable - a pre-existing gap
-	// unrelated to this change) read-back path entirely.
+	// emitJudge), independent of the session-state gateScore read-back (e.Executor.gateScore/node_done) that the live SSE stream ALSO feeds; asserting on the direct event avoids that separate (and, for a native multi-root-node graph, currently unreliable - a pre-existing gap unrelated to this change) read-back path entirely.
 	judgeDone := map[string]stream.AgentCompleteData{}
 	var judgeMu sync.Mutex
 	record := func(ev stream.SSEEvent, _ error) bool {
@@ -116,8 +103,7 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 	}
 	// The judge's stage:judge events ride a sink injected on ctx (SSE-only -
 	// see node.go's RunGatedRefine doc), wired in production by
-	// orchestrator.go's stream.WithYield; replicate that here so this direct
-	// RunPlanAsGraph call actually surfaces them.
+	// orchestrator.go's stream.WithYield; replicate that here so this direct RunPlanAsGraph call actually surfaces them.
 	ctx := stream.WithYield(context.Background(), func(ev stream.SSEEvent) { record(ev, nil) })
 	outputs := map[string]string{}
 	start := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}

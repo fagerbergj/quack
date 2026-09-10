@@ -1,11 +1,6 @@
-// This file drives internal/orchestrator's REAL entry point (Orchestrator.Run)
-// through the REAL ledger.Exporter/MemStore, then feeds the resulting bundle
-// back into replay.Load - proving UserTurns() works against a bundle shaped
-// the way PRODUCTION actually writes one, not a hand-built fixture that
-// happens to only ever go through one exporter (see #617: before the fix,
-// root/orchestrator-level events carried no ledger.Coords at all and fell
-// into the shared "unscoped" bucket, so no chat's own bundle ever had a root
-// stream for UserTurns() to read).
+// This file drives Orchestrator.Run through the REAL ledger.Exporter/MemStore and replays the bundle:
+// UserTurns() must work against a production-shaped bundle (#617: before the fix, root events had no
+// ledger.Coords and fell into the shared "unscoped" bucket, so no chat's bundle ever had a root stream).
 package replay_test
 
 import (
@@ -46,10 +41,9 @@ func (a answerStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bo
 	}
 }
 
-// newOrchForTest builds an Orchestrator with its model wrapped in
-// tracedModel - exactly how production's inference.NewModel wraps every
-// model - so its "chat" ledger events flow through the real emitChatEvent
-// seam this test needs.
+// newOrchForTest wraps its model in tracedModel - exactly how production's
+// inference.NewModel wraps every model - so "chat" ledger events flow through
+// the real emitChatEvent seam.
 func newOrchForTest(t *testing.T, m model.LLM) *orchestrator.Orchestrator {
 	t.Helper()
 	traced := inference.TracedModelForTesting(m, "orch-model")
@@ -69,10 +63,9 @@ func newOrchForTest(t *testing.T, m model.LLM) *orchestrator.Orchestrator {
 	return orchestrator.New(sessions, traced, "You are the orchestrator.", planner, ex, nil, nil, nil)
 }
 
-// TestUserTurns_FromProductionShapedBundle is the #617 regression that
-// matters most: UserTurns() must recover the user's turn from a bundle built
-// the way a live run actually records one - root events stamped with ChatID
-// only, filed by the real exporter under this chat's own id.
+// TestUserTurns_FromProductionShapedBundle (#617 regression): UserTurns()
+// recovers the user's turn from a bundle recorded the way a live run records
+// it - root events stamped with ChatID only, filed under the chat's own id.
 func TestUserTurns_FromProductionShapedBundle(t *testing.T) {
 	store := ledgertest.NewMemStore()
 

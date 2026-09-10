@@ -42,8 +42,7 @@ const NARROW_QUERY = '(max-width: 639px)'
 
 // The parenthetical on both the idle and streaming placeholders is
 // meaningless on a touch device and, at phone widths, wraps to a second line
-// the fixed-height input clips (#759 item 2) - so it's dropped below the
-// breakpoint rather than fought with layout.
+// the fixed-height input clips (#759 item 2) - so it's dropped below the breakpoint rather than fought with layout.
 function useNarrowViewport(): boolean {
   const supported = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
   const [narrow, setNarrow] = useState(() => supported && window.matchMedia(NARROW_QUERY).matches)
@@ -89,9 +88,8 @@ export interface ComposerProps {
 }
 
 // Composer owns the draft `input` + `attachments` locally so typing only re-renders
-// this small component, not the whole chat (the turn list / DAG trees). It hands the
-// finished message up via onSubmit - the caller decides whether that's an immediate
-// send or (while streaming) queuing it for after the current run.
+// this small component, not the whole chat (the turn list / DAG trees). The
+// finished message goes up via onSubmit - the caller decides whether that's an immediate send or (while streaming) queuing it for after the current run.
 export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemoveQueued, archived = false, noChat = false }: ComposerProps) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<AttachmentItem[]>([])
@@ -100,17 +98,12 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   const narrow = useNarrowViewport()
   // #1174: the compact (<600px) branch swaps decoration/subtree (icon buttons,
   // pill row, queued chip) rather than just resizing, so it's a JS branch -
-  // the wrapper's pure resize stays CSS via the `medium:` breakpoint.
-  // Below the 600px `medium` size class (#1145); useCompact was deleted in #1189.
+  // the wrapper's pure resize stays CSS via the `medium:` breakpoint. Below the 600px `medium` size class (#1145); useCompact was deleted in #1189.
   const compact = useMediaQuery('(max-width: 599px)')
 
   // Auto-grow the textarea with its content (CSS field-sizing isn't in Firefox/
-  // Safari yet). Reset to auto first so it shrinks back when the draft is cleared;
-  // capped at MAX_HEIGHT_PX (matches max-h-32 compact / max-h-48 desktop - #1174).
-  // #425: overflow-y is toggled in JS rather than left as a permanent Tailwind
-  // class - an always-on `overflow-y-auto` renders a vertical scrollbar even on
-  // a single empty line in Chromium, since the scrollbar reserves its track
-  // regardless of whether content actually overflows.
+  // Safari yet). Reset to auto first so it shrinks back when the draft is
+  // cleared; capped at MAX_HEIGHT_PX (#1174). #425: overflow-y is toggled in JS rather than a permanent Tailwind class - an always-on `overflow-y-auto` renders a Chromium scrollbar track even on a single empty line.
   const MAX_HEIGHT_PX = compact ? 128 : 192
   useLayoutEffect(() => {
     const ta = textareaRef.current
@@ -148,17 +141,13 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   return (
     // #1248 follow-up: floating pill, not a full-width bar - no bg/border here,
     // the pill surface below carries its own bg/shadow. Bottom offset is the
-    // shared --composer-gap (index.css) - 12px on inset-less devices, 12px
-    // above the home indicator on iPhones. Don't add another safe-area-inset
-    // read here; that's the doubling that caused the pre-#1249 excess.
+    // shared --composer-gap (index.css); don't add another safe-area-inset read here - that doubling caused the pre-#1249 excess.
     <div className="px-3 pt-2 pb-[var(--composer-gap)] medium:px-6 medium:pt-3">
       {queue != null && queue.length > 0 && (
         compact ? (
           // #1174: a row per queued bubble stacks on top of the 60px budget -
           // one "N queued" chip instead. <details> is DOM-handled, so the chip
-          // stays open across queue additions without re-rendering the composer
-          // (same disclosure pattern as TriggerEnvelope); remove is always
-          // visible because touch has no hover.
+          // stays open across queue additions without re-rendering the composer (same disclosure pattern as TriggerEnvelope); remove is always visible because touch has no hover.
           <details className="mb-3">
             <summary className="list-none w-fit cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-700">
               {`${queue.length} queued`}
@@ -269,10 +258,8 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             id="composer-input"
             name="message"
             // placeholder:truncate is the layout-proof half of #759 item 2: the
-            // narrow-viewport text above is the common case, but this is what
-            // stops any placeholder from ever wrapping into a clipped second
-            // line, at any width - e.g. mid-stream, when Stop+Queue also
-            // compete for the row's space.
+            // narrow-viewport text above is the common case, but this stops any
+            // placeholder from ever wrapping into a clipped second line, at any width - e.g. mid-stream, when Stop+Queue also compete for the row's space.
             className={compact
               ? 'flex-1 min-w-0 bg-transparent px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-32 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'
               : 'flex-1 min-w-0 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl resize-none max-h-48 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'}

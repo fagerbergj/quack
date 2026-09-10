@@ -25,9 +25,7 @@ import (
 
 // TestMemoryMCPServers_SSEWireShape pins the session/new wire shape opencode
 // requires: an SSE server with type "sse" and a non-null headers array. The
-// original Http variant (type unset, headers nil) serialized to
-// {"type":"","headers":null,...}, which opencode rejected with -32602 and
-// killed the ACP subprocess - breaking every code node. Guard against regress.
+// original Http variant (type unset, headers nil) serialized to {"type":"","headers":null,...}, which opencode rejected with -32602 and killed the ACP subprocess - breaking every code node. Guard against regress.
 func TestMemoryMCPServers_SSEWireShape(t *testing.T) {
 	caps := sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}}
 
@@ -210,11 +208,7 @@ func TestMemoryMCP_StageMemory_LandsInBuffer(t *testing.T) {
 
 // TestMemoryMCP_CrossNodeIsolation is the negative test for #344's security
 // fix: two concurrent nodes of the SAME plan get two DISTINCT, unguessable
-// secrets. Node A's client must not be able to read or write node B's memory
-// - not via B's real secret misused by A's assumptions, and NOT by deriving
-// anything from the plan/node IDs both nodes' prompts disclose (the advisor-
-// thread token, planID+"/"+nodeID, is exactly that derivation, and a sibling's
-// node ID is visible in a worker's own prompt via the running-siblings list).
+// secrets. Node A's client must not be able to read or write node B's memory - not via B's real secret misused by A's assumptions, and NOT by deriving anything from the plan/node IDs both nodes' prompts disclose (the advisor-thread token, planID+"/"+nodeID, is exactly that derivation, and a sibling's node ID is visible in a worker's own prompt via the running-siblings list).
 func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMCPEmbedder{}, verbatimConsolidator{}, "test_mcp_isolation", "task", 5, 0)
@@ -240,9 +234,7 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 
 	// Same plan, two sibling nodes - the OLD (vulnerable) credential would have
 	// been these two advisor-thread tokens, each derivable from the other by
-	// any agent that knows its own node ID and its plan ID (both disclosed in
-	// its own prompt) plus a sibling's node ID (disclosed via the running-
-	// siblings list - see internal/dag/executor.go siblingIDs).
+	// any agent that knows its own node ID and its plan ID (both disclosed in its own prompt) plus a sibling's node ID (disclosed via the running-siblings list - see internal/dag/executor.go siblingIDs).
 	planID := "plan-shared"
 	tokenA := vetting.AdvisorThreadToken(planID, "node-a")
 	tokenB := vetting.AdvisorThreadToken(planID, "node-b")
@@ -280,8 +272,7 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 
 	// 3) Node A's real secret cannot stage into node B's buffer: A can only
 	// ever reach ITS OWN MemSession (the handler resolves tools from the ONE
-	// session matching the URL's secret), so a stage_memory call over csA can
-	// only ever land in stageA.
+	// session matching the URL's secret), so a stage_memory call over csA can only ever land in stageA.
 	if _, err := csA.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "stage_memory",
 		Arguments: map[string]any{"content": "poisoned by node A", "kind": "repo"},
@@ -298,10 +289,7 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 
 // TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes covers epic #1255 P2's
 // core ACP verification end to end: a recall_memory call mid-run lands in the
-// node's RecallStage (the received set a live round loop reads every round -
-// see node.go's per-round merge), logs a memory.recall ledger entry with
-// source "tool", and - once fed to applyMemoryVotesOnPass as node.go's round
-// loop would - is voted on like any other received memory.
+// node's RecallStage (the received set a live round loop reads every round - see node.go's per-round merge), logs a memory.recall ledger entry with source "tool", and - once fed to applyMemoryVotesOnPass as node.go's round loop would - is voted on like any other received memory.
 func TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMCPEmbedder{}, verbatimConsolidator{}, "test_mcp_recall", "task", 5, 0)
@@ -373,9 +361,7 @@ func TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes(t *testing.T) {
 
 	// 3) The recalls counter (the same projection prefill bumps) confirms
 	// RecordRecall ran - node.go's round loop feeds this snapshot into
-	// applyMemoryVotesOnPass exactly like prefill's hits (see package
-	// vetting's TestApplyMemoryVotesOnPass_SupportedAndContradicted, which
-	// covers the vote outcome itself against this same Delivered shape).
+	// applyMemoryVotesOnPass exactly like prefill's hits (see package vetting's TestApplyMemoryVotesOnPass_SupportedAndContradicted, which covers the vote outcome itself against this same Delivered shape).
 	mems, _, err = store.List(ctx, []string{"repo:acme/recall-repo"}, 0, 10, true, "")
 	if err != nil || mems[0].Recalls < 1 {
 		t.Fatalf("point recalls not bumped: %v mems=%+v", err, mems)
@@ -384,9 +370,7 @@ func TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes(t *testing.T) {
 
 // TestMemoryMCP_UnregisteredSecret_FailsLoudly pins the lifecycle guarantee: a
 // straggler call after a node's session has been unregistered (the gate
-// drains-and-unregisters the moment it reads the staging buffer - see
-// RunGatedRefine) gets an explicit protocol error, never a silent write into
-// an orphaned buffer nobody will read again.
+// drains-and-unregisters the moment it reads the staging buffer - see RunGatedRefine) gets an explicit protocol error, never a silent write into an orphaned buffer nobody will read again.
 func TestMemoryMCP_UnregisteredSecret_FailsLoudly(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMCPEmbedder{}, verbatimConsolidator{}, "test_mcp_gone", "task", 5, 0)
@@ -412,11 +396,7 @@ func TestMemoryMCP_UnregisteredSecret_FailsLoudly(t *testing.T) {
 
 // TestMemoryMCP_ConnectMarksSessionConnected pins #640's observability fix
 // end to end: a real client connecting through memoryMCPHandler must mark the
-// session connected (vetting.MarkMemSessionConnected), so UnregisterMemSession
-// stays silent on teardown - the same silent "offered but unreachable" gap
-// that let the #628 rename go unnoticed for a full day now warns instead (see
-// vetting.TestUnregisterMemSession_WarnsWhenNeverConnected for the negative
-// case, which can't be driven here since the handler always connects).
+// session connected (vetting.MarkMemSessionConnected), so UnregisterMemSession stays silent on teardown - the same silent "offered but unreachable" gap that let the #628 rename go unnoticed for a full day now warns instead (see vetting.TestUnregisterMemSession_WarnsWhenNeverConnected for the negative case, which can't be driven here since the handler always connects).
 func TestMemoryMCP_ConnectMarksSessionConnected(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}})
@@ -454,12 +434,7 @@ func TestMemoryMCPURL_LoopbackOnly(t *testing.T) {
 
 // TestMemoryMCP_NamespaceIsSurfaceNeutral pins the shared per-node server's
 // name: "quackmcp" - surface-neutral (not "quack-memory", since it also
-// serves review/PR tools) and distinct from bare "quack" (opencode's own
-// config names quack's LLM provider "quack" in the same config, so a
-// collision there suppresses the tool prefix entirely). Checks both the
-// server's own identity (initialize handshake) and the Name handed to
-// opencode in session/new (memoryMCPServers - the one that drives the tool
-// prefix).
+// serves review/PR tools) and distinct from bare "quack" (opencode's own config names quack's LLM provider "quack" in the same config, so a collision there suppresses the tool prefix entirely). Checks both the server's own identity (initialize handshake) and the Name handed to opencode in session/new (memoryMCPServers - the one that drives the tool prefix).
 func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})
@@ -485,9 +460,7 @@ func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 
 // TestReviewMCP_ToolNamesUnprefixed pins the review + PR tool names the ACP
 // agent prompts (agents/code-reviewer, agents/code-implementer) hardcode: the
-// wire-level MCP tool name is always the bare "stage_review_comment" etc, and
-// opencode adds the "quack_" prefix client-side, so these strings - the ones
-// grepped for elsewhere - must never change without a matching prompt update.
+// wire-level MCP tool name is always the bare "stage_review_comment" etc, and opencode adds the "quack_" prefix client-side, so these strings - the ones grepped for elsewhere - must never change without a matching prompt update.
 func TestReviewMCP_ToolNamesUnprefixed(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})
@@ -514,8 +487,7 @@ func TestReviewMCP_ToolNamesUnprefixed(t *testing.T) {
 
 // TestReviewMCP_SliceGetsNoVerdictTool pins #1148: a reviewer node feeding a
 // synthesizer must never be offered stage_review/write_code_review - the
-// prompt tells it the tool list is a fact, so a registered-but-refused tool
-// is what drove both slice siblings into a sleep-poll loop.
+// prompt tells it the tool list is a fact, so a registered-but-refused tool is what drove both slice siblings into a sleep-poll loop.
 func TestReviewMCP_SliceGetsNoVerdictTool(t *testing.T) {
 	secret := mustMemSecret(t)
 	fanout := vetting.GetReviewFanout(t.Name(), 2)
@@ -559,10 +531,7 @@ func TestReviewMCP_SliceGetsNoVerdictTool(t *testing.T) {
 
 // TestMcpToolNames_AnnouncesEveryRegisteredTool guards the announcement-gap
 // class of bug (read_artifact was registered on the loopback server but
-// missing from mcpToolNames, so the agent never learned it existed): for a
-// fully-populated session, every tool the server actually registers must
-// appear in mcpToolNames's output. Add a field to this session when adding
-// the next MCP tool and this test enforces the announcement stays in sync.
+// missing from mcpToolNames, so the agent never learned it existed): for a fully-populated session, every tool the server actually registers must appear in mcpToolNames's output. Add a field to this session when adding the next MCP tool and this test enforces the announcement stays in sync.
 func TestMcpToolNames_AnnouncesEveryRegisteredTool(t *testing.T) {
 	secret := mustMemSecret(t)
 	sess := vetting.MemSession{

@@ -27,9 +27,7 @@ type jailedReadResult struct {
 
 // newJailedReadTool builds a read_file stand-in that resolves its path
 // through the SAME two-step scope derivation internal/tools' fs bindings use
-// (scopeFromContext → Jail.Resolve) - package-local because importing
-// internal/tools here would cycle. Proves the judge's tool calls land in the
-// worker's real clone dir without a separate clone.
+// (scopeFromContext → Jail.Resolve) - package-local because importing internal/tools here would cycle. Proves the judge's tool calls land in the worker's real clone dir without a separate clone.
 func newJailedReadTool(t *testing.T, jail *workspace.Jail, userID string) tool.Tool {
 	t.Helper()
 	rt, err := functiontool.New[jailedReadArgs, jailedReadResult](
@@ -77,8 +75,7 @@ func contentText(c *genai.Content) string {
 
 // claimCheckingJudge calls read_file for the path the answer claims to
 // reference, then scores based on whether the file's real content backs the
-// claim - a stand-in for "verify the answer's claim against ground truth"
-// rather than trusting it on sight.
+// claim - a stand-in for "verify the answer's claim against ground truth" rather than trusting it on sight.
 type claimCheckingJudge struct{ path string }
 
 func (claimCheckingJudge) Name() string { return "claim-checking-judge" }
@@ -100,15 +97,9 @@ func (j claimCheckingJudge) GenerateContent(_ context.Context, req *model.LLMReq
 	}
 }
 
-// TestJudgeReadToolsResolveWorkersRealClone proves the judge's read-only
-// workspace tools resolve into the SAME clone the worker used - no second
-// clone, no separate jail scope - by driving the real gate plumbing: register
-// an advisor thread exactly as dag.newGatedNode does for a node's worker,
-// embed the resulting marker in the worker prompt (mirroring
-// graph.go/node.go), and confirm the judge's read_file call (scoped purely
-// from the invocation's UserContent, like a real judge round) reads the file
-// the "worker" actually wrote under its OWN node directory rather than the
-// per-user root or a sibling node's directory.
+// TestJudgeReadToolsResolveWorkersRealClone proves the judge's read-only workspace tools resolve into the SAME clone the worker used - no second
+// clone, no separate jail scope - by driving the real gate plumbing: register an advisor thread exactly as dag.newGatedNode does, embed the resulting
+// marker in the worker prompt (mirroring graph.go/node.go), and confirm the judge's read_file call (scoped purely from the invocation's UserContent, like a real judge round) reads the file the "worker" actually wrote under its OWN node directory rather than the per-user root or a sibling node's directory.
 func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -152,12 +143,9 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	}
 }
 
-// TestJudgeReadToolsResolveViaConfigAdvisorToken pins #502/#498's fix: the
-// judge's own content (what runJudgeRound hands the runner as UserContent) is
+// TestJudgeReadToolsResolveViaConfigAdvisorToken pins #502/#498's fix: the judge's own content (what runJudgeRound hands the runner as UserContent) is
 // buildJudgePrompt's output, not `question` itself, so scopeFromContext must
-// not depend on whatever marker `question`'s text happens to carry. Here
-// `question` carries NO marker at all - resolution must come entirely from
-// Config.AdvisorToken, which runJudgeRound stamps onto its own content.
+// not depend on whatever marker `question`'s text happens to carry. Here `question` carries NO marker at all - resolution must come entirely from Config.AdvisorToken, which runJudgeRound stamps onto its own content.
 func TestJudgeReadToolsResolveViaConfigAdvisorToken(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

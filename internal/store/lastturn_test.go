@@ -118,11 +118,9 @@ func TestGetLastTurnWithContent_TurnBiggerThanWindowStillComplete(t *testing.T) 
 	}
 }
 
-// TestGetLastTurnWithContent_PartialRunInProgress covers a run still streaming: the
-// ChatTurn row exists (SaveTurn runs before the model call starts) but no assistant event
-// has landed yet. GetLastTurnWithContent must agree with GetTurnsWithContent - empty
-// AsstText, not an error or a stale previous turn - since DeriveTerminalStatus reads
-// exactly this state on every run-end call that races a still-draining stream.
+// TestGetLastTurnWithContent_PartialRunInProgress covers a run still
+// streaming: the ChatTurn row exists (SaveTurn runs before the model call
+// starts) but no assistant event has landed yet. GetLastTurnWithContent must agree with GetTurnsWithContent - empty AsstText, not an error or a stale previous turn - since DeriveTerminalStatus reads exactly this state on every run-end call that races a still-draining stream.
 func TestGetLastTurnWithContent_PartialRunInProgress(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

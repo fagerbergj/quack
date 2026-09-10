@@ -37,8 +37,7 @@ func (m *alwaysPassModel) GenerateContent(_ context.Context, req *model.LLMReque
 
 // TestDeterministicFailSkipsJudgeOnTerminalRound proves a deterministic
 // criterion already below threshold (RequireRetrieval with zero retrieval
-// activity here) decides the terminal round without paying for a judge model
-// call whose feedback nothing would ever consume.
+// activity here) decides the terminal round without paying for a judge model call whose feedback nothing would ever consume.
 func TestDeterministicFailSkipsJudgeOnTerminalRound(t *testing.T) {
 	stub := &alwaysPassModel{}
 	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Model: stub, Description: "r", Instruction: "Answer."})
@@ -67,9 +66,7 @@ func TestDeterministicFailSkipsJudgeOnTerminalRound(t *testing.T) {
 	}
 	// Round loop runs JudgeRounds+1 rounds (2 revises + 1 terminal). Every
 	// revise round still needs the judge to produce feedback the worker can
-	// act on, but the terminal round's judge call is skipped once a
-	// deterministic criterion has already failed - JudgeRounds calls, not
-	// JudgeRounds+1.
+	// act on, but the terminal round's judge call is skipped once a deterministic criterion has already failed - JudgeRounds calls, not JudgeRounds+1.
 	if stub.judgeCalls != cfg.JudgeRounds {
 		t.Fatalf("judge model rounds run = %d, want %d (terminal round must skip the judge once grounded_in_retrieval already fails)", stub.judgeCalls, cfg.JudgeRounds)
 	}

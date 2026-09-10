@@ -35,13 +35,9 @@ export default function App() {
   }, [])
 
   return (
-    // h-dvh, not h-screen: 100vh is the layout viewport, which on mobile
-    // stays taller than what's actually visible while browser chrome (URL
-    // bar/toolbar) covers part of the screen - pinning the composer at the
-    // bottom of a too-tall box puts it underneath that chrome. 100dvh
-    // tracks the real visible viewport instead - except iOS Safari's
-    // keyboard, which shrinks visualViewport without shrinking dvh (#1248).
-    // The inline height (from visualViewport) overrides h-dvh once it fires.
+    // h-dvh, not h-screen: 100vh is the layout viewport, still tall while
+    // browser chrome covers part of it, hiding the pinned composer. iOS
+    // Safari's keyboard shrinks visualViewport, not dvh (#1248) - hence the inline height override.
     <div className="h-dvh flex" style={vvHeight != null ? { height: vvHeight } : undefined}>
       {/* Nav drawer (#1171): Chats/Memory/extensions as a peer list, outside
           the page switch below so it's common to every route. It renders

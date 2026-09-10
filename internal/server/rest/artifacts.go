@@ -21,8 +21,7 @@ import (
 
 // inlineArtifactMimeTypes is the ONLY set of MIME types GetChatArtifact
 // renders inline. Everything else - including image/svg+xml, which can
-// carry a <script> - downloads as an attachment; same-origin stored-XSS via
-// an SVG "image" is the trap this allowlist exists to close.
+// carry a <script> - downloads as an attachment; same-origin stored-XSS via an SVG "image" is the trap this allowlist exists to close.
 var inlineArtifactMimeTypes = map[string]bool{
 	"image/png":  true,
 	"image/jpeg": true,
@@ -100,9 +99,7 @@ func toArtifactRevisionInfo(rv store.ArtifactRevision) schema.ArtifactRevisionIn
 
 // revisionsForArtifact fetches one artifact name's revisions - the store's
 // WHERE name = ? seam (store.TurnAwareService.RevisionsForName) when the
-// backend supports it, falling back to filtering ListForSession's full-chat
-// listing only for a backend that doesn't (adversarial review follow-up on
-// #1094: the original version always paid for the full-chat scan).
+// backend supports it, falling back to filtering ListForSession's full-chat listing only for a backend that doesn't (adversarial review follow-up on #1094: the original version always paid for the full-chat scan).
 func (h *Handler) revisionsForArtifact(r *http.Request, chatID, name string) ([]store.ArtifactRevision, bool, error) {
 	userID := h.sessionUser(r.Context(), chatID)
 	revs, supported, err := h.artifacts.RevisionsForName(r.Context(), artifactref.AppName, userID, chatID, name)
@@ -153,8 +150,7 @@ func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 
 // diffable reports whether a MIME type is worth diffing at byte level:
 // binary blobs (images, PDFs) render as noise, not a review aid -
-// DiffArtifactRevisions 415s anything outside this allowlist instead of
-// pretending a diff exists.
+// DiffArtifactRevisions 415s anything outside this allowlist instead of pretending a diff exists.
 func diffable(mimeType string) bool {
 	return mimeType == "application/json" || strings.HasPrefix(mimeType, "text/")
 }

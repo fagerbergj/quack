@@ -47,10 +47,9 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// directAnswerModel is a minimal model.LLM that answers with plain text and
-// no tool calls, so the orchestrator's top-level llmagent completes without
-// touching plan/execute - the same shape as rest.stubModel, reused here
-// because the dispatch loop only needs to prove it reached a real Answer.
+// directAnswerModel is a minimal model.LLM answering plain text, no tool
+// calls, so the orchestrator's top-level llmagent completes without
+// plan/execute. Same shape as rest.stubModel; reused here because the dispatch loop only needs to prove it reached a real Answer.
 type directAnswerModel struct{}
 
 func (directAnswerModel) Name() string { return "direct-answer-stub" }
@@ -65,29 +64,25 @@ func (directAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest,
 	}
 }
 
-// newExtTestStack builds a real (sqlite) store + a stub-model orchestrator -
-// enough to drive a full dispatch without a live LLM - and stores it into
-// orchRef the same way buildFromConfig does once the orchestrator exists.
-// The returned TurnAwareService is a row-backed artifact service sharing
-// the same store, exactly like buildFromConfig wires attachments in production.
+// newExtTestStack builds a real (sqlite) store + a stub-model orchestrator
+// (a full dispatch without a live LLM), stored into orchRef the way
+// buildFromConfig does; the returned TurnAwareService is a row-backed artifact service sharing the store, as in production.
 func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *workspace.Jail) {
 	t.Helper()
 	return newExtTestStackWithModel(t, directAnswerModel{})
 }
 
 // newExtTestStackWithModel is newExtTestStack with the orchestrator's model
-// swapped out - used by tests that need a specific failure mode from the
-// model itself (e.g. #1156's gateway-error-during-planning repro), rather
-// than the always-succeeds directAnswerModel.
+// swapped out - for tests needing a specific model failure mode (e.g. #1156's
+// gateway-error-during-planning repro), rather than the always-succeeds directAnswerModel.
 func newExtTestStackWithModel(t *testing.T, m model.LLM) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *workspace.Jail) {
 	t.Helper()
 	return newExtTestStackWithModelAndAgents(t, m, nil)
 }
 
 // newExtTestStackWithModelAndAgents is newExtTestStackWithModel with the
-// planner's known-agent roster also swappable - needed by any test whose
-// scripted plan names a real agent (e.g. dag's own reviewerAgent), since
-// dag.Planner.Build rejects an unknown agent name before anything else runs.
+// planner's known-agent roster also swappable - needed when a scripted plan
+// names a real agent (e.g. dag's reviewerAgent), since dag.Planner.Build rejects unknown agent names before anything else runs.
 func newExtTestStackWithModelAndAgents(t *testing.T, m model.LLM, agents []dag.AgentInfo) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *workspace.Jail) {
 	t.Helper()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -122,11 +117,9 @@ func noopModulesConfig(t *testing.T, workspaceRoot string, yamlBlock string) *co
 	return &config.Config{Extensions: ext, Workspace: config.WorkspaceConfig{Root: workspaceRoot}}
 }
 
-// waitRunSettled blocks until chatID's background run goroutine has stamped
-// a terminal outcome - the last durable write driveExtensionRun makes before
-// returning. Callers use this to fully drain one dispatch's goroutine before
-// firing another, so two runs' event-log writes never race each other (and
-// leak past their test into whichever runs next in the same process).
+// waitRunSettled blocks until chatID's run goroutine stamps a terminal
+// outcome - the last durable write driveExtensionRun makes - so callers fully
+// drain one dispatch before the next: two runs' event-log writes never race or leak past their test.
 func waitRunSettled(t *testing.T, st *store.Store, chatID string) {
 	t.Helper()
 	waitUntil(t, 5*time.Second, func() bool {
@@ -149,10 +142,9 @@ func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
 	}
 }
 
-// TestSDKExtensionDispatchLoop is the spec's phase-2 loop-proof test: it
-// configures noop, dispatches over real HTTP against a stub-model
-// orchestrator, and asserts the run lands as a normal chat+turn and that
-// /status only advances once RunEnded actually fires.
+// TestSDKExtensionDispatchLoop is the spec's phase-2 loop-proof test: with
+// noop, dispatching over real HTTP against a stub-model orchestrator, the run
+// lands as a normal chat+turn and /status only advances once RunEnded fires.
 func TestSDKExtensionDispatchLoop(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
@@ -237,13 +229,9 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	}
 }
 
-// TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch is #1198: a first
-// dispatch as one GitHub user (the PR author) followed by a re-dispatch on
-// the SAME chat as a different user (a /review commenter) must run the
-// second turn under the first turn's user - both the chat's own stored
-// SessionUser and the ADK session the node actually runs in, or the node's
-// record/artifact writes land under a user the chat's own listing never
-// looks under.
+// TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch is #1198: a
+// re-dispatch on the SAME chat as a different GitHub user must run the second
+// turn under the first turn's user - both the chat's stored SessionUser and the ADK session the node runs in - or the node's record/artifact writes land under a user the chat's own listing never looks under.
 func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail
@@ -264,10 +252,8 @@ func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 	waitRunSettled(t, st, chatID)
 
 	// waitRunSettled alone would race here (review comment thread
-	// 3937400227): turn 1 already left RunStatus non-empty, so it returns
-	// immediately without turn 2 ever having run - the same trap
-	// extensions_plan_rejection_test.go:166 works around. Wait for turn 2's
-	// own ActiveTurnID go-then-clear transition instead.
+	// 3937400227): turn 1 left RunStatus non-empty, so it returns immediately
+	// without turn 2 ever having run - the same trap extensions_plan_rejection_test.go:166 works around. Wait for turn 2's own ActiveTurnID go-then-clear transition instead.
 	t1, err := st.GetChat(ctx, chatID)
 	if err != nil || t1 == nil {
 		t.Fatalf("GetChat after turn 1: %v, %v", t1, err)
@@ -280,10 +266,8 @@ func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 		t.Fatalf("dispatch 2: %v", err)
 	}
 	// Oracle: UpdatedAt advancing past turn 1's snapshot is a terminal,
-	// monotonic write - unlike ActiveTurnID going non-empty, which a fast
-	// noop dispatch can set and clear entirely between two 10ms polls
-	// (the actual cause of #1218's 5s timeout). No separate "wait for the
-	// turn to start" step is needed: a later UpdatedAt already proves turn 2 ran.
+	// monotonic write - unlike ActiveTurnID, which a fast noop dispatch can
+	// set and clear entirely between two 10ms polls (the cause of #1218's 5s timeout). No "wait for the turn to start" step is needed: a later UpdatedAt already proves turn 2 ran.
 	waitUntil(t, 5*time.Second, func() bool {
 		c, _ := st.GetChat(context.Background(), chatID)
 		return c != nil && c.ActiveTurnID == "" && c.UpdatedAt.After(turn1UpdatedAt)
@@ -310,10 +294,7 @@ func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 
 // TestSDKExtensionInputArtifactWrittenBeforeFirstDispatchIsVisibleToRun
 // reproduces #1225's exact shape: github writes its input artifacts (via
-// Host.WriteArtifact) BEFORE calling Dispatch, while the chat row - and thus
-// any stored SessionUser - doesn't exist yet. The write and the dispatch must
-// land under the same user (resolveArtifactUser's job) or the run's
-// load_artifacts can never find what was just written.
+// Host.WriteArtifact) BEFORE calling Dispatch, while the chat row - and thus any stored SessionUser - doesn't exist yet. The write and the dispatch must land under the same user (resolveArtifactUser's job) or the run's load_artifacts can never find what was just written.
 func TestSDKExtensionInputArtifactWrittenBeforeFirstDispatchIsVisibleToRun(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail
@@ -521,9 +502,8 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 }
 
 // (e) dispatching twice to the same LocalID appends a second turn to the
-// same chat rather than starting a new one - exercised directly against the
-// dispatch adapter (newExtDispatch) since noop's own dispatch policy always
-// mints a fresh id, but quack's LocalID-reuse contract is what's under test.
+// same chat rather than a new one - exercised directly against the dispatch
+// adapter (newExtDispatch) since noop's own policy always mints a fresh id; quack's LocalID-reuse contract is what's under test.
 func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
@@ -573,9 +553,7 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 
 // echoProbeModel records every prompt text it's given (one entry per
 // GenerateContent call) so a test can assert what actually reached the
-// orchestrator's LLM turn, not just what was requested. Mutex-guarded: the
-// dispatch under test runs the model call from a background goroutine while
-// the test polls seen() from the main goroutine.
+// orchestrator's LLM turn. Mutex-guarded: the dispatch under test runs the model call from a background goroutine while the test polls seen() from the main goroutine.
 type echoProbeModel struct {
 	mu   *sync.Mutex
 	seen *[]string
@@ -687,10 +665,9 @@ func TestSDKExtensionRedispatchAfterBoundPlanKeepsAskOnBothTurns(t *testing.T) {
 	if err := dispatch(context.Background(), req2); err != nil {
 		t.Fatalf("second (unshaped) dispatch: %v", err)
 	}
-	// Turn 1's own bound-plan run already produced one orchestrator-model
-	// call (its synthesis/format step) before turn 2 is even dispatched, so
-	// waiting on any call arriving races: wait for one whose text actually
-	// names turn 2's message instead.
+	// Turn 1's bound-plan run already produced one orchestrator-model call
+	// (its synthesis/format step) before turn 2 is even dispatched, so waiting
+	// on any call arriving races: wait for one whose text actually names turn 2's message instead.
 	waitUntil(t, 5*time.Second, func() bool {
 		for _, c := range m.calls() {
 			if strings.Contains(c, "re-review PR #42") {
@@ -726,9 +703,8 @@ func TestSDKExtensionRedispatchAfterBoundPlanKeepsAskOnBothTurns(t *testing.T) {
 }
 
 // TestSDKExtensionDispatchEmptyMessageErrors is #1195's guard: an unshaped
-// dispatch whose composed message is empty must fail the dispatch call
-// itself - never run the orchestrator's LLM turn on an empty prompt and end
-// as a silent no-answer gap.
+// dispatch whose composed message is empty must fail the dispatch call itself
+// - never run the orchestrator's LLM turn on an empty prompt and end as a silent no-answer gap.
 func TestSDKExtensionDispatchEmptyMessageErrors(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
@@ -845,11 +821,9 @@ func TestSDKExtensionDispatchPreservesTraceContinuity(t *testing.T) {
 	}
 }
 
-// extAttachStub plays the orchestrator (routes on the "plan" tool's
-// presence), the judge (submit_verdict), and the "media" worker - recording
-// the bytes/mime the worker actually received off req.Contents. Mirrors
-// rest.attachStub (internal/server/rest/attachments_test.go); duplicated
-// rather than exported since it's package-local test fixture, not API.
+// extAttachStub plays the orchestrator (routes on the "plan" tool), the
+// judge (submit_verdict), and the "media" worker - recording the bytes/mime
+// the worker actually received off req.Contents. Mirrors rest.attachStub (internal/server/rest/attachments_test.go); duplicated rather than exported: package-local test fixture, not API.
 type extAttachStub struct {
 	mu          sync.Mutex
 	workerCalls int
@@ -982,9 +956,7 @@ var extFakePNG = []byte("\x89PNG-ext-fake-pixel-data-0123456789abcdef")
 
 // TestSDKExtensionDispatch_AttachmentHydratesAndPersistsReferenceOnly is the
 // extension-dispatch mirror of rest.TestAttachmentRoundTrip: an attachment
-// on Ask.Attachments reaches the media worker's model as real bytes, while
-// the persisted DAG plan and ADK session events carry only a
-// quack-artifact:// reference - never the bytes themselves.
+// on Ask.Attachments reaches the media worker's model as real bytes, while the persisted DAG plan and ADK session events carry only a quack-artifact:// reference - never the bytes themselves.
 func TestSDKExtensionDispatch_AttachmentHydratesAndPersistsReferenceOnly(t *testing.T) {
 	st, orch, hub, artifacts, stub := newExtAttachmentTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
@@ -1048,12 +1020,8 @@ func TestSDKExtensionDispatch_AttachmentHydratesAndPersistsReferenceOnly(t *test
 }
 
 // planToolProbeModel stands in for the orchestrator's own top-level model,
-// recording whether any call it received offered the "plan" tool - the
-// actual mechanism of "planning" in this codebase. It may still legitimately
-// be called for the unrelated post-execution format pass (finalizeAnswer ->
-// formatAnswer), which never offers tools at all; only a call that CAN
-// decompose into nodes counts as the planner LLM call this proves is
-// skipped.
+// recording whether any call it received offered the "plan" tool - the actual
+// mechanism of "planning" in this codebase. It may still legitimately be called for the unrelated post-execution format pass (finalizeAnswer -> formatAnswer), which never offers tools; only a call that CAN decompose into nodes counts as the planner LLM call this proves is skipped.
 type planToolProbeModel struct{ sawPlanTool atomic.Bool }
 
 func (*planToolProbeModel) Name() string { return "plan-tool-probe-stub" }
@@ -1073,10 +1041,8 @@ func (m *planToolProbeModel) GenerateContent(_ context.Context, req *model.LLMRe
 }
 
 // TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM is test case 4
-// (workflow binding): a dispatch naming a shaped catalog entry
-// runs the bound node straight through the graph executor - the
-// orchestrator's own LLM (the planner call) is never invoked - and the
-// persisted plan carries the node's task with {{ask}} substituted.
+// (workflow binding): a dispatch naming a shaped catalog entry runs the bound
+// node straight through the graph executor - the orchestrator's own LLM (the planner call) is never invoked - and the persisted plan carries the node's task with {{ask}} substituted.
 func TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM(t *testing.T) {
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -1179,10 +1145,8 @@ func (m hintProbeModel) GenerateContent(_ context.Context, req *model.LLMRequest
 }
 
 // TestSDKExtensionDispatch_UnshapedWorkflowFoldsHintIntoMessage is test case
-// 2 (workflow binding): a dispatch naming a catalog entry with
-// no bound Nodes still runs the orchestrator's own LLM turn, with the
-// workflow named as a hint in the composed message - unchanged behavior for
-// every shape that predates binding.
+// 2 (workflow binding): a dispatch naming a catalog entry with no bound Nodes
+// still runs the orchestrator's own LLM turn, with the workflow named as a hint in the composed message - unchanged behavior for every shape that predates binding.
 func TestSDKExtensionDispatch_UnshapedWorkflowFoldsHintIntoMessage(t *testing.T) {
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -1229,8 +1193,7 @@ func TestSDKExtensionDispatch_UnshapedWorkflowFoldsHintIntoMessage(t *testing.T)
 
 // TestSDKExtensionUpdateChatOriginRefreshesBadge is #844's proof: a chat
 // dispatched with badge "open" reads back "open" over the real GET
-// /api/v1/chats/{id} route, Host.UpdateChatOrigin flips it, and the same GET
-// shows the new badge - without a second Dispatch/run.
+// /api/v1/chats/{id} route; Host.UpdateChatOrigin flips it and the same GET shows the new badge - without a second Dispatch/run.
 func TestSDKExtensionUpdateChatOriginRefreshesBadge(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]

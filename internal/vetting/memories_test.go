@@ -37,8 +37,7 @@ func newMemoryStoreForVoteTest(t *testing.T) *memory.Store {
 
 // TestApplyMemoryVotesOnPass_SupportedAndContradicted covers epic #1255 P1's
 // core verification: two recalled memories, one supported and one
-// contradicted, yield +1/-1 and a memory.vote ledger entry each, and the
-// supported one's tier flips to verified.
+// contradicted, yield +1/-1 and a memory.vote ledger entry each, and the supported one's tier flips to verified.
 func TestApplyMemoryVotesOnPass_SupportedAndContradicted(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)
@@ -135,8 +134,7 @@ func TestApplyMemoryVotesOnPass_IgnoresVoteForUnknownID(t *testing.T) {
 
 // TestRecallLedgerEntry_AppendsMemoryRecall covers the usage-tracking half:
 // a recall delivery appends one memory.recall ledger entry naming every
-// delivered id, stamped with the node's agent and round (#1259 - these were
-// previously left blank, unlike every other coord-bearing entry).
+// delivered id, stamped with the node's agent and round (#1259 - these were previously left blank, unlike every other coord-bearing entry).
 func TestRecallLedgerEntry_AppendsMemoryRecall(t *testing.T) {
 	ctx := context.Background()
 	lgr := ledgertest.NewMemStore()
@@ -159,9 +157,7 @@ func TestRecallLedgerEntry_AppendsMemoryRecall(t *testing.T) {
 
 // TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation covers the
 // fail-closed discipline: the point mutation is a PROJECTION of the
-// memory.vote ledger entry, so a failed AppendIntent must skip the point
-// mutation AND the memory_ops row entirely - never apply a vote the ledger
-// never durably recorded.
+// memory.vote ledger entry, so a failed AppendIntent must skip the point mutation AND the memory_ops row entirely - never apply a vote the ledger never durably recorded.
 func TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)
@@ -220,8 +216,7 @@ func TestMergeMemoryHits_DedupesByID(t *testing.T) {
 
 // TestRecallMemoryHits_ParsesFunctionResponse covers a native worker's
 // recall_memory call: its FunctionResponse (a recallMemoryResult round-
-// tripped through session-event JSON) must parse back into the hits it
-// returned, the shape the round loop merges into the received set.
+// tripped through session-event JSON) must parse back into the hits it returned, the shape the round loop merges into the received set.
 func TestRecallMemoryHits_ParsesFunctionResponse(t *testing.T) {
 	resp := map[string]any{
 		"hits": []any{
@@ -262,10 +257,8 @@ func (f *fakeOpsLogRecorder) LogMemoryOp(_ context.Context, memoryID string, op 
 func (f *fakeOpsLogRecorder) PruneMemoryOps(context.Context, time.Time) (int, error) { return 0, nil }
 
 // TestApplyMemoryVotesOnPass_NoVotesWhenNoneGiven covers "a failed round
-// yields no votes": RunGatedRefine never calls applyMemoryVotesOnPass for a
-// failed round (see node.go's res.Passed guard), but this pins the
-// function's own behavior when called with an empty verdict.Memories, the
-// shape a failed round's zero-value verdict would carry if it were.
+// yields no votes": RunGatedRefine never calls applyMemoryVotesOnPass for a failed round (see node.go's res.Passed guard), but this pins the
+// function's own behavior when called with an empty verdict.Memories, the shape a failed round's zero-value verdict would carry if it were.
 func TestApplyMemoryVotesOnPass_NoVotesWhenNoneGiven(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)

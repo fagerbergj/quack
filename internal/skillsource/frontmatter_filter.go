@@ -31,8 +31,7 @@ var knownFrontmatterKeys = func() map[string]bool {
 
 // NewFileSystemSource wraps fsys in the frontmatter filter before handing it
 // to ADK's skill.NewFileSystemSource, so a SKILL.md carrying a field ADK's
-// KnownFields(true) decoder doesn't recognize (e.g. Claude Code's
-// argument-hint, #1084) still loads instead of being skipped by Tolerant.
+// KnownFields(true) decoder doesn't recognize (e.g. Claude Code's argument-hint, #1084) still loads instead of being skipped by Tolerant.
 func NewFileSystemSource(fsys fs.FS) skill.Source {
 	return skill.NewFileSystemSource(filterFrontmatterFS{fsys})
 }
@@ -94,10 +93,7 @@ func leadingSep(content []byte) (sep []byte, ok bool) {
 }
 
 // indexLineStart finds the first occurrence of sep that starts a line (index
-// 0, or immediately after a '\n'), skipping any substring hit that doesn't -
-// ADK's own Parse anchors the closing separator to a whole line
-// (bytes.Equal(line, sep)), so a mid-line "---" (inside a scalar value or a
-// block-scalar body) must never be mistaken for it.
+// 0, or immediately after a '\n'), skipping any substring hit that doesn't - ADK's own Parse anchors the closing separator to a whole line (bytes.Equal(line, sep)), so a mid-line "---" (inside a scalar value or a block-scalar body) must never be mistaken for it.
 func indexLineStart(b, sep []byte) int {
 	off := 0
 	for {
@@ -130,21 +126,12 @@ func findSep(b []byte) (idx, seplen int, ok bool) {
 
 // filterFrontmatter drops unknown top-level keys from the YAML frontmatter
 // block of a SKILL.md's bytes, leaving the "---" delimiters and markdown body
-// byte-identical. It edits the YAML AST (yaml.Node) rather than decoding
-// through a generic map: a map round-trip re-serializes each scalar from its
-// resolved Go type, so `007` comes back `7` and `1.0` comes back `1` even
-// with no unknown key present - a silent corruption of every skill, not just
-// the ones this wrapper exists for. Node-level editing keeps each surviving
-// key's original style/tag, so its literal text is untouched.
+// byte-identical. It edits the YAML AST (yaml.Node) rather than decoding through a generic map: a map round-trip re-serializes each scalar from its resolved Go type, so `007` comes back `7` and `1.0` comes back `1` even with no unknown key present - a silent corruption of every skill, not just the ones this wrapper exists for. Node-level editing keeps each surviving key's original style/tag, so its literal text is untouched.
 //
 // If no key is unknown, content is returned as-is: no parse-and-rewrite for
-// the common case, which matters because ListFrontmatters runs on every
-// skill on every agent turn (SkillToolset.ProcessRequest), not just at
-// startup.
+// the common case, which matters because ListFrontmatters runs on every skill on every agent turn (SkillToolset.ProcessRequest), not just at startup.
 //
-// ok is false when the content isn't valid ADK-shaped frontmatter (no
-// separators, bad YAML) - the caller passes the original bytes through
-// unchanged so Tolerant's own parse still decides skip-vs-fatal.
+// ok is false when the content isn't valid ADK-shaped frontmatter (no separators, bad YAML) - the caller passes the original bytes through unchanged so Tolerant's own parse still decides skip-vs-fatal.
 func filterFrontmatter(content []byte) (out []byte, ok bool) {
 	openSep, ok := leadingSep(content)
 	if !ok {

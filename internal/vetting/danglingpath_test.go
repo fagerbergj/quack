@@ -7,8 +7,7 @@ import (
 
 // TestDanglingDeliverablePathCriterion_CatchesUncommittedPointer pins #569:
 // a plan-only run wrote PLAN_58_HOME_FRAGMENT_COMPOSE.md into its (discarded)
-// working directory and then posted a comment pointing at it as the
-// deliverable, never having committed anything.
+// working directory and then posted a comment pointing at it as the deliverable, never having committed anything.
 func TestDanglingDeliverablePathCriterion_CatchesUncommittedPointer(t *testing.T) {
 	act := workerActivity{written: []string{"node1/PLAN_58_HOME_FRAGMENT_COMPOSE.md"}}
 	answer := "The implementation plan is complete at `PLAN_58_HOME_FRAGMENT_COMPOSE.md`. Here's what it covers: ..."
@@ -52,17 +51,9 @@ func TestDanglingDeliverablePathCriterion_NothingWritten(t *testing.T) {
 	}
 }
 
-// TestDanglingDeliverablePathCriterion_DiscussingAnEditedFile pins the
-// home-server#3 false positive (github-fagerbergj-home-server-3, node
-// "explore-llm"): a code-explorer run strayed off-task and edited
-// deepwiki/docker-compose.yml, but its actual answer only ever CITES that
-// path (and the unrelated llm/docker-compose.yml it was asked to read) in a
-// findings table - it never claims the file IS the deliverable. Basename
-// substring matching alone flags this because "docker-compose.yml" is a
-// common name the answer legitimately discusses in prose; this must not fire.
-//
-// This reproduces against current main - see PR description for the recorded
-// run (chat github-fagerbergj-home-server-3).
+// TestDanglingDeliverablePathCriterion_DiscussingAnEditedFile pins the home-server#3 false positive: a code-explorer run strayed off-task and
+// edited deepwiki/docker-compose.yml, but its actual answer only ever CITES that path (and the unrelated docker-compose.yml it was asked to read) in a
+// findings table - it never claims the file IS the deliverable. Basename substring matching alone flags this because "docker-compose.yml" is a common name the answer legitimately discusses in prose; this must not fire.
 func TestDanglingDeliverablePathCriterion_DiscussingAnEditedFile(t *testing.T) {
 	act := workerActivity{written: []string{"explore-llm/deepwiki/docker-compose.yml"}}
 	answer := "### 1. Full docker-compose.yml — `llm/docker-compose.yml`\n\n" +
@@ -88,8 +79,7 @@ func TestDanglingDeliverablePathCriterion_BasenameFallbackStillNeedsPointerPhras
 
 // TestDanglingDeliverablePathCriterion_BasenameFallbackWithPointerPhrase: the
 // full relative path never appears (only the bare filename), but the
-// pointer phrasing is genuine - this is still the true positive the
-// criterion exists for.
+// pointer phrasing is genuine - this is still the true positive the criterion exists for.
 func TestDanglingDeliverablePathCriterion_BasenameFallbackWithPointerPhrase(t *testing.T) {
 	act := workerActivity{written: []string{"node1/sub/report.md"}}
 	answer := "The full write-up is saved to `report.md`."

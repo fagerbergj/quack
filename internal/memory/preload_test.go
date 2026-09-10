@@ -61,10 +61,9 @@ func TestStoreRecall(t *testing.T) {
 	}
 }
 
-// TestRecallWithHits_PopulatesScore covers the #1257 review finding: a
-// Delivered hit must carry the real cosine score, not the zero value every
-// memory.recall ledger entry silently recorded before recall() threaded its
-// scored points back out.
+// TestRecallWithHits_PopulatesScore covers the #1257 review finding: a Delivered hit
+// must carry the real cosine score, not the zero value every memory.recall ledger
+// entry silently recorded before recall() threaded its scored points back out.
 func TestRecallWithHits_PopulatesScore(t *testing.T) {
 	consolidator := fakeModel{reply: `{"ops":[{"action":"ADD","content":"build with make dev, not npm run build","kind":"convention"}]}`}
 	s := newSQLiteStore(t, "task", consolidator)

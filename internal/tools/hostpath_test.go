@@ -11,11 +11,8 @@ import (
 )
 
 // A tool error must speak the ONE namespace the model speaks - the same
-// invariant established for RESULTS still leaking through the ERROR paths.
-// Regression: an error echoed the full host path (workspace root, chat id,
-// node id), none of which the model has ever seen, and handed it the host's
-// layout. The ids below are deliberately distinctive strings: any of them
-// appearing in a returned error is the leak.
+// invariant established for RESULTS, still leaking through the ERROR paths.
+// The ids below are deliberately distinctive strings: any of them appearing in a returned error is the leak.
 const (
 	leakChatID = "2dfbfc35-7114-4065-84db-bab4b4abdb9e"
 	leakNodeID = "explorer"
@@ -85,11 +82,9 @@ func TestReadFileErrorNamesTheModelPathNotTheHostPath(t *testing.T) {
 	}
 }
 
-// THE STRUCTURAL GUARANTEE. The leak is not any tool's bug - it comes from os/git
-// handing back the resolved path, which every tool faithfully wraps with %w. So the
-// scrub is applied at Build's ONE wrap point, and every tool Build produces carries
-// it. A tool added tomorrow is covered without its author knowing the wrapper
-// exists; a tool that somehow skips the wrap point fails here.
+// THE STRUCTURAL GUARANTEE. The leak comes from os/git handing back the resolved path,
+// which every tool faithfully wraps with %w - so the scrub is applied at Build's ONE
+// wrap point: every tool Build produces carries it, and a tool that skips the wrap point fails here.
 func TestEveryBuiltToolIsPathScrubbed(t *testing.T) {
 	var names []string
 	for name, ctor := range registry {

@@ -18,9 +18,7 @@ import (
 
 // runnableTool is the structural interface a functiontool-built tool.Tool
 // satisfies beyond the plain tool.Tool interface (Name/Description/
-// IsLongRunning) - mirrors internal/tools' own (unexported) runnableTool.
-// Redeclared here because this is a different package and Go interface
-// satisfaction is structural, not nominal.
+// IsLongRunning) - mirrors internal/tools' own (unexported) runnableTool; redeclared here because this is a different package and Go interface satisfaction is structural, not nominal.
 type runnableTool interface {
 	Name() string
 	Run(ctx adkagent.Context, args any) (map[string]any, error)
@@ -28,11 +26,7 @@ type runnableTool interface {
 
 // writeCurrentDateReplayFixture writes a one-entry ledger JSONL recording a
 // current_date call under the ZERO-VALUE ledger coordinates (no node/agent/
-// round attributes) - what a bare ctx-less Run(nil, ...) call resolves to
-// (ledger.CoordsFromContext(nil) == ledger.Coords{}), so the test can invoke
-// the built stub directly without assembling a real agent.Context. The
-// canned result is a value no REAL current_date implementation could ever
-// produce, so a passing assertion proves the STUB answered, not a live call.
+// round attributes) - what a bare ctx-less Run(nil, ...) call resolves to (ledger.CoordsFromContext(nil) == ledger.Coords{}), so the test can invoke the built stub directly without assembling a real agent.Context. The canned result is a value no REAL current_date implementation could ever produce, so a passing assertion proves the STUB answered, not a live call.
 func writeCurrentDateReplayFixture(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "entries.jsonl")
@@ -47,12 +41,7 @@ func writeCurrentDateReplayFixture(t *testing.T) string {
 
 // TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs is #610's
 // regression test: a native (non-ACP) agent bound to a kind:"replay"
-// provider must get REPLAY STUBS for its tools (Deps.Replayer set), not real
-// backends - a full-server strict replay (`quack replay`) of a chat that
-// used native agents must never construct, let alone execute, a live tool.
-// Before #610, buildAgents never threaded Deps.Replayer at all: this agent's
-// current_date tool would have been the REAL implementation, which reports
-// today's actual date - never the fixture's canned "RECORDED-NOT-LIVE".
+// provider must get REPLAY STUBS for its tools (Deps.Replayer set), not real backends - a full-server strict replay (`quack replay`) of a chat that used native agents must never construct, let alone execute, a live tool. Before #610, buildAgents never threaded Deps.Replayer at all: this agent's current_date tool would have been the REAL implementation, which reports today's actual date - never the fixture's canned "RECORDED-NOT-LIVE".
 func TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

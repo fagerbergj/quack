@@ -20,10 +20,9 @@ export function githubStateBadgeClass(state: string): string {
   }
 }
 
-// originBadgeClass mirrors GitHub's own state colors for the generic origin
-// badge (#832), but only for these three exact values - an extension's own
-// badge vocabulary (e.g. "draft", a doc's revision label) is unknown to us
-// and must not be guessed at, so it keeps the neutral chip below.
+// Mirrors GitHub's own state colors for the generic origin badge (#832), but
+// only for these three exact values - an extension's own badge vocabulary
+// (e.g. "draft", a doc's revision label) is unknown to us and must not be guessed at; it keeps the neutral chip below.
 export function originBadgeClass(badge: string): string {
   switch (badge) {
     case 'open': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
@@ -96,10 +95,9 @@ export interface ChatListProps {
   onExpandArchived?: () => void
 }
 
-// ChatRow renders a single chat row. Every row has exactly one always-visible
-// kebab (#1319): an active row's menu holds Archive (reversible); an archived
-// row's holds Restore and permanent Delete. Reusable by both the active
-// groups and the archived section.
+// A single chat row. Every row has exactly one always-visible kebab (#1319):
+// an active row's menu holds Archive (reversible); an archived row's holds
+// Restore and permanent Delete. Reusable by both sections.
 function ChatRow({
   s,
   activeChatId,
@@ -359,9 +357,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
 
   // Off-canvas below `medium` (600px, `fixed medium:static` below - the one
   // compact/expanded line the whole app switches on), persistent alongside
-  // the chat pane above it (#1131). The drawer a11y wiring (Esc, focus trap,
-  // scroll lock, return focus) is armed on that same query so there's no
-  // width where the panel is off-canvas but the wiring is dark.
+  // the chat pane above it (#1131). The drawer a11y wiring (Esc, focus trap, scroll lock, return focus) is armed on that same query - no width where the panel is off-canvas but the wiring is dark.
   const offCanvas = useMediaQuery('(max-width: 599px)')
   const panelRef = useDrawer(open && offCanvas, onCloseMobile)
 

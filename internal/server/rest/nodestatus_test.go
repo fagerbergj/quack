@@ -26,8 +26,7 @@ import (
 
 // stubModel is a minimal model.LLM that always answers with a plain text
 // reply and no tool calls, so the orchestrator's llmagent completes without
-// going through plan/execute - enough to exercise SendChatMessage end to end
-// without a real research run.
+// going through plan/execute - enough to exercise SendChatMessage end to end without a real research run.
 type stubModel struct{}
 
 func (stubModel) Name() string { return "stub" }
@@ -44,9 +43,7 @@ func (stubModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool)
 
 // newTestHandler builds a Handler backed by a real (sqlite, temp-file)
 // store and a real Orchestrator/Executor with an empty agent roster and a
-// stub top-level model - enough to run CancelNode/SteerNode/RetryNode (which
-// never reach a real gated node in these tests) and a full SendChatMessage
-// direct-answer turn (no plan/execute).
+// stub top-level model - enough to run CancelNode/SteerNode/RetryNode (which never reach a real gated node in these tests) and a full SendChatMessage direct-answer turn (no plan/execute).
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	return newTestHandlerWithModel(t, stubModel{})
@@ -84,8 +81,6 @@ func mustCreateChat(t *testing.T, h *Handler) string {
 	return c.ID
 }
 
-// --- UpdateNodeStatus -------------------------------------------------------
-
 // seedPlan writes a minimal DagPlan (+ optional DagNode) fixture directly to
 // the store, standing in for a completed orchestrator run.
 func seedPlan(t *testing.T, h *Handler, chatID, planID, nodeID string) {
@@ -120,11 +115,7 @@ func putNodeStatus(t *testing.T, h *Handler, chatID, nodeID string, body schema.
 
 // TestUpdateNodeStatus_CancelUndeliverable409: cancel, like steer, is NOT
 // optimistic. The node's persisted row says "running", but with no live control
-// registered the cancel lands nowhere - and the old handler discarded
-// CancelNode's bool and answered 200 + "cancelled" anyway. Live (2026-07-13) the
-// user hit Cancel six times in one second, got six 200s, and the node ran on:
-// "cancel and steer is seemingly doing nothing". Delivery success is exercised at
-// the dag layer (control tests) and live e2e.
+// registered the cancel lands nowhere - and the old handler discarded CancelNode's bool and answered 200 + "cancelled" anyway. Live the user hit Cancel six times in one second, got six 200s, and the node ran on: "cancel and steer is seemingly doing nothing". Delivery success is exercised at the dag layer (control tests) and live e2e.
 func TestUpdateNodeStatus_CancelUndeliverable409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -242,10 +233,7 @@ func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
 
 // TestUpdateNodeStatus_ResumeAlreadyLiveConflict409 pins finding 12: a pause
 // is cooperative (the node keeps running until its next gate boundary), so
-// the persisted row can say "paused" while the first run is still live. A
-// second resume request must not dispatch a second concurrent run of the
-// same node - it must 409, the same shape as the other undeliverable-control
-// responses in this file.
+// the persisted row can say "paused" while the first run is still live. A second resume request must not dispatch a second concurrent run of the same node - it must 409, the same shape as the other undeliverable-control responses in this file.
 func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -281,10 +269,7 @@ func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
 
 // TestUpdateNodeStatus_ResumeRegistersRunSynchronously pins finding 14:
 // startRun registers synchronously "so cancel can never miss the run"
-// (handler.go's own doc); retryNodeAsync/startNodeAsync must match that shape
-// instead of registering inside the spawned goroutine, or a shutdown drain
-// snapshotting hub.ActiveChatIDs() right after the handler returns can miss
-// a dispatch that hasn't reached RegisterRun yet.
+// (handler.go's own doc); retryNodeAsync/startNodeAsync must match that shape instead of registering inside the spawned goroutine, or a shutdown drain snapshotting hub.ActiveChatIDs() right after the handler returns can miss a dispatch that hasn't reached RegisterRun yet.
 func TestUpdateNodeStatus_ResumeRegistersRunSynchronously(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -323,10 +308,7 @@ func TestStartNode_AwaitingInputRegistersRunSynchronously(t *testing.T) {
 
 // TestUpdateNodeStatus_AwaitingInputRetryRejected: needs_input -> running
 // via the generic status endpoint must be refused, not routed into
-// retryNodeAsync - the node's worker A2A session survives an awaiting_input
-// pause on purpose (#A2) with an unanswered function call at its tail, and a
-// bare retry dispatch would land in that same deterministic session without
-// ever answering it. Only StartNode (with an answer) may resume it.
+// retryNodeAsync - the node's worker A2A session survives an awaiting_input pause on purpose (#A2) with an unanswered function call at its tail, and a bare retry dispatch would land in that same deterministic session without ever answering it. Only StartNode (with an answer) may resume it.
 func TestUpdateNodeStatus_AwaitingInputRetryRejected(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -671,8 +653,6 @@ func TestUpdateNodeStatus_NoPlan404(t *testing.T) {
 	}
 }
 
-// --- UpdateResponseStatus ----------------------------------------------------
-
 func TestUpdateResponseStatus_CancelsActiveRun(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, responseID := "c1", "r1"
@@ -711,12 +691,9 @@ func TestUpdateResponseStatus_WrongResponseID404(t *testing.T) {
 	}
 }
 
-// --- DeleteChat --------------------------------------------------------------
-
 // TestDeleteChat_CancelsActiveRun is #468's core regression: DELETE must kill
 // a run still in flight on the chat, not just drop its row while the run
-// keeps executing. Registers a run's cancel handle the same way startRun does
-// (via the shared hub) and asserts DeleteChat invokes it.
+// keeps executing. Registers a run's cancel handle the same way startRun does (via the shared hub) and asserts DeleteChat invokes it.
 func TestDeleteChat_CancelsActiveRun(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := "c1"
@@ -764,12 +741,9 @@ func TestUpdateResponseStatus_NoActiveRun404(t *testing.T) {
 	}
 }
 
-// --- response_created is the first event of a run --------------------------
-
 // TestSendChatMessage_ResponseCreatedFirst runs a full (stubbed) turn and
 // checks that response_created is the very first SSE event, carrying the same
-// id as the chat's persisted turn - and that the response is no longer
-// cancellable by that id once the run (and handler call) has returned.
+// id as the chat's persisted turn - and that the response is no longer cancellable by that id once the run (and handler call) has returned.
 func TestSendChatMessage_ResponseCreatedFirst(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -835,14 +809,9 @@ func parseSSEBody(t *testing.T, body string) []sseEvent {
 	return out
 }
 
-// --- needs_input persistence -------------------------------------------------
-
 // TestNeedsInputPersistsAcrossReload: a HITL pause (node_needs_input) persists
 // the node's DB status as "needs_input", but the wire boundary normalizes
-// that to paused/awaiting_input - visible in the turn's quack:dag output item
-// after a simulated reload (GetTurnsWithContent → buildTurn), not just in the
-// live SSE stream. The DAG item itself reads in_progress while any node is
-// still paused (a paused run is not "completed").
+// that to paused/awaiting_input - visible in the turn's quack:dag output item after a simulated reload (GetTurnsWithContent → buildTurn), not just in the live SSE stream. The DAG item itself reads in_progress while any node is still paused (a paused run is not "completed").
 func TestNeedsInputPersistsAcrossReload(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

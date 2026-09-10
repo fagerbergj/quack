@@ -30,11 +30,7 @@ func SpawnEnv(home string, extra []string, caps workspace.Caps) []string {
 	env = append(env, extra...)
 	// GOMODCACHE/GOCACHE/GOFLAGS/GOTOOLCHAIN appended LAST: exec.Cmd.Env uses
 	// the last value for a duplicate key, so these win over config's
-	// workspace.env default (GOMODCACHE=/usr/local/go/pkg/mod, the #940
-	// preseed - READ-ONLY, outside every RW grant). Go writes cache/lock (and
-	// any module the preseed lacks) even for a pure `go test`, so GOMODCACHE
-	// must be a writable dir - EnsureWritableGoModCache farms one from the
-	// preseed with symlinks (#954) so those offline modules still resolve.
+	// workspace.env default (GOMODCACHE=/usr/local/go/pkg/mod, the #940 preseed - READ-ONLY, outside every RW grant). Go writes cache/lock (and any module the preseed lacks) even for a pure `go test`, so GOMODCACHE must be a writable dir - EnsureWritableGoModCache farms one from the preseed with symlinks (#954) so those offline modules still resolve.
 	goCache := filepath.Join(home, ".cache", "go-build")
 	_ = os.MkdirAll(goCache, 0o755)
 	env = append(env,

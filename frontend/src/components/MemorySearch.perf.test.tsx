@@ -6,9 +6,8 @@ import { MemoryTab } from './MemoryTab'
 import { client } from '../generated/client.gen'
 
 // React's controlled-input value setter (native setter, bypassing React's
-// tracked-value shim) so dispatching 'input' actually registers a change -
-// used with fake timers below since userEvent's own internal timers would
-// otherwise fight vi.useFakeTimers.
+// tracked-value shim) so dispatching 'input' registers a change - used with
+// fake timers below since userEvent's internal timers would fight vi.useFakeTimers.
 function typeChar(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
   setter.call(input, value)
@@ -117,21 +116,16 @@ describe('lead C: memory search keystroke behavior', () => {
   })
 
   // #1300 review: the debounce effect's cleanup (clearTimeout) must win a
-  // race against unmount - if it didn't, the pending setTimeout would fire
-  // after teardown and call setState (setDebouncedQ/resetPaging) on an
-  // unmounted component. Confirms unmounting mid-debounce neither leaks a
-  // request nor throws.
+  // race against unmount - otherwise the pending setTimeout fires after
+  // teardown and calls setState on an unmounted component. Confirms no leaked request, no throw.
   it('unmounting before the debounce fires cancels it - no leaked request, no post-unmount setState', async () => {
     await renderTab()
     const input = host!.querySelector('input[type="search"]') as HTMLInputElement
 
     vi.useFakeTimers({ shouldAdvanceTime: true })
     // Since React 18, setState on an unmounted component is a silent no-op,
-    // so listCalls staying [''] alone can't tell "the cleanup cancelled the
-    // timer" from "the timer fired post-unmount and React dropped the
-    // setState" - spy clearTimeout to pin the cleanup itself. Spied AFTER
-    // useFakeTimers, which installs its own clearTimeout onto globalThis -
-    // spying first would wrap the real one and never see the fake calls.
+    // so listCalls staying [''] can't tell "cleanup cancelled the timer" from
+    // "timer fired post-unmount and React dropped the setState" - spy clearTimeout to pin the cleanup itself. Spied AFTER useFakeTimers (it installs its own clearTimeout on globalThis; spying first would wrap the real one).
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
     try {
       act(() => { typeChar(input, 'graphlit') })

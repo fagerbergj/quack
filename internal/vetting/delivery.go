@@ -66,8 +66,7 @@ func hasStagedPR(act workerActivity) bool {
 
 // stageToolName: the delivery tool THIS run actually has - stage_pr opens a
 // new PR, stage_push hands off a commit to one that's already open. A run
-// only ever gets one of the two (internal/acp/acp.go's mcpToolNames), so the
-// guidance text must name whichever it was given, never the other (#724).
+// only ever gets one of the two (internal/acp/acp.go's mcpToolNames), so the guidance text must name whichever it was given, never the other (#724).
 func stageToolName(existingPR bool) string {
 	if existingPR {
 		return "stage_push"

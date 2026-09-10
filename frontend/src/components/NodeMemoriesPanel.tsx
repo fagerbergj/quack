@@ -8,8 +8,7 @@ export interface NodeMemoriesPanelProps {
   nodeId: string
   // Bumping this (the node's judge-round counter, chatStore's
   // NodeState.judgeRounds) triggers a refetch - the chat's SSE stream
-  // already carries judge-round completion, so this is the "live update"
-  // hook the epic #1255 P4 spec asks for without a dedicated subscription.
+  // already carries judge-round completion, the "live update" hook epic #1255 P4 asks for without a dedicated subscription.
   judgeRounds?: number
   onClose: () => void
 }
@@ -51,12 +50,9 @@ function SourceBadge({ source }: { source: string }) {
   )
 }
 
-// One row: the memory's content, source, tier, the judge's vote (if the
-// round has voted yet), and a manual vote control. NodeMemory carries no
-// corpus-wide vote_score (that lives on the full Memory the memory page
-// shows) - this control only reflects the caller's own vote highlight.
-// Vote control sits at the row's end (#1266 owner follow-up), matching the
-// memory page's row layout - not a left gutter, so the text gets full width.
+// One row: content, source, tier, the judge's vote (if the
+// round has voted yet), and a manual vote control - NodeMemory carries no
+// corpus-wide vote_score (that lives on the full Memory the memory page shows); this control only reflects the caller's own vote highlight. Vote control sits at the row's end (#1266 owner follow-up), matching the memory page's layout - not a left gutter, so the text gets full width.
 function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: string, vote: VoteDirection) => Promise<void> }) {
   return (
     <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
@@ -82,10 +78,9 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
   )
 }
 
-// NodeMemoriesPanel (epic #1255 P4): the memories a worker node received
-// (prefill and/or recall_memory tool calls), with the judge's per-memory
-// vote once the round has judged them, and a manual vote control. Read from
-// GET /api/v1/chats/{id}/nodes/{node}/memories.
+// (Epic #1255 P4): the memories a worker node received
+// (prefill and/or recall_memory calls), with the judge's per-memory
+// vote once the round has judged them, and a manual vote control. Read from GET /api/v1/chats/{id}/nodes/{node}/memories.
 export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: NodeMemoriesPanelProps) {
   const [memories, setMemories] = useState<NodeMemory[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -107,8 +102,7 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
     try {
       // Merge the server's authoritative tier/own_vote back onto the row
       // (#1265 review finding 7) - the optimistic own_vote above can be
-      // right about direction but not about tier (e.g. an up-vote can
-      // newly verify the memory).
+      // right about direction but not about tier (an up-vote can newly verify the memory).
       const updated = await api.voteMemory(id, vote)
       setMemories(cur => cur.map(m => (m.id === id ? { ...m, tier: updated.tier, own_vote: updated.own_vote } : m)))
     } catch (e) {
@@ -119,8 +113,7 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
 
   // Native <dialog> + showModal() (mirrors ArtifactPanel): Esc closes,
   // focus is trapped in the top layer, and the browser itself restores
-  // focus to whatever opened this once it closes - no manual focus-trap or
-  // focus-restore code needed (#1265 review finding 6).
+  // focus to whatever opened this once it closes - no manual focus-trap/restore code needed (#1265 review finding 6).
   const dialogRef = useRef<HTMLDialogElement>(null)
   useEffect(() => { dialogRef.current?.showModal() }, [])
 

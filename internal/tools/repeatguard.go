@@ -73,7 +73,6 @@ func (s *repeatStates) observeResourceFail(sessionID, resourceKey string, failed
 	return s.fails[k]
 }
 
-// newRepeatGuard wraps inner, fails loudly if not runnable.
 func newRepeatGuard(inner tool.Tool, states *repeatStates) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {

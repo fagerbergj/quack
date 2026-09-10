@@ -148,9 +148,7 @@ func TestGenerate_PromotedReasoningLogMessage(t *testing.T) {
 
 // TestGenerate_ToolCallsSuppressPromotion is a regression test for PR #1243
 // review: the non-streaming path must never promote reasoning_content to the
-// answer on a turn that already has a real tool call, even when the answer
-// text is empty. Before the fix, real tool-call parts were appended AFTER
-// the fallback ladder ran, so the ladder saw no answer yet and promoted.
+// answer on a turn that already has a real tool call, even when the answer text is empty. Before the fix, real tool-call parts were appended AFTER the fallback ladder ran, so the ladder saw no answer yet and promoted.
 func TestGenerate_ToolCallsSuppressPromotion(t *testing.T) {
 	buf := captureLogs(t)
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"","reasoning_content":"deciding which tool to call","tool_calls":[{"id":"c1","type":"function","function":{"name":"web_search","arguments":"{}"}}]}}]}`)

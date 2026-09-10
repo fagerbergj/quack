@@ -356,13 +356,7 @@ func TestReadOnlyBuildDirsWritable(t *testing.T) {
 
 // TestReadOnlyBuildDirSymlinkCannotEscape is this fix's real attack case: the
 // agent itself controls what lands inside a granted build dir (that's the
-// whole point - `npm install` writes there), so it can plant a symlink INSIDE
-// node_modules pointing OUT at a tracked file ("../main.go") and then write
-// through the symlink name. Both landlock (a DAC rule keyed to the resolved
-// target inode/path, not the syntactic name used to reach it) and bwrap (the
-// symlink's ".." traversal, resolved inside the mount namespace, walks back
-// onto the RO-bound parent mount, not some host path outside the sandbox)
-// must deny the write and leave main.go untouched.
+// whole point - `npm install` writes there), so it can plant a symlink INSIDE node_modules pointing OUT at a tracked file ("../main.go") and then write through the symlink name. Both landlock (a DAC rule keyed to the resolved target inode/path, not the syntactic name used to reach it) and bwrap (the symlink's ".." traversal, resolved inside the mount namespace, walks back onto the RO-bound parent mount, not some host path outside the sandbox) must deny the write and leave main.go untouched.
 func TestReadOnlyBuildDirSymlinkCannotEscape(t *testing.T) {
 	for _, mode := range []SandboxMode{SandboxBwrap, SandboxLandlock} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -405,15 +399,7 @@ func TestReadOnlyBuildDirSymlinkCannotEscape(t *testing.T) {
 
 // TestBuildDirGrantsRejectsSymlinkedBuildDir is the OTHER symlink shape (the
 // one that was actually exploitable): the build dir NAME ITSELF is a symlink
-// pointing outside the work tree at pre-create time - e.g. a malicious PR
-// commits a symlink literally named "node_modules" -> an arbitrary host path,
-// which a normal git checkout materializes before PrecreateBuildDirs ever
-// runs, or the agent later deletes its granted node_modules and replaces it
-// with one (landlockGrants/childArgv recompute grants on every RunArgv call,
-// so a mid-session swap is re-evaluated too). Landlock adds its rule against
-// the resolved target (proven: without the Lstat guard this test landed a
-// file OUTSIDE the work tree under landlock), and bwrap's --bind-try would
-// bind-mount the target directory itself. Neither may be granted.
+// pointing outside the work tree at pre-create time - e.g. a malicious PR commits a symlink literally named "node_modules" -> an arbitrary host path, which a normal git checkout materializes before PrecreateBuildDirs ever runs, or the agent later deletes its granted node_modules and replaces it with one (landlockGrants/childArgv recompute grants on every RunArgv call, so a mid-session swap is re-evaluated too). Landlock adds its rule against the resolved target (proven: without the Lstat guard this test landed a file OUTSIDE the work tree under landlock), and bwrap's --bind-try would bind-mount the target directory itself. Neither may be granted.
 func TestBuildDirGrantsRejectsSymlinkedBuildDir(t *testing.T) {
 	for _, mode := range []SandboxMode{SandboxBwrap, SandboxLandlock} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -456,9 +442,7 @@ func TestBuildDirGrantsRejectsSymlinkedBuildDir(t *testing.T) {
 
 // TestBuildDirGrantsSkipsUngitignoredEntries is buildDirGrants' pure-
 // computation counterpart (no sandbox kernel support needed): a configured
-// entry not named in the repo's .gitignore is dropped, an entry the
-// .gitignore names by a nested path's top-level component is kept, and a
-// plain top-level .gitignore line NOT in the configured list is added too.
+// entry not named in the repo's .gitignore is dropped, an entry the .gitignore names by a nested path's top-level component is kept, and a plain top-level .gitignore line NOT in the configured list is added too.
 func TestBuildDirGrantsSkipsUngitignoredEntries(t *testing.T) {
 	dir := t.TempDir()
 	gitignore := "node_modules/\ndist/\n.venv/\n*.log\n/build/\nnested/skip/\n"
@@ -485,10 +469,7 @@ func TestBuildDirGrantsSkipsUngitignoredEntries(t *testing.T) {
 
 // TestBuildDirGrantsMatchesQuacksOwnGitignoreShape pins the real-world shape
 // this repo's OWN .gitignore uses - "node_modules" and "frontend/dist" with
-// NO trailing slash (gitignore never requires one; a bare no-slash pattern
-// still matches the directory) - since a parser that only accepted
-// "node_modules/"-with-slash would silently grant nothing on quack's own
-// tree.
+// NO trailing slash (gitignore never requires one; a bare no-slash pattern still matches the directory) - since a parser that only accepted "node_modules/"-with-slash would silently grant nothing on quack's own tree.
 func TestBuildDirGrantsMatchesQuacksOwnGitignoreShape(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules\nfrontend/dist\n"), 0o644); err != nil {
@@ -520,14 +501,7 @@ func TestBuildDirGrantsNoGitignoreGrantsNothing(t *testing.T) {
 
 // TestBuildDirGrantsRejectsDotDotEscape: the reviewed repo's OWN .gitignore
 // is untrusted content (a malicious PR branch can write anything into it),
-// and the "any other top-level dir the .gitignore names" bonus grant
-// (buildDirGrants' second loop) uses a bare gitignore line's text AS the
-// granted path with no containment check. A bare ".." line has no "/" and no
-// glob char, so it parses as a bare pattern and, unguarded, resolves through
-// filepath.Join(work, "..") to the WORK DIR'S PARENT - landlockGrants would
-// then grant real RW there, and childArgv would --bind-try the host parent
-// dir into the sandbox: a full escape from a repo the agent is meant to only
-// review. Nothing returned may name a path outside work.
+// and the "any other top-level dir the .gitignore names" bonus grant (buildDirGrants' second loop) uses a bare gitignore line's text AS the granted path with no containment check. A bare ".." line has no "/" and no glob char, so it parses as a bare pattern and, unguarded, resolves through filepath.Join(work, "..") to the WORK DIR'S PARENT - landlockGrants would then grant real RW there, and childArgv would --bind-try the host parent dir into the sandbox: a full escape from a repo the agent is meant to only review. Nothing returned may name a path outside work.
 func TestBuildDirGrantsRejectsDotDotEscape(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules/\n..\n"), 0o644); err != nil {
@@ -606,8 +580,7 @@ func TestBuildDirGrantsRejectsTrackedRegularFile(t *testing.T) {
 
 // TestBuildDirGrantsRejectsEscapingConfiguredEntry: workspace.build_dirs is
 // operator config, not agent input, but a "../../etc"-shaped entry should
-// still be rejected defensively rather than trusted to resolve inside work -
-// same containment guarantee as the gitignore-driven bonus grant above.
+// still be rejected defensively rather than trusted to resolve inside work - same containment guarantee as the gitignore-driven bonus grant above.
 func TestBuildDirGrantsRejectsEscapingConfiguredEntry(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("etc\n"), 0o644); err != nil {

@@ -98,9 +98,7 @@ func TestHubActive(t *testing.T) {
 
 // A bare Subscribe (no run has ever published) auto-vivifies an empty topic
 // so a same-moment Publish never races past the registered subscriber - but
-// that placeholder must not itself read as Active, or a chat nobody ever ran
-// would show "running" forever (and the REST /stream handler's cold/warm
-// split would misfire on every later reconnect to the same never-run chat).
+// that placeholder must not itself read as Active, or a chat nobody ever ran would show "running" forever (and the REST /stream handler's cold/warm split would misfire on every later reconnect to the same never-run chat).
 func TestHubActiveNotFooledByBareSubscribe(t *testing.T) {
 	h := NewHub()
 	_, _, cancel, done := h.Subscribe("c")
@@ -134,13 +132,9 @@ func TestHubNewRunResets(t *testing.T) {
 	}
 }
 
-// --- run-cancel registry (#468) ----------------------------------------------
-//
 // This is the seam that makes DELETE/stop reach a run regardless of which
 // driver started it: the REST handler and the GitHub webhook extension both
-// register their run's cancel func here (RegisterRun) instead of keeping
-// separate, mutually-unreachable maps, so CancelRun/CancelResponse cancel
-// either kind of run identically.
+// register their run's cancel func here (RegisterRun) instead of keeping separate, mutually-unreachable maps, so CancelRun/CancelResponse cancel either kind of run identically.
 
 func TestHubCancelRun(t *testing.T) {
 	h := NewHub()
@@ -236,9 +230,7 @@ func TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun(t *testing.T) {
 
 // A GitHub-dispatched run and a REST-started run are both just callers of
 // RegisterRun on the same Hub instance - this pins that the registry is
-// driver-agnostic: whichever goroutine registered a chat's cancel func, the
-// same CancelRun call reaches it. (internal/github.dispatch and
-// rest.Handler.startRun both call exactly this method on the shared hub.)
+// driver-agnostic: whichever goroutine registered a chat's cancel func, the same CancelRun call reaches it. (internal/github.dispatch and rest.Handler.startRun both call exactly this method on the shared hub.)
 func TestHubCancelRun_ReachesEitherDriver(t *testing.T) {
 	h := NewHub()
 	uiCancelled, githubCancelled := false, false
@@ -257,10 +249,7 @@ func TestHubCancelRun_ReachesEitherDriver(t *testing.T) {
 
 // A subscriber whose channel backs up past its buffer must be dropped
 // (channel closed), not silently skipped mid-stream. Skipping loses a
-// contiguous range with no signal to the client, and the resume cursor
-// (last id seen) can never recover it. Dropping ends the connection so the
-// client sees the error and reconnects, replaying the gap off the buffer
-// (or the durable log) from its last contiguous id.
+// contiguous range with no signal to the client, and the resume cursor (last id seen) can never recover it. Dropping ends the connection so the client sees the error and reconnects, replaying the gap off the buffer (or the durable log) from its last contiguous id.
 func TestHubPublishDropsSlowSubscriberInsteadOfSkipping(t *testing.T) {
 	h := NewHub()
 	_, live, cancel, _ := h.Subscribe("c")

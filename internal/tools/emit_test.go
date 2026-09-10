@@ -8,13 +8,9 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// TestEmitTool_ProcessRequestIsIdempotentAndPreservesDeclaration answers the
-// review question on emitTool.ProcessRequest's req.Tools[e.Name()] = e
-// re-pointing (mirrors guard.go/cancelguard.go's established convention):
-// calling it twice on the same request must leave exactly the WRAPPER in the
-// map (never duplicate entries, never revert to the inner tool), and the
-// LLM-visible Declaration must be byte-identical to the inner tool's -
-// wrapping must never change what the model sees.
+// TestEmitTool_ProcessRequestIsIdempotentAndPreservesDeclaration: calling
+// ProcessRequest twice on the same request must leave exactly the WRAPPER in the
+// tools map (never duplicates, never the inner tool), with the LLM-visible Declaration byte-identical to the inner tool's - wrapping must never change what the model sees.
 func TestEmitTool_ProcessRequestIsIdempotentAndPreservesDeclaration(t *testing.T) {
 	inner := &fakeRunnable{}
 	wrapped, err := emitWrap(inner, ledger.Coords{})

@@ -98,11 +98,9 @@ func TestLoadEvents_PrefersTable(t *testing.T) {
 	}
 }
 
-// TestLoadEvents_NeverFoldsWithPriorProgress: the table's Seq (per-RUN) and
-// the ledger's Seq (per-CHAT LIFETIME) are different numbering spaces - a
-// client with fromSeq > 0 already holds a per-run id, which the fold cannot
-// honestly satisfy. A lost table must return empty for such a client, never
-// a fold-derived guess in the wrong space.
+// TestLoadEvents_NeverFoldsWithPriorProgress: the table's Seq (per-RUN) and the
+// ledger's Seq (per-CHAT LIFETIME) are different numbering spaces - a client with
+// fromSeq > 0 already holds a per-run id, which the fold cannot honestly satisfy. A lost table must return empty for such a client, never a fold-derived guess in the wrong space.
 func TestLoadEvents_NeverFoldsWithPriorProgress(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
@@ -147,15 +145,9 @@ func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 	}
 }
 
-// TestLoadEvents_CrashBetweenIntentAndWatermark is #1144 P3's kill-9 test:
-// the ledger already has durable node.* intents (as if a live writer had
-// appended them) but the process died before this chat's "sse" projection
-// ever wrote a single row or watermark - simulating a kill -9 right after
-// the WAL append. A brand-new EventLog (a fresh boot's process) must resume
-// by folding the WHOLE chat from watermark 0 and land on exactly what an
-// independent fold.Fold computes - no CLI, no rebuild command involved. A
-// second resume on the same (now-populated) table must not re-insert or
-// duplicate anything, proving the watermark advance actually stuck.
+// TestLoadEvents_CrashBetweenIntentAndWatermark is #1144 P3's kill-9 test: the
+// ledger already has durable node.* intents (as if a live writer had appended
+// them) but the process died before this chat's "sse" projection ever wrote a single row or watermark - simulating a kill -9 right after the WAL append. A brand-new EventLog (a fresh boot's process) must resume by folding the WHOLE chat from watermark 0 and land on exactly what an independent fold.Fold computes - no CLI, no rebuild command involved. A second resume on the same (now-populated) table must not re-insert or duplicate anything, proving the watermark advance actually stuck.
 func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)

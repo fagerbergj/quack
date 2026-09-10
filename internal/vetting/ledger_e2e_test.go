@@ -19,12 +19,9 @@ import (
 	"google.golang.org/genai"
 )
 
-// fabricationStub reenacts the live-e2e defect (2026-07-10): the worker reads
-// one file, then ANSWERS claiming a commit it never made and quoting README
+// fabricationStub reenacts a live-e2e defect: the worker reads one file, then ANSWERS claiming a commit it never made and quoting README
 // content it never read. The judge side captures the full prompt it receives,
-// so the test can assert the workspace ledger reached it - the fix under
-// test. The judge passes (0.9): what's being proven is the judge now HAS the
-// evidence, not any particular verdict.
+// so the test can assert the workspace ledger reached it - the fix under test. The judge passes (0.9): what's being proven is the judge now HAS the evidence, not any particular verdict.
 type fabricationStub struct {
 	mu          sync.Mutex
 	judgePrompt string
@@ -78,12 +75,9 @@ func newStubReadFileTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-// TestJudgeSeesWorkspaceLedger drives the REAL gate loop (RunGatedRefine on
-// the ADK workflow engine) with a worker that performs one read_file and then
+// TestJudgeSeesWorkspaceLedger drives the REAL gate loop (RunGatedRefine on the ADK workflow engine) with a worker that performs one read_file and then
 // fabricates a commit claim. Asserts the judge's incoming prompt carries the
-// workspace ledger - the read_file entry WITH its content sample - and no
-// git_commit entry, giving claims_match_activity everything it needs to fail
-// the fabrication.
+// workspace ledger - the read_file entry WITH its content sample - and no git_commit entry, giving claims_match_activity everything it needs to fail the fabrication.
 func TestJudgeSeesWorkspaceLedger(t *testing.T) {
 	stub := &fabricationStub{}
 	worker, err := llmagent.New(llmagent.Config{

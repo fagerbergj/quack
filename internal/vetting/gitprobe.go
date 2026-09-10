@@ -15,12 +15,9 @@ import (
 // probeAugmentFromRepo: ledger event name for the probe (emitProbeEvent).
 const probeAugmentFromRepo = "augment_from_repo"
 
-// gitProbeCache memoises augmentFromRepo's git reads per (dir, HEAD sha):
-// actFor calls it ~9 times per node run, usually with no git state change
+// gitProbeCache memoises augmentFromRepo's git reads per (dir, HEAD sha): actFor calls it ~9 times per node run, usually with no git state change
 // between calls. Never evicted - same unbounded-growth ceiling as the
-// existing baselineCache in baseline.go; a jail dir is reused across a
-// node's rounds but not across nodes/chats, so this stays small in practice.
-// ponytail: process-lifetime sync.Map, add a TTL/size cap if it ever shows up in profiling.
+// existing baselineCache in baseline.go; a jail dir is reused across a node's rounds but not across nodes/chats, so this stays small in practice. ponytail: process-lifetime sync.Map, add a TTL/size cap if it ever shows up in profiling.
 var gitProbeCache sync.Map // key: dir + "\x00" + head → *gitProbeResult, or a nil *gitProbeResult for "nothing committed yet"
 
 // gitProbeResult is the git-derived slice of augmentFromRepo's work, replayed
@@ -225,8 +222,7 @@ func commitReachable(dir string, caps workspace.Caps, sha string) bool {
 
 // fileLineAt returns one line (1-based) of file as it read at sha, "" on any
 // failure (missing sha/file/line - the finding-hash snippet input degrades
-// gracefully, never blocks the write). Used instead of reading off disk
-// because HEAD may have moved past sha by the time this runs.
+// gracefully, never blocks the write). Used instead of reading off disk because HEAD may have moved past sha by the time this runs.
 func fileLineAt(dir string, caps workspace.Caps, sha, file string, line int) string {
 	if sha == "" || line <= 0 {
 		return ""
@@ -265,18 +261,12 @@ func cloneHeadSHA(cfg Config) string {
 
 // commitHygieneOffTaskCeiling: code-implementer's commit_hygiene criterion
 // scores below this (normalised) when a commit swept in files with no
-// connection to the task - the contamination band, distinct from a merely
-// thin commit message or an incomplete-but-on-task round (#762).
+// connection to the task - the contamination band, distinct from a merely thin commit message or an incomplete-but-on-task round (#762).
 const commitHygieneOffTaskCeiling = 0.4
 
-// resetCloneToNodeBase discards everything the just-rejected round committed,
-// before the worker is re-prompted to revise - but only when commit_hygiene
-// says that round swept in off-task work (#762). An ordinary incomplete or
-// wrong round keeps its commits: its code is largely right, and revise is
-// expected to build on it, not redo it from scratch. Keyed on the judge's
-// criterion score, never on reading commits/diffs for topicality; a rubric
-// that doesn't name commit_hygiene gets no reset, failing open rather than
-// guessing from something else.
+// resetCloneToNodeBase discards everything the just-rejected round committed, before the worker is re-prompted to revise - but only when commit_hygiene
+// says that round swept in off-task work (#762). An ordinary incomplete or wrong round keeps its commits: its code is largely right, and revise is
+// expected to build on it, not redo it from scratch. Keyed on the judge's criterion score, never on reading commits/diffs for topicality; a rubric that doesn't name commit_hygiene gets no reset, failing open rather than guessing from something else.
 func resetCloneToNodeBase(cfg Config, v verdict) {
 	cs, ok := v.Criteria["commit_hygiene"]
 	if !ok || cs.Score >= commitHygieneOffTaskCeiling {

@@ -12,7 +12,6 @@ import (
 // lifecycle doesn't allow (e.g. done → running).
 var ErrIllegalTransition = errors.New("store: illegal node-status transition")
 
-// planForChat resolves the chat's most recent plan id.
 func (s *Store) planForChat(ctx context.Context, chatID string) (string, error) {
 	p, err := s.GetLatestDagPlan(ctx, chatID)
 	if err != nil {
@@ -26,10 +25,7 @@ func (s *Store) planForChat(ctx context.Context, chatID string) (string, error) 
 
 // SetNodeStatus is the one write-through for a node lifecycle transition: it
 // validates from → to against dag's table and updates status + pause metadata
-// in a single statement. Synchronous by design - a pause must be on disk
-// before it is acted on, so a kill can't lose it (#827's goroutine race).
-// Passing an empty status leaves the status alone and only stamps the pause
-// metadata (the HITL park, whose status arrives on the needs_input event).
+// in a single statement. Synchronous by design - a pause must be on disk before it is acted on, so a kill can't lose it (#827's goroutine race). Passing an empty status leaves the status alone and only stamps the pause metadata (the HITL park, whose status arrives on the needs_input event).
 func (s *Store) SetNodeStatus(ctx context.Context, planID, nodeID string, to dag.NodeStatus, reason dag.PauseReason, question string) error {
 	fields := map[string]any{"pause_reason": string(reason), "pending_question": question}
 	if to == "" {
@@ -52,8 +48,7 @@ func (s *Store) SetNodeStatus(ctx context.Context, planID, nodeID string, to dag
 
 // casNodeStatus commits only if the row's status still equals from: a
 // legality check run against a read that's since been superseded (a pause
-// racing the node's own done write, #late-pause-cancel) must not silently
-// overwrite the newer status just because it once looked legal.
+// racing the node's own done write, #late-pause-cancel) must not silently overwrite the newer status just because it once looked legal.
 func (s *Store) casNodeStatus(ctx context.Context, planID, nodeID string, from, to dag.NodeStatus, fields map[string]any) error {
 	fields["status"] = string(to)
 	res := s.db.WithContext(ctx).Model(&DagNode{}).

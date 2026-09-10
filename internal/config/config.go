@@ -37,8 +37,7 @@ type Config struct {
 	Skills       SkillsConfig           `yaml:"skills"`
 	// Plugins are the Agent Plugins roots quack loads. A root contributes
 	// skills, MCP servers, and quack's own extension declarations, so it is
-	// no longer a skills-only concern - skills.plugins stays readable as a
-	// deprecated alias.
+	// no longer a skills-only concern - skills.plugins stays a deprecated alias.
 	Plugins []string `yaml:"plugins"`
 	// Workflows is a top-level key, not nested under skills: - it's a
 	// binding mechanism onto the DAG planner, not a skill-library concern
@@ -52,12 +51,9 @@ type Config struct {
 	// short form) - a deployment-authored workflow shape's provenance stamps
 	// this as its version, so a shape changes version only when quack.yaml does.
 	Revision string `yaml:"-"`
-	// skipRuntimeValidation - set by LoadForSandbox - skips the checks that
-	// require a live LLM endpoint/model/database to be configured (provider
-	// endpoint, orchestrator/agent model, session/artifacts store URL). Every
-	// other check (workspace, gates shape, dag, server, etc.) still runs, so
-	// `quack sandbox` validates the SAME workspace config an ACP agent gets,
-	// just without demanding inference plumbing it never calls.
+	// skipRuntimeValidation - set by LoadForSandbox - skips the checks that require a live LLM endpoint/model/database to be configured (provider
+	// endpoint, orchestrator/agent model, session/artifacts store URL). Every other check (workspace, gates shape, dag, server, etc.) still runs, so
+	// `quack sandbox` validates the SAME workspace config an ACP agent gets, without demanding inference plumbing it never calls.
 	skipRuntimeValidation bool
 }
 
@@ -68,11 +64,9 @@ type SkillsConfig struct {
 	Plugins []string `yaml:"plugins"`
 }
 
-// PluginRoots is the effective plugin-root list: the top-level plugins: key,
-// else the deprecated skills.plugins, else the defaults. Each root is
-// resolved at startup via internal/plugin's Agent Plugins / Codex discovery
-// order. A root that fails to resolve is a startup warning, never an error.
-// Order is preserved and never deduped.
+// PluginRoots is the effective plugin-root list: the top-level plugins: key, else the deprecated skills.plugins, else the defaults. Each root is resolved
+// at startup via internal/plugin's Agent Plugins / Codex discovery order; a root
+// that fails to resolve is a startup warning, never an error. Order is preserved and never deduped.
 func (c *Config) PluginRoots() []string {
 	if c.Plugins != nil {
 		return c.Plugins
@@ -85,15 +79,12 @@ func (c *Config) PluginRoots() []string {
 
 // WorkflowShape teaches plan-work's "Common workflows" table a deployment-
 // specific DAG shape (issue #805) - a house-standard node chain (document
-// ingestion, reMarkable notes, ...) that isn't in the shipped catalog.
-// Trigger and Shape render as the table's two columns verbatim; Agents is
-// the subset of that prose the config layer can actually validate.
+// ingestion, reMarkable notes, ...) that isn't in the shipped catalog. Trigger
+// and Shape render as the table's two columns verbatim; Agents is the subset
+// of that prose the config layer can actually validate.
 //
-// Nodes is optional (workflow binding): when present, a dispatch
-// naming this shape gets Nodes built into a dag.Plan directly - no planner
-// LLM call - instead of Trigger/Shape staying a planner hint. Trigger/Shape
-// still render in the table either way, so the shape stays discoverable to
-// an ordinary chat request too.
+// Nodes is optional (workflow binding): when present, a dispatch naming this
+// shape gets Nodes built into a dag.Plan directly - no planner LLM call - instead of Trigger/Shape staying a planner hint; Trigger/Shape still render in the table either way, so the shape stays discoverable to an ordinary chat.
 type WorkflowShape struct {
 	Name    string         `yaml:"name"`    // short id for logs/warnings; also the future storage key (#806)
 	Trigger string         `yaml:"trigger"` // "Request" column - when this shape applies
@@ -117,11 +108,8 @@ type WorkflowNode struct {
 }
 
 // validateWorkflows drops structurally incomplete shapes with a warning
-// (test case 4: never takes down planning) but hard-fails the whole config
-// when a structurally valid shape names an agent that isn't configured (test
-// case 3: never let a plan reach a node the executor can't run), or when a
-// bound shape's node list is malformed - a shape a dispatch can bind to must
-// never fail loud only at dispatch time.
+// (test case 4: never takes down planning) but hard-fails the whole config when a structurally valid shape names an agent that isn't configured
+// (test case 3: never let a plan reach a node the executor can't run), or when a bound shape's node list is malformed - a bindable shape must never fail loud only at dispatch time.
 func (c *Config) validateWorkflows() error {
 	valid := make([]WorkflowShape, 0, len(c.Workflows))
 	for i, w := range c.Workflows {
@@ -222,8 +210,7 @@ func workflowNodesAcyclic(nodes []WorkflowNode) bool {
 
 // defaultSkillPlugins are the plugin roots a stock quack loads: two vendored
 // skill libraries, plus the first-party manifest declaring the usage
-// extension. .agents/plugins/ holds quack's own manifests; .agents/vendor/
-// holds fetched trees.
+// extension. .agents/plugins/ holds quack's own manifests; .agents/vendor/ holds fetched trees.
 var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"}
 
 type ObservabilityConfig struct {
@@ -302,9 +289,7 @@ type OtelConfig struct {
 	Sample    float64        `yaml:"sample"`
 	// Content opts into putting prompt/tool/response text on span attributes -
 	// both the model-call spans (internal/inference) and ACP tool-call spans
-	// (internal/acp/turnspan.go). Off by default: an existing deployment that
-	// only wired traces/metrics must not silently start shipping message
-	// content on upgrade.
+	// (internal/acp/turnspan.go). Off by default: an existing deployment that only wired traces/metrics must not silently start shipping message content on upgrade.
 	Content bool `yaml:"capture_content"`
 	// Environment lands on the OTel resource as deployment.environment.name -
 	// what trace backends split dev traffic from the deployed server by.
@@ -372,12 +357,9 @@ func (e OtelExporter) Wants(sig OtelSignal) bool {
 	return false
 }
 
-// ExtensionsConfig is the extensions: block - every top-level key is opaque
-// (internal/serve resolves each against sdk.Registered() and hands the raw
-// node to its Factory). GitHub used to be typed and strict here
-// (GitHubExtensionConfig); now that internal/github is an SDK module like
-// any other, its config lives entirely in quack-extensions/github and quack
-// itself never parses it.
+// ExtensionsConfig is the extensions: block - every top-level key is opaque (internal/serve resolves each against sdk.Registered() and hands the raw
+// node to its Factory). internal/github is an SDK module like any other, so
+// its config (formerly the typed GitHubExtensionConfig) lives entirely in quack-extensions/github; quack itself never parses it.
 type ExtensionsConfig struct {
 	Modules map[string]yaml.Node `yaml:",inline"`
 }
@@ -485,16 +467,14 @@ type CompactionConfig struct {
 	// 0 disables the cadence trigger (threshold-only, prior behaviour).
 	CompactionInterval int `yaml:"compaction_interval"`
 	// OverlapSize is how many already-compacted raw events carry into the
-	// next summarization window, so a fact split across a chunk boundary
-	// isn't lost. adk has no default here - 0 disables overlap - and requires
-	// CompactionInterval > 0 whenever this is set (see validate()).
+	// next summarization window, so a fact split across a chunk boundary isn't
+	// lost. adk has no default here - 0 disables overlap - and requires CompactionInterval > 0 whenever this is set (see validate()).
 	OverlapSize int `yaml:"overlap_size"`
 }
 
 // defaultMaxActiveNodes: permissive PER-RUN host-resource ceiling (each run
 // gets its own semaphore, see rundag.go/nativegraph.go), not a GPU limiter
-// (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM
-// the GPU pool knows nothing about.
+// (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM the GPU pool doesn't know about.
 const defaultMaxActiveNodes = 32
 
 // defaultMaxActiveRuns: host disk/CPU ceiling on concurrent run SETUP
@@ -502,17 +482,14 @@ const defaultMaxActiveNodes = 32
 const defaultMaxActiveRuns = 8
 
 type DagConfig struct {
-	// MaxActiveRuns caps concurrent RUNS server-wide. #1007 removed this as a
-	// GPU knob (models.<m>.limits.sessions is that, and since #1067 it bounds
-	// orchestrator turns too); it is back only as the setup guard, and as the
-	// one way to bound how many runs are live - and so how many chats show as
-	// running - at once. 0 = defaultMaxActiveRuns.
+	// MaxActiveRuns caps concurrent RUNS server-wide. Not a GPU knob (#1007:
+	// models.<m>.limits.sessions is that, and since #1067 it bounds orchestrator
+	// turns too) - it is back only as the setup guard, and as the one way to bound how many runs - and so how many chats show as running - at once. 0 = defaultMaxActiveRuns.
 	MaxActiveRuns int `yaml:"max_active_runs"`
 
 	// MaxActiveNodes caps concurrently-running nodes WITHIN ONE RUN (each run
 	// gets its own semaphore) as a host-resource guard (jail/clone CPU+RAM),
-	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens
-	// and providers.<p>.limits.active (#1007).
+	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active (#1007).
 	MaxActiveNodes int `yaml:"max_active_nodes"`
 }
 
@@ -542,8 +519,7 @@ type JudgeConfig struct {
 	MaxOutputTokens int `yaml:"max_output_tokens"`
 	// ThinkingLevel opts the judge/plan-judge request into a capped reasoning
 	// effort ("low", "medium", "high"); "" (default) sends no ThinkingConfig at
-	// all - some OpenAI-compatible endpoints 400 on reasoning_effort for a
-	// non-reasoning model, so this must stay opt-in, not forced on (#1235).
+	// all - some OpenAI-compatible endpoints 400 on reasoning_effort for a non-reasoning model, so this must stay opt-in, not forced (#1235).
 	ThinkingLevel string `yaml:"thinking_level"`
 }
 
@@ -580,9 +556,8 @@ type AcpAgentConfig struct {
 	McpServers []string          `yaml:"mcp_servers"`
 	ReadOnly   bool              `yaml:"read_only"`
 	// AllowClone lifts the git clone deny for this agent (code-explorer reads
-	// third-party repos the gate never provisions). Requires ReadOnly - see validate -
-	// and takes effect only under a sandbox that enforces a boundary on the ACP
-	// child, landlock or bwrap (see serve.opencodeEnv / workspace.EnforcesBoundary).
+	// third-party repos the gate never provisions). Requires ReadOnly - see
+	// validate - and takes effect only under a sandbox that enforces a boundary on the ACP child, landlock or bwrap (serve.opencodeEnv / workspace.EnforcesBoundary).
 	AllowClone bool `yaml:"allow_clone"`
 }
 
@@ -641,12 +616,9 @@ type ModelConfig struct {
 	ContextWindow int           `yaml:"context_window"`
 	Limits        *ModelLimits  `yaml:"limits"`
 	Cost          *ModelPricing `yaml:"cost"`
-	// Effort is a reasoning-effort default ("low"/"medium"/"high") mapped to
-	// provider-specific params (OpenAI-compatible reasoning_effort); "" (default)
+	// Effort is a reasoning-effort default ("low"/"medium"/"high") mapped to provider-specific params (OpenAI-compatible reasoning_effort); "" (default)
 	// sends no ThinkingConfig unless the request sets its own (e.g. the judge's
-	// gates.judge.thinking_level, which always takes precedence). #1235 - some
-	// OpenAI-compatible endpoints 400 on reasoning_effort for a non-reasoning
-	// model, so only set this on a model that accepts it.
+	// gates.judge.thinking_level, which always takes precedence). #1235 - some OpenAI-compatible endpoints 400 on reasoning_effort for a non-reasoning model, so only set this on a model that accepts it.
 	Effort string `yaml:"effort"`
 }
 
@@ -665,9 +637,8 @@ type ModelPricing struct {
 }
 
 // checkModelRegistered errors if a non-empty model reference (from any of
-// the several Provider+Model fields outside agents:) isn't in the registry -
-// ModelCost is a silent map lookup, so an unregistered judge/embed/etc model
-// would otherwise load clean and quietly drop its cost metric forever.
+// the several Provider+Model fields outside agents:) isn't in the registry:
+// ModelCost is a silent map lookup, so an unregistered judge/embed/etc model would otherwise load clean and quietly drop its cost metric forever.
 func (c *Config) checkModelRegistered(field, model string) error {
 	if model == "" {
 		return nil
@@ -833,8 +804,7 @@ type OrchestratorConfig struct {
 	Model    string `yaml:"model"`
 	// ContextWindow is the orchestrator's kv_tokens reservation (#1067), the
 	// counterpart to an agent's own context_window. Unset means context is not
-	// a scheduling dimension for its turns - NOT the model's full window, which
-	// one turn would reserve entirely, starving the workers it just planned.
+	// a scheduling dimension for its turns - NOT the model's full window, which one turn would reserve entirely, starving the workers it just planned.
 	ContextWindow  int                  `yaml:"context_window"`
 	Tools          []string             `yaml:"tools"`
 	Skills         []string             `yaml:"skills"`
@@ -919,16 +889,9 @@ func Load(path string) (*Config, error) {
 	return load(path, false)
 }
 
-// LoadForSandbox loads path the same way Load does (parse, expand, the full
-// workspace/gates/dag/server validation and defaulting) but skips the checks
-// that require live inference plumbing an agent's OWN model calls need,
-// never `quack sandbox`: provider endpoint, orchestrator/agent model,
-// session/artifacts store url. `quack sandbox` runs a shell command inside
-// an agent's Caps/WrapArgv/spawnEnv - it never calls a model or a store - so
-// a deployment config with those left as empty env vars (e.g. a CI image
-// with no QUACK_*_MODEL/QUACK_DATABASE_URL set) should still resolve one
-// agent's acp/workspace config instead of failing on a sibling agent's
-// unrelated empty model.
+// LoadForSandbox loads path the same way Load does (parse, expand, the full workspace/gates/dag/server validation and defaulting) but skips the checks that require live inference plumbing - provider endpoint, orchestrator/agent model, session/artifacts store url - which `quack sandbox` never needs: it
+// runs a shell command inside an agent's Caps/WrapArgv/spawnEnv, never calling a model or a store. So a deployment config with those left as empty env vars
+// (e.g. a CI image with no QUACK_*_MODEL/QUACK_DATABASE_URL set) should still resolve one agent's acp/workspace config instead of failing on a sibling agent's unrelated empty model.
 func LoadForSandbox(path string) (*Config, error) {
 	return load(path, true)
 }

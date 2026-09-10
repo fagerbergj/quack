@@ -15,7 +15,6 @@ export default meta
 
 type Story = StoryObj<typeof DagNode>
 
-// ---- node definitions -------------------------------------------------------
 
 const wrNode: DagNodeDef = {
   id: 'r1',
@@ -31,7 +30,6 @@ const synthNode: DagNodeDef = {
   depends_on: ['r1'],
 }
 
-// ---- run fixtures -----------------------------------------------------------
 
 const researchActivity: Activity[] = [
   { kind: 'thinking', text: 'I need the best months to visit Dublin based on weather data.' },
@@ -49,7 +47,6 @@ const judgeRun = (round: number, score: number, passed: boolean, feedback: strin
   activity: [{ kind: 'thinking', text: 'Re-checking cited URLs against the claims…' }],
 })
 
-// ---- stories ----------------------------------------------------------------
 
 export const Queued: Story = {
   args: {
@@ -181,9 +178,7 @@ export const Truncated: Story = {
 
 // #379: a node whose worker run streamed 80 tool-call events - the
 // performance case the streaming-update fix targets (see messageParts.ts /
-// AgentParts.test.ts). Renders via the same WorkerCard + ActivityList path
-// as a live run; ActivityList windows to its most recent items so this stays
-// cheap however many events arrive.
+// AgentParts.test.ts). ActivityList windows to its most recent items, so this stays cheap however many events arrive.
 const manyToolActivity: Activity[] = Array.from({ length: 80 }, (_, i) => ({
   kind: 'tool' as const,
   tool: { callId: `c${i}`, name: 'web_search', args: { query: `query ${i}` }, result: { results: [] }, done: true },
@@ -211,7 +206,6 @@ export const Failed: Story = {
   },
 }
 
-// ---- #265: pause / cancel / queued-message states ---------------------------
 
 export const Cancelled: Story = {
   args: {
@@ -329,7 +323,6 @@ export const LongContentManyRounds: Story = {
   },
 }
 
-// ---- 0.9.0: ⋮ overflow menu + needs_input (#384/#265 follow-up) ------------
 
 // A mid-node HITL question (StatusDot amber, matching needs_input everywhere
 // else in the app) - the filled "Answer" button in the header opens the popup
@@ -418,7 +411,6 @@ export const OverflowMenuHiddenOnTerminal: Story = {
   },
 }
 
-// ---- 0.9.0: compact collapse-to-one-line ethos (live UI feedback) ----------
 
 const markdownVerdict = [
   '**Mostly solid**, but the rainfall claim is unbacked.',
@@ -487,12 +479,9 @@ export const AnswerPopup: Story = {
   },
 }
 
-// A mechanical deterministic-check retry (the gate's continuation loop handing
-// the worker another tool-bearing round after e.g. a failed `go test`) is a
-// SEPARATE run under the hood but renders as ONE continuous activity feed -
-// not a second "1 tool call" block - because it isn't a meaningful stage
-// boundary the way a judge-triggered revise is. Regression guard for the
-// render-level grouping in groupWorkerRuns (DagNode.tsx).
+// A mechanical deterministic-check retry (the gate's continuation loop
+// handing the worker another tool-bearing round after e.g. a failed `go test`)
+// is a SEPARATE run under the hood but renders as ONE continuous activity feed - not a second "1 tool call" block - because it isn't a meaningful stage boundary the way a judge-triggered revise is. Regression guard for the render-level grouping in groupWorkerRuns (DagNode.tsx).
 export const DeterministicRetryOneFeed: Story = {
   args: {
     node: wrNode,
@@ -519,7 +508,6 @@ export const DeterministicRetryOneFeed: Story = {
   },
 }
 
-// ---- context meter + compaction (per-node context pressure) ---------------
 
 const contextNode: DagNodeDef = { ...wrNode, context_window: 262_144 }
 

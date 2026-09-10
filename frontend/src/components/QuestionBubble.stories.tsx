@@ -27,10 +27,9 @@ export const Answered: Story = {
   args: { agent: 'orchestrator', question: 'Which Springfield do you mean?', options: SPRINGFIELDS, answered: 'Springfield, Missouri' },
 }
 
-// A paused node's mid-node HITL question - no discrete options, free text only,
-// credited to the node's own agent rather than the orchestrator. This is what
-// used to render as the amber NodeAskPrompt box buried inside the node card; now
-// it's a conversation-level bubble like any other question.
+// A paused node's mid-node HITL question - no discrete options, free text
+// only, credited to the node's own agent rather than the orchestrator.
+// Used to render as the amber NodeAskPrompt box buried inside the node card; now a conversation-level bubble like any other question.
 export const NodeQuestion: Story = {
   args: { agent: 'web-researcher', question: 'Which time zone should the itinerary use - local or your home time zone?' },
 }

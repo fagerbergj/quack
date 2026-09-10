@@ -16,20 +16,14 @@ export default meta
 
 type Story = StoryObj<typeof ArtifactPanel>
 
-// The panel talks to the real REST client (frontend/src/api.ts), so a story
-// stubs global.fetch with canned responses matching the generated schema -
-// no MSW in this repo (see frontend-design skill: reach for native/existing
-// before a new dependency), and this is the whole surface it calls. The
-// stub routes on the chat id in the URL so each story gets its own fixture:
-// chat-1 (a finished review node), chat-failed (a failed node, no
-// artifacts), chat-more (a node with lots of secondary artifacts).
+// The panel talks to the real REST client, so a story stubs global.fetch
+// with canned responses matching the generated schema - no MSW in this repo
+// (frontend-design skill), and this is its whole surface. Routes on the chat id in the URL: chat-1 (a finished review node), chat-failed (a failed node, no artifacts), chat-more (lots of secondary artifacts).
 const findingV1 = JSON.stringify({ path: 'a.go', title: 'missing nil check', rationale: 'x may be nil here', severity: 'high' })
 const findingV2 = JSON.stringify({ path: 'a.go', title: 'missing nil check (fixed)', rationale: 'x may be nil here', severity: 'high' })
 // One fixed review format (internal/vetting/reviewoverview.go): the panel
 // renders `rendered` (server-computed) as markdown rather than reimplement
-// the renderer in TSX - codeReviewNew covers the new fields, codeReviewLegacy
-// a pre-migration record with only `summary` and no `rendered` at all, so
-// the panel falls back to the generic JSON tree (LegacyCodeReview story).
+// the renderer in TSX - codeReviewNew covers the new fields, codeReviewLegacy is pre-migration (only `summary`, no `rendered`) so the panel falls back to the generic JSON tree (LegacyCodeReview story).
 const codeReviewNew = {
   verdict: 'request_changes',
   takeaway: 'Two blocking issues remain in the fallback path.',
@@ -81,11 +75,9 @@ let reviewRev3Written = false
 const reviewMdV3 = '# Review summary (live update)\n\nA third revision just landed over SSE.\n'
 
 window.fetch = async (input: RequestInfo | URL) => {
-  // The generated client's per-request fetch always calls this with a real
-  // Request instance (client.gen.ts) - String(aRequest) is "[object
-  // Request]", so its own .url must be read; getArtifactText's plain
-  // fetch() call still passes a bare string, which the ternary also covers.
-  // buildUrl percent-encodes the artifact_name path param (":" -> "%3A").
+  // The generated client's per-request fetch always passes a real Request
+  // instance (client.gen.ts) - String(request) is "[object Request]", so its
+  // .url must be read; getArtifactText's plain fetch() still passes a bare string (the ternary covers it). buildUrl percent-encodes artifact_name (":" -> "%3A").
   const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
 
   if (url.includes('/chats/chat-failed/')) {
@@ -199,17 +191,9 @@ function textResponse(body: string): Response {
   return new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } })
 }
 
-// A finished review node (#1178): the panel opens directly on the node's
-// result - the review markdown under the node's own name - with the
-// two-round judge timeline pinned under the header. Tap a chip to see that
-// round's notes on the revision it judged; the revision bar diffs against
-// the previous revision; the finding and the dispatch-authored
-// code_review sit behind "More"; id/kind/class/lineage/REST link sit in
-// the collapsed "Details" at the bottom. Verified against the global theme
-// toolbar (light, the Storybook default); WithResultDark below is the same
-// fixture pinned to dark so both are checkable without touching the
-// toolbar - #1114 owner feedback ("dark mode looks awful, text is black on
-// gray") was found in this exact panel.
+// A finished review node (#1178): opens on the node's result (the review
+// markdown under the node's own name) with the two-round judge timeline
+// under the header, "More" for finding/code_review, provenance in Details. Verified light; WithResultDark pins dark - #1114's "black on gray" complaint was found in this exact panel.
 export const WithResult: Story = {
   args: {
     chatId: 'chat-1',
@@ -238,9 +222,8 @@ class FakeEventSource {
 window.EventSource = FakeEventSource as unknown as typeof EventSource
 
 // #1114: the panel follows a live artifact_revision event over the chat's
-// own SSE stream, no page reload/manual Refresh - the story injects its own
-// ChatStore, attaches it (opening the fake EventSource above), and the play
-// function fires the event exactly as the real stream would deliver it.
+// own SSE stream, no page reload - the story injects its own ChatStore,
+// attaches it (opening the fake EventSource above), and play fires the event exactly as the real stream would.
 const liveStore = new ChatStore()
 liveStore.seed('chat-1', [])
 liveStore.attach('chat-1')
@@ -271,20 +254,15 @@ export const WithLongTask: Story = {
 
 export const WithResultDark: Story = {
   ...WithResult,
-  // A local `.dark` ancestor is enough - Tailwind's dark: custom-variant
-  // (`&:where(.dark, .dark *)`) matches any dark-classed ancestor, not just
-  // <html>, so this pins the theme without touching the global toolbar
-  // toggle .storybook/preview.tsx already provides for every other story.
+  // A local `.dark` ancestor is enough: Tailwind's dark: variant matches any
+  // dark-classed ancestor, not just <html>, so this pins the theme without
+  // touching the global toolbar toggle .storybook/preview.tsx provides.
   decorators: [Story => <div className="dark"><Story /></div>],
 }
 
 // #1178 mobile: the dialog is a full-height bottom sheet (h-dvh) below
-// `sm`, the timeline pinned under the header. No viewport addon in this
-// repo (.storybook/main.ts's addons list is empty) - a tiny new dependency
-// wasn't clearly worth it for one story, so this wraps the fixed 390x844
-// box directly (a real, sized container the panel's own `sm:` breakpoint
-// reacts to exactly like a real small screen would; Chrome DevTools device
-// emulation and this box agree at 390px either way).
+// `sm`, the timeline pinned under the header. No viewport addon in this repo
+// (.storybook/main.ts's addons list is empty), so this wraps the fixed 390x844 box directly - a real, sized container the panel's own `sm:` breakpoint reacts to exactly like a real small screen (DevTools emulation and this box agree at 390px).
 export const WithResultMobile: Story = {
   ...WithResult,
   decorators: [Story => (
@@ -322,10 +300,8 @@ export const MoreHeavyNode: Story = {
 }
 
 // A pre-migration code_review record: `summary` but no `rendered` field at
-// all (never backfilled - old history, not a fresh save), so the panel
-// falls back to the generic JSON tree rather than rendering nothing. The
-// MoreHeavyNode/WithResult fixtures' own code_review record (codeReviewNew)
-// already covers the new takeaway/verified/notes/rendered shape.
+// all (old history, never backfilled), so the panel falls back to the
+// generic JSON tree; the codeReviewNew fixture covers the new shape.
 export const LegacyCodeReview: Story = {
   args: {
     chatId: 'chat-review-legacy',

@@ -33,8 +33,7 @@ type stageReviewCommentInput struct {
 
 // listReviewCommentsInput is list_review_comments' input: plain limit/offset
 // pagination - this repo's convention for bounding a response rather than
-// trusting it stays small (see judge.go's changedFilesBudget, workspace's
-// max_read_kb). No cursor: a review node stages at most a few dozen findings.
+// trusting it stays small (see judge.go's changedFilesBudget, workspace's max_read_kb). No cursor: a review node stages at most a few dozen findings.
 type listReviewCommentsInput struct {
 	Limit  int `json:"limit,omitempty" jsonschema:"max comments to return (default 50)"`
 	Offset int `json:"offset,omitempty" jsonschema:"how many staged comments to skip, in stage order (default 0)"`
@@ -58,9 +57,7 @@ type stageReviewInput struct {
 
 // defaultListLimit and listExcerptLen bound list_review_comments' response:
 // a page of results, and a short excerpt per body rather than the full text -
-// just enough for the reviewer to recognize a finding it already staged and
-// grab the id to retract it with, not to reproduce the finding verbatim
-// (unstage_review_comment takes the id, not the body, so it never needs to).
+// just enough for the reviewer to recognize a finding it already staged and grab the id to retract it with, not to reproduce the finding verbatim (unstage_review_comment takes the id, not the body, so it never needs to).
 const (
 	defaultListLimit = 50
 	listExcerptLen   = 120
@@ -184,8 +181,7 @@ func registerPRTool(srv *mcp.Server, pr *vetting.PRStage) {
 
 // stagePushInput is stage_push's input: title/body are OPTIONAL - this run is
 // pushing onto a PR that already exists, so it may have nothing to say about
-// either (issue #724: stage_pr's required fields forced the agent to invent
-// them, and the invented text then overwrote someone else's PR).
+// either (issue #724: stage_pr's required fields forced the agent to invent them, and the invented text then overwrote someone else's PR).
 type stagePushInput struct {
 	Title string `json:"title,omitempty" jsonschema:"optional: only pass this if you are deliberately changing the PR's title"`
 	Body  string `json:"body,omitempty" jsonschema:"optional: only pass this if you are deliberately changing the PR's description"`

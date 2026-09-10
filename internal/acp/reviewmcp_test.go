@@ -13,10 +13,7 @@ import (
 
 // TestReviewMCP_StageToolsLandInBuffer drives the review MCP surface (#451)
 // exactly as the ACP reviewer subprocess does: stage_review_comment per inline
-// finding, stage_review for the verdict+summary. The gate reads the SAME buffer
-// via ReviewStage.Snapshot, so asserting the snapshot asserts what delivery
-// posts. It also pins the gating: a review-only session (no Memory) never
-// exposes the memory tools, and a malformed verdict fails loudly.
+// finding, stage_review for the verdict+summary. The gate reads the SAME buffer via ReviewStage.Snapshot, so asserting the snapshot asserts what delivery posts. It also pins the gating: a review-only session (no Memory) never exposes the memory tools, and a malformed verdict fails loudly.
 func TestReviewMCP_StageToolsLandInBuffer(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -85,8 +82,7 @@ func TestReviewMCP_StageToolsLandInBuffer(t *testing.T) {
 
 // TestReviewMCP_StageReviewEnforcesCaps proves the tool boundary rejects a
 // missing takeaway and an over-cap notes list with an actionable error - the
-// same caps validateCodeReview enforces on a native write_code_review call
-// (reviewrecord.go's CheckCodeReviewCaps), so the two surfaces can't drift.
+// same caps validateCodeReview enforces on a native write_code_review call (reviewrecord.go's CheckCodeReviewCaps), so the two surfaces can't drift.
 func TestReviewMCP_StageReviewEnforcesCaps(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -128,8 +124,7 @@ func TestReviewMCP_StageReviewEnforcesCaps(t *testing.T) {
 
 // TestReviewMCP_StageReturnsID proves stage_review_comment's "create" leg of
 // the CRUD surface (#562): it hands back the id needed to retract the finding
-// later, formatted "<path>:<line>#<n>" so it's self-explanatory to a human or
-// the judge without a lookup.
+// later, formatted "<path>:<line>#<n>" so it's self-explanatory to a human or the judge without a lookup.
 func TestReviewMCP_StageReturnsID(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -164,8 +159,7 @@ func TestReviewMCP_StageReturnsID(t *testing.T) {
 
 // TestReviewMCP_StageDuplicateReportsExistingID proves staging the same
 // path/line/body twice over the live MCP surface stages exactly one comment:
-// the second stage_review_comment call reports the duplicate and hands back
-// the first id instead of a forced list_review_comments round trip.
+// the second stage_review_comment call reports the duplicate and hands back the first id instead of a forced list_review_comments round trip.
 func TestReviewMCP_StageDuplicateReportsExistingID(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -207,9 +201,7 @@ func TestReviewMCP_StageDuplicateReportsExistingID(t *testing.T) {
 
 // TestReviewMCP_ListAndUnstageByID exercises the read + delete legs together:
 // list shows the staged set (id, path, line, excerpt - no need to reproduce
-// the body verbatim), unstage-by-id removes exactly that one and leaves the
-// rest, and retracting the same id twice is a visible tool error, not a
-// silent no-op (#562's read-before-you-stage loop).
+// the body verbatim), unstage-by-id removes exactly that one and leaves the rest, and retracting the same id twice is a visible tool error, not a silent no-op (#562's read-before-you-stage loop).
 func TestReviewMCP_ListAndUnstageByID(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -415,11 +407,7 @@ func TestToolOfferIsExclusive(t *testing.T) {
 
 // TestPlanOnlyNodeOffersNoStagePRTool pins #739 test case 2 at the wire
 // level: a planOnly node's MemSession never carries a PRStage (dag's
-// newGatedNode only sets one when prNode is true - see
-// TestPlanOnlyOffersNoWritableNode in internal/dag), so the live MCP server
-// registers neither stage_pr nor stage_push for it - the same server
-// TestToolOfferIsExclusive above proves offers exactly one of them for a
-// writable node.
+// newGatedNode only sets one when prNode is true - see TestPlanOnlyOffersNoWritableNode in internal/dag), so the live MCP server registers neither stage_pr nor stage_push for it - the same server TestToolOfferIsExclusive above proves offers exactly one of them for a writable node.
 func TestPlanOnlyNodeOffersNoStagePRTool(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{PRStage: nil})

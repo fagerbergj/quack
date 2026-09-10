@@ -8,10 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// buildRecovererOrWarn must never abort `ledger recover` on a build failure -
-// it degrades to nil (every orphan reported Unresolved) and warns on stderr
-// instead, since this is a diagnostics command and a misconfigured extension
-// must not hide the orphans it might otherwise explain.
+// buildRecovererOrWarn must never abort `ledger recover` on a build
+// failure - it degrades to nil (every orphan reported Unresolved) and warns
+// on stderr instead, since this is a diagnostics command and a misconfigured extension must not hide the orphans it might otherwise explain.
 func TestBuildRecovererOrWarn_ConfigLoadFailureDegrades(t *testing.T) {
 	t.Setenv("QUACK_CONFIG", t.TempDir()+"/does-not-exist.yaml")
 	var errBuf bytes.Buffer
@@ -41,5 +40,16 @@ func TestBuildRecovererOrWarn_DryRunSkipsBuild(t *testing.T) {
 	}
 	if errBuf.String() != "" {
 		t.Errorf("stderr = %q, want no output under --dry-run", errBuf.String())
+	}
+}
+
+// Flag-registration only: their JSON shape is proven directly against
+// RunLedgerRebuild/RunLedgerRecover's output in internal/cli.
+func TestLedgerRebuildRecover_JSONFlagRegistered(t *testing.T) {
+	if newLedgerRebuildCmd().Flags().Lookup("json") == nil {
+		t.Error("ledger rebuild is missing --json")
+	}
+	if newLedgerRecoverCmd().Flags().Lookup("json") == nil {
+		t.Error("ledger recover is missing --json")
 	}
 }

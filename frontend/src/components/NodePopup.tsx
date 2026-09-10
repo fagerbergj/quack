@@ -5,14 +5,9 @@ import { Sheet } from './Sheet'
 import { type DagNodeDef } from '../state/agentStream'
 import type { NodeState, QueuedMessage } from '../state/chatStore'
 
-// NodePopup (#384/#265, restyled for 0.9.0) is an extension of the main chat,
-// not a bespoke modal: the node's prompt renders through the same
-// BubbleHeader + AssistantText markdown treatment as every chat bubble, with
-// no standalone header or section dividers of its own - only a light
-// overlay + close affordance to pop it out. Start/stop/pause live one click
-// away in DagNode's ⋮ menu now; this surface is for what needs the input/editor -
-// queueing a message, editing a not-yet-started prompt, or answering a
-// pending mid-node question.
+// NodePopup (#384/#265, restyled for 0.9.0) is an extension of the main
+// chat, not a bespoke modal: the node's prompt renders through the same
+// BubbleHeader + AssistantText markdown treatment as every chat bubble, with no standalone header or section dividers - only a light overlay + close affordance to pop it out. Start/stop/pause live one click away in DagNode's ⋮ menu; this surface is for what needs the input/editor - queueing a message, editing a not-yet-started prompt, or answering a pending mid-node question.
 interface Props {
   node: DagNodeDef
   state: NodeState
@@ -90,8 +85,7 @@ export function NodePopup({
   const running = state.status === 'running'
   // Answering resumes the node now; queueing waits for its next turn
   // boundary - same input widget, chosen by which state the node is in.
-  // needs_input is the legacy DB/SSE spelling; paused/awaiting_input is the
-  // wire-normalized one the REST read model returns - both mean "parked on a question".
+  // needs_input is the legacy DB/SSE spelling; paused/awaiting_input is the wire-normalized one the REST read model returns - both mean "parked on a question".
   const answering = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && state.question != null
   const queue = state.queue ?? []
 

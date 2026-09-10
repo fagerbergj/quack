@@ -34,10 +34,8 @@ func sandboxCaps(t *testing.T, mode SandboxMode) Caps {
 }
 
 // TestSandboxBlocksReadsOutsideTheJail is the whole point of the sandbox: a
-// child process - even one the metachar wall happily allows, and even `sh -c` -
-// cannot READ a file outside its working directory. The same command with
-// sandbox: none succeeds, which is what proves this test exercises the OS
-// boundary rather than some path check.
+// child process - even one the metachar wall happily allows, and even `sh -c`
+// - cannot READ a file outside its working directory. The same command with sandbox: none succeeds, which is what proves this test exercises the OS boundary rather than some path check.
 func TestSandboxBlocksReadsOutsideTheJail(t *testing.T) {
 	requireBwrap(t)
 
@@ -79,8 +77,7 @@ func TestSandboxBlocksReadsOutsideTheJail(t *testing.T) {
 
 // TestSandboxAllowsWorkInsideTheJail: the boundary must not break the job. A
 // normal in-jail command reads its own working directory, a pipeline still
-// chains real processes across it, and the child's isolated HOME (where npm/go
-// caches land) stays writable.
+// chains real processes across it, and the child's isolated HOME (where npm/go caches land) stays writable.
 func TestSandboxAllowsWorkInsideTheJail(t *testing.T) {
 	requireBwrap(t)
 
@@ -116,11 +113,9 @@ func TestSandboxAllowsWorkInsideTheJail(t *testing.T) {
 	}
 }
 
-// TestSandboxMountsTheWorkRootAtOneFixedPath pins that the child's view of its
-// own workspace matches the MODEL's view: Caps.WorkRoot appears inside the
-// namespace at SandboxWorkRoot and nowhere else, so `pwd` prints no host
-// prefix. Before this, `pwd` printed the host path and the model went looking
-// for its workspace on the host filesystem.
+// TestSandboxMountsTheWorkRootAtOneFixedPath pins that the child's view of
+// its own workspace matches the MODEL's view: Caps.WorkRoot appears inside
+// the namespace at SandboxWorkRoot and nowhere else, so `pwd` prints no host prefix. Before this, `pwd` printed the host path and the model went looking for its workspace on the host filesystem.
 func TestSandboxMountsTheWorkRootAtOneFixedPath(t *testing.T) {
 	requireBwrap(t)
 
@@ -167,9 +162,7 @@ func TestSandboxMountsTheWorkRootAtOneFixedPath(t *testing.T) {
 
 // TestSandboxToolchainAndHomeSurviveTheFixedMount pins that remapping the
 // WORKSPACE doesn't disturb the other two things a build needs: an exec_path
-// toolchain (bound read-only at its own host path) and the isolated $HOME
-// caches land in. The fake "toolchain" doubles as proof of both - it only runs
-// if exec_path reached inside the namespace, and prints the $HOME it got.
+// toolchain (bound read-only at its own host path) and the isolated $HOME caches land in. The fake "toolchain" doubles as proof of both - it only runs if exec_path reached inside the namespace, and prints the $HOME it got.
 func TestSandboxToolchainAndHomeSurviveTheFixedMount(t *testing.T) {
 	requireBwrap(t)
 
@@ -201,10 +194,7 @@ func TestSandboxToolchainAndHomeSurviveTheFixedMount(t *testing.T) {
 
 // TestSandboxBwrapLinkedWorktreeGitWorks is the bwrap-mode counterpart of
 // TestSandboxLandlockLinkedWorktreeGitWorks: a linked git worktree's parent
-// clone lives OUTSIDE work entirely (a sibling under the same chat scope, see
-// dag.worktreeParentID), so without the extra bind (worktreeCommonGitDirs,
-// wired into childArgv's bwrap branch) it would simply be absent from the
-// child's mount namespace and every git command inside would fail.
+// clone lives OUTSIDE work entirely (a sibling under the same chat scope, see dag.worktreeParentID), so without the extra bind (worktreeCommonGitDirs, wired into childArgv's bwrap branch) it would simply be absent from the child's mount namespace and every git command inside would fail.
 func TestSandboxBwrapLinkedWorktreeGitWorks(t *testing.T) {
 	requireBwrap(t)
 	worktreeDir := setupLinkedWorktreeFixture(t)
@@ -252,10 +242,9 @@ func TestSandboxBlocksWritesOutsideTheJail(t *testing.T) {
 	}
 }
 
-// TestChildArgvBwrapGrantsExtraROReadOnly is a pure argv-assembly check (no
-// bwrap install needed): Caps.ExtraRO (skill paths the node needs to read,
-// per serve.go - no longer a GitHub context dir, #1010 deleted that use)
-// lands as a read-only bwrap bind.
+// TestChildArgvBwrapGrantsExtraROReadOnly is a pure argv-assembly check
+// (no bwrap install needed): Caps.ExtraRO (skill paths the node needs to
+// read, per serve.go - no longer a GitHub context dir, #1010 deleted that use) lands as a read-only bwrap bind.
 func TestChildArgvBwrapGrantsExtraROReadOnly(t *testing.T) {
 	dir := t.TempDir()
 	ctxDir := t.TempDir()
@@ -311,8 +300,7 @@ func TestLimitsApplyToChildren(t *testing.T) {
 
 // TestSandboxJavaToolOptionsBoundsAddressSpace: the JVM memory bound (#647)
 // applies whenever AddressSpaceMB is set, in EVERY sandbox mode - unlike the
-// tmpdir pin (landlock-only), a JVM's ergonomics ignore RLIMIT_AS regardless
-// of which OS boundary wraps it.
+// tmpdir pin (landlock-only), a JVM's ergonomics ignore RLIMIT_AS regardless of which OS boundary wraps it.
 func TestSandboxJavaToolOptionsBoundsAddressSpace(t *testing.T) {
 	for _, mode := range []SandboxMode{SandboxNone, SandboxBwrap, SandboxLandlock} {
 		caps := Caps{Sandbox: mode, Limits: Limits{AddressSpaceMB: 8192}, HomeDir: t.TempDir()}
@@ -339,9 +327,7 @@ func TestSandboxJavaToolOptionsNoLimitIsEmpty(t *testing.T) {
 
 // TestSandboxJavaToolOptionsCombinesLandlockTmpdirAndMemoryBound: under
 // landlock with a limit set, both concerns must land in the SAME string - a
-// second JAVA_TOOL_OPTIONS entry would replace the first rather than merge
-// (the JVM honours only the last occurrence in envp), so childEnv/spawnEnv can
-// only ever append one.
+// second JAVA_TOOL_OPTIONS entry would replace the first rather than merge (the JVM honours only the last occurrence in envp), so childEnv/spawnEnv can only ever append one.
 func TestSandboxJavaToolOptionsCombinesLandlockTmpdirAndMemoryBound(t *testing.T) {
 	home := t.TempDir()
 	caps := Caps{Sandbox: SandboxLandlock, Limits: Limits{AddressSpaceMB: 1024}, HomeDir: home}
@@ -382,10 +368,7 @@ func TestSameDeviceErrorsOnAMissingPath(t *testing.T) {
 
 // TestHomeTmpDirRejectsACrossDeviceHomeDir is the fallback case from #936: a
 // real dev machine has no second filesystem handy to prove this against, so
-// the test drives the decision logic directly via sameDeviceHook (a same
-// pattern as probeLandlockHook) rather than asserting on live stat results,
-// which would pass vacuously when HomeDir and WorkRoot happen to share a
-// device (the common case on a dev box).
+// the test drives the decision logic directly via sameDeviceHook (a same pattern as probeLandlockHook) rather than asserting on live stat results, which would pass vacuously when HomeDir and WorkRoot happen to share a device (the common case on a dev box).
 func TestHomeTmpDirRejectsACrossDeviceHomeDir(t *testing.T) {
 	restore := sameDeviceHook
 	sameDeviceHook = func(a, b string) (bool, error) { return false, nil }
@@ -401,10 +384,9 @@ func TestHomeTmpDirRejectsACrossDeviceHomeDir(t *testing.T) {
 	}
 }
 
-// TestHomeTmpDirCrossDeviceReadOnlySkipsWorkRoot: a ReadOnly node's tree must
-// stay wholly immutable, so the WorkRoot last resort is skipped - "" (shared
-// /tmp, loudly) as before. ACP read-only nodes never reach this: resolveNode
-// always sets Caps.ScratchDir for them.
+// TestHomeTmpDirCrossDeviceReadOnlySkipsWorkRoot: a ReadOnly node's tree
+// must stay wholly immutable, so the WorkRoot last resort is skipped - ""
+// (shared /tmp, loudly) as before. ACP read-only nodes never reach this: resolveNode always sets Caps.ScratchDir for them.
 func TestHomeTmpDirCrossDeviceReadOnlySkipsWorkRoot(t *testing.T) {
 	restore := sameDeviceHook
 	sameDeviceHook = func(a, b string) (bool, error) { return false, nil }
@@ -418,8 +400,7 @@ func TestHomeTmpDirCrossDeviceReadOnlySkipsWorkRoot(t *testing.T) {
 
 // TestHomeTmpDirNoHomeFallsBackToWorkRoot: no HomeDir at all (the boot
 // warning's other trigger) still yields a workspace-filesystem scratch dir
-// when a WorkRoot exists, so landlockTmpDir's shared-/tmp warning stops
-// firing on a setup that has a workspace.
+// when a WorkRoot exists, so landlockTmpDir's shared-/tmp warning stops firing on a setup that has a workspace.
 func TestHomeTmpDirNoHomeFallsBackToWorkRoot(t *testing.T) {
 	caps := Caps{WorkRoot: t.TempDir()}
 	want := filepath.Join(caps.WorkRoot, workRootTmpDirName)
@@ -442,8 +423,7 @@ func TestHomeTmpDirTrustsHomeDirWhenDeviceIsUnknown(t *testing.T) {
 
 // TestHomeTmpDirScratchDirIgnoresDeviceCheck: ScratchDir is already the
 // workspace-scoped dir (Jail.ScratchDir) - the common, already-correct path
-// - so it must NOT be re-verified even when the device hook is stubbed to
-// reject everything.
+// - so it must NOT be re-verified even when the device hook is stubbed to reject everything.
 func TestHomeTmpDirScratchDirIgnoresDeviceCheck(t *testing.T) {
 	restore := sameDeviceHook
 	sameDeviceHook = func(a, b string) (bool, error) { return false, nil }
@@ -458,8 +438,7 @@ func TestHomeTmpDirScratchDirIgnoresDeviceCheck(t *testing.T) {
 
 // TestLandlockTmpDirWarnsBeforeFallingBackToSharedTmp: when neither
 // ScratchDir nor HomeDir yields a usable dir, landlockTmpDir must still work
-// (fall back to os.TempDir()) but LOUDLY - a silent fallback is exactly the
-// #936 bug (a cross-device TMPDIR that fails confusingly much later).
+// (fall back to os.TempDir()) but LOUDLY - a silent fallback is exactly the #936 bug (a cross-device TMPDIR that fails confusingly much later).
 func TestLandlockTmpDirWarnsBeforeFallingBackToSharedTmp(t *testing.T) {
 	var buf bytes.Buffer
 	restore := slog.Default()

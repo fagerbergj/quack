@@ -58,18 +58,16 @@ type pgSeqCounter struct {
 
 func (pgSeqCounter) TableName() string { return "ledger_seq_counters" }
 
-// PGStore is the Postgres LedgerStore adapter (V4 §4.8): the WAL backend,
-// meant to run against the same database as internal/store. It is the only
-// adapter with a real transactional, gapless per-chat seq (see nextSeq);
-// List/Delete operate at the chat grain.
+// PGStore is the Postgres LedgerStore adapter (V4 §4.8), meant to share the app's
+// database with internal/store - the only adapter with a transactional, gapless
+// per-chat seq (see nextSeq); List/Delete operate at the chat grain.
 type PGStore struct {
 	db *gorm.DB
 }
 
-// NewPGStore migrates the ledger's own tables on db and returns a store
-// backed by it. db is expected to already point at the app's Postgres
-// database (internal/store.New / store.NewArtifactService open their own
-// connections the same way).
+// NewPGStore migrates the ledger's tables on db and returns a store backed by
+// it; db is expected to already point at the app's Postgres database (internal/
+// store.New and store.NewArtifactService open their own connections the same way).
 func NewPGStore(db *gorm.DB) (*PGStore, error) {
 	if err := db.AutoMigrate(&pgEntry{}, &pgSeqCounter{}); err != nil {
 		return nil, fmt.Errorf("ledger: automigrate postgres store: %w", err)
@@ -93,10 +91,9 @@ func NewPGStore(db *gorm.DB) (*PGStore, error) {
 	return &PGStore{db: db}, nil
 }
 
-// ensureParentRevisionIndex adds the unique (chat_id, key, parent_revision)
-// index (#1144 P4). A migrated/restored database isn't provably free of
-// pre-index duplicates, so this checks first and refuses to start rather
-// than create a broken index or leave the guarantee silently unenforced.
+// ensureParentRevisionIndex adds the unique (chat_id, key, parent_revision) index
+// (#1144 P4); a migrated/restored database isn't provably duplicate-free, so this
+// checks first and refuses to start rather than create a broken index or leave the guarantee silently unenforced.
 func ensureParentRevisionIndex(db *gorm.DB) error {
 	var exists int
 	if err := db.Raw(`SELECT count(*) FROM pg_indexes WHERE tablename = 'ledger_entries' AND indexname = ?`, idxParentRevision).Scan(&exists).Error; err != nil {
@@ -105,13 +102,9 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 	if exists > 0 {
 		return nil // already created (and therefore already free of duplicates) - skip the full-table scan below on every boot
 	}
-	// AutoMigrate's ADD COLUMN leaves parent_revision NULL on every row that
-	// predates this column - Postgres never backfills a value for existing
-	// rows. Left as NULL, the dedup GROUP BY below folds ALL of them together
-	// (SQL groups NULLs as equal), so every id with more than one pre-existing
-	// revision would look like a duplicate and wedge the deploy. Backfill from
-	// the payload (which every artifact.revision entry already carries this
-	// field in) before scanning.
+	// AutoMigrate's ADD COLUMN leaves parent_revision NULL on pre-existing rows (Postgres
+	// never backfills); left NULL, the dedup GROUP BY below folds ALL of them together
+	// (SQL groups NULLs as equal) and wedges the deploy - backfill from the payload first.
 	if err := db.Exec(`
 		UPDATE ledger_entries SET parent_revision = (payload->>'parent_revision')::bigint
 		WHERE kind = ? AND parent_revision IS NULL
@@ -144,10 +137,8 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 }
 
 // NewPGStoreFromURL opens its own Postgres connection at url, mirroring
-// internal/store.NewArtifactService - the ledger store is meant to point at
-// the same database, but is wired independently of internal/store. Uses
-// pgdial.Open so this dialector gets the same dial retry as every other one
-// (#1200 review: this was a fourth postgres dialector missed by the first pass).
+// internal/store.NewArtifactService (same database, wired independently of
+// internal/store). Uses pgdial.Open for the shared dial retry (#1200 review: a fourth dialector missed by the first pass).
 func NewPGStoreFromURL(url string) (*PGStore, error) {
 	gormCfg := &gorm.Config{Logger: logger.New(
 		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
@@ -164,13 +155,9 @@ func NewPGStoreFromURL(url string) (*PGStore, error) {
 	return NewPGStore(db)
 }
 
-// nextSeq atomically allocates the next seq for chatID inside tx: one
-// UPSERT that either inserts the counter at 1 or increments it, returning
-// the new value. Postgres locks the counter row for the UPDATE branch, so N
-// concurrent callers serialize on that single row and each gets a distinct,
-// gapless value - no explicit advisory lock or SELECT ... FOR UPDATE
-// needed, and the increment and the entry insert commit together in tx, so
-// a failed insert never leaves the counter incremented without a row.
+// nextSeq atomically allocates the next seq for chatID inside tx: one UPSERT (insert at 1
+// or increment) whose row lock serializes concurrent callers into distinct, gapless values - no
+// advisory lock needed. The increment and the entry insert commit together in tx, so a failed insert never leaves the counter incremented without a row.
 func nextSeq(tx *gorm.DB, chatID string) (int64, error) {
 	var row pgSeqCounter
 	err := tx.Raw(`
@@ -217,10 +204,9 @@ func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
 	if payload == nil {
 		payload = json.RawMessage("null")
 	}
-	// Checked before inserting, not just after: a repeat save must short-circuit
-	// even if its now-stale parent would otherwise conflict (see MemStore's
-	// matching comment). A concurrent duplicate can still race past this read;
-	// the insert's own idxIdempotency violation below is the fallback.
+	// Checked before inserting, not just after: a repeat save must short-circuit even with a
+	// now-stale parent (see MemStore's matching comment); a concurrent duplicate can still
+	// race past this read, and the insert's idxIdempotency violation below is the fallback.
 	if e.IdempotencyKey != "" {
 		if existing, ferr := s.findByIdempotencyKey(ctx, e.ChatID, e.IdempotencyKey); ferr == nil {
 			return 0, &DuplicateIntentError{Existing: existing}
@@ -321,10 +307,9 @@ func (s *PGStore) MaxSeq(ctx context.Context, chatID string) (int64, error) {
 	return row.NextSeq, nil
 }
 
-// ReadEntriesPage is #1101's paging optimization: fold.Fold pages through a
-// big chat page-by-page instead of loading it in one slice (ReadEntries's
-// contract). Optional on LedgerStore - a store without it is read in one
-// ReadEntries call.
+// ReadEntriesPage is #1101's paging optimization: fold.Fold pages through a big chat
+// instead of loading it in one slice (ReadEntries's contract). Optional on LedgerStore -
+// a store without it is read in one ReadEntries call.
 func (s *PGStore) ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]Entry, error) {
 	var rows []pgEntry
 	if err := s.db.WithContext(ctx).

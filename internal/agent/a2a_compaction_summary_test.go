@@ -24,15 +24,9 @@ func (m *capturingSummaryModel) GenerateContent(_ context.Context, req *model.LL
 	}
 }
 
-// TestNativeCompactionConfigDoesNotTruncatePreviousSummary is a regression
-// test for the ADK audit's A1 finding: NativeCompactionConfig left
-// MaxToolContentChars at ADK's zero value, which the summarizer treats as
-// its 2000-char default (session/compaction/llm_summarizer.go) and applies
-// to EVERY rendered part - including the rolling summary that tail
-// retention seeds the next compaction window with. quack's own compaction
-// prompt (compactionSystemPrompt) demands "ALL TECHNICAL CONTENT" and says
-// it is fine for a summary to run far longer than usual, so a summary that
-// legitimately grows past 2000 chars must reach the summarizer whole.
+// TestNativeCompactionConfigDoesNotTruncatePreviousSummary is a regression test for the ADK audit's A1 finding: NativeCompactionConfig left MaxToolContentChars
+// at ADK's zero value, which the summarizer reads as its 2000-char default and applies to EVERY rendered part - including the rolling summary that tail
+// retention seeds the next compaction window with. quack's compaction prompt demands "ALL TECHNICAL CONTENT" and allows a summary far longer than usual, so a summary that grows past 2000 chars must reach the summarizer whole.
 func TestNativeCompactionConfigDoesNotTruncatePreviousSummary(t *testing.T) {
 	m := &capturingSummaryModel{}
 	cfg, err := NativeCompactionConfig(Compaction{

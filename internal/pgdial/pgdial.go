@@ -1,7 +1,6 @@
-// Package pgdial provides a retrying postgres dial + GORM dialector. It is a
-// leaf package (no internal/store or internal/ledger imports) so both can
-// depend on it without an import cycle (#1200 review: ledger.NewPGStoreFromURL
-// was a fourth postgres dialector missed by the first retry pass).
+// Package pgdial is a retrying postgres dial + GORM dialector, a leaf package so
+// both internal/store and internal/ledger can depend on it without an import
+// cycle (#1200 review: NewPGStoreFromURL was a fourth dialector, missed by the first retry pass).
 package pgdial
 
 import (
@@ -15,10 +14,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// RetryAttempts/RetryBackoff absorb a short DNS/dial blip (#1193 measured
-// Docker's embedded DNS failing to resolve quack-postgres for ~20s every 30min)
-// without turning it into a run failure. Only the TCP dial retries here - a
-// connected query error is never retried.
+// RetryAttempts/RetryBackoff absorb a short DNS/dial blip (#1193: Docker's
+// embedded DNS failed quack-postgres for ~20s every 30min) without failing a
+// run. Only the TCP dial retries - a connected query error never does.
 const RetryAttempts = 3
 
 var RetryBackoff = 2 * time.Second

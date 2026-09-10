@@ -25,10 +25,8 @@ func readRubricText(path string) (string, error) {
 }
 
 // TestCleanOutputRubricCatchesDeliberation pins clean_output failing visible
-// deliberation (self-correction, an abandoned draft, a rewritten snippet),
-// not just preamble/trailing narration, across the default rubric and every
-// bundle override. Globbed rather than hardcoded, so a new bundle omitting
-// the language fails this test instead of silently reopening the gap.
+// deliberation (self-correction, an abandoned draft, a rewritten snippet), not just preamble/trailing narration, across the default rubric and every
+// bundle override. Globbed rather than hardcoded, so a new bundle omitting the language fails this test instead of silently reopening the gap.
 func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 	rubrics := []string{"../../config/rubric.md"}
 	bundleRubrics, err := filepath.Glob("../../agents/*/rubric.yaml")
@@ -93,9 +91,7 @@ func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 // verdict - self-contradictory, and nothing deterministic catches it (the
 // maintainer's explicit call: this is a judgment call for the judge to
 // reason about, not a regex). Pins that structured_verdict's own text names
-// both directions of the contradiction (a blocking/security label under an
-// approve verdict, and a request_changes verdict backed by only nits) so a
-// live judge is actually told to check it.
+// both directions of the contradiction (a blocking/security label under an approve verdict, and a request_changes verdict backed by only nits) so a live judge is actually told to check it.
 func TestStructuredVerdictRubricCatchesSeverityCoherence(t *testing.T) {
 	rubric, err := readRubricText("../../agents/code-reviewer/rubric.yaml")
 	if err != nil {
@@ -126,12 +122,9 @@ func TestStructuredVerdictRubricCatchesSeverityCoherence(t *testing.T) {
 	}
 }
 
-// TestConstructiveActionableRubricScoresCodeBlocks pins the actionability
-// extension: a finding that proposes specific code must actually show that
-// code (a plain fenced block, NOT a GitHub ```suggestion block - the reviewer
-// prompt forbids those for now, staging can't validate their exact-anchor
-// discipline yet), while a purely observational finding (a question, a
-// naming nit) must be explicitly exempt from that requirement.
+// TestConstructiveActionableRubricScoresCodeBlocks pins the actionability extension: a finding that proposes specific code must actually show that
+// code (a plain fenced block, NOT a GitHub ```suggestion block - the reviewer prompt forbids those for now, staging can't validate their exact-anchor
+// discipline yet), while a purely observational finding (a question, a naming nit) must be explicitly exempt from that requirement.
 func TestConstructiveActionableRubricScoresCodeBlocks(t *testing.T) {
 	rubric, err := readRubricText("../../agents/code-reviewer/rubric.yaml")
 	if err != nil {

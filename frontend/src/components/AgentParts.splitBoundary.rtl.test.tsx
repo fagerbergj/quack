@@ -1,12 +1,6 @@
 // @vitest-environment jsdom
-//
-// Adversarial coverage for AssistantText's streaming split (AgentParts.tsx +
-// mermaidSource.ts's lastSafeSplitOffset): constructions where the naive
-// "last blank line" boundary can land inside a block that spans it. For
-// each: (a) the post-streaming single-document render must byte-for-byte
-// match a fresh non-streaming render, and (b) the mid-stream split render
-// must not throw or lose content, even where its DOM shape can transiently
-// differ from the final one (documented per-case below).
+// Adversarial coverage for the streaming split (lastSafeSplitOffset) where
+// the naive blank-line boundary lands inside a block: post-stream output must match a fresh non-streaming render byte-for-byte, and mid-stream splits must not throw or lose content (transient DOM differences documented per-case).
 import { describe, it, expect } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -26,22 +20,18 @@ function renderHtml(text: string, streaming = false): string {
   return html
 }
 
-// Simulates the frozen-prefix/live-tail split directly (bypassing the
-// LIVE_TAIL_CHARS timing): each half through its own non-streaming
-// AssistantText, unwrapped and rejoined inside ONE outer div - matching
-// production, where FrozenAssistantDocument and AssistantDocument are
-// siblings inside AssistantText's single wrapping div, not two divs.
+// Simulates the frozen/live split directly (bypassing the LIVE_TAIL_CHARS
+// timing): each half through its own non-streaming AssistantText, unwrapped
+// and rejoined in ONE outer div - matching production's single wrapping div.
 function splitHtml(text: string, cut: number): string {
   const unwrap = (html: string) => html.replace(/^<div class="prose[^"]*">/, '').replace(/<\/div>$/, '')
   return `<div class="prose prose-sm dark:prose-invert max-w-[70ch] break-words">`
     + unwrap(renderHtml(text.slice(0, cut))) + unwrap(renderHtml(text.slice(cut))) + `</div>`
 }
 
-// react-markdown emits a source-position newline as a text node between two
-// sibling top-level blocks; that seam is naturally absent right at a join
-// point two independent parses create (nothing wrong is lost - it's
-// whitespace between tags, invisible once rendered). Ignore it so these
-// assertions check real structure, not that artifact.
+// react-markdown emits a source-position newline between sibling top-level
+// blocks; that seam is naturally absent at a join of two independent parses -
+// whitespace between tags, invisible rendered. Ignore it; assertions check real structure.
 function normTags(html: string): string {
   return html.replace(/>\s+</g, '><')
 }
@@ -94,14 +84,9 @@ describe('AssistantText split boundary safety', () => {
     expect(renderHtml(text, false).match(/<pre>/g)?.length).toBe(1)
   })
 
-  // A loose list's item boundary (a "- item2" at the SAME indentation, not a
-  // continuation of the prior item) is NOT caught by the indented-lazy-
-  // continuation guard - splitting there mid-stream renders it as two
-  // adjacent <ul>s instead of one two-item list. Accepted: it self-heals the
-  // moment streaming ends (asserted below), so it's a transient visual
-  // quirk, not a data-loss or throw. Full container-nesting tracking to
-  // avoid it is not worth the complexity for a self-correcting mid-stream
-  // artifact - see AgentParts.tsx anchors/ids note for the same tradeoff.
+  // A loose list's item boundary (same indentation, not a continuation) is
+  // NOT caught by the indented-lazy-continuation guard - splitting there
+  // yields two adjacent <ul>s. Accepted: self-heals when streaming ends; see the AgentParts.tsx anchors/ids note for the same tradeoff.
   it('a loose list split at an item boundary is a transient visual artifact that heals once streaming ends', () => {
     const text = 'Intro.\n\n- item one\n\n  continuation paragraph within same item\n\n- item two\n\nOutro.\n'
     const itemBoundary = text.indexOf('same item') + 'same item'.length

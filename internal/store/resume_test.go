@@ -82,8 +82,7 @@ func TestResumePausedDagNodes_MissingPlanFails(t *testing.T) {
 
 // TestResumePausedDagNodes_ArchivedChatIsNotResumed pins #1176: a resumable
 // callback that rejects archived chats (as serve.go's boot wiring does) must
-// mark the node failed with that reason, not hand it back to Start - an
-// archived chat's stale paused nodes were being resumed forever in prod.
+// mark the node failed with that reason, not hand it back to Start - an archived chat's stale paused nodes were being resumed forever in prod.
 func TestResumePausedDagNodes_ArchivedChatIsNotResumed(t *testing.T) {
 	st := resumeTestStore(t)
 	ctx := context.Background()

@@ -98,8 +98,6 @@ func readCapped(r io.Reader, max int64) (data []byte, capped bool, err error) {
 	return data, false, nil
 }
 
-// read_file
-
 type readFileArgs struct {
 	Path   string `json:"path"`
 	Offset int    `json:"offset,omitempty"` // 0-based line
@@ -196,8 +194,6 @@ func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
 		NextOffset: nextOffset,
 	}, nil
 }
-
-// write_file / edit_file / list_dir
 
 type listDirArgs struct {
 	Path  string `json:"path,omitempty"`
@@ -302,8 +298,6 @@ func (b fsBinding) listDir(a listDirArgs) (listDirResult, error) {
 	return listDirResult{Entries: entries, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
 }
 
-// glob
-
 type globArgs struct {
 	Pattern string `json:"pattern"`
 	Path    string `json:"path,omitempty"`
@@ -381,8 +375,6 @@ func pathHasGeneratedDir(p string) bool {
 	}
 	return false
 }
-
-// grep
 
 type grepArgs struct {
 	Pattern string `json:"pattern"`
@@ -521,5 +513,3 @@ func grepFile(path string, re *regexp.Regexp, ctxLines int) ([]grepMatch, error)
 	}
 	return out, nil
 }
-
-// delete_path

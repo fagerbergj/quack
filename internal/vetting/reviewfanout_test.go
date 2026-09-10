@@ -226,8 +226,7 @@ func TestResolveAbortedReviewer_KilledSiblingStagedReviewReachesMerge(t *testing
 
 // #942: a single-reviewer plan (no ReviewFanout) whose round dies (killed,
 // timed out, errored) after quackmcp_stage_review already staged the full
-// verdict must deliver that staged review, flagged as abnormal - not discard
-// it and not substitute anything else.
+// verdict must deliver that staged review, flagged as abnormal - not discard it and not substitute anything else.
 func TestResolveAbortedReviewer_SoloReviewerDeliversStagedReviewInsteadOfDiscarding(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -259,8 +258,7 @@ func TestResolveAbortedReviewer_SoloReviewerDeliversStagedReviewInsteadOfDiscard
 
 // #1118 regression: a solo reviewer's round that dies must still post the
 // staged review + abort note, not the stale code_review record left by a
-// prior round on the same chat (the artifact render would clobber both the
-// note and the current staged verdict with old content).
+// prior round on the same chat (the artifact render would clobber both the note and the current staged verdict with old content).
 func TestResolveAbortedReviewer_SoloReviewerNotClobberedByStaleArtifact(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-1118", User: "u1", Artifacts: artifact.InMemoryService()}
 	seedCodeReview(t, cfg, "approve", "STALE prior-round summary", nil)
@@ -332,11 +330,9 @@ func TestIsReviewerPauseSentinel(t *testing.T) {
 	}
 }
 
-// A reviewer node parked on a human question (workflow.ErrNodeInterrupted,
-// ADK's HITL park sentinel, returned by pauseIfWorkerRaisedHITL) must NOT be
+// A reviewer node parked on a human question (workflow.ErrNodeInterrupted, ADK's HITL park sentinel, returned by pauseIfWorkerRaisedHITL) must NOT be
 // registered as a failed terminal - it isn't done yet. Nothing may deliver
-// while it's parked; once it resumes and stages its real verdict, the fan-in
-// completes and that verdict is included, not discarded (#948 review finding).
+// while it's parked; once it resumes and stages its real verdict, the fan-in completes and that verdict is included, not discarded (#948 review finding).
 func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -387,11 +383,9 @@ func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *t
 	}
 }
 
-// Review plan with a downstream synthesizer (the PR #965 incident, 03:46Z):
-// two reviewer nodes finish, but the plan's synthesizer node owns the final
+// Review plan with a downstream synthesizer (the PR #965 incident): two reviewer nodes finish, but the plan's synthesizer node owns the final
 // consolidated review - nothing may go to GitHub until it finishes, and the
-// one delivery must carry the synthesizer's body, worst-of verdict, and the
-// reviewers' attributed inline comments.
+// one delivery must carry the synthesizer's body, worst-of verdict, and the reviewers' attributed inline comments.
 func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {

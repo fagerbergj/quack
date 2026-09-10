@@ -160,12 +160,7 @@ type searchResult struct {
 
 // newFixtureTool builds the ONE fake tool the fixture's worker uses,
 // wrapped through the real execute_tool emission seam
-// (tools.EmitWrapForTesting) so its recorded ledger entry matches a builtin
-// tool's. coords is stamped directly (Deps.LedgerCoords' testing twin)
-// rather than left to ctx: workflow.RunNode's dynamic-child scheduling
-// doesn't propagate a context.WithValue stamp down to a tool call, and a
-// tool built once per node before any round exists has no per-round hook -
-// so this only ever carries node/agent (Round empty; see emitTool's doc).
+// (tools.EmitWrapForTesting) so its recorded ledger entry matches a builtin tool's. coords is stamped directly (Deps.LedgerCoords' testing twin) rather than left to ctx: workflow.RunNode's dynamic-child scheduling doesn't propagate a context.WithValue stamp down to a tool call, and a tool built once per node before any round exists has no per-round hook - so this only ever carries node/agent (Round empty; see emitTool's doc).
 func newFixtureTool(t *testing.T, coords ledger.Coords) tool.Tool {
 	t.Helper()
 	ft, err := functiontool.New[searchArgs, searchResult](
@@ -186,10 +181,7 @@ func newFixtureTool(t *testing.T, coords ledger.Coords) tool.Tool {
 
 // runFixtureNode drives ONE gated-refine node to completion through the
 // real emission seams - worker + judge each a scriptedModel wrapped by
-// inference.TracedModelForTesting (the seam that emits the "chat" ledger
-// event, coordinated per round by vetting.RunGatedRefine's
-// SetLedgerCoords call), the tool wrapped by tools.EmitWrapForTesting
-// (stamped once, per node, above).
+// inference.TracedModelForTesting (the seam that emits the "chat" ledger event, coordinated per round by vetting.RunGatedRefine's SetLedgerCoords call), the tool wrapped by tools.EmitWrapForTesting (stamped once, per node, above).
 func runFixtureNode(t *testing.T, nodeID, prompt string) {
 	t.Helper()
 	workerModel := inference.TracedModelForTesting(&scriptedModel{name: fixtureWorkerModel}, fixtureWorkerModel)

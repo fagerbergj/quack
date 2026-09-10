@@ -11,9 +11,7 @@ func probeLandlock() error {
 
 // SandboxExecMain: unreachable in practice - ResolveSandbox refuses
 // `workspace.sandbox: landlock` on this platform before any child ever
-// carries SandboxExecArg, but a stub keeps the argv[0] dispatch (which any
-// binary answers unconditionally - see RunSandboxExecIfInvoked) from being
-// build-tagged itself.
+// carries SandboxExecArg, but a stub keeps the argv[0] dispatch (which any binary answers unconditionally - see RunSandboxExecIfInvoked) from being build-tagged itself.
 func SandboxExecMain(args []string) error {
 	return fmt.Errorf("sandbox-exec: landlock is only supported on Linux")
 }

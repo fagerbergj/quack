@@ -21,11 +21,9 @@ function supportSharePct(week: MemoryWeekStats | undefined): string {
   return `${Math.round(week.support_share * 100)}%`
 }
 
-// MemoryStatsHeader (#1267): this week's recall precision and support share
-// up front, the vote counts behind them in a <details> disclosure (no extra
-// click chrome, no tooltip-on-touch problem at 390px), and the last 4 weeks
-// as plain numbers - a sparkline would need a charting dependency for four
-// data points.
+// (#1267): this week's recall precision and support share up front, the vote
+// counts behind a <details> disclosure (no extra click chrome, no
+// tooltip-on-touch problem at 390px), and the last 4 weeks as plain numbers - a sparkline would need a charting dependency for four data points.
 export function MemoryStatsHeader({ weeks, loading, error }: MemoryStatsHeaderProps) {
   if (loading) {
     return (

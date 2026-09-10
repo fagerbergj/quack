@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// TestQdrantLess (#1266 review): qdrant's list() sorts entirely in Go (it
-// already fetches the whole matching set via Scroll), so qdrantLess is the
-// one place that ordering logic lives - a pure function over []scored, no
-// live qdrant harness needed (same reasoning as TestExcludeInvalidatedFilter).
+// TestQdrantLess (#1266 review): qdrant's list() sorts entirely in Go (it already
+// fetches the whole matching set via Scroll), so qdrantLess is the one place that
+// ordering logic lives - a pure function over []scored, no live qdrant harness needed (same reasoning as TestExcludeInvalidatedFilter).
 func TestQdrantLess(t *testing.T) {
 	all := []scored{
 		{ID: "a", Timestamp: "2026-08-01T00:00:00Z", Upvotes: 1, Downvotes: 5, VoteScore: -4, Recalls: 1, LastRecalledAt: "2026-08-01T00:00:00Z"},

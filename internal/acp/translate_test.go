@@ -151,10 +151,7 @@ func TestTranslate_ExecuteToolCallPair(t *testing.T) {
 
 // An edit's diff carries the interesting fields; #388 - this must map to
 // "edit_file" (not "write_file") so the frontend's ToolCallView keys it to
-// the before→after diff view native edit_file calls get, with the path
-// resolved node-relative (the ledger/judge namespace) and old/new text
-// carried in args (EditFileView's diff source), never absolute for a path
-// inside the node dir.
+// the before→after diff view native edit_file calls get, with the path resolved node-relative (the ledger/judge namespace) and old/new text carried in args (EditFileView's diff source), never absolute for a path inside the node dir.
 func TestTranslate_EditDiffToEditFile(t *testing.T) {
 	tr := newTranslator("/work")
 	old := "a"

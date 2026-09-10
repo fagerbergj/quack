@@ -36,8 +36,7 @@ func TestNew_EventsSessionIndex_IdempotentAcrossBoots(t *testing.T) {
 
 // TestNew_Migrations_IdempotentAcrossBoots_Postgres runs the same two-boot
 // check against real Postgres, where CREATE INDEX IF NOT EXISTS and GORM's
-// AutoMigrate (dag_nodes.plan_id index) have different failure modes than
-// sqlite. Skips if Docker isn't reachable.
+// AutoMigrate (dag_nodes.plan_id index) have different failure modes than sqlite; skips if Docker isn't reachable.
 func TestNew_Migrations_IdempotentAcrossBoots_Postgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -86,10 +85,7 @@ func TestNew_Migrations_IdempotentAcrossBoots_Postgres(t *testing.T) {
 
 // TestDeleteChatRow_CascadesPerChatTables_Postgres is
 // TestDeleteChatRow_CascadesPerChatTables against real Postgres (#1296):
-// AutoMigrate's relationship-driven FK creation (ALTER TABLE ADD CONSTRAINT)
-// is a different code path than glebarez/sqlite's table-rebuild one, so the
-// cascade needs its own proof on the dialect prod actually runs. Skips if
-// Docker isn't reachable.
+// AutoMigrate's relationship-driven FK creation (ALTER TABLE ADD CONSTRAINT) is a different code path than glebarez/sqlite's table-rebuild one, so the cascade needs its own proof on the dialect prod actually runs; skips if Docker isn't reachable.
 func TestDeleteChatRow_CascadesPerChatTables_Postgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

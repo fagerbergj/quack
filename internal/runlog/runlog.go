@@ -15,11 +15,9 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// drainItem is either a real event row or a flush marker (ev is the zero
-// value; done is closed once every item enqueued ahead of it has drained).
-// One channel, one consumer: the marker can only be dequeued after the real
-// events ahead of it in FIFO order have already been included in an earlier
-// (or the same) INSERT batch.
+// drainItem is either a real event row or a flush marker (ev is the zero value;
+// done is closed once every item enqueued ahead of it has drained). One channel,
+// one consumer: the marker can only be dequeued after the real events ahead of it in FIFO order have already been included in an earlier (or the same) INSERT batch.
 type drainItem struct {
 	ev   store.ChatEvent
 	done chan struct{}
@@ -106,18 +104,8 @@ func (l *EventLog) run() {
 	}
 }
 
-// Flush blocks until every event Append'd before this call was made has
-// been drained (persisted, or dropped-with-warning on a store error - the
-// same at-most-once contract as Append's own full-queue drop). A caller
-// must call this before releasing any in-memory copy of those events (e.g.
-// stream.Hub.Close frees the hub's replay buffer) - see FinishRun, which is
-// the shared, ordered version of that every run-ending path must use.
-//
-// Implemented as a marker sent through the same channel as real events
-// (never a shared counter): a WaitGroup shared by every concurrent
-// Append/Flush across every chat can panic ("Add called concurrently with
-// Wait") the instant its counter returns to zero while another chat is
-// still mid-run - this channel design has no such counter to race.
+// Flush blocks until every event Append'd before this call was made has been drained
+// (persisted, or dropped-with-warning on a store error - the same at-most-once contract as Append's own full-queue drop). A caller must call this before releasing any in-memory copy of those events (e.g. stream.Hub.Close frees the hub's replay buffer) - see FinishRun, which is the shared, ordered version of that every run-ending path must use. Implemented as a marker sent through the same channel as real events (never a shared counter): a WaitGroup shared by every concurrent Append/Flush across every chat can panic ("Add called concurrently with Wait") the instant its counter returns to zero while another chat is still mid-run - this channel design has no such counter to race.
 func (l *EventLog) Flush() {
 	done := make(chan struct{})
 	l.ch <- drainItem{done: done} // blocking: a dropped flush marker would hang the caller forever instead
@@ -204,10 +192,9 @@ func (p *Publisher) Publish(ev stream.SSEEvent) {
 	p.log.Append(p.chatID, p.seq, ev)
 }
 
-// DriveResult is what draining one run's event stream to a Publisher
-// determined - the plan/pause signals every dispatch path (REST, SDK
-// extensions, the GitHub webhook) needs to decide what happens next, plus
-// the orchestrator's own model/usage for StampTurn's tail.
+// DriveResult is what draining one run's event stream to a Publisher determined -
+// the plan/pause signals every dispatch path (REST, SDK extensions, the GitHub
+// webhook) needs to decide what happens next, plus the orchestrator's own model/usage for StampTurn's tail.
 type DriveResult struct {
 	// SawPlan is true the moment any dag_plan event is seen, name-only -
 	// even a test double's bare one with no Data payload.
@@ -227,13 +214,9 @@ type DriveResult struct {
 	Usage store.TurnUsage
 }
 
-// Step folds one event into res: DAG plan/node persistence, pause tracking,
-// and model/usage capture - the per-event logic shared by Drive and
-// rest.Handler's own loop (REST interleaves title-send between events, so it
-// can't range through Drive directly; both must still agree on this step).
-// persist gates the store writes (Drive passes pub != nil; a caller with no
-// store, e.g. a test double, passes false and still gets plan/pause/usage
-// tracking).
+// Step folds one event into res: DAG plan/node persistence, pause tracking, and
+// model/usage capture - the per-event logic shared by Drive and rest.Handler's own
+// loop (REST interleaves title-send between events, so it can't range through Drive directly; both must still agree on this step). persist gates the store writes (Drive passes pub != nil; a caller with no store, e.g. a test double, passes false and still gets plan/pause/usage tracking).
 func (res *DriveResult) Step(st *store.Store, chatID, turnID string, persist bool, ev stream.SSEEvent) {
 	if ev.Name == stream.EventDagPlan {
 		res.SawPlan = true
@@ -263,13 +246,9 @@ func (res *DriveResult) Step(st *store.Store, chatID, turnID string, persist boo
 	}
 }
 
-// Drive drains run's event stream to pub, mirroring DAG plan/node state into
-// st as it goes - the shared loop behind every dispatch path (REST, SDK
-// extensions, the GitHub webhook), so the three don't each hand-roll their
-// own copy. onErr, if non-nil, is called for each per-event error the
-// iterator yields; the loop keeps draining regardless (never fatal). pub may
-// be nil (a caller with no store to persist against, e.g. a test double) -
-// persistence/publish are skipped, but plan/pause/usage tracking still runs.
+// Drive drains run's event stream to pub, mirroring DAG plan/node state into st as
+// it goes - the shared loop behind every dispatch path (REST, SDK extensions, the
+// GitHub webhook), so the three don't each hand-roll their own copy. onErr, if non-nil, is called for each per-event error the iterator yields; the loop keeps draining regardless (never fatal). pub may be nil (a caller with no store to persist against, e.g. a test double) - persistence/publish are skipped, but plan/pause/usage tracking still runs.
 func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.SSEEvent, error], onErr func(error)) (res DriveResult) {
 	// A recovered node-yield panic still poisons range-over-func state (#1016):
 	// the next yield, or this loop's own exit, re-panics per Go's rangefunc
@@ -299,11 +278,9 @@ func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.
 	return res
 }
 
-// StampTurn stamps the orchestrator's model + token usage on the turn row -
-// the tail every dispatch path (REST, SDK extensions) must share rather than
-// duplicate (#831's lesson applied to model/usage stamping, not just the
-// drain loop). A DAG turn (res.PlanID != "") is a no-op here: its tokens are
-// already on DagNode, per node.
+// StampTurn stamps the orchestrator's model + token usage on the turn row - the
+// tail every dispatch path (REST, SDK extensions) must share rather than duplicate
+// (#831's lesson applied to model/usage stamping, not just the drain loop). A DAG turn (res.PlanID != "") is a no-op here: its tokens are already on DagNode, per node.
 func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res DriveResult) {
 	if res.Model == "" || res.PlanID != "" {
 		return
@@ -313,11 +290,9 @@ func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res 
 	}
 }
 
-// PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal
-// transitions are logged, write proceeds. Synchronous on purpose: one
-// goroutine per event gave no ordering, so a node_done write could be
-// overwritten by an earlier event's later-scheduled goroutine, leaving a
-// finished node stuck at running. Lifecycle events are a handful per node.
+// PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal transitions
+// are logged, write proceeds. Synchronous on purpose: one goroutine per event gave
+// no ordering, so a node_done write could be overwritten by an earlier event's later-scheduled goroutine, leaving a finished node stuck at running. Lifecycle events are a handful per node.
 func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
 	var nodeID string

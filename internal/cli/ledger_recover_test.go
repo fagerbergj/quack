@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -70,8 +71,7 @@ func appendDeliveryIntentWithContextForTest(t *testing.T, ls ledger.LedgerStore,
 
 // countingLedgerStore wraps a LedgerStore and counts calls that read a
 // chat's entries, so a test can assert Recover reads the ledger once per
-// chat instead of once for delivery intents and again to fold artifacts
-// (perf audit #1).
+// chat instead of once for delivery intents and again to fold artifacts (perf audit #1).
 type countingLedgerStore struct {
 	ledger.LedgerStore
 	reads int
@@ -84,8 +84,7 @@ func (c *countingLedgerStore) ReadEntries(ctx context.Context, chatID string, fr
 
 // TestRunLedgerRecover_ReadsLedgerOnce is perf audit #1's "read once in
 // Recover": with both a delivery intent and an artifact revision present
-// (exercising both of RunLedgerRecover's passes), the chat's ledger must be
-// read exactly once, not once per pass.
+// (exercising both of RunLedgerRecover's passes), the chat's ledger must be read exactly once, not once per pass.
 func TestRunLedgerRecover_ReadsLedgerOnce(t *testing.T) {
 	ctx := context.Background()
 	ls := &countingLedgerStore{LedgerStore: ledgertest.NewMemStore()}
@@ -129,8 +128,7 @@ func TestRunLedgerRecover_RebuildsDeliveryContextFromIntent(t *testing.T) {
 
 // #1093 case 13, "found" branch (#1144 P2: completion is a delivery_record
 // write, not a delivery.done entry). RecoverDelivery reports found=true, so
-// recover calls RecordDelivery and never Redo (the extension is never asked
-// to post twice).
+// recover calls RecordDelivery and never Redo (the extension is never asked to post twice).
 func TestRunLedgerRecover_FoundRecordsDeliveryWithoutRedo(t *testing.T) {
 	ctx := context.Background()
 	ls := ledgertest.NewMemStore()
@@ -210,6 +208,34 @@ func TestRunLedgerRecover_NoRecovererReportsUnresolved(t *testing.T) {
 	}
 }
 
+// TestRunLedgerRecover_JSON asserts `ledger recover --json`'s shape via the
+// shared WriteJSON writer, distinct from FormatRecoverSummary's text.
+func TestRunLedgerRecover_JSON(t *testing.T) {
+	ctx := context.Background()
+	ls := ledgertest.NewMemStore()
+	appendDeliveryIntentForTest(t, ls, "chat5", "document:doc:5@1", "document:doc:5", 1)
+
+	report, err := RunLedgerRecover(ctx, ls, "chat5", Projections{}, true)
+	if err != nil {
+		t.Fatalf("RunLedgerRecover: %v", err)
+	}
+	var out bytes.Buffer
+	if err := WriteJSON(&out, report); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if got["chat_id"] != "chat5" {
+		t.Errorf("chat_id = %v, want chat5", got["chat_id"])
+	}
+	unresolved, ok := got["unresolved"].([]any)
+	if !ok || len(unresolved) != 1 {
+		t.Errorf("unresolved = %v, want one entry", got["unresolved"])
+	}
+}
+
 // A delivery.intent WITH a matching delivery_record is not orphaned at all
 // (#1144 P2: DeliveryRecorded is the single "is this done" read).
 func TestRunLedgerRecover_NoOrphanWhenRecordExists(t *testing.T) {
@@ -230,10 +256,7 @@ func TestRunLedgerRecover_NoOrphanWhenRecordExists(t *testing.T) {
 
 // TestRecover_CrashBetweenDeliveryIntentAndRecord is the kill -9 case for
 // delivery (#1144 P2): a delivery.intent lands, the process dies before the
-// delivery_record artifact write. Recover (real vetting.DeliveryProjections
-// against a real store) asks the extension, finds the delivery already
-// landed, and writes the completing delivery_record - no CLI involved. A
-// second pass finds nothing left to do.
+// delivery_record artifact write. Recover (real vetting.DeliveryProjections against a real store) asks the extension, finds the delivery already landed, and writes the completing delivery_record - no CLI involved. A second pass finds nothing left to do.
 func TestRecover_CrashBetweenDeliveryIntentAndRecord(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -277,10 +300,7 @@ func TestRecover_CrashBetweenDeliveryIntentAndRecord(t *testing.T) {
 
 // TestRecover_TwoDeliveriesOnOneSubjectBothSettled is the blocker regression
 // from review: a subject delivered TWICE (normal for re-review rounds) has a
-// delivery_record history of two revisions, [rev1, rev2]. A Latest-only
-// DeliveryRecorded would see only rev2 and re-flag rev1's intent as orphaned
-// forever. Both intents must be found settled, and a recovery pass must call
-// neither the recoverer nor RecordDelivery - nothing new gets appended.
+// delivery_record history of two revisions, [rev1, rev2]. A Latest-only DeliveryRecorded would see only rev2 and re-flag rev1's intent as orphaned forever. Both intents must be found settled, and a recovery pass must call neither the recoverer nor RecordDelivery - nothing new gets appended.
 func TestRecover_TwoDeliveriesOnOneSubjectBothSettled(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -334,11 +354,7 @@ func TestRecover_TwoDeliveriesOnOneSubjectBothSettled(t *testing.T) {
 
 // TestRecover_CrashBetweenIntentAndRow is the kill -9 case: the WAL holds an
 // artifact.revision intent whose row write never happened. #1144 P4 deleted
-// the artifact.revision.aborted self-heal in favor of the cheaper
-// recordstore.saveAtOrAdopt path (no bytes duplicated into the ledger) - a
-// PLAIN SAVE on the same id adopts the orphaned intent and completes it at
-// the same revision, so Recover only needs to REPORT the orphan (matching
-// P1: an unresolved count, never a write) until the next save clears it.
+// the artifact.revision.aborted self-heal in favor of the cheaper recordstore.saveAtOrAdopt path (no bytes duplicated into the ledger) - a PLAIN SAVE on the same id adopts the orphaned intent and completes it at the same revision, so Recover only needs to REPORT the orphan (matching P1: an unresolved count, never a write) until the next save clears it.
 func TestRecover_CrashBetweenIntentAndRow(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)

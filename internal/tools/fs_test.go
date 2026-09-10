@@ -36,10 +36,6 @@ func writeUserFile(t *testing.T, b fsBinding, relPath, content string) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// read_file
-// ---------------------------------------------------------------------------
-
 func TestReadFileBasic(t *testing.T) {
 	b := newTestBinding(t, "u1")
 	writeUserFile(t, b, "hello.txt", "line0\nline1\nline2")
@@ -121,18 +117,6 @@ func TestReadFileRejectsEscape(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// write_file
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// edit_file
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// list_dir
-// ---------------------------------------------------------------------------
-
 func TestListDirDepthAndCaps(t *testing.T) {
 	b := newTestBinding(t, "u1")
 	writeUserFile(t, b, "top.txt", "x")
@@ -185,10 +169,6 @@ func TestListDirCapTruncates(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// glob
-// ---------------------------------------------------------------------------
-
 func TestGlobDoublestar(t *testing.T) {
 	b := newTestBinding(t, "u1")
 	writeUserFile(t, b, "a.go", "x")
@@ -227,10 +207,6 @@ func TestGlobResultCap(t *testing.T) {
 		t.Errorf("got %d paths, want 2", len(res.Paths))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// grep
-// ---------------------------------------------------------------------------
 
 func TestGrepFindsMatches(t *testing.T) {
 	b := newTestBinding(t, "u1")
@@ -285,10 +261,6 @@ func TestGrepSkipsBinary(t *testing.T) {
 		t.Errorf("expected binary file to be skipped, got matches: %+v", res.Matches)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// newFSBinding / registry
-// ---------------------------------------------------------------------------
 
 func TestNewFSBindingRequiresWorkspace(t *testing.T) {
 	if _, err := newFSBinding(Deps{}); err == nil {

@@ -105,15 +105,12 @@ func (o *Orchestrator) SetArtifacts(svc artifact.Service) { o.artifacts = svc }
 
 // SetLedger wires the WAL's fail-closed AppendIntent path into the
 // orchestrator's own write_<kind>/write_artifact tools, so a direct-chat
-// write records parent_revision like every gated node does (#1153). Mirrors
-// dag.Executor.SetWALLedger.
+// write records parent_revision like every gated node does (#1153). Mirrors dag.Executor.SetWALLedger.
 func (o *Orchestrator) SetLedger(store ledger.LedgerStore) { o.ledgerStore = store }
 
 // failSoftListArtifacts: load_artifacts calls List on every LLM request
 // (ADK's loadartifactstool.ProcessRequest), and a List error fails the whole
-// orchestrator turn - not just artifact loading. A transient artifact-store
-// outage shouldn't take down ordinary chat, so List degrades to "no
-// artifacts" instead of erroring; Load/Save/Delete/Versions pass through.
+// orchestrator turn - not just artifact loading. A transient artifact-store outage shouldn't take down ordinary chat, so List degrades to "no artifacts" instead of erroring; Load/Save/Delete/Versions pass through.
 type failSoftListArtifacts struct{ artifact.Service }
 
 func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListRequest) (*artifact.ListResponse, error) {
@@ -131,9 +128,7 @@ func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListReque
 
 // Load degrades to a text-part message on any failure - not found, oversize,
 // or a transient store error - instead of returning an error: ADK's
-// loadartifactstool runs every requested name's Load in one errgroup, and one
-// error there cancels every sibling load and fails the whole turn (#1225 -
-// one bad name in a model's load_artifacts call killed plan+answer both).
+// loadartifactstool runs every requested name's Load in one errgroup, and one error there cancels every sibling load and fails the whole turn (#1225 - one bad name in a model's load_artifacts call killed plan+answer both).
 func (s failSoftListArtifacts) Load(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, error) {
 	resp, err := s.Service.Load(ctx, req)
 	if err != nil {
@@ -169,9 +164,8 @@ var runAdmissionSpec = dag.AdmissionSpec{Model: "orchestrator-run"}
 // SetMaxActiveRuns caps concurrent runs server-wide via the same admission
 // queue (dag.Admission) node scheduling uses, instead of a second
 // parallel implementation. RetryNodeResumed (boot resume) bypasses this
-// admission entirely (#1176) - the caller caps its own concurrency instead
-// (serve.startResumedNodes), so this limit is not a true ceiling on
-// concurrent runs while resumes are in flight.
+// admission entirely (#1176) - the caller caps its own concurrency
+// instead (serve.startResumedNodes), so this limit is not a true ceiling on concurrent runs while resumes are in flight.
 func (o *Orchestrator) SetMaxActiveRuns(n int) {
 	if n >= 1 {
 		o.runAdmit = dag.NewAdmission(map[string]int{runAdmissionSpec.Model: n}, nil, nil, 0)
@@ -394,20 +388,14 @@ func (o *Orchestrator) retryNode(ctx context.Context, userID, chatID string, see
 }
 
 // BuildBoundPlan builds a Plan from a workflow-catalog-bound node list (a
-// dispatch naming a shaped workflow) - no plan judge, no
-// review-fanout heuristic, and critically no orchestrator LLM turn: callers
-// pass the result straight to RunBoundPlan instead of Run. allowedKinds: nil
-// = unrestricted, matching AllowedDeliveryKindsFromContext's sentinel on the
-// planner-LLM path.
+// dispatch naming a shaped workflow) - no plan judge, no review-fanout heuristic, and critically no orchestrator LLM turn: callers pass the result straight to RunBoundPlan instead of Run. allowedKinds: nil = unrestricted, matching AllowedDeliveryKindsFromContext's sentinel on the planner-LLM path.
 func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, message string, attachments []*genai.Part, allowedKinds []string) (*dag.Plan, error) {
 	return o.planner.BuildBound(ctx, nodes, nil, nil, message, attachments, allowedKinds)
 }
 
 // RunBoundPlan runs an already-built bound Plan directly through the graph
 // executor - the "no planner LLM call per dispatch" path: no orchestrator
-// llmagent turn ever runs. The trust gate is unaffected -
-// RunPlanAsGraph is the exact same executor a model-authored plan runs
-// through, so every node still passes through vetting.RunGatedRefine.
+// llmagent turn ever runs. The trust gate is unaffected - RunPlanAsGraph is the exact same executor a model-authored plan runs through, so every node still passes through vetting.RunGatedRefine.
 func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, source string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
 	// Same turn-boundary clear as Run - a bound plan never calls the plan
 	// tool itself, but a stale rejection from an earlier unbound turn on this
@@ -471,8 +459,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 
 		// A bound plan skips the llmagent turn entirely, so nothing else ever
 		// appends this turn's "user" event - without it, groupSessionEvents
-		// (store.GetTurnsWithContent) sees zero events for this ChatTurn row
-		// and misaligns every later turn's persisted content against it (#1195).
+		// (store.GetTurnsWithContent) sees zero events for this ChatTurn row and misaligns every later turn's persisted content against it (#1195).
 		o.persistUserMessage(ctx, userID, sessionID, plan.UserMessage)
 
 		// A bound plan never passes through the execute tool (no orchestrator
@@ -491,9 +478,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		}
 		// Stashed exactly like the execute tool stashes a model-authored plan,
 		// so a later HITL resume (LatestPendingQuestion -> stashedPlan) finds
-		// it regardless of which path the resuming dispatch takes. Only after
-		// RunPlanAsGraph: its own runner is what auto-creates the session -
-		// nothing exists to stash into before that.
+		// it regardless of which path the resuming dispatch takes. Only after RunPlanAsGraph: its own runner is what auto-creates the session - nothing exists to stash into before that.
 		o.stashPlanForResume(ctx, userID, sessionID, plan)
 		if !paused {
 			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID)
@@ -546,17 +531,13 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	// Bound to this turn (#1181 review): an earlier turn's rejection must
 	// never outlive it - a later silent gap or gateway failure on the same
-	// chat needs its OWN evidence, not a stale reason from a turn that
-	// already ended.
+	// chat needs its OWN evidence, not a stale reason from a turn that already ended.
 	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
 		// A prior turn's unconsumed planning failure (empty node/agent key,
 		// store.orchestratorGiveUpError's read) must not leak into THIS run:
-		// if this turn itself never calls the model again before ending in
-		// its own empty gap (e.g. a pending-choice reply, or a plan that runs
-		// but ends silent), the stale record would still be sitting there
-		// (#1109 review finding 3 precedent, #1156).
+		// if this turn itself never calls the model again before ending in its own empty gap (e.g. a pending-choice reply, or a plan that runs but ends silent), the stale record would still be sitting there (#1109 review finding 3 precedent, #1156).
 		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
@@ -820,15 +801,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			return
 		}
 
-		// Planning that EXHAUSTS its rejection budget without an acceptable plan is a
-		// FAILED run, not an answer (#693): the model's own text at this point may just
-		// be narrating the plan judge's internal rejection reason back at the user. A
-		// single rejection is normal iteration - the model may correctly pivot to a
-		// direct answer instead of retrying (a reply-only deliverable the orchestrator
-		// over-eagerly tried to plan for, #760/home-server#3) - so only repeated
-		// rejections count as exhaustion; this must never be decided by inspecting the
-		// answer text itself. A pending clarifying question is also a legitimate reason
-		// to stop without a plan.
+		// Planning that EXHAUSTS its rejection budget without an acceptable
+		// plan is a FAILED run, not an answer (#693): the model's own text at
+		// this point may just be narrating the plan judge's internal rejection reason back at the user. A single rejection is normal iteration - the model may correctly pivot to a direct answer instead of retrying (a reply-only deliverable the orchestrator over-eagerly tried to plan for, #760/home-server#3) - so only repeated rejections count as exhaustion; this must never be decided by inspecting the answer text itself. A pending clarifying question is also a legitimate reason to stop without a plan.
 		if _, selected := planCache.Selected(); !selected {
 			if count, reason := planCache.Rejections(); count >= minRejectionsForExhaustion {
 				if _, hasPending := o.PendingQuestion(ctx, userID, sessionID); !hasPending {
@@ -870,10 +845,9 @@ const continuationMarker = "CONTINUE - your last turn produced no plan and no an
 // judge's own reason - that text is internal machinery talk, not an answer.
 const planExhaustedNotice = "I could not produce a workable plan for this request."
 
-// minRejectionsForExhaustion: rejections at or above this count mean the model
-// kept retrying and failing (NightsOut#97 saw four) - below it, a single
-// rejection followed by an answer is the model correctly pivoting away from a
-// plan it didn't need (#760), not exhaustion.
+// minRejectionsForExhaustion: rejections at or above this count mean the
+// model kept retrying and failing (NightsOut#97 saw four) - below it, a
+// single rejection followed by an answer is the model correctly pivoting away from a plan it didn't need (#760), not exhaustion.
 const minRejectionsForExhaustion = 2
 
 func continuationContent() *genai.Content {
@@ -989,11 +963,9 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 	o.startNodeRun(ctx, userID, sessionID, message, &pend, pend.nodeID, yield)
 }
 
-// StartNode is the "start a paused node" transition: it re-enters the stashed
-// plan's graph at the node that paused. A node parked on a question
-// (pause_reason awaiting_input, i.e. an unanswered HITL interrupt in the
-// session) takes message as the answer; a node paused by a user or by
-// shutdown needs no message and simply resumes at its last gate boundary.
+// StartNode is the "start a paused node" transition: it re-enters the
+// stashed plan's graph at the node that paused. A node parked on a question
+// (pause_reason awaiting_input, i.e. an unanswered HITL interrupt in the session) takes message as the answer; a node paused by a user or by shutdown needs no message and simply resumes at its last gate boundary.
 func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
 	o.executor.StartNode(sessionID, nodeID)
 	var pend *pendingInterrupt

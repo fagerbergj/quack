@@ -6,10 +6,9 @@ import (
 	"time"
 )
 
-// TestComputeStats_WeeklyPrecision seeds two ISO weeks (UTC) of votes and
-// checks precision/support-share and week-boundary attribution: a vote at
-// 23:59:59 Saturday UTC (mid ISO week) and one 24h later (the next ISO week,
-// Sunday->Monday crossing) land in different buckets.
+// TestComputeStats_WeeklyPrecision seeds two ISO weeks (UTC) of votes and checks precision/
+// support-share and week-boundary attribution: a vote at 23:59:59 Saturday UTC
+// (mid ISO week) and one 24h later (the next ISO week, Sunday->Monday crossing) land in different buckets.
 func TestComputeStats_WeeklyPrecision(t *testing.T) {
 	// 2026-01-05 is a Monday (ISO week 2026-W02).
 	week1Mon := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)

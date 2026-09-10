@@ -121,9 +121,7 @@ func TestTranslatorAccumulatesUsageOntoComplete(t *testing.T) {
 
 // TestTranslatorUsageWithoutMarkers covers the orchestrator's own un-gated
 // direct-answer session: it feeds raw model events straight to the Translator
-// with no agent_start/agent_complete markers at all (curRun never opens), so
-// Usage() must still report the accumulated totals for the caller to stamp onto
-// its own manually-built agent_complete event.
+// with no agent_start/agent_complete markers at all (curRun never opens), so Usage() must still report the accumulated totals for the caller to stamp onto its own manually-built agent_complete event.
 func TestTranslatorUsageWithoutMarkers(t *testing.T) {
 	tr := NewTranslator()
 	usage := eventWith(&genai.Part{Text: "the answer"})

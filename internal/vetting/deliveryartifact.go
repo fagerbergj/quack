@@ -1,10 +1,6 @@
-// deliveryartifact.go: renders a round's delivery from the durable
-// code_review/finding/pr_body records instead of the worker's own staged
-// text (#1093, P6/P10 of the artifact-model epic #1090). commitDelivery
-// calls this on every final round, passed or failed - a code_review/document
-// revision is written every round (saveEpisodicRound), so the posted content
-// and the recorded delivered_revision are always the same thing, even on a
-// gate-fail draft delivery (design V4 §4.5).
+// deliveryartifact.go: renders a round's delivery from the durable code_review/finding/pr_body records instead of the worker's own staged
+// text (#1093, P6/P10 of epic #1090). commitDelivery calls this on every final round, passed or failed - a code_review/document revision is written
+// every round, so the posted content and the recorded delivered_revision are always the same thing, even on a gate-fail draft delivery (design V4 §4.5).
 package vetting
 
 import (
@@ -17,15 +13,9 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// artifactRenderedDelivery replaces the "review" and "pr" staged items with
-// artifact-backed renders where a record exists, leaving every other staged
-// item (and either one, on any render failure) exactly as the worker staged
-// it. staged is mutated in place and returned for call-site convenience;
-// fromStaged is true when any item fell back to the worker's own staged text
-// (finding 2: the caller must never record such a delivery as artifact-backed).
-// ponytail: all-or-nothing across items; fine while reviewers stage only
-// "review" and implementers only "pr" - needs per-item scoping once #1095's
-// pr_body writer lands alongside a rendered review in the same delivery.
+// artifactRenderedDelivery replaces the "review" and "pr" staged items with artifact-backed renders where a record exists, leaving every other staged
+// item (and either one, on any render failure) exactly as the worker staged it. staged is mutated in place and returned; fromStaged is true when any
+// item fell back to the worker's own staged text (finding 2: the caller must never record such a delivery as artifact-backed). ponytail: all-or-nothing across items; fine while reviewers stage only "review" and implementers only "pr" - needs per-item scoping once #1095's pr_body writer lands alongside a rendered review in the same delivery.
 func artifactRenderedDelivery(ctx context.Context, cfg Config, nodeID string, staged map[string]StagedDelivery) (result map[string]StagedDelivery, fromStaged bool) {
 	if cfg.IsReviewer {
 		if item, ok := renderReviewFromArtifact(ctx, cfg, nodeID); ok {
@@ -48,10 +38,7 @@ func artifactRenderedDelivery(ctx context.Context, cfg Config, nodeID string, st
 
 // highlightBody composes a finding's Highlights-table/verdict-count body:
 // its title as-is when the title itself already carries a Conventional-
-// Comments label, otherwise the finding's own Severity field prepended as
-// one - a write_finding-native finding carries its label in Severity, not
-// embedded in Title's text, so without this a blocking finding written that
-// way would show no count and never make the Highlights table.
+// Comments label, otherwise the finding's own Severity field prepended as one - a write_finding-native finding carries its label in Severity, not embedded in Title's text, so without this a blocking finding written that way would show no count and never make the Highlights table.
 func highlightBody(f FindingRecord) string {
 	if label, _ := commentLabel(f.Title); label != "" {
 		return f.Title
@@ -66,11 +53,8 @@ func highlightBody(f FindingRecord) string {
 }
 
 // renderReviewFromArtifact loads the latest code_review record (called on
-// every final round, whether it passed or failed - see commitDelivery) and
-// its findings, and renders the same StagedDelivery{Kind: "review", ...}
-// shape stage_review/the answer-tail parser would have produced. false when
-// no code_review record exists yet for this subject (fresh chat, or a
-// non-episodic reviewer config) - the caller falls back to staged text.
+// every final round, whether it passed or failed - see commitDelivery) and its findings, and renders the same StagedDelivery{Kind: "review", ...}
+// shape stage_review/the answer-tail parser would have produced. false when no code_review record exists yet for this subject (fresh chat, or a non-episodic reviewer config) - the caller falls back to staged text.
 func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (StagedDelivery, bool) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -169,9 +153,7 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 
 // renderPRBodyFromArtifact loads the latest pr_body blob and overlays it
 // onto the worker's staged PR item (branch/omitted-flag bookkeeping the
-// worker already set stays; only Title/Body come from the record). false
-// when no pr_body record exists yet (no writer produces this kind as of
-// #1093 - #1095 scope; this stays a no-op fallback until one does).
+// worker already set stays; only Title/Body come from the record). false when no pr_body record exists yet (no writer produces this kind as of #1093 - #1095 scope; this stays a no-op fallback until one does).
 func renderPRBodyFromArtifact(ctx context.Context, cfg Config, nodeID string, staged StagedDelivery) (StagedDelivery, bool) {
 	c := recordClient(cfg)
 	if c == nil {

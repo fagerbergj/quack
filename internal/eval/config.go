@@ -1,9 +1,6 @@
 // Package eval implements `quack eval` (#606): re-run a recorded bundle's
-// user turns live against a swapped model, and compare the resulting judge
-// scores to the recording's own. It owns two things - the config-level model
-// swap (config.go) and the recorded-vs-new comparison (compare.go) - the
-// run itself (a fresh chat, turn-by-turn) is driven by internal/cli, which
-// already owns every other non-interactive CLI run loop.
+// user turns live against a swapped model, and compare the resulting judge scores to the recording's own. It owns the config-level model swap
+// (config.go) and the recorded-vs-new comparison (compare.go); the run itself (a fresh chat, turn-by-turn) is driven by internal/cli, which already owns every other non-interactive CLI run loop.
 package eval
 
 import (
@@ -24,20 +21,15 @@ const (
 )
 
 // OverrideModel mutates cfg IN PLACE, swapping the model bound to every agent
-// in role (or every agent for RoleAll) to model, and returns the names of
-// what changed ("orchestrator" plus any agents: entries). It never touches
-// gates.judge.model/provider - an eval compares a swapped WORKER against the
-// SAME judge, so the judge must stay fixed for the two runs' scores to mean
-// anything - and it never touches a media/image agent (outside this
-// comparison's scope).
+// in role (or every agent for RoleAll) to model, returning the changed names.
+// It never touches gates.judge.model/provider - an eval compares a swapped
+// WORKER against the SAME judge, so the judge must stay fixed for the two
+// runs' scores to mean anything - and it never touches a media/image agent (out of scope).
 //
-// Role membership is structural, not name-listed:
-//   - "coder" is every agents: entry with an acp: block set (all code agents
-//     run external over ACP); its model binds through the generated
-//     OPENCODE_CONFIG_CONTENT, so overriding AgentConfig.Model is the whole fix.
-//   - "researcher" is every OTHER text-only agent (excludes media/image
-//     readers).
-//   - "orch" is the orchestrator's own top-level model (OrchestratorConfig.Model).
+// Role membership is structural, not name-listed: "coder" = every agents:
+// entry with an acp: block set (all code agents run external over ACP; its
+// model binds through the generated OPENCODE_CONFIG_CONTENT, so overriding
+// AgentConfig.Model is the whole fix); "researcher" = every OTHER text-only agent (excludes media/image readers); "orch" = the orchestrator's own top-level model (OrchestratorConfig.Model).
 func OverrideModel(cfg *config.Config, role, model string) ([]string, error) {
 	switch role {
 	case RoleCoder, RoleResearcher, RoleOrch, RoleAll:

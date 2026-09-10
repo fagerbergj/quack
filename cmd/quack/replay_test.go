@@ -31,11 +31,8 @@ func TestReplayifyProviders_Strict(t *testing.T) {
 	}
 }
 
-// TestReplayifyProviders_Fork: --fork-from carries EVERY provider's ORIGINAL
-// (real) config forward as its `live` delegate - inference.NewModel's
-// kind:"replay" + fork_mode:"fork" case builds the live model straight from
-// it (factory.go), so a fork run needs no separate provider config beyond
-// what quack.yaml already has.
+// TestReplayifyProviders_Fork: --fork-from carries EVERY provider's
+// ORIGINAL (real) config forward as its `live` delegate - inference.NewModel's kind:"replay" + fork_mode:"fork" case builds the live model straight from it (factory.go), so a fork run needs no separate provider config beyond what quack.yaml already has.
 func TestReplayifyProviders_Fork(t *testing.T) {
 	cfg := &config.Config{Providers: map[string]config.ProviderConfig{
 		"default": {Kind: "openai", Endpoint: "http://real", APIKey: "k"},

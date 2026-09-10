@@ -28,10 +28,7 @@ const apiPrefix = "/api"
 
 // Mount is ADK's own session/runtime/debug/artifact REST controllers plus
 // its Angular console, wired to quack's real session.Service and agents.
-//
-// SECURITY: /run, /run_sse and /run_live execute a loaded agent directly -
-// no trust gate, no auth of their own, and no way to drop just those routes
-// (adkrest.NewServer wires them with the read-only ones as one unit).
+// SECURITY: /run, /run_sse and /run_live execute a loaded agent directly - no trust gate, no auth of their own, and no way to drop just those routes (adkrest.NewServer wires them with the read-only ones as one unit).
 type Mount struct {
 	// Handler serves the combined surface, rooted as if mounted at "/" -
 	// callers strip MountPath before delegating (see router.go).

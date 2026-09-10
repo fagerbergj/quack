@@ -11,17 +11,14 @@ import (
 
 // readOnlyGateCfg mimics a real code-reviewer/code-explorer's startup-time
 // config (internal/serve/serve.go's perAgentGateCfg): ACP-backed, read-only,
-// no delivery target - the shape any read-only agent's cfgFor hands back,
-// regardless of what a planner-authored node asks for.
+// no delivery target - the shape any read-only agent's cfgFor hands back, regardless of what a planner-authored node asks for.
 func readOnlyGateCfg() vetting.Config {
 	return vetting.Config{ExternalWorker: true, ReadOnly: true}
 }
 
 // TestNodeGateConfigDropsChecksForReadOnlyNode pins the prod failure (trust
 // gate fail-closed: `checks_pass: check "go build ./...": workspace: workdir
-// ".../review-f65532f/repo" does not exist`) at its root: a read-only node
-// (any agent lacking write/push tools, not just code-reviewer by name) never
-// gets a deterministic build check, because it can never satisfy one.
+// ".../review-f65532f/repo" does not exist`) at its root: a read-only node (any agent lacking write/push tools, not just code-reviewer by name) never gets a deterministic build check, because it can never satisfy one.
 func TestNodeGateConfigDropsChecksForReadOnlyNode(t *testing.T) {
 	for _, agent := range []string{reviewerAgent, explorerAgent, "web-researcher"} {
 		t.Run(agent, func(t *testing.T) {
@@ -70,9 +67,7 @@ func TestNodeGateConfigKeepsChecksForWritableNode(t *testing.T) {
 
 // TestNodeGateConfigReviewerHasNoChecksPassCriterion proves the practical
 // consequence for a reviewer node: with Checks nil and DeriveChecks false
-// (reviewer is never the implementer), vetting.checksPassCriterion's own
-// "not_configured" skip fires - the gate never evaluates a checks_pass
-// criterion for it at all.
+// (reviewer is never the implementer), vetting.checksPassCriterion's own "not_configured" skip fires - the gate never evaluates a checks_pass criterion for it at all.
 func TestNodeGateConfigReviewerHasNoChecksPassCriterion(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "review", AgentName: reviewerAgent, Checks: []string{"go build ./..."}, Workdir: "guessed"}}}
 	cfgFor := func(string) vetting.Config { return readOnlyGateCfg() }

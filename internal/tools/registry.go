@@ -44,7 +44,6 @@ type Deps struct {
 	Ledger          ledger.LedgerStore // recall_memory's memory.recall ledger entries
 }
 
-// constructor builds one tool from Deps.
 type constructor func(Deps) (tool.Tool, error)
 
 var registry = map[string]constructor{

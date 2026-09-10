@@ -29,11 +29,9 @@ func TestCodeReviewerPromptScopesSliceVerdict(t *testing.T) {
 	}
 }
 
-// TestPlanWorkSkillTellsSliceVerdictScope guards the same bug at the planning
-// side: the fanned-out reviewer task template must say a slice stages
-// findings only, and that a terminal synthesizer node owns the PR's one
-// verdict - or every node authored from it inherits the same
-// comment-over-nits contradiction.
+// TestPlanWorkSkillTellsSliceVerdictScope guards the same bug at the planning side: the
+// fanned-out reviewer task template must say a slice stages findings only and the terminal
+// synthesizer owns the PR's one verdict - or every authored node inherits the contradiction.
 func TestPlanWorkSkillTellsSliceVerdictScope(t *testing.T) {
 	b, err := os.ReadFile("../../skills/plan-work/SKILL.md")
 	if err != nil {

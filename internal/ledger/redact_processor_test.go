@@ -41,13 +41,9 @@ func attrString(t *testing.T, r sdklog.Record, key string) string {
 	return got
 }
 
-// TestRedactingProcessorProtectsEveryDownstreamProcessor is the blocking
-// finding's regression test: a LoggerProvider wired like production - the
-// redacting processor first, then TWO independent exporters (the ledger
-// path and an OTLP stand-in) - must hand BOTH exporters already-redacted
-// data. Before this processor existed, only the ledger exporter's own
-// Export-time Redact call protected its path; a second processor (added
-// whenever otlp_endpoint is configured) saw the raw record.
+// TestRedactingProcessorProtectsEveryDownstreamProcessor (the blocking finding): a
+// production-shaped LoggerProvider (redacting processor first, then TWO independent
+// exporters, ledger + OTLP stand-in) must hand BOTH already-redacted data - before, the second processor saw the raw record.
 func TestRedactingProcessorProtectsEveryDownstreamProcessor(t *testing.T) {
 	ledgerExp := &captureProcExporter{}
 	otlpStandIn := &captureProcExporter{}

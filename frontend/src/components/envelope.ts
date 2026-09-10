@@ -1,11 +1,6 @@
 // Parses the GitHub trigger envelope (design: .quack/trigger-prompts-v2.md) - an
-// XML-ish wrapper around GitHub's own JSON, seeded verbatim. Hand-rolled rather
-// than DOMParser: the content inside <title>/<description>/JSON blocks is NOT
-// XML-escaped (seeded verbatim per spec), so a real XML parser would choke on
-// any body containing a literal `<`. Best-effort tag matching degrades instead
-// of throwing - never blank the message over one malformed block (#667).
-//
-// No JSX here so this stays trivially testable; rendering lives in TriggerEnvelope.tsx.
+// XML-ish wrapper around GitHub's own JSON, seeded verbatim. Hand-rolled
+// rather than DOMParser: the content inside <title>/<description>/JSON is NOT XML-escaped (seeded verbatim per spec), so a real XML parser chokes on a literal `<` in a body; best-effort tag matching degrades instead of throwing - never blank the message over one malformed block (#667). No JSX here so this stays trivially testable; rendering lives in TriggerEnvelope.tsx.
 
 import { str, num } from './toolFormat'
 
@@ -63,8 +58,7 @@ export type EnvelopeBlock =
 
 // The tags that mark this string as an envelope rather than a plain chat
 // message - present on every step in the design doc, so any one of them is a
-// reliable signal. A plain user message that happens to start with "<" (rare,
-// but possible free text) won't match any of these and falls back untouched.
+// reliable signal. A plain message starting with "<" (rare, but possible free text) won't match any of these and falls back untouched.
 const ENVELOPE_MARKERS = new Set(['permissions', 'deliverable', 'event'])
 
 interface RawBlock {
@@ -84,9 +78,7 @@ function parseAttrs(attrsStr: string): Record<string, string> {
 
 // parseTopLevel walks `src` left to right, matching one tag at a time and
 // pairing it with its first matching close tag. Stray text between tags
-// (whitespace, or anything a mismatched/unterminated tag left behind) is
-// skipped rather than rejected - the whole point is not to fail closed on
-// content that isn't strictly valid XML.
+// (whitespace, or anything a mismatched/unterminated tag left behind) is skipped rather than rejected - the whole point is not to fail closed on content that isn't strictly valid XML.
 function parseTopLevel(src: string): RawBlock[] {
   const blocks: RawBlock[] = []
   const tagRe = /<([a-zA-Z][\w-]*)((?:\s+[\w-]+="[^"]*")*)\s*(\/)?>/g
@@ -255,8 +247,7 @@ function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
 
 // parseCheckLine reads one checksBlock line ("name: status" or "name:
 // completed conclusion"). Splits on the LAST ": " - a job name can itself
-// contain a colon (e.g. "test: unit (node 18)"), but the appended
-// status/conclusion never does.
+// contain a colon (e.g. "test: unit (node 18)"), but the appended status/conclusion never does.
 function parseCheckLine(line: string): CheckRun | null {
   const idx = line.lastIndexOf(': ')
   if (idx === -1) return null
@@ -312,8 +303,7 @@ function numAttr(v: string | undefined): number | undefined {
 
 // parseEnvelope returns the ordered top-level blocks of a GitHub trigger
 // envelope, or null when `raw` doesn't look like one (a plain chat message,
-// or - if anything goes wrong parsing it - malformed input). Callers fall
-// back to rendering `raw` as-is on null.
+// or - if anything goes wrong parsing it - malformed input). Callers fall back to rendering `raw` as-is on null.
 export function parseEnvelope(raw: string): EnvelopeBlock[] | null {
   try {
     const trimmed = raw.trim()
@@ -346,15 +336,13 @@ export interface AccumulatedComments {
   comments: Comment[]
   // False when the earliest turn this client can see is itself a delta (no
   // seed in the visible window - a rehydrated store, or a chat opened after
-  // reaping) - the list below is everything captured so far, not the issue's
-  // whole history.
+  // reaping) - the list below is everything captured so far, not the issue's whole history.
   complete: boolean
 }
 
-// accumulateComments folds a chat's <comments> blocks (`priorContents` oldest
+// Folds a chat's <comments> blocks (`priorContents` oldest
 // first, `current` last) into one running history, replaying the same
-// new/edited/deleted rule the server applied when it built each delta
-// (envelope.go's diffSnapshots) rather than re-sending anything to the model.
+// new/edited/deleted rule the server applied when it built each delta (envelope.go's diffSnapshots) rather than re-sending anything to the model.
 export function accumulateComments(priorContents: string[], current: CommentsBlock): AccumulatedComments {
   const blocks: CommentsBlock[] = []
   for (const c of priorContents) {
@@ -372,9 +360,7 @@ export function accumulateComments(priorContents: string[], current: CommentsBlo
       if (c.quackStatus === 'deleted') {
         // A comment already in the running history is removed outright. One
         // this client never saw alive (its own removal is the first record of
-        // it - no seed in the visible window) is kept and marked deleted
-        // instead of silently vanishing: the incompleteness is what `complete`
-        // is for, not a reason to drop data this delta actually carried.
+        // it - no seed in the visible window) is kept and marked deleted rather than silently vanishing: the incompleteness is what `complete` is for, not a reason to drop data this delta actually carried.
         if (byId.has(id)) {
           byId.delete(id)
           order.splice(order.indexOf(id), 1)

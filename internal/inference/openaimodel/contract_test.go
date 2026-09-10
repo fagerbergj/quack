@@ -11,10 +11,9 @@ import (
 	"google.golang.org/genai"
 )
 
-// sseServer serves an OpenAI-compatible streaming /chat/completions response from
-// the given raw SSE "data:" payloads (each a ChatCompletionChunk JSON), then
-// [DONE]. It's the offline stand-in for the model host, so this test guards our
-// load-bearing adapter (v2 ships no OpenAI provider) with no live dependency.
+// sseServer serves an OpenAI-compatible streaming /chat/completions
+// response from the given raw SSE "data:" payloads (each a
+// ChatCompletionChunk JSON), then [DONE]. It's the offline stand-in for the model host, so this test guards our load-bearing adapter (v2 ships no OpenAI provider) with no live dependency.
 func sseServer(t *testing.T, chunks ...string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -91,11 +90,9 @@ func TestStreaming_TranslatesContentReasoningTools(t *testing.T) {
 	}
 }
 
-// TestStreaming_CachedTokens verifies the streaming adapter carries a vLLM
-// prefix-cache hit (usage.prompt_tokens_details.cached_tokens) through to
-// UsageMetadata.CachedContentTokenCount - the field traced.go's
-// recordUsageMetrics/emitChatEvent split out for the otel metric and the
-// ledger llm.call payload.
+// TestStreaming_CachedTokens verifies the streaming adapter carries a
+// vLLM prefix-cache hit (usage.prompt_tokens_details.cached_tokens)
+// through to UsageMetadata.CachedContentTokenCount - the field traced.go's recordUsageMetrics/emitChatEvent split out for the otel metric and the ledger llm.call payload.
 func TestStreaming_CachedTokens(t *testing.T) {
 	srv := sseServer(t,
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"hi"}}]}`,
@@ -114,11 +111,9 @@ func TestStreaming_CachedTokens(t *testing.T) {
 	}
 }
 
-// TestStreaming_EmptyTurnReasoningOnly reproduces the reasoning-model failure
-// mode that bit us live: the model streams only reasoning_content and hits the
-// length limit, so content (the non-thought text) comes back empty. Per #295,
-// the adapter promotes the reasoning to the answer rather than dropping it -
-// and still returns a terminal response with finish=length.
+// TestStreaming_EmptyTurnReasoningOnly reproduces the reasoning-model
+// failure mode that bit us live: the model streams only
+// reasoning_content and hits the length limit, so content (the non-thought text) comes back empty. Per #295, the adapter promotes the reasoning to the answer rather than dropping it - and still returns a terminal response with finish=length.
 func TestStreaming_EmptyTurnReasoningOnly(t *testing.T) {
 	srv := sseServer(t,
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"reasoning_content":"thinking and thinking"}}]}`,
@@ -170,9 +165,7 @@ func TestReasoningToolCalls(t *testing.T) {
 }
 
 // TestReasoningToolCalls_XMLFunctionStyle covers the second qwen leak format:
-// tool calls in reasoning_content as <function=name><parameter=k>v</parameter>
 // XML inside <tool_call> (observed live from qwen3.x - the Hermes-JSON regex
-// never matches it, so the calls were lost and the raw XML ended up promoted
 // to the answer). Verbatim shape from the incident, multi-line values included.
 func TestReasoningToolCalls_XMLFunctionStyle(t *testing.T) {
 	reasoning := "Good progress. Let me now fetch more detailed pages.\n\n" +
@@ -216,10 +209,9 @@ func TestReasoningToolCalls_XMLFunctionStyle(t *testing.T) {
 	}
 }
 
-// TestStreaming_RecoversXMLToolCallsFromReasoning runs the leak through the
-// streaming adapter end to end, with the XML block split across chunks the
-// way a live stream delivers it. The recovered calls must surface as
-// FunctionCall parts and no XML residue may remain in the thinking.
+// TestStreaming_RecoversXMLToolCallsFromReasoning runs the leak through
+// the streaming adapter end to end, with the XML block split across
+// chunks the way a live stream delivers it. The recovered calls must surface as FunctionCall parts and no XML residue may remain in the thinking.
 func TestStreaming_RecoversXMLToolCallsFromReasoning(t *testing.T) {
 	srv := sseServer(t,
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"reasoning_content":"Let me fetch details.\n<tool_call>\n<function=web_fetch>\n"}}]}`,
@@ -293,10 +285,9 @@ func TestStreaming_RecoversBareFunctionCallFromContent(t *testing.T) {
 	}
 }
 
-// TestGenerate_RecoversXMLToolCallsFromReasoning covers the non-streaming path
-// (the one worker rounds use): a tool call leaked into reasoning_content must
-// become a FunctionCall, and the empty-content fallback must NOT promote the
-// raw XML thinking to the answer.
+// TestGenerate_RecoversXMLToolCallsFromReasoning covers the non-streaming
+// path (the one worker rounds use): a tool call leaked into
+// reasoning_content must become a FunctionCall, and the empty-content fallback must NOT promote the raw XML thinking to the answer.
 func TestGenerate_RecoversXMLToolCallsFromReasoning(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"Let me search.\n<tool_call>\n<function=web_search>\n<parameter=query>\nSMR 2026\n</parameter>\n</function>\n</tool_call>"}}]}`)
 	defer srv.Close()
@@ -338,8 +329,7 @@ func TestGenerate_RecoversXMLToolCallsFromReasoning(t *testing.T) {
 
 // TestReasoningToolCalls_BareFunctionForm covers #427 (recurrence of #402):
 // a tool call leaked as the bare <function=…><parameter=…>…</parameter></function>
-// form, with no <tool_call> wrapper - the shape ask_advisor leaked as literal
-// text into the answer instead of executing.
+// form, with no tool_call wrapper - the shape ask_advisor leaked as literal text into the answer instead of executing.
 func TestReasoningToolCalls_BareFunctionForm(t *testing.T) {
 	text := "Let me check with the advisor.\n" +
 		"<function=ask_advisor>\n<parameter=question>\nIs this design sound?\n</parameter>\n</function>\n" +
@@ -366,8 +356,7 @@ func TestReasoningToolCalls_BareFunctionForm(t *testing.T) {
 
 // TestReasoningToolCalls_BareFunctionForm_NoFalsePositive guards the
 // misfire case #427 called out explicitly: prose that merely mentions
-// "<function=" while also closing with "</function>" - but whose body isn't
-// clean <parameter=…> structure - must NOT be parsed as a tool call.
+// clean tool_call structure - must NOT be parsed as a tool call.
 func TestReasoningToolCalls_BareFunctionForm_NoFalsePositive(t *testing.T) {
 	text := "The docs describe a <function=foo> tag that wraps arguments, " +
 		"closed by </function> at the end of the block."
@@ -382,8 +371,7 @@ func TestReasoningToolCalls_BareFunctionForm_NoFalsePositive(t *testing.T) {
 
 // TestGenerate_RecoversBareFunctionCallFromContent runs the #427 leak (bare
 // <function=…> in the answer content, no reasoning_content involved) through
-// the non-streaming adapter end to end: it must surface as a FunctionCall and
-// be stripped from the visible answer text.
+// the non-streaming adapter end to end: it must surface as a FunctionCall and be stripped from the visible answer text.
 func TestGenerate_RecoversBareFunctionCallFromContent(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Checking in.\n<function=ask_advisor>\n<parameter=question>\nShould we ship this?\n</parameter>\n</function>\n"}}]}`)
 	defer srv.Close()
@@ -421,10 +409,9 @@ func TestGenerate_RecoversBareFunctionCallFromContent(t *testing.T) {
 	}
 }
 
-// TestGenerate_NoFalsePositiveOnProseMentioningFunctionTag guards the non-
-// streaming path against #427's misfire case: an answer that legitimately
-// discusses "<function=" syntax in prose must reach the user unmodified, with
-// no phantom tool call.
+// TestGenerate_NoFalsePositiveOnProseMentioningFunctionTag guards the
+// non-streaming path against #427's misfire case: an answer that
+// legitimately discusses "<function=" syntax in prose must reach the user unmodified, with no phantom tool call.
 func TestGenerate_NoFalsePositiveOnProseMentioningFunctionTag(t *testing.T) {
 	body := "To call a tool, models emit <function=name> followed by " +
 		"arguments and a closing </function> tag."
@@ -473,8 +460,7 @@ func jsonServer(t *testing.T, body string) *httptest.Server {
 
 // TestGenerate_PromotesReasoningWhenContentEmpty covers issue #295: the
 // non-streaming path (used for actual worker rounds - RunConfig.StreamingMode
-// defaults to "none") dropped a synthesized answer that landed entirely in
-// reasoning_content, leaving content empty. The answer must be recovered.
+// defaults to "none") dropped a synthesized answer that landed entirely in reasoning_content, leaving content empty. The answer must be recovered.
 func TestGenerate_PromotesReasoningWhenContentEmpty(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"Sources read and synthesized: the answer is 42."}}]}`)
 	defer srv.Close()

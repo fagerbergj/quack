@@ -25,12 +25,9 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// memoryVoteJudge is a worker+judge stub (same dual-role trick as
-// fixedScoreModel): first submit_verdict call always skips memories, the
+// memoryVoteJudge is a worker+judge stub (same dual-role trick as fixedScoreModel): first submit_verdict call always skips memories, the
 // second (the #1259 nudge turn) either votes on every id it was told about,
-// or repeats the omission - proving both the nudge fires and, when the
-// judge still ignores it, the round surfaces that instead of manufacturing
-// votes.
+// or repeats the omission - proving both the nudge fires and, when the judge still ignores it, the round surfaces that instead of manufacturing votes.
 type memoryVoteJudge struct {
 	calls       int32
 	voteOnRetry bool
@@ -69,8 +66,7 @@ func (j *memoryVoteJudge) GenerateContent(_ context.Context, req *model.LLMReque
 
 // runMemoryVoteNode seeds one recallable memory (role "coding", legacy
 // nodeID - matching MemoryScope exactly), runs one gated node with
-// ExternalWorker+CommitMemory so the prefill recall path fires for real, and
-// returns the gate result plus the ledger/log evidence.
+// ExternalWorker+CommitMemory so the prefill recall path fires for real, and returns the gate result plus the ledger/log evidence.
 func runMemoryVoteNode(t *testing.T, voteOnRetry bool) (res GateResult, lgr *ledgertest.MemStore, logs string) {
 	t.Helper()
 	ctx := context.Background()
@@ -152,8 +148,7 @@ func TestRunGatedRefine_MemoryVotesNudge_AppliesOnRetry(t *testing.T) {
 
 // TestRunGatedRefine_MemoryVotesNudge_WarnsWhenStillMissing covers #1259
 // item 3's warning: a judge that ignores the nudge too still passes (the
-// answer itself is fine), but zero votes land and the round logs a warning
-// naming it, instead of silently dropping the received memories.
+// answer itself is fine), but zero votes land and the round logs a warning naming it, instead of silently dropping the received memories.
 func TestRunGatedRefine_MemoryVotesNudge_WarnsWhenStillMissing(t *testing.T) {
 	res, lgr, logs := runMemoryVoteNode(t, false)
 	if !res.Passed {

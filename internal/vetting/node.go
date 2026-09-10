@@ -66,8 +66,7 @@ const (
 
 // judgeFailureFeedback distinguishes a judge that never got to run (transport/model
 // outage) from one that ran and simply never committed a verdict (ErrJudgeNoVerdict) -
-// judge.go is the only place that knows which happened, so it returns a typed
-// sentinel rather than this checking the error string (#779).
+// judge.go is the only place that knows which happened, so it returns a typed sentinel rather than this checking the error string (#779).
 func judgeFailureFeedback(jerr error) (status, feedback string) {
 	if errors.Is(jerr, ErrJudgeNoVerdict) {
 		return judgeStatusNoVerdict, "quack's judge ran but exhausted its iteration budget without reaching a verdict, so this answer could not be scored: " + jerr.Error()
@@ -213,8 +212,7 @@ func replyString(reply any) string {
 
 // appendNodeEvent is the WAL's node.* observational path (#1090 §4.9): a
 // best-effort AppendIntent call, Warn-logged and otherwise ignored - it must
-// never affect the run, unlike an artifact.revision save (including a
-// judge_round one), which is fail-closed. No-op when cfg.Ledger is unset.
+// never affect the run, unlike an artifact.revision save (including a judge_round one), which is fail-closed. No-op when cfg.Ledger is unset.
 func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind string, rounds int) {
 	if cfg.Ledger == nil {
 		return
@@ -234,12 +232,9 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 	}
 }
 
-// deliveryTarget resolves the recordstore artifact backing this node's
-// delivery, if any: the code_review subject for a reviewer, or cfg.Artifact
+// deliveryTarget resolves the recordstore artifact backing this node's delivery, if any: the code_review subject for a reviewer, or cfg.Artifact
 // for a document node. false when this delivery has no backing artifact
-// (a plain PR-only delivery) - the WAL/delivery_record path is skipped
-// entirely in that case (#1093: idempotency key = artifact id + revision,
-// nothing to key on without one).
+// (a plain PR-only delivery) - the WAL/delivery_record path is skipped entirely in that case (#1093: idempotency key = artifact id + revision, nothing to key on without one).
 func deliveryTarget(ctx context.Context, cfg Config) (id string, revision int, ok bool) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -302,14 +297,9 @@ func appendDeliveryIntent(ctx context.Context, cfg Config, nodeID, key, targetID
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
-	// cfg.NodeID (workspaceNodeID), NOT nodeID - the recorder keys every
-	// generate() call on cfg.NodeID (line ~1212 below), which for an
-	// implementer node in a setup/repo-chain plan is workspace.SharedRepoScope,
-	// not the plan node id nodeID carries (#1109 re-review finding). A node
-	// id is reused across turns/plans on the same chat - drop any unconsumed
-	// failure record from a previous invocation before this one records its
-	// own, so a stale streak can't leak into an unrelated future empty
-	// completion (PR #1109 review finding 3).
+	// cfg.NodeID (workspaceNodeID), NOT nodeID - the recorder keys every generate() call on cfg.NodeID, which for an implementer node in a setup/repo-chain plan is workspace.SharedRepoScope,
+	// not the plan node id nodeID carries (#1109 re-review finding). A node id is reused across turns/plans on the same chat - drop any unconsumed
+	// failure record from a previous invocation before this one records its own, so a stale streak can't leak into an unrelated future empty completion (PR #1109 review finding 3).
 	inference.ClearFailure(cfg.ChatID, cfg.NodeID, cfg.Agent)
 
 	nodeCtx, span := otelobs.StartNode(ctx,
@@ -318,12 +308,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		attribute.String(otelobs.GenAIAgentName, cfg.Agent),
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 	)
-	// turnID: closest available stand-in for the store row's turn_id column
-	// (#1090 V4.2 point 2) - no chat-turn id is plumbed this deep today
-	// (dag/orchestrator carry none either), so the ADK invocation id is the
-	// best per-run identity RunGatedRefine actually has. Computed here
-	// (rather than at its original use site below) so node.started can be
-	// stamped with the same id node.done/node.failed close out on.
+	// turnID: closest available stand-in for the store row's turn_id column (#1090 V4.2 point 2) - no chat-turn id is plumbed this deep today
+	// (dag/orchestrator carry none either), so the ADK invocation id is the best per-run identity RunGatedRefine actually has. Computed here
+	// (rather than at its original use site below) so node.started can be stamped with the same id node.done/node.failed close out on.
 	turnID := ctx.InvocationID()
 	appendNodeEvent(nodeCtx, cfg, nodeID, turnID, ledger.KindNodeStarted, 0)
 	defer func() {
@@ -436,13 +423,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// reach commitDelivery below. delivered is set true once commitDelivery
 	// has handled that; any other return path (worker error, ErrNodeEmpty,
 	// cancel) needs to register as a failed sibling here instead, so a dead
-	// reviewer node can never block the run's delivery forever. A paused
-	// node is NOT terminal - it may still resume and stage its real verdict
-	// later, so a pause sentinel is excluded: every quack pause now returns
-	// ErrNodePaused (HITL parks wrap ADK's workflow.ErrNodeInterrupted in it),
-	// and a bare ErrNodeInterrupted can still surface from ADK's own scheduler.
-	// Registering a merely-parked node as "failed" would let the fan-in
-	// deliver without it, then silently discard its verdict on resume.
+	// reviewer node can never block the run's delivery forever. A paused node is NOT terminal - it may still resume and stage its real
+	// verdict later, so a pause sentinel is excluded: every quack pause now returns ErrNodePaused (HITL parks wrap ADK's workflow.ErrNodeInterrupted in it), and a bare ErrNodeInterrupted can still surface from ADK's own scheduler. Registering a merely-parked node as "failed" would let the fan-in deliver without it, then silently discard its verdict on resume.
 	delivered := false
 	// Must run unconditionally (#942): a staged review lives in this
 	// process, not the dying ACP subprocess, so it survives a kill.
@@ -584,8 +566,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 
 		// Turn-boundary control check, even when no judge round runs at all
 		// (cfg.JudgeRounds == 0 or judge == nil skips the loop below entirely) -
-		// a paused/cancelled/queued node must be honored here too, not just
-		// inside the judge loop.
+		// a paused/cancelled/queued node must be honored here too, not just inside the judge loop.
 		if ctrl != nil {
 			if ctrl.Cancelled() {
 				return answer, GateResult{}, nil
@@ -605,13 +586,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		var res GateResult
 		var checksSkipReason string // last computeDeterministicCriteria skip reason; attached to res below (#780)
 		queuedText := ""
-		// episodicState: cross-round (and, seeded once, cross-turn) tracking
-		// for the episodic record write site below - live findings by hash id
-		// plus the last-known revision of every code_review/finding/document
-		// id, so a re-review turn stamps true parent_revision instead of
-		// fabricating one and correctly marks repeats "unchanged" (#1090 P2).
-		// nil until first touched; saveEpisodicRound seeds it from the store
-		// on that first call.
+		// episodicState: cross-round (and, seeded once, cross-turn) tracking for the episodic record write site below - live findings by hash id
+		// plus the last-known revision of every code_review/finding/document id, so a re-review turn stamps true parent_revision instead of
+		// fabricating one and correctly marks repeats "unchanged" (#1090 P2). nil until first touched; saveEpisodicRound seeds it from the store on that first call.
 		var episodicState *episodicRoundState
 		episodicRoundsWritten := 0
 		// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
@@ -638,22 +615,17 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 					trigger = episodicState.triggerAnnotation
 				}
 				// Intentional: this round's revise (below, on judge fail) also
-				// stamps Round=round, even though its tool writes are first
-				// referenced by round+1's code_review - "round r judges, on
-				// fail revises" (line 557), so a revision belongs to the
-				// judgment that required it, not the round that later reads it.
+				// stamps Round=round, even though its tool writes are first referenced by round+1's code_review - "round r judges, on
+				// fail revises" (JudgeRounds loop above), so a revision belongs to the judgment that required it, not the round that later reads it.
 				SetAdvisorThreadRound(advisorToken, round, turnID, cfg.NodeBaseSHA, trigger)
 				if cfg.RoundCoordsSink != nil {
 					cfg.RoundCoordsSink(round, turnID, cfg.NodeBaseSHA, trigger)
 				}
 			}
 			act := actFor(answer)
-			// recall_memory hits merge in fresh every round, from wherever this
-			// round's answer actually came from - re-scanning the FULL session
-			// (native) each round, and a live (non-destructive) snapshot of the
-			// ACP MemSession's collector, so a call made mid-round is captured
-			// by THIS round's judge, not missed because the set was snapshotted
-			// before the call happened (epic #1255 P2 adversarial review finding).
+			// recall_memory hits merge in fresh every round, from wherever this round's answer actually came from - re-scanning the FULL session
+			// (native) each round, and a live (non-destructive) snapshot of the ACP MemSession's collector, so a call made mid-round is captured
+			// by THIS round's judge, not missed because the set was snapshotted before the call happened (epic #1255 P2 adversarial review finding).
 			receivedMemories = mergeMemoryHits(receivedMemories, act.recalled)
 			if advisorToken != "" {
 				if t, ok := LookupAdvisorThread(advisorToken); ok && t.MemSecret != "" {
@@ -664,16 +636,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			// Every judge round writes a revision, gate-passed or not - only
 			// delivery stays gate-passed-only (#1090 P2: rounds are history).
-			// Every gated node writes one, not just reviewer/document nodes
-			// (#1095/#1090 P8: saveEpisodicRound falls back to "text:<node>").
+			// Every gated node writes one, not just reviewer/document nodes (#1095/#1090 P8: saveEpisodicRound falls back to "text:<node>").
 			episodicState = saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, round, answer, act.stagedDelivery["review"], episodicState)
 			episodicRoundsWritten++
 			runID := fmt.Sprintf("judge-r%d", round)
 			judgeCtx, jspan := startStageSpan(nodeCtx, sink, cfg, nodeID, "judge", stream.StageJudge, runID, round)
 			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
 			// Node: cfg.NodeID (not nodeID) matches the worker recorder's own
-			// key (see RunGatedRefine's entry-clear above) - both must agree
-			// on the same workspace scope for setup/repo-chain plans.
+			// key (see RunGatedRefine's entry-clear above) - both must agree on the same workspace scope for setup/repo-chain plans.
 			judgeCoords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: "judge", BundleHash: cfg.BundleHash, Round: runID, User: cfg.User, Source: cfg.Source}
 			ledgerCtx := ledger.WithCoords(ctx, judgeCoords)
 			// Same belt-and-suspenders as runWorkerNodeTraced's workerModel stamp.
@@ -682,8 +652,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			// Nothing reads a "judge"-role failure record today - clear it on
 			// entry so a failed judge round doesn't leave a permanent orphan
-			// waiting for a judge success that may never come (#1109
-			// re-review suggestion).
+			// waiting for a judge success that may never come (#1109 re-review suggestion).
 			inference.ClearFailure(cfg.ChatID, cfg.NodeID, "judge")
 			// Compute deterministic criteria before judge runs.
 			det, skip := computeDeterministicCriteria(judgeCtx, answer, act, cfg)
@@ -726,8 +695,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if isNonDeliveringSlice(cfg) {
 				// Fan-out (#1092, design V4 §4.6): a reviewer node feeding a
 				// synthesizer never owns the delivered verdict, so its own
-				// structured_verdict/VERDICT-consistency score would gate on
-				// something this node never controls.
+				// structured_verdict/VERDICT-consistency score would gate on something this node never controls.
 				v = dropCriteria(v, "structured_verdict")
 			}
 			v = sanitizeAnchors(v, answer, cfg)
@@ -741,15 +709,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			// judge_round record (#1144 P2): this SaveStructured call IS the
 			// WAL entry for this round's verdict (recordstore appends
-			// artifact.revision before the row, fail-closed) - no separate
-			// judge.round intent to append first.
+			// artifact.revision before the row, fail-closed) - no separate judge.round intent to append first.
 			jr := buildJudgeRoundRecord(turnID, round, res.Passed, res.Score, scored, v, det, answer)
 			jrID, _, saveErr := saveJudgeRoundRecord(nodeCtx, cfg, nodeID, turnID, round, jr)
 			if saveErr != nil && cfg.Ledger != nil {
 				// Fail-closed (#1090 §4.9, #1144 P2), WAL-scoped only - same
 				// as the old separate judge.round append: with no ledger
-				// configured this save failure stays fail-open (Warned by
-				// saveJudgeRoundRecord's SaveStructured call, next round proceeds).
+				// configured this save failure stays fail-open (Warned by saveJudgeRoundRecord's SaveStructured call, next round proceeds).
 				log.Error("judge_round WAL save failed; stopping the round loop", "round", round, "err", saveErr)
 				verdictWord := "failed"
 				if env.Passed {
@@ -794,8 +760,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			// Re-check now that the verdict is known to have failed: the judge's
 			// own model call can run long, and a revise round after it is another
-			// full worker round - a cancel landing during the judge call must stop
-			// here too, not just at the top of the next round (#879).
+			// full worker round - a cancel landing during the judge call must stop here too, not just at the top of the next round (#879).
 			if ctrl != nil {
 				if ctrl.Cancelled() {
 					return answer, res, nil
@@ -810,15 +775,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			// #762: undo this round's commits before the worker gets another
 			// try, but only if commit_hygiene says it swept in off-task work -
-			// an ordinary incomplete/wrong round keeps its commits so revise
-			// builds on them instead of redoing the change from scratch.
+			// an ordinary incomplete/wrong round keeps its commits so revise builds on them instead of redoing the change from scratch.
 			resetCloneToNodeBase(cfg, v)
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, env, act, citationOnlyFailure(v, cfg.Threshold), jr.Notes)) + markerLine
 			reviseRunID := fmt.Sprintf("worker-r%d%s", round, sfx)
 			// gate.revise spans the round through the same choke point gate.judge
 			// uses. sink is nil: the matching agent_start/complete SSE for this run
-			// already comes from dagStream off the worker's own session events, so
-			// this raises only the span half.
+			// already comes from dagStream off the worker's own session events, so this raises only the span half.
 			reviseCtx, rspan := startStageSpan(nodeCtx, nil, cfg, nodeID, "revise", stream.StageRevise, reviseRunID, round)
 			revised, rerr := runWorkerNodeTraced(ctx, reviseCtx, cfg, workerModel, workerNode, revisePrompt, reviseRunID, "revise", promptEmit)
 			rspan.end(stream.AgentCompleteData{RunID: reviseRunID, Stage: stream.StageRevise, Round: round}, rerr)
@@ -833,10 +796,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if strings.TrimSpace(revised) == "" {
 				// Revise round ended on a tool call with no trailing text (finalSpec
 				// answer_len 0). That's only a true no-op if the tool call didn't
-				// change what would be delivered (act unchanged, e.g. a re-read of
-				// a file) - a search, stage_review_comment or edit_artifact call
-				// DOES move act, and the prior verdict never saw it, so it must be
-				// judged before delivery instead of going out un-vetted.
+				// change what would be delivered (act unchanged, e.g. a re-read of a file) - a search, stage_review_comment or edit_artifact call DOES move act, and the prior verdict never saw it, so it must be judged before delivery instead of going out un-vetted.
 				if reflect.DeepEqual(act, actFor(answer)) {
 					log.Info("revise produced no text and no new activity; keeping current verdict", "round", round)
 					break
@@ -870,9 +830,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 		// A judge-less node (JudgeRounds == 0, e.g. a deterministic-only
 		// reMarkable stage) never entered the round loop above - write its
-		// one round here so it still gets a code_review/document/text record.
-		// Mirrors the round loop's own empty-answer guard (line 658) so an
-		// empty/whitespace-only answer doesn't produce an empty text revision.
+		// one round here so it still gets a code_review/document/text record. Mirrors the round loop's empty-answer break guard, so an empty/whitespace-only answer doesn't produce an empty text revision.
 		if episodicRoundsWritten == 0 && strings.TrimSpace(stripLeadingEnvScaffold(answer)) != "" {
 			saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, 1, answer, act.stagedDelivery["review"], nil)
 		}
@@ -887,7 +845,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		commitDelivery(nodeCtx, sink, cfg, nodeID, act, res)
 		// commitDelivery already ran on the full answer (memory, episodic
 		// record, delivery render); only the chat-visible return value
-		// collapses when it just restates what was staged (#1306-ish).
+		// collapses when it just restates what was staged.
 		return dedupeAnswerAgainstStaged(answer, act.stagedDelivery), res, nil
 	}
 }
@@ -924,11 +882,9 @@ func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, ctrl NodeContr
 	return false, nil
 }
 
-// parkForInput folds an ADK HITL park into the node state machine: mark the
-// control paused/awaiting_input with the question (persisted before the park
+// parkForInput folds an ADK HITL park into the node state machine: mark the control paused/awaiting_input with the question (persisted before the park
 // is acted on), then wrap ADK's sentinel in ErrNodePaused so quack code sees
-// one sentinel. ErrNodeInterrupted stays in the chain because ADK's engine
-// keys the park itself off it - dropping it would fail the node instead.
+// one sentinel. ErrNodeInterrupted stays in the chain because ADK's engine keys the park itself off it - dropping it would fail the node instead.
 func parkForInput(ctrl NodeControl, question string, ierr error) error {
 	if !errors.Is(ierr, workflow.ErrNodeInterrupted) {
 		return ierr // emit failure, not a park
@@ -939,11 +895,9 @@ func parkForInput(ctrl NodeControl, question string, ierr error) error {
 	return fmt.Errorf("%w: %w", ErrNodePaused, ierr)
 }
 
-// recallMemoryHits: parses a native recall_memory FunctionResponse (a
-// tools.recallMemoryResult round-tripped through session-event JSON) back
+// recallMemoryHits: parses a native recall_memory FunctionResponse (a tools.recallMemoryResult round-tripped through session-event JSON) back
 // into the hits it delivered - a JSON roundtrip rather than manual map
-// assertions, since ADK's own representation of a nested slice varies by
-// path (live run vs replay) and json.Marshal handles either uniformly.
+// assertions, since ADK's own representation of a nested slice varies by path (live run vs replay) and json.Marshal handles either uniformly.
 func recallMemoryHits(resp map[string]any) []memory.Delivered {
 	if resp == nil {
 		return nil
@@ -1065,14 +1019,11 @@ func resolveCloneCoordinates(cfg Config, act workerActivity) (cloneURL, branch s
 func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity, res GateResult) {
 	// Multi-reviewer plan (#867): this node's own review never goes out on
 	// its own - it's handed to the run's ReviewFanout, which delivers the
-	// merged, worst-of-verdict review exactly once, when every reviewer
-	// node in the plan has finished.
+	// merged, worst-of-verdict review exactly once, when every reviewer node in the plan has finished.
 	if cfg.ReviewFanout != nil && !cfg.IsReviewer {
-		// Synthesizer node (#965): its answer is the plan's consolidated
-		// review - hand it to the fan-in, which delivers exactly once. The
+		// Synthesizer node (#965): its answer is the plan's consolidated review - hand it to the fan-in, which delivers exactly once. The
 		// structured code_review verdict (#1184) is read here rather than
-		// parsed from act.answer, since a native write_code_review leaves no
-		// VERDICT tail in the answer text.
+		// parsed from act.answer, since a native write_code_review leaves no VERDICT tail in the answer text.
 		verdict, _ := LatestCodeReviewVerdict(ctx, cfg)
 		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer, verdict)
 		if deliverNow {
@@ -1115,11 +1066,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		return
 	}
 	// Render from the durable record instead of the worker's own restatement
-	// (#1093 P6/P10) - every final round writes its code_review/document
-	// revision (saveEpisodicRound runs pass or fail), so a draft-on-fail
-	// delivery renders and records the SAME revision it posts, never the
-	// staged text (finding 2: a staged-text post must never be recorded as
-	// an artifact-backed delivery).
+	// (#1093 P6/P10) - every final round writes its code_review/document revision (saveEpisodicRound runs pass or fail), so a draft-on-fail
+	// delivery renders and records the SAME revision it posts, never the staged text (finding 2: a staged-text post must never be recorded as an artifact-backed delivery).
 	renderedFromStaged := act.skipArtifactRender
 	if !renderedFromStaged {
 		act.stagedDelivery, renderedFromStaged = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
@@ -1157,8 +1105,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 
 	// #1198 part C: a review with comments/findings but no verdict is not a
 	// reviewed PR - drop just that item (loud refusal), same per-item shape
-	// as the allowed-kinds check below, so a sibling pr/comment item in the
-	// same delivery still ships.
+	// as the allowed-kinds check below, so a sibling pr/comment item in the same delivery still ships.
 	if verdictless, rest := partitionEmptyVerdictReview(dc.Items); len(verdictless) > 0 {
 		for _, item := range verdictless {
 			slog.Error("delivery refused: staged review has no verdict", "component", "vetting", "node", nodeID)
@@ -1222,11 +1169,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		}
 	}
 
-	// Gate-owned push: lands on the remote before any item reaches the
-	// extension. A push failure still reaches Deliver (carried on
-	// dc.PushError) instead of short-circuiting it - the extension is the
-	// only thing that can tell the human on GitHub a delivery failed (#1155);
-	// it's expected to skip the push-dependent items using PushError rather
+	// Gate-owned push: lands on the remote before any item reaches the extension. A push failure still reaches Deliver (carried on dc.PushError) instead of short-circuiting it - the extension is the
+	// only thing that can tell the human on GitHub a delivery failed (#1155); it's expected to skip the push-dependent items using PushError rather
 	// than attempt them against a branch that was never pushed.
 	if pushErr := ensurePush(cctx, cfg, &dc); pushErr != nil {
 		slog.Error("gate push failed", "component", "vetting", "node", nodeID, "err", pushErr, "branch", dc.Branch)
@@ -1243,8 +1187,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 
 	if hasTarget {
 		// #1187: the GitHub side effect already happened by this point, so the
-		// bookkeeping below must survive a run-level cancel (shutdown drain,
-		// hub.CancelRun) landing between Deliver returning and here - it runs
+		// bookkeeping below must survive a run-level cancel (shutdown drain, hub.CancelRun) landing between Deliver returning and here - it runs
 		// on a context detached from ctx's cancellation, with its own budget.
 		if ctx.Err() != nil {
 			slog.Warn("run context cancelled before post-delivery bookkeeping; continuing on a detached context",
@@ -1308,10 +1251,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
 }
 
-// deliverMergedReview: posts the fan-in's merged review as this node's own
-// single-item delivery. cfg.ReviewFanout is cleared first so the recursive
-// commitDelivery call goes straight through instead of re-intercepting.
-// A merge with nothing valid in it (every reviewer node failed/staged
+// deliverMergedReview: posts the fan-in's merged review as this node's own single-item delivery. cfg.ReviewFanout is cleared first so the recursive
+// commitDelivery call goes straight through instead of re-intercepting. A merge with nothing valid in it (every reviewer node failed/staged
 // nothing) posts nothing - there is nothing true to tell the reader.
 func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, merged StagedDelivery) {
 	cloneURL, branch := cfg.ReviewFanout.Clone()
@@ -1323,10 +1264,8 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 	}
 	cfg.ReviewFanout = nil
 	// The delivering node (often a synthesizer) may have cloned nothing
-	// itself - fall back to a reviewer sibling's clone coordinates (#1059).
-	// The merge is already the final worst-of text; a reviewer-node terminal
-	// (latent plan shape, see #1118 review) must never let the render
-	// clobber it with that node's own individual code_review record.
+	// itself - fall back to a reviewer sibling's clone coordinates (#1059). The merge is already the final worst-of text; a reviewer-node terminal
+	// (latent plan shape, see #1118 review) must never let the render clobber it with that node's own individual code_review record.
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}, currentBranch: branch, skipArtifactRender: true}
 	if cloneURL != "" {
 		act.clonedRepos = []string{cloneURL}
@@ -1334,13 +1273,9 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 	commitDelivery(ctx, sink, cfg, nodeID, act, GateResult{Passed: true})
 }
 
-// isReviewerPauseSentinel: true when err means "parked, may still resume" -
-// not a terminal outcome for the review fan-in. Both of RunGatedRefine's own
-// early-return sentinel ErrNodePaused (every quack pause, HITL included) and
-// ADK's own workflow.ErrNodeInterrupted (which the scheduler can still raise
-// on its own, so it stays recognised here) mean
-// the node is not done - registering it as failed here would let the fan-in
-// deliver without it, then silently discard its real verdict on resume.
+// isReviewerPauseSentinel: true when err means "parked, may still resume" - not a terminal outcome for the review fan-in. Both of RunGatedRefine's own
+// early-return sentinel ErrNodePaused (every quack pause, HITL included) and ADK's own workflow.ErrNodeInterrupted (which the scheduler can still raise
+// on its own, so it stays recognised here) mean the node is not done - registering it as failed here would let the fan-in deliver without it, then silently discard its real verdict on resume.
 func isReviewerPauseSentinel(err error) bool {
 	return errors.Is(err, ErrNodePaused) || errors.Is(err, workflow.ErrNodeInterrupted)
 }
@@ -1392,10 +1327,8 @@ func partitionByAllowedKinds(items []StagedDelivery, allowedKinds []string) (all
 }
 
 // partitionEmptyVerdictReview splits staged items, dropping a "review" item
-// whose Event is empty (#1198 part C) - GitHub has no "no verdict" review,
-// and posting one anyway is the markers-only bug. Per-item, like
-// partitionByAllowedKinds: a sibling pr/comment item in the same delivery
-// still ships.
+// whose Event is empty (#1198 part C) - GitHub has no "no verdict" review, and posting one anyway is the markers-only bug. Per-item, like
+// partitionByAllowedKinds: a sibling pr/comment item in the same delivery still ships.
 func partitionEmptyVerdictReview(items []StagedDelivery) (verdictless, rest []StagedDelivery) {
 	for _, item := range items {
 		if item.Kind == "review" && strings.TrimSpace(item.Event) == "" {
@@ -1443,8 +1376,7 @@ func emitJudgeRound(sink func(stream.SSEEvent), id string, passed bool, score fl
 
 // isNonDeliveringSlice reports whether cfg is a reviewer node that is part
 // of a fan-out with a downstream synthesizer (#1092, design V4 §4.6) - such
-// a node's own verdict is never what delivery renders, so it isn't judged on
-// structured_verdict.
+// a node's own verdict is never what delivery renders, so it isn't judged on structured_verdict.
 func isNonDeliveringSlice(cfg Config) bool {
 	return cfg.IsReviewer && cfg.ReviewFanout != nil && cfg.ReviewFanout.SynthExpected()
 }
@@ -1468,8 +1400,7 @@ func recordDeliveryOutcomeMetric(cfg Config, res GateResult, attempted, delivere
 
 // MemoryScope: node's memory entitlement (repo, role, user). Exported for ACP
 // MCP surface. Legacy is deliberately unset here - it exists only so
-// memories committed before per-scope buckets (keyed by agent NAME, e.g.
-// "web-researcher") still recall; a node id is not that key.
+// memories committed before per-scope buckets (keyed by agent NAME, e.g. "web-researcher") still recall; a node id is not that key.
 func MemoryScope(ctx adkagent.Context, cfg Config) memory.Scope {
 	sc := memory.Scope{Role: cfg.MemoryRole}
 	if s := ctx.Session(); s != nil {
@@ -1483,8 +1414,7 @@ func MemoryScope(ctx adkagent.Context, cfg Config) memory.Scope {
 
 // runWorkerNode: runs worker as sub-branched child, strips thinking content.
 // attachments are artifactref reference parts by the time they arrive here
-// (rerouted at the REST/plan entry boundary) - real bytes are swapped back
-// in only at the model boundary (internal/inference's hydratingModel).
+// (rerouted at the REST/plan entry boundary) - real bytes are swapped back in only at the model boundary (internal/inference's hydratingModel).
 func workerInput(prompt string, attachments []*genai.Part) any {
 	if len(attachments) == 0 {
 		return prompt
@@ -1493,19 +1423,13 @@ func workerInput(prompt string, attachments []*genai.Part) any {
 }
 
 // gatePromptAuthor authors the prompt-delivery events emitPrompt writes. NOT
-// "user" (a user-authored event would split a chat turn in store.
-// groupSessionEvents and confuse the runner's turn detection) and never an
-// agent's name (remoteagent presents foreign-authored events to the remote
-// model as user messages - exactly what a prompt should be).
+// "user" (a user-authored event would split a chat turn in store. groupSessionEvents and confuse the runner's turn detection) and never an
+// agent's name (remoteagent presents foreign-authored events to the remote model as user messages - exactly what a prompt should be).
 const gatePromptAuthor = "quack-gate"
 
-// emitPrompt writes the worker's prompt into the session as a gate-authored
-// event, immediately before the RunNode that consumes it. A local llmagent takes
-// RunNode input directly, but production workers are A2A REMOTE agents, which
-// build their outbound message from SESSION EVENTS ONLY - without this event a
-// remote worker never sees its task, and an empty session tail skips the
-// dispatch entirely. emit completes durably before it returns, so there is no
-// ordering race. The event is filtered everywhere else by its author/branch.
+// emitPrompt writes the worker's prompt into the session as a gate-authored event, immediately before the RunNode that consumes it. A local llmagent takes
+// RunNode input directly, but production workers are A2A REMOTE agents, which build their outbound message from SESSION EVENTS ONLY - without this event a
+// remote worker never sees its task, and an empty session tail skips the dispatch entirely. emit completes durably before it returns, so there is no ordering race. The event is filtered everywhere else by its author/branch.
 func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any) {
 	if emit == nil {
 		return
@@ -1669,10 +1593,8 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 }
 
 // deterministicCriterionSpec: definition/fix declared per deterministic
-// criterion name (#941). A static table rather than editing each of the ~10
-// constructor sites (checks.go, mermaid.go, shape.go, vacuoustests.go,
-// delivery.go) - the criterion names are a fixed, code-owned set, so one
-// lookup keyed by name is a smaller diff with the same effect.
+// criterion name (#941). A static table rather than editing each of the ~10 constructor sites (checks.go, mermaid.go, shape.go, vacuoustests.go,
+// delivery.go) - the criterion names are a fixed, code-owned set, so one lookup keyed by name is a smaller diff with the same effect.
 var deterministicCriterionSpec = map[string]struct {
 	definition string
 	fix        string
@@ -1704,11 +1626,8 @@ const citesSourcesFix = "Fetch each source, or remove the citation and any claim
 // keys are exactly the code-owned set - composeFeedback reads it to tell a
 // code-owned failure from a judge-scored one (#791). Also stamps each
 // criterion's declared definition/bands/fix (#941): cfg.RubricSpecs/RubricFixes
-// (loaded from the node's rubric.yaml) win when the rubric names the
-// criterion (e.g. cites_sources in web-researcher/synthesizer's rubric.yaml);
-// deterministicCriterionSpec/citesSourcesBands below are the fallback for
-// criteria no rubric declares (checks_pass, delivery_complete, ...) or when
-// no structured rubric was loaded for this node at all.
+// (loaded from the node's rubric.yaml) win when the rubric names the criterion (e.g. cites_sources in web-researcher/synthesizer's rubric.yaml);
+// deterministicCriterionSpec/citesSourcesBands below are the fallback for criteria no rubric declares (checks_pass, delivery_complete, ...) or when no structured rubric was loaded for this node at all.
 func mergeDeterministic(v verdict, det map[string]criterionScore, cfg Config) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
@@ -1738,11 +1657,9 @@ func mergeDeterministic(v verdict, det map[string]criterionScore, cfg Config) ve
 	return aggregateVerdict(v)
 }
 
-// composeFeedback builds the #941 structured envelope from v and a rendered
-// one-paragraph summary for callers that still want prose: AgentCompleteData.Feedback
+// composeFeedback builds the #941 structured envelope from v and a rendered one-paragraph summary for callers that still want prose: AgentCompleteData.Feedback
 // (kept for one release so the UI does not blank) and GateResult.Feedback (the
-// delivery-caveat text). The envelope itself - not this summary - is what
-// buildRevisionContent hands the worker.
+// delivery-caveat text). The envelope itself - not this summary - is what buildRevisionContent hands the worker.
 func composeFeedback(v verdict, threshold float64, round int) (verdictEnvelope, string) {
 	env := buildEnvelope(v, threshold, round)
 	return env, renderFeedbackSummary(env, v.Feedback, v.Findings)
@@ -1750,8 +1667,7 @@ func composeFeedback(v verdict, threshold float64, round int) (verdictEnvelope, 
 
 // renderFeedbackSummary: prose rendering of the envelope, in the same
 // deterministic-leads/judge-follows shape composeFeedback used before #941 -
-// a code-owned failure has one correct fix, a low judge score is arguable, and
-// collapsing them together misrepresents the judge's opinion as decided (#791).
+// a code-owned failure has one correct fix, a low judge score is arguable, and collapsing them together misrepresents the judge's opinion as decided (#791).
 func renderFeedbackSummary(env verdictEnvelope, judgeFeedback string, findings []findingVerdict) string {
 	var detFails, judgeFails []string
 	for _, f := range env.DeterministicFailures {
@@ -1826,11 +1742,9 @@ func joinWritten(cwd, p string) string {
 	return filepath.Join(cwd, p)
 }
 
-// writtenRel resolves a worker's write/edit path to a CHAT-relative path for
-// Jail.Resolve - the read-side mirror of tools.jailPath. Worker paths are
+// writtenRel resolves a worker's write/edit path to a CHAT-relative path for Jail.Resolve - the read-side mirror of tools.jailPath. Worker paths are
 // NODE-relative (the node dir is invisible to the model), re-applied here; a
-// leading "/" is the chat-root escape hatch, ignoring both. Must match the
-// judge's resolution, or it silently reads NOTHING (has bitten twice).
+// leading "/" is the chat-root escape hatch, ignoring both. Must match the judge's resolution, or it silently reads NOTHING (has bitten twice).
 func writtenRel(nodeDir, cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
 		return strings.TrimPrefix(p, "/")

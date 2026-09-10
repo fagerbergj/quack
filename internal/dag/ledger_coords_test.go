@@ -73,11 +73,9 @@ func (a lcScopedAgent) ForNode(string, func() string, artifact.Service, string, 
 	return a.Agent, a.model, a.tools, nil, func(bool) {}, nil
 }
 
-// ledgerCoordsStub calls current_date once, answers, and passes the judge
-// immediately (JudgeRounds:1, first verdict scores 0.9) - the shortest
-// path that still produces one chat AND one execute_tool event. Local
-// duplicate of dag's own gCall/gText/gHasTool stub helpers - unexported
-// there (see ask_advisor_test.go's identical note).
+// ledgerCoordsStub calls current_date once, answers, and passes the judge (verdict 0.9) -
+// the shortest path producing one chat AND one execute_tool event. Local duplicate of dag's
+// unexported gCall/gText/gHasTool stub helpers (see ask_advisor_test.go's identical note).
 type ledgerCoordsStub struct{}
 
 func (ledgerCoordsStub) Name() string { return "ledgerCoordsStub" }
@@ -142,10 +140,9 @@ func lcCall(name string, args map[string]any) *model.LLMResponse {
 	}
 }
 
-// TestRunPlanAsGraph_LedgerCoordsReachModelAndTool drives ONE gated node
-// through the real production entry point (dag.Executor.RunPlanAsGraph, the
-// same call serve.go makes) and asserts both the "chat" and the
-// "execute_tool" ledger events it emits carry the run's coordinates.
+// TestRunPlanAsGraph_LedgerCoordsReachModelAndTool drives one gated node through the
+// production entry point (dag.Executor.RunPlanAsGraph, the same call serve.go makes) and
+// asserts both "chat" and "execute_tool" ledger events carry the run's coordinates.
 func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	capExp := &ledgerCaptureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -184,11 +181,9 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	const chatID = "ledger-coords-chat"
 	plan := dag.Plan{ID: "t", UserMessage: "what's today's date?", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "answer"}}}
 
-	// Start from the run's PARTIAL coords, the way production does
-	// (orchestrator.go stamps ChatID/User/Source before any node runs). Starting
-	// from a bare context is what let a broken coords-precedence fix through
-	// review: node/agent/round were dropped on every worker call and this test
-	// still passed (#1039).
+	// Seed the run's PARTIAL coords the way production does (orchestrator.go stamps
+	// ChatID/User/Source before any node runs); a bare context is what let the #1039
+	// broken coords-precedence fix through - node/agent/round dropped, test still passing.
 	ctx := stream.WithYield(
 		ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID, User: "u", Source: "ui"}),
 		func(stream.SSEEvent) {})

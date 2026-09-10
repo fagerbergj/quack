@@ -13,11 +13,7 @@ import (
 
 // RunChatShow is `quack chat show <id>`: a one-screen status snapshot
 // (id/title/status/pending question, the last turn's per-node table, then its
-// answer text). --json prints the full ChatDetail instead. -f/--follow
-// additionally attaches to the chat's live stream (Client.Subscribe) and
-// prints line-oriented events until the run ends, applying the same
-// pause/failure exit-code semantics as `chat send` (see Report). Returns the
-// process exit code.
+// answer text). --json prints the full ChatDetail instead. -f/--follow additionally attaches to the chat's live stream (Client.Subscribe) and prints line-oriented events until the run ends, applying the same pause/failure exit-code semantics as `chat send` (see Report). Returns the process exit code.
 func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, asJSON, follow bool) int {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -30,7 +26,7 @@ func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, 
 		return 1
 	}
 	if asJSON {
-		_ = writeJSON(out, detail)
+		_ = WriteJSON(out, detail)
 		return exitCode(string(detail.Status))
 	}
 	printChatSnapshot(out, detail)
@@ -148,8 +144,7 @@ func formatScore(f *float64) string {
 
 // followState carries the small amount of cross-event bookkeeping printLine
 // needs so a stream of many small updates for the SAME reasoning block or tool
-// call collapses to one terse line each, instead of dumping every raw event
-// (#385 - collapse/summarize, the OTel traces are the full-detail surface now).
+// call collapses to one terse line each, instead of dumping every raw event (#385 - collapse/summarize, the OTel traces are the full-detail surface now).
 type followState struct {
 	thinking map[string]bool // run_id -> already printed a "thinking…" line
 	tools    map[string]bool // call_id -> already printed the call's summary line
@@ -161,12 +156,7 @@ func newFollowState() *followState {
 
 // printLine renders one SSE event as a human-readable, line-oriented trace for
 // `chat show -f`: "node r1 running", a terse "tool: name(arg)" / "→ outcome"
-// pair per tool call, one "thinking…" line per reasoning block. The
-// orchestrator's own top-level answer text is deliberately NOT streamed here:
-// narration ahead of a tool call and the eventual final answer arrive on the
-// same channel, so printing tokens live has no way to "un-print" preamble
-// once a later tool call reveals it wasn't the answer - the final answer
-// prints once via Report at the end of RunChatShow instead.
+// pair per tool call, one "thinking…" line per reasoning block. The orchestrator's own top-level answer text is deliberately NOT streamed here: narration ahead of a tool call and the eventual final answer arrive on the same channel, so printing tokens live has no way to "un-print" preamble once a later tool call reveals it wasn't the answer - the final answer prints once via Report at the end of RunChatShow instead.
 func (f *followState) printLine(out io.Writer, ev SSEEvent) {
 	switch ev.Name {
 	case "node_start":
@@ -256,8 +246,7 @@ func followPrefix(nodeID string) string {
 
 // summarizeToolArgs picks one representative arg to show beside the tool name
 // so a call is identifiable without a full JSON dump - mirrors the priority
-// order frontend/src/components/toolFormat.ts's summarizeArgs uses, for the
-// same call rendered consistently across the web UI and the CLI.
+// order frontend/src/components/toolFormat.ts's summarizeArgs uses, for the same call rendered consistently across the web UI and the CLI.
 func summarizeToolArgs(args map[string]any) string {
 	for _, key := range []string{"query", "url", "path", "command", "message", "id", "q"} {
 		if v, ok := args[key].(string); ok && v != "" {
@@ -272,10 +261,7 @@ func summarizeToolArgs(args map[string]any) string {
 
 // summarizeToolResult renders a tool result as one short outcome word/phrase -
 // never the raw payload - matching #385's design principle that full detail
-// belongs to OTel traces, not the terminal trace. `name` picks a tool-specific
-// outcome field (mirroring the per-tool web views in ToolCallView.tsx) so the
-// terminal trace carries the same load-bearing fact the UI does - a commit's
-// short sha, an edit's replacement count - not just a bare "ok" (#404 CLI parity).
+// belongs to OTel traces, not the terminal trace. `name` picks a tool-specific outcome field (mirroring the per-tool web views in ToolCallView.tsx) so the terminal trace carries the same load-bearing fact the UI does - a commit's short sha, an edit's replacement count - not just a bare "ok" (#404 CLI parity).
 func summarizeToolResult(name string, result any) string {
 	m, ok := result.(map[string]any)
 	if !ok {

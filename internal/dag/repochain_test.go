@@ -22,8 +22,6 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// --- unit tests: the two chain-aware helpers directly ---
-
 func TestWorkspaceNodeID(t *testing.T) {
 	setup := &Setup{Repo: "r", BaseRef: "main", WorkBranch: "w"}
 	cases := []struct {
@@ -53,10 +51,9 @@ func TestWorkspaceNodeID(t *testing.T) {
 	}
 }
 
-// TestWorktreeParentID pins the OTHER half of the picture workspaceNodeID
-// alone doesn't show: a read-only qualifying node's own dir is a git
-// worktree OF the shared clone, named here - "" for a writer (it gets the
-// shared clone directly) and for anything with no plan.Setup.
+// TestWorktreeParentID pins the half workspaceNodeID alone doesn't show: a read-only
+// qualifying node's own dir is a worktree OF the shared clone - named only for a
+// non-writer with plan.Setup; writers get the shared clone directly (parent "").
 func TestWorktreeParentID(t *testing.T) {
 	setup := &Setup{Repo: "r", BaseRef: "main", WorkBranch: "w"}
 	cases := []struct {
@@ -105,8 +102,6 @@ func TestNonTerminalRepoChainNode(t *testing.T) {
 		t.Error("plan.Setup == nil: want false - each node delivers independently")
 	}
 }
-
-// --- end-to-end: a real depends_on chain run through RunPlanAsGraph ---
 
 // stagePRArgs/stagePRResult/chainStagePRTool give the chain's worker agent a
 // real stage_pr tool so a FunctionCall dispatches to an actual FunctionResponse

@@ -84,8 +84,7 @@ func TestStageSpan_SingleRaiseProducesBothProjections(t *testing.T) {
 
 // TestStageSpan_UnavailableJudgeOmitsScoreAttrsAndRecordsError proves the
 // error branch's single raise still projects both sides: SSE reports
-// status=unavailable, and the span records the error without a score/passed
-// attribute pair (there was no verdict to attach one to).
+// status=unavailable, and the span records the error without a score/passed attribute pair (there was no verdict to attach one to).
 func TestStageSpan_UnavailableJudgeOmitsScoreAttrsAndRecordsError(t *testing.T) {
 	exp := withTestTracer(t)
 	var got []stream.SSEEvent
@@ -121,8 +120,7 @@ func TestStageSpan_UnavailableJudgeOmitsScoreAttrsAndRecordsError(t *testing.T) 
 
 // TestStageSpan_SSEWireFormatUnchanged pins the exact JSON the judge stage
 // puts on the wire, so the choke-point refactor can't silently change what
-// existing SSE consumers (frontend, MCP, A2A) receive for a representative
-// node lifecycle (start -> scored complete).
+// existing SSE consumers (frontend, MCP, A2A) receive for a representative node lifecycle (start -> scored complete).
 func TestStageSpan_SSEWireFormatUnchanged(t *testing.T) {
 	withTestTracer(t)
 	var got []stream.SSEEvent

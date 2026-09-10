@@ -23,11 +23,7 @@ import (
 
 // sessionGetSpy wraps a real session.Service but fails (and counts) any Get call - live
 // profiling on #738 found ListChats's old per-chat read wasn't a cheap row lookup, it was
-// orchestrator.PriorEvents -> ADK's databaseService.Get deserializing a chat's ENTIRE event
-// history, 109 times every 5s (81% of a 15s CPU profile, mostly encoding/json). A bounded
-// query count (below) would still pass if a single session load per request crept back in;
-// this asserts the stronger invariant that actually matters - ListChats never reads session
-// history at all.
+// orchestrator.PriorEvents -> ADK's databaseService.Get deserializing a chat's ENTIRE event history, 109 times every 5s (81% of a 15s CPU profile, mostly encoding/json). A bounded query count (below) would still pass if a single session load per request crept back in; this asserts the stronger invariant that actually matters - ListChats never reads session history at all.
 type sessionGetSpy struct {
 	session.Service
 	gets atomic.Int64
@@ -70,9 +66,7 @@ func listChatsQueries(t *testing.T, h *Handler) int64 {
 
 // TestListChatsQueryCountBoundedByChatCount is #738 test 1: with 100+ chats stored,
 // ListChats issues a bounded number of queries that does not grow with chat count - the
-// N+1 the ponytail marker on the old ListChats named - and, the stronger claim the live
-// profile says actually matters, touches the ADK session store not at all (sessionGetSpy
-// above fails any Get; ListChats must never trigger one).
+// N+1 the ponytail marker on the old ListChats named - and, the stronger claim the live profile says actually matters, touches the ADK session store not at all (sessionGetSpy above fails any Get; ListChats must never trigger one).
 func TestListChatsQueryCountBoundedByChatCount(t *testing.T) {
 	h, spy := newTestHandlerWithSessionSpy(t)
 	ctx := context.Background()
@@ -142,11 +136,7 @@ func TestToSummaryReadsStampedOutcome(t *testing.T) {
 
 // TestCrashedRunDoesNotStickAtRunning is #738 test 3: a run killed mid-flight (MarkRunActive
 // ran, StampRunOutcome never did - simulating process death before the deferred stamp)
-// must not leave the chat reading "running" forever. ListChats never persists "running" in
-// the first place (it's hub.Active, live and per-process - see stream.NewHub's ponytail on
-// single-instance scope) so a fresh process trivially reports not-running; the guard this
-// pins is the READ side noticing the abandoned marker instead of trusting a stale idle/
-// needs_input stamp left over from a run before the one that crashed.
+// must not leave the chat reading "running" forever. ListChats never persists "running" in the first place (it's hub.Active, live and per-process - see stream.NewHub's ponytail on single-instance scope) so a fresh process trivially reports not-running; the guard this pins is the READ side noticing the abandoned marker instead of trusting a stale idle/needs_input stamp left over from a run before the one that crashed.
 func TestCrashedRunDoesNotStickAtRunning(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -223,8 +213,7 @@ func TestListChatsUnchangedIsCheapOnTheWire(t *testing.T) {
 
 // TestListChatsETagVariesWithPage is #738 requirement 3: the ETag is computed over the
 // page actually returned, so page 2's ETag must differ from page 1's, and replaying
-// page 1's ETag against a page-2 request must not read as unchanged (a naive ETag over
-// just "the chats table changed" would wrongly 304 page 2 with page 1's stale ETag).
+// page 1's ETag against a page-2 request must not read as unchanged (a naive ETag over just "the chats table changed" would wrongly 304 page 2 with page 1's stale ETag).
 func TestListChatsETagVariesWithPage(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

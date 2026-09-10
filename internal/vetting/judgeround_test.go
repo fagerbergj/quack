@@ -32,8 +32,7 @@ func judgeRoundID(turnID, nodeID string, round int) string {
 
 // TestJudgeRoundRecordTriggerAnnotationChain is design V4 §7 case 3: every
 // judge round writes a revision with parent_revision and trigger_annotation
-// set, and exactly one judge_round record whose "scored" matches the
-// revisions it judged.
+// set, and exactly one judge_round record whose "scored" matches the revisions it judged.
 func TestJudgeRoundRecordTriggerAnnotationChain(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -121,8 +120,7 @@ CLEAN:
 
 // TestJudgeRoundIdentityIncludesNodeID is the BLOCKING #1092 adversarial
 // review finding: turnID (ctx.InvocationID()) is shared by every node in one
-// run, so two fan-out nodes' round 1 must not resolve to the same judge_round
-// id, WAL key, or clobber each other's revision.
+// run, so two fan-out nodes' round 1 must not resolve to the same judge_round id, WAL key, or clobber each other's revision.
 func TestJudgeRoundIdentityIncludesNodeID(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
@@ -147,8 +145,7 @@ func TestJudgeRoundIdentityIncludesNodeID(t *testing.T) {
 
 	// WAL keys (ledger.Entry.Key) for the judge_round artifact.revision must
 	// differ too, or the second save would clobber the first's WAL row for
-	// the same (chat, turn, round) - #1144 P2: the artifact.revision entry
-	// recordstore already appends IS this round's only WAL entry.
+	// the same (chat, turn, round) - #1144 P2: the artifact.revision entry recordstore already appends IS this round's only WAL entry.
 	var judgeRoundKeys []string
 	for _, e := range fl.entries {
 		if e.Kind == ledger.KindArtifactRevision && (e.Key == idA || e.Key == idB) {
@@ -219,8 +216,7 @@ func TestJudgeRoundRecordNotesAnchoring(t *testing.T) {
 
 // TestRevisePromptCarriesNoteRefs: the revise prompt built from a
 // judge_round record's notes names the exact artifact_id/revision a worker
-// would read_artifact/edit_artifact to address the feedback (#1092 scope
-// item 3 - the prompt sources from the record, not ad hoc string-building).
+// would read_artifact/edit_artifact to address the feedback (#1092 scope item 3 - the prompt sources from the record, not ad hoc string-building).
 func TestRevisePromptCarriesNoteRefs(t *testing.T) {
 	notes := []JudgeNote{{
 		Ref:       NoteRef{ArtifactID: "code_review:pr:42", Revision: 5, Snippet: "the bug is right here", LineHint: 2},
@@ -264,9 +260,7 @@ func TestNonDeliveringSliceDropsStructuredVerdict(t *testing.T) {
 
 // TestMergeReviewsSynthesizerOwnsVerdict: the synthesizer's own VERDICT tail
 // is the merge's verdict, overriding the worst-of computed from slices whose
-// VERDICT lines should have been ignored (#1092, design V4 §4.6) - a
-// slice-only approve doesn't force delivery to approve over the
-// synthesizer's request_changes.
+// VERDICT lines should have been ignored (#1092, design V4 §4.6) - a slice-only approve doesn't force delivery to approve over the synthesizer's request_changes.
 func TestMergeReviewsSynthesizerOwnsVerdict(t *testing.T) {
 	terminal := map[string]reviewFanoutEntry{
 		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Event: "approve"}},
@@ -281,8 +275,7 @@ func TestMergeReviewsSynthesizerOwnsVerdict(t *testing.T) {
 
 // TestMergeReviewsSlicesOnlyNitsPassesAsComment: a fan-out with only nits and
 // every slice staging VERDICT: comment merges to comment when the
-// synthesizer produces none (fallback path) - and a non-delivering slice
-// with no blocking findings must not itself force a request_changes.
+// synthesizer produces none (fallback path) - and a non-delivering slice with no blocking findings must not itself force a request_changes.
 func TestMergeReviewsSlicesOnlyNitsPassesAsComment(t *testing.T) {
 	terminal := map[string]reviewFanoutEntry{
 		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Event: "comment"}},
@@ -295,9 +288,7 @@ func TestMergeReviewsSlicesOnlyNitsPassesAsComment(t *testing.T) {
 
 // TestMergeReviewsStructuredVerdictApprove: three slices stage findings with
 // no event (V4: slices never own a verdict, #1150) and the synthesizer's
-// structured code_review record says approve (#1184's exact prod shape: a
-// native write_code_review leaves no VERDICT tail for the old fallback to
-// find). Delivered event must be approve, not "comment".
+// structured code_review record says approve (#1184's exact prod shape: a native write_code_review leaves no VERDICT tail for the old fallback to find). Delivered event must be approve, not "comment".
 func TestMergeReviewsStructuredVerdictApprove(t *testing.T) {
 	terminal := map[string]reviewFanoutEntry{
 		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Body: "a"}},
@@ -354,9 +345,7 @@ func TestMergeReviewsNoVerdictAnywhereIsComment(t *testing.T) {
 
 // TestNonDeliveringSliceStagesNoReview: a fan-out slice reviewer that only
 // found nits and staged VERDICT: comment never delivers its own review - its
-// item is consumed by ReviewFanout.Finish, not handed to cfg.Deliver
-// (design V4 §4.6: a slice's VERDICT is staged only as delivery's
-// worst-of-fallback input, never delivered on its own).
+// item is consumed by ReviewFanout.Finish, not handed to cfg.Deliver (design V4 §4.6: a slice's VERDICT is staged only as delivery's worst-of-fallback input, never delivered on its own).
 func TestNonDeliveringSliceStagesNoReview(t *testing.T) {
 	var deliverCalls int
 	deliver := func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -380,8 +369,7 @@ func TestNonDeliveringSliceStagesNoReview(t *testing.T) {
 
 // TestArtifactSSEEventOrder: within a round, artifact_revision fires for
 // every revision the round wrote, all before that round's
-// artifact_judge_round event (#1090 §4.8 - the judge_round record references
-// revisions that must already be visible to a client).
+// artifact_judge_round event (#1090 §4.8 - the judge_round record references revisions that must already be visible to a client).
 func TestArtifactSSEEventOrder(t *testing.T) {
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{

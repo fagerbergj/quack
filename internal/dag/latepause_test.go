@@ -37,10 +37,9 @@ func TestDagStream_LateOutputOverridesPause(t *testing.T) {
 	t.Fatalf("got %v; want node_done - a late shutdown pause must not discard a delivered answer", names(got))
 }
 
-// TestDagStream_LiveUserPauseStillWinsOverDraftOutput: a user pause caught by
-// node.go's own cooperative check (not a late shutdown race) still reports
-// node_paused even though the node returns whatever draft answer it had -
-// that draft was never delivered, so reporting node_done would be a lie.
+// TestDagStream_LiveUserPauseStillWinsOverDraftOutput: a user pause caught by node.go's own
+// cooperative check (not a late shutdown race) still reports node_paused - its draft answer
+// was never delivered, so node_done would be a lie.
 func TestDagStream_LiveUserPauseStillWinsOverDraftOutput(t *testing.T) {
 	agentByID := map[string]string{"n1": "a"}
 	var got []stream.SSEEvent

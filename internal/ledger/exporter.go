@@ -9,10 +9,9 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
-// Exporter adapts a LedgerStore to sdklog.Exporter: every gen_ai.* log
-// record becomes one typed observation Entry. Recording is best-effort by
-// design - Export never returns an error (a store failure is logged at Warn
-// and the record dropped), so a broken store can never affect the run.
+// Exporter adapts a LedgerStore to sdklog.Exporter: every gen_ai.* log record becomes
+// one typed observation Entry. Recording is best-effort by design - Export never
+// errors (store failures are logged at Warn and the record dropped), so a broken store can never affect the run.
 type Exporter struct {
 	store LedgerStore
 	log   *slog.Logger
@@ -126,9 +125,8 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 }
 
 // valueToAny converts an attribute.Value to the generic shape encoding/json
-// already knows how to marshal. otel/log v0.21.0 dropped its own Value/Kind
-// types in favor of attribute.Value/Type (upstream record.go now embeds
-// attribute.Value directly) - see the otel/log v0.21.0 release notes.
+// already marshals: otel/log v0.21.0 dropped its own Value/Kind types in favor
+// of attribute.Value/Type (record.go embeds attribute.Value directly - v0.21.0 release notes).
 func valueToAny(v attribute.Value) any {
 	switch v.Type() {
 	case attribute.BOOL:

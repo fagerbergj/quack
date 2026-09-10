@@ -14,10 +14,9 @@ import { traceUrl } from '../state/clientConfig'
 import { Icon } from './Icon'
 import { Sheet } from './Sheet'
 
-// NodeMenu is the node's ⋮ overflow menu: one click for pause/start/stop (no
-// popup round-trip), with "queue a message…" / "edit prompt" opening the
-// popup only when they need its input/editor. Hidden entirely on a terminal
-// node (done/failed/cancelled) - nothing left to do.
+// The node's ⋮ overflow menu: one click for pause/start/stop (no popup
+// round-trip); "queue a message…" / "edit prompt" open the popup only when
+// they need its input/editor. Hidden entirely on a terminal node (done/failed/cancelled) - nothing left to do.
 function NodeMenu({
   nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, onOpenPopup, onOpenArtifacts, onOpenMemories,
 }: {
@@ -157,8 +156,6 @@ export function pausedStatusLabel(status: NodeStatus, reason: NodeState['pauseRe
   }
 }
 
-// (Per-run "spinner" dots were removed - redundant with the node header's
-// pulsing status dot, they read as a stray extra dot in run-card summaries.)
 
 // RunTimer shows a per-run elapsed timer: live while the run is open, frozen on
 // its final duration once complete. Floated right within a card summary.
@@ -212,13 +209,9 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
   )
 }
 
-// ContentPopup shows one block of prose (a judge verdict, a node's vetted
-// answer) full-size, as an extension of the main chat rather than a bespoke
-// modal - the same structure NodePopup uses (#384/#406): a light overlay, a
-// close button on its own row (never overlapping the content - the maintainer just
-// fixed exactly that overlap on NodePopup), Escape-to-close, click-outside-to-
-// close, and the content in a chat-style bubble via AssistantText so it reads
-// as formatted markdown.
+// Shows one block of prose (a judge verdict, a node's vetted answer)
+// full-size as an extension of the main chat rather than a bespoke modal -
+// the same structure NodePopup uses (#384/#406): a light overlay, a close button on its own row (never overlapping the content), Escape/outside-click-to-close, and the content in a chat-style bubble via AssistantText.
 function ContentPopup({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
   return (
     <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
@@ -246,12 +239,9 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
   )
 }
 
-// CollapsedPreview is the one-line "label + truncated preview" affordance -
-// the same compact-collapse ethos as ThinkBlock/ToolBlock (#385/#399) - but
-// clicking it opens the full content in a ContentPopup instead of expanding
-// inline: a judge verdict or a node's vetted answer reads better full-size
-// (it's often the thing the reader most wants to inspect) than height-locked
-// inside the node card.
+// The one-line "label + truncated preview" affordance - the same compact-
+// collapse ethos as ThinkBlock/ToolBlock (#385/#399) - but clicking opens the
+// full content in a ContentPopup instead of expanding inline: a judge verdict or vetted answer reads better full-size (often the thing the reader most wants to inspect) than height-locked inside the node card.
 function CollapsedPreview({ label, text, popupTitle }: { label: string; text: string; popupTitle: string }) {
   const [open, setOpen] = useState(false)
   if (!text) return null
@@ -270,24 +260,10 @@ function CollapsedPreview({ label, text, popupTitle }: { label: string; text: st
   )
 }
 
-// ── per-run stage cards ──────────────────────────────────────────────────────
 
-// WorkerCard renders the worker stage's activity as ONE continuous feed -
-// including any ask_advisor consults, which show up as ordinary tool calls.
-// `runs` is one or more consecutive same-stage worker runs (see groupWorkerRuns):
-// a mechanical continuation round (e.g. a deterministic-check retry, #399
-// follow-up) hands the worker another tool-bearing turn as a NEW run, but that's
-// not a meaningful stage boundary the way a judge-triggered revise is - so
-// their activity is concatenated into this one card rather than opening a
-// second boxed block. The node's vetted answer is rendered separately at the
-// foot of the node (NodeAnswer), so it sits below the judge rather than inside
-// the worker card. Like every other stage card it carries its own labeled
-// header - without one, its activity rows visually attach to whatever labeled
-// card rendered above it.
-// Memoized so an event on one run (a new run object, per messageParts' mapRun)
-// only re-renders that run's own group - sibling groups keep the same `runs`
-// reference and bail out of the shallow prop compare, instead of every card in
-// the node re-rendering on every tool-call/thinking event (#379).
+// Renders the worker stage's activity as ONE continuous feed - ask_advisor
+// consults show up as ordinary tool calls. `runs` is one or more consecutive
+// same-stage worker runs (groupWorkerRuns): a mechanical continuation round (e.g. a deterministic-check retry, #399 follow-up) hands the worker another tool-bearing turn as a NEW run, but that's not a stage boundary the way a judge-triggered revise is - so the activity is concatenated, not a second boxed block. The vetted answer renders separately at the foot (NodeAnswer); each group keeps its own labeled header (without one, its rows attach to the labeled card above); memoized so an event re-renders only that run's group (#379).
 const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[]; running: boolean }) {
   const activity: Activity[] = runs.length === 1 ? runs[0].activity : runs.flatMap(r => r.activity)
   const empty = activity.length === 0
@@ -325,10 +301,9 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
   )
 })
 
-// groupWorkerRuns folds consecutive 'worker'-stage runs into one render group
-// so a mechanical continuation round (e.g. a deterministic-check retry) merges
-// into its predecessor's activity feed instead of opening a new boxed block -
-// judge and revise runs stay their own group (they mark a meaningful stage).
+// Folds consecutive 'worker'-stage runs into one render group so a mechanical
+// continuation round (e.g. a deterministic-check retry) merges into its
+// predecessor's activity feed; judge and revise runs stay their own group (they mark a meaningful stage).
 type RunGroup = { stage: AgentRun['stage']; runs: AgentRun[]; activeIdx: number }
 
 function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
@@ -345,14 +320,9 @@ function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
   return groups
 }
 
-// NodeAnswer renders a node's vetted output as a one-line preview at the foot
-// of the node - the same collapse-to-one-line ethos as ThinkBlock/ToolBlock
-// (#385/#399), extended to the answer (0.9.0 feedback): a truncated preview by
-// default, the full answer in a popup on click (maintainer call: the answer
-// reads better full-size than height-locked inline). Shown for every node so
-// each specialist's answer is inspectable - except the final node, whose
-// answer IS the turn's answer and renders in full in the message bubble
-// below the DAG (a card row here would be a second copy of the same text).
+// A node's vetted output as a one-line preview at the foot of the node - the
+// same collapse-to-one-line ethos as ThinkBlock/ToolBlock (#385/#399) - with
+// the full answer in a popup on click. Shown for every node so each specialist's answer is inspectable - except the final node, whose answer IS the turn's answer and renders in full in the bubble below the DAG (a card row here would be a second copy of the same text).
 function NodeAnswer({ answer }: { answer: string }) {
   const [open, setOpen] = useState(false)
   if (!answer) return null
@@ -371,10 +341,9 @@ function NodeAnswer({ answer }: { answer: string }) {
   )
 }
 
-// judgeFailureHeading names the two ways a judge round ends without a verdict
-// (#779): "unavailable" - the judge model itself couldn't be reached;
-// "no_verdict" - it ran (read files, spent its turns) but never committed
-// one, which "unavailable" would misreport as an outage.
+// Names the two ways a judge round ends without a verdict (#779):
+// "unavailable" - the judge model itself couldn't be reached; "no_verdict"
+// - it ran (read files, spent its turns) but never committed one, which "unavailable" would misreport as an outage.
 function judgeFailureHeading(status?: string): string | null {
   if (status === 'unavailable') return 'Judge unavailable'
   if (status === 'no_verdict') return 'Judge did not reach a verdict'
@@ -502,7 +471,6 @@ function RetryControl({ nodeId, onRetry }: {
   )
 }
 
-// ── DagNode ─────────────────────────────────────────────────────────────────
 
 interface Props {
   node: DagNodeDef
@@ -525,11 +493,9 @@ interface Props {
   onAnswerQuestion?: (nodeId: string, answer: string) => void
 }
 
-// Memoized (#421): DagView re-renders on every SSE event for the whole DAG (any
-// node's token/tool-call/state change), and an unmemoized DagNode re-ran its full
-// body - popup state, timers, activity grouping - for every OTHER node too. The
-// callback props are stable (Chat.tsx wraps them in useCallback), so a shallow
-// compare bails out for every node except the one that actually changed.
+// Memoized (#421): DagView re-renders on every SSE event for the whole DAG
+// (any node's token/tool-call/state change), and an unmemoized DagNode re-ran
+// its full body - popup state, timers, activity grouping - for every OTHER node too. The callback props are stable (Chat.tsx wraps them in useCallback), so a shallow compare bails out for every node except the one that actually changed.
 export const DagNode = memo(function DagNode({
   node, state, runs, answer, isFinal, chatId,
   onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,

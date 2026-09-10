@@ -35,10 +35,8 @@ func (rejectedPlanModel) GenerateContent(_ context.Context, req *model.LLMReques
 			last := req.Contents[len(req.Contents)-1]
 			for _, p := range last.Parts {
 				if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == "plan" {
-					// Already tried and was rejected this invocation - stop
-					// here (empty) so the orchestrator's bounded continuation
-					// loop is what re-drives the next attempt, not an
-					// unbounded in-invocation retry loop.
+					// Rejected this invocation - stop (empty) so the orchestrator's bounded
+					// continuation loop re-drives the next attempt, not an in-invocation retry.
 					yield(&model.LLMResponse{
 						Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: ""}}},
 						FinishReason: genai.FinishReasonStop,
@@ -64,10 +62,9 @@ func (rejectedPlanModel) GenerateContent(_ context.Context, req *model.LLMReques
 	}
 }
 
-// TestPlanRejection_EndsRunFailedWithRejectionReason is #1180's regression
-// guard: a planner turn whose `plan` calls are all rejected, and that ends
-// with no plan and no answer, must end the run failed with the rejection
-// text - not the generic "produced no answer - no error" silent-gap comment.
+// TestPlanRejection_EndsRunFailedWithRejectionReason is #1180's guard: an all-rejected
+// planner turn ending with no plan and no answer must end the run failed with the rejection
+// text - not the generic silent-gap comment.
 func TestPlanRejection_EndsRunFailedWithRejectionReason(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStackWithModelAndAgents(t, rejectedPlanModel{},
 		[]dag.AgentInfo{{Name: "code-reviewer", Description: "reviews PRs"}})
@@ -114,10 +111,9 @@ func TestPlanRejection_EndsRunFailedWithRejectionReason(t *testing.T) {
 	}
 }
 
-// rejectThenSilentModel behaves exactly like rejectedPlanModel for its first
-// dispatch, then - once the request's own text names the "TURN2" marker -
-// always answers empty, never touching the plan tool at all. Simulates a
-// SECOND, unrelated turn on the same chat that is a genuine silent gap.
+// rejectThenSilentModel behaves like rejectedPlanModel for its first dispatch, then once
+// the request names "TURN2" always answers empty, never touching the plan tool - a second,
+// unrelated, genuine silent-gap turn on the same chat.
 type rejectThenSilentModel struct{}
 
 func (rejectThenSilentModel) Name() string { return "reject-then-silent-stub" }
@@ -142,11 +138,9 @@ func (rejectThenSilentModel) GenerateContent(_ context.Context, req *model.LLMRe
 	return rejectedPlanModel{}.GenerateContent(context.Background(), req, s)
 }
 
-// TestPlanRejection_DoesNotLeakIntoALaterSilentGap is the #1181 review's
-// suggestion: an earlier turn's rejection must not outlive it - a later,
-// unrelated turn on the SAME chat that genuinely produces nothing (no plan
-// call at all) must derive a true silent gap (idle, no error), not get
-// stamped failed with the first turn's stale rejection text.
+// TestPlanRejection_DoesNotLeakIntoALaterSilentGap is the #1181 review's suggestion:
+// an earlier turn's rejection must not outlive it - a later unrelated no-output turn on
+// the SAME chat must derive a true silent gap (idle, no error), not the stale rejection.
 func TestPlanRejection_DoesNotLeakIntoALaterSilentGap(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStackWithModelAndAgents(t, rejectThenSilentModel{},
 		[]dag.AgentInfo{{Name: "code-reviewer", Description: "reviews PRs"}})
@@ -179,10 +173,8 @@ func TestPlanRejection_DoesNotLeakIntoALaterSilentGap(t *testing.T) {
 	if err := dispatch(context.Background(), second); err != nil {
 		t.Fatalf("dispatch 2: %v", err)
 	}
-	// MarkRunActive alone (turn 2 starting) already bumps updated_at via
-	// gorm's auto-timestamp - wait for ActiveTurnID to go non-empty (turn 2
-	// truly started) and then clear again (StampTerminalOutcome, turn 2's
-	// own finish), not just "updated_at moved".
+	// MarkRunActive alone already bumps updated_at via gorm's auto-timestamp - wait for
+	// ActiveTurnID to go non-empty (turn 2 truly started) and then clear (StampTerminalOutcome).
 	waitUntil(t, 5*time.Second, func() bool {
 		c, _ := st.GetChat(context.Background(), chatID)
 		return c != nil && c.ActiveTurnID != ""

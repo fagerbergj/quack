@@ -16,12 +16,9 @@ import (
 // package keeps its own copy to avoid an import cycle).
 const AppName = "quack"
 
-// InlineMaxBytes is the largest artifact payload a reading surface returns
-// inline - the read_artifact agent tool (internal/acp/memorymcp.go) and the
-// REST artifact diff endpoint (internal/server/rest/artifacts.go) both cap
-// at this bound, so they can't silently disagree about what "too big" means.
-// Anything bigger tells the reader to fetch it by another means, so one
-// oversized revision can't flood a single response or an agent's context.
+// InlineMaxBytes caps payloads the read_artifact tool and REST artifact diff
+// endpoint return inline (shared so "too big" means the same in both).
+// Bigger payloads must be fetched by another means, not flood a response.
 const InlineMaxBytes = 256 * 1024
 
 // Scheme names a reference's FileData.FileURI - never a scheme a real

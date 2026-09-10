@@ -14,8 +14,7 @@ import (
 
 // ListModels queries {endpoint}/models and returns the model IDs, sorted. Works
 // against any OpenAI-compatible server (the response is `{ "data": [{ "id": ... }] }`).
-// The wizard uses this to populate role selects; on failure the caller falls
-// back to manual entry.
+// The wizard uses this to populate role selects; on failure the caller falls back to manual entry.
 func ListModels(ctx context.Context, endpoint, apiKey string) ([]string, error) {
 	ep := strings.TrimRight(endpoint, "/") + "/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep, nil)

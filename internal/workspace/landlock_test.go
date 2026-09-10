@@ -46,8 +46,7 @@ var landlockBaseRO = []string{"--ro", "/usr", "--ro", "/bin", "--ro", "/lib", "-
 
 // TestSandboxExecShimConfinement is spec test case 1: the whole point of the
 // shim. An rw-granted write succeeds, the SAME command targeting a sibling
-// (ungranted) dir fails, a granted RO read succeeds, and a read outside every
-// grant fails.
+// (ungranted) dir fails, a granted RO read succeeds, and a read outside every grant fails.
 func TestSandboxExecShimConfinement(t *testing.T) {
 	requireLandlock(t)
 
@@ -108,10 +107,7 @@ func TestSandboxExecRequiresTarget(t *testing.T) {
 
 // TestSandboxLandlockRealToolchains is the empirical basis for the /proc and
 // /dev grant decisions (landlockGrants/landlockSystemDirs' docs), exercised
-// through the REAL production path (RunArgv -> childArgv's landlock branch),
-// not just the raw shim: git runs cleanly with no /proc grant at all, and
-// node's os.cpus() - which silently returns an EMPTY array without /proc,
-// rather than failing loudly - reports the real CPU count with it.
+// through the REAL production path (RunArgv -> childArgv's landlock branch), not just the raw shim: git runs cleanly with no /proc grant at all, and node's os.cpus() - which silently returns an EMPTY array without /proc, rather than failing loudly - reports the real CPU count with it.
 func TestSandboxLandlockRealToolchains(t *testing.T) {
 	requireLandlock(t)
 
@@ -161,12 +157,9 @@ func TestSandboxLandlockRealToolchains(t *testing.T) {
 	})
 }
 
-// setupLinkedWorktreeFixture creates a plain (unsandboxed) clone at parentDir
-// and links a git worktree off it at the returned dir, checked out on its own
-// branch - the fixture the landlock grant (worktreeCommonGitDirs) exists
-// for. Provisioning itself runs OUTSIDE the sandbox (exactly like
-// tools.SetupClone/SetupWorktree do in production - the harness provisions,
-// only the AGENT'S OWN commands run confined).
+// setupLinkedWorktreeFixture creates a plain (unsandboxed) clone at
+// parentDir and links a git worktree off it at the returned dir, checked out
+// on its own branch - the fixture the landlock grant (worktreeCommonGitDirs) exists for. Provisioning itself runs OUTSIDE the sandbox (exactly like tools.SetupClone/SetupWorktree do in production - the harness provisions, only the AGENT'S OWN commands run confined).
 func setupLinkedWorktreeFixture(t *testing.T) (worktreeDir string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -194,11 +187,9 @@ func setupLinkedWorktreeFixture(t *testing.T) (worktreeDir string) {
 	return worktreeDir
 }
 
-// TestSandboxLandlockLinkedWorktreeGitWorks pins that a linked worktree's git
-// commands work under landlock: its ".git" is a pointer file, with the object
-// db/refs/index living under the PARENT clone's ".git" outside the worktree
-// dir. Without the extra grant (worktreeCommonGitDirs) landlock's deny-by-
-// default breaks `git status`/`git log` with "not a git repository".
+// TestSandboxLandlockLinkedWorktreeGitWorks pins that a linked worktree's
+// git commands work under landlock: its ".git" is a pointer file, with the
+// object db/refs/index living under the PARENT clone's ".git" outside the worktree dir. Without the extra grant (worktreeCommonGitDirs) landlock's deny-by-default breaks `git status`/`git log` with "not a git repository".
 func TestSandboxLandlockLinkedWorktreeGitWorks(t *testing.T) {
 	requireLandlock(t)
 	worktreeDir := setupLinkedWorktreeFixture(t)
@@ -225,10 +216,7 @@ func TestSandboxLandlockLinkedWorktreeGitWorks(t *testing.T) {
 
 // TestSandboxLandlockWorktreeCannotWriteParentStore is the other half of the
 // worktree grant: the shared store is granted READ-ONLY, so a read-only node
-// (a reviewer or explorer in its own worktree) can read the writer's history
-// but cannot rewrite its refs or objects. Granting the whole parent .git
-// read-write - as the first cut of this did - would have left exactly the
-// cross-node write the worktree isolation exists to end.
+// (a reviewer or explorer in its own worktree) can read the writer's history but cannot rewrite its refs or objects. Granting the whole parent .git read-write - as the first cut of this did - would have left exactly the cross-node write the worktree isolation exists to end.
 func TestSandboxLandlockWorktreeCannotWriteParentStore(t *testing.T) {
 	requireLandlock(t)
 	worktreeDir := setupLinkedWorktreeFixture(t)
@@ -267,9 +255,8 @@ func TestSandboxLandlockWorktreeCannotWriteParentStore(t *testing.T) {
 }
 
 // TestWorktreeCommonGitDirResolvesParentGitDir pins the pointer-file parsing
-// itself, independent of the sandbox: a linked worktree's WorktreeCommonGitDir
-// resolves to the PARENT clone's real ".git" directory, and a plain (non-
-// worktree) clone or an arbitrary directory resolves to "".
+// itself, independent of the sandbox: a linked worktree's
+// WorktreeCommonGitDir resolves to the PARENT clone's real ".git" directory, and a plain (non-worktree) clone or an arbitrary directory resolves to "".
 func TestWorktreeCommonGitDirResolvesParentGitDir(t *testing.T) {
 	worktreeDir := setupLinkedWorktreeFixture(t)
 
@@ -314,8 +301,7 @@ func TestResolveSandboxLandlockSucceeds(t *testing.T) {
 
 // TestWrapArgvLandlockIncludesExtraGrants: WrapArgv adds extraRO/extraRW on
 // top of the caller's own scope (internal/acp's skill paths, and worktree
-// isolation's future extraRW). The bwrap and none halves live in
-// wrapargv_bwrap_test.go.
+// isolation's future extraRW). The bwrap and none halves live in wrapargv_bwrap_test.go.
 func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 	dir := t.TempDir()
 	argv := []string{"opencode", "acp"}
@@ -329,12 +315,9 @@ func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 	}
 }
 
-// TestWrapArgvLandlockCarriesNoLimits (#798, reverting #646): the ACP wrap path
-// must NOT carry rlimits. On the live deployment each limit alone stopped
-// opencode before its first ACP message - FSIZE 1024MB against a 1.27GB
-// opencode.db, and AS 8192MB against V8's startup reservation - both reported
-// as the same opaque "Failed query: PRAGMA wal_checkpoint(PASSIVE)". This
-// asserts the absence so the next edit to WrapArgv can't silently restore it.
+// TestWrapArgvLandlockCarriesNoLimits (#798, reverting #646): the ACP wrap
+// path must NOT carry rlimits. On the live deployment each limit alone
+// stopped opencode before its first ACP message - FSIZE 1024MB against a 1.27GB opencode.db, and AS 8192MB against V8's startup reservation - both reported as the same opaque "Failed query: PRAGMA wal_checkpoint(PASSIVE)". This asserts the absence so the next edit to WrapArgv can't silently restore it.
 func TestWrapArgvLandlockCarriesNoLimits(t *testing.T) {
 	dir := t.TempDir()
 	argv := []string{"opencode", "acp"}
@@ -369,8 +352,7 @@ func TestLandlockArgvStillCarriesLimits(t *testing.T) {
 
 // TestLandlockGrantsIncludesCapsExtraRO is a pure computation check (no
 // Landlock kernel support needed): Caps.ExtraRO (skill paths the node needs
-// to read, per serve.go - no longer a GitHub context dir, #1010 deleted
-// that use) lands in the read-only grant set, never the read-write one.
+// to read, per serve.go - no longer a GitHub context dir, #1010 deleted that use) lands in the read-only grant set, never the read-write one.
 func TestLandlockGrantsIncludesCapsExtraRO(t *testing.T) {
 	dir := t.TempDir()
 	ctxDir := t.TempDir()
@@ -393,9 +375,8 @@ func TestLandlockGrantsIncludesCapsExtraRO(t *testing.T) {
 }
 
 // TestSandboxExecStampsTheEnvMarker pins the observability marker: a confined
-// process is indistinguishable from a bare one in `ps` (syscall.Exec replaces the
-// image) and kernels through 6.8 expose no Landlock field in /proc, so the marker
-// is the only way to answer "is this confined?" from outside.
+// process is indistinguishable from a bare one in `ps` (syscall.Exec replaces
+// the image) and kernels through 6.8 expose no Landlock field in /proc, so the marker is the only way to answer "is this confined?" from outside.
 func TestSandboxExecStampsTheEnvMarker(t *testing.T) {
 	requireLandlock(t)
 	dir := t.TempDir()
@@ -422,10 +403,7 @@ func TestSandboxExecStampsTheEnvMarker(t *testing.T) {
 
 // TestSandboxExecRefer pins issue #954: without LANDLOCK_ACCESS_FS_REFER,
 // link()/rename() across two dirs under the SAME rw grant is denied and
-// reported as EXDEV even though both paths are on one filesystem - breaking
-// git's object writes (rename tmp -> .git/objects/xx/) and `git clone
-// --local` (hardlinks). All three checks share a single rw-granted root so a
-// regression to the pre-WithRefer ruleset fails every subcase.
+// reported as EXDEV even though both paths are on one filesystem - breaking git's object writes (rename tmp -> .git/objects/xx/) and `git clone --local` (hardlinks). All three checks share a single rw-granted root so a regression to the pre-WithRefer ruleset fails every subcase.
 func TestSandboxExecRefer(t *testing.T) {
 	requireLandlock(t)
 	if _, err := exec.LookPath("git"); err != nil {

@@ -11,10 +11,8 @@ import (
 )
 
 // CriterionComparison is one rubric criterion's recorded-vs-new judge score.
-// *OK is false when that side's bundle carried no score for this criterion
-// at all (the rubric changed between runs, or a judge-unavailable round -
-// see vetting/judge.go's judge-unavailable path, which emits no evaluation
-// event); Delta is only meaningful when both are true.
+// *OK is false when that side's bundle carried no score for this criterion at
+// all (the rubric changed between runs, or a judge-unavailable round, which emits no evaluation event - see vetting/judge.go); Delta is only meaningful when both are true.
 type CriterionComparison struct {
 	Name       string  `json:"name"`
 	Recorded   float64 `json:"recorded,omitempty"`
@@ -26,8 +24,7 @@ type CriterionComparison struct {
 
 // Comparison is eval's whole result for one bundle re-run: the swap that was
 // made, both runs' final-answer lengths, and the per-criterion score table
-// plus each side's weakest-link overall (vetting.aggregateVerdict's own
-// aggregation - the lowest criterion, no averaging, no caps).
+// plus each side's weakest-link overall (vetting.aggregateVerdict's own aggregation - the lowest criterion, no averaging, no caps).
 type Comparison struct {
 	Role              string                `json:"role"`
 	Model             string                `json:"model"`
@@ -83,15 +80,9 @@ func Build(role, model string, changedAgents []string, recordedScores, newScores
 	return c
 }
 
-// latestPerCriterion collapses a bundle's raw evaluation.result events into
-// one score per criterion name: the LATEST (by timestamp) reading, which is
-// the gate's final verdict for whichever node/round most recently judged it
-// (an earlier, lower score from a revise loop is superseded - the gate's own
-// pass/fail decision only ever looks at the last round, see vetting/node.go).
-//
-// v1 ceiling: a multi-node run's SAME criterion name from two different
-// nodes collapses into one row - fine for the common single/few-node eval
-// target this feature ships for, not a cross-node breakdown.
+// latestPerCriterion collapses a bundle's raw evaluation.result events into one score per criterion name: the LATEST (by timestamp) reading, which is
+// the gate's final verdict for whichever node/round most recently judged it (an earlier, lower score from a revise loop is superseded - the gate's own
+// pass/fail decision only ever looks at the last round, see vetting/node.go). v1 ceiling: a multi-node run's SAME criterion name from two different nodes collapses into one row - fine for the common single/few-node eval target this feature ships for, not a cross-node breakdown.
 func latestPerCriterion(scores []replay.EvalScore) map[string]replay.EvalScore {
 	out := map[string]replay.EvalScore{}
 	for _, s := range scores {

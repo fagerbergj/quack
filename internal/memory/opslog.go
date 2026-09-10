@@ -14,10 +14,9 @@ const (
 	OpDelete     OpsLogOp = "delete"
 	OpReinforce  OpsLogOp = "reinforce"
 	OpInvalidate OpsLogOp = "invalidate"
-	// OpVote: a judge or human's per-memory vote (epic #1255 P1). Recall
-	// delivery itself is NOT logged here - the ledger's memory.recall entry
-	// is the source of truth for what a chat retrieved (see internal/ledger
-	// and internal/ledger/fold).
+	// OpVote: a judge or human's per-memory vote (epic #1255 P1). Recall delivery itself is
+	// NOT logged here - the ledger's memory.recall entry is the source of truth
+	// for what a chat retrieved (see internal/ledger and internal/ledger/fold).
 	OpVote OpsLogOp = "vote"
 )
 
@@ -38,17 +37,14 @@ const (
 	ActorRescope OpsLogActor = "rescope"
 )
 
-// OpsLog persists an append-only audit trail of memory lifecycle transitions
-// (design doc §3's memory_ops table). internal/memory can't import
-// internal/store - the server bootstrap (internal/serve) wires a concrete
-// implementation backed by internal/store.Store at construction time (see
-// Store.SetOpsLog).
+// OpsLog persists an append-only audit trail of memory lifecycle transitions (design
+// doc §3's memory_ops table). internal/memory can't import internal/store - the
+// server bootstrap (internal/serve) wires a concrete implementation backed by internal/store.Store at construction time (see Store.SetOpsLog).
 type OpsLog interface {
 	LogMemoryOp(ctx context.Context, memoryID string, op OpsLogOp, actor OpsLogActor, reason string) error
-	// PruneMemoryOps hard-deletes memory_ops rows older than cutoff (design
-	// doc §6's bound on unbounded audit-trail growth) and reports how many
-	// were removed - the retention sweep's counterpart to the point-level
-	// hard-delete it runs alongside.
+	// PruneMemoryOps hard-deletes memory_ops rows older than cutoff (design doc §6's bound on
+	// unbounded audit-trail growth) and reports how many were removed - the
+	// retention sweep's counterpart to the point-level hard-delete it runs alongside.
 	PruneMemoryOps(ctx context.Context, cutoff time.Time) (int, error)
 }
 

@@ -19,13 +19,9 @@ type askUserResult struct {
 	Status string `json:"status"`
 }
 
-// NewAskUserTool returns the mid-node HITL tool (vetting.AskToolName): a worker
-// agent calls it when its task is blocked on information only the user has. The
-// tool takes no action itself - it records the question (in its call args) and
-// ends the worker's turn (SkipSummarization); the trust GATE detects the call,
-// pauses the NODE via workflow.ResumeOrRequestInput under a round-stable
-// interrupt ID, and the user's next message resumes the node with the answer
-// folded into the worker's prompt.
+// NewAskUserTool: the mid-node HITL tool (vetting.AskToolName), for turns blocked
+// on user-only information. It records the question (in its call args) and ends
+// the worker's turn (SkipSummarization); the trust gate pauses the node via workflow.ResumeOrRequestInput under a round-stable interrupt ID, and the user's next message resumes it with the answer folded into the worker's prompt.
 func NewAskUserTool() (tool.Tool, error) {
 	return functiontool.New[askUserArgs, askUserResult](
 		functiontool.Config{

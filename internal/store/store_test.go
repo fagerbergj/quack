@@ -66,8 +66,7 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 
 // TestChatUsageAggregate covers GetChatUsage/ChatsUsageTotals: SQL SUM across
 // a chat's plain-reply turns AND its DAG nodes (joined through the plan),
-// never loading a row into memory. Two chats prove ChatsUsageTotals doesn't
-// cross-contaminate between them.
+// never loading a row into memory; two chats prove ChatsUsageTotals doesn't cross-contaminate between them.
 func TestChatUsageAggregate(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -202,9 +201,7 @@ func TestChatEventLog(t *testing.T) {
 
 // TestSetChatGitHub covers both the create-if-missing path (webhook dispatch
 // can fire before the chat row exists) and updating an existing row. Also
-// pins #512's read/write asymmetry fix: SessionUser is recorded on create and
-// must NOT move on a later dispatch by a different commenter, since existing
-// session history was already written under the original login.
+// pins #512's read/write asymmetry fix: SessionUser is recorded on create and must NOT move on a later dispatch by a different commenter, since existing session history was already written under the original login.
 func TestSetChatGitHub(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -316,8 +313,7 @@ func TestGithubReviewBaselineRoundTrip(t *testing.T) {
 
 // TestGithubMergeIntentRoundTrip pins the standing quack:merge intent's store
 // half: no row until explicitly set, then readable back with the recorder,
-// updatable in place (re-applying the label refreshes it), and gone after
-// delete (consumed by a merge).
+// updatable in place (re-applying the label refreshes it), and gone after delete (consumed by a merge).
 func TestGithubMergeIntentRoundTrip(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -377,10 +373,7 @@ func asstEvent(parts ...*genai.Part) *session.Event {
 
 // orchestratorAgentNodeEvent is the orchestrator's OWN reply as ADK actually
 // stamps it in production: the orchestrator llmagent is wrapped in a
-// workflow.AgentNode too (Start → agentNode), so its real events carry NodeInfo
-// just like a gate-internal node's - "author, not NodeInfo" is what distinguishes
-// them. Regression fixture for the bug where a plain `NodeInfo != nil` exclusion
-// filter dropped the orchestrator's own conversational (no-DAG) answer entirely.
+// workflow.AgentNode too (Start → agentNode), so its real events carry NodeInfo just like a gate-internal node's - "author, not NodeInfo" is what distinguishes them. Regression fixture for the bug where a plain `NodeInfo != nil` exclusion filter dropped the orchestrator's own conversational (no-DAG) answer entirely.
 func orchestratorAgentNodeEvent(text string) *session.Event {
 	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "orchestrator"
@@ -450,12 +443,7 @@ func TestGroupSessionEvents(t *testing.T) {
 
 // compactionEvent mirrors what ADK's compactor actually persists (adk/v2
 // internal/compactioninternal summary_event.go newSummaryEvent): Author
-// "user" (a summary is injected context, re-authored "model" only when
-// materialized into a prompt) but no top-level Content - the summary prose
-// lives solely under Actions.Compaction.CompactedContent. groupSessionEvents'
-// `ev.Content == nil` guard must skip it rather than reading Author=="user"
-// as a new turn boundary (#A3: the orchestrator's chat session can now carry
-// one of these once compaction is enabled).
+// "user" (a summary is injected context, re-authored "model" only when materialized into a prompt) but no top-level Content - the summary prose lives solely under Actions.Compaction.CompactedContent. groupSessionEvents' `ev.Content == nil` guard must skip it rather than reading Author=="user" as a new turn boundary (#A3: the orchestrator's chat session can now carry one of these once compaction is enabled).
 func compactionEvent() *session.Event {
 	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "user"
@@ -467,10 +455,7 @@ func compactionEvent() *session.Event {
 
 // TestGroupSessionEvents_CompactionEventDoesNotSplitATurn is a regression
 // test for the ADK audit's A3 finding: a compaction summary event has no
-// top-level Content (see compactionEvent), so it must not register as a
-// bogus Author=="user" turn boundary - that would desync groupSessionEvents'
-// output length from ListTurns' row count and shift every later turn's
-// content onto the wrong ChatTurn in GetTurnsWithContent's offset alignment.
+// top-level Content (see compactionEvent), so it must not register as a bogus Author=="user" turn boundary - that would desync groupSessionEvents' output length from ListTurns' row count and shift every later turn's content onto the wrong ChatTurn in GetTurnsWithContent's offset alignment.
 func TestGroupSessionEvents_CompactionEventDoesNotSplitATurn(t *testing.T) {
 	events := []*session.Event{
 		userEvent("turn one"),
@@ -506,8 +491,7 @@ func nodeEvent(path string, parts ...*genai.Part) *session.Event {
 
 // TestGroupSessionEvents_NodeActivityExcluded guards the leak that made a node's
 // internal deliberation (advisor guidance, a worker's raw draft) show up as the
-// turn's message: gate-internal events (NodeInfo set) must contribute NEITHER
-// asstText NOR toolCalls - only the orchestrator's own top-level events do.
+// turn's message: gate-internal events (NodeInfo set) must contribute NEITHER asstText NOR toolCalls - only the orchestrator's own top-level events do.
 func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 	events := []*session.Event{
 		userEvent("research X"),
@@ -540,8 +524,7 @@ func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 
 // TestGroupSessionEvents_UsageAccumulation covers Turn.usage's data source: the
 // orchestrator's own model events carry UsageMetadata, summed per turn - while a
-// gate-internal node event's usage (already surfaced separately via DagNodeState)
-// must NOT leak into it, mirroring the asstText/toolCalls exclusion above.
+// gate-internal node event's usage (already surfaced separately via DagNodeState) must NOT leak into it, mirroring the asstText/toolCalls exclusion above.
 func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
 	orch1 := asstEvent(&genai.Part{Text: "thinking"})
 	orch1.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 30, CandidatesTokenCount: 5}
@@ -571,9 +554,7 @@ func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
 
 // TestGetTurnsWithContent_UsageFallbackIsSymmetric pins the review fix: a
 // turn that predates SetTurnUsage (ChatTurn's token columns are zero) falls
-// back to the session-walk-derived usage for ALL five fields, not just the
-// three original ones - cachedTokens/totalTokens used to stay 0 even though
-// groupSessionEvents already computed them.
+// back to the session-walk-derived usage for ALL five fields, not just the three original ones - cachedTokens/totalTokens used to stay 0 even though groupSessionEvents already computed them.
 func TestGetTurnsWithContent_UsageFallbackIsSymmetric(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -624,10 +605,7 @@ func TestGetTurnsWithContent_UsageFallbackIsSymmetric(t *testing.T) {
 
 // TestGetTurnsWithContent_SurvivesSessionReset pins #1226: a ResetHistory
 // dispatch deletes the whole ADK session (orchestrator.ResetSession), which
-// leaves turns that predate it with no session events at all - not even a
-// misaligned one. GetTurnsWithContent must still show the user's original
-// text for that turn, from the ChatTurn.UserText column stamped at SaveTurn,
-// instead of rendering it as {"content": ""} forever.
+// leaves turns that predate it with no session events at all - not even a misaligned one. GetTurnsWithContent must still show the user's original text for that turn, from the ChatTurn.UserText column stamped at SaveTurn, instead of rendering it as {"content": ""} forever.
 func TestGetTurnsWithContent_SurvivesSessionReset(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -655,12 +633,8 @@ func TestGetTurnsWithContent_SurvivesSessionReset(t *testing.T) {
 	}
 
 	// A ResetHistory dispatch for turn 2 deletes the whole session
-	// (Orchestrator.ResetSession) before the new turn's own events land.
-	// The ADK schema declares its events table as CASCADE-owned by the
-	// session row (see adk/v2/session/database storageEvent), which
-	// Postgres enforces on every delete; SQLite's enforcement is
-	// per-connection and flaky under gorm's pool, so this deletes the
-	// orphaned event row directly to pin the CASCADE behavior deterministically.
+	// (Orchestrator.ResetSession) before the new turn's own events land. The
+	// ADK schema declares its events table as CASCADE-owned by the session row (see adk/v2/session/database storageEvent), which Postgres enforces on every delete; SQLite's enforcement is per-connection and flaky under gorm's pool, so this deletes the orphaned event row directly to pin the CASCADE behavior deterministically.
 	if err := st.Sessions.Delete(ctx, &session.DeleteRequest{AppName: chatAppName, UserID: "local", SessionID: chatID}); err != nil {
 		t.Fatalf("session Delete: %v", err)
 	}
@@ -695,12 +669,7 @@ func TestGetTurnsWithContent_SurvivesSessionReset(t *testing.T) {
 
 // TestDeleteChat_ReapsSession pins #352 bug 2: deleting a chat must not
 // strand its turns, DAG plan/node state, durable event log, or ADK session -
-// all of it lives in tables/services keyed off the chat id, and the "chats"
-// row was the only thing DeleteChat used to touch. Also covers a
-// GitHub-dispatched chat that predates #512's SessionUser column (id prefix
-// github-, no recorded SessionUser): its ADK session was written under
-// fallback user "github" - the reap must find it there, not the row (already
-// deleted by the time the ADK cleanup runs).
+// all of it lives in tables/services keyed off the chat id, and the "chats" row was the only thing DeleteChat used to touch. Also covers a GitHub-dispatched chat that predates #512's SessionUser column (id prefix github-, no recorded SessionUser): its ADK session was written under fallback user "github" - the reap must find it there, not the row (already deleted by the time the ADK cleanup runs).
 func TestDeleteChat_ReapsSession(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -757,10 +726,7 @@ func TestDeleteChat_ReapsSession(t *testing.T) {
 
 // TestSessionUserForChat_RoundTrip pins the #512 read/write asymmetry fix: a
 // GitHub chat created for commenter "alice" resolves "alice" (not the old
-// hardcoded "github") via both SessionUserFor and SessionUserForChat, and
-// DeleteChat reaps the ADK session under that SAME identity. An
-// older/unrecorded GitHub chat (empty SessionUser) still falls back to
-// "github"; a non-GitHub chat falls back to "local".
+// hardcoded "github") via both SessionUserFor and SessionUserForChat, and DeleteChat reaps the ADK session under that SAME identity. An older/unrecorded GitHub chat (empty SessionUser) still falls back to "github"; a non-GitHub chat falls back to "local".
 func TestSessionUserForChat_RoundTrip(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -809,8 +775,7 @@ func TestSessionUserForChat_RoundTrip(t *testing.T) {
 
 // TestGroupSessionEvents_OrchestratorOwnReplyKept guards the regression: the
 // orchestrator's own conversational (no-DAG) reply carries NodeInfo (it's
-// AgentNode-wrapped too) but must still be captured - only gate-internal
-// (different-author) events are excluded.
+// AgentNode-wrapped too) but must still be captured - only gate-internal (different-author) events are excluded.
 func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
 	events := []*session.Event{
 		userEvent("what is the tallest mountain?"),
@@ -827,10 +792,7 @@ func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
 
 // TestRecordedQuerySQL_OffByDefaultAndBounded is the #1113 second-review
 // regression: record_sql's callback is registered unconditionally in New(),
-// so without a gate + cap it would grow forever on a live server. Proves
-// both halves: recording off (the production default) leaves the slice
-// empty no matter how many queries run, and recording on caps at
-// querySQLCap regardless of how many more queries run past it.
+// so without a gate + cap it would grow forever on a live server. Proves both halves: recording off (the production default) leaves the slice empty no matter how many queries run, and recording on caps at querySQLCap regardless of how many more queries run past it.
 func TestRecordedQuerySQL_OffByDefaultAndBounded(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -863,8 +825,7 @@ func TestRecordedQuerySQL_OffByDefaultAndBounded(t *testing.T) {
 
 // TestUpdateTitle_CapsLength is #1124's backstop: a titler that ignores its
 // own "3-6 words" instruction (or a manual rename, or an extension's origin
-// label) must never persist an unbounded string as a chat's title - capped
-// once here, not duplicated per caller.
+// label) must never persist an unbounded string as a chat's title - capped once here, not duplicated per caller.
 func TestUpdateTitle_CapsLength(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -942,8 +903,7 @@ func TestDeleteChat_RemovesCheckpointRow(t *testing.T) {
 
 // TestGetTurnsWithContent_NodesQueryIsConstant pins the perf audit #5 fix:
 // dag_nodes must be fetched with one plan_id IN (?) query, not one
-// GetDagNodes call per turn - so the query delta between N=5 and N=20 turns
-// (each with its own plan+node) must be the same, not proportional to N.
+// GetDagNodes call per turn - so the query delta between N=5 and N=20 turns (each with its own plan+node) must be the same, not proportional to N.
 func TestGetTurnsWithContent_NodesQueryIsConstant(t *testing.T) {
 	ctx := context.Background()
 	run := func(n int) int64 {

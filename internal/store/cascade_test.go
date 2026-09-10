@@ -13,8 +13,7 @@ import (
 
 // TestResumePausedDagNodes_SkipsChatRowGone pins #1296: a paused node whose
 // owning chat row is gone (raw SQL bypassing DeleteChat's cascade, or legacy
-// data from before the chats(id) FK existed) must never be resumed - resuming
-// it would write chat_events for a chat with no row, exactly the prod orphan.
+// data from before the chats(id) FK existed) must never be resumed - resuming it would write chat_events for a chat with no row, exactly the prod orphan.
 func TestResumePausedDagNodes_SkipsChatRowGone(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -34,9 +33,7 @@ func TestResumePausedDagNodes_SkipsChatRowGone(t *testing.T) {
 
 	// Reproduce the exact orphan shape prod hit: chat row gone, dag_plans/
 	// dag_nodes still there. With the chats(id) FK live this can no longer
-	// happen through this store's own connection - disable enforcement to
-	// simulate a pre-#1296 database or a raw SQL delete run with
-	// constraints off.
+	// happen through this store's own connection - disable enforcement to simulate a pre-#1296 database or a raw SQL delete run with constraints off.
 	if err := st.db.Exec("PRAGMA foreign_keys = OFF").Error; err != nil {
 		t.Fatalf("disable FK: %v", err)
 	}
@@ -66,8 +63,7 @@ func TestResumePausedDagNodes_SkipsChatRowGone(t *testing.T) {
 
 // TestDeleteChatRow_CascadesPerChatTables pins #1296's DB-level guarantee: a
 // raw SQL DELETE against chats (bypassing DeleteChat's app-level cascade
-// entirely) still removes every per-chat row, via ON DELETE CASCADE, not
-// application code.
+// entirely) still removes every per-chat row, via ON DELETE CASCADE, not application code.
 func TestDeleteChatRow_CascadesPerChatTables(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -113,11 +109,8 @@ func TestDeleteChatRow_CascadesPerChatTables(t *testing.T) {
 }
 
 // TestNew_SweepsPreExistingOrphansBeforeMigrating pins the boot-safety half
-// of #1296: prod already had 1,367 orphan chat_events rows (chats hard-deleted
-// before this FK existed) when this migration ships. Without a sweep,
-// AutoMigrate's ALTER TABLE ADD CONSTRAINT (Postgres) / table-rebuild
-// (SQLite) fails validating a pre-existing orphan, and the failure repeats
-// every boot since the orphan survives a restart.
+// of #1296: prod already had 1,367 orphan chat_events rows (chats
+// hard-deleted before this FK existed) when this migration ships. Without a sweep, AutoMigrate's ALTER TABLE ADD CONSTRAINT (Postgres) / table-rebuild (SQLite) fails validating a pre-existing orphan, and the failure repeats every boot since the orphan survives a restart.
 func TestNew_SweepsPreExistingOrphansBeforeMigrating(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	raw, err := sql.Open(sqlite.DriverName, dbPath)

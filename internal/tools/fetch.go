@@ -56,7 +56,6 @@ func (directFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) 
 	return fetchVia(tc, d, nil, u, target)
 }
 
-// crawl4aiFetcher: direct GET with crawl4ai render fallback.
 type crawl4aiFetcher struct{ renderer PageRenderer }
 
 func (f crawl4aiFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
@@ -78,7 +77,6 @@ func newFetcher(kind, base string, client *http.Client) (fetcher, error) {
 	}
 }
 
-// newFetch: builds fetch tool over a config-selected fetcher.
 func newFetch(d Deps) (tool.Tool, error) {
 	f, err := newFetcher(d.Fetch.Kind, d.Fetch.URL, d.Client)
 	if err != nil {

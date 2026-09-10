@@ -35,11 +35,9 @@ func TestAgentBundlesLoad(t *testing.T) {
 	}
 }
 
-// TestCodeImplementerBundle pins the new bundle's specifics beyond the generic
-// sweep above: the card's name matches its config key (buildAgents keys gate
-// configs by that name), and its rubric.md override loads non-empty - the
-// exact path buildAgents takes (vetting.LoadBundleRubric) to replace the
-// default config/rubric.md with the code-quality one for this agent.
+// TestCodeImplementerBundle pins the bundle's specifics beyond the generic sweep above:
+// the card's name matches its config key (buildAgents keys gate configs by that name), and
+// the rubric.md override loads non-empty via buildAgents' path (vetting.LoadBundleRubric).
 func TestCodeImplementerBundle(t *testing.T) {
 	b, err := agent.LoadBundle("../../agents/code-implementer")
 	if err != nil {
@@ -55,11 +53,9 @@ func TestCodeImplementerBundle(t *testing.T) {
 	if rubric == "" {
 		t.Fatal("rubric override is empty - buildAgents would silently fall back to the default rubric")
 	}
-	// Spot-check the rubric carries all three parts of its contract: the
-	// research criteria, the first-class ponytail section, and the
-	// claims-vs-ledger fabrication criterion (live e2e 2026-07-10).
-	// "weakest-link" itself is judge-prompt content now, not rubric content
-	// (#941) - judge.go states the aggregation method once, not per rubric.
+	// Spot-check the rubric carries its contract: research criteria, the ponytail section, and
+	// the claims-vs-ledger fabrication criterion. "weakest-link" is judge-prompt content, not
+	// rubric content (#941) - judge.go states the aggregation method once, not per rubric.
 	for _, marker := range []string{"checks_pass", "complexity_proportionate", "module_shape", "coupling",
 		"claims_match_activity", "Workspace activity", "ledger"} {
 		if !strings.Contains(rubric, marker) {

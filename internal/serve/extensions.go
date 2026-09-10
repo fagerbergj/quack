@@ -220,11 +220,9 @@ func sdkExtensionTools(exts []builtSDKExtension) []extTool {
 	return out
 }
 
-// findGitCredentialSource returns the first built extension implementing
-// sdk.GitCredentialSource, detected the same way Starter is - not
-// hardcoded to one extension's name. More than one match logs a warning and
-// keeps the first (deterministic build order, sorted by name); today only
-// the GitHub extension implements this.
+// findGitCredentialSource returns the first built extension implementing sdk.GitCredentialSource,
+// detected the same way Starter is - not hardcoded to one extension's name. More than one match
+// logs a warning and keeps the first (deterministic build order, sorted by name).
 func findGitCredentialSource(exts []builtSDKExtension) (extsdk.GitCredentialSource, string) {
 	var found extsdk.GitCredentialSource
 	var foundName string
@@ -395,10 +393,9 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 	return found, foundName, nil
 }
 
-// newExtDispatch builds the sdk.DispatchFunc an extension's Host carries.
-// The prep (chat row, turn) is synchronous and fast; the run itself happens
-// in a goroutine, so Dispatch returns before the run completes - RunObserver
-// is how a caller learns it finished.
+// newExtDispatch builds the sdk.DispatchFunc an extension's Host carries. Prep (chat row, turn) is
+// synchronous; the run happens in a goroutine, so Dispatch returns before the run completes -
+// RunObserver is how a caller learns it finished.
 func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if hub.Draining() {
@@ -427,19 +424,15 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			userID = extRunUserID
 		}
 
-		// Detach from the HTTP request's lifecycle (the run outlives the
-		// handler) while keeping the caller's trace, so the extension's
-		// inbound span still parents the whole run's spans. Run.Timeout is
-		// applied inside driveExtensionRunEvents, which already owns
-		// runCtx's cancel-func lifecycle end to end.
+		// Detach from the HTTP request's lifecycle (the run outlives the handler) while keeping the
+		// caller's trace, so the extension's inbound span still parents the run's spans. Run.Timeout
+		// is applied in driveExtensionRunEvents, which owns runCtx's cancel end to end.
 		runCtx := context.WithoutCancel(ctx)
 		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
 
-		// Merge onto whatever this chat already has stored, rather than
-		// replacing it wholesale: a nudge/retry re-dispatch (quack-extensions#47)
-		// carries neither Chat.Origin nor Run.Setup, and previously blanked
-		// both on this call - the exact reason turn 2 of #1180 had no PR head
-		// ref to plan a review with.
+		// Merge onto whatever this chat already has stored, rather than replacing it: a nudge/retry
+		// re-dispatch (quack-extensions#47) carries neither Chat.Origin nor Run.Setup, and previously
+		// blanked both - why turn 2 of #1180 had no PR head ref to plan a review with.
 		existing, getErr := st.GetChat(runCtx, chatID)
 		if getErr != nil {
 			slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
@@ -487,10 +480,9 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			attachments = append(attachments, ref)
 		}
 
-		// Reset synchronously, before Dispatch returns (the caller's ack), so
-		// a subscriber landing in the run's start window never reads the
-		// previous dispatch's (possibly terminal) events off the hub or the
-		// durable log (#audit-5).
+		// Reset synchronously, before Dispatch returns (the caller's ack), so a subscriber landing in
+		// the run's start window never reads the previous dispatch's (possibly terminal) events off
+		// the hub or the durable log (#audit-5).
 		hub.Reset(chatID)
 		eventLog.Reset(runCtx, chatID)
 
@@ -628,10 +620,9 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 	case newSetup.ExistingHeadRef != "" || rec.Setup == nil || rec.Setup.ExistingHeadRef == "":
 		rec.Setup = newSetup
 	default:
-		// newSetup is non-nil but its head ref is blank, and we have a better
-		// one on record - keep everything else from this dispatch (repo/base/
-		// work branch can legitimately change turn to turn), just borrow the
-		// real head ref rather than losing it.
+		// newSetup is non-nil but its head ref is blank, and we have a better one on record - keep
+		// everything else from this dispatch (repo/base/work branch can legitimately change turn to
+		// turn), just borrow the real head ref rather than losing it.
 		merged := *newSetup
 		merged.ExistingHeadRef = rec.Setup.ExistingHeadRef
 		rec.Setup = &merged
@@ -650,11 +641,9 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 	return string(b), effectiveSetup
 }
 
-// toDagSetup adapts the SDK's Setup to dag.Setup. ExistingHeadRef overrides
-// WorkBranch for the checkout rather than supplementing it (mirrors what
-// dag.OverrideExistingPRHead used to do post-hoc from the GitHub-specific
-// tools.WithGitHubPR context - now folded into Setup itself, generalized
-// past GitHub).
+// toDagSetup adapts the SDK's Setup to dag.Setup. ExistingHeadRef overrides WorkBranch for the
+// checkout rather than supplementing it (mirrors what dag.OverrideExistingPRHead used to do
+// post-hoc from tools.WithGitHubPR - now folded into Setup itself, generalized past GitHub).
 func toDagSetup(s extsdk.Setup) dag.Setup {
 	out := dag.Setup{Repo: s.Repo, BaseRef: s.BaseRef, WorkBranch: s.WorkBranch}
 	if s.ExistingHeadRef != "" {
@@ -673,11 +662,9 @@ func toDagContextItems(items []extsdk.NamedContext) []dag.ContextItem {
 	return out
 }
 
-// inputArtifactKind is the recordstore kind every dispatch input artifact is
-// saved under (#1010 P3) - callers address them by name alone (ReadArtifact/
-// WriteArtifact take no kind), so the kind must be the same constant on both
-// the read and write side regardless of mime; "bytes" is the generic blob
-// kind already registered by internal/vetting/reviewrecord.go.
+// inputArtifactKind is the recordstore kind every dispatch input artifact is saved under (#1010
+// P3) - callers address by name alone (ReadArtifact/WriteArtifact take no kind), so the kind must
+// be the same constant on read and write; "bytes" is the generic blob kind in internal/vetting/reviewrecord.go.
 const inputArtifactKind = "bytes"
 
 // inputArtifactLineage stamps every dispatch input artifact the same way:
@@ -687,10 +674,9 @@ func inputArtifactLineage() recordstore.Lineage {
 	return recordstore.Lineage{Author: "dispatch", SavedAt: time.Now()}
 }
 
-// extChatUser backs Host.ChatUser: the sdk doc requires ok=false for an
-// unknown chatID, so this reads the row directly rather than via
-// SessionUserForChat's id-shape fallback, which would otherwise claim a
-// stable user for a chat that doesn't exist yet (#1225 footgun).
+// extChatUser backs Host.ChatUser: the sdk doc requires ok=false for an unknown chatID, so this
+// reads the row directly rather than via SessionUserForChat's id-shape fallback, which would
+// claim a stable user for a chat that doesn't exist yet (#1225 footgun).
 func extChatUser(st *store.Store) func(chatID string) (string, bool) {
 	return func(chatID string) (string, bool) {
 		c, err := st.GetChat(context.Background(), chatID)
@@ -730,10 +716,9 @@ func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) fu
 	}
 }
 
-// writeExtInputArtifact backs Host.WriteArtifact: saves a new revision only
-// when data changed since the latest one (recordstore.SaveBlob always
-// writes a revision - the byte comparison happens here so an unchanged
-// input artifact never advances turn_id/lineage.saved_at for no reason).
+// writeExtInputArtifact backs Host.WriteArtifact: saves a new revision only when data changed
+// since the latest one (recordstore.SaveBlob always writes a revision - the byte comparison
+// happens here so an unchanged input artifact never advances turn_id/lineage.saved_at for no reason).
 func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, user, name, mimeType string, data []byte) (int64, bool, error) {
 	return func(chatID, user, name, mimeType string, data []byte) (int64, bool, error) {
 		if artifacts == nil {
@@ -844,10 +829,9 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, extsdk.ErrUnknownChat)
 		}
 		prevState := priorOriginState(c.Origin)
-		// Merge, don't replace (#1181 review): a bare json.Marshal(&origin)
-		// here wiped the stored quackSetup field on every state-transition
-		// webhook (synchronize/close/merge) between a dispatch and a nudge -
-		// undoing mergeExtOrigin's whole point and reopening #1180.
+		// Merge, don't replace (#1181 review): a bare json.Marshal(&origin) here wiped the stored
+		// quackSetup field on every state-transition webhook (synchronize/close/merge) between a
+		// dispatch and a nudge - undoing mergeExtOrigin's whole point and reopening #1180.
 		originJSON, _ := mergeExtOrigin(c.Origin, &origin, nil)
 		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
@@ -857,11 +841,9 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 	}
 }
 
-// priorOriginState reads State off a chat's previously stored origin JSON
-// (opaque to internal/store - see Chat.Origin), so newExtUpdateChatOrigin can
-// tell a transition from steady state before overwriting it. "" (including
-// no prior origin, or one minted before sdk v0.5.0 added State) reads as
-// unknown, same as the SDK's own zero value.
+// priorOriginState reads State off a chat's previously stored origin JSON (opaque to internal/
+// store - see Chat.Origin), so newExtUpdateChatOrigin can tell a transition from steady state.
+// "" (no prior origin, or pre-sdk v0.5.0's State) reads as unknown, same as the SDK's zero value.
 func priorOriginState(originJSON string) extsdk.SubjectState {
 	if originJSON == "" {
 		return ""
@@ -928,10 +910,9 @@ func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next ext
 	}
 }
 
-// driveExtensionRun runs one dispatched turn to completion through the
-// orchestrator's own LLM turn (the unshaped/hint path), mirroring
-// rest.Handler.runChat / github.Extension.dispatch. timeout is
-// Run.Timeout - zero means unbounded.
+// driveExtensionRun runs one dispatched turn to completion through the orchestrator's own LLM
+// turn (the unshaped/hint path), mirroring rest.Handler.runChat / github.Extension.dispatch.
+// timeout is Run.Timeout - zero means unbounded.
 func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID, message string, attachments []*genai.Part, timeout time.Duration) {
 	driveExtensionRunEvents(ctx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, timeout, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
 		// name doubles as the token.usage/cost "source" attribution - the
@@ -981,11 +962,9 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	// same tail, so an extension-dispatched chat gets it too.
 	runlog.StampTurn(runCtx, st, chatID, turnID, res)
 
-	// Shutdown force-cancelled this run - skip RunEnded entirely so a deploy
-	// never posts a PR comment for work the process didn't get to finish.
-	// Per-chat marker, not global Draining: a run that finishes normally
-	// during the drain window keeps its RunEnded. The drain pauses nodes
-	// (#962), so the chat stamps paused and boot resumes it.
+	// Shutdown force-cancelled this run - skip RunEnded so a deploy never posts a PR comment for
+	// work the process didn't get to finish. Per-chat marker, not global Draining: a run finishing
+	// normally during the drain window keeps its RunEnded. The drain pauses nodes (#962) - boot resumes.
 	if hub.WasInterrupted(chatID) {
 		stampCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		if err := st.StampRunOutcome(stampCtx, chatID, store.RunStatusPaused, ""); err != nil {
@@ -1033,10 +1012,9 @@ func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator,
 	return mapExtRunOutcome(status, question, nodeError, answer, planRan, needsInput, timedOut, cancelled)
 }
 
-// mapExtRunOutcome is buildExtRunOutcome's classification step, split out so
-// it's testable without a live store/orch. cancelled wins over status - it
-// interrupted whatever DeriveTerminalStatus derived from the turn. nodeError
-// is the failed node's own error text (#1105) - "" for a true silent gap.
+// mapExtRunOutcome is buildExtRunOutcome's classification step, split out so it's testable without
+// a live store/orch. cancelled wins over status - it interrupted whatever DeriveTerminalStatus
+// derived from the turn. nodeError is the failed node's own error text (#1105) - "" for a true silent gap.
 func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	out := extsdk.RunOutcome{PlanRan: planRan, TimedOut: timedOut, Answer: answer}
 	switch {
@@ -1057,11 +1035,9 @@ func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, 
 	default:
 		out.Status = extsdk.RunDone
 		if out.Answer == "" && !timedOut {
-			// Silent-gap (#568): a run that finished with no error, no failed
-			// node, and no answer. Was GitHub-only (internal/github's own
-			// call); centralized here so every extension's dispatch gets the
-			// same metric, matching rest.Handler's own runs once it adopts
-			// this same accounting.
+			// Silent-gap (#568): a run that finished with no error, no failed node, and no answer.
+			// Was GitHub-only (internal/github's own call); centralized here so every extension's
+			// dispatch gets the same metric, matching rest.Handler's runs once it adopts this accounting.
 			otelobs.RecordRunNoAnswer()
 		}
 	}

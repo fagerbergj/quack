@@ -42,8 +42,7 @@ func newRecordingBundle(t *testing.T, criterion string, score float64) []byte {
 
 // TestRunEval_MultiTurnAndScored: two recorded turns are sent in order, each
 // only after the previous turn's run completes; once both are done the fresh
-// chat's own recording is fetched and scored, and the comparison table
-// (recorded vs new) is printed.
+// chat's own recording is fetched and scored, and the comparison table (recorded vs new) is printed.
 func TestRunEval_MultiTurnAndScored(t *testing.T) {
 	var turnsSeen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
