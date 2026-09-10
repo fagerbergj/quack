@@ -85,15 +85,14 @@ dag:
 
 ## Bounding the plan-judge loop
 
-A rejected plan tells the orchestrator's model to fix the nodes and call `plan` again; nothing stopped that loop before these caps existed, and the QA rig hit 56 rejections over 347s producing nothing (`result-18a8d57.md`).
+A rejected plan tells the orchestrator's model to fix the nodes and call `plan` again; `max_plan_judge_rounds` caps how many times the plan judge may reject a proposed plan in one turn.
 
 ```yaml
 orchestrator:
-  max_plan_judge_rounds: 5           # plan-judge rejections in one turn; default 5
-  max_repeated_plan_rejection: 3     # consecutive similar rejections; default 3
+  max_plan_judge_rounds: 5    # plan-judge rejections in one turn; default 5
 ```
 
-`max_plan_judge_rounds` caps how many times the plan judge may reject a proposed plan in one turn; `max_repeated_plan_rejection` ends the turn earlier if the judge's rejection reason stops changing (compared by token overlap, not exact text, since a real judge rewords the same complaint rather than repeating it verbatim). Either trip gives the model exactly one more real round to react - a genuine pivot to a direct answer is still delivered - and only then ends the turn with the delivered failure, carrying the judge's own reasons. Both must be `>= 1`; `0` keeps the default, a negative value is a config error, same as `dag.max_active_runs`.
+Past the cap the model gets exactly one more real round to react - a genuine pivot to a direct answer is still delivered - and only then does the turn end with the delivered failure, carrying the judge's own reasons. Must be `>= 1`; `0` keeps the default, a negative value is a config error, same as `dag.max_active_runs`.
 
 ## The judge is a separate model
 

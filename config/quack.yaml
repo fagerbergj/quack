@@ -130,10 +130,9 @@ orchestrator:
     provider: default
     model: ${QUACK_JUDGE_MODEL}                 # reuse the always-warm judge model; override to bind a different one
   # A rejected plan tells the model to fix the nodes and call `plan` again;
-  # these bound that loop so it ends with the delivered failure instead of
-  # retrying forever (the QA rig hit 56 rejections over 347s uncapped).
+  # this bounds that loop so the turn ends with the delivered failure
+  # instead of retrying forever.
   # max_plan_judge_rounds: 5              # plan-judge rejections in one turn; unset ⇒ 5
-  # max_repeated_plan_rejection: 3        # consecutive similar rejections; unset ⇒ 3
 
 # Declarative agents. Each is an agent-card.json + prompt.md bundle on disk,
 # bound here to a model and a selection of built-in tools. Add an agent by

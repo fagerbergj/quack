@@ -80,10 +80,8 @@ type Orchestrator struct {
 	// every turn's runner.Config - nil leaves the chat session uncompacted,
 	// same as before #A3.
 	compaction *compaction.Config
-	// planJudgeRoundCap/planJudgeRepeatCap: 0 keeps tools.PlanCache's own
-	// defaults - see SetPlanJudgeCap.
-	planJudgeRoundCap  int
-	planJudgeRepeatCap int
+	// planJudgeRoundCap: 0 keeps tools.PlanCache's own default - see SetPlanJudgeCap.
+	planJudgeRoundCap int
 }
 
 // SetCompaction wires adk/v2's native runner-level compaction (built via
@@ -176,12 +174,11 @@ func (o *Orchestrator) SetMaxActiveRuns(n int) {
 	}
 }
 
-// SetPlanJudgeCap overrides the round cap and repeated-reason cap one turn
-// tolerates before it ends with the delivered failure; either argument <= 0
-// keeps tools.PlanCache's built-in default.
-func (o *Orchestrator) SetPlanJudgeCap(roundCap, repeatCap int) {
+// SetPlanJudgeCap overrides the plan-judge round cap one turn tolerates
+// before it ends with the delivered failure; roundCap <= 0 keeps
+// tools.PlanCache's built-in default.
+func (o *Orchestrator) SetPlanJudgeCap(roundCap int) {
 	o.planJudgeRoundCap = roundCap
-	o.planJudgeRepeatCap = repeatCap
 }
 
 // planJudgeCapModelName names the synthetic model.LLM capAwareModel routes
@@ -641,7 +638,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		}
 		o.executor.ResetNodeCancels(sessionID)
 		planCache := tools.NewPlanCache()
-		planCache.SetCaps(o.planJudgeRoundCap, o.planJudgeRepeatCap)
+		planCache.SetRoundCap(o.planJudgeRoundCap)
 		o.maybeMineUserMemory(ctx, userID, sessionID, source, message)
 		prior := o.PriorEvents(ctx, userID, sessionID)
 		pending, hasPending := LatestPendingQuestion(prior)

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,30 +19,12 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// Real plan-judge rejection reasons captured from the QA rig's non-convergent
-// PR-review-fixture run (~/workspace/wt/qa/result-18a8d57.md,
-// ~/workspace/wt/qa/logs/server.log): the judge reworded the same underlying
-// complaint - the proposed plan modifies README.md instead of reviewing the
-// change - every round, so no two consecutive reasons were byte-identical.
-// This regression fixture proves the round cap, not the repeated-reason
-// stop, is what has to end a loop shaped like the rig's.
-var rigRejectionReasons = []string{
-	`The user's request explicitly demands execution of a review or change with tools, not just a plan. The proposed plan is a single code-implementer node that modifies the README.md but lacks any node performing the requested "read the change" and "carry out the review" steps. It fails to deliver what the user asked for: an actual review/examination of changes, not merely adding a line to a file.`,
-	`The user explicitly requested to "read the change, and carry out the review" - meaning they want a code review of an existing PR, not implementation of changes. The proposed plan incorrectly sets up a code-implementer node to make changes (append a line to README.md) instead of creating a reviewer node that reads and reviews the actual PR.`,
-	`The user explicitly requested a review of the change, not an implementation. The proposed plan incorrectly implements a change (appending a line to README.md) instead of performing the requested review.`,
-	`The user's request explicitly demands a review of changes and the execution of tools (clone, read change, carry out review), not just an implementation task. The proposed plan only contains a code-implementer node to append a line to README.md, which does not address the request to clone the repo, read the change, and carry out a review. The plan needs a code-reviewer node to perform the actual review of changes.`,
-	`The user explicitly requested a live execution of a review, not an implementation plan. The proposed plan is a code-implementer node that modifies a file and creates a pull request, which does not fulfill the user's request for a "review".`,
-	`The user explicitly requested a review of changes, not an implementation task. The proposed plan's node-1 is tasked with cloning the repo and modifying README.md (implementation), which does not match the request for a code review.`,
-}
-
-// rigJudge replays rigRejectionReasons in order, cycling - mirrors the rig's
-// judge rejecting every retry with a freshly-worded version of the same complaint.
-func rigJudge() vetting.PlanJudge {
+// countingRejectJudge rejects every plan with a distinct reason, numbered in call order.
+func countingRejectJudge() vetting.PlanJudge {
 	i := 0
 	return func(context.Context, string, string, string) (bool, string, error) {
-		reason := rigRejectionReasons[i%len(rigRejectionReasons)]
 		i++
-		return false, reason, nil
+		return false, fmt.Sprintf("reason %d: add a terminal node", i), nil
 	}
 }
 
@@ -53,22 +36,21 @@ func planCalls(n int) []*model.LLMResponse {
 	return out
 }
 
-// TestOrchestrator_PlanJudgeCap_RigRegressionText pins the QA rig's actual
-// failure (result-18a8d57.md: 56 rejections/347s, no cap, nothing delivered):
-// replaying real rejection text against the default round cap (5) must stop
-// the loop there and deliver a failure that carries those reasons, not hang.
-// capAwareModel grants one real grace round after the cap trips (#760: a
-// pivot must survive), so a model that keeps calling plan costs the round
-// cap PLUS that one grace round in real invocations before the synthetic
-// round ends the turn - 6 here, not 5.
-func TestOrchestrator_PlanJudgeCap_RigRegressionText(t *testing.T) {
+// TestOrchestrator_PlanJudgeCap_EndsTurnAtDefaultRoundCap: with no cap, a
+// model that keeps calling plan after every rejection never stops on its
+// own. The default round cap (5) must end the turn and deliver a failure
+// carrying the rejection reasons. capAwareModel grants one real grace round
+// after the cap trips (#760: a pivot must survive), so a model that keeps
+// calling plan costs the round cap PLUS that one grace round in real
+// invocations before the synthetic round ends the turn - 6 here, not 5.
+func TestOrchestrator_PlanJudgeCap_EndsTurnAtDefaultRoundCap(t *testing.T) {
 	stub := &orchStub{replies: planCalls(8)} // more than cap+grace - proves it actually stops there
-	o := newTestOrchWithJudge(t, stub, rigJudge())
+	o := newTestOrchWithJudge(t, stub, countingRejectJudge())
 
-	evs := runTurn(t, o, "clone the repo, read the change, and carry out the review")
+	evs := runTurn(t, o, "review this PR")
 
 	if got := stub.invocations(); got != 6 {
-		t.Fatalf("model invocations = %d, want exactly 6 (the round cap of 5 plus one grace round) - a run with no cap consumed all 8 queued rounds and more (rig: 56)", got)
+		t.Fatalf("model invocations = %d, want exactly 6 (the round cap of 5 plus one grace round)", got)
 	}
 	if !hasEvent(evs, stream.EventError) {
 		t.Errorf("a capped run must surface an error event; events=%v", evs)
@@ -81,55 +63,29 @@ func TestOrchestrator_PlanJudgeCap_RigRegressionText(t *testing.T) {
 	if answer == planExhaustedNotice {
 		t.Fatal("a capped run must deliver the judge's reasons, not the generic reason-suppressing exhaustion notice")
 	}
-	for _, reason := range rigRejectionReasons[:6] {
-		if !strings.Contains(answer, reason) {
-			t.Errorf("answer missing an actual rejection reason from the fixture: %q", reason)
+	for i := 1; i <= 5; i++ {
+		want := fmt.Sprintf("reason %d:", i)
+		if !strings.Contains(answer, want) {
+			t.Errorf("answer missing round %d's reason: %q", i, answer)
 		}
 	}
 }
 
 // TestOrchestrator_PlanJudgeCap_Configurable proves SetPlanJudgeCap's round
-// cap is honored (not just the built-in default of 5): with distinct
-// reasons every round (so the repeat-reason stop never trips first), a cap
-// of 2 must stop the loop after the 2 capped rounds plus one grace round.
+// cap is honored, not just the built-in default of 5.
 func TestOrchestrator_PlanJudgeCap_Configurable(t *testing.T) {
 	stub := &orchStub{replies: planCalls(6)}
-	o := newTestOrchWithJudge(t, stub, rigJudge())
-	o.SetPlanJudgeCap(2, 100)
+	o := newTestOrchWithJudge(t, stub, countingRejectJudge())
+	o.SetPlanJudgeCap(2)
 
-	runTurn(t, o, "clone the repo, read the change, and carry out the review")
+	runTurn(t, o, "review this PR")
 
 	if got := stub.invocations(); got != 3 {
 		t.Fatalf("model invocations = %d, want exactly the configured round cap (2) plus one grace round", got)
 	}
 	answer := o.LatestAnswer(context.Background(), "u", "chat")
-	for _, reason := range rigRejectionReasons[:3] {
-		if !strings.Contains(answer, reason) {
-			t.Errorf("answer = %q, missing round's reason %q", answer, reason)
-		}
-	}
-}
-
-// TestOrchestrator_PlanJudgeRepeatedReason_StopsBeforeRoundCap: repeating
-// the identical rejection reason is not converging - it must end the turn
-// at the repeat cap (3) plus one grace round, well under the round cap of 5.
-func TestOrchestrator_PlanJudgeRepeatedReason_StopsBeforeRoundCap(t *testing.T) {
-	const reason = "delivery not declared: the plan has no terminal node that delivers the requested artifact"
-	stub := &orchStub{replies: planCalls(8)}
-	o := newTestOrchWithJudge(t, stub, rejectAlwaysJudge(reason))
-
-	runTurn(t, o, "make a small follow-up change")
-
-	if got := stub.invocations(); got != 4 {
-		t.Fatalf("model invocations = %d, want exactly 4 (the repeat cap of 3 plus one grace round) - repeating the same reason must stop the loop early, before the round cap (5)", got)
-	}
-	answer := o.LatestAnswer(context.Background(), "u", "chat")
-	const wantPrefix = "The planner could not produce an acceptable plan: "
-	if !strings.HasPrefix(answer, wantPrefix) {
-		t.Fatalf("answer = %q, want it to start with %q", answer, wantPrefix)
-	}
-	if n := strings.Count(answer, reason); n != 1 {
-		t.Errorf("answer repeats the identical reason %d times, want it deduped to 1: %q", n, answer)
+	if !strings.Contains(answer, "reason 1:") || !strings.Contains(answer, "reason 2:") {
+		t.Errorf("answer = %q, missing one of the two rounds' reasons", answer)
 	}
 }
 
@@ -145,10 +101,10 @@ func TestOrchestrator_PlanJudgeCap_GracePivotDeliveredVerbatim(t *testing.T) {
 		planCall(), planCall(), // rounds 1-2: rejected, trips the round cap of 2
 		stubText(pivotAnswer), // round 3 (grace): a genuine pivot, not another plan call
 	}}
-	o := newTestOrchWithJudge(t, stub, rigJudge())
-	o.SetPlanJudgeCap(2, 100)
+	o := newTestOrchWithJudge(t, stub, countingRejectJudge())
+	o.SetPlanJudgeCap(2)
 
-	evs := runTurn(t, o, "clone the repo, read the change, and carry out the review")
+	evs := runTurn(t, o, "review this PR")
 
 	if hasEvent(evs, stream.EventError) {
 		t.Errorf("a grace-round pivot must not surface an error; events=%v", evs)
@@ -188,20 +144,19 @@ func newTracedTestOrchWithJudge(t *testing.T, stub *orchStub, judge vetting.Plan
 // TestOrchestrator_PlanJudgeCap_SyntheticRoundRecordsLedgerEntry: the
 // synthetic completion capAwareModel returns once the grace round is spent
 // bypasses the real model - it must still leave a normal llm.call ledger
-// trail (via inference.TracedModelForTesting), not vanish from observability
-// just because no real backend was called.
+// trail (via inference.Traced), not vanish from observability just because
+// no real backend was called.
 func TestOrchestrator_PlanJudgeCap_SyntheticRoundRecordsLedgerEntry(t *testing.T) {
 	capExp := &ledgerCaptureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 	defer restore()
 
-	const reason = "delivery not declared: the plan has no terminal node that delivers the requested artifact"
 	stub := &orchStub{replies: planCalls(8)}
-	o := newTracedTestOrchWithJudge(t, stub, rejectAlwaysJudge(reason))
-	o.SetPlanJudgeCap(2, 2) // repeat cap 2: capped after round 2, grace at round 3, synthetic at round 4
+	o := newTracedTestOrchWithJudge(t, stub, countingRejectJudge())
+	o.SetPlanJudgeCap(2)
 
-	runTurn(t, o, "make a small follow-up change")
+	runTurn(t, o, "review this PR")
 
 	if got := stub.invocations(); got != 3 {
 		t.Fatalf("model invocations = %d, want 3 (2 capped rounds + one grace round)", got)
