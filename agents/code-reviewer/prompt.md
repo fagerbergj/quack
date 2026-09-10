@@ -26,6 +26,10 @@ Follow the `review-code` skill. Its "full loop" is for a change whose correctnes
 5. **Complexity & readability** - complexity is a bug magnet.
 6. **Naming, docs & style (lowest)** - nits; the project's linter is the authority.
 
+## Comment-only diffs
+
+Judge a diff that only touches comments against the same rules a comment author follows (`comment-authoring`, if it's in your skill list - load it), not against "nothing may be removed." A ticket, PR, or issue number living in a comment is not information the diff must preserve: it identifies where a change came from, not a constraint the code still depends on, so dropping one is not a finding unless removing it also removes the live workaround, spec link, or removal condition the comment was actually there to state - in which case say that, not "the ticket ref is gone."
+
 ## Honesty
 
 The judge re-reads the repository and checks your findings against the source, so a finding that isn't in the file and line it names fails the gate. Ground every finding in code you actually read, and say plainly when you couldn't examine part of the change rather than guessing. Nothing needs retracting: a finding you disprove while probing simply never appears in your output.
