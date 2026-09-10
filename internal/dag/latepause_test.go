@@ -92,3 +92,47 @@ func TestDagStream_DeliveredOutranksLivePauseRace(t *testing.T) {
 	}
 	t.Fatalf("got %v; want node_done - MarkDelivered must outrank a pause that raced in after commitDelivery", names(got))
 }
+
+// TestDagStream_FinishSweepDeliveredOutranksEmptyOutputAndPause exercises
+// Finish()'s own terminal sweep (review finding): the tests above all go
+// through handle()+flush() with non-empty output, so none of them reach a
+// node the sweep - not handle() - has to close out. The motivating case is a
+// delivered answer that dedupeAnswerAgainstStaged collapsed to empty/
+// whitespace, racing a pause that lands after commitDelivery: delivered must
+// still outrank both the empty-output-means-failed guess and the pause flag,
+// or dropping the `!delivered &&` guards on those branches would go
+// unnoticed.
+func TestDagStream_FinishSweepDeliveredOutranksEmptyOutputAndPause(t *testing.T) {
+	agentByID := map[string]string{"n1": "a"}
+	var got []stream.SSEEvent
+	ds := newDagStream("", "", agentByID, nil,
+		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
+		map[string]string{}, // outputs: n1 stays unset - the empty-output case
+		func(string) gateScore { return gateScore{} },
+		func(string) bool { return false },
+		func(string) PauseReason { return PauseUser },
+		func(string, int) string { return "" },
+	)
+	ds.deliveredOf = func(string) bool { return true }
+	// Never calling ds.handle: n1 is never doneEmitted, so Finish's own sweep
+	// (not handle/flush) is what has to decide it, matching the motivating
+	// race - a pause landing after commitDelivery, before graph.go's Finish.
+
+	s := &DagStream{
+		ds:        ds,
+		plan:      Plan{Nodes: []Node{{ID: "n1"}}},
+		agentByID: agentByID,
+		yield:     func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
+	}
+	s.Finish()
+
+	for _, e := range got {
+		switch e.Name {
+		case stream.EventNodeDone:
+			return
+		case stream.EventNodePaused, stream.EventNodeFailed:
+			t.Fatalf("got %s; want node_done - delivered must outrank the pause flag and the empty-output guess", e.Name)
+		}
+	}
+	t.Fatalf("got %v; want node_done", names(got))
+}
