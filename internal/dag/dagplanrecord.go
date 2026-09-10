@@ -24,25 +24,23 @@ const kindDagPlan = "dag_plan"
 // Assignment is one bit of work in the scope of a node's job: a task, the
 // handoffs it waits on (DependsOn - the tasks this one references, A2A
 // referenceTaskIds; ordering is implied and results travel as those
-// referenced tasks' artifacts), the deterministic checks it runs, and
-// read-only TaskID/Result/Meta the executor fills in once the node runs.
-// TaskID is the A2A task_id this assignment is dispatched as - set once,
-// when execute runs it. Meta is namespaced per extension (e.g.
-// meta["github"] = {repo,base_sha,workdir}) rather than a bare top-level
-// field, so two extensions' node-scoped context can never collide.
+// referenced tasks' artifacts), and the deterministic checks it runs.
 type Assignment struct {
-	NodeID    string                    `json:"node_id"`
-	Task      string                    `json:"task"`
-	DependsOn []string                  `json:"depends_on,omitempty"`
-	Checks    []string                  `json:"checks,omitempty"`
-	Workdir   string                    `json:"workdir,omitempty"`
-	Rubric    string                    `json:"rubric,omitempty"`
-	TaskID    string                    `json:"task_id,omitempty"`
-	Result    string                    `json:"result,omitempty"`
-	Meta      map[string]map[string]any `json:"meta,omitempty"`
-	// ForkOf: reserved for cross-turn node reuse (a later slice) - accepted
-	// and persisted, not yet interpreted by anything.
-	ForkOf string `json:"fork_of,omitempty"`
+	NodeID    string   `json:"node_id"`
+	Task      string   `json:"task"`
+	DependsOn []string `json:"depends_on,omitempty"`
+	Checks    []string `json:"checks,omitempty"`
+	Workdir   string   `json:"workdir,omitempty"`
+	Rubric    string   `json:"rubric,omitempty"`
+	// TaskID, Result, Meta, ForkOf: reserved for a later slice (the A2A
+	// task_id this assignment dispatches as and its result; per-extension
+	// namespaced context, e.g. meta["github"] = {repo,base_sha,workdir};
+	// cross-turn node reuse) - accepted and persisted, not yet written or
+	// interpreted by anything.
+	TaskID string                    `json:"task_id,omitempty"`
+	Result string                    `json:"result,omitempty"`
+	Meta   map[string]map[string]any `json:"meta,omitempty"`
+	ForkOf string                    `json:"fork_of,omitempty"`
 }
 
 // DagPlanRecord is the "dag_plan" kind's structured body. Assignment.NodeID
