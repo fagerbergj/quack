@@ -94,6 +94,10 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 			if resume.handle.Kind != "acp" {
 				sessionNodeID = resume.handle.Scope
 			}
+			// Only signal a granted resume outside the WAL: cfg.Ledger's
+			// resumed_from is opt-in (postgres-only), so a deploy without it
+			// has no other way to confirm continue actually took.
+			slog.Info("continue: node resumed", "component", "dag", "node", node.ID, "continues", node.Continue, "kind", resume.handle.Kind)
 		} else if resume.fallbackReason != "" {
 			slog.Warn("continue: node starts fresh", "component", "dag", "node", node.ID, "reason", resume.fallbackReason)
 		}
