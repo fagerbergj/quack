@@ -82,6 +82,8 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				var rejected *dag.PlanRejectedError
 				if errors.As(err, &rejected) {
 					reason = rejected.Reason
+					// The cap itself is enforced one layer up (orchestrator.go's
+					// capAwareModel) - a tool can't end an ADK invocation itself.
 					cache.RecordRejection(reason)
 				}
 				// Survives past this turn's PlanCache so the give-up path

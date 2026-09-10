@@ -837,6 +837,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if ledgerStore != nil {
 		orch.SetLedger(ledgerStore)
 	}
+	orch.SetPlanJudgeCap(cfg.Orchestrator.MaxPlanJudgeRounds, cfg.Orchestrator.MaxRepeatedPlanRejection)
 	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
 	// any node reaches the GPU ledger. Also the only cap on how many runs are
 	// live at once, which is what the UI shows as running (#1067).

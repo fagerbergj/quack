@@ -80,6 +80,10 @@ type Orchestrator struct {
 	// every turn's runner.Config - nil leaves the chat session uncompacted,
 	// same as before #A3.
 	compaction *compaction.Config
+	// planJudgeRoundCap/planJudgeRepeatCap: 0 keeps tools.PlanCache's own
+	// defaults - see SetPlanJudgeCap.
+	planJudgeRoundCap  int
+	planJudgeRepeatCap int
 }
 
 // SetCompaction wires adk/v2's native runner-level compaction (built via
@@ -170,6 +174,36 @@ func (o *Orchestrator) SetMaxActiveRuns(n int) {
 	if n >= 1 {
 		o.runAdmit = dag.NewAdmission(map[string]int{runAdmissionSpec.Model: n}, nil, nil, 0)
 	}
+}
+
+// SetPlanJudgeCap overrides the round cap and repeated-reason cap one turn
+// tolerates before it ends with the delivered failure; either argument <= 0
+// keeps tools.PlanCache's built-in default.
+func (o *Orchestrator) SetPlanJudgeCap(roundCap, repeatCap int) {
+	o.planJudgeRoundCap = roundCap
+	o.planJudgeRepeatCap = repeatCap
+}
+
+// capAwareModel skips the real model call once PlanCache.Capped() trips,
+// returning a minimal final response instead - a tool can't end an ADK
+// invocation itself (EndInvocation() is a no-op for tool/callback contexts),
+// so this is what actually stops the loop.
+type capAwareModel struct {
+	model.LLM
+	cache *tools.PlanCache
+}
+
+func (m capAwareModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	if capped, _ := m.cache.Capped(); capped {
+		return func(yield func(*model.LLMResponse, error) bool) {
+			yield(&model.LLMResponse{
+				Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: ""}}},
+				FinishReason: genai.FinishReasonStop,
+				TurnComplete: true,
+			}, nil)
+		}
+	}
+	return m.LLM.GenerateContent(ctx, req, stream)
 }
 
 // RunAdmissionUsage reports the run-level admission's current (used, limit),
@@ -582,6 +616,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		}
 		o.executor.ResetNodeCancels(sessionID)
 		planCache := tools.NewPlanCache()
+		planCache.SetCaps(o.planJudgeRoundCap, o.planJudgeRepeatCap)
 		o.maybeMineUserMemory(ctx, userID, sessionID, source, message)
 		prior := o.PriorEvents(ctx, userID, sessionID)
 		pending, hasPending := LatestPendingQuestion(prior)
@@ -679,7 +714,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		ag, err := llmagent.New(llmagent.Config{
 			Name:        orchestratorName,
 			Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
-			Model:       o.model,
+			Model:       capAwareModel{LLM: o.model, cache: planCache},
 			Instruction: o.sysPrompt,
 			Tools:       toolList,
 			Toolsets:    toolsets,
@@ -778,6 +813,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 
 		produced, stop := invoke(content)
 		for attempt := 1; !produced && !stop && attempt <= maxOrchestratorContinues; attempt++ {
+			// capAwareModel already ended the prior invocation once capped -
+			// retrying would just re-hit the same cap (rig-observed 56 rounds/347s with no cap at all).
+			if capped, _ := planCache.Capped(); capped {
+				break
+			}
 			slog.Warn("orchestrator turn produced no plan and no answer; continuing it",
 				"component", "orchestrator", "chat", sessionID, "attempt", attempt)
 			produced, stop = invoke(continuationContent())
@@ -792,6 +832,23 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, CachedTokens: cachedTokens, FinishReason: finishReason,
 			FinishedAtMs: time.Now().UnixMilli(),
 		}}, nil)
+
+		// Delivers WHY, not the generic "no plan or answer" notice below -
+		// that's the whole point of a cap over an unbounded loop.
+		if capped, reasons := planCache.Capped(); capped {
+			if _, selected := planCache.Selected(); !selected {
+				if _, hasPending := o.PendingQuestion(ctx, userID, sessionID); !hasPending {
+					count, _ := planCache.Rejections()
+					slog.Error("plan-judge round cap hit without an acceptable plan; delivering the rejection reasons",
+						"component", "orchestrator", "chat", sessionID, "rejections", count, "reasons", reasons)
+					msg := fmt.Sprintf(planJudgeCapNotice, reasons)
+					safeYield(stream.Errorf(msg), nil)
+					o.persistAnswer(ctx, userID, sessionID, msg)
+					safeYield(stream.Done(), nil)
+					return
+				}
+			}
+		}
 
 		if !produced {
 			slog.Error("orchestrator produced no plan and no answer; giving up",
@@ -849,6 +906,10 @@ const planExhaustedNotice = "I could not produce a workable plan for this reques
 // model kept retrying and failing (NightsOut#97 saw four) - below it, a
 // single rejection followed by an answer is the model correctly pivoting away from a plan it didn't need (#760), not exhaustion.
 const minRejectionsForExhaustion = 2
+
+// planJudgeCapNotice: unlike planExhaustedNotice, this DOES carry the
+// judge's own reasons - the cap exists to say why, not just that it gave up.
+const planJudgeCapNotice = "The planner could not produce an acceptable plan: %s"
 
 func continuationContent() *genai.Content {
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: continuationMarker + "\n\n" +

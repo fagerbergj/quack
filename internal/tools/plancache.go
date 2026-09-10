@@ -1,9 +1,17 @@
 package tools
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/fagerbergj/quack/internal/dag"
+)
+
+// defaultPlanJudgeRoundCap/defaultPlanRejectionRepeatCap bound one turn's
+// plan-judge loop - the QA rig hit 56 rejections over 347s with no cap.
+const (
+	defaultPlanJudgeRoundCap      = 5
+	defaultPlanRejectionRepeatCap = 3
 )
 
 // PlanCache holds plans by ID so execute can reference them losslessly. One
@@ -16,10 +24,27 @@ type PlanCache struct {
 	selected        string
 	rejectionCount  int
 	rejectionReason string
+	reasonStreak    int      // consecutive rejections carrying the identical reason text
+	reasons         []string // distinct reasons in order, for the capped-turn failure message
+	roundCap        int
+	repeatCap       int
 }
 
 func NewPlanCache() *PlanCache {
-	return &PlanCache{plans: make(map[string]dag.Plan)}
+	return &PlanCache{plans: make(map[string]dag.Plan), roundCap: defaultPlanJudgeRoundCap, repeatCap: defaultPlanRejectionRepeatCap}
+}
+
+// SetCaps overrides the plan-judge round cap and repeated-reason cap; a
+// non-positive value keeps the existing (default) cap.
+func (c *PlanCache) SetCaps(roundCap, repeatCap int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if roundCap > 0 {
+		c.roundCap = roundCap
+	}
+	if repeatCap > 0 {
+		c.repeatCap = repeatCap
+	}
 }
 
 // SetDelivered records the terminal answer so the caller can persist it after the run.
@@ -71,7 +96,15 @@ func (c *PlanCache) RecordRejection(reason string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.rejectionCount++
+	if reason == c.rejectionReason {
+		c.reasonStreak++
+	} else {
+		c.reasonStreak = 1
+	}
 	c.rejectionReason = reason
+	if len(c.reasons) == 0 || c.reasons[len(c.reasons)-1] != reason {
+		c.reasons = append(c.reasons, reason)
+	}
 }
 
 // Rejections returns how many times the plan judge rejected a proposed plan
@@ -81,6 +114,17 @@ func (c *PlanCache) Rejections() (count int, reason string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.rejectionCount, c.rejectionReason
+}
+
+// Capped reports whether the round cap or the repeated-reason cap has
+// tripped, plus the distinct reasons seen so far for the failure message.
+func (c *PlanCache) Capped() (bool, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rejectionCount < c.roundCap && c.reasonStreak < c.repeatCap {
+		return false, ""
+	}
+	return true, strings.Join(c.reasons, "; ")
 }
 
 // Pending reports whether a plan was created but never executed.

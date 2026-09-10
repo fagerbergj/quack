@@ -809,6 +809,12 @@ type OrchestratorConfig struct {
 	Tools          []string             `yaml:"tools"`
 	Skills         []string             `yaml:"skills"`
 	UserMemoryHook UserMemoryHookConfig `yaml:"user_memory_hook"`
+	// MaxPlanJudgeRounds caps plan-judge rejections in one turn (0 = built-in
+	// default 5) - an uncapped loop ran 56 rounds/347s producing nothing on the QA rig.
+	MaxPlanJudgeRounds int `yaml:"max_plan_judge_rounds"`
+	// MaxRepeatedPlanRejection stops the loop once the judge repeats the
+	// identical rejection reason this many times in a row (0 = default 3).
+	MaxRepeatedPlanRejection int `yaml:"max_repeated_plan_rejection"`
 }
 
 type UserMemoryHookConfig struct {
