@@ -121,7 +121,7 @@ async function writeExtension(servers) {
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { McpClient, checkPolicy, checkLoop, recordLoopOutcome } from "${pathToFileURL(join(here, "mcp-client.mjs")).href}";
+import { McpClient, checkPolicy, checkLoop } from "${pathToFileURL(join(here, "mcp-client.mjs")).href}";
 
 export default function (pi: any) {
   const cfg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "quackmcp.json"), "utf8"));
@@ -161,7 +161,6 @@ export default function (pi: any) {
         }
         await (ready ??= client.connect());
         const r = await client.toolsCall(t.name, params);
-        recordLoopOutcome(t.name, params, !!r.isError);
         return { content: r.content ?? [{ type: "text", text: JSON.stringify(r) }], isError: !!r.isError, details: {} };
       },
     });

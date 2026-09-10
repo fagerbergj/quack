@@ -477,11 +477,10 @@ type CompactionConfig struct {
 // (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM the GPU pool doesn't know about.
 const defaultMaxActiveNodes = 32
 
-// defaultToolLoopFailThreshold/SuccessThreshold/MaxCalls: see ToolLoopConfig.
+// defaultToolLoopThreshold/HardStopAfterRefusals: see ToolLoopConfig.
 const (
-	defaultToolLoopFailThreshold    = 3
-	defaultToolLoopSuccessThreshold = 8
-	defaultToolLoopMaxCalls         = 200
+	defaultToolLoopThreshold             = 3
+	defaultToolLoopHardStopAfterRefusals = 2
 )
 
 // defaultMaxActiveRuns: host disk/CPU ceiling on concurrent run SETUP
@@ -499,27 +498,20 @@ type DagConfig struct {
 	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active (#1007).
 	MaxActiveNodes int `yaml:"max_active_nodes"`
 
-	// ToolLoop bounds a single node's identical-call and total-call budget -
-	// the deterministic backstop for a model that keeps calling a refused (or
-	// even succeeding) tool instead of stopping on its own. 0 = defaults.
+	// ToolLoop bounds a single node's identical-call budget - the
+	// deterministic backstop for a model that keeps calling a refused tool
+	// instead of stopping on its own. 0 = defaults.
 	ToolLoop ToolLoopConfig `yaml:"tool_loop"`
 }
 
-// ToolLoopConfig: internal/tools' repeat guard thresholds. FailThreshold is
-// lower than SuccessThreshold because a call that keeps erroring is far more
-// likely to be a stuck loop than one that keeps succeeding (e.g. polling, or
-// re-reading a file the worker forgot it already has).
+// ToolLoopConfig: internal/tools' repeat guard thresholds.
 type ToolLoopConfig struct {
-	// FailThreshold: consecutive identical calls whose last outcome was a
-	// refusal/error before the node's turn is force-ended. 0 = 3.
-	FailThreshold int `yaml:"fail_threshold"`
-	// SuccessThreshold: same, for a streak whose last outcome succeeded. 0 = 8.
-	SuccessThreshold int `yaml:"success_threshold"`
-	// MaxCalls: total tool calls (any tool, any args) a single node may make
-	// in one run before it is force-ended - the generous backstop for a loop
-	// the fingerprint check doesn't catch (e.g. varying a harmless argument
-	// each time). 0 = 200.
-	MaxCalls int `yaml:"max_calls"`
+	// Threshold: consecutive identical calls before the guard refuses the
+	// next one. 0 = 3.
+	Threshold int `yaml:"threshold"`
+	// HardStopAfterRefusals: further refusals beyond the first the model can
+	// ignore before the node's turn is force-ended. 0 = 2.
+	HardStopAfterRefusals int `yaml:"hard_stop_after_refusals"`
 }
 
 type GatesConfig struct {
@@ -1278,23 +1270,17 @@ func (c *Config) validate() error {
 	if c.Dag.MaxActiveRuns < 1 {
 		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
 	}
-	if c.Dag.ToolLoop.FailThreshold == 0 {
-		c.Dag.ToolLoop.FailThreshold = defaultToolLoopFailThreshold
+	if c.Dag.ToolLoop.Threshold == 0 {
+		c.Dag.ToolLoop.Threshold = defaultToolLoopThreshold
 	}
-	if c.Dag.ToolLoop.FailThreshold < 1 {
-		return fmt.Errorf("config: dag.tool_loop.fail_threshold must be >= 1")
+	if c.Dag.ToolLoop.Threshold < 1 {
+		return fmt.Errorf("config: dag.tool_loop.threshold must be >= 1")
 	}
-	if c.Dag.ToolLoop.SuccessThreshold == 0 {
-		c.Dag.ToolLoop.SuccessThreshold = defaultToolLoopSuccessThreshold
+	if c.Dag.ToolLoop.HardStopAfterRefusals == 0 {
+		c.Dag.ToolLoop.HardStopAfterRefusals = defaultToolLoopHardStopAfterRefusals
 	}
-	if c.Dag.ToolLoop.SuccessThreshold < 1 {
-		return fmt.Errorf("config: dag.tool_loop.success_threshold must be >= 1")
-	}
-	if c.Dag.ToolLoop.MaxCalls == 0 {
-		c.Dag.ToolLoop.MaxCalls = defaultToolLoopMaxCalls
-	}
-	if c.Dag.ToolLoop.MaxCalls < 1 {
-		return fmt.Errorf("config: dag.tool_loop.max_calls must be >= 1")
+	if c.Dag.ToolLoop.HardStopAfterRefusals < 1 {
+		return fmt.Errorf("config: dag.tool_loop.hard_stop_after_refusals must be >= 1")
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

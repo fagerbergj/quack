@@ -302,6 +302,14 @@ dag:
   # (#1007); raise this only if the host itself can't take more concurrent
   # clones/checks within a single run.
   max_active_nodes: 32
+  # Tool-call-loop guard (internal/tools' repeat guard): refuses the
+  # threshold'th+ consecutive identical tool call, then force-ends the
+  # node's turn once the model has ignored that refusal hard_stop_after_
+  # refusals times more - the backstop for a model that keeps calling a
+  # refused tool instead of stopping on its own.
+  tool_loop:
+    threshold: 3
+    hard_stop_after_refusals: 2
 
 server:
   addr: ":8080"

@@ -153,6 +153,95 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 }
 
+// toolLoopFlagCtrl is a minimal NodeControl whose ToolLoopFailure fires
+// exactly once - simulating a tool-loop hard stop landing mid-round while
+// that round still completes normally (err == nil from RunGatedRefine's own
+// point of view), the way a real abort can race a round's own return.
+type toolLoopFlagCtrl struct {
+	msg   string
+	fired bool
+}
+
+func (c *toolLoopFlagCtrl) Cancelled() bool      { return false }
+func (c *toolLoopFlagCtrl) Paused() bool         { return false }
+func (c *toolLoopFlagCtrl) TakeQueued() string   { return "" }
+func (c *toolLoopFlagCtrl) PauseForInput(string) {}
+func (c *toolLoopFlagCtrl) MarkDelivered()       {}
+func (c *toolLoopFlagCtrl) ToolLoopFailure() (string, bool) {
+	if c.fired || c.msg == "" {
+		return "", false
+	}
+	c.fired = true
+	return c.msg, true
+}
+
+// raceStub answers normally but sets ctrl's tool-loop flag on its way out -
+// the draft round itself returns err == nil, so only a boundary check run
+// UNCONDITIONALLY (not just inside an err != nil branch) can catch it.
+type raceStub struct {
+	ctrl *toolLoopFlagCtrl
+}
+
+func (m *raceStub) Name() string { return "race-stub" }
+func (m *raceStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		m.ctrl.msg = "tool-call loop: race_tool called identically 4 times; node terminated"
+		yield(stubText("draft answer"), nil)
+	}
+}
+
+// TestRunGatedRefine_ToolLoopFlagCaughtAtNextBoundaryEvenAfterCleanRound: a
+// stale, uncleared flag could otherwise sit until a LATER, unrelated failure
+// wrongly reports it as the cause - the boundary check must consume it as
+// soon as it's set, whether or not the round that set it also errored.
+func TestRunGatedRefine_ToolLoopFlagCaughtAtNextBoundaryEvenAfterCleanRound(t *testing.T) {
+	ctrl := &toolLoopFlagCtrl{}
+	stub := &raceStub{ctrl: ctrl}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "Answer.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	workerNode, err := NewWorkerNode(worker)
+	if err != nil {
+		t.Fatalf("worker node: %v", err)
+	}
+	cfg := Config{} // JudgeRounds 0: the turn-boundary check still runs (its own doc comment)
+	node := workflow.NewDynamicNode[string, string]("gate",
+		func(ctx adkagent.Context, task string, emit func(*session.Event) error) (string, error) {
+			answer, _, err := RunGatedRefine(ctx, "gate", workerNode, stub, nil, cfg, "do it", nil, ctrl, emit)
+			return answer, err
+		}, workflow.NodeConfig{})
+	root, err := workflowagent.New(workflowagent.Config{
+		Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "do it"}}}
+	var runErr error
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			runErr = err
+			break
+		}
+	}
+	if runErr == nil || !strings.Contains(runErr.Error(), "tool-call loop") {
+		t.Fatalf("run error = %v; want the tool-loop message even though the draft round itself returned no error", runErr)
+	}
+	if !ctrl.fired {
+		t.Fatal("ToolLoopFailure was never consumed - the flag would have gone stale for a later round to misattribute")
+	}
+}
+
 // stubFixedAnswerModel is a worker stub that always returns the same text with
 // no tool calls - for tests that need deterministic zero-retrieval activity.
 type stubFixedAnswerModel struct{ text string }

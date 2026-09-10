@@ -16,53 +16,52 @@ import (
 )
 
 // repeatGuard: breaks identical-call loops - refuses a call past its
-// threshold, then force-ends the node's turn if the model repeats it anyway.
+// threshold, then force-ends the node's turn once the model has ignored the
+// refusal hardStopAfter times.
 type repeatGuard struct {
 	inner         runnableTool
 	states        *repeatStates
-	failThresh    int
-	successThresh int
-	maxCalls      int
+	threshold     int
+	hardStopAfter int
 	// endTurn aborts the round via dag.Executor.NoteToolLoopFailure - a
 	// returned tool error alone can't: ADK folds it into a function response
 	// and keeps the model's turn going.
 	endTurn func(chatID, nodeID, msg string) bool
 }
 
-// failThreshold/successThreshold: consecutive identical calls before the
-// node's turn is force-ended (1..threshold-1 run, threshold is refused,
-// threshold+1 force-ends it). A streak whose last outcome errored is cut off
-// sooner than one that kept succeeding (e.g. polling, or a harmless re-read).
+// outcomeDeclinedKey: a tool's result may set this (bool true) to signal a
+// failure that isn't a Go error - e.g. ask_advisor's consult failing
+// internally but still returning a graceful empty-advice result to the
+// model. Read here, then stripped so the model never sees it.
+const outcomeDeclinedKey = "quack_tool_declined"
+
+// defaultRepeatThreshold: consecutive identical calls before refusal.
+// defaultHardStopAfterRefusals: further refusals (beyond the first) the
+// model can ignore before the node's turn is force-ended.
 const (
-	defaultFailThreshold    = 3
-	defaultSuccessThreshold = 8
-	// defaultMaxToolCalls: per-node total tool-call ceiling backstop (any tool, any args).
-	defaultMaxToolCalls = 200
+	defaultRepeatThreshold       = 3
+	defaultHardStopAfterRefusals = 2
 )
 
-// repeatStates: tracks the last call fingerprint and total call count per session.
+// repeatStates: tracks the last call fingerprint per session.
 // ponytail: entries never pruned - add if sessions number in the millions.
 type repeatStates struct {
-	mu     sync.Mutex
-	last   map[string]*repeatState
-	fails  map[string]int
-	totals map[string]int
+	mu    sync.Mutex
+	last  map[string]*repeatState
+	fails map[string]int
 }
 
 type repeatState struct {
 	fingerprint string
 	count       int
-	failed      bool // outcome of the last actually-executed call with this fingerprint
 }
 
 func newRepeatStates() *repeatStates {
-	return &repeatStates{last: map[string]*repeatState{}, fails: map[string]int{}, totals: map[string]int{}}
+	return &repeatStates{last: map[string]*repeatState{}, fails: map[string]int{}}
 }
 
-// observe records a call, returns the consecutive count for this fingerprint
-// and the threshold that applies to it (picked from the fingerprint's last
-// executed outcome, not this call - a call this refuses is never executed).
-func (s *repeatStates) observe(sessionID, fingerprint string, failThresh, successThresh int) (n, threshold int) {
+// observe records a call, returns the consecutive count for this fingerprint.
+func (s *repeatStates) observe(sessionID, fingerprint string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.last[sessionID]
@@ -71,32 +70,16 @@ func (s *repeatStates) observe(sessionID, fingerprint string, failThresh, succes
 		s.last[sessionID] = st
 	}
 	st.count++
-	threshold = successThresh
-	if st.failed {
-		threshold = failThresh
-	}
-	return st.count, threshold
+	return st.count
 }
 
-// recordOutcome updates the fingerprint's last-executed outcome, used to pick
-// the threshold on the NEXT identical call. No-op if a different call landed
-// in between (the streak already broke).
-func (s *repeatStates) recordOutcome(sessionID, fingerprint string, failed bool) {
+// resetSession clears a session's streak counter after a hard stop, so a
+// retry (e.g. a revise round) starts with a fresh budget instead of
+// immediately hard-stopping again on its very first call.
+func (s *repeatStates) resetSession(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st := s.last[sessionID]; st != nil && st.fingerprint == fingerprint {
-		st.failed = failed
-	}
-}
-
-// observeTotal increments and returns the session's total tool-call count
-// across every tool and fingerprint - the generous backstop for a loop the
-// identical-args check doesn't catch.
-func (s *repeatStates) observeTotal(sessionID string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.totals[sessionID]++
-	return s.totals[sessionID]
+	delete(s.last, sessionID)
 }
 
 // resourceFailCount returns consecutive-failure count without mutating.
@@ -119,21 +102,18 @@ func (s *repeatStates) observeResourceFail(sessionID, resourceKey string, failed
 	return s.fails[k]
 }
 
-func newRepeatGuard(inner tool.Tool, states *repeatStates, failThresh, successThresh, maxCalls int, endTurn func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
+func newRepeatGuard(inner tool.Tool, states *repeatStates, threshold, hardStopAfter int, endTurn func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
 		return nil, fmt.Errorf("tool %q does not support repeat guarding (not a runnable function tool)", inner.Name())
 	}
-	if failThresh <= 0 {
-		failThresh = defaultFailThreshold
+	if threshold <= 0 {
+		threshold = defaultRepeatThreshold
 	}
-	if successThresh <= 0 {
-		successThresh = defaultSuccessThreshold
+	if hardStopAfter <= 0 {
+		hardStopAfter = defaultHardStopAfterRefusals
 	}
-	if maxCalls <= 0 {
-		maxCalls = defaultMaxToolCalls
-	}
-	return &repeatGuard{inner: rt, states: states, failThresh: failThresh, successThresh: successThresh, maxCalls: maxCalls, endTurn: endTurn}, nil
+	return &repeatGuard{inner: rt, states: states, threshold: threshold, hardStopAfter: hardStopAfter, endTurn: endTurn}, nil
 }
 
 func (g *repeatGuard) Name() string        { return g.inner.Name() }
@@ -165,10 +145,8 @@ func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 // pathFailThreshold: consecutive failures against a (tool, resource) before refusing the next call.
 const pathFailThreshold = 3
 
-// Run: refuses an identical call at its threshold, force-ends the node's
-// turn if the model repeats it again, and separately force-ends the turn if
-// the node's total tool-call count (any tool, any args) blows past its
-// generous backstop ceiling.
+// Run: refuses the threshold'th+ consecutive identical call, and force-ends
+// the node's turn once the model has ignored that refusal hardStopAfter times.
 func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
@@ -177,22 +155,16 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	sessionID := ctx.SessionID()
 	fingerprint := g.Name() + ":" + string(argsJSON)
 
-	if total := g.states.observeTotal(sessionID); total > g.maxCalls {
-		msg := fmt.Sprintf("tool-call ceiling: this node has made %d tool calls this run (limit %d); node terminated", total, g.maxCalls)
-		slog.Warn("tool call ceiling exceeded; ending node turn", "component", "tools", "session", sessionID, "total", total, "limit", g.maxCalls)
-		g.endNodeTurn(ctx, msg)
-		return nil, errors.New(msg)
-	}
-
-	n, threshold := g.states.observe(sessionID, fingerprint, g.failThresh, g.successThresh)
-	switch {
-	case n > threshold:
+	n := g.states.observe(sessionID, fingerprint)
+	if n > g.threshold+g.hardStopAfter {
 		msg := fmt.Sprintf("tool-call loop: %s called with identical arguments %d consecutive times despite being refused; node terminated", g.Name(), n)
 		slog.Warn("tool call loop: ending node turn", "component", "tools",
 			"tool", g.Name(), "consecutive", n, "session", sessionID)
 		g.endNodeTurn(ctx, msg)
+		g.states.resetSession(sessionID) // a retry (e.g. revise) starts with a fresh budget, not an already-blown one
 		return nil, errors.New(msg)
-	case n == threshold:
+	}
+	if n >= g.threshold {
 		slog.Warn("tool call refused: identical call repeated", "component", "tools",
 			"tool", g.Name(), "consecutive", n, "session", sessionID)
 		return nil, fmt.Errorf(
@@ -219,9 +191,15 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	}
 
 	result, runErr := g.inner.Run(ctx, args)
-	g.states.recordOutcome(sessionID, fingerprint, runErr != nil)
+	failed := runErr != nil
+	if v, ok := result[outcomeDeclinedKey]; ok {
+		delete(result, outcomeDeclinedKey) // internal signal (e.g. ask_advisor's declined consult) - never model-facing
+		if declined, ok := v.(bool); ok && declined {
+			failed = true
+		}
+	}
 	if hasResource {
-		g.states.observeResourceFail(sessionID, resourceKey, runErr != nil)
+		g.states.observeResourceFail(sessionID, resourceKey, failed)
 	}
 	return result, runErr
 }
@@ -255,6 +233,6 @@ func resourceFingerprint(argsJSON []byte) (string, bool) {
 }
 
 // repeatWrap applies the identical-call breaker.
-func repeatWrap(t tool.Tool, states *repeatStates, failThresh, successThresh, maxCalls int, endTurn func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
-	return newRepeatGuard(t, states, failThresh, successThresh, maxCalls, endTurn)
+func repeatWrap(t tool.Tool, states *repeatStates, threshold, hardStopAfter int, endTurn func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
+	return newRepeatGuard(t, states, threshold, hardStopAfter, endTurn)
 }

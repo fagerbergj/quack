@@ -73,7 +73,7 @@ func newFailingPathTool(t *testing.T, calls *int, fail func(pathArgs) bool) runn
 // trips); all fail, and once pathFailThreshold (3) have run and failed the next attempt is refused before the tool even runs.
 func TestRepeatGuardCatchesSemanticChurn(t *testing.T) {
 	calls := 0
-	g, err := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), newRepeatStates(), 3, 3, 0, nil)
+	g, err := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), newRepeatStates(), 3, 3, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestRepeatGuardResourceFailAllowsGenuineDifference(t *testing.T) {
 	states := newRepeatStates()
 
 	// Two different paths, each failing twice: neither reaches the threshold.
-	g1, _ := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), states, 3, 3, 0, nil)
+	g1, _ := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), states, 3, 3, nil)
 	rg1 := g1.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 	for i, note := range []string{"a", "b"} {
@@ -126,7 +126,7 @@ func TestRepeatGuardResourceFailAllowsGenuineDifference(t *testing.T) {
 	// A path whose 3rd call succeeds resets the streak: two more failures
 	// afterward must not be refused (only 2 consecutive since the reset).
 	n := 0
-	g2, _ := newRepeatGuard(newFailingPathTool(t, &n, func(a pathArgs) bool { return a.Note != "fixed" }), states, 3, 3, 0, nil)
+	g2, _ := newRepeatGuard(newFailingPathTool(t, &n, func(a pathArgs) bool { return a.Note != "fixed" }), states, 3, 3, nil)
 	rg2 := g2.(*repeatGuard)
 	seq := []string{"x", "y", "fixed", "z", "w"}
 	for i, note := range seq {
@@ -177,11 +177,10 @@ func newRepeatCtxWithAdvisorThread(t *testing.T, sid, chatID, nodeID string) *re
 }
 
 // The breaker: with the threshold set to 3, the 1st and 2nd identical calls
-// run; the 3rd is refused (tool NOT executed) with a steering error; the 4th
-// is where the hard stop fires and ends the node's turn.
+// run; the 3rd is refused (tool NOT executed) with a steering error.
 func TestRepeatGuardRefusesThirdIdenticalCall(t *testing.T) {
 	calls := 0
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), 3, 3, 0, nil)
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), 3, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,47 +197,16 @@ func TestRepeatGuardRefusesThirdIdenticalCall(t *testing.T) {
 	if err3 == nil || !strings.Contains(err3.Error(), "REFUSED") {
 		t.Fatalf("3rd identical call: want REFUSED, got %v", err3)
 	}
-	_, err4 := rg.Run(ctx, args)
-	if err4 == nil || !strings.Contains(err4.Error(), "tool-call loop") {
-		t.Fatalf("4th identical call: want the hard-stop error, got %v", err4)
-	}
 	if calls != 2 {
 		t.Fatalf("tool executed %d times; want 2 (refusals must not execute)", calls)
 	}
 }
 
-// Two-tier default thresholds: a streak of SUCCESSFUL identical calls gets
-// more leash (successThreshold=8) than one that keeps failing/being refused
-// (failThreshold=3) - a legitimate idempotent re-check shouldn't trip as
-// eagerly as a call that's visibly not working.
-func TestRepeatGuardSuccessStreakUsesHigherThreshold(t *testing.T) {
-	calls := 0
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), defaultFailThreshold, defaultSuccessThreshold, 0, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rg := g.(*repeatGuard)
-	ctx := newRepeatCtx("s1")
-	args := map[string]any{"q": "same"}
-
-	for i := 1; i < defaultSuccessThreshold; i++ {
-		if _, err := rg.Run(ctx, args); err != nil {
-			t.Fatalf("call %d: want a plain success (below the success threshold), got %v", i, err)
-		}
-	}
-	_, refused := rg.Run(ctx, args)
-	if refused == nil || !strings.Contains(refused.Error(), "REFUSED") {
-		t.Fatalf("call %d: want REFUSED at the success threshold, got %v", defaultSuccessThreshold, refused)
-	}
-	if calls != defaultSuccessThreshold-1 {
-		t.Fatalf("tool executed %d times; want %d", calls, defaultSuccessThreshold-1)
-	}
-}
-
-// The hard stop: once a call is refused, repeating it again reaches
-// dag.Executor.NoteToolLoopFailure (via endTurn) with the offending tool name
-// and count, in addition to returning a terminal error - the loop must end
-// the node's turn, not just keep refusing forever (the pre-existing bug).
+// The hard stop: threshold=2, hardStopAfter=1 - the 1st call runs, the 2nd
+// (threshold) and 3rd (the "1 more" refusal) are refused, and the 4th is
+// where the model has ignored the refusal once too often and the guard ends
+// the node's turn via endTurn (dag.Executor.NoteToolLoopFailure), not just
+// refuse forever.
 func TestRepeatGuardHardStopsAfterRefusal(t *testing.T) {
 	calls := 0
 	var gotChat, gotNode, gotMsg string
@@ -246,7 +214,7 @@ func TestRepeatGuardHardStopsAfterRefusal(t *testing.T) {
 		gotChat, gotNode, gotMsg = chatID, nodeID, msg
 		return true
 	}
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), 2, 2, 0, endTurn)
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), 2, 1, endTurn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,16 +228,19 @@ func TestRepeatGuardHardStopsAfterRefusal(t *testing.T) {
 	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "REFUSED") {
 		t.Fatalf("2nd (threshold) call: want REFUSED, got %v", err)
 	}
+	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "REFUSED") {
+		t.Fatalf("3rd call: want another REFUSED (the 1 extra refusal), got %v", err)
+	}
 	if gotMsg != "" {
 		t.Fatalf("endTurn fired before the hard-stop repeat: %q", gotMsg)
 	}
 	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "tool-call loop") {
-		t.Fatalf("3rd call: want the hard-stop error, got %v", err)
+		t.Fatalf("4th call: want the hard-stop error, got %v", err)
 	}
 	if gotChat != "chat-1" || gotNode != "node-1" {
 		t.Fatalf("endTurn got (%q, %q); want (chat-1, node-1)", gotChat, gotNode)
 	}
-	if !strings.Contains(gotMsg, "echo") || !strings.Contains(gotMsg, "3") {
+	if !strings.Contains(gotMsg, "echo") || !strings.Contains(gotMsg, "4") {
 		t.Fatalf("endTurn message missing tool name/count: %q", gotMsg)
 	}
 	if calls != 1 {
@@ -277,34 +248,31 @@ func TestRepeatGuardHardStopsAfterRefusal(t *testing.T) {
 	}
 }
 
-// The total-call ceiling is a backstop independent of any single fingerprint
-// - varying the args every call never trips the identical-call guard, but
-// still hits the ceiling and ends the node's turn.
-func TestRepeatGuardTotalCallCeiling(t *testing.T) {
+// A hard stop resets the streak counter: the same identical call after the
+// stop gets a fresh budget (runs again) instead of immediately re-tripping.
+func TestRepeatGuardResetsStreakAfterHardStop(t *testing.T) {
 	calls := 0
-	var endedMsg string
-	endTurn := func(chatID, nodeID, msg string) bool { endedMsg = msg; return true }
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), defaultFailThreshold, defaultSuccessThreshold, 3, endTurn)
+	stops := 0
+	endTurn := func(string, string, string) bool { stops++; return true }
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), 2, 1, endTurn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
+	args := map[string]any{"q": "same"}
 
-	for i := 1; i <= 3; i++ {
-		if _, err := rg.Run(ctx, map[string]any{"q": fmt.Sprintf("distinct-%d", i)}); err != nil {
-			t.Fatalf("call %d: want success (varying args, under the ceiling), got %v", i, err)
-		}
+	for i := 1; i <= 4; i++ { // run, refuse, refuse, hard-stop
+		rg.Run(ctx, args)
 	}
-	_, err = rg.Run(ctx, map[string]any{"q": "distinct-4"})
-	if err == nil || !strings.Contains(err.Error(), "ceiling") {
-		t.Fatalf("call over the ceiling: want a ceiling error, got %v", err)
+	if stops != 1 {
+		t.Fatalf("endTurn fired %d times after 4 calls; want 1", stops)
 	}
-	if endedMsg == "" {
-		t.Fatal("endTurn never fired for the total-call ceiling")
+	if _, err := rg.Run(ctx, args); err != nil {
+		t.Fatalf("call after hard stop: want a fresh budget (run, not refuse), got %v", err)
 	}
-	if calls != 3 {
-		t.Fatalf("tool executed %d times; want 3", calls)
+	if calls != 2 {
+		t.Fatalf("tool executed %d times; want 2 (1st call, then the post-reset call)", calls)
 	}
 }
 
@@ -313,7 +281,7 @@ func TestRepeatGuardTotalCallCeiling(t *testing.T) {
 func TestRepeatGuardResets(t *testing.T) {
 	calls := 0
 	states := newRepeatStates()
-	g, _ := newRepeatGuard(newRepeatTestTool(t, &calls), states, 3, 3, 0, nil)
+	g, _ := newRepeatGuard(newRepeatTestTool(t, &calls), states, 3, 3, nil)
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 
@@ -328,7 +296,7 @@ func TestRepeatGuardResets(t *testing.T) {
 	}
 	// Another tool's call between repeats resets too (shared states).
 	other := 0
-	g2, _ := newRepeatGuard(newNamedRepeatTestTool(t, "echo2", &other), states, 3, 3, 0, nil)
+	g2, _ := newRepeatGuard(newNamedRepeatTestTool(t, "echo2", &other), states, 3, 3, nil)
 	if _, err := g2.(*repeatGuard).Run(ctx, map[string]any{"q": "a"}); err != nil {
 		t.Fatalf("other tool: %v", err)
 	}

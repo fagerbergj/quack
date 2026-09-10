@@ -456,6 +456,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	basePrompt := prompt
 	queueAttempt := 0
 	for {
+		if lerr, ok := loopFailed(); ok {
+			return "", GateResult{}, lerr // a prior round's abort raced its own err==nil return; consume it here, not later
+		}
 		if cancelled() {
 			return "", GateResult{}, nil // cancelled before drafting → empty (continue-but-warn)
 		}
@@ -602,6 +605,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// (cfg.JudgeRounds == 0 or judge == nil skips the loop below entirely) -
 		// a paused/cancelled/queued node must be honored here too, not just inside the judge loop.
 		if ctrl != nil {
+			if lerr, ok := loopFailed(); ok {
+				return answer, GateResult{}, lerr
+			}
 			if ctrl.Cancelled() {
 				return answer, GateResult{}, nil
 			}
@@ -629,6 +635,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		for round := 1; judge != nil && cfg.JudgeRounds > 0 && round <= cfg.JudgeRounds+1; round++ {
 			// Cooperative cancel/pause/queue before each judge round.
 			if ctrl != nil {
+				if lerr, ok := loopFailed(); ok {
+					return answer, res, lerr
+				}
 				if ctrl.Cancelled() {
 					return answer, res, nil
 				}
@@ -796,6 +805,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// own model call can run long, and a revise round after it is another
 			// full worker round - a cancel landing during the judge call must stop here too, not just at the top of the next round (#879).
 			if ctrl != nil {
+				if lerr, ok := loopFailed(); ok {
+					return answer, res, lerr
+				}
 				if ctrl.Cancelled() {
 					return answer, res, nil
 				}

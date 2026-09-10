@@ -438,3 +438,69 @@ func TestAskAdvisor_RunnerErrorYieldsEmptyAdvice(t *testing.T) {
 		t.Errorf("expected a warning logged for the failed consult; log:\n%s", logBuf.String())
 	}
 }
+
+// TestAskAdvisor_RepeatedDeclinedConsultHardStopsAtFailThreshold: ask_advisor
+// swallows a failed consult into a graceful empty-advice result with a nil Go
+// error - outcomeDeclinedKey classifies it as a failure anyway (never leaking
+// to the model), and identical requests against an always-failing advisor
+// store still hit the repeat guard's threshold and hard stop like any other
+// stuck call.
+func TestAskAdvisor_RepeatedDeclinedConsultHardStopsAtFailThreshold(t *testing.T) {
+	advisorAgent, err := llmagent.New(llmagent.Config{
+		Name: "advisor", Model: &recordingAdvisor{}, Description: "advisor", Instruction: "Advise.",
+		Mode: llmagent.ModeChat,
+	})
+	if err != nil {
+		t.Fatalf("advisor agent: %v", err)
+	}
+	sessions := brokenAdvisorSessions{Service: session.InMemoryService()}
+	tl, err := NewAskAdvisorTool(advisorAgent, sessions)
+	if err != nil {
+		t.Fatalf("NewAskAdvisorTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatalf("ask_advisor tool %T is not runnable", tl)
+	}
+
+	var endedChat, endedNode, endedMsg string
+	endTurn := func(chatID, nodeID, msg string) bool {
+		endedChat, endedNode, endedMsg = chatID, nodeID, msg
+		return true
+	}
+	g, err := newRepeatGuard(rt, newRepeatStates(), 3, 1, endTurn)
+	if err != nil {
+		t.Fatalf("newRepeatGuard: %v", err)
+	}
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
+	args := map[string]any{"request": "any advice?"}
+
+	for i := 1; i <= 2; i++ {
+		result, err := rg.Run(ctx, args)
+		if err != nil {
+			t.Fatalf("call %d: want the consult to run and swallow its own error, got %v", i, err)
+		}
+		if _, leaked := result[outcomeDeclinedKey]; leaked {
+			t.Errorf("call %d: %s leaked into the model-facing result: %v", i, outcomeDeclinedKey, result)
+		}
+	}
+	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "REFUSED") {
+		t.Fatalf("call 3 (threshold): want REFUSED, got %v", err)
+	}
+	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "REFUSED") {
+		t.Fatalf("call 4 (the 1 extra refusal): want REFUSED, got %v", err)
+	}
+	if endedMsg != "" {
+		t.Fatalf("endTurn fired before the hard-stop repeat: %q", endedMsg)
+	}
+	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "tool-call loop") {
+		t.Fatalf("call 5: want the hard-stop error, got %v", err)
+	}
+	if endedChat != "chat-1" || endedNode != "node-1" {
+		t.Fatalf("endTurn got (%q, %q); want (chat-1, node-1)", endedChat, endedNode)
+	}
+	if !strings.Contains(endedMsg, "ask_advisor") {
+		t.Errorf("endTurn message missing the tool name: %q", endedMsg)
+	}
+}

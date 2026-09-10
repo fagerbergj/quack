@@ -46,6 +46,10 @@ type askAdvisorArgs struct {
 
 type askAdvisorResult struct {
 	Advice string `json:"advice"`
+	// Declined: repeatguard.go's outcomeDeclinedKey, read then stripped
+	// before the result reaches the model - a consult that failed
+	// internally is never mistaken for one that actually worked.
+	Declined bool `json:"quack_tool_declined,omitempty"`
 }
 
 // NewAskAdvisorTool: worker consults its advisor. Node identity derived from the advisor-thread marker.
@@ -64,7 +68,7 @@ func NewAskAdvisorTool(advisor adkagent.Agent, sessions session.Service) (tool.T
 			if err != nil {
 				slog.Warn("ask_advisor: consult failed; proceeding without advice",
 					"component", "tools", "thread", token, "err", err)
-				return askAdvisorResult{}, nil
+				return askAdvisorResult{Declined: true}, nil
 			}
 			return askAdvisorResult{Advice: advice}, nil
 		},
