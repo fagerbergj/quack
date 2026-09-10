@@ -62,7 +62,6 @@ type AdvisorTask struct {
 	ChatID          string // workspace/jail scope - the real chat id, stable across a retry's synthetic ADK session
 	InvocationID    string
 	MemSecret       string // unguessable per-node credential for ACP memory
-	ACPSessionID    string // last round's ACP protocol session id, for cross-round resume (judge -> revise -> revise)
 	// Round/TurnID/HeadSHA: the gate's own per-round coordinates, refreshed at
 	// the start of every round (SetAdvisorThreadRound) so a tool-initiated write (write_finding et al, via the MemSession's AdvisorToken) stamps
 	// real lineage instead of Round:0/TurnID:""/HeadSHA:"" - BuildReviewPreload drops any finding with an empty HeadSHA (#1091 adversarial review finding #4).
@@ -437,19 +436,6 @@ func UnregisterAdvisorThread(token string) {
 // lets acp release a pinned process without vetting importing acp (acp
 // already imports vetting the other way).
 var NodeSessionClosed func(token string)
-
-// SetAdvisorThreadSessionID records the ACP session id a round established,
-// so the next round for this same node (judge -> revise -> revise) can
-// resume it instead of starting a cold session (#1006 tool-call amnesia).
-func SetAdvisorThreadSessionID(token, sessionID string) {
-	v, ok := advisorThreads.Load(token)
-	if !ok {
-		return
-	}
-	t := v.(AdvisorTask)
-	t.ACPSessionID = sessionID
-	advisorThreads.Store(token, t)
-}
 
 // SetAdvisorThreadRound records the gate's current round/turn/head-sha coordinates on token's AdvisorTask - called at the start of every judge
 // round (and once for the draft) so a tool-initiated write made during that

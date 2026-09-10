@@ -65,7 +65,7 @@ func TestLive_OpencodeRound(t *testing.T) {
 
 	var specs []eventSpec
 	err = a.round(ctx, cwd, "", workspace.Caps{},
-		"Create a file named hello.txt in the current directory containing exactly the word: hi\nThen reply with a single line confirming what you did.", "", "", "", "",
+		"Create a file named hello.txt in the current directory containing exactly the word: hi\nThen reply with a single line confirming what you did.", "", "", "",
 		func(s eventSpec) bool {
 			specs = append(specs, s)
 			return true
