@@ -94,7 +94,13 @@ func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFun
 		n, b := sweepBaselineTemp(ctx, cfg.ScratchTTL, cfg.BaselineTempDir, prune)
 		res.ScratchRemoved += n
 		res.BytesReclaimed += b
-		n, b = sweepHomeTmp(cfg.ScratchTTL, jail)
+		n, b = sweepHomeSubdir(cfg.ScratchTTL, jail, "tmp")
+		res.ScratchRemoved += n
+		res.BytesReclaimed += b
+		// acp-state backstop: chat archive/delete is the normal path (see
+		// workspace.Jail.RemoveChatACPState); this catches a chat that never
+		// gets archived/deleted, since a session now outlives its node.
+		n, b = sweepHomeSubdir(cfg.ScratchTTL, jail, "acp-state")
 		res.ScratchRemoved += n
 		res.BytesReclaimed += b
 	}
@@ -188,8 +194,11 @@ func sweepBaselineTemp(ctx context.Context, ttl time.Duration, tempDir string, p
 	return removed, bytes
 }
 
-// sweepHomeTmp removes stale .quack-home/tmp entries. Caches (npm/go/gradle) are left alone.
-func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
+// sweepHomeSubdir removes stale entries under .quack-home/<subdir> - shared
+// by scratch ("tmp") and the ACP session-state backstop ("acp-state", see
+// workspace.Jail.ACPStateDir/RemoveChatACPState). No isActive check, same as
+// before: a live entry's mtime is kept fresh by its own use, same as scratch always was.
+func sweepHomeSubdir(ttl time.Duration, jail *Jail, subdir string) (removed int, bytes int64) {
 	userEntries, err := os.ReadDir(jail.Root())
 	if err != nil {
 		return 0, 0
@@ -203,7 +212,7 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 		if err != nil {
 			continue
 		}
-		tmpDir := filepath.Join(homeDir, "tmp")
+		tmpDir := filepath.Join(homeDir, subdir)
 		entries, err := os.ReadDir(tmpDir)
 		if err != nil {
 			continue
@@ -216,7 +225,7 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 			}
 			sz := dirSize(p)
 			if err := RemoveAllForce(p); err != nil {
-				slog.Warn("workspace gc: remove home tmp entry failed", "component", "workspace", "path", p, "err", err)
+				slog.Warn("workspace gc: remove home subdir entry failed", "component", "workspace", "subdir", subdir, "path", p, "err", err)
 				continue
 			}
 			removed++

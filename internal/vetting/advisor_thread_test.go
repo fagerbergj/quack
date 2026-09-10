@@ -44,36 +44,21 @@ func TestUnregisterMemSession_SilentWhenConnected(t *testing.T) {
 	}
 }
 
-// TestUnregisterAdvisorThread_FiresNodeSessionClosedHook pins the acp/vetting
-// seam a pinned ACP process's cleanup rides on (#1006 perf): every advisor
-// thread teardown - not just the ones dag/graph.go happens to exercise - must reach NodeSessionClosed with the exact token, or a pinned subprocess for that node leaks forever with nothing left to evict it.
-func TestUnregisterAdvisorThread_FiresNodeSessionClosedHook(t *testing.T) {
-	old := NodeSessionClosed
-	defer func() { NodeSessionClosed = old }()
-
-	var got []string
-	NodeSessionClosed = func(token string) { got = append(got, token) }
-
-	token := "test-token-hook"
+// TestUnregisterAdvisorThread_DropsEntryOnly pins the continue-primitive
+// requirement that a node's ACP session outlives the node (closed at chat
+// archive/delete instead, acp.CloseChatPinnedSessions): unregister must
+// clear the in-memory bookkeeping but never itself reach into acp - vetting
+// has no import edge to acp to call through even if it wanted to.
+func TestUnregisterAdvisorThread_DropsEntryOnly(t *testing.T) {
+	token := "test-token-drop-only"
 	RegisterAdvisorThread(token, AdvisorTask{})
-	UnregisterAdvisorThread(token)
-
-	if len(got) != 1 || got[0] != token {
-		t.Fatalf("NodeSessionClosed calls = %v, want exactly one call with token %q", got, token)
+	if _, ok := LookupAdvisorThread(token); !ok {
+		t.Fatal("expected the token to be registered before unregister")
 	}
-}
-
-// TestUnregisterAdvisorThread_NilHookDoesNotPanic: acp wires NodeSessionClosed
-// at server boot (serve.go); any other caller (an in-process test, `quack api`
-// paths without a server, ...) must not crash for lack of that wiring.
-func TestUnregisterAdvisorThread_NilHookDoesNotPanic(t *testing.T) {
-	old := NodeSessionClosed
-	defer func() { NodeSessionClosed = old }()
-	NodeSessionClosed = nil
-
-	token := "test-token-nil-hook"
-	RegisterAdvisorThread(token, AdvisorTask{})
-	UnregisterAdvisorThread(token) // must not panic
+	UnregisterAdvisorThread(token)
+	if _, ok := LookupAdvisorThread(token); ok {
+		t.Fatal("expected the token to be gone after unregister")
+	}
 }
 
 // TestUnregisterMemSession_BackstopDoubleCallDoesNotDoubleWarn pins the

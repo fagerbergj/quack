@@ -187,6 +187,41 @@ func TestSweepHomeTmpReapsScratchDirEntries(t *testing.T) {
 	}
 }
 
+// TestSweepReapsStaleACPStateEntries pins the TTL backstop for a chat that
+// never gets archived/deleted (the normal path - see
+// workspace.Jail.RemoveChatACPState): a node's ACPStateDir sweeps by the
+// same rule as ScratchDir, since both are per-node HomeDir subdirs.
+func TestSweepReapsStaleACPStateEntries(t *testing.T) {
+	jail := newTestJail(t)
+	old := time.Now().Add(-12 * time.Hour)
+	fresh := time.Now()
+
+	oldState, err := jail.ACPStateDir("alice", "chat1", "old-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newState, err := jail.ACPStateDir("alice", "chat1", "new-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(oldState, "f"), old)
+	touch(t, filepath.Join(newState, "f"), fresh)
+	if err := os.Chtimes(oldState, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	res := Sweep(context.Background(), jail, GCConfig{ScratchTTL: time.Hour}, never, nil)
+	if res.ScratchRemoved != 1 {
+		t.Fatalf("ScratchRemoved = %d, want 1", res.ScratchRemoved)
+	}
+	if _, err := os.Stat(oldState); !os.IsNotExist(err) {
+		t.Errorf("old node's acp-state dir should have been reaped, stat err = %v", err)
+	}
+	if _, err := os.Stat(newState); err != nil {
+		t.Errorf("fresh node's acp-state dir should have survived: %v", err)
+	}
+}
+
 // growHome writes an n-byte file into the user's agent home, simulating
 // opencode.db/snapshot/tool-output growth from a completed round.
 func growHome(t *testing.T, jail *Jail, userID, name string, n int) {

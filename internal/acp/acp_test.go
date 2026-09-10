@@ -33,11 +33,11 @@ func TestMain(m *testing.M) {
 		runFakeAgent(mode)
 		os.Exit(0)
 	}
-	// Same wiring serve.go does in prod: without it, every test below that
-	// registers an advisor token and completes a round would pin a real
-	// subprocess forever - UnregisterAdvisorThread's deferred cleanup is a no-op until this hook is set.
-	vetting.NodeSessionClosed = ClosePinnedSession
-	os.Exit(m.Run())
+	code := m.Run()
+	// A pinned process now outlives its node (closed at chat archive/delete,
+	// not node-finish) - reap whatever the suite left pinned before exiting.
+	CloseAllPinnedSessions()
+	os.Exit(code)
 }
 
 func runFakeAgent(mode string) {
@@ -415,9 +415,11 @@ func TestRound_PinnedProcessReusedAcrossRounds(t *testing.T) {
 	}
 }
 
-// TestClosePinnedSession_KillsProcessAndClearsRegistry pins the node-finish
-// path itself (vetting.UnregisterAdvisorThread -> NodeSessionClosed ->
-// ClosePinnedSession, wired in serve.go): a node that finishes normally after pinning a process must not leave that process running - this is the #1309 leak class (a per-node resource with no teardown on the happy path), not just the abort/failure exits the other tests already cover.
+// TestClosePinnedSession_KillsProcessAndClearsRegistry pins the chat
+// archive/delete path (internal/server/rest/handler.go): closing a token
+// that pinned a process after a normal round must not leave it running -
+// this is the #1309 leak class (a resource with no teardown), same as the
+// abort/failure exits the other tests already cover.
 func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
 	a := testAgent(t, "pin")
 	token := "tok-close-pinned"
@@ -437,7 +439,7 @@ func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
 	}
 	proc := v.(*pinnedProc).h.cmd.Process
 
-	ClosePinnedSession(token) // simulates node-finish's own call, same as UnregisterAdvisorThread's hook
+	ClosePinnedSession(token) // simulates chat archive/delete's own call
 
 	if _, ok := pinned.Load(token); ok {
 		t.Fatal("ClosePinnedSession left the process pinned")
@@ -476,13 +478,16 @@ func TestClosePinnedSession_RemovesACPStateDir(t *testing.T) {
 	}
 }
 
-// TestUnregisterAdvisorThread_KillsPinnedProcess drives the real end-to-end
-// wiring TestMain sets up (vetting.NodeSessionClosed = ClosePinnedSession, the
-// exact assignment serve.go makes at boot): the ONLY call graph.go's node teardown actually makes is vetting.UnregisterAdvisorThread - if that stops reaching the pinned process for any reason, every node leaks one subprocess on its happy path.
-func TestUnregisterAdvisorThread_KillsPinnedProcess(t *testing.T) {
+// TestUnregisterAdvisorThread_LeavesPinnedProcessRunning pins the continue
+// primitive's whole premise: a terminal node's ACP session must survive its
+// own node-finish call (vetting.UnregisterAdvisorThread, the only call
+// dag/graph.go makes), so a later turn's continue: can still session/load
+// it. Node-finish now only drops the in-memory advisor-thread entry.
+func TestUnregisterAdvisorThread_LeavesPinnedProcessRunning(t *testing.T) {
 	a := testAgent(t, "pin")
-	token := "tok-unregister-kills-pin"
+	token := "tok-unregister-leaves-pin"
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer ClosePinnedSession(token) // real teardown: chat archive/delete
 
 	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
@@ -493,8 +498,34 @@ func TestUnregisterAdvisorThread_KillsPinnedProcess(t *testing.T) {
 
 	vetting.UnregisterAdvisorThread(token) // the ONLY call a finishing node makes (dag/graph.go)
 
-	if _, ok := pinned.Load(token); ok {
-		t.Fatal("node finish (UnregisterAdvisorThread) left the process pinned")
+	if _, ok := pinned.Load(token); !ok {
+		t.Fatal("node finish (UnregisterAdvisorThread) closed the pinned process - it must stay resumable until chat archive/delete")
+	}
+}
+
+// TestCloseChatPinnedSessions_ScopedToChat: archiving/deleting one chat must
+// not touch another chat's still-live pinned sessions.
+func TestCloseChatPinnedSessions_ScopedToChat(t *testing.T) {
+	a := testAgent(t, "pin")
+	tokenA, tokenB := "tok-chat-a", "tok-chat-b"
+	vetting.RegisterAdvisorThread(tokenA, vetting.AdvisorTask{})
+	vetting.RegisterAdvisorThread(tokenB, vetting.AdvisorTask{})
+	defer ClosePinnedSession(tokenB)
+
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "chat-a", "", tokenA, "", func(eventSpec) bool { return true }); err != nil {
+		t.Fatalf("round a: %v", err)
+	}
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "chat-b", "", tokenB, "", func(eventSpec) bool { return true }); err != nil {
+		t.Fatalf("round b: %v", err)
+	}
+
+	CloseChatPinnedSessions("chat-a")
+
+	if _, ok := pinned.Load(tokenA); ok {
+		t.Fatal("chat-a's pinned process survived CloseChatPinnedSessions(\"chat-a\")")
+	}
+	if _, ok := pinned.Load(tokenB); !ok {
+		t.Fatal("CloseChatPinnedSessions(\"chat-a\") closed chat-b's pinned process too")
 	}
 }
 

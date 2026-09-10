@@ -426,17 +426,13 @@ func LookupAdvisorThread(token string) (AdvisorTask, bool) {
 	return t, ok
 }
 
+// UnregisterAdvisorThread drops this node's in-memory bookkeeping only - it
+// no longer closes the node's ACP session (moved to chat archive/delete plus
+// the scratch TTL sweep backstop, so a terminal node's session stays
+// resumable for a future turn's continue: while the chat is still live).
 func UnregisterAdvisorThread(token string) {
 	advisorThreads.Delete(token)
-	if NodeSessionClosed != nil {
-		NodeSessionClosed(token)
-	}
 }
-
-// NodeSessionClosed, when set, runs at the end of UnregisterAdvisorThread -
-// lets acp release a pinned process without vetting importing acp (acp
-// already imports vetting the other way).
-var NodeSessionClosed func(token string)
 
 // SetAdvisorThreadSessionID records the ACP session id a round established,
 // so the next round for this same node (judge -> revise -> revise) can

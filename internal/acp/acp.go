@@ -258,6 +258,11 @@ type pinnedProc struct {
 	sessID      sdk.SessionId
 	toolNames   []string
 	acpStateDir string
+	// chatID: the advisor thread's real chat scope (round's steerChatID) -
+	// lets CloseChatPinnedSessions find every token belonging to one chat,
+	// since a pinned process now outlives its node (closed at chat
+	// archive/delete instead - see CloseChatPinnedSessions).
+	chatID string
 }
 
 // pinned: advisorToken -> the node's pinned process - shared across every
@@ -265,12 +270,28 @@ type pinnedProc struct {
 // per node instance, vetting.AdvisorThreadToken).
 var pinned sync.Map
 
-// ClosePinnedSession kills token's pinned process and removes its ACP state
-// dir - wired to vetting.NodeSessionClosed since acp can't import vetting.
+// ClosePinnedSession kills token's pinned process and removes its ACP state dir.
 func ClosePinnedSession(token string) {
 	if v, ok := pinned.LoadAndDelete(token); ok {
 		closePinnedProc(v.(*pinnedProc))
 	}
+}
+
+// CloseChatPinnedSessions kills every pinned process belonging to chatID -
+// wired to chat archive/delete (internal/server/rest/handler.go), which is
+// when a terminal node's session stops being resumable.
+func CloseChatPinnedSessions(chatID string) {
+	if chatID == "" {
+		return
+	}
+	pinned.Range(func(k, v any) bool {
+		pp := v.(*pinnedProc)
+		if pp.chatID == chatID {
+			closePinnedProc(pp)
+			pinned.Delete(k)
+		}
+		return true
+	})
 }
 
 // CloseAllPinnedSessions kills every pinned process - belt-and-suspenders
@@ -345,7 +366,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	var pinOK bool
 	defer func() {
 		if pinOK && advisorToken != "" {
-			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames, acpStateDir: caps.ACPStateDir})
+			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames, acpStateDir: caps.ACPStateDir, chatID: steerChatID})
 			return
 		}
 		if advisorToken != "" {

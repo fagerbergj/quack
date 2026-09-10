@@ -21,6 +21,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -507,6 +508,9 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		if *body.Archived && h.orch.Queued(chatID) && c.ActiveTurnID != "" {
 			h.hub.CancelResponse(chatID, c.ActiveTurnID)
 		}
+		if *body.Archived {
+			closeNodeSessions(h.jail, chatID)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, h.toSummary(*c, h.chatTotalTokens(r.Context(), chatID)))
@@ -526,7 +530,22 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 				"component", "rest", "chat", chatID, "err", err)
 		}
 	}
+	closeNodeSessions(h.jail, chatID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// closeNodeSessions ends every live ACP session this chat's nodes pinned and
+// removes their persisted state - a terminal node's session stays resumable
+// (continue:) while the chat is live, so this only runs at archive/delete,
+// not node-finish (see vetting.UnregisterAdvisorThread).
+func closeNodeSessions(jail *workspace.Jail, chatID string) {
+	acp.CloseChatPinnedSessions(chatID)
+	if jail == nil {
+		return
+	}
+	if err := jail.RemoveChatACPState(userID, chatID); err != nil {
+		slog.Warn("acp state cleanup failed", "component", "rest", "chat", chatID, "err", err)
+	}
 }
 
 // Starts a run and streams it as SSE. Accepts JSON or multipart/form-data (with optional file attachments).
@@ -1327,7 +1346,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 	if planOK {
 		nodes := make([]schema.DagNodeDef, len(planData.Nodes))
 		for i, n := range planData.Nodes {
-			nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow), Artifact: strPtr(n.Artifact)}
+			nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow), Artifact: strPtr(n.Artifact), Continue: strPtr(n.Continue)}
 		}
 		edges := make([]schema.DagEdge, len(planData.Edges))
 		for i, e := range planData.Edges {

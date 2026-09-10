@@ -327,6 +327,52 @@ func TestRemoveChatScope(t *testing.T) {
 	}
 }
 
+// TestRemoveChatACPState pins the continue primitive's cleanup move: a
+// chat's ACP session state lives one directory per node under HomeDir (not
+// under the chat's own workspace scope RemoveChatScope reaches), so
+// archive/delete needs its own glob-and-remove, and a sibling chat's state
+// must survive.
+func TestRemoveChatACPState(t *testing.T) {
+	j := newTestJail(t)
+	if _, err := j.ACPStateDir("alice", "chat1", "n1"); err != nil {
+		t.Fatalf("ACPStateDir(chat1, n1): %v", err)
+	}
+	if _, err := j.ACPStateDir("alice", "chat1", "n2"); err != nil {
+		t.Fatalf("ACPStateDir(chat1, n2): %v", err)
+	}
+	chat2Dir, err := j.ACPStateDir("alice", "chat2", "n1")
+	if err != nil {
+		t.Fatalf("ACPStateDir(chat2, n1): %v", err)
+	}
+
+	if err := j.RemoveChatACPState("alice", "chat1"); err != nil {
+		t.Fatalf("RemoveChatACPState(chat1): %v", err)
+	}
+
+	home, err := j.HomeDir("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(home, "acp-state", ChatDirName("chat1")+"__*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("chat1's acp-state entries survived: %v", matches)
+	}
+	if _, err := os.Stat(chat2Dir); err != nil {
+		t.Errorf("chat2's acp-state dir should survive: %v", err)
+	}
+
+	// Removing an already-clean chat is a no-op, and an empty chatID is rejected.
+	if err := j.RemoveChatACPState("alice", "chat1"); err != nil {
+		t.Errorf("RemoveChatACPState on an already-clean chat = %v, want nil (no-op)", err)
+	}
+	if err := j.RemoveChatACPState("alice", ""); !errors.Is(err, ErrInvalidChatID) {
+		t.Errorf("RemoveChatACPState(empty) = %v, want ErrInvalidChatID", err)
+	}
+}
+
 func TestJailHomeDirIsSiblingNotNestedInARepo(t *testing.T) {
 	j := newTestJail(t)
 	// Simulate a cloned repo living directly under the user's jail root, the
