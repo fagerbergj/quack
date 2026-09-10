@@ -416,3 +416,66 @@ func TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup(t *testing.T) 
 		t.Fatalf("parent_revision after backfill = %v, want [0 1]", got)
 	}
 }
+
+// TestRecoverInvalidConcurrentIndex_DropsAndAllowsRebuild reproduces an
+// invalid index the same way Postgres itself produces one (a unique index
+// built concurrently over duplicate data always fails mid-build), then
+// checks recoverInvalidConcurrentIndex drops it so a rebuild can succeed.
+func TestRecoverInvalidConcurrentIndex_DropsAndAllowsRebuild(t *testing.T) {
+	t.Parallel()
+	db := newTestPGDB(t)
+	if err := db.Exec(`CREATE TABLE t1350 (id int, kind text)`).Error; err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO t1350 (id, kind) VALUES (1, 'a'), (1, 'b')`).Error; err != nil {
+		t.Fatalf("seed duplicate data: %v", err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX CONCURRENTLY idx_t1350 ON t1350 (id)`).Error; err == nil {
+		t.Fatal("expected the duplicate-data unique index build to fail")
+	}
+	var invalid int64
+	if err := db.Raw(`SELECT count(*) FROM pg_index WHERE indexrelid = 'idx_t1350'::regclass AND NOT indisvalid`).
+		Scan(&invalid).Error; err != nil || invalid != 1 {
+		t.Fatalf("setup: failed build did not leave an invalid index (invalid=%d, err=%v)", invalid, err)
+	}
+
+	if err := recoverInvalidConcurrentIndex(db, "idx_t1350"); err != nil {
+		t.Fatalf("recoverInvalidConcurrentIndex: %v", err)
+	}
+	var exists int64
+	if err := db.Raw(`SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_t1350'`).Scan(&exists).Error; err != nil {
+		t.Fatalf("check dropped: %v", err)
+	}
+	if exists != 0 {
+		t.Fatal("invalid index still present after recovery")
+	}
+	// A rebuild over the same (now non-unique) index must succeed - proves
+	// the boot path is unblocked, not just that the row disappeared.
+	if err := db.Exec(`CREATE INDEX CONCURRENTLY idx_t1350 ON t1350 (id)`).Error; err != nil {
+		t.Fatalf("rebuild after recovery: %v", err)
+	}
+}
+
+// TestRecoverInvalidConcurrentIndex_NoOpWhenValidOrAbsent: the boot path
+// calls this on every start, so it must never disturb a healthy index or
+// error out when the index doesn't exist yet (first boot).
+func TestRecoverInvalidConcurrentIndex_NoOpWhenValidOrAbsent(t *testing.T) {
+	t.Parallel()
+	db := newTestPGDB(t)
+	if err := recoverInvalidConcurrentIndex(db, "idx_does_not_exist_yet"); err != nil {
+		t.Fatalf("absent index: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE t1350b (id int, kind text)`).Error; err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if err := db.Exec(`CREATE INDEX idx_t1350b ON t1350b (id)`).Error; err != nil {
+		t.Fatalf("create valid index: %v", err)
+	}
+	if err := recoverInvalidConcurrentIndex(db, "idx_t1350b"); err != nil {
+		t.Fatalf("valid index: %v", err)
+	}
+	var exists int64
+	if err := db.Raw(`SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_t1350b'`).Scan(&exists).Error; err != nil || exists != 1 {
+		t.Fatalf("valid index was disturbed: exists=%d, err=%v", exists, err)
+	}
+}
