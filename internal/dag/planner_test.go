@@ -59,6 +59,27 @@ func TestBuildValidatesAndStamps(t *testing.T) {
 	}
 }
 
+// A continue target lived in an earlier turn's plan, never this one's node
+// list - depends_on naming it must not trip the "unknown node" structural
+// check (a real rig loop: the model reasonably lists its continue target as
+// a dependency, and used to get hard-rejected before ever reaching
+// resolveContinue's own eligibility check).
+func TestBuildDropsDependsOnEntryMatchingContinueTarget(t *testing.T) {
+	p := testPlanner()
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "n2", Agent: "code-implementer", Task: "reword", Continue: "n1", DependsOn: []string{"n1"}},
+	}, nil, nil, nil, "follow up", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Nodes[0].DependsOn; len(got) != 0 {
+		t.Errorf("DependsOn = %v, want empty (continue target stripped)", got)
+	}
+	if plan.Nodes[0].Continue != "n1" {
+		t.Errorf("Continue = %q, want n1", plan.Nodes[0].Continue)
+	}
+}
+
 func TestBuildStampsAgentContextWindow(t *testing.T) {
 	p := NewPlanner([]AgentInfo{
 		{Name: "web-researcher", ContextWindow: 131072},

@@ -314,6 +314,24 @@ func AttachmentDesc(parts []*genai.Part) string {
 	return fmt.Sprintf("[User attached: %d file(s): %s]", len(mimes), strings.Join(mimes, ", "))
 }
 
+// dropContinueTarget strips a depends_on entry naming the node's own
+// continue target: that prior node lived in an earlier turn's plan, so it's
+// never a declared id in this one, and topoLayers below would otherwise
+// reject it as unknown - resolveContinue (continuation.go), not the DAG
+// edge, is what actually orders a resumed node against its prior self.
+func dropContinueTarget(dependsOn []string, continueID string) []string {
+	if continueID == "" {
+		return dependsOn
+	}
+	out := dependsOn[:0:0]
+	for _, d := range dependsOn {
+		if d != continueID {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // assemble: validates nodes, hardens synthesizer deps, checks acyclicity, validates delivery kind.
 func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup *Setup, delivery *Delivery, allowedKinds []string) (*Plan, error) {
 	if len(nodes) == 0 {
@@ -359,7 +377,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			AgentName:     n.Agent,
 			Task:          n.Task,
 			Rubric:        n.Rubric,
-			DependsOn:     n.DependsOn,
+			DependsOn:     dropContinueTarget(n.DependsOn, n.Continue),
 			Checks:        n.Checks,
 			Workdir:       n.Workdir,
 			ContextWindow: agentInfo.ContextWindow,
