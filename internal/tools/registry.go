@@ -36,20 +36,16 @@ type Deps struct {
 	Guards          map[string]string
 	SafetyJudge     SafetyJudge
 	NodeCancelled   func(chatID, nodeID string) bool
-	// EndNodeTurn force-ends a node's round on a deterministic tool-call
-	// loop (dag.Executor.NoteToolLoopFailure) - nil disables the hard stop,
-	// leaving only the soft refusal (replay/test builds, no live executor).
-	EndNodeTurn func(chatID, nodeID, msg string) bool
-	// ToolLoopThreshold/HardStopAfterRefusals: repeatGuard's thresholds
-	// (config.DagConfig.ToolLoop) - 0 uses repeatguard.go's defaults.
-	ToolLoopThreshold             int
-	ToolLoopHardStopAfterRefusals int
-	ExtTools                      map[string]tool.Tool
-	Replayer                      *replay.Session
-	LedgerCoords                  ledger.Coords
-	Memory                        *memory.Store      // recall_memory (nil = not offered - see resolveToolNames)
-	MemoryRole                    string             // recall_memory's role bucket; empty falls back to repo then user
-	Ledger                        ledger.LedgerStore // recall_memory's memory.recall ledger entries
+	// RepeatGuardTripped ends a node's round when the repeat guard's hard
+	// stop fires (dag.Executor.RepeatGuardTripped) - nil leaves only the
+	// soft refusal (replay/test builds, no live executor).
+	RepeatGuardTripped func(chatID, nodeID, msg string) bool
+	ExtTools           map[string]tool.Tool
+	Replayer           *replay.Session
+	LedgerCoords       ledger.Coords
+	Memory             *memory.Store      // recall_memory (nil = not offered - see resolveToolNames)
+	MemoryRole         string             // recall_memory's role bucket; empty falls back to repo then user
+	Ledger             ledger.LedgerStore // recall_memory's memory.recall ledger entries
 }
 
 type constructor func(Deps) (tool.Tool, error)
@@ -118,7 +114,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
 			}
 		}
-		if direct, err = repeatWrap(direct, repeats, d.ToolLoopThreshold, d.ToolLoopHardStopAfterRefusals, d.EndNodeTurn); err != nil {
+		if direct, err = repeatWrap(direct, repeats, d.RepeatGuardTripped); err != nil {
 			return nil, fmt.Errorf("tools: repeat guard %q: %w", name, err)
 		}
 		if direct, err = cancelWrap(direct, name, d); err != nil {
@@ -127,7 +123,6 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		if direct, err = emitWrap(direct, d.LedgerCoords); err != nil {
 			return nil, fmt.Errorf("tools: emit wrap %q: %w", name, err)
 		}
-		direct = newCtxBoundTool(direct)
 		out = append(out, direct)
 	}
 	return out, nil

@@ -140,9 +140,6 @@ gates:
 dag:
   max_active_nodes: 32  # PER-RUN host-resource ceiling only (jail/clone CPU+RAM); GPU concurrency
                         # is models.<m>.limits + providers.<p>.limits.active (#1007)
-  tool_loop:            # deterministic identical-call-loop guard; see quack.yaml's dag.tool_loop
-    threshold: 3
-    hard_stop_after_refusals: 2
 
 server:
   addr: ":8080"

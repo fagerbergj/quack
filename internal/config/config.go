@@ -477,12 +477,6 @@ type CompactionConfig struct {
 // (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM the GPU pool doesn't know about.
 const defaultMaxActiveNodes = 32
 
-// defaultToolLoopThreshold/HardStopAfterRefusals: see ToolLoopConfig.
-const (
-	defaultToolLoopThreshold             = 3
-	defaultToolLoopHardStopAfterRefusals = 2
-)
-
 // defaultMaxActiveRuns: host disk/CPU ceiling on concurrent run SETUP
 // (clone/jail), which happens before any node reaches the #1007 GPU ledger.
 const defaultMaxActiveRuns = 8
@@ -497,21 +491,6 @@ type DagConfig struct {
 	// gets its own semaphore) as a host-resource guard (jail/clone CPU+RAM),
 	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active (#1007).
 	MaxActiveNodes int `yaml:"max_active_nodes"`
-
-	// ToolLoop bounds a single node's identical-call budget - the
-	// deterministic backstop for a model that keeps calling a refused tool
-	// instead of stopping on its own. 0 = defaults.
-	ToolLoop ToolLoopConfig `yaml:"tool_loop"`
-}
-
-// ToolLoopConfig: internal/tools' repeat guard thresholds.
-type ToolLoopConfig struct {
-	// Threshold: consecutive identical calls before the guard refuses the
-	// next one. 0 = 3.
-	Threshold int `yaml:"threshold"`
-	// HardStopAfterRefusals: further refusals beyond the first the model can
-	// ignore before the node's turn is force-ended. 0 = 2.
-	HardStopAfterRefusals int `yaml:"hard_stop_after_refusals"`
 }
 
 type GatesConfig struct {
@@ -1269,18 +1248,6 @@ func (c *Config) validate() error {
 	}
 	if c.Dag.MaxActiveRuns < 1 {
 		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
-	}
-	if c.Dag.ToolLoop.Threshold == 0 {
-		c.Dag.ToolLoop.Threshold = defaultToolLoopThreshold
-	}
-	if c.Dag.ToolLoop.Threshold < 1 {
-		return fmt.Errorf("config: dag.tool_loop.threshold must be >= 1")
-	}
-	if c.Dag.ToolLoop.HardStopAfterRefusals == 0 {
-		c.Dag.ToolLoop.HardStopAfterRefusals = defaultToolLoopHardStopAfterRefusals
-	}
-	if c.Dag.ToolLoop.HardStopAfterRefusals < 1 {
-		return fmt.Errorf("config: dag.tool_loop.hard_stop_after_refusals must be >= 1")
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

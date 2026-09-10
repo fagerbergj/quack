@@ -121,7 +121,7 @@ async function writeExtension(servers) {
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { McpClient, checkPolicy, checkLoop } from "${pathToFileURL(join(here, "mcp-client.mjs")).href}";
+import { McpClient, checkPolicy } from "${pathToFileURL(join(here, "mcp-client.mjs")).href}";
 
 export default function (pi: any) {
   const cfg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "quackmcp.json"), "utf8"));
@@ -148,17 +148,6 @@ export default function (pi: any) {
       description: t.description || t.name,
       parameters: t.inputSchema,
       async execute(_id: string, params: any) {
-        // Loop guard (mirrors internal/tools/repeatguard.go): a tool error here
-        // just becomes another retry turn for pi, so past the hard stop this
-        // ends the round outright (process.exit) instead of refusing again.
-        const v = checkLoop(t.name, params);
-        if (v?.stop) {
-          console.error(v.stop);
-          process.exit(1);
-        }
-        if (v?.refuse) {
-          return { content: [{ type: "text", text: v.refuse }], isError: true, details: {} };
-        }
         await (ready ??= client.connect());
         const r = await client.toolsCall(t.name, params);
         return { content: r.content ?? [{ type: "text", text: JSON.stringify(r) }], isError: !!r.isError, details: {} };

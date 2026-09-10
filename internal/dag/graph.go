@@ -102,7 +102,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 	return nodesByID, subAgents, nil
 }
 
-// withRoundAbort wraps the worker so a node cancel or NoteToolLoopFailure can
+// withRoundAbort wraps the worker so a node cancel or RepeatGuardTripped can
 // abort its round mid-flight. Must wrap the Agent itself, not ctx deeper in
 // the call chain: workflow.RunNode's scheduler binds the child's context
 // once, at node activation, so only the Agent it calls Run on can inject a

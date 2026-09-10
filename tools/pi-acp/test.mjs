@@ -10,46 +10,8 @@ import { strict as assert } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { checkLoop, DEFAULT_LOOP_THRESHOLD, DEFAULT_LOOP_HARD_STOP_AFTER_REFUSALS } from "./mcp-client.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-
-// Tool-call-loop guard (mirrors internal/tools/repeatguard_test.go): identical
-// calls run up to the threshold, are refused from there on, and once the
-// model has ignored the refusal hardStopAfter times more the caller is told
-// to end the round outright - a refusal alone must never be the final word.
-{
-  const name = "loop_test_tool";
-  const args = { q: "same" };
-  for (let i = 1; i < DEFAULT_LOOP_THRESHOLD; i++) {
-    const v = checkLoop(name, args);
-    assert.equal(v, null, `call ${i}: want to run, got ${JSON.stringify(v)}`);
-  }
-  for (let i = 0; i <= DEFAULT_LOOP_HARD_STOP_AFTER_REFUSALS; i++) {
-    const refused = checkLoop(name, args);
-    assert.ok(refused?.refuse, `refusal ${i + 1}: want a refusal, got ${JSON.stringify(refused)}`);
-  }
-  const stopped = checkLoop(name, args);
-  assert.ok(stopped?.stop, `want the hard-stop signal after ${DEFAULT_LOOP_HARD_STOP_AFTER_REFUSALS + 1} refusals, got ${JSON.stringify(stopped)}`);
-  assert.ok(stopped.stop.includes(name), "hard-stop message missing the tool name");
-
-  // Varying the args resets the streak - never a repeat.
-  assert.equal(checkLoop(name, { q: "different" }), null, "different args wrongly counted as a repeat");
-
-  // Non-consecutive repeats of the SAME call, interleaved with a different
-  // call each time, must never accumulate into a streak - only ever ONE
-  // fingerprint is tracked at a time (mirrors Go's single last-call slot),
-  // so A,B,A,B,... never refuses A even after many total A calls.
-  const a = "list_review_comments";
-  const b = "read_file";
-  for (let i = 1; i <= DEFAULT_LOOP_THRESHOLD + DEFAULT_LOOP_HARD_STOP_AFTER_REFUSALS + 2; i++) {
-    const va = checkLoop(a, { path: "x" });
-    assert.equal(va, null, `interleaved A call ${i}: want to run, got ${JSON.stringify(va)}`);
-    const vb = checkLoop(b, { path: "y" });
-    assert.equal(vb, null, `interleaved B call ${i}: want to run, got ${JSON.stringify(vb)}`);
-  }
-  console.log("ok - checkLoop (pure unit)");
-}
 const env = { ...process.env };
 if (!process.env.PI_ACP_REAL) env.PI_ACP_PI_CMD = join(here, "fake-pi.mjs");
 if (!env.OPENCODE_CONFIG_CONTENT)

@@ -100,10 +100,10 @@ type nodeControl struct {
 	// must keep the round's work so it can resume, so it never calls this.
 	roundAbort context.CancelFunc
 
-	// loopFailure: set by NoteToolLoopFailure on a tool-loop hard stop.
+	// repeatFailure: set by RepeatGuardTripped on a tool-loop hard stop.
 	// Distinct from cancelled (user-initiated) so it surfaces as a real
 	// failure, not the cancel path's silent empty continue-but-warn.
-	loopFailure string
+	repeatFailure string
 
 	// Write-through coordinates; nil store = in-memory only (tests).
 	store          NodeStateStore
@@ -157,7 +157,7 @@ func (c *nodeControl) clearRoundAbort() {
 func (c *nodeControl) SetRoundAbort(cancel context.CancelFunc) {
 	c.setRoundAbort(cancel)
 	c.mu.Lock()
-	fire := c.cancelled || c.loopFailure != ""
+	fire := c.cancelled || c.repeatFailure != ""
 	c.mu.Unlock()
 	if fire {
 		cancel()
@@ -166,15 +166,15 @@ func (c *nodeControl) SetRoundAbort(cancel context.CancelFunc) {
 
 func (c *nodeControl) ClearRoundAbort() { c.clearRoundAbort() }
 
-// NoteToolLoopFailure records a tool-call-loop hard stop and aborts the
+// RepeatGuardTripped records a tool-call-loop hard stop and aborts the
 // in-flight round so the node's turn actually ends, not hangs.
-func (c *nodeControl) NoteToolLoopFailure(msg string) {
+func (c *nodeControl) RepeatGuardTripped(msg string) {
 	c.mu.Lock()
-	if c.loopFailure != "" {
+	if c.repeatFailure != "" {
 		c.mu.Unlock()
 		return // already noted for this round - keep the first message
 	}
-	c.loopFailure = msg
+	c.repeatFailure = msg
 	abort := c.roundAbort
 	c.mu.Unlock()
 	if abort != nil {
@@ -182,13 +182,13 @@ func (c *nodeControl) NoteToolLoopFailure(msg string) {
 	}
 }
 
-// ToolLoopFailure reports NoteToolLoopFailure's message, if any, and clears
+// RepeatFailure reports RepeatGuardTripped's message, if any, and clears
 // it - a one-shot read so the next round (a retry) starts clean.
-func (c *nodeControl) ToolLoopFailure() (string, bool) {
+func (c *nodeControl) RepeatFailure() (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	msg := c.loopFailure
-	c.loopFailure = ""
+	msg := c.repeatFailure
+	c.repeatFailure = ""
 	return msg, msg != ""
 }
 
@@ -607,14 +607,14 @@ func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 	return e.controls.wasCancelled(chatID, nodeID)
 }
 
-// NoteToolLoopFailure reaches a live node's control from internal/tools' repeat
+// RepeatGuardTripped reaches a live node's control from internal/tools' repeat
 // guard to abort a tool-call-loop round. False if the node isn't running.
-func (e *Executor) NoteToolLoopFailure(chatID, nodeID, msg string) bool {
+func (e *Executor) RepeatGuardTripped(chatID, nodeID, msg string) bool {
 	c := e.controls.get(chatID, nodeID)
 	if c == nil {
 		return false
 	}
-	c.NoteToolLoopFailure(msg)
+	c.RepeatGuardTripped(msg)
 	return true
 }
 

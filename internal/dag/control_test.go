@@ -218,18 +218,18 @@ func TestExecute_CancelDuringJudgeStopsBeforeRevise(t *testing.T) {
 	}
 }
 
-// loopFailStub blocks the worker's first model call on ctx (unlike coopStub's
-// plain channel) so a mid-round NoteToolLoopFailure must interrupt it, not
+// repeatTripStub blocks the worker's first model call on ctx (unlike coopStub's
+// plain channel) so a mid-round RepeatGuardTripped must interrupt it, not
 // just set a flag nobody reads until the round returns on its own.
-type loopFailStub struct {
+type repeatTripStub struct {
 	mu      sync.Mutex
 	calls   int
 	started chan struct{}
 }
 
-func (*loopFailStub) Name() string { return "loopFailStub" }
+func (*repeatTripStub) Name() string { return "repeatTripStub" }
 
-func (s *loopFailStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (s *repeatTripStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
 			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
@@ -247,7 +247,7 @@ func (s *loopFailStub) GenerateContent(ctx context.Context, req *model.LLMReques
 	}
 }
 
-func newLoopFailExecutor(t *testing.T, stub *loopFailStub, rounds int) (*Executor, Plan) {
+func newRepeatTripExecutor(t *testing.T, stub *repeatTripStub, rounds int) (*Executor, Plan) {
 	t.Helper()
 	ag, err := llmagent.New(llmagent.Config{Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer."})
 	if err != nil {
@@ -259,18 +259,18 @@ func newLoopFailExecutor(t *testing.T, stub *loopFailStub, rounds int) (*Executo
 	return ex, plan
 }
 
-// TestExecute_ToolLoopFailureAbortsNativeRoundAndReportsFailure: the tool
-// layer's hard stop reaches here via Executor.NoteToolLoopFailure and must
+// TestExecute_RepeatGuardTrippedAbortsNativeRoundAndReportsFailure: the tool
+// layer's hard stop reaches here via Executor.RepeatGuardTripped and must
 // abort the in-flight model call, not just wait for the round to give up.
-func TestExecute_ToolLoopFailureAbortsNativeRoundAndReportsFailure(t *testing.T) {
-	stub := &loopFailStub{started: make(chan struct{}, 1)}
-	ex, plan := newLoopFailExecutor(t, stub, 1)
+func TestExecute_RepeatGuardTrippedAbortsNativeRoundAndReportsFailure(t *testing.T) {
+	stub := &repeatTripStub{started: make(chan struct{}, 1)}
+	ex, plan := newRepeatTripExecutor(t, stub, 1)
 
 	const wantMsg = "tool-call loop: test_tool called identically 4 times; node terminated"
 	go func() {
 		<-stub.started
-		if !ex.NoteToolLoopFailure("chat", "n1", wantMsg) {
-			t.Error("NoteToolLoopFailure returned false for a live node")
+		if !ex.RepeatGuardTripped("chat", "n1", wantMsg) {
+			t.Error("RepeatGuardTripped returned false for a live node")
 		}
 	}()
 

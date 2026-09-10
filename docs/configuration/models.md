@@ -79,14 +79,9 @@ orchestrator:
 dag:
   max_active_runs: 2      # concurrent runs server-wide; default 8
   max_active_nodes: 32    # concurrent nodes WITHIN one run; default 32
-  tool_loop:
-    threshold: 3                  # consecutive identical tool calls before refusal; default 3
-    hard_stop_after_refusals: 2   # further refusals the model can ignore before the node's turn ends; default 2
 ```
 
 `max_active_runs` is a host disk/CPU guard on run setup and the cap on how many runs are live, not a GPU knob - `limits.sessions` is that. Set both when you want few runs in flight *and* few of them generating.
-
-`tool_loop` is the deterministic backstop for a model that keeps calling a tool the guard has already refused: past `threshold` consecutive identical calls it refuses, and once the model has ignored that refusal `hard_stop_after_refusals` more times it force-ends the node's turn as a failure instead of letting the round hang. Applies to both native agents (`internal/tools`' repeat guard) and ACP/pi agents (the shim's own copy of the same rule).
 
 ## The judge is a separate model
 
