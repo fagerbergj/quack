@@ -1548,7 +1548,7 @@ export type ListMemoriesData = {
          */
         sort?: 'newest' | 'oldest' | 'score' | 'upvotes' | 'downvotes' | 'recalls' | 'last_recalled';
         /**
-         * Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
+         * Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter and `sort` it was issued for - an offset from one sort order names a different row under another.
          *
          */
         page_token?: string;
@@ -1558,7 +1558,7 @@ export type ListMemoriesData = {
 
 export type ListMemoriesErrors = {
     /**
-     * Malformed page_token, or one issued for a different bucket filter
+     * Malformed page_token, or one issued for a different bucket filter or sort
      */
     400: ErrorResponse;
     /**

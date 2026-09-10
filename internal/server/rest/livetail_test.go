@@ -188,3 +188,46 @@ func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 		t.Fatal("handler did not return after client disconnect")
 	}
 }
+
+// TestSubscribeCloseRacesActiveRead is the harvest review finding: Active is
+// read before Subscribe, so a Hub.Close landing in that window leaves active
+// stale-true while Subscribe reports done and returns a nil live channel.
+// Falling into the warm path with that nil channel never delivers the
+// buffered replay: the client sees an empty stream (the goroutine itself
+// blocks on the nil channel indefinitely, but nothing more is ever written to
+// the response, so from the caller's side the response is just empty). The
+// discriminating check is the body content, not "did the call return" - a
+// future change could make the buggy path return quickly for an unrelated
+// reason and still drop the replay, and a return-only assertion would miss
+// that.
+func TestSubscribeCloseRacesActiveRead(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
+	pub.Publish(stream.ResponseCreated("t1"))
+	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
+	pub.Publish(stream.Done())
+	h.eventLog.Flush() // Close frees the hub buffer; must wait for the durable write first.
+
+	restore := subscribeRaceHook
+	subscribeRaceHook = func() { h.hub.Close(chatID) }
+	defer func() { subscribeRaceHook = restore }()
+
+	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
+	rec := newSyncRecorder()
+	done := make(chan struct{})
+	go func() {
+		h.SubscribeChatStream(rec, req, chatID)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		// The buggy path blocks the goroutine forever on the nil live
+		// channel rather than erroring - fall through to the content check
+		// below, which is what actually distinguishes the two behaviors.
+	}
+	if !strings.Contains(rec.body(), "node_done") {
+		t.Fatalf("Hub.Close racing the Active read dropped the buffered replay; body:\n%q", rec.body())
+	}
+}

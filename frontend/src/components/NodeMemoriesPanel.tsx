@@ -123,9 +123,9 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
       aria-label="Memories received by this node"
       onClose={onClose}
       onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
-      className="m-auto w-full max-w-lg max-h-[80vh] p-0 border-0 rounded-lg bg-transparent backdrop:bg-black/40"
+      className="m-auto w-full max-w-lg max-h-[80dvh] p-0 border-0 rounded-lg bg-transparent backdrop:bg-black/40"
     >
-      <div className="flex flex-col max-h-[80vh] rounded-lg bg-white dark:bg-gray-800 shadow-xl">
+      <div className="flex flex-col max-h-[80dvh] rounded-lg bg-white dark:bg-gray-800 shadow-xl">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Memories</h2>
           <button

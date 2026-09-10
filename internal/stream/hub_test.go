@@ -1,6 +1,8 @@
 package stream
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -201,6 +203,31 @@ func TestHubUnregisterRun(t *testing.T) {
 	}
 }
 
+// TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun pins the #1342 review
+// finding: if a new turn registers its own run handle for a chat after an
+// old run's tail already called cancelRun() but before that old run's
+// EndRun executes, the stale EndRun must not delete the NEW run's handle or
+// close its topic - CancelResponse/DrainActiveRuns/the new stream all still
+// need it live.
+func TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun(t *testing.T) {
+	h := NewHub()
+	h.RegisterRun("c1", "old-run", func() {})
+	h.Publish("c1", 1, SSEEvent{})
+	_, _, cancelSub, _ := h.Subscribe("c1")
+	defer cancelSub()
+
+	h.RegisterRun("c1", "new-run", func() {}) // a fast retry supersedes the old run
+
+	h.EndRun("c1", "old-run") // the old run's own tail, arriving late
+
+	if !h.CancelRun("c1") {
+		t.Error("EndRun(old-run) wiped the new run's cancel handle")
+	}
+	if !h.Active("c1") {
+		t.Error("EndRun(old-run) closed the new run's topic")
+	}
+}
+
 // A GitHub-dispatched run and a REST-started run are both just callers of
 // RegisterRun on the same Hub instance - this pins that the registry is
 // driver-agnostic: whichever goroutine registered a chat's cancel func, the same CancelRun call reaches it. (internal/github.dispatch and rest.Handler.startRun both call exactly this method on the shared hub.)
@@ -251,5 +278,35 @@ func TestHubPublishDropsSlowSubscriberInsteadOfSkipping(t *testing.T) {
 	defer cancel2()
 	if len(replay) != 1025 {
 		t.Fatalf("fresh subscribe replay = %d events, want 1025", len(replay))
+	}
+}
+
+// TestHubRegisterRunRacesEndRun is the harvest review finding: runs used to
+// be a sync.Map with no lock spanning EndRun's Load-check-Delete, so a
+// RegisterRun landing between EndRun's Load and Delete could be wiped by an
+// EndRun meant for the run it just superseded. Putting runs under h.mu closes
+// that window - run with -race and repeated, since a race depends on
+// scheduling, not a single call.
+func TestHubRegisterRunRacesEndRun(t *testing.T) {
+	h := NewHub()
+	for i := range 200 {
+		chatID := fmt.Sprintf("c%d", i)
+		h.RegisterRun(chatID, "old", func() {})
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			h.RegisterRun(chatID, "new", func() {})
+		}()
+		go func() {
+			defer wg.Done()
+			h.EndRun(chatID, "old")
+		}()
+		wg.Wait()
+
+		if !h.HasRegisteredRun(chatID) {
+			t.Fatalf("iteration %d: EndRun(old) wiped the newer RegisterRun racing it", i)
+		}
 	}
 }

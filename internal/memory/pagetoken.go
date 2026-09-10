@@ -12,15 +12,15 @@ import (
 const MemoryPageMaxLimit = 200
 
 // ErrInvalidPageToken is returned by DecodePageToken when the token doesn't
-// decode, or was issued under a different bucket filter than it's being
-// replayed against.
+// decode, or was issued under a different bucket filter or sort than it's
+// being replayed against.
 var ErrInvalidPageToken = errors.New("memory: invalid page token")
 
-const pageSortRecencyDesc = "recency_desc"
-
-// pageToken is listMemories' opaque continuation token: an offset anchor (the store's
-// list is already a full scan sorted newest-first, sliced by offset - see
-// qdrantIndex.list/sqliteIndex.list) bound to the bucket filter it was issued under, the same way store.chatsPageToken binds to scope.
+// pageToken is listMemories' opaque continuation token: an offset anchor
+// bound to the bucket filter AND sort it was issued under (the same way
+// store.chatsPageToken binds to scope) - an offset from one sort order names
+// a different row under another, so replaying it against a changed sort
+// must fail loudly instead of silently returning the wrong page.
 type pageToken struct {
 	Sort   string `json:"s"`
 	Bucket string `json:"b"`
@@ -28,14 +28,14 @@ type pageToken struct {
 }
 
 // EncodePageToken builds the opaque continuation token for the next page
-// starting at offset, issued under the given bucket filter.
-func EncodePageToken(bucket string, offset int) string {
-	b, _ := json.Marshal(pageToken{Sort: pageSortRecencyDesc, Bucket: bucket, Offset: offset})
+// starting at offset, issued under the given bucket filter and sort.
+func EncodePageToken(bucket, sort string, offset int) string {
+	b, _ := json.Marshal(pageToken{Sort: sort, Bucket: bucket, Offset: offset})
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// DecodePageToken validates s was issued under bucket and returns its offset.
-func DecodePageToken(s, bucket string) (int, error) {
+// DecodePageToken validates s was issued under bucket and sort, and returns its offset.
+func DecodePageToken(s, bucket, sort string) (int, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
@@ -44,8 +44,8 @@ func DecodePageToken(s, bucket string) (int, error) {
 	if err := json.Unmarshal(raw, &t); err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
 	}
-	if t.Sort != pageSortRecencyDesc {
-		return 0, fmt.Errorf("%w: issued for sort %q, not %q", ErrInvalidPageToken, t.Sort, pageSortRecencyDesc)
+	if t.Sort != sort {
+		return 0, fmt.Errorf("%w: issued for sort %q, not %q", ErrInvalidPageToken, t.Sort, sort)
 	}
 	if t.Bucket != bucket {
 		return 0, fmt.Errorf("%w: issued for bucket %q, not %q", ErrInvalidPageToken, t.Bucket, bucket)

@@ -536,7 +536,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       // Below `medium`: the same bottom-sheet shell as Sheet/NodePopup (docked
       // to the bottom edge via mt-auto, rounded top, scrim, safe-area padding);
       // a centred card at medium+. dvh, not vh, so it clears mobile browser chrome (#1177). One component tree at every width - the only width-conditional code is this class.
-      className="m-0 mt-auto w-screen max-w-[100vw] h-[90dvh] medium:m-auto medium:w-full medium:max-w-4xl medium:h-[min(32rem,85vh)] max-h-[100vh] medium:max-h-[85vh] p-0 border-0 rounded-t-2xl medium:rounded-2xl bg-transparent backdrop:bg-black/40"
+      className="m-0 mt-auto w-screen max-w-[100vw] h-[90dvh] medium:m-auto medium:w-full medium:max-w-4xl medium:h-[min(32rem,85vh)] max-h-[100vh] medium:max-h-[85dvh] p-0 border-0 rounded-t-2xl medium:rounded-2xl bg-transparent backdrop:bg-black/40"
     >
       <div
         className="relative flex flex-col w-full h-full overflow-hidden rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl pb-[calc(0.75rem+var(--composer-gap))] medium:pb-0"

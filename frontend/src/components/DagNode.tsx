@@ -214,7 +214,7 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
 // the same structure NodePopup uses (#384/#406): a light overlay, a close button on its own row (never overlapping the content), Escape/outside-click-to-close, and the content in a chat-style bubble via AssistantText.
 function ContentPopup({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
   return (
-    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85vh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
       <div className="flex justify-end -mb-2">
         <button
           onClick={onClose}

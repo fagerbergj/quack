@@ -282,3 +282,44 @@ func TestApplyMemoryVotesOnPass_NoVotesWhenNoneGiven(t *testing.T) {
 		t.Fatalf("entries = %+v, want none", entries)
 	}
 }
+
+// TestMissingMemoryVotes_PartialVoteStillMissing pins the fix for a verdict
+// that voted on SOME but not all received memories: len(v.Memories) > 0 alone
+// used to read as "not missing" and skip the retry nudge, leaving every
+// unvoted id permanently unvoted (the applied set is exactly what's present
+// in v.Memories, see applyMemoryVotesOnPass).
+func TestMissingMemoryVotes_PartialVoteStillMissing(t *testing.T) {
+	received := []string{"m1", "m2", "m3"}
+	cases := []struct {
+		name string
+		v    verdict
+		want bool
+	}{
+		{"none voted", verdict{}, true},
+		{"partial vote", verdict{Memories: []memoryVerdict{{ID: "m1", Vote: "supported"}}}, true},
+		{"all voted", verdict{Memories: []memoryVerdict{
+			{ID: "m1", Vote: "supported"}, {ID: "m2", Vote: "not_relevant"}, {ID: "m3", Vote: "contradicted"},
+		}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := missingMemoryVotes(received, c.v); got != c.want {
+				t.Errorf("missingMemoryVotes(%v, %+v) = %v, want %v", received, c.v, got, c.want)
+			}
+		})
+	}
+	if missingMemoryVotes(nil, verdict{}) {
+		t.Error("missingMemoryVotes(nil, ...) = true, want false (nothing was owed)")
+	}
+}
+
+// TestMissingMemoryVotes_VoteOutsideRecallSetDoesNotCountAsCoverage pins the
+// case the table above doesn't: a vote on an id that was never received must
+// not cover a different, unvoted received id (review finding) - the loop
+// must key off receivedIDs, not v.Memories.
+func TestMissingMemoryVotes_VoteOutsideRecallSetDoesNotCountAsCoverage(t *testing.T) {
+	v := verdict{Memories: []memoryVerdict{{ID: "m2", Vote: "supported"}}}
+	if !missingMemoryVotes([]string{"m1"}, v) {
+		t.Error("missingMemoryVotes([m1], votes=[m2]) = false, want true (m1 was never voted on)")
+	}
+}

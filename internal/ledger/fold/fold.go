@@ -98,9 +98,11 @@ func (a *Artifact) Latest() (ArtifactRevision, bool) {
 // turn's stale terminal status.
 type NodeState struct {
 	NodeID, TurnID string
-	StartedSeq     int64  // 0 = no node.started entry seen
-	TerminalStatus string // "" | "done" | "failed" - "" whenever a start supersedes it
+	StartedSeq     int64     // 0 = no node.started entry seen
+	StartedAt      time.Time // the source ledger entry's own At, not fold/rebuild wall-clock
+	TerminalStatus string    // "" | "done" | "failed" - "" whenever a start supersedes it
 	TerminalSeq    int64
+	TerminalAt     time.Time
 	Round          int
 }
 
@@ -314,12 +316,12 @@ func applyLoop(res *Result, live map[revKey]ArtifactRevision, entries []ledger.E
 				// A later start re-runs the node; entries arrive in seq
 				// order, so any earlier terminal (same-turn retry or a
 				// previous turn) necessarily precedes it and is superseded.
-				n.TerminalStatus, n.TerminalSeq = "", 0
-				n.StartedSeq = e.Seq
+				n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "", 0, time.Time{}
+				n.StartedSeq, n.StartedAt = e.Seq, e.At
 			case ledger.KindNodeDone:
-				n.TerminalStatus, n.TerminalSeq = "done", e.Seq
+				n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "done", e.Seq, e.At
 			case ledger.KindNodeFailed:
-				n.TerminalStatus, n.TerminalSeq = "failed", e.Seq
+				n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "failed", e.Seq, e.At
 			}
 		case ledger.KindMemoryRecall:
 			var p ledger.MemoryRecallPayload

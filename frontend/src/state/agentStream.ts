@@ -1,6 +1,7 @@
 // Shared event vocabulary and dispatch for the agent SSE stream. Both
-// transports - fetched ReadableStream (chat) and EventSource (job live
-// log) - route events through dispatchAgentEvent so the per-event JSON shape lives in one place.
+// transports - fetched ReadableStream (a chat's initial POST) and EventSource
+// (chatStore's GET reconnect) - route events through dispatchAgentEvent so
+// the per-event JSON shape lives in one place.
 
 interface ConfirmationRequestPayload {
   callId: string
@@ -348,7 +349,7 @@ function dispatchAgentEvent(
           contextTokens: p.context_tokens,
           finishReason: p.finish_reason,
           durationMs: p.duration_ms,
-          finishedAtMs: p.finished_at_ms,
+          finishedAtMs: typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined,
           judgeRounds: p.judge_rounds,
           judgeFinalScore: p.judge_final_score,
           judgePassed: p.judge_passed,
@@ -506,9 +507,12 @@ export async function readAgentStream(
   return { done: sawDone, lastEventId }
 }
 
-// Wires an EventSource (the job live log) to the same handler shape
-// readAgentStream consumes; returns a teardown that closes it. shouldDispatch,
-// if given, gates each event BEFORE it reaches handlers - e.g. chatStore's id-contiguity check (#audit-6): a gap must never be applied, so the gate has to run ahead of dispatch, not as a second independent listener racing it.
+// attachAgentEventSource wires an EventSource (chatStore.openEventSource, the chat stream) to
+// the same handler shape readAgentStream consumes. Returns a teardown that
+// closes the EventSource. shouldDispatch, if given, gates each event BEFORE
+// it reaches handlers - e.g. chatStore's id-contiguity check (#audit-6):
+// a gap must never be applied, so the gate has to run ahead of dispatch,
+// not as a second independent listener racing it.
 export function attachAgentEventSource(
   es: EventSource,
   handlers: AgentStreamHandlers,

@@ -49,7 +49,7 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
             if (e.key === 'Enter') { e.preventDefault(); onEdit?.(text); setEditing(false) }
             if (e.key === 'Escape') { setText(msg.text); setEditing(false) }
           }}
-          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400"
+          className="flex-1 min-w-0 text-base px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400"
         />
         <button onClick={() => { onEdit?.(text); setEditing(false) }} className="text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:underline">save</button>
         <button onClick={() => { setText(msg.text); setEditing(false) }} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
@@ -103,7 +103,7 @@ export function NodePopup({
   }
 
   return (
-    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85vh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
       {/* Close on its own row so it never overlaps the content bubbles. */}
       <div className="flex justify-end -mb-2">
         <button
@@ -132,7 +132,7 @@ export function NodePopup({
               value={taskText}
               onChange={e => setTaskText(e.target.value)}
               rows={6}
-              className="w-full text-xs px-2 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              className="w-full text-base px-2 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
             />
             <div className="flex items-center gap-2">
               <button
@@ -196,7 +196,7 @@ export function NodePopup({
               if (e.key === 'Enter' && inputText.trim()) { e.preventDefault(); submitInput() }
             }}
             placeholder={answering ? 'Type your answer…' : 'Queue a message for this node…'}
-            className={`flex-1 min-w-0 text-xs px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
+            className={`flex-1 min-w-0 text-base px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
               answering
                 ? 'border-blue-300 dark:border-blue-700 focus:ring-blue-400'
                 : 'border-gray-300 dark:border-gray-600 focus:ring-gray-400'

@@ -103,6 +103,19 @@ type nodeControl struct {
 	// Write-through coordinates; nil store = in-memory only (tests).
 	store          NodeStateStore
 	chatID, nodeID string
+	// owner: nil in a test that constructs nodeControl directly rather than
+	// via runControls.register - MarkDelivered no-ops then, same as every
+	// other nil-guarded seam here (store, liveSteer, roundAbort).
+	owner *runControls
+}
+
+// MarkDelivered records that RunGatedRefine reached commitDelivery for this
+// node (vetting.NodeControl) - see runControls.delivered's doc for why
+// dagStream needs this signal instead of inferring delivery from output text.
+func (c *nodeControl) MarkDelivered() {
+	if c.owner != nil {
+		c.owner.markDelivered(c.chatID, c.nodeID)
+	}
 }
 
 // setLiveSteer/clearLiveSteer: the live round's forward hook, registered for
@@ -368,7 +381,14 @@ type runControls struct {
 	m         map[string]map[string]*nodeControl // chatID → nodeID → control (live)
 	cancelled map[string]map[string]bool         // chatID → nodeID → user-cancelled; persists after the control is unregistered so the stream can mark the node "cancelled" (not "failed")
 	paused    map[string]map[string]PauseReason  // chatID → nodeID → why it paused this run; persists past unregister, same reason as cancelled
-	overrides map[string]map[string]string       // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveNode.Task)
+	// delivered: chatID → nodeID → RunGatedRefine reached commitDelivery this
+	// run. Sticky past unregister for the same reason as cancelled/paused -
+	// dagStream.handle's terminal-event case can run after unregister, and a
+	// truly delivered answer must outrank a pause/cancel flag set afterward
+	// (the race #1340 only closed for PauseShutdown; a live pause/cancel
+	// arriving in the same window still needs this, not the out!="" guess).
+	delivered map[string]map[string]bool
+	overrides map[string]map[string]string // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveNode.Task)
 	store     NodeStateStore
 }
 
@@ -377,6 +397,7 @@ func newRunControls() *runControls {
 		m:         map[string]map[string]*nodeControl{},
 		cancelled: map[string]map[string]bool{},
 		paused:    map[string]map[string]PauseReason{},
+		delivered: map[string]map[string]bool{},
 		overrides: map[string]map[string]string{},
 	}
 }
@@ -412,12 +433,31 @@ func (r *runControls) clearPausedSticky(chatID, nodeID string) {
 	delete(r.paused[chatID], nodeID)
 }
 
+// markDelivered records that RunGatedRefine reached commitDelivery for
+// nodeID this run - see the delivered field's doc.
+func (r *runControls) markDelivered(chatID, nodeID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.delivered[chatID] == nil {
+		r.delivered[chatID] = map[string]bool{}
+	}
+	r.delivered[chatID][nodeID] = true
+}
+
+// wasDelivered reports markDelivered's flag (survives unregister).
+func (r *runControls) wasDelivered(chatID, nodeID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.delivered[chatID][nodeID]
+}
+
 // resetCancelled clears flags and overrides for a new turn.
 func (r *runControls) resetCancelled(chatID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.cancelled, chatID)
 	delete(r.paused, chatID)
+	delete(r.delivered, chatID)
 	delete(r.overrides, chatID)
 }
 
@@ -428,7 +468,7 @@ func (r *runControls) registerAndTakeOverride(chatID, nodeID string) (c *nodeCon
 	if r.m[chatID] == nil {
 		r.m[chatID] = map[string]*nodeControl{}
 	}
-	c = &nodeControl{store: r.store, chatID: chatID, nodeID: nodeID}
+	c = &nodeControl{store: r.store, chatID: chatID, nodeID: nodeID, owner: r}
 	r.m[chatID][nodeID] = c
 	if m := r.overrides[chatID]; m != nil {
 		if t, present := m[nodeID]; present {
@@ -484,6 +524,7 @@ func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, boo
 	r.clearPausedSticky(chatID, nodeID)
 	r.mu.Lock()
 	delete(r.cancelled[chatID], nodeID)
+	delete(r.delivered[chatID], nodeID)
 	r.mu.Unlock()
 	return c, override, ok
 }

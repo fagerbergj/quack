@@ -7,6 +7,12 @@ import { LazyLoadBoundary } from './components/LazyLoadBoundary'
 // iframe host are route-split out of the entry chunk (~19.7 kB gzip).
 const Memory = lazy(() => import('./pages/Memory'))
 const ExtensionHost = lazy(() => import('./pages/ExtensionHost'))
+
+// A null Suspense fallback leaves a blank slot while a route chunk loads, and
+// a screen reader hears nothing at all; role=status announces the wait.
+const routeFallback = (
+  <div role="status" aria-live="polite" className="flex-1 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400">Loading…</div>
+)
 import { useRoute, useExtName } from './router'
 import { applyTheme } from './hooks/useTheme'
 import { useVisualViewportHeight } from './hooks/useVisualViewportHeight'
@@ -55,9 +61,9 @@ export default function App() {
             navigation between them - a failure on one route would then
             keep showing its error screen on the other, unrelated route. */}
         {route === 'memory'
-          ? <LazyLoadBoundary key={route}><Suspense fallback={null}><Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
+          ? <LazyLoadBoundary key={route}><Suspense fallback={routeFallback}><Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
           : route === 'ext'
-            ? <LazyLoadBoundary key={route}><Suspense fallback={null}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
+            ? <LazyLoadBoundary key={route}><Suspense fallback={routeFallback}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
             : <Chat navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />}
       </div>
     </div>

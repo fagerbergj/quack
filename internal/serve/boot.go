@@ -162,8 +162,8 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	_ = st.MarkRunActive(runCtx, chatID, plan.TurnID)
 	// Reset already ran synchronously in startResumedNodes, before this
 	// goroutine was dispatched - not here, or a subscriber could race it.
-	// FinishRun flushes then closes then unregisters, in that order - see its doc.
-	defer eventLog.FinishRun(hub, chatID, cancelRun)
+	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+	defer eventLog.FinishRun(hub, chatID, plan.TurnID, cancelRun)
 
 	pub := runlog.NewPublisher(hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(plan.TurnID))

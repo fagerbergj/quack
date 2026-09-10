@@ -86,14 +86,26 @@ func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 	}
 	var items []item
 	for _, n := range res.Nodes {
+		// Built directly, not via stream.NodeStart/NodeDone/NodeFailed: those
+		// stamp *Ms from time.Now(), correct for the live path but wrong here
+		// - a folded/rebuilt row must carry the SOURCE ledger entry's own At
+		// (n.StartedAt/TerminalAt), or a resumed chat renders a started/
+		// finished_at_ms from the moment of reconstruction instead of the
+		// original run.
 		if n.StartedSeq > 0 {
-			items = append(items, item{seq: n.StartedSeq, ev: stream.NodeStart(n.NodeID, "")})
+			items = append(items, item{seq: n.StartedSeq, ev: stream.SSEEvent{Name: stream.EventNodeStart, Data: stream.NodeStartData{
+				NodeID: n.NodeID, StartedAtMs: n.StartedAt.UnixMilli(),
+			}}})
 		}
 		switch n.TerminalStatus {
 		case "done":
-			items = append(items, item{seq: n.TerminalSeq, ev: stream.NodeDone(n.NodeID, stream.NodeDoneData{})})
+			items = append(items, item{seq: n.TerminalSeq, ev: stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{
+				NodeID: n.NodeID, FinishedAtMs: n.TerminalAt.UnixMilli(),
+			}}})
 		case "failed":
-			items = append(items, item{seq: n.TerminalSeq, ev: stream.NodeFailed(n.NodeID, "")})
+			items = append(items, item{seq: n.TerminalSeq, ev: stream.SSEEvent{Name: stream.EventNodeFailed, Data: stream.NodeFailedData{
+				NodeID: n.NodeID, FinishedAtMs: n.TerminalAt.UnixMilli(),
+			}}})
 		}
 	}
 	// judge_round artifact.revision entries carry no dedicated SSE event yet (design

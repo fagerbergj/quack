@@ -178,9 +178,10 @@ func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	if len(got) != len(wantEvents) {
 		t.Fatalf("resumed %d events, want %d (independent fold): got=%+v want=%+v", len(got), len(wantEvents), got, wantEvents)
 	}
-	// Compare node id + event name, not the raw JSON: SynthesizeChatEvents stamps a
-	// live timestamp each call, so two independent calls never produce
-	// byte-identical payloads even when they agree on everything the fold actually carries.
+	// Compare node id + event name, not the raw JSON: LoadEvents' fold runs
+	// independently of the `want` fold above, and node.* payloads carry no
+	// content beyond node id (Agent/Output are populated by the live path,
+	// not reconstructed) - the two folds' events differ in nothing else.
 	for i := range got {
 		gotEv, err := UnmarshalEvent(got[i].Event)
 		if err != nil {
@@ -213,6 +214,77 @@ func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	}
 	if len(again) != len(wantEvents) {
 		t.Fatalf("second resume returned %d events, want %d (no duplicates)", len(again), len(wantEvents))
+	}
+}
+
+// TestSynthesizeChatEvents_UsesSourceEntryTimestamps pins the fold-
+// reconstruction fix: a folded node_start/node_done must carry the ORIGINAL
+// ledger entry's At, not the wall-clock moment of reconstruction - otherwise
+// a resumed/rebuilt chat renders a started/finished_at_ms minutes (or
+// rebuild-runs later than the entry, days) after the real run.
+func TestSynthesizeChatEvents_UsesSourceEntryTimestamps(t *testing.T) {
+	ctx := context.Background()
+	ls := ledgertest.NewMemStore()
+	const chatID = "chat-ts"
+	started := time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC)
+	finished := started.Add(90 * time.Second)
+
+	payload, err := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+		Turn   string `json:"turn"`
+	}{NodeID: "n1", Turn: "t1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: payload, At: started}); err != nil {
+		t.Fatalf("append started: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeDone, Payload: payload, At: finished}); err != nil {
+		t.Fatalf("append done: %v", err)
+	}
+
+	res, err := fold.Fold(ctx, ls, chatID, 0)
+	if err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	// Reconstruction happens well after the original run - proves the
+	// synthesized timestamps come from `res`, not from calling this "now".
+	time.Sleep(10 * time.Millisecond)
+	events := SynthesizeChatEvents(chatID, res)
+
+	var gotStart, gotDone bool
+	for _, ce := range events {
+		ev, err := UnmarshalEvent(ce.Event)
+		if err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		raw, ok := ev.Data.(json.RawMessage)
+		if !ok {
+			t.Fatalf("event %q: Data = %T, want json.RawMessage", ev.Name, ev.Data)
+		}
+		switch ev.Name {
+		case stream.EventNodeStart:
+			var d stream.NodeStartData
+			if err := json.Unmarshal(raw, &d); err != nil {
+				t.Fatalf("unmarshal node_start: %v", err)
+			}
+			gotStart = true
+			if d.StartedAtMs != started.UnixMilli() {
+				t.Errorf("StartedAtMs = %d, want %d (the original entry's At)", d.StartedAtMs, started.UnixMilli())
+			}
+		case stream.EventNodeDone:
+			var d stream.NodeDoneData
+			if err := json.Unmarshal(raw, &d); err != nil {
+				t.Fatalf("unmarshal node_done: %v", err)
+			}
+			gotDone = true
+			if d.FinishedAtMs != finished.UnixMilli() {
+				t.Errorf("FinishedAtMs = %d, want %d (the original entry's At)", d.FinishedAtMs, finished.UnixMilli())
+			}
+		}
+	}
+	if !gotStart || !gotDone {
+		t.Fatalf("events = %+v, want both node_start and node_done", events)
 	}
 }
 

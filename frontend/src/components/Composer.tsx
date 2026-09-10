@@ -56,20 +56,24 @@ function useNarrowViewport(): boolean {
   return narrow
 }
 
-function placeholderFor(disabled: boolean, streaming: boolean, narrow: boolean, archived: boolean): string {
+function placeholderFor(streaming: boolean, narrow: boolean, archived: boolean, noChat: boolean): string {
   if (archived) return 'Archived chats are read-only - restore to continue'
-  if (disabled) return 'Select or start a chat first'
+  if (noChat) return 'Ask a question'
   if (streaming) return narrow ? 'Type a follow-up…' : 'Type a follow-up… (queues until the current response finishes)'
   return narrow ? 'Ask something…' : 'Ask something… (Enter to send, Shift+Enter for newline)'
 }
 
 export interface ComposerProps {
-  // No active chat, or the active chat is archived - input is disabled.
+  // The active chat is archived - input is disabled and read-only. No active
+  // chat is NOT disabled: the first send creates the chat (onSubmit handles
+  // that), so noChat only swaps the placeholder.
   disabled: boolean
   // A turn is streaming - input stays live and Send queues instead of running
   // a second turn; Stop appears alongside it to cancel the active run.
   streaming: boolean
-  onSubmit: (text: string, files: File[], previews: AttachmentPreview[]) => void
+  // A rejected return restores the draft (input + attachments) instead of
+  // losing it - see submit()'s catch below.
+  onSubmit: (text: string, files: File[], previews: AttachmentPreview[]) => void | Promise<void>
   onStop: () => void
   // Follow-ups queued while streaming, in send order - rendered as pending
   // rows above the input; empty/omitted when nothing is queued.
@@ -78,12 +82,15 @@ export interface ComposerProps {
   // Distinguishes an archived chat's disabled composer (a specific, expected
   // read-only state) from the generic "no chat selected" disabled placeholder.
   archived?: boolean
+  // No chat selected yet (the empty /chat route) - composer stays enabled,
+  // placeholder invites the first message rather than reading blank.
+  noChat?: boolean
 }
 
 // Composer owns the draft `input` + `attachments` locally so typing only re-renders
 // this small component, not the whole chat (the turn list / DAG trees). The
 // finished message goes up via onSubmit - the caller decides whether that's an immediate send or (while streaming) queuing it for after the current run.
-export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemoveQueued, archived = false }: ComposerProps) {
+export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemoveQueued, archived = false, noChat = false }: ComposerProps) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<AttachmentItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -107,6 +114,9 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
     ta.style.overflowY = overflowing ? 'auto' : 'hidden'
   }, [input, compact])
 
+  // Clears the draft right away for a responsive send, but restores it (text
+  // and attachments) if onSubmit rejects - e.g. the empty-route chat-create
+  // failing (review finding) - instead of silently losing what was typed.
   function submit() {
     const trimmed = input.trim()
     if ((!trimmed && attachments.length === 0) || disabled) return
@@ -114,7 +124,11 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
     const previews = items.map(a => ({ url: a.url, mime: a.file.type, name: a.file.name }))
     setInput('')
     setAttachments([])
-    onSubmit(trimmed, items.map(a => a.file), previews)
+    const result = onSubmit(trimmed, items.map(a => a.file), previews)
+    result?.catch(() => {
+      setInput(trimmed)
+      setAttachments(items)
+    })
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -250,7 +264,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
               ? 'flex-1 min-w-0 bg-transparent px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-32 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'
               : 'flex-1 min-w-0 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl resize-none max-h-48 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'}
             rows={1}
-            placeholder={placeholderFor(disabled, streaming, narrow, archived)}
+            placeholder={placeholderFor(streaming, narrow, archived, noChat)}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}

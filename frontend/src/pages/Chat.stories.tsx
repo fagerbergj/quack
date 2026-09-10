@@ -102,7 +102,8 @@ export default meta
 type Story = StoryObj<typeof Chat>
 const baseArgs = { navOpen: false, onToggleNav: () => {} }
 
-// No chats at all - the "Select or start a chat" empty state, sidebar empty too.
+// No chats at all - empty sidebar, composer enabled with the "Ask a question"
+// placeholder (audit finding 8: the first send creates the chat).
 export const EmptyChat: Story = {
   args: baseArgs,
   decorators: withChat(undefined, []),

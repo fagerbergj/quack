@@ -661,7 +661,8 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
 		defer recoverRun(chatID, turnID)
-		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
+		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, turnID, cancelRun)
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
 }
@@ -1116,7 +1117,8 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
-		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
+		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, dp.TurnID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
@@ -1168,7 +1170,8 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
-		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
+		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, dp.TurnID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
@@ -1188,6 +1191,12 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 }
 
 // Connects a client to a chat's live (or just-completed) run. Reconnect-safe via Last-Event-ID or the durable event log.
+// subscribeRaceHook runs between the Active and Subscribe reads in
+// SubscribeChatStream - a no-op in production, overridden in tests to
+// simulate Hub.Close landing in that window (review finding, same seam
+// pattern as workspace.sameDeviceHook).
+var subscribeRaceHook = func() {}
+
 func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	if !h.requireChat(w, r, chatID) {
 		return
@@ -1200,11 +1209,16 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 	lastSeq := lastEventID(r)
 	// Covers all drivers of a run on this chat (REST or GitHub-dispatched).
 	active := h.hub.Active(chatID)
+	subscribeRaceHook()
 	replay, live, cancel, done := h.hub.Subscribe(chatID)
 	defer cancel()
 
 	// Cold path: hub has no buffered events - replay from the durable log.
-	if len(replay) == 0 && !active {
+	// done is atomic with Subscribe's replay snapshot; active above is not -
+	// if Hub.Close lands between the two reads, active is stale-true and
+	// live would be nil, so trust done (not the stale active) here or
+	// streamHub blocks forever reading a nil channel (review finding).
+	if done || (len(replay) == 0 && !active) {
 		// LoadEvents (#1101): the SSE table when it has rows, else - only when
 		// a WAL is armed - a fold-derived reconstruction.
 		evs, err := h.eventLog.LoadEvents(r.Context(), chatID, lastSeq)
@@ -1225,16 +1239,6 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 	}
 
 	// Warm path: hub holds the run. Replay buffer (skipping what the client has seen), then tail live.
-	if done {
-		for _, it := range replay {
-			if it.Seq > lastSeq {
-				if sse.sendID(it.Seq, it.SSE) != nil {
-					return
-				}
-			}
-		}
-		return
-	}
 	streamHub(r.Context(), sse, replay, live, lastSeq)
 }
 
@@ -1255,7 +1259,11 @@ func streamHub(ctx context.Context, sse *sseWriter, replay []stream.Event, live 
 		select {
 		case it, ok := <-live:
 			if !ok {
-				return // run ended (its Done was delivered via the live channel)
+				// live closes on three paths: the run ended (Done delivered),
+				// Publish dropped this subscriber as too slow, or Reset tore
+				// down the topic mid-attach - the client's onerror→reconnect
+				// recovers the latter two from the durable log.
+				return
 			}
 			if !send(it) {
 				return

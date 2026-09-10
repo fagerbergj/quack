@@ -163,7 +163,7 @@ func TestRunGatedRefine_MemoryVotesNudge_WarnsWhenStillMissing(t *testing.T) {
 			t.Fatalf("expected no memory.vote entries, got one: %+v", e)
 		}
 	}
-	if !strings.Contains(logs, "cast zero votes after the nudge") {
-		t.Errorf("expected a warning about zero votes after the nudge, got: %s", logs)
+	if !strings.Contains(logs, "left some unvoted after the nudge") {
+		t.Errorf("expected a warning about unvoted memories after the nudge, got: %s", logs)
 	}
 }

@@ -72,16 +72,42 @@ func memoryIDs(received []memory.Delivered) []string {
 	return ids
 }
 
+// owedMemoryVoteIDs returns the received ids v's verdict left unvoted, in
+// receivedIDs order - the ones still owed, not the full received set (#1259
+// review finding: a partial vote must not be told to re-vote what it already
+// recorded).
+func owedMemoryVoteIDs(receivedIDs []string, v verdict) []string {
+	if len(receivedIDs) == 0 {
+		return nil
+	}
+	voted := make(map[string]bool, len(v.Memories))
+	for _, mv := range v.Memories {
+		voted[mv.ID] = true
+	}
+	var owed []string
+	for _, id := range receivedIDs {
+		if !voted[id] {
+			owed = append(owed, id)
+		}
+	}
+	return owed
+}
+
 // missingMemoryVotes reports a round that owed votes (non-empty received
-// set) but whose verdict carries none (#1259).
+// set) but whose verdict left at least one of them unvoted (#1259). A
+// partial vote (e.g. 1 of 5) used to read as "not missing" since only
+// len(v.Memories)==0 was checked - the rest silently never got a vote
+// recorded (applyMemoryVotesOnPass only applies ids present in v.Memories).
 func missingMemoryVotes(receivedIDs []string, v verdict) bool {
-	return len(receivedIDs) > 0 && len(v.Memories) == 0
+	return len(owedMemoryVoteIDs(receivedIDs, v)) > 0
 }
 
 // judgeMemoriesNudgeText: one-shot in-session nudge (#1236 pattern) for a
-// verdict that reached submit_verdict/text-JSON but voted on nothing.
-func judgeMemoriesNudgeText(receivedIDs []string) string {
-	return fmt.Sprintf("You did not vote on the recalled memories. Vote on memories %s via submit_verdict's `memories` array before finishing.", strings.Join(receivedIDs, ", "))
+// verdict that reached submit_verdict/text-JSON but left owedIDs unvoted -
+// the still-owed subset (see owedMemoryVoteIDs), not every id received, so a
+// partial vote isn't told to re-vote what it already recorded.
+func judgeMemoriesNudgeText(owedIDs []string) string {
+	return fmt.Sprintf("You did not vote on all the recalled memories. Vote on memories %s via submit_verdict's `memories` array before finishing.", strings.Join(owedIDs, ", "))
 }
 
 // mergeMemoryHits appends new into base, deduping by id (first occurrence

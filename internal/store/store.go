@@ -1484,7 +1484,7 @@ func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[s
 	return tc
 }
 
-// lastTurnWindow is getLastTurnGroup's starting NumRecentEvents window, doubled (x8) until
+// lastTurnWindow is getLastTurnGroup's starting NumRecentEvents window, grown 8x per iteration until
 // a user event comes into view. 512 covers the audit's median turn (~280 events) in one
 // round trip; only a turn bigger than the window costs a second fetch.
 const lastTurnWindow = 512
