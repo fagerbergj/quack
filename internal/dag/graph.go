@@ -343,7 +343,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// session-reap skip above handles that case).
 			recordHandle := func() {
 				if recordSession != nil {
-					recordSession(node.ID, buildSessionHandle(runCtx, cfg, node, token))
+					recordSession(node.ID, buildSessionHandle(runCtx, cfg, node, plan.Setup, plan.Delivery, token))
 				}
 			}
 			answer, res, err := vetting.RunGatedRefine(runCtx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)

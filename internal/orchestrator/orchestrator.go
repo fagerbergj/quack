@@ -748,6 +748,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		if desc := dag.AttachmentDesc(attachments); desc != "" {
 			text += "\n\n" + desc
 		}
+		if desc := dag.ResumableNodesDesc(resumable); desc != "" {
+			text += "\n\n" + desc
+		}
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
 
 		if hasPending && pending.choiceCallID != "" {

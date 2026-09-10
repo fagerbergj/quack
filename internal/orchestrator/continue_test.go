@@ -311,3 +311,25 @@ func TestOrchestrator_NormalTurn_Untouched(t *testing.T) {
 		t.Errorf("a normal turn must not surface an error; events=%v", evs)
 	}
 }
+
+// TestOrchestrator_ResumableCandidates_ReachOwnTurnContent is the rig-found
+// fix's other half: the plan tool's own (static) description is not enough
+// for a smaller model to act on - the resumable candidate list must also
+// land in the orchestrator's OWN turn content as a stated fact (like
+// dag.AttachmentDesc), not only inside the plan tool's schema.
+func TestOrchestrator_ResumableCandidates_ReachOwnTurnContent(t *testing.T) {
+	stub := &orchStub{replies: []*model.LLMResponse{stubText("Ducks are birds.")}}
+	o := newTestOrch(t, stub)
+	o.SetResumableNodesLookup(func(context.Context, string) ([]dag.ResumableNode, error) {
+		return []dag.ResumableNode{{ID: "n1", Agent: "web-researcher", Summary: "researched the thing"}}, nil
+	})
+
+	runTurn(t, o, "also check one more source")
+
+	stub.mu.Lock()
+	saw := stub.orchSaw
+	stub.mu.Unlock()
+	if len(saw) == 0 || !strings.Contains(saw[0], "n1") || !strings.Contains(saw[0], "researched the thing") {
+		t.Errorf("orchestrator's own turn content = %q, want the resumable candidate's id/summary stated as a fact", saw)
+	}
+}

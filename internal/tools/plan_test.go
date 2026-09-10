@@ -442,6 +442,79 @@ func TestPlanTool_ExposesResumableCandidates(t *testing.T) {
 	}
 }
 
+// TestPlanTool_ContinueInheritsPriorSetupDelivery pins the rig-found fix: a
+// plan whose only GitHub-touching node continues a resumable candidate never
+// saw that candidate's repo/branch/delivery, so leaving setup/delivery unset
+// must inherit them from the candidate - not fail the plan judge for a
+// missing declaration (the rig's implement-follow-up loop, #1360).
+func TestPlanTool_ContinueInheritsPriorSetupDelivery(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	resumable := []dag.ResumableNode{{
+		ID: "n1", Agent: "code-implementer", Summary: "added the auth middleware",
+		Setup:    &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main", WorkBranch: "quack/issue-836"},
+		Delivery: &dag.Delivery{Kind: "pull_request"},
+	}}
+	nodes := []map[string]any{{"id": "n2", "agent": "code-implementer", "task": "extend the auth middleware", "depends_on": []string{}, "continue": "n1"}}
+	p := buildPlanResumable(t, planner, NewPlanCache(), nil, map[string]any{"nodes": nodes}, resumable)
+
+	if p.Setup == nil || *p.Setup != *resumable[0].Setup {
+		t.Errorf("Setup = %+v, want inherited from the continued candidate %+v", p.Setup, resumable[0].Setup)
+	}
+	if p.Delivery == nil || p.Delivery.Kind != "pull_request" {
+		t.Errorf("Delivery = %+v, want inherited kind %q", p.Delivery, "pull_request")
+	}
+}
+
+// TestPlanTool_ContinueNeverOverridesDeclaredSetupDelivery is the contrast
+// case: a plan that DOES declare its own setup/delivery keeps it, even
+// alongside a continue: node - inheritance only fills a gap, never overrides.
+func TestPlanTool_ContinueNeverOverridesDeclaredSetupDelivery(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	resumable := []dag.ResumableNode{{
+		ID: "n1", Agent: "code-implementer", Summary: "added the auth middleware",
+		Setup:    &dag.Setup{Repo: "https://example.com/prior.git", BaseRef: "main", WorkBranch: "prior-branch"},
+		Delivery: &dag.Delivery{Kind: "review"},
+	}}
+	nodes := []map[string]any{{"id": "n2", "agent": "code-implementer", "task": "extend the auth middleware", "depends_on": []string{}, "continue": "n1"}}
+	args := map[string]any{
+		"nodes":    nodes,
+		"setup":    map[string]any{"repo": "https://example.com/own.git", "base_ref": "main", "work_branch": "own-branch"},
+		"delivery": map[string]any{"kind": "pull_request"},
+	}
+	p := buildPlanResumable(t, planner, NewPlanCache(), nil, args, resumable)
+
+	if p.Setup == nil || p.Setup.WorkBranch != "own-branch" {
+		t.Errorf("Setup = %+v, want the plan's own declared setup, not the inherited one", p.Setup)
+	}
+	if p.Delivery == nil || p.Delivery.Kind != "pull_request" {
+		t.Errorf("Delivery = %+v, want the plan's own declared delivery, not the inherited one", p.Delivery)
+	}
+}
+
+// buildPlanResumable is buildPlan plus a resumable candidate list - kept
+// separate so the far more common no-resumable call sites stay terse.
+func buildPlanResumable(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup *dag.Setup, args map[string]any, resumable []dag.ResumableNode) dag.Plan {
+	t.Helper()
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", githubSetup, nil, "", nil, false, nil, resumable)
+	if err != nil {
+		t.Fatalf("NewPlanTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatalf("plan tool is not runnable")
+	}
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, args)
+	if err != nil {
+		t.Fatalf("plan tool Run: %v", err)
+	}
+	planID, _ := res["plan_id"].(string)
+	p, ok := cache.Get(planID)
+	if !ok {
+		t.Fatalf("plan %q not found in cache", planID)
+	}
+	return p
+}
+
 // TestPlanTool_NoResumableCandidatesSaysSo pins the "facts, not gates"
 // requirement's other half: with nothing to resume, the description must
 // say so plainly rather than silently omitting the topic.

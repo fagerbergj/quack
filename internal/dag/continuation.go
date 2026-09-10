@@ -89,8 +89,16 @@ func short12(sha string) string {
 // read back from the advisor thread since round() only updates it there).
 // ctx is the node's OWN activation context (post-override if this node
 // itself was a continuation), so Branch/IsolationScope chain forward.
-func buildSessionHandle(ctx adkagent.Context, cfg vetting.Config, node Node, token string) SessionHandle {
+// setup/delivery are the plan's own (possibly nil) - stamped onto the handle
+// so a later plan that continues this node can inherit them.
+func buildSessionHandle(ctx adkagent.Context, cfg vetting.Config, node Node, setup *Setup, delivery *Delivery, token string) SessionHandle {
 	h := SessionHandle{Agent: node.AgentName, Scope: cfg.NodeID, HeadSHA: vetting.CloneHeadSHA(cfg)}
+	if setup != nil {
+		h.Repo, h.BaseRef, h.WorkBranch = setup.Repo, setup.BaseRef, setup.WorkBranch
+	}
+	if delivery != nil {
+		h.DeliveryKind = delivery.Kind
+	}
 	if cfg.ExternalWorker {
 		h.Kind = "acp"
 		if t, ok := vetting.LookupAdvisorThread(token); ok {

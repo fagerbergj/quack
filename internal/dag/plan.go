@@ -2,6 +2,9 @@
 package dag
 
 import (
+	"fmt"
+	"strings"
+
 	"google.golang.org/genai"
 )
 
@@ -96,6 +99,16 @@ type SessionHandle struct {
 	// what this node said, instead of a prompt-text splice.
 	Branch         string `json:"branch,omitempty"`
 	IsolationScope string `json:"isolation_scope,omitempty"`
+	// Repo/BaseRef/WorkBranch/DeliveryKind: the plan-level setup/delivery this
+	// node's own plan declared - a later plan that continues this node
+	// inherits them when it leaves its own setup/delivery unset (see
+	// tools.NewPlanTool's inheritContinuedSetupDelivery), so a follow-up that
+	// only extends this node's work never has to restate a repo/branch it
+	// never saw.
+	Repo         string `json:"repo,omitempty"`
+	BaseRef      string `json:"base_ref,omitempty"`
+	WorkBranch   string `json:"work_branch,omitempty"`
+	DeliveryKind string `json:"delivery_kind,omitempty"`
 }
 
 // ResumableNode is one candidate the plan tool surfaces to the orchestrator:
@@ -104,6 +117,29 @@ type ResumableNode struct {
 	ID      string `json:"id"`
 	Agent   string `json:"agent"`
 	Summary string `json:"summary"`
+	// Setup/Delivery: the prior plan's own declared setup/delivery, carried
+	// so a continuing plan can inherit them - see SessionHandle's matching
+	// fields, which is where these are actually persisted.
+	Setup    *Setup    `json:"-"`
+	Delivery *Delivery `json:"-"`
+}
+
+// ResumableNodesDesc renders resumable as a stated fact for the orchestrator's
+// OWN turn content (like AttachmentDesc) - not just the `plan` tool's static
+// schema description, which a smaller model reading a long tool description
+// can fail to act on. "" when resumable is empty.
+func ResumableNodesDesc(resumable []ResumableNode) string {
+	if len(resumable) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("FACT: this chat has resumable node(s) from the last turn's plan - if this message refines " +
+		"or extends one of their work, set that node's `continue` field to its id in your `plan` call instead of " +
+		"starting a fresh node for it:")
+	for _, r := range resumable {
+		fmt.Fprintf(&sb, "\n- %s (agent: %s): %s", r.ID, r.Agent, r.Summary)
+	}
+	return sb.String()
 }
 
 func terminalIDs(nodes []Node) []string {

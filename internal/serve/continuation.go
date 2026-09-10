@@ -35,7 +35,14 @@ func resumableNodesFromStore(st *store.Store) func(ctx context.Context, chatID s
 		out := make([]dag.ResumableNode, len(nodes))
 		for i, n := range nodes {
 			h := dag.DecodeSessionHandle(n.SessionHandle)
-			out[i] = dag.ResumableNode{ID: n.NodeID, Agent: h.Agent, Summary: n.OutputPreview}
+			rn := dag.ResumableNode{ID: n.NodeID, Agent: h.Agent, Summary: n.OutputPreview}
+			if h.Repo != "" || h.BaseRef != "" || h.WorkBranch != "" {
+				rn.Setup = &dag.Setup{Repo: h.Repo, BaseRef: h.BaseRef, WorkBranch: h.WorkBranch}
+			}
+			if h.DeliveryKind != "" {
+				rn.Delivery = &dag.Delivery{Kind: h.DeliveryKind}
+			}
+			out[i] = rn
 		}
 		return out, nil
 	}

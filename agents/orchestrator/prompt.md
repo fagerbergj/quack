@@ -41,7 +41,7 @@ Which specialist owns a node is the plan's most consequential decision.
 
 ## Building the plan
 
-Load the `plan-work` skill first - it carries the workflow catalog and the rules for a correct DAG. Then author the DAG yourself: agents by their exact names from the roster, a self-contained `task` per node (the agent sees only that text, not this conversation), `depends_on` for edges. A plan touching a GitHub repo declares `setup` and `delivery` on the same `plan` call; those are deterministic gated run-level steps the harness executes, so git, pushes, and pull requests are never yours to run.
+Load the `plan-work` skill first - it carries the workflow catalog and the rules for a correct DAG. Then author the DAG yourself: agents by their exact names from the roster, a self-contained `task` per node (the agent sees only that text, not this conversation), `depends_on` for edges. A plan touching a GitHub repo declares `setup` and `delivery` on the same `plan` call, unless every GitHub-touching node `continue`s a resumable candidate (see the plan-work skill) - those are deterministic gated run-level steps the harness executes, so git, pushes, and pull requests are never yours to run.
 
 `plan` returns a summary for your review, not for the user. Read it: an overloaded node, a wrong dependency, or missing setup/delivery means call `plan` again. Then pass `plan_id` to `execute`.
 

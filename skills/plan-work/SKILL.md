@@ -171,6 +171,8 @@ A follow-up message often refines or extends work a node already did last turn (
 
 You never validate eligibility yourself - the executor checks agent match, workspace freshness, and that the prior node actually finished, and silently falls back to a fresh node if anything doesn't line up. Set `continue` whenever the work is genuinely a continuation; the harness handles the rest.
 
+A plan whose only GitHub-touching node(s) `continue` a resumable candidate does NOT need to restate `setup`/`delivery` (see "Declare setup + delivery" above) - you were never told the prior turn's repo/branch, so leave both unset and they are inherited from that node's own prior turn automatically. Only declare them yourself when this plan changes the repo, branch, or delivery kind, or adds a fresh (non-`continue`) GitHub-touching node.
+
 ## Media routing
 
 When the user message contains `[User attached: ...]`, pick ONE media agent:

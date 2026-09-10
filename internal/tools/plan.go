@@ -39,6 +39,40 @@ type planResult struct {
 	Resumable []dag.ResumableNode `json:"resumable_nodes,omitempty"`
 }
 
+// inheritContinuedSetupDelivery backfills a.Setup/a.Delivery from the first
+// continued node's own resumable candidate, when the plan leaves either
+// unset - never overrides a value the model DID declare. A plan whose only
+// GitHub-touching work is `continue`-ing a prior node has no new repo/branch
+// to report; forcing the model to restate one it never saw is what produced
+// the rig's non-convergent plan-judge loop.
+func inheritContinuedSetupDelivery(a *planArgs, resumable []dag.ResumableNode) {
+	if a.Setup != nil && a.Delivery != nil {
+		return
+	}
+	byID := make(map[string]dag.ResumableNode, len(resumable))
+	for _, r := range resumable {
+		byID[r.ID] = r
+	}
+	for _, n := range a.Nodes {
+		if n.Continue == "" {
+			continue
+		}
+		r, ok := byID[n.Continue]
+		if !ok {
+			continue
+		}
+		if a.Setup == nil && r.Setup != nil {
+			a.Setup = r.Setup
+		}
+		if a.Delivery == nil && r.Delivery != nil {
+			a.Delivery = r.Delivery
+		}
+		if a.Setup != nil && a.Delivery != nil {
+			return
+		}
+	}
+}
+
 // NewPlanTool: validates and caches a DAG plan, emits dag_plan SSE event.
 // resumable: this chat's continue: candidates from its last turn - see
 // dag.ResumableNode; nil/empty when none exist.
@@ -61,7 +95,9 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 		var sb strings.Builder
 		sb.WriteString("`continue` is OPTIONAL: set it to a prior node id below to resume that node's own agent " +
 			"session instead of starting cold - use it when this turn's work refines or extends what that node " +
-			"already did, not for unrelated work. Resumable nodes from the last turn:")
+			"already did, not for unrelated work. You do NOT need to restate `setup`/`delivery` on a plan whose " +
+			"only GitHub-touching node continues one of these - they are inherited from that node's own prior " +
+			"turn automatically when you leave them unset. Resumable nodes from the last turn:")
 		for _, r := range resumable {
 			fmt.Fprintf(&sb, "\n- %s (agent: %s): %s", r.ID, r.Agent, r.Summary)
 		}
@@ -92,6 +128,15 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"directly. If validation fails, fix the nodes and call again.",
 		},
 		func(tc agent.Context, a planArgs) (planResult, error) {
+			// A plan that only continues a resumable node has nothing new to
+			// declare - the model correctly leaves setup/delivery unset since
+			// it never saw the prior turn's repo/branch; backfill them here so
+			// the plan judge sees a real declaration instead of rejecting for
+			// a missing one (a rig-found loop: the follow-up half of an
+			// implement dispatch never converged because no context re-forces
+			// setup/delivery on a follow-up turn the way a fresh GitHub
+			// dispatch does via githubSetup below).
+			inheritContinuedSetupDelivery(&a, resumable)
 			// ChatID-only Coords: plan judge's chat call files under this chat.
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
 			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments, allowedKinds)

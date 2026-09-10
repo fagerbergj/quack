@@ -116,12 +116,20 @@ func TestBuildSessionHandle_ACP(t *testing.T) {
 	vetting.SetAdvisorThreadSessionID(token, "acp-sess-42")
 
 	cfg := vetting.Config{ChatID: "chat1", NodeID: "n1", ExternalWorker: true}
-	h := buildSessionHandle(nil, cfg, Node{ID: "n1", AgentName: "pi"}, token)
+	setup := &Setup{Repo: "https://example.com/r.git", BaseRef: "main", WorkBranch: "feat/x"}
+	delivery := &Delivery{Kind: "pull_request"}
+	h := buildSessionHandle(nil, cfg, Node{ID: "n1", AgentName: "pi"}, setup, delivery, token)
 	if h.Kind != "acp" {
 		t.Fatalf("Kind = %q, want acp", h.Kind)
 	}
 	if h.ID != "acp-sess-42" {
 		t.Fatalf("ID = %q, want the ACP protocol session id", h.ID)
+	}
+	if h.Repo != setup.Repo || h.BaseRef != setup.BaseRef || h.WorkBranch != setup.WorkBranch {
+		t.Fatalf("Repo/BaseRef/WorkBranch = %q/%q/%q, want the plan's own setup %+v", h.Repo, h.BaseRef, h.WorkBranch, setup)
+	}
+	if h.DeliveryKind != "pull_request" {
+		t.Fatalf("DeliveryKind = %q, want %q", h.DeliveryKind, "pull_request")
 	}
 }
 
