@@ -50,13 +50,27 @@ func TestCompleteChatIDs(t *testing.T) {
 	}
 }
 
-// TestCompleteChatIDs_UnreachableServerTimesOut: an unroutable --server must
-// not hang tab-complete - completionTimeout bounds the whole round trip.
+// TestCompleteChatIDs_UnreachableServerTimesOut: a --server that never
+// responds must not hang tab-complete - completionTimeout bounds the round
+// trip. A handler that blocks past the deadline pins that bound
+// deterministically, unlike relying on the OS to blackhole an unroutable IP.
 func TestCompleteChatIDs_UnreachableServerTimesOut(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+		}
+	}))
+	defer srv.Close()
+
 	start := time.Now()
-	got, directive := completeChatIDs(cmdWithServer(t, "http://10.255.255.1:9999"), nil, "")
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
-		t.Errorf("completeChatIDs took %s, want it bounded by completionTimeout (2s)", elapsed)
+	got, directive := completeChatIDs(cmdWithServer(t, srv.URL), nil, "")
+	elapsed := time.Since(start)
+	if elapsed < completionTimeout {
+		t.Errorf("completeChatIDs returned after %s, want it to wait out completionTimeout (%s), not return early", elapsed, completionTimeout)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("completeChatIDs took %s, want it bounded by completionTimeout (%s)", elapsed, completionTimeout)
 	}
 	if got != nil {
 		t.Errorf("completions = %v, want none", got)
@@ -170,6 +184,58 @@ workspace:
 	got, _ := completeAgentNames(nil, nil, "")
 	if len(got) != 1 || got[0] != "code-reviewer" {
 		t.Errorf("completions = %v, want [code-reviewer]", got)
+	}
+}
+
+// TestCompleteAgentNames_MissingOrMalformedConfig: the offline completer's
+// invariant that matters most - never crash the shell - needs its own
+// coverage: a missing QUACK_CONFIG path or unparseable YAML must degrade to
+// no completions, not a panic.
+func TestCompleteAgentNames_MissingOrMalformedConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T) // sets QUACK_CONFIG for this case
+	}{
+		{"unset, no quack.yaml in cwd", func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			t.Setenv("QUACK_CONFIG", "")
+		}},
+		{"nonexistent path", func(t *testing.T) {
+			t.Setenv("QUACK_CONFIG", filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+		}},
+		{"malformed yaml", func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "quack.yaml")
+			if err := os.WriteFile(p, []byte("not: [valid yaml"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("QUACK_CONFIG", p)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setup(t)
+
+			got, directive := completeAgentNames(nil, nil, "")
+			if got != nil {
+				t.Errorf("completions = %v, want none", got)
+			}
+			if directive != cobra.ShellCompDirectiveNoFileComp {
+				t.Errorf("directive = %v, want NoFileComp", directive)
+			}
+		})
+	}
+}
+
+// TestCompleteServerNames_EmptyRegistry: no servers registered must degrade
+// to no completions, not a panic.
+func TestCompleteServerNames_EmptyRegistry(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+
+	got, directive := completeServerNames(nil, nil, "")
+	if len(got) != 0 {
+		t.Errorf("completions = %v, want none", got)
+	}
+	if directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Errorf("directive = %v, want NoFileComp", directive)
 	}
 }
 

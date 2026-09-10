@@ -1,20 +1,31 @@
 package cli
 
-import "context"
+import (
+	"context"
+	"net/url"
+	"strconv"
+
+	"github.com/fagerbergj/quack/internal/schema"
+)
+
+// completionChatLimit caps the listing like completionMemoryLimit below -
+// ListChats auto-pages every chat, which could burn the whole completionTimeout mid-pagination.
+const completionChatLimit = 50
 
 // CompletionChatIDs lists chat ids for shell completion of any `<chat-id>`
-// positional - the same call `chat list` makes.
+// positional - a single page, unlike `chat list`'s full ListChats.
 func CompletionChatIDs(ctx context.Context, server string) ([]string, error) {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return nil, err
 	}
-	chats, err := c.ListChats(ctx, nil)
-	if err != nil {
+	var out schema.ChatList
+	q := url.Values{"limit": {strconv.Itoa(completionChatLimit)}}
+	if err := c.getJSON(ctx, "/api/v1/chats?"+q.Encode(), &out); err != nil {
 		return nil, err
 	}
-	ids := make([]string, len(chats))
-	for i, ch := range chats {
+	ids := make([]string, len(out.Data))
+	for i, ch := range out.Data {
 		ids[i] = ch.Id
 	}
 	return ids, nil
