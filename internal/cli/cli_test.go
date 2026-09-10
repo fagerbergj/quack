@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -324,6 +325,46 @@ func TestEmitServerConfigTextOnly(t *testing.T) {
 	// No embedder ⇒ no gates judge-less memory; memory off, gates off.
 	if cfg.Gates.Enabled() {
 		t.Error("text-only (no judge) should disable gates")
+	}
+}
+
+// TestEmitServerConfig_WebToggles: the orchestrator/web-researcher tool
+// lists must only reference web_search/web_fetch when the answer enabled it.
+func TestEmitServerConfig_WebToggles(t *testing.T) {
+	cases := []struct {
+		name                string
+		webSearch, webFetch bool
+	}{
+		{"both off", false, false},
+		{"search only", true, false},
+		{"fetch only", false, true},
+		{"both on", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := InitAnswers{
+				Endpoint: "http://x/v1", MainModel: "m", SessionKind: "sqlite",
+				WebSearch: tc.webSearch, WebFetch: tc.webFetch, SearchKind: "exa", FetchKind: "direct",
+			}
+			t.Setenv("QUACK_LLM_API_KEY", "k")
+			path := filepath.Join(t.TempDir(), "quack.yaml")
+			rendered := EmitServerConfig(a)
+			if err := os.WriteFile(path, []byte(rendered), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadConfigForTest(path)
+			if err != nil {
+				t.Fatalf("server validate: %v\n---\n%s", err, rendered)
+			}
+			for _, tools := range [][]string{cfg.Agents["web-researcher"].Tools, cfg.Orchestrator.Tools} {
+				if got := slices.Contains(tools, "web_search"); got != tc.webSearch {
+					t.Errorf("tools %v contains web_search = %v, want %v", tools, got, tc.webSearch)
+				}
+				if got := slices.Contains(tools, "web_fetch"); got != tc.webFetch {
+					t.Errorf("tools %v contains web_fetch = %v, want %v", tools, got, tc.webFetch)
+				}
+			}
+		})
 	}
 }
 

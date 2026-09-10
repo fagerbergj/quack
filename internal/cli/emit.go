@@ -112,12 +112,11 @@ func EmitServerConfig(a InitAnswers) string {
 	emitModels(&b, a)
 
 	b.WriteString("agents:\n")
-	researcherTools := "[web_search, web_fetch, summarize, current_date"
+	researcherTools := baseTools(a)
 	if a.EmbedModel != "" {
-		researcherTools += ", stage_memory"
+		researcherTools = append(researcherTools, "stage_memory")
 	}
-	researcherTools += "]"
-	emitAgent(&b, "web-researcher", a.MainModel, 65536, researcherTools)
+	emitAgent(&b, "web-researcher", a.MainModel, 65536, "["+strings.Join(researcherTools, ", ")+"]")
 	emitAgent(&b, "synthesizer", a.MainModel, 65536, "[]")
 	if a.AudioModel != "" {
 		emitAgent(&b, "media-reader", a.AudioModel, 32768, "[]")
@@ -254,8 +253,21 @@ func emitModels(b *strings.Builder, a InitAnswers) {
 	b.WriteString("\n")
 }
 
+// baseTools is shared by the orchestrator and web-researcher: an agent
+// referencing web_search/web_fetch when `tools:` doesn't define it fails at boot.
+func baseTools(a InitAnswers) []string {
+	var t []string
+	if a.WebSearch {
+		t = append(t, "web_search")
+	}
+	if a.WebFetch {
+		t = append(t, "web_fetch")
+	}
+	return append(t, "summarize", "current_date")
+}
+
 func emitOrchTools(b *strings.Builder, a InitAnswers) {
-	tools := []string{"web_search", "web_fetch", "summarize", "current_date"}
+	tools := baseTools(a)
 	if a.EmbedModel != "" {
 		tools = append(tools, "commit_memory")
 	}
