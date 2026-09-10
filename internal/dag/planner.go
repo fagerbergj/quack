@@ -72,6 +72,7 @@ type Planner struct {
 
 // NewPlanner: returns a Planner over the agent roster, check prefixes, and plan judge.
 func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJudge) *Planner {
+	SetAgentRoster(agents)
 	return &Planner{agents: agents, checkCommands: checkCommands, judge: judge}
 }
 
@@ -323,6 +324,9 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	}
 	ids := make(map[string]bool, len(nodes))
 	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, AllowedDeliveryKinds: allowedKinds}
+	if plan.Delivery == nil {
+		plan.Delivery = DefaultDeliveryFromAllowedKinds(allowedKinds)
+	}
 	for _, n := range nodes {
 		if n.ID == "" {
 			return nil, fmt.Errorf("node missing id")
@@ -429,6 +433,19 @@ func validateChecks(checks, checkCommands []string) error {
 }
 
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
+
+// DefaultDeliveryFromAllowedKinds fills in Delivery when the triggering
+// dispatch (a GitHub review/implement/plan-only extension run, or any other
+// caller of tools.WithAllowedDeliveryKinds) grants exactly one kind: the
+// extension already knows how the result reaches GitHub, so the model isn't
+// required to declare it too. nil when the dispatch is unrestricted or grants
+// a genuine choice among several kinds - the model still decides those.
+func DefaultDeliveryFromAllowedKinds(allowed []string) *Delivery {
+	if len(allowed) != 1 || !deliveryKinds[allowed[0]] {
+		return nil
+	}
+	return &Delivery{Kind: allowed[0]}
+}
 
 func validateDelivery(d *Delivery) error {
 	if d == nil {

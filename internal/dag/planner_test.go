@@ -764,6 +764,49 @@ func TestBuildAllowsNonReviewDispatchWithoutReviewerNode(t *testing.T) {
 	}
 }
 
+// A review-trigger dispatch (AllowedDeliveryKinds grants exactly "review")
+// validates even when the model declares no Delivery at all: the trigger's
+// single granted kind is filled in as the default, removing the "delivery
+// not declared" rejection class for a single-kind dispatch.
+func TestBuildDefaultsDeliveryFromSingleAllowedKind(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: reviewerAgent}}, nil, nil)
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "review", Agent: reviewerAgent, Task: "Review the diff and post inline comments."},
+	}, nil, nil, nil, "Review PR #888.", nil, []string{"review"})
+	if err != nil {
+		t.Fatalf("Build: a review-trigger plan with no declared delivery must validate: %v", err)
+	}
+	if plan.Delivery == nil || plan.Delivery.Kind != "review" {
+		t.Fatalf("Delivery = %+v, want the trigger's single allowed kind defaulted in", plan.Delivery)
+	}
+}
+
+// A model-declared Delivery always wins over the trigger default.
+func TestBuildModelDeliveryOverridesDefault(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x"},
+	}, nil, &Delivery{Kind: "comment"}, nil, "m", nil, []string{"comment", "pull_request"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if plan.Delivery == nil || plan.Delivery.Kind != "comment" {
+		t.Fatalf("Delivery = %+v, want the model's declared kind, not a default", plan.Delivery)
+	}
+}
+
+func TestDefaultDeliveryFromAllowedKindsIgnoresMultipleOrUnknown(t *testing.T) {
+	if d := DefaultDeliveryFromAllowedKinds(nil); d != nil {
+		t.Errorf("no allowed kinds must not default: got %+v", d)
+	}
+	if d := DefaultDeliveryFromAllowedKinds([]string{"review", "comment"}); d != nil {
+		t.Errorf("multiple allowed kinds must leave the choice to the model: got %+v", d)
+	}
+	if d := DefaultDeliveryFromAllowedKinds([]string{"push_directly_to_main"}); d != nil {
+		t.Errorf("an unrecognized kind must not be defaulted: got %+v", d)
+	}
+}
+
 // #310: a plan that declares Setup (one shared clone+branch) but whose
 // repo-touching nodes could run CONCURRENTLY (no depends_on between them)
 // must be rejected at build - they'd corrupt the one shared working tree.
