@@ -274,7 +274,9 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
 
-    await user.click(screen.getByRole('button', { name: 'Round 1, failed, score 42%' }))
+    // findByRole, not getByRole: the chip comes from a separate judge-body
+    // fetch that races the content fetch the heading above waited on.
+    await user.click(await screen.findByRole('button', { name: 'Round 1, failed, score 42%' }))
 
     // The cursor jumps to revision 1 and that revision's content renders.
     expect(await screen.findByText('Revision 1 of 2')).toBeTruthy()
@@ -296,7 +298,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     stubPlanFixture()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
-    await user.click(screen.getByRole('button', { name: 'Round 1, failed, score 42%' }))
+    await user.click(await screen.findByRole('button', { name: 'Round 1, failed, score 42%' }))
     expect(await screen.findByText('Revision 1 of 2')).toBeTruthy()
     expect(await screen.findByRole('button', { name: /Judge note on line/ })).toBeTruthy()
 
