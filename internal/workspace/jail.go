@@ -97,6 +97,26 @@ func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
 	return dir, nil
 }
 
+// ACPStateDir: per-node dir for the ACP shim's own session persistence (pi's
+// --session-dir) - unlike ScratchDir, never named in environment.go's prompt.
+func (j *Jail) ACPStateDir(userID, chatID, nodeID string) (string, error) {
+	if !isSafePathComponent(chatID) {
+		return "", ErrInvalidChatID
+	}
+	if !isSafePathComponent(nodeID) {
+		return "", ErrInvalidNodeID
+	}
+	home, err := j.HomeDir(userID)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, "acp-state", ChatDirName(chatID)+"__"+nodeID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("workspace: create acp state dir %q: %w", dir, err)
+	}
+	return dir, nil
+}
+
 // Working directory a DAG node's tools default to (one component under chat scope). "" falls back to chat root.
 func NodeDir(nodeID string) string {
 	if !isSafePathComponent(nodeID) {

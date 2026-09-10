@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -446,6 +447,32 @@ func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
 	// of leaving this test to guess from a timing window.
 	if err := proc.Signal(syscall.Signal(0)); err == nil {
 		t.Fatal("ClosePinnedSession did not kill the subprocess - it still responds to signals")
+	}
+}
+
+// TestClosePinnedSession_RemovesACPStateDir: node-finish must remove the
+// persisted session dir, not leave it for a TTL sweep that doesn't cover it.
+func TestClosePinnedSession_RemovesACPStateDir(t *testing.T) {
+	a := testAgent(t, "pin")
+	token := "tok-close-pinned-state-dir"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	stateDir := filepath.Join(t.TempDir(), "acp-state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{ACPStateDir: stateDir}, "go", "", "", token, "", func(eventSpec) bool { return true }); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	if _, ok := pinned.Load(token); !ok {
+		t.Fatal("round did not pin a process")
+	}
+
+	ClosePinnedSession(token)
+
+	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
+		t.Fatalf("ACPStateDir %q still exists after ClosePinnedSession: %v", stateDir, err)
 	}
 }
 

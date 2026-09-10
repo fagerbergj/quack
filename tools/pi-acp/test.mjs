@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createServer } from "node:http";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -157,11 +157,8 @@ if (!process.env.ACP_CMD) {
   assert.ok(kinds.includes("usage_update"), "usage_update missing - quack metrics would go dark");
 }
 if (process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
-  // Real end-to-end resume proof: round 2 on a FRESH shim process
-  // (session/load, not the pinned-process fast path) must carry round 1's
-  // turn into the model's prefix, not start a blank conversation. Requires
-  // the caller to have OPENCODE_CONFIG_CONTENT's baseURL pointed at a live
-  // tools/pi-acp/mock-openai.mjs, which exposes what it received via GET /requests.
+  // Real end-to-end resume proof: round 2 on a FRESH shim process must carry
+  // round 1's turn into the model's prefix (mock-openai.mjs's GET /requests).
   const base = new URL(JSON.parse(env.OPENCODE_CONFIG_CONTENT).provider.quack.options.baseURL);
   const before = await fetch(`${base.origin}/requests`).then((r) => r.json());
   const { shim: shim2, call: call2 } = connectShim(env);
@@ -179,6 +176,26 @@ if (process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
     "round 2's prefix is missing round 1's turn - session/load did not resume");
   shim2.stdin.end();
   await new Promise((r) => shim2.on("exit", r));
+
+  // Same deletion proof as the fake-pi block below, against real pi.
+  const { shim: shim5, call: call5 } = connectShim(env);
+  await call5("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  const sess5 = await call5("session/new", { cwd: process.cwd(), mcpServers: [] });
+  await call5("session/prompt", { sessionId: sess5.sessionId, prompt: [{ type: "text", text: "hi" }] });
+  shim5.stdin.end();
+  await new Promise((r) => shim5.on("exit", r));
+
+  const sessionsDir5 = join(tmpdir(), "pi-acp-" + sess5.sessionId, "pi-sessions");
+  for (const f of readdirSync(sessionsDir5)) rmSync(join(sessionsDir5, f));
+
+  const { shim: shim6, call: call6 } = connectShim(env);
+  await call6("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  await assert.rejects(
+    call6("session/load", { sessionId: sess5.sessionId, cwd: process.cwd(), mcpServers: [] }),
+    /no persisted session/,
+    "real pi: session/load must fail once its session file is gone");
+  shim6.stdin.end();
+  await new Promise((r) => shim6.on("exit", r));
 }
 if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   // permission bridge: git push blocked locally (no ask), .env reads asked -
@@ -224,11 +241,8 @@ if (!process.env.ACP_CMD) {
 }
 console.log("ok -", updates.length, "updates,", mcpCalls.length, "mcp call(s),", otlpSpans.length, "otlp span(s)");
 
-// connectShim: a second, independent shim process wired for plain
-// request/response, auto-allowing every permission ask - fake-pi.mjs fires
-// its 3 guarded calls whenever the quackmcp bridge config exists, even with
-// no MCP server configured, so a harness that ignores session/request_permission
-// leaves that fetch() with no reply and the round hangs forever.
+// connectShim: a second shim process, auto-allowing every permission ask -
+// fake-pi.mjs's 3 guarded calls fire even with mcpServers: [], and hang without a reply.
 function connectShim(spawnEnv) {
   const s = spawn(argv[0], argv.slice(1), { env: spawnEnv, stdio: ["pipe", "pipe", "inherit"] });
   const pend = new Map();
@@ -252,14 +266,8 @@ function connectShim(spawnEnv) {
   return { shim: s, call: call2 };
 }
 
-// session/new must launch pi with --session-id/--session-dir (not
-// --no-session) so session/load on a FRESH shim process (the common case
-// after a server restart or a dropped pinned process) resumes the same
-// conversation instead of starting a blank one. fake-pi.mjs records one line
-// per prompt into <piDir>/<sessionId>.turns; a second process reusing that
-// file's line count proves it landed in the same session, not a new one.
-// Runs before mcpSrv/otlpSrv close below - shim2's own bridge setup and otel
-// flush still need them live.
+// session/load on a FRESH shim process must resume, not start blank - proven
+// via fake-pi.mjs's per-prompt turn counter surviving into a second process.
 if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   const turnsFile = join(piDir, "pi-sessions", sess.sessionId + ".turns");
   assert.equal(readFileSync(turnsFile, "utf8").trim().split("\n").length, 1, "round 1 did not record a turn");
@@ -273,10 +281,32 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   assert.equal(readFileSync(turnsFile, "utf8").trim().split("\n").length, 2,
     "session/load spawned pi against a different session id/dir than session/new used - resume broken");
   shim2.stdin.end();
-  // otel flush on stdin "end" is async (fire-and-forget from the shim's own
-  // point of view) - wait for the process to actually exit before the
-  // otlpSrv.close() below, or its flush races the server going away.
+  // Fire-and-forget otel flush on stdin "end" - wait for real exit or it
+  // races otlpSrv.close() below.
   await new Promise((r) => shim2.on("exit", r));
+}
+
+// A missing/deleted session file must fail session/load deterministically -
+// never let pi silently start a blank session that quack records as resumed.
+if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
+  const { shim: shim3, call: call3 } = connectShim(env);
+  await call3("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  const sess3 = await call3("session/new", { cwd: process.cwd(), mcpServers: [] });
+  await call3("session/prompt", { sessionId: sess3.sessionId, prompt: [{ type: "text", text: "hi" }] });
+  shim3.stdin.end();
+  await new Promise((r) => shim3.on("exit", r));
+
+  const sessionsDir = join(tmpdir(), "pi-acp-" + sess3.sessionId, "pi-sessions");
+  for (const f of readdirSync(sessionsDir)) rmSync(join(sessionsDir, f));
+
+  const { shim: shim4, call: call4 } = connectShim(env);
+  await call4("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  await assert.rejects(
+    call4("session/load", { sessionId: sess3.sessionId, cwd: process.cwd(), mcpServers: [] }),
+    /no persisted session/,
+    "session/load must fail, not silently start blank, once its session file is gone");
+  shim4.stdin.end();
+  await new Promise((r) => shim4.on("exit", r));
 }
 
 shim.stdin.end();

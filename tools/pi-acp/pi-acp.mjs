@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createInterface } from "node:readline";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -25,13 +25,29 @@ const prov = (() => {
   return { baseUrl: p.options.baseURL, apiKey: p.options.apiKey || "unused", model, contextWindow: p.models[model]?.limit?.context };
 })();
 
-// pi config+session dir (models.json, settings.json, extensions/, pi's own
-// session JSONL) - keyed by ACP session id, not mkdtemp'd, so a fresh shim
-// process on session/load points pi at the same dir session/new used and
-// `--session-id` finds the prior session file on disk.
+// PI_ACP_STATE_DIR (quack: Jail.ACPStateDir) keeps pi's session files out of
+// TMPDIR - the round's own documented scratch space, not a session store.
+const stateRoot = process.env.PI_ACP_STATE_DIR || tmpdir();
+
+// pi config+session dir, keyed by ACP session id (not mkdtemp'd) so a fresh
+// shim process on session/load finds the same dir session/new wrote.
+function piDirFor(sessionId) {
+  return join(stateRoot, "pi-acp-" + sessionId);
+}
+
+// hasExistingSession: pi 0.85.1 writes "<timestamp>_<sessionId>.jsonl" flat
+// into --session-dir - checked before spawning so a stale id fails the load.
+function hasExistingSession(sessionId) {
+  try {
+    return readdirSync(join(piDirFor(sessionId), "pi-sessions")).some((f) => f.endsWith("_" + sessionId + ".jsonl"));
+  } catch {
+    return false;
+  }
+}
+
 let piDir;
 function ensurePiDir(sessionId) {
-  const dir = join(tmpdir(), "pi-acp-" + sessionId);
+  const dir = piDirFor(sessionId);
   mkdirSync(dir, { recursive: true });
   if (prov) {
     const modelEntry = { id: prov.model };
@@ -181,6 +197,10 @@ let pi = null;            // child process
 let sessionId = null;
 let promptReq = null;     // pending session/prompt JSON-RPC id
 let cancelled = false;
+// Belt-and-suspenders behind hasExistingSession's pre-check - see startPi's
+// stderr watcher and the "session/load did not actually resume" reply below.
+let resumeAttempted = false;
+let resumeFailed = false;
 
 function notify(update) {
   out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
@@ -240,9 +260,14 @@ function onPiEvent(ev) {
     case "agent_settled":
       otel.flush();
       if (promptReq !== null) {
-        out({ jsonrpc: "2.0", id: promptReq, result: { stopReason: cancelled ? "cancelled" : "end_turn" } });
+        if (resumeFailed) {
+          out({ jsonrpc: "2.0", id: promptReq, error: { code: -32000, message: "session/load did not actually resume - pi started a blank session" } });
+        } else {
+          out({ jsonrpc: "2.0", id: promptReq, result: { stopReason: cancelled ? "cancelled" : "end_turn" } });
+        }
         promptReq = null;
         cancelled = false;
+        resumeAttempted = false; // only the first prompt after a load is checked
       }
       break;
   }
@@ -251,14 +276,11 @@ function onPiEvent(ev) {
 function startPi(cwd, sid) {
   otel = new Otel(prov?.model);
   const cmd = process.env.PI_ACP_PI_CMD || "pi";
-  // --session-id creates-or-resumes by exact id. --session-dir MUST differ
-  // from PI_CODING_AGENT_DIR: pointed at the same dir, pi's session lookup
-  // silently misses on the second launch and starts a fresh session instead
-  // of resuming (verified against real pi 0.85.1) - a subdir of piDir avoids
-  // it and still gets swept alongside piDir.
+  // --session-dir must differ from PI_CODING_AGENT_DIR: equal, pi 0.85.1's
+  // session lookup silently misses on the second launch (verified empirically).
   const args = ["--mode", "rpc", "--session-id", sid, "--session-dir", join(piDir, "pi-sessions")];
   if (prov) args.push("--provider", "quack", "--model", prov.model);
-  pi = spawn(cmd, args, { cwd, env: { ...process.env, PI_CODING_AGENT_DIR: piDir }, stdio: ["pipe", "pipe", "inherit"] });
+  pi = spawn(cmd, args, { cwd, env: { ...process.env, PI_CODING_AGENT_DIR: piDir }, stdio: ["pipe", "pipe", "pipe"] });
   pi.on("exit", (code) => {
     if (promptReq !== null)
       out({ jsonrpc: "2.0", id: promptReq, error: { code: -32000, message: `pi exited (${code})` } });
@@ -267,6 +289,12 @@ function startPi(cwd, sid) {
   createInterface({ input: pi.stdout }).on("line", (l) => {
     if (!l.trim()) return;
     try { onPiEvent(JSON.parse(l)); } catch { /* non-JSON noise */ }
+  });
+  // Piped (not "inherit") so a session/load's "no project session found"
+  // warning is observable here, not just visible to a human at the console.
+  createInterface({ input: pi.stderr }).on("line", (l) => {
+    process.stderr.write(l + "\n");
+    if (resumeAttempted && l.includes("No project session found")) resumeFailed = true;
   });
 }
 
@@ -304,10 +332,13 @@ async function handle(msg) {
       reply({ sessionId });
       break;
     case "session/load":
-      // pi resumes silently in-process on a matching --session-id/--session-dir -
-      // no stdout replay of prior turns, so nothing to emit as session/update
-      // before replying (quack's round() only waits on this RPC's own response).
+      // No stdout replay of prior turns on a real resume - quack's round()
+      // only waits on this RPC's own response, so that's fine to skip.
       sessionId = msg.params.sessionId;
+      if (!hasExistingSession(sessionId)) {
+        return fail(`no persisted session for ${sessionId}`);
+      }
+      resumeAttempted = true;
       try {
         await startSession(sessionId, msg.params.cwd, msg.params.mcpServers);
       } catch (e) {

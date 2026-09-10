@@ -3,7 +3,7 @@
 // If the shim generated a quackmcp bridge, calls the first bridged tool and
 // runs guarded calls through the SAME policy path the real extension uses.
 import { createInterface } from "node:readline";
-import { readFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { McpClient, checkPolicy } from "./mcp-client.mjs";
 
@@ -21,13 +21,16 @@ function argFlag(name) {
 }
 const fakeSessionId = argFlag("--session-id");
 const fakeSessionDir = argFlag("--session-dir");
-// One line per prompt processed, appended (not overwritten) to this
-// session-id's own file - test.mjs reads its length to prove a second shim
-// process launched against the same --session-id/--session-dir resumed
-// rather than starting fresh.
+// Stands in for pi's own "<timestamp>_<id>.jsonl" - lets hasExistingSession
+// (pi-acp.mjs) exercise its real pre-check against a fake pi.
+if (fakeSessionDir && fakeSessionId) {
+  mkdirSync(fakeSessionDir, { recursive: true });
+  writeFileSync(join(fakeSessionDir, "fake_" + fakeSessionId + ".jsonl"), "");
+}
+// One line per prompt, appended - test.mjs reads its length to prove a
+// second shim process resumed the same session rather than starting fresh.
 function recordTurn() {
   if (!fakeSessionDir || !fakeSessionId) return;
-  mkdirSync(fakeSessionDir, { recursive: true });
   appendFileSync(join(fakeSessionDir, fakeSessionId + ".turns"), "1\n");
 }
 
