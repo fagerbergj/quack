@@ -1,5 +1,5 @@
 // consolidate_prefix_cache_test.go: measures the per-cluster dedupe prompt's
-// shared byte-prefix across two different bursts (mirrors #1324's approach).
+// shared byte-prefix across two different bursts.
 package memory
 
 import "testing"

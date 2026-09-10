@@ -124,8 +124,8 @@ func (s *Store) consolidateOnce(ctx context.Context) {
 	s.log.Info("consolidation sweep", "clusters", clusters, "skipped", skipped, "called", called, "ops_applied", applied)
 }
 
-// clusterFingerprint hashes a burst's sorted member ids+content; any
-// membership or wording change yields a different value next sweep.
+// clusterFingerprint must hash exactly what buildDedupePrompt sends
+// (id+content) - a skip is only safe if the model would see the same text.
 func clusterFingerprint(cluster []scored) string {
 	keys := make([]string, len(cluster))
 	for i, p := range cluster {

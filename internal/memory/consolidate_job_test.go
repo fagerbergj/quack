@@ -309,6 +309,71 @@ func TestConsolidateOnce_SkipsUnchangedClusterNextSweep(t *testing.T) {
 	}
 }
 
+// TestConsolidateOnce_RecallsWhenMemberContentChanges: clusterFingerprint
+// hashes content, so editing a stamped member's wording (a re-upsert clears
+// its consolidate_fp too) must force a fresh call, not a skip.
+func TestConsolidateOnce_RecallsWhenMemberContentChanges(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	seedMemory(t, s, point{ID: "m1", Content: "the frontend uses vite", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+	seedMemory(t, s, point{ID: "m2", Content: "the backend is written in go", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:05:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+
+	calls := 0
+	s.consolidator = countingModel{reply: `{"ops":[]}`, calls: &calls}
+
+	s.consolidateOnce(ctx)
+	s.consolidateOnce(ctx) // confirm the skip engages before editing
+	if calls != 1 {
+		t.Fatalf("calls before the edit = %d, want 1", calls)
+	}
+
+	seedMemory(t, s, point{ID: "m1", Content: "the frontend uses vite 6", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+
+	s.consolidateOnce(ctx)
+	if calls != 2 {
+		t.Fatalf("calls after editing m1's content = %d, want 2", calls)
+	}
+}
+
+// TestConsolidateOnce_StaysSkippedAfterVoteOnlyChange: clusterFingerprint
+// hashes only id+content, so a judge vote (touches upvotes/tier, not
+// content) on an otherwise-unchanged burst must stay skipped, not re-call.
+func TestConsolidateOnce_StaysSkippedAfterVoteOnlyChange(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	seedMemory(t, s, point{ID: "m1", Content: "the frontend uses vite", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+	seedMemory(t, s, point{ID: "m2", Content: "the backend is written in go", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:05:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+
+	calls := 0
+	s.consolidator = countingModel{reply: `{"ops":[]}`, calls: &calls}
+
+	s.consolidateOnce(ctx)
+	if calls != 1 {
+		t.Fatalf("calls after first sweep = %d, want 1", calls)
+	}
+
+	if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: "m1", Vote: VoteSupported, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+		t.Fatalf("ApplyVotes: %v", err)
+	}
+
+	s.consolidateOnce(ctx)
+	if calls != 1 {
+		t.Fatalf("calls after a vote-only change = %d, want still 1 (skip)", calls)
+	}
+}
+
 // TestRetentionOnce_RemovesExpiredKeepsFreshAndValid covers design doc §6: an
 // invalidated point older than retentionDays is hard-removed, a recently
 // invalidated one survives, and a currently-valid point is never a candidate
