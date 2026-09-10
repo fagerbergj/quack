@@ -234,6 +234,69 @@ func TestProvision_MarksProvisionedAndSkipsOnSecondCall(t *testing.T) {
 	}
 }
 
+// TestProvision_SkipsWipeWhenNodeWouldResume: a continue-only plan whose
+// single node's continuation resolveContinue would grant (StatusDone, agent
+// match, trivial no-repo freshness match - see
+// TestResolveContinue_NoRepoBothSidesMatchTrivially) must never call
+// setupFn - wiping the shared clone here would defeat the very continuation
+// being granted.
+func TestProvision_SkipsWipeWhenNodeWouldResume(t *testing.T) {
+	stub := &setupStub{}
+	ag, err := llmagent.New(llmagent.Config{Name: implementerAgent, Model: stub, Description: "impl", Instruction: "ROLE Answer."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub},
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{} }, nil)
+	var setupCalls int32Counter
+	ex.SetSetup(func(context.Context, string, string, string, Setup) error { setupCalls.inc(); return nil })
+	ex.SetNodeLookup(func(context.Context, string, string, string) (PriorNode, bool, error) {
+		return PriorNode{Status: StatusDone, Handle: SessionHandle{Agent: implementerAgent, Scope: "impl-1"}}, true, nil
+	})
+	plan := Plan{
+		ID:    "p",
+		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Nodes: []Node{{ID: "impl-2", AgentName: implementerAgent, Continue: "impl-1"}},
+	}
+	if err := ex.Provision(context.Background(), "u", "c", &plan); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if got := setupCalls.get(); got != 0 {
+		t.Fatalf("setupFn called %d times, want 0 - a granted continuation must never wipe the shared clone", got)
+	}
+	if !plan.Setup.Provisioned {
+		t.Fatal("Provision must still mark Setup.Provisioned so a later runPlanSetup call is a no-op")
+	}
+}
+
+// TestProvision_ClonesNormallyWhenContinuationWouldBeRejected: same shape as
+// above, but with no node lookup wired, so resolveContinue can never grant
+// the continuation - Provision must fall back to its normal clone rather
+// than silently skip and leave the node with no workspace at all.
+func TestProvision_ClonesNormallyWhenContinuationWouldBeRejected(t *testing.T) {
+	stub := &setupStub{}
+	ag, err := llmagent.New(llmagent.Config{Name: implementerAgent, Model: stub, Description: "impl", Instruction: "ROLE Answer."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub},
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{} }, nil)
+	var setupCalls int32Counter
+	ex.SetSetup(func(context.Context, string, string, string, Setup) error { setupCalls.inc(); return nil })
+	// No SetNodeLookup call: resolveContinue always falls back.
+	plan := Plan{
+		ID:    "p",
+		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Nodes: []Node{{ID: "impl-2", AgentName: implementerAgent, Continue: "impl-1"}},
+	}
+	if err := ex.Provision(context.Background(), "u", "c", &plan); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if got := setupCalls.get(); got != 1 {
+		t.Fatalf("setupFn called %d times, want 1 - an ungranted continuation must still get a normal clone", got)
+	}
+}
+
 // TestProvision_ClonefailureIsHumanReadable pins #848's other half: a clone
 // failure must read as "plan setup failed: repository ... is unreachable
 // (fatal: ...)" - the git STDERR reason is kept (it's the useful part), but runGit's leading "git clone --quiet ...: " argv dump is stripped, since that's what "the raw git fatal in chat" actually meant live: the full invocation, not just the reason. Also must still satisfy errors.Is against the underlying cause, so callers that inspect it (e.g. RunPlanAsGraph's error wrapping) keep working.

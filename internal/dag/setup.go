@@ -87,7 +87,14 @@ func (e *Executor) Provision(ctx context.Context, userID, chatID string, plan *P
 	if plan == nil || plan.Setup == nil || plan.Setup.Provisioned {
 		return nil
 	}
-	if len(setupQualifyingNodes(*plan)) == 0 {
+	nodes := setupQualifyingNodes(*plan)
+	if len(nodes) == 0 {
+		return nil
+	}
+	// setupFn always wipes the shared clone first - that would destroy a
+	// continue-only plan's resumable workspace before resolveContinue can check it.
+	if e.allNodesWouldResume(ctx, *plan, chatID, nodes) {
+		plan.Setup.Provisioned = true
 		return nil
 	}
 	s := plan.Setup
@@ -108,6 +115,28 @@ func (e *Executor) Provision(ctx context.Context, userID, chatID string, plan *P
 	}
 	plan.Setup.Provisioned = true
 	return nil
+}
+
+// allNodesWouldResume reports whether every setup-qualifying node continues
+// a prior node whose workspace resolveContinue would actually grant, run
+// against the clone as it stands right now (before any wipe). One node that
+// doesn't continue anything, or whose continuation resolveContinue would
+// reject anyway, forces the normal (safe) clone path.
+func (e *Executor) allNodesWouldResume(ctx context.Context, plan Plan, chatID string, nodes []Node) bool {
+	for _, n := range nodes {
+		if n.Continue == "" {
+			return false
+		}
+		ag, ok := e.agents[n.AgentName]
+		if !ok {
+			return false
+		}
+		cfg := nodeGateConfig(plan, n, ag, e.cfgFor, chatID, "")
+		if !resolveContinue(ctx, n, cfg, e.nodeLookup, chatID, plan.ID).ok {
+			return false
+		}
+	}
+	return true
 }
 
 // runPlanSetup: plan's clone+checkout pre-step; failure aborts the run.
