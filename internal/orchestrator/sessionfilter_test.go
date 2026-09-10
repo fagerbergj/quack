@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"google.golang.org/adk/v2/session"
@@ -59,5 +60,54 @@ func TestConversationSessionsFiltersReadsNotWrites(t *testing.T) {
 	}
 	if n := rawGot.Session.Events().Len(); n != 4 {
 		t.Fatalf("raw Len = %d, want 4 (all authors persisted)", n)
+	}
+}
+
+// flakyOnceStale fails the next N AppendEvent calls with a stale-session error,
+// then delegates - simulates the nested-runner race without a database.
+type flakyOnceStale struct {
+	session.Service
+	failures int
+}
+
+func (f *flakyOnceStale) AppendEvent(ctx context.Context, sess session.Session, ev *session.Event) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("stale session error: last update time from request (t1) is older than in database (t2)")
+	}
+	return f.Service.AppendEvent(ctx, sess, ev)
+}
+
+func TestConversationSessionsAppendEventRetriesOnStaleSession(t *testing.T) {
+	flaky := &flakyOnceStale{Service: session.InMemoryService(), failures: 2}
+	view := conversationSessions{flaky}
+	ctx := context.Background()
+
+	created, err := view.Create(ctx, &session.CreateRequest{AppName: "quack", UserID: "u", SessionID: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := session.NewEvent(ctx, "inv")
+	ev.Author = "user"
+	ev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}
+	if err := view.AppendEvent(ctx, created.Session, ev); err != nil {
+		t.Fatalf("AppendEvent should retry past 2 stale failures (retries=%d): %v", staleSessionRetries, err)
+	}
+}
+
+func TestConversationSessionsAppendEventGivesUpAfterRetryBudget(t *testing.T) {
+	flaky := &flakyOnceStale{Service: session.InMemoryService(), failures: staleSessionRetries + 1}
+	view := conversationSessions{flaky}
+	ctx := context.Background()
+
+	created, err := view.Create(ctx, &session.CreateRequest{AppName: "quack", UserID: "u", SessionID: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := session.NewEvent(ctx, "inv")
+	ev.Author = "user"
+	ev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}
+	if err := view.AppendEvent(ctx, created.Session, ev); err == nil {
+		t.Fatal("AppendEvent should still fail once retries are exhausted")
 	}
 }
