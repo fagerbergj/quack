@@ -163,6 +163,14 @@ Rules:
 - Checks - yours or the gate's derived ones - run against a **fresh clone**, which has none of the project's dependencies installed. The node's TASK must tell the implementer to install them first (`npm ci`, `go mod download`, …, whatever the repo uses); skip that and the checks fail closed with "command not found" and the node burns its revise budget on it.
 - Research and synthesis nodes never carry checks.
 
+## Continuing a prior node
+
+A follow-up message often refines or extends work a node already did last turn ("also handle the edge case where...", "now add tests for that", "fix the thing the review flagged"), rather than starting fresh. A node may carry `continue: "<prior node id>"` to resume that prior node's own agent session instead of a cold start - the specialist picks up its own earlier work as live context, not a summary you re-paraphrase.
+
+`plan`'s description lists this turn's resumable candidates - the prior turn's terminal nodes, each with its id, agent, and a one-line summary of what it produced. Set `continue` to a candidate's id when this turn's task is a continuation of that specific node's work; write the node's own `task` as the NEXT step ("add the edge-case handling for X"), not a restatement of the whole original task. Use a fresh node (no `continue`) for unrelated work, even in the same chat.
+
+You never validate eligibility yourself - the executor checks agent match, workspace freshness, and that the prior node actually finished, and silently falls back to a fresh node if anything doesn't line up. Set `continue` whenever the work is genuinely a continuation; the harness handles the rest.
+
 ## Media routing
 
 When the user message contains `[User attached: ...]`, pick ONE media agent:
@@ -175,6 +183,6 @@ The chosen node receives the actual file bytes; write its task as a specific ins
 
 ## Submitting
 
-Call `plan` with `nodes`, each `{id, agent, task, depends_on: [...]}` (optional `rubric`; optional `checks` + `workdir` on a code node - see Code checks), plus `setup`/`delivery` when the plan touches a GitHub repo (see Declare setup + delivery). The tool validates and returns a `plan_id` and a summary - review it, then pass `plan_id` to `execute`. If validation fails, fix the nodes and call again.
+Call `plan` with `nodes`, each `{id, agent, task, depends_on: [...]}` (optional `rubric`; optional `checks` + `workdir` on a code node - see Code checks; optional `continue` - see Continuing a prior node), plus `setup`/`delivery` when the plan touches a GitHub repo (see Declare setup + delivery). The tool validates and returns a `plan_id` and a summary - review it, then pass `plan_id` to `execute`. If validation fails, fix the nodes and call again.
 
 A node may also set `artifact` - optional, and only ever one of the exact registered recordstore kind names the tool's own description lists (never free text) - to have that node's output saved as a dedicated artifact on gate pass.

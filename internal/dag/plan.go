@@ -70,6 +70,33 @@ type Node struct {
 	ContextWindow int
 	// Artifact: episodic record name this node writes on gate pass (#1006).
 	Artifact string
+	// Continue: a prior (possibly earlier-turn) node id whose agent session
+	// this node's first round resumes, when the executor's eligibility and
+	// freshness checks pass. "" = fresh node, the default.
+	Continue string
+}
+
+// SessionHandle is the durable pointer a terminal node leaves behind so a
+// later turn's continue: can resume its agent session: the ADK session id
+// (native agents - always the chat's own session) or the ACP protocol
+// session id (external agents, from session/new), plus the workspace scope
+// and agent name the continue primitive's eligibility check compares
+// against, and the shared clone's HEAD at the moment this node went
+// terminal (the freshness baseline).
+type SessionHandle struct {
+	Kind    string `json:"kind"` // "adk" or "acp"
+	ID      string `json:"id"`
+	Agent   string `json:"agent"`
+	Scope   string `json:"scope"`
+	HeadSHA string `json:"head_sha"`
+}
+
+// ResumableNode is one candidate the plan tool surfaces to the orchestrator:
+// a terminal node from the chat's last turn a follow-up's continue: may name.
+type ResumableNode struct {
+	ID      string `json:"id"`
+	Agent   string `json:"agent"`
+	Summary string `json:"summary"`
 }
 
 func terminalIDs(nodes []Node) []string {

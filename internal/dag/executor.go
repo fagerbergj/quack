@@ -40,9 +40,19 @@ type Executor struct {
 	walLedger ledger.LedgerStore
 	admission *Admission
 	specFor   func(agentName string) AdmissionSpec
+	// nodeLookup resolves the continue primitive's eligibility check against
+	// persisted node history. nil disables continue: entirely (every node
+	// starts fresh) - see SetNodeLookup.
+	nodeLookup NodeLookup
 
-	gateResults sync.Map
+	gateResults    sync.Map
+	sessionHandles sync.Map
 }
+
+// SetNodeLookup wires the continue primitive's read of persisted node state.
+// Wired to store.Store.FindDagNodeByChat by serve.go - dag cannot import
+// store (store already imports dag).
+func (e *Executor) SetNodeLookup(fn NodeLookup) { e.nodeLookup = fn }
 
 // SetAdmission wires the #1007 capacity ledger and its per-agent spec
 // resolver. Nil admission (the zero Executor) runs unbounded, same as before #1007.
@@ -117,6 +127,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		return e.NodeQueueGuidance(cancelKey, nodeID, gen)
 	})
 	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
+	ds.sessionOf = func(nodeID string) SessionHandle { return e.sessionHandle(cancelKey, nodeID) }
 	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds}
 }
 
@@ -159,11 +170,11 @@ func (s *DagStream) Finish() {
 			continue
 		}
 		if !delivered && s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
-			s.yield(stream.NodeCancelled(n.ID), nil)
+			s.yield(stream.NodeCancelled(n.ID, s.ds.sessionOfEncoded(n.ID)), nil)
 			continue
 		}
 		if !delivered && strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
-			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID])), nil)
+			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID]), s.ds.sessionOfEncoded(n.ID)), nil)
 			continue
 		}
 		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
@@ -184,10 +195,12 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 		slog.Warn("retry: no session, skipping artifact tools", "component", "dag", "chat_id", chatID, "node_id", nodeID)
 	}
 	sink, _ := stream.YieldFromContext(ctx)
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
+	gateNodes, _, err := buildGateNodes(ctx, plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
-		}, e.admission, e.specFor, artifacts, e.walLedger, nil, sink, e.sessions) // retry never re-runs setup, so nothing to refresh
+		}, e.admission, e.specFor, artifacts, e.walLedger, nil, sink, e.sessions, e.nodeLookup, func(nodeID string, h SessionHandle) {
+			e.recordSessionHandle(chatID, nodeID, h)
+		}) // retry never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +243,23 @@ func gateResultKey(chatID, nodeID string) string { return chatID + "\x00" + node
 
 func (e *Executor) recordGateResult(chatID, nodeID string, score float64, passed bool, rounds int) {
 	e.gateResults.Store(gateResultKey(chatID, nodeID), gateScore{score: score, passed: passed, rounds: rounds})
+}
+
+// recordSessionHandle/sessionHandle mirror recordGateResult/gateScore's
+// in-process-first shape, but the handle has no session-state fallback (it's
+// not written to ADK session state anywhere) - a run that never recorded one
+// (e.g. a paused node) simply has no handle for the SSE event to carry.
+func (e *Executor) recordSessionHandle(chatID, nodeID string, h SessionHandle) {
+	e.sessionHandles.Store(gateResultKey(chatID, nodeID), h)
+}
+
+func (e *Executor) sessionHandle(chatID, nodeID string) SessionHandle {
+	if v, ok := e.sessionHandles.Load(gateResultKey(chatID, nodeID)); ok {
+		if got, ok := v.(SessionHandle); ok {
+			return got
+		}
+	}
+	return SessionHandle{}
 }
 
 func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, nodeID string) gateScore {
@@ -293,6 +323,9 @@ type dagStream struct {
 	// every test, which is safe (handle's switch guards it) and keeps every
 	// existing newDagStream(...) test call site unchanged.
 	deliveredOf func(string) bool
+	// sessionOf: the durable handle recordSessionHandle captured for this
+	// node, if any - same nil-safe post-construction wiring as deliveredOf.
+	sessionOf func(string) SessionHandle
 
 	started     map[string]bool
 	doneEmitted map[string]bool
@@ -338,6 +371,15 @@ func (s *dagStream) scope(node string) string {
 		return sc
 	}
 	return node
+}
+
+// sessionOfEncoded: node's captured SessionHandle, JSON-encoded for the SSE
+// wire ("" if none captured or sessionOf is unwired).
+func (s *dagStream) sessionOfEncoded(node string) string {
+	if s.sessionOf == nil {
+		return ""
+	}
+	return EncodeSessionHandle(s.sessionOf(node))
 }
 
 func (s *dagStream) emit(ev stream.SSEEvent) bool {
@@ -409,7 +451,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 					return false
 				}
 			case s.cancelled != nil && s.cancelled(node):
-				if !s.emit(stream.NodeCancelled(node)) {
+				if !s.emit(stream.NodeCancelled(node, s.sessionOfEncoded(node))) {
 					return false
 				}
 			case out != "":
@@ -427,7 +469,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 					return false
 				}
 			default:
-				if !s.emit(stream.NodeFailed(node, emptyNodeError(s.chatID, s.scope(node), s.agentByID[node]))) {
+				if !s.emit(stream.NodeFailed(node, emptyNodeError(s.chatID, s.scope(node), s.agentByID[node]), s.sessionOfEncoded(node))) {
 					return false
 				}
 			}
@@ -593,7 +635,7 @@ func (s *dagStream) flush() bool {
 // usage, and judge result.
 func (s *dagStream) nodeDoneData(node string) stream.NodeDoneData {
 	out := s.outputs[node]
-	d := stream.NodeDoneData{Output: out, OutputPreview: preview(out)}
+	d := stream.NodeDoneData{Output: out, OutputPreview: preview(out), SessionHandle: s.sessionOfEncoded(node)}
 	if t, ok := s.startedAt[node]; ok {
 		d.DurationMs = time.Since(t).Milliseconds()
 	}

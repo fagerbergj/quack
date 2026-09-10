@@ -259,6 +259,10 @@ func cloneHeadSHA(cfg Config) string {
 	return gitLine(dir, checksCaps(cfg), "rev-parse", "HEAD")
 }
 
+// CloneHeadSHA exports cloneHeadSHA for dag's continue: freshness check
+// (buildSessionHandle/resolveContinue) - dag already imports vetting.
+func CloneHeadSHA(cfg Config) string { return cloneHeadSHA(cfg) }
+
 // commitHygieneOffTaskCeiling: code-implementer's commit_hygiene criterion
 // scores below this (normalised) when a commit swept in files with no
 // connection to the task - the contamination band, distinct from a merely thin commit message or an incomplete-but-on-task round (#762).

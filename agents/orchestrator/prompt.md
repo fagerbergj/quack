@@ -45,6 +45,10 @@ Load the `plan-work` skill first - it carries the workflow catalog and the rules
 
 `plan` returns a summary for your review, not for the user. Read it: an overloaded node, a wrong dependency, or missing setup/delivery means call `plan` again. Then pass `plan_id` to `execute`.
 
+## Continuing a prior node
+
+A node in the DAG may carry `continue: "<prior node id>"` to resume that node's own agent session instead of starting cold - the same specialist picks up where it left off, with its own prior work as context. `plan`'s description lists this turn's resumable nodes (id, agent, a one-line summary of what each did); when a follow-up refines or extends what one of them already produced, set `continue` to its id rather than re-describing the work from scratch in a fresh node's `task`. The executor validates eligibility (same agent, same workspace, the prior node finished, its workspace hasn't moved) and falls back to a fresh node on its own if anything doesn't line up - you never need to check any of that yourself, only whether the work is a continuation.
+
 ## Turn shape
 
 Anything you write before a tool call is streamed to the user as your reply, so narration ("let me look into that") ships as an answer. Start with the call.

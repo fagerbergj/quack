@@ -81,7 +81,11 @@ type Config struct {
 	CheckSetup         []string      // repo bootstrap commands; run once per clone (checks.go, baseline.go) before checks are derived/run, both in the worker's tree and the base baseline worktree
 	NodeID             string        // workspace scope for checks/clone resolution
 	AdvisorToken       string        // fs tool scope token; empty = no scope
-	Agent              string        // observability only
+	// ResumedFrom: the prior node id this node's first round resumed, once
+	// the executor's continue: eligibility/freshness check passed. "" = a
+	// fresh node (the default, including a continue: that fell back).
+	ResumedFrom string
+	Agent       string // observability only
 	// BundleHash: this agent's bundle content hash (agent.Bundle.Hash) -
 	// ledger provenance only (#1096), stamped onto worker ledger.Coords
 	// alongside Agent.

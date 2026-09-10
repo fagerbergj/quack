@@ -50,6 +50,13 @@ func (s *advisorSnoopStub) GenerateContent(_ context.Context, req *model.LLMRequ
 // shared plumbing for the two tests below.
 func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, refresh func(context.Context, Node, vetting.Config) bool) {
 	t.Helper()
+	runSingleNodeResumed(t, plan, cfg, stub, refresh, continuation{})
+}
+
+// runSingleNodeResumed is runSingleNode plus a continuation, for tests
+// pinning the continue: primitive's wiring into newGatedNode itself.
+func runSingleNodeResumed(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, refresh func(context.Context, Node, vetting.Config) bool, resume continuation) {
+	t.Helper()
 	ag, err := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +66,7 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, 
 		t.Fatal(err)
 	}
 	gateNodes := map[string]workflow.Node{
-		plan.Nodes[0].ID: newGatedNode(plan, plan.Nodes[0], wn, nil, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil, nil, AdmissionSpec{}, refresh, nil),
+		plan.Nodes[0].ID: newGatedNode(plan, plan.Nodes[0], wn, nil, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil, nil, AdmissionSpec{}, refresh, nil, resume, nil),
 	}
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {

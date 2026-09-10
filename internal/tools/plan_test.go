@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -30,7 +31,7 @@ func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { retur
 // #661 deterministic-setup tests below.
 func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup *dag.Setup, args map[string]any) dag.Plan {
 	t.Helper()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", githubSetup, nil, "", nil, false, nil)
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", githubSetup, nil, "", nil, false, nil, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -62,7 +63,7 @@ func implementNode() []map[string]any {
 func TestPlanToolStampsPlanOnly(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	cache := NewPlanCache()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", nil, nil, "", nil, true, nil)
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", nil, nil, "", nil, true, nil, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 
 func TestNewPlanToolMetadata(t *testing.T) {
 	planner := dag.NewPlanner(nil, nil, nil)
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", nil, nil, "", nil, false, nil)
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", nil, nil, "", nil, false, nil, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool error: %v", err)
 	}
@@ -394,7 +395,7 @@ func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 		Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main",
 		WorkBranch: "quack/issue-836", // no CheckoutExistingHead
 	}
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", githubSetup, nil, "", nil, false, nil)
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", githubSetup, nil, "", nil, false, nil, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -402,5 +403,67 @@ func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 	reviewNode := []map[string]any{{"id": "rev", "agent": "code-reviewer", "task": "review the PR", "depends_on": []string{}}}
 	if _, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"nodes": reviewNode}); err == nil {
 		t.Fatal("plan accepted, want the review-needs-real-head rejection")
+	}
+}
+
+// TestPlanTool_ExposesResumableCandidates pins design point 4 of the
+// continue primitive: the model must see real ids/agents/summaries from the
+// tool itself, both up front (the description, before it authors nodes) and
+// in the call result - it must never guess a continue: target.
+func TestPlanTool_ExposesResumableCandidates(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	resumable := []dag.ResumableNode{{ID: "n1", Agent: "code-implementer", Summary: "added the auth middleware"}}
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", nil, nil, "", nil, false, nil, resumable)
+	if err != nil {
+		t.Fatalf("NewPlanTool: %v", err)
+	}
+	if !strings.Contains(tl.Description(), "n1") || !strings.Contains(tl.Description(), "added the auth middleware") {
+		t.Errorf("Description() = %q, want the resumable candidate's id and summary", tl.Description())
+	}
+
+	rt := tl.(runnableTool)
+	nodes := []map[string]any{{"id": "n2", "agent": "code-implementer", "task": "extend the auth middleware", "depends_on": []string{}, "continue": "n1"}}
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"nodes": nodes})
+	if err != nil {
+		t.Fatalf("plan tool Run: %v", err)
+	}
+	// functiontool.Run converts the result through JSON, so this is
+	// []any/map[string]any, not []dag.ResumableNode - round-trip it back.
+	b, err := json.Marshal(res["resumable_nodes"])
+	if err != nil {
+		t.Fatalf("marshal resumable_nodes: %v", err)
+	}
+	var echoed []dag.ResumableNode
+	if err := json.Unmarshal(b, &echoed); err != nil {
+		t.Fatalf("unmarshal resumable_nodes: %v", err)
+	}
+	if len(echoed) != 1 || echoed[0].ID != "n1" || echoed[0].Summary != "added the auth middleware" {
+		t.Fatalf("resumable_nodes = %+v, want the one candidate echoed back", echoed)
+	}
+}
+
+// TestPlanTool_NoResumableCandidatesSaysSo pins the "facts, not gates"
+// requirement's other half: with nothing to resume, the description must
+// say so plainly rather than silently omitting the topic.
+func TestPlanTool_NoResumableCandidatesSaysSo(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", nil, nil, "", nil, false, nil, nil)
+	if err != nil {
+		t.Fatalf("NewPlanTool: %v", err)
+	}
+	if !strings.Contains(tl.Description(), "nothing to resume") {
+		t.Errorf("Description() = %q, want an explicit no-candidates statement", tl.Description())
+	}
+}
+
+// TestPlan_ContinueFieldSurvivesAssemble pins the planner-level shape carry:
+// a node's continue: id must land on the built dag.Plan unchanged - the
+// executor (not the planner) validates it, so assemble must never drop it.
+func TestPlan_ContinueFieldSurvivesAssemble(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	nodes := []map[string]any{{"id": "n2", "agent": "code-implementer", "task": "extend it", "depends_on": []string{}, "continue": "n1"}}
+	p := buildPlan(t, planner, NewPlanCache(), nil, map[string]any{"nodes": nodes})
+	if len(p.Nodes) != 1 || p.Nodes[0].Continue != "n1" {
+		t.Fatalf("Nodes = %+v, want Continue=%q on the one node", p.Nodes, "n1")
 	}
 }

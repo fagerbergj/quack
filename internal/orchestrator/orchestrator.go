@@ -80,6 +80,9 @@ type Orchestrator struct {
 	// every turn's runner.Config - nil leaves the chat session uncompacted,
 	// same as before #A3.
 	compaction *compaction.Config
+	// resumableNodes lists the chat's continue: candidates for the plan
+	// tool's result - see SetResumableNodesLookup.
+	resumableNodes func(ctx context.Context, chatID string) ([]dag.ResumableNode, error)
 }
 
 // SetCompaction wires adk/v2's native runner-level compaction (built via
@@ -96,6 +99,13 @@ func (o *Orchestrator) SetCompaction(cfg *compaction.Config) { o.compaction = cf
 // must not import store (serve already imports both; see New's callers).
 func (o *Orchestrator) SetNodeSessionReaper(fn func(ctx context.Context, chatID string) error) {
 	o.nodeSessions = fn
+}
+
+// SetResumableNodesLookup wires the plan tool's continue: candidate list to
+// store.Store.ListResumableDagNodes - same reason as SetNodeSessionReaper:
+// orchestrator must not import store.
+func (o *Orchestrator) SetResumableNodesLookup(fn func(ctx context.Context, chatID string) ([]dag.ResumableNode, error)) {
+	o.resumableNodes = fn
 }
 
 // SetArtifacts wires an artifact.Service into the orchestrator's own runner
@@ -596,8 +606,16 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		if s, ok := tools.GitHubSetupFromContext(ctx); ok {
 			githubSetup = &s
 		}
+		var resumable []dag.ResumableNode
+		if o.resumableNodes != nil {
+			if rn, rerr := o.resumableNodes(ctx, sessionID); rerr != nil {
+				slog.Warn("resumable-node lookup failed; continue: unavailable this turn", "component", "orchestrator", "chat", sessionID, "err", rerr)
+			} else {
+				resumable = rn
+			}
+		}
 		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubSetup,
-			tools.AllowedDeliveryKindsFromContext(ctx), tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx), o.artifacts)
+			tools.AllowedDeliveryKindsFromContext(ctx), tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx), o.artifacts, resumable)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return

@@ -33,10 +33,16 @@ type planArgs struct {
 type planResult struct {
 	PlanID  string `json:"plan_id"` // pass this to the execute tool
 	Summary string `json:"summary"` // human-readable node list for the model
+	// Resumable: this chat's continue: candidates from its last turn (ids,
+	// agent, summary) - also named in the tool description below, repeated
+	// here so a plan that gets rejected and retried still sees them.
+	Resumable []dag.ResumableNode `json:"resumable_nodes,omitempty"`
 }
 
 // NewPlanTool: validates and caches a DAG plan, emits dag_plan SSE event.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool, artifacts artifact.Service) (tool.Tool, error) {
+// resumable: this chat's continue: candidates from its last turn - see
+// dag.ResumableNode; nil/empty when none exist.
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool, artifacts artifact.Service, resumable []dag.ResumableNode) (tool.Tool, error) {
 	artifactDesc := fmt.Sprintf("`artifact` is OPTIONAL - only set it to have a node's output saved as a "+
 		"named recordstore artifact on gate pass, and only to one of these exact registered kind names: %s. "+
 		"Never put free text there (it is not a title or description); omit it entirely if you don't need a "+
@@ -49,13 +55,25 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			"workspace-relative repo dir they run in) ONLY when the user named the exact commands to run; each "+
 			"must then be exactly, or extend with a space, one of these allowed prefixes: %s.", strings.Join(cc, ", "))
 	}
+	continueDesc := "`continue` is OPTIONAL and there is nothing to resume this turn: no prior node in this chat " +
+		"left a resumable session, so every node below must be a fresh one (omit `continue`)."
+	if len(resumable) > 0 {
+		var sb strings.Builder
+		sb.WriteString("`continue` is OPTIONAL: set it to a prior node id below to resume that node's own agent " +
+			"session instead of starting cold - use it when this turn's work refines or extends what that node " +
+			"already did, not for unrelated work. Resumable nodes from the last turn:")
+		for _, r := range resumable {
+			fmt.Fprintf(&sb, "\n- %s (agent: %s): %s", r.ID, r.Agent, r.Summary)
+		}
+		continueDesc = sb.String()
+	}
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
 			Name: "plan",
 			Description: "Tool to run a DAG of specialist agents. Load the plan-work skill first, then YOU author " +
 				"the DAG: pass `nodes`, each {id, agent (a name from the Agents list), task (self-contained - the " +
 				"agent sees only this text), depends_on: [ids it needs output from]}. Optionally a `rubric`. " +
-				checksDesc + " " + artifactDesc + " " +
+				checksDesc + " " + artifactDesc + " " + continueDesc + " " +
 				"Every plan MUST declare setup (the working clone + branch) and delivery (how the gated result " +
 				"reaches GitHub). setup and delivery run deterministically AFTER the trust gate - you declare " +
 				"intent, you never run git, push, or open a PR yourself. Pass `setup: {repo, base_ref, work_branch}` " +
@@ -129,7 +147,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			}
 
 			emitPlanEvent(tc, p)
-			return planResult{PlanID: p.ID, Summary: summarizePlan(p)}, nil
+			return planResult{PlanID: p.ID, Summary: summarizePlan(p), Resumable: resumable}, nil
 		},
 	)
 }
@@ -138,7 +156,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 func DagPlanEvent(ctx context.Context, p dag.Plan) stream.SSEEvent {
 	nodes := make([]stream.DagNodeDef, len(p.Nodes))
 	for i, n := range p.Nodes {
-		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: n.ContextWindow, Artifact: n.Artifact}
+		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: n.ContextWindow, Artifact: n.Artifact, Continue: n.Continue}
 	}
 	return stream.WithTrace(stream.DagPlan(p.ID, nodes, planEdges(p.Nodes)), otelobs.TraceIDOf(ctx))
 }

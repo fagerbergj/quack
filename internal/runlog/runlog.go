@@ -315,9 +315,11 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 		n.CachedTokens = d.CachedTokens
 		n.DurationMs, n.JudgeRounds = d.DurationMs, d.JudgeRounds
 		n.JudgeFinalScore, n.JudgePassed = d.JudgeFinalScore, d.JudgePassed
+		n.SessionHandle = d.SessionHandle
 	case stream.NodeFailedData:
 		nodeID, to = d.NodeID, dag.StatusFailed
 		n.NodeID, n.Status, n.Error, n.FinishedAt = d.NodeID, string(to), d.Error, &t
+		n.SessionHandle = d.SessionHandle
 	case stream.NodeNeedsInputData:
 		nodeID, to = d.NodeID, dag.StatusNeedsInput
 		n.NodeID, n.Status = d.NodeID, string(to)
@@ -329,6 +331,7 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	case stream.NodeCancelledData:
 		nodeID, to = d.NodeID, dag.StatusCancelled
 		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
+		n.SessionHandle = d.SessionHandle
 	default:
 		return
 	}

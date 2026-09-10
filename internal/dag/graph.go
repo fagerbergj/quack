@@ -53,8 +53,8 @@ type nodeScopedWorker interface {
 // (#1123) - must match the userID the rest of the chat's artifacts (e.g. the
 // orchestrator's own writes) were saved under, or a node's list/read/edit
 // would silently see nothing.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
-	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent), sessions session.Service) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
+	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent), sessions session.Service, nodeLookup NodeLookup, recordSession func(nodeID string, h SessionHandle)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -92,7 +92,17 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.Artifacts = artifacts
 		cfg.Ledger = walLedger
 		cfg.RoundCoordsSink = setRoundCoords
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup, sessions)
+		resume := resolveContinue(ctx, node, cfg, nodeLookup, chatID, plan.ID)
+		if resume.ok {
+			// Reuse the prior node's own workspace scope, not this node's -
+			// continuing means picking up the SAME clone/ACP-state directory,
+			// not a fresh one named after this node's own id.
+			cfg.NodeID = resume.handle.Scope
+			cfg.ResumedFrom = node.Continue
+		} else if resume.fallbackReason != "" {
+			slog.Warn("continue: node starts fresh", "component", "dag", "node", node.ID, "reason", resume.fallbackReason)
+		}
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup, sessions, resume, recordSession)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -175,7 +185,7 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 }
 
 func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(paused bool), admission *Admission, spec AdmissionSpec,
-	refreshSetup func(context.Context, Node, vetting.Config) bool, sessions session.Service) workflow.Node {
+	refreshSetup func(context.Context, Node, vetting.Config) bool, sessions session.Service, resume continuation, recordSession func(nodeID string, h SessionHandle)) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			// paused stays false on every path except the HITL-park return below:
@@ -220,14 +230,21 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if refreshed {
 				prompt += refreshedNote
 			}
+			prompt = continuePreamble(resume) + prompt
 			token := vetting.AdvisorThreadToken(plan.ID, node.ID)
 			task := vetting.AdvisorTask{
 				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,
-				WorkspaceNodeID: workspaceNodeID(plan, node),
+				WorkspaceNodeID: cfg.NodeID, // possibly overridden to a continued node's own scope (buildGateNodes)
 				WorktreeParent:  worktreeParentID(plan, node),
 				ReadOnly:        cfg.ReadOnly,
 				InvocationID:    ctx.InvocationID(),
 				ChatID:          chatID, // real chat scope; the ADK session id below is a retry-only alias
+			}
+			if resume.ok && resume.handle.Kind == "acp" {
+				// ACP's real resume mechanism: session/load against the prior
+				// node's own on-disk state, found because WorkspaceNodeID above
+				// already points at that same scope (#1359).
+				task.ACPSessionID = resume.handle.ID
 			}
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
@@ -295,9 +312,19 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// ACP agents ignore workerModel (never invoked - the subprocess does the
 			// real work), so their gen_ai metrics attribution rides on worker itself.
 			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
+			// recordHandle captures this node's durable session handle for a
+			// future turn's continue: - every exit except a HITL park, which
+			// leaves the node resumable within THIS run already (#A2's own
+			// session-reap skip above handles that case).
+			recordHandle := func() {
+				if recordSession != nil {
+					recordSession(node.ID, buildSessionHandle(cfg, node, token))
+				}
+			}
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				markGateFailed(ctx, node.ID)
+				recordHandle()
 				return "", nil
 			}
 			if errors.Is(err, vetting.ErrNodePaused) {
@@ -321,6 +348,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				_ = st.Set(gatePassedKey+node.ID, res.Passed)
 				_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
 			}
+			recordHandle()
 			return answer, err
 		},
 		workflow.NodeConfig{})

@@ -93,6 +93,11 @@ type RawNode struct {
 	// validates it against ArtifactKindNames() either way (#1128: a planner
 	// once put free text here, which reached SaveBlob and errored unregistered).
 	Artifact string `json:"artifact,omitempty"`
+	// Continue: id of a prior node (this turn or an earlier one) whose agent
+	// session this node resumes - see dag.Node.Continue. The executor, not
+	// the planner, validates eligibility (same agent, same workspace scope,
+	// terminal, fresh HEAD): assemble only carries the field through.
+	Continue string `json:"continue,omitempty"`
 }
 
 // ArtifactKindNames returns the sorted names of every registered blob-class
@@ -345,6 +350,9 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 				return nil, fmt.Errorf("node %q: %w", n.ID, err)
 			}
 		}
+		if n.Continue == n.ID && n.Continue != "" {
+			return nil, fmt.Errorf("node %q: continue cannot name itself", n.ID)
+		}
 		ids[n.ID] = true
 		plan.Nodes = append(plan.Nodes, Node{
 			ID:            n.ID,
@@ -356,6 +364,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			Workdir:       n.Workdir,
 			ContextWindow: agentInfo.ContextWindow,
 			Artifact:      n.Artifact,
+			Continue:      n.Continue,
 		})
 	}
 

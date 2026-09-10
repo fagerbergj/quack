@@ -800,6 +800,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		executor.SetWALLedger(ledgerStore)
 	}
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
+	executor.SetNodeLookup(nodeLookupFromStore(st))
 	executorRef.Store(executor)
 	// Orchestrator turns take a session from the same pool its worker nodes draw on, held only while
 	// generating - holding across the DAG span would deadlock its own nodes. Wraps AFTER
@@ -811,6 +812,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// a prod config without it silently dropped every plan record (#1122).
 	orch.SetArtifacts(artifacts)
 	orch.SetNodeSessionReaper(st.ReapNodeSessions)
+	orch.SetResumableNodesLookup(resumableNodesFromStore(st))
 	// Same source of truth as buildAgents' per-node compactionFor
 	// (cfg.Session.Compaction) - built once here for the orchestrator's own
 	// long-lived chat session, which buildAgents never sees (#A3).

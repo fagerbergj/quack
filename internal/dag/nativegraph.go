@@ -177,12 +177,14 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	// here while ctx is still live, then carried as a plain value past the
 	// point workflow.RunNode stops propagating it (#1185 follow-up).
 	sink, _ := stream.YieldFromContext(ctx)
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
+	gateNodes, _, err := buildGateNodes(ctx, plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		}, e.admission, e.specFor, e.artifacts, e.walLedger, func(nctx context.Context, node Node, cfg vetting.Config) bool {
 			return e.refreshStaleSetup(nctx, userID, chatID, &plan, node, cfg)
-		}, sink, e.sessions)
+		}, sink, e.sessions, e.nodeLookup, func(nodeID string, h SessionHandle) {
+			e.recordSessionHandle(chatID, nodeID, h)
+		})
 	if err != nil {
 		return false, err
 	}

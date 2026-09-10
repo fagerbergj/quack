@@ -197,6 +197,10 @@ type DagNode struct {
 	InstanceID string `gorm:"column:instance_id" json:"-"`
 	// Bumped on every write; fallback for FailStaleDagNodes when no InstanceID matches.
 	UpdatedAt *time.Time `json:"-"`
+	// JSON-encoded dag.SessionHandle this node leaves behind on a terminal
+	// event, so a later turn's continue: can resume its agent session -
+	// written by node_done/node_failed/node_cancelled, same as Output.
+	SessionHandle string `gorm:"column:session_handle" json:"-"`
 }
 
 // TurnContent is the fully-joined view of one turn used to build API responses.
@@ -1425,6 +1429,44 @@ func (s *Store) GetDagNode(ctx context.Context, planID, nodeID string) (*DagNode
 		return nil, err
 	}
 	return &n, nil
+}
+
+// FindDagNodeByChat resolves node_id against chatID's plan history, most
+// recent plan first, excluding excludePlanID - the continue primitive's
+// target names a prior turn's node id, and a follow-up's plan is saved
+// before the executor runs, so "the chat's latest plan" would resolve to the
+// plan currently being built, not the one before it (see CountDagPlans: a
+// node id recurs across a chat's plans, so this can't just key on node_id alone).
+func (s *Store) FindDagNodeByChat(ctx context.Context, chatID, nodeID, excludePlanID string) (*DagNode, error) {
+	var n DagNode
+	err := s.db.WithContext(ctx).Table("dag_nodes").
+		Joins("JOIN dag_plans ON dag_plans.id = dag_nodes.plan_id").
+		Where("dag_plans.chat_id = ? AND dag_nodes.node_id = ? AND dag_nodes.plan_id <> ?", chatID, nodeID, excludePlanID).
+		Order("dag_plans.created_at DESC").
+		First(&n).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+// ListResumableDagNodes returns chatID's latest plan's terminal nodes that
+// left a session handle behind - the plan tool's continue: candidates
+// (#... resumable-nodes design point 4), so the model sees real ids
+// instead of guessing.
+func (s *Store) ListResumableDagNodes(ctx context.Context, chatID string) ([]DagNode, error) {
+	plan, err := s.GetLatestDagPlan(ctx, chatID)
+	if err != nil || plan == nil {
+		return nil, err
+	}
+	var nodes []DagNode
+	err = s.db.WithContext(ctx).Where("plan_id = ? AND status IN ? AND session_handle <> ''",
+		plan.ID, []string{string(dag.StatusDone), string(dag.StatusFailed), string(dag.StatusCancelled)}).
+		Find(&nodes).Error
+	return nodes, err
 }
 
 func (s *Store) GetLatestDagPlan(ctx context.Context, chatID string) (*DagPlan, error) {

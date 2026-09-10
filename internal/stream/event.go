@@ -213,6 +213,9 @@ type DagNodeDef struct {
 	// Artifact is the node's declared output artifact kind - the record name
 	// its output is saved as on gate pass; absent when the node declares none.
 	Artifact string `json:"artifact,omitempty"`
+	// Continue is the prior node id this node asked to resume, as declared
+	// (not whether the executor's eligibility check actually granted it).
+	Continue string `json:"continue,omitempty"`
 }
 
 // Wire representation of one edge in a DAG plan.
@@ -274,6 +277,11 @@ type NodeDoneData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node finished - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
+	// SessionHandle: JSON-encoded dag.SessionHandle this node leaves behind
+	// for a future turn's continue: - "" when none was captured (e.g. no
+	// clone, or the node's agent isn't session-scoped). stream cannot import
+	// dag (dag already imports stream), so this rides as an opaque string.
+	SessionHandle string `json:"session_handle,omitempty"`
 }
 
 // `node_failed` event payload.
@@ -283,6 +291,9 @@ type NodeFailedData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node failed - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
+	// SessionHandle: see NodeDoneData.SessionHandle - a failed node can still
+	// leave one behind (the session existed before the gate rejected it).
+	SessionHandle string `json:"session_handle,omitempty"`
 }
 
 // `node_cancelled` event payload: node stopped by the user, rendered neutrally (not as red failure).
@@ -291,11 +302,13 @@ type NodeCancelledData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node was cancelled - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
+	// SessionHandle: see NodeDoneData.SessionHandle.
+	SessionHandle string `json:"session_handle,omitempty"`
 }
 
 // NodeCancelled builds a node_cancelled event, stamping FinishedAtMs now (see NodeDone).
-func NodeCancelled(nodeID string) SSEEvent {
-	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID, FinishedAtMs: time.Now().UnixMilli()}}
+func NodeCancelled(nodeID, sessionHandle string) SSEEvent {
+	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID, FinishedAtMs: time.Now().UnixMilli(), SessionHandle: sessionHandle}}
 }
 
 // `node_steered` event payload: the node's queued messages were delivered at its next turn boundary. A fresh node_start…node_done follows.
@@ -476,8 +489,8 @@ func NodeNeedsInput(nodeID, interruptID, message string) SSEEvent {
 }
 
 // NodeFailed builds a node_failed event, stamping FinishedAtMs now (see NodeDone).
-func NodeFailed(nodeID, errMsg string) SSEEvent {
-	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg, FinishedAtMs: time.Now().UnixMilli()}}
+func NodeFailed(nodeID, errMsg, sessionHandle string) SSEEvent {
+	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg, FinishedAtMs: time.Now().UnixMilli(), SessionHandle: sessionHandle}}
 }
 
 // ChatTitle builds a chat_title event.
