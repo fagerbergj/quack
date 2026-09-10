@@ -123,27 +123,30 @@ func commentLabel(body string) (label, why string) {
 	return label, firstSentence(remainder)
 }
 
-// dedupeComments drops a repeat of the same finding, keeping the first
-// occurrence - matched by FindingID when both entries carry one, else by
-// path+line (a native write_finding and a staged inline comment for the
-// same issue land at the same line but rarely share an id).
+// dedupeComments drops a repeat of the same finding: FindingIDs equal, or
+// one side has none and path+line+label all match - never on line alone.
 func dedupeComments(comments []ReviewComment) []ReviewComment {
-	seenIDs := make(map[string]bool, len(comments))
-	seenLines := make(map[string]bool, len(comments))
 	out := make([]ReviewComment, 0, len(comments))
 	for _, c := range comments {
-		if c.FindingID != "" && seenIDs[c.FindingID] {
-			continue
+		label, _ := commentLabel(c.Body)
+		dup := false
+		for _, seen := range out {
+			if c.FindingID != "" && seen.FindingID != "" {
+				if c.FindingID == seen.FindingID {
+					dup = true
+					break
+				}
+				continue
+			}
+			seenLabel, _ := commentLabel(seen.Body)
+			if c.Path == seen.Path && c.Line == seen.Line && label == seenLabel {
+				dup = true
+				break
+			}
 		}
-		lineKey := fmt.Sprintf("%s:%d", c.Path, c.Line)
-		if seenLines[lineKey] {
-			continue
+		if !dup {
+			out = append(out, c)
 		}
-		if c.FindingID != "" {
-			seenIDs[c.FindingID] = true
-		}
-		seenLines[lineKey] = true
-		out = append(out, c)
 	}
 	return out
 }
