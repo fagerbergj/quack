@@ -42,6 +42,10 @@ RUN ./scripts/plugins.sh
 # /go/pkg/mod is not - see the go mod download comment above.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /quack ./cmd/quack
+# Landlock self-exec target, built separately so a sandboxed child re-execs a
+# few MB instead of the full server binary on every spawn.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack-sandbox ./cmd/quack-sandbox
 
 # 2b) The external ACP coding agent: pi, driven through the tools/pi-acp shim.
 # PINNED - the RPC surface is integration-tested per release, so bump
@@ -79,6 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
 WORKDIR /
 COPY --from=backend /quack /quack
+COPY --from=backend /quack-sandbox /quack-sandbox
 # Build toolchains for the coding agents (#283): the code-implementer must be
 # able to `go build/test` and `npx tsc`/`npm test` what it writes - without them
 # every check fails with "not found" and the worker grinds hunting a toolchain

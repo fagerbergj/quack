@@ -1,6 +1,7 @@
 .PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean
 
 BINARY := quack
+SANDBOX_BINARY := quack-sandbox
 
 ## plugins: fetch the skill-library plugin trees pinned in .agents/vendor/plugins.yaml
 ## (not in git; go:embed needs them present, so build/test/run depend on this)
@@ -11,9 +12,10 @@ plugins:
 plugins-update:
 	./scripts/plugins.sh --update $(PLUGIN)
 
-## build: build the frontend, embed it, and compile the server
+## build: build the frontend, embed it, and compile the server + sandbox sidecar
 build: plugins frontend-build
 	go build -o $(BINARY) ./cmd/quack
+	go build -o $(SANDBOX_BINARY) ./cmd/quack-sandbox
 
 ## frontend-build: build the SPA into the server's embed dir
 frontend-build:
@@ -56,7 +58,7 @@ docker-down:
 
 ## clean: remove build artifacts
 clean:
-	rm -rf frontend/dist $(BINARY)
+	rm -rf frontend/dist $(BINARY) $(SANDBOX_BINARY)
 	rm -rf internal/serve/web/dist
 	mkdir -p internal/serve/web/dist
 	touch internal/serve/web/dist/.gitkeep

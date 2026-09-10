@@ -10,6 +10,7 @@
 frontend/dist
 internal/serve/web/dist/assets
 /quack
+/quack-sandbox
 *.test
 *.out
 .env
