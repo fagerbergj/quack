@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/artifact"
@@ -38,15 +39,16 @@ func TestEditPlanEmitsAgentEnum(t *testing.T) {
 	assertAssignmentAgentEnum(t, tl.(runnableTool), []string{"code-implementer", "web-researcher"})
 }
 
-// TestCreatePlanSchemaOmitsSetupWhenTriggerBacked and
-// TestEditPlanSchemaOmitsSetupWhenTriggerBacked pin the other half of the
-// rig regression (#slice3 review): the trigger's own setup always
+// TestCreatePlanSchemaMarksSetupIgnoredWhenTriggerBacked and
+// TestEditPlanSchemaMarksSetupIgnoredWhenTriggerBacked pin the other half
+// of the rig regression (#slice3 review): the trigger's own setup always
 // overwrites rec.Setup regardless of what's submitted, so a trigger-backed
-// dispatch's schema must not even offer `setup` - a property the model
-// can't actually change only invites a wrong guess (the rig's own repro:
-// rejected on setup.repo, then the corrected retry dropped `agent`
-// instead). A plain chat (no trigger) keeps `setup`.
-func TestCreatePlanSchemaOmitsSetupWhenTriggerBacked(t *testing.T) {
+// dispatch's schema stops ADVERTISING `setup` as useful (a Description
+// saying it's ignored) - it stays a known property (so a model that sends
+// it anyway is still schema-valid; deleting it outright would make ADK's
+// own schema validation reject the whole call before setupIgnoredNote ever
+// runs). A plain chat (no trigger) leaves `setup` undescribed.
+func TestCreatePlanSchemaMarksSetupIgnoredWhenTriggerBacked(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
@@ -54,7 +56,7 @@ func TestCreatePlanSchemaOmitsSetupWhenTriggerBacked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
-	assertSetupSchemaPresence(t, tl.(runnableTool), false)
+	assertSetupSchemaDescription(t, tl.(runnableTool), githubSetup)
 }
 
 func TestCreatePlanSchemaKeepsSetupOnPlainChat(t *testing.T) {
@@ -64,10 +66,10 @@ func TestCreatePlanSchemaKeepsSetupOnPlainChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
-	assertSetupSchemaPresence(t, tl.(runnableTool), true)
+	assertSetupSchemaDescription(t, tl.(runnableTool), nil)
 }
 
-func TestEditPlanSchemaOmitsSetupWhenTriggerBacked(t *testing.T) {
+func TestEditPlanSchemaMarksSetupIgnoredWhenTriggerBacked(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
@@ -75,7 +77,7 @@ func TestEditPlanSchemaOmitsSetupWhenTriggerBacked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
-	assertSetupSchemaPresence(t, tl.(runnableTool), false)
+	assertSetupSchemaDescription(t, tl.(runnableTool), githubSetup)
 }
 
 func TestEditPlanSchemaKeepsSetupOnPlainChat(t *testing.T) {
@@ -85,19 +87,55 @@ func TestEditPlanSchemaKeepsSetupOnPlainChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
-	assertSetupSchemaPresence(t, tl.(runnableTool), true)
+	assertSetupSchemaDescription(t, tl.(runnableTool), nil)
 }
 
-func assertSetupSchemaPresence(t *testing.T, tl runnableTool, wantPresent bool) {
+// assertSetupSchemaDescription checks `setup` stays a known property either
+// way; when githubSetup is non-nil, its Description must say it's ignored
+// and name the trigger's own repo/base_ref, otherwise it must be untouched
+// (empty - jsonschema.For never sets one for a bare field with no doc tag).
+func assertSetupSchemaDescription(t *testing.T, tl runnableTool, githubSetup *dag.Setup) {
 	t.Helper()
 	decl := tl.Declaration()
 	schema, ok := decl.ParametersJsonSchema.(*jsonschema.Schema)
 	if !ok {
 		t.Fatalf("ParametersJsonSchema = %T, want *jsonschema.Schema", decl.ParametersJsonSchema)
 	}
-	_, present := schema.Properties["setup"]
-	if present != wantPresent {
-		t.Errorf("schema.Properties[setup] present = %v, want %v (properties: %v)", present, wantPresent, schema.Properties)
+	setupProp, present := schema.Properties["setup"]
+	if !present {
+		t.Fatalf("schema.Properties[setup] missing - it must stay a known property so a model that sends it is still schema-valid")
+	}
+	if githubSetup == nil {
+		if setupProp.Description != "" {
+			t.Errorf("setup.Description = %q, want empty on a plain chat", setupProp.Description)
+		}
+		return
+	}
+	if !strings.Contains(strings.ToLower(setupProp.Description), "ignored") || !strings.Contains(setupProp.Description, githubSetup.Repo) {
+		t.Errorf("setup.Description = %q, want it to say ignored and name the trigger's repo", setupProp.Description)
+	}
+}
+
+// TestCreatePlanRejectsMisspelledTopLevelKey pins the reviewer's correction
+// (#slice3 review): widening AdditionalProperties to accommodate a model
+// that still sends `setup` on a trigger-backed dispatch must not also let a
+// genuinely misspelled key silently pass schema validation and get dropped
+// - it stays closed (jsonschema.For's own default), only `setup` itself
+// gets a description, so an unknown key is still rejected by name.
+func TestCreatePlanRejectsMisspelledTopLevelKey(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"assignmnets": []map[string]any{{"agent": "web-researcher", "task": "x"}}, // misspelled "assignments"
+	})
+	if err == nil {
+		t.Fatal("want an error for a misspelled top-level key, not silent acceptance")
 	}
 }
 

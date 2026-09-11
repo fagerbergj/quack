@@ -141,13 +141,17 @@ type assignmentInput struct {
 // fill it in - only its value, when given, is constrained; node_id stays
 // free-form (minted ids aren't known ahead of a call).
 //
-// githubSetup, when non-nil (a trigger-backed dispatch), drops `setup` from
-// the schema entirely: the trigger's own setup always overwrites rec.Setup
-// regardless of what's submitted (createplan.go/editplan.go), so offering
-// the model a property it cannot actually change only invites a wrong
-// guess it then has to recover from (#slice3 review: a rig run rejected a
-// good plan on setup.repo, and the model's corrected retry dropped `agent`
-// instead - two separate mistakes stacked into one dead end).
+// githubSetup, when non-nil (a trigger-backed dispatch), stops ADVERTISING
+// `setup` as useful - a one-line Description saying it's ignored on this
+// run - rather than dropping the property outright: jsonschema.For closes
+// the object (additionalProperties: false), and ADK's functiontool really
+// validates a call against this schema before unmarshalling it, so removing
+// `setup` from Properties would make a model that sends it anyway fail
+// schema validation - the one outcome this must NOT produce (a real,
+// accepted createPlanArgs/editPlanArgs field; setupIgnoredNote in the
+// handler is what actually handles it). Widening AdditionalProperties
+// instead would silently swallow a genuinely misspelled key (e.g.
+// "assignmnets") rather than rejecting it by name, which is worse.
 func assignmentInputSchema[T any](githubSetup *dag.Setup) (*jsonschema.Schema, error) {
 	schema, err := jsonschema.For[T](nil)
 	if err != nil {
@@ -167,21 +171,9 @@ func assignmentInputSchema[T any](githubSetup *dag.Setup) (*jsonschema.Schema, e
 		agentProp.Enum[i] = n
 	}
 	if githubSetup != nil {
-		delete(schema.Properties, "setup")
-		required := schema.Required[:0]
-		for _, r := range schema.Required {
-			if r != "setup" {
-				required = append(required, r)
-			}
+		if setupProp, ok := schema.Properties["setup"]; ok {
+			setupProp.Description = fmt.Sprintf("Ignored on this run: the trigger fixes repo/base_ref to %s@%s.", githubSetup.Repo, githubSetup.BaseRef)
 		}
-		schema.Required = required
-		// jsonschema.For derives a CLOSED schema (additionalProperties:
-		// false) for a Go struct, which would 400 the whole call the instant
-		// a model sends `setup` anyway despite it not being offered - the
-		// one case this must NOT reject (it's still a real, valid
-		// createPlanArgs/editPlanArgs field; setupIgnoredNote is what
-		// handles it, in the handler, not a schema-level rejection).
-		schema.AdditionalProperties = nil
 	}
 	return schema, nil
 }
