@@ -11,6 +11,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/recordstore"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // execToolCtx adds Actions() on top of planToolCtx - the execute tool's
@@ -184,5 +185,48 @@ func TestTerminalOutput(t *testing.T) {
 	// Empty outputs - returns empty string (callers check for this).
 	if got := TerminalOutput(single, map[string]string{}); got != "" {
 		t.Errorf("empty outputs: got %q, want empty", got)
+	}
+}
+
+// TestExecuteToolStopsCallingTheJudgeAfterRejectionCap is the regression
+// test for the QA rig's context-overflow finding: a model that keeps
+// calling create_plan/edit_plan/execute in one long-running invocation must
+// not be allowed to run the plan judge indefinitely - each rejected round
+// resends the whole plan and reason, growing the prompt until it exceeds the
+// model's context window before the orchestrator's own post-invocation
+// exhaustion check ever runs. Pins that execute refuses a third judge call
+// after two rejections in the same turn, without invoking the judge again.
+func TestExecuteToolStopsCallingTheJudgeAfterRejectionCap(t *testing.T) {
+	judgeCalls := 0
+	judge := vetting.PlanJudge(func(context.Context, string, string, string) (bool, string, error) {
+		judgeCalls++
+		return false, "not grounded", nil
+	})
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, judge)
+	rec := dag.DagPlanRecord{PlanID: "p1", Assignments: []dag.Assignment{{NodeID: "impl-1", Task: "x"}}}
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "impl-1", Agent: "code-implementer"}})
+	cache := NewPlanCache()
+
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "x", nil, nil, nil, "", nil, false)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+
+	for i := 1; i <= 2; i++ {
+		if _, err := rt.Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err == nil {
+			t.Fatalf("execute call %d: want the plan judge's rejection surfaced as an error", i)
+		}
+	}
+	if judgeCalls != 2 {
+		t.Fatalf("judgeCalls = %d after 2 execute calls, want exactly 2", judgeCalls)
+	}
+
+	_, err = rt.Run(newExecToolCtx(), map[string]any{"plan_id": "p1"})
+	if err == nil || !strings.Contains(err.Error(), "already rejected") {
+		t.Fatalf("execute call 3: err = %v, want a rejection-cap error", err)
+	}
+	if judgeCalls != 2 {
+		t.Errorf("judgeCalls = %d after the capped 3rd call, want still 2 - execute must not call the judge again", judgeCalls)
 	}
 }
