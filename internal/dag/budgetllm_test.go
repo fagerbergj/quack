@@ -40,24 +40,51 @@ func bigCallResponsePair(n int) []*genai.Content {
 // BudgetedLLM must still never forward a request over budget.
 func TestBudgetedLLMTrimsAToolLoopGrowingPastTheWindow(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = budgetOutputReserve + 1000 // usable budget = 1000 tokens (budget = contextWindow - reserve)
+	const contextWindow = 8000 // reserve = contextWindow/4 = 2000, budget = 6000
 	llm := NewBudgetedLLM(rec, contextWindow)
+	budget := llm.(*BudgetedLLM).budget
 
 	opening := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review PR #1"}}}
 	contents := []*genai.Content{opening}
 
-	// 20 rounds of a 500-char pair (~2500 tokens total) - past the 1000-token budget.
-	for round := 0; round < 20; round++ {
+	// 40 rounds of a 500-char pair (~20000 tokens total) - well past budget.
+	for round := 0; round < 40; round++ {
 		contents = append(contents, bigCallResponsePair(500)...)
 		req := &model.LLMRequest{Contents: append([]*genai.Content(nil), contents...)}
 		drainLLM(llm.GenerateContent(context.Background(), req, false))
 
-		if got := estimateTokens(rec.got.Contents); got > 1000 {
-			t.Fatalf("round %d: forwarded request = %d estimated tokens, want <= 1000 (the configured budget)", round, got)
+		if got := estimateTokens(rec.got.Contents); got > budget {
+			t.Fatalf("round %d: forwarded request = %d estimated tokens, want <= %d (the configured budget)", round, got, budget)
 		}
 		if rec.got.Contents[0] != opening {
 			t.Fatalf("round %d: Contents[0] = %+v, want the invocation's own opening turn preserved", round, rec.got.Contents[0])
 		}
+	}
+}
+
+// A changed note on a second trim would move the cache divergence point.
+func TestBudgetedLLMTrimNoteIsFixedText(t *testing.T) {
+	rec := &recordingBudgetLLM{}
+	// 800: budget 600, so the pairs below overflow. Two pairs on the first
+	// call - one pair alone is the pinned last content and can never be trimmed.
+	const contextWindow = 800
+	llm := NewBudgetedLLM(rec, contextWindow)
+
+	opening := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review PR #1"}}}
+	contents := []*genai.Content{opening}
+	contents = append(contents, bigCallResponsePair(2000)...)
+	contents = append(contents, bigCallResponsePair(2000)...)
+	req := &model.LLMRequest{Contents: append([]*genai.Content(nil), contents...)}
+	drainLLM(llm.GenerateContent(context.Background(), req, false))
+	firstNote := rec.got.Contents[1].Parts[0].Text
+
+	contents = append(contents, bigCallResponsePair(2000)...)
+	req = &model.LLMRequest{Contents: append([]*genai.Content(nil), contents...)}
+	drainLLM(llm.GenerateContent(context.Background(), req, false))
+	secondNote := rec.got.Contents[1].Parts[0].Text
+
+	if firstNote != secondNote {
+		t.Fatalf("trim note changed between trims: %q vs %q", firstNote, secondNote)
 	}
 }
 
@@ -67,7 +94,7 @@ func TestBudgetedLLMTrimsAToolLoopGrowingPastTheWindow(t *testing.T) {
 // failure mode for another.
 func TestBudgetedLLMNeverOrphansACallOrResponse(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = budgetOutputReserve + 200 // usable budget = 200 tokens
+	const contextWindow = 1600 // reserve = contextWindow/4 = 400, budget = 1200
 	llm := NewBudgetedLLM(rec, contextWindow)
 
 	contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "ask"}}}}
@@ -108,7 +135,7 @@ func TestBudgetedLLMNeverOrphansACallOrResponse(t *testing.T) {
 // its neighbor.
 func TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = budgetOutputReserve + 200 // usable budget = 200 tokens - tight
+	const contextWindow = 800 // reserve capped at contextWindow/4 = 200, so budget = 600 - tight
 	llm := NewBudgetedLLM(rec, contextWindow)
 
 	blob := strings.Repeat("x", 300)
@@ -145,7 +172,7 @@ func TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole(t *testing.T) {
 // survives, and the model server then 500s with "no user query found".
 func TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = budgetOutputReserve + 200 // usable budget = 200 tokens - tight
+	const contextWindow = 800 // reserve capped at contextWindow/4 = 200, so budget = 600 - tight
 	llm := NewBudgetedLLM(rec, contextWindow)
 
 	opening := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "session start: review this repo"}}}
@@ -182,6 +209,29 @@ func TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory(t *testing.T) {
 				t.Fatalf("Contents[%d] is a FunctionCall whose next content (%d) is not its FunctionResponse - pairing broken", i, i+1)
 			}
 		}
+	}
+}
+
+// Below the flat 20k, the reserve caps at contextWindow/4 instead.
+func TestNewBudgetedLLMCapsReserveAtContextWindow4(t *testing.T) {
+	rec := &recordingBudgetLLM{}
+	const contextWindow = 32768
+	llm := NewBudgetedLLM(rec, contextWindow)
+	bl := llm.(*BudgetedLLM)
+	wantReserve := contextWindow / 4 // 8192, well under the flat 20_000
+	if want := contextWindow - wantReserve; bl.budget != want {
+		t.Fatalf("budget = %d, want %d (reserve capped at contextWindow/4 = %d instead of the flat %d)", bl.budget, want, wantReserve, budgetOutputReserve)
+	}
+}
+
+// Above 80k, contextWindow/4 exceeds 20k, so the flat reserve wins instead.
+func TestNewBudgetedLLMKeepsFlatReserveOnALargeWindow(t *testing.T) {
+	rec := &recordingBudgetLLM{}
+	const contextWindow = 200_000 // contextWindow/4 (50_000) exceeds the flat reserve
+	llm := NewBudgetedLLM(rec, contextWindow)
+	bl := llm.(*BudgetedLLM)
+	if want := contextWindow - budgetOutputReserve; bl.budget != want {
+		t.Fatalf("budget = %d, want %d (flat reserve %d)", bl.budget, want, budgetOutputReserve)
 	}
 }
 

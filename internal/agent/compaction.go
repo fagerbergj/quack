@@ -43,9 +43,14 @@ func ResolveSummarizer(active, fallback model.LLM) model.LLM {
 	return fallback
 }
 
-// usable is the input budget: context window minus output reserve.
+// usable is the input budget: context window minus output reserve, capped
+// at contextWindow/4 to match internal/dag's budgetOutputReserve.
 func usable(contextWindow int) int {
-	if u := contextWindow - compactionBuffer; u > 0 {
+	reserve := compactionBuffer
+	if ceil := contextWindow / 4; ceil < reserve {
+		reserve = ceil
+	}
+	if u := contextWindow - reserve; u > 0 {
 		return u
 	}
 	return 0

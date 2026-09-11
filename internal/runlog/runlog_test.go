@@ -62,9 +62,7 @@ func TestDriveResultStepCapturesTopLevelModelAndUsage(t *testing.T) {
 	}
 }
 
-// StampTurn is the shared tail (#831's lesson applied to model/usage, not
-// just the drain loop): it must write the turn row for a plain-reply turn
-// and skip a DAG turn outright (DagNode carries those tokens per-node).
+// StampTurn must write the turn row for a plain-reply turn AND a DAG turn.
 func TestStampTurn(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -87,18 +85,28 @@ func TestStampTurn(t *testing.T) {
 		t.Fatalf("turn not stamped: %+v", turns[0])
 	}
 
-	// A DAG turn (PlanID set) must not touch the turn row - its tokens live
-	// on DagNode instead.
+	// A DAG turn (PlanID set) must also get its own orchestrator tokens stamped.
 	if err := st.SaveTurn(ctx, c.ID, "t2", ""); err != nil {
 		t.Fatalf("SaveTurn t2: %v", err)
 	}
-	StampTurn(ctx, st, c.ID, "t2", DriveResult{Model: "qwen3", PlanID: "p1"})
+	StampTurn(ctx, st, c.ID, "t2", DriveResult{
+		Model: "qwen3", PlanID: "p1", Usage: store.TurnUsage{PromptTokens: 80055, CachedTokens: 1000},
+	})
 	turns, err = st.GetTurnsWithContent(ctx, "quack", store.SessionUserFor(*c), c.ID)
 	if err != nil || len(turns) != 2 {
 		t.Fatalf("GetTurnsWithContent: %+v err=%v", turns, err)
 	}
-	if turns[1].Model != "" {
-		t.Fatalf("DAG turn got stamped with a model: %+v", turns[1])
+	if turns[1].Model != "qwen3" || turns[1].PromptTokens != 80055 || turns[1].CachedTokens != 1000 {
+		t.Fatalf("DAG turn not stamped: %+v", turns[1])
+	}
+
+	// GetChatUsage sums ChatTurn/DagNode independently - confirm no double count.
+	agg, err := st.GetChatUsage(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetChatUsage: %v", err)
+	}
+	if agg.InputTokens != 50+80055 {
+		t.Fatalf("GetChatUsage.InputTokens = %d, want %d (t1 + t2, no DagNode rows exist to double-count)", agg.InputTokens, 50+80055)
 	}
 }
 
