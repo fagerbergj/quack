@@ -40,7 +40,7 @@ func bigCallResponsePair(n int) []*genai.Content {
 // BudgetedLLM must still never forward a request over budget.
 func TestBudgetedLLMTrimsAToolLoopGrowingPastTheWindow(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = 8000 // reserve = contextWindow/8 = 1000, budget = 7000
+	const contextWindow = 8000 // reserve = contextWindow/4 = 2000, budget = 6000
 	llm := NewBudgetedLLM(rec, contextWindow)
 	budget := llm.(*BudgetedLLM).budget
 
@@ -91,7 +91,7 @@ func TestBudgetedLLMTrimNoteIsFixedText(t *testing.T) {
 // failure mode for another.
 func TestBudgetedLLMNeverOrphansACallOrResponse(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = 1600 // reserve = contextWindow/8 = 200, budget = 1400
+	const contextWindow = 1600 // reserve = contextWindow/4 = 400, budget = 1200
 	llm := NewBudgetedLLM(rec, contextWindow)
 
 	contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "ask"}}}}
@@ -211,20 +211,22 @@ func TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory(t *testing.T) {
 // with only 12768 usable, when measured orchestrator output peaks at ~1.1k.
 // Below the flat 20k, the reserve caps at contextWindow/8 instead.
 func TestNewBudgetedLLMCapsReserveAtContextWindow8(t *testing.T) {
+// Below the flat 20k, the reserve caps at contextWindow/4 instead.
+func TestNewBudgetedLLMCapsReserveAtContextWindow4(t *testing.T) {
 	rec := &recordingBudgetLLM{}
 	const contextWindow = 32768
 	llm := NewBudgetedLLM(rec, contextWindow)
 	bl := llm.(*BudgetedLLM)
-	wantReserve := contextWindow / 8 // 4096, well under the flat 20_000
+	wantReserve := contextWindow / 4 // 8192, well under the flat 20_000
 	if want := contextWindow - wantReserve; bl.budget != want {
-		t.Fatalf("budget = %d, want %d (reserve capped at contextWindow/8 = %d instead of the flat %d)", bl.budget, want, wantReserve, budgetOutputReserve)
+		t.Fatalf("budget = %d, want %d (reserve capped at contextWindow/4 = %d instead of the flat %d)", bl.budget, want, wantReserve, budgetOutputReserve)
 	}
 }
 
-// Above 160k, contextWindow/8 exceeds 20k, so the flat reserve wins instead.
+// Above 80k, contextWindow/4 exceeds 20k, so the flat reserve wins instead.
 func TestNewBudgetedLLMKeepsFlatReserveOnALargeWindow(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = 200_000 // contextWindow/8 (25_000) exceeds the flat reserve
+	const contextWindow = 200_000 // contextWindow/4 (50_000) exceeds the flat reserve
 	llm := NewBudgetedLLM(rec, contextWindow)
 	bl := llm.(*BudgetedLLM)
 	if want := contextWindow - budgetOutputReserve; bl.budget != want {

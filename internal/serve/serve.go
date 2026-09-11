@@ -851,18 +851,12 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if cfg.Orchestrator.ContextWindow <= 0 {
 			slog.Warn("context compaction enabled but orchestrator.context_window is unset; not compacting the chat session", "component", "startup")
 		} else {
-			// The orchestrator's session is a handful of events; the worker
-			// default of 20 always exceeds that, so tail retention never fires.
-			retention := orchCompCfg.EventRetentionSize
-			if retention == 0 {
-				retention = 6
-			}
 			orchComp, cerr := agent.NativeCompactionConfig(agent.Compaction{
 				Summarizer:         llm,
 				ContextWindow:      cfg.Orchestrator.ContextWindow,
 				Enabled:            true,
 				TokenThreshold:     orchCompCfg.TokenThreshold,
-				EventRetentionSize: retention,
+				EventRetentionSize: orchCompCfg.EventRetentionSize,
 				CompactionInterval: orchCompCfg.CompactionInterval,
 				OverlapSize:        orchCompCfg.OverlapSize,
 			})

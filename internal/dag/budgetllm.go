@@ -41,9 +41,9 @@ func NewBudgetedLLM(inner model.LLM, contextWindow int) model.LLM {
 	if contextWindow <= 0 {
 		return inner
 	}
-	// Reserve capped at contextWindow/8: no per-model cap reaches this layer.
+	// Capped at contextWindow/4: a large create_plan output must still fit.
 	reserve := budgetOutputReserve
-	if ceil := contextWindow / 8; ceil < reserve {
+	if ceil := contextWindow / 4; ceil < reserve {
 		reserve = ceil
 	}
 	budget := contextWindow - reserve
