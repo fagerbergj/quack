@@ -12,8 +12,10 @@ import (
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -240,6 +242,66 @@ func TestChatStatusNeedsInput(t *testing.T) {
 	}
 	if pendingQuestion == nil || *pendingQuestion != "which Springfield?" {
 		t.Errorf("pending_question = %v, want %q", pendingQuestion, "which Springfield?")
+	}
+}
+
+// TestChatStatusNeedsInputFromPlanStepSession: a node dispatched by execute()'s
+// incremental step asks its question under dag.PlanStepSessionID(chatID), not the
+// chat's own session. Both GetChat (live) and the stamped ListChats path must
+// still report needs_input with that question.
+func TestChatStatusNeedsInputFromPlanStepSession(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	c, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	stepResp, err := h.store.Sessions.Create(ctx, &session.CreateRequest{
+		AppName: orchestrator.AppName, UserID: userID, SessionID: dag.PlanStepSessionID(c.ID),
+	})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	ask := session.NewEvent(ctx, "test")
+	ask.RequestedInput = &session.RequestInput{InterruptID: "hitl-web-researcher-1-r1", Message: "which source?"}
+	if err := h.store.Sessions.AppendEvent(ctx, stepResp.Session, ask); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	status, pendingQuestion := getChatStatus(t, h, c.ID)
+	if status != schema.ChatStatusNeedsInput {
+		t.Fatalf("GetChat status = %q, want needs_input", status)
+	}
+	if pendingQuestion == nil || *pendingQuestion != "which source?" {
+		t.Errorf("GetChat pending_question = %v, want %q", pendingQuestion, "which source?")
+	}
+
+	// The list path only ever reads the stamp a run leaves at run end (#738).
+	h.stampRunOutcome(ctx, c.ID)
+	stamped, err := h.store.GetChat(ctx, c.ID)
+	if err != nil || stamped == nil {
+		t.Fatalf("GetChat after stamp: %+v, %v", stamped, err)
+	}
+	summary := h.toSummary(*stamped, 0)
+	if summary.Status != schema.ChatStatusNeedsInput {
+		t.Fatalf("toSummary status = %q, want needs_input", summary.Status)
+	}
+	if summary.PendingQuestion == nil || *summary.PendingQuestion != "which source?" {
+		t.Errorf("toSummary pending_question = %v, want %q", summary.PendingQuestion, "which source?")
+	}
+
+	// Answering resolves it the same way the resume path's FunctionResponse does.
+	answer := session.NewEvent(ctx, "test")
+	answer.Author = "user"
+	answer.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{
+		FunctionResponse: &genai.FunctionResponse{ID: "hitl-web-researcher-1-r1", Name: workflow.WorkflowInputFunctionCallName, Response: map[string]any{"payload": "wikipedia"}},
+	}}}
+	if err := h.store.Sessions.AppendEvent(ctx, stepResp.Session, answer); err != nil {
+		t.Fatalf("AppendEvent answer: %v", err)
+	}
+	status, _ = getChatStatus(t, h, c.ID)
+	if status == schema.ChatStatusNeedsInput {
+		t.Fatal("after answer: still needs_input")
 	}
 }
 
