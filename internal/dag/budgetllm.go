@@ -41,8 +41,7 @@ func NewBudgetedLLM(inner model.LLM, contextWindow int) model.LLM {
 	if contextWindow <= 0 {
 		return inner
 	}
-	// No per-model output cap reaches this layer, so the flat reserve stays,
-	// capped at contextWindow/8 - a flat 20k reserve ate 61% of a 32k window.
+	// Reserve capped at contextWindow/8: no per-model cap reaches this layer.
 	reserve := budgetOutputReserve
 	if ceil := contextWindow / 8; ceil < reserve {
 		reserve = ceil
@@ -105,8 +104,7 @@ func trimContentsToBudget(req *model.LLMRequest, budget int) {
 	if dropped == 0 {
 		return
 	}
-	// Fixed text, not a per-trim count: a changing byte here would move the
-	// cache divergence point on every repeated trim.
+	// Fixed text: a changing count would move the cache divergence point.
 	const note = "[earlier messages omitted to fit the model's context window]"
 	// Appended as an extra part on the surviving content at index 1, not a
 	// new same-role content spliced in - two consecutive user-role contents

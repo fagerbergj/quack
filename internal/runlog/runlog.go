@@ -278,11 +278,8 @@ func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.
 	return res
 }
 
-// StampTurn stamps the orchestrator's model + token usage on the turn row - the
-// tail every dispatch path (REST, SDK extensions) must share rather than duplicate
-// (#831's lesson applied to model/usage stamping, not just the drain loop). Stamped
-// for a DAG turn too: the orchestrator's own planning tokens are otherwise never
-// recorded anywhere (DagNode only ever carries the workers' tokens).
+// StampTurn stamps the orchestrator's model + token usage on the turn row,
+// including for a DAG turn - DagNode never carries the orchestrator's own.
 func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res DriveResult) {
 	if res.Model == "" {
 		return

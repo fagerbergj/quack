@@ -57,11 +57,7 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, m
 }
 
 // HoistInstructionCallback moves own's text to the front of the assembled
-// SystemInstruction. ADK's toolProcessor appends load_artifacts/preload_memory
-// text before instructionsRequestProcessor appends the agent's own instruction,
-// so a new artifact or memory name shifts the whole stable prompt's cache
-// prefix; this callback runs last (base_flow.go's callLLM, after every request
-// processor) and restores the stable prompt to byte 0.
+// SystemInstruction, ahead of ADK's own prepended artifact/memory text.
 func HoistInstructionCallback(own func() string) llmagent.BeforeModelCallback {
 	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
 		text := own()

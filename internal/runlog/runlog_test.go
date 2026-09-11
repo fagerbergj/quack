@@ -62,10 +62,7 @@ func TestDriveResultStepCapturesTopLevelModelAndUsage(t *testing.T) {
 	}
 }
 
-// StampTurn is the shared tail (#831's lesson applied to model/usage, not
-// just the drain loop): it must write the turn row for a plain-reply turn,
-// AND for a DAG turn - the orchestrator's own planning tokens are otherwise
-// never recorded anywhere, since DagNode only ever carries the workers'.
+// StampTurn must write the turn row for a plain-reply turn AND a DAG turn.
 func TestStampTurn(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -88,9 +85,7 @@ func TestStampTurn(t *testing.T) {
 		t.Fatalf("turn not stamped: %+v", turns[0])
 	}
 
-	// A DAG turn (PlanID set) must ALSO get its own orchestrator tokens
-	// stamped - previously a no-op, which made the planning turn's tokens
-	// invisible in chat_turns.
+	// A DAG turn (PlanID set) must also get its own orchestrator tokens stamped.
 	if err := st.SaveTurn(ctx, c.ID, "t2", ""); err != nil {
 		t.Fatalf("SaveTurn t2: %v", err)
 	}
@@ -105,9 +100,7 @@ func TestStampTurn(t *testing.T) {
 		t.Fatalf("DAG turn not stamped: %+v", turns[1])
 	}
 
-	// GetChatUsage sums ChatTurn and DagNode tokens independently (two
-	// separate SUMs) - confirm the DAG turn's stamped tokens land only once,
-	// not double-counted through DagNode's own column family.
+	// GetChatUsage sums ChatTurn/DagNode independently - confirm no double count.
 	agg, err := st.GetChatUsage(ctx, c.ID)
 	if err != nil {
 		t.Fatalf("GetChatUsage: %v", err)

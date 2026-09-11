@@ -8,10 +8,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// Mirrors what ADK's toolProcessor + instructionsRequestProcessor leave
-// behind by the time BeforeModelCallbacks run: volatile artifact/memory text
-// first, quack's own instruction appended last (base_flow.go's request
-// processor order, verified against the v2.3.0 module source).
+// The volatile artifact text arrives first, quack's own instruction last.
 func TestHoistInstructionCallback_MovesOwnInstructionToFront(t *testing.T) {
 	own := "You are quack's orchestrator. Route requests to specialists."
 	cb := HoistInstructionCallback(func() string { return own })
