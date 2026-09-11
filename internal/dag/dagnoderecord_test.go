@@ -98,7 +98,7 @@ func TestUpdateDagNodeContextEmptyIsNoop(t *testing.T) {
 }
 
 // TestDagNodeRecordResumable covers list_nodes' resumable/reason mapping off
-// a node's stored status.
+// a node's stored status, for a node that actually started running at least once.
 func TestDagNodeRecordResumable(t *testing.T) {
 	cases := []struct {
 		status    NodeStatus
@@ -113,13 +113,32 @@ func TestDagNodeRecordResumable(t *testing.T) {
 		{StatusCancelled, true},
 	}
 	for _, c := range cases {
-		rec := DagNodeRecord{NodeID: "n1", Agent: "code-implementer", Status: c.status}
+		rec := DagNodeRecord{NodeID: "n1", Agent: "code-implementer", Status: c.status, Started: true}
 		resumable, reason := rec.Resumable()
 		if resumable != c.resumable {
 			t.Errorf("status %q: resumable = %v, want %v", c.status, resumable, c.resumable)
 		}
 		if reason == "" {
 			t.Errorf("status %q: reason is empty, want an explanation either way", c.status)
+		}
+	}
+}
+
+// TestDagNodeRecordResumable_NeverStarted: CanTransition allows queued ->
+// failed/cancelled directly (an admission/setup failure, or a cancel before
+// dispatch), so a terminal status alone does NOT prove a real session ever
+// existed - Started must gate it, for both transports, or an ACP node's
+// leftover mint-time placeholder gets threaded into session/load as a
+// doomed "resume".
+func TestDagNodeRecordResumable_NeverStarted(t *testing.T) {
+	for _, status := range []NodeStatus{StatusDone, StatusFailed, StatusCancelled} {
+		rec := DagNodeRecord{NodeID: "n1", Agent: "code-implementer", Status: status, Started: false}
+		resumable, reason := rec.Resumable()
+		if resumable {
+			t.Errorf("status %q, never started: resumable = true, want false", status)
+		}
+		if reason != "no session recorded" {
+			t.Errorf("status %q, never started: reason = %q, want %q", status, reason, "no session recorded")
 		}
 	}
 }

@@ -10,7 +10,7 @@ import (
 
 // TestDeleteChat_ReapsPerNodeWorkerSessions is a regression test for the ADK
 // audit's A2 finding: DeleteChat used to reap only the chat's own session
-// under AppName="quack" (chatAppName), leaving every DAG node's own worker session - AppName is whichever agent bundle ran the node, id is "<chatID>:<nodeID>" (internal/agent.WorkerSessionID) - and its retry session ("<chatID>::retry") permanently orphaned. release() now reaps a node's session immediately (internal/serve/nativeagent.go), but this is the backstop for whichever node's release never ran, and for rows already orphaned before that fix - DeleteChat/ReapNodeSessions can address them purely by chat id, without knowing which bundle ran which node.
+// under AppName="quack" (chatAppName), leaving every DAG node's own worker session - AppName is whichever agent bundle ran the node, id is "<chatID>:<nodeID>" (internal/agent.WorkerSessionID) - and its retry session ("<chatID>::retry") permanently orphaned. A node's own worker session now lives until this runs - node reuse needs it to survive past a single dispatch (release() no longer reaps it) - so DeleteChat/ReapNodeSessions is the only reaper left, addressing every node purely by chat id, without knowing which bundle ran which one.
 func TestDeleteChat_ReapsPerNodeWorkerSessions(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

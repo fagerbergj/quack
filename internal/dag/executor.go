@@ -15,6 +15,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	quackagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -162,11 +163,12 @@ func (s *DagStream) Finish() {
 			continue
 		}
 		if !delivered && s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
-			s.yield(stream.NodeCancelled(n.ID), nil)
+			s.yield(stream.WithContextID(stream.NodeCancelled(n.ID), s.ds.contextOf(n.ID)), nil)
 			continue
 		}
 		if !delivered && strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
-			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID])), nil)
+			ev := stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID]))
+			s.yield(stream.WithContextID(ev, s.ds.contextOf(n.ID)), nil)
 			continue
 		}
 		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
@@ -174,6 +176,14 @@ func (s *DagStream) Finish() {
 }
 
 // RetryPlanInNode: re-runs target node + descendants with seeded outputs.
+// Retry is "same task, fresh session" - a native node's own A2A worker
+// session now outlives normal completion (node reuse), so retry must reap
+// ITS target node's session itself rather than relying on that no longer
+// happening; an ACP node needs no equivalent because its resume is opt-in
+// via Node.ResumedFrom, which a retry's stashed plan never carries.
+// ponytail: only the named target, not a re-cascaded descendant - the same
+// class of staleness could in principle reach one of those too, add if it
+// shows up in practice.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
 	source := ledger.CoordsFromContext(ctx).Source
 	var userID string
@@ -186,6 +196,7 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 		artifacts = nil
 		slog.Warn("retry: no session, skipping artifact tools", "component", "dag", "chat_id", chatID, "node_id", nodeID)
 	}
+	e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
 	sink, _ := stream.YieldFromContext(ctx)
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
@@ -195,6 +206,34 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 		return nil, err
 	}
 	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, retrySet(plan, nodeID))
+}
+
+// resetNativeWorkerSession deletes nodeID's deterministic A2A worker session
+// (quackagent.WorkerSessionID) before a retry dispatch - since that session
+// now survives normal completion (node reuse), retry must reap it itself to
+// keep its own guarantee: same task, fresh session. Best-effort/no-op when
+// there's nothing to delete (an ACP node, or one that never ran).
+func (e *Executor) resetNativeWorkerSession(ctx context.Context, plan Plan, chatID, nodeID string) {
+	if e.sessions == nil {
+		return
+	}
+	var agentName string
+	for _, n := range plan.Nodes {
+		if n.ID == nodeID {
+			agentName = n.AgentName
+			break
+		}
+	}
+	if agentName == "" {
+		return
+	}
+	workerContextID := quackagent.WorkerSessionID(chatID, nodeID)
+	if err := e.sessions.Delete(ctx, &session.DeleteRequest{
+		AppName: agentName, UserID: quackagent.WorkerSessionUser(workerContextID), SessionID: workerContextID,
+	}); err != nil {
+		slog.Debug("retry: no prior native worker session to reap (fine for a first attempt or an ACP node)",
+			"component", "dag", "node_id", nodeID, "err", err)
+	}
 }
 
 // NewExecutor: returns a graph Executor.
@@ -353,6 +392,17 @@ func (s *dagStream) scope(node string) string {
 	return node
 }
 
+// contextOf returns node's resumable transport context id if one was ever
+// established (nil-safe scoreOf) - captured unconditionally in graph.go
+// regardless of outcome, so this reads the same value on a failure/
+// cancellation path as nodeDoneData does on success.
+func (s *dagStream) contextOf(node string) string {
+	if s.scoreOf == nil {
+		return ""
+	}
+	return s.scoreOf(node).contextID
+}
+
 func (s *dagStream) emit(ev stream.SSEEvent) bool {
 	if s.stopped {
 		return false
@@ -423,7 +473,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 					return false
 				}
 			case s.cancelled != nil && s.cancelled(node):
-				if !s.emit(stream.NodeCancelled(node)) {
+				if !s.emit(stream.WithContextID(stream.NodeCancelled(node), s.contextOf(node))) {
 					return false
 				}
 			case out != "":
@@ -441,7 +491,8 @@ func (s *dagStream) handle(ev *session.Event) bool {
 					return false
 				}
 			default:
-				if !s.emit(stream.NodeFailed(node, emptyNodeError(s.chatID, s.scope(node), s.agentByID[node]))) {
+				ev := stream.NodeFailed(node, emptyNodeError(s.chatID, s.scope(node), s.agentByID[node]))
+				if !s.emit(stream.WithContextID(ev, s.contextOf(node))) {
 					return false
 				}
 			}

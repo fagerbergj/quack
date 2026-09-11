@@ -324,6 +324,7 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 	case stream.NodeFailedData:
 		nodeID, to = d.NodeID, dag.StatusFailed
 		n.NodeID, n.Status, n.Error, n.FinishedAt = d.NodeID, string(to), d.Error, &t
+		contextID = d.ContextID
 	case stream.NodeNeedsInputData:
 		nodeID, to = d.NodeID, dag.StatusNeedsInput
 		n.NodeID, n.Status = d.NodeID, string(to)
@@ -335,6 +336,7 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 	case stream.NodeCancelledData:
 		nodeID, to = d.NodeID, dag.StatusCancelled
 		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
+		contextID = d.ContextID
 	default:
 		return
 	}

@@ -307,6 +307,22 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// real work), so their gen_ai metrics attribution rides on worker itself.
 			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
+			// Captured unconditionally, before UnregisterAdvisorThread's defer
+			// fires and regardless of outcome (success, empty, paused, or a
+			// hard failure) - an ACP node can establish a real transport
+			// session before ultimately failing or being cancelled, and that
+			// id must still reach the dag_node record (runlog.PersistNodeEvent
+			// reads gateContextKey the same way on every terminal event). For
+			// a native node this is whatever was seeded above (harmless -
+			// never consulted there).
+			contextID := ""
+			if at, ok := vetting.LookupAdvisorThread(token); ok {
+				contextID = at.ACPSessionID
+			}
+			if recordGate != nil {
+				recordGate(node.ID, res.Score, res.Passed, res.Rounds, contextID)
+			}
+			_ = ctx.State().Set(gateContextKey+node.ID, contextID)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				markGateFailed(ctx, node.ID)
 				return "", nil
@@ -323,23 +339,11 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				return answer, nil
 			}
 			if err == nil {
-				// Read before UnregisterAdvisorThread's defer fires: for an ACP
-				// node this is the real transport session id its first round
-				// established (SetAdvisorThreadSessionID); for a native node it's
-				// whatever was seeded above (harmless - never consulted there).
-				contextID := ""
-				if at, ok := vetting.LookupAdvisorThread(token); ok {
-					contextID = at.ACPSessionID
-				}
-				if recordGate != nil {
-					recordGate(node.ID, res.Score, res.Passed, res.Rounds, contextID)
-				}
 				st := ctx.State()
 				_ = st.Set(gateFailedKey+node.ID, !res.Passed)
 				_ = st.Set(gateScoreKey+node.ID, res.Score)
 				_ = st.Set(gatePassedKey+node.ID, res.Passed)
 				_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
-				_ = st.Set(gateContextKey+node.ID, contextID)
 			}
 			return answer, err
 		},

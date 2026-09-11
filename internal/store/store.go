@@ -838,7 +838,8 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 }
 
 // ReapNodeSessions deletes every per-DAG-node ADK session this chat owns: each node's A2A worker session (internal/agent.WorkerSessionID, "<chatID>:<nodeID>") and its in-node retry session ("<chatID>::retry"), across whichever agent bundle's AppName ran that node - the ADK schema's session PK is (app_name, user_id, id) with events cascading on delete (google.golang.org/adk/v2/session/database), so one raw sweep on id reaps both tables without knowing which bundle a node used.
-// This is the backstop for a node whose own release() never ran (crash, abandoned dynamic node) - the normal path deletes its session immediately (internal/serve/nativeagent.go perNodeServers.track).
+// A node's own worker session now lives until this runs (chat archive/delete) - node reuse needs it to survive
+// past a single dispatch, so internal/serve/nativeagent.go's perNodeServers.track no longer reaps it at completion.
 // It does not reach ask_advisor consult sessions (internal/vetting AdvisorSessionID keys those "<planID>/<nodeID>:advisor" - not chatID prefixed); those are reaped at node-done by internal/dag.newGatedNode.
 func (s *Store) ReapNodeSessions(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Exec("DELETE FROM sessions WHERE id = ? OR id LIKE ? ESCAPE '\\'",

@@ -291,6 +291,9 @@ type NodeFailedData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node failed - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
+	// ContextID: see NodeDoneData.ContextID - a failed node can still have
+	// established a real transport session before failing.
+	ContextID string `json:"context_id,omitempty"`
 }
 
 // `node_cancelled` event payload: node stopped by the user, rendered neutrally (not as red failure).
@@ -299,6 +302,8 @@ type NodeCancelledData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node was cancelled - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
+	// ContextID: see NodeDoneData.ContextID.
+	ContextID string `json:"context_id,omitempty"`
 }
 
 // NodeCancelled builds a node_cancelled event, stamping FinishedAtMs now (see NodeDone).
@@ -470,6 +475,26 @@ func WithResumedFrom(ev SSEEvent, resumedFrom string) SSEEvent {
 	}
 	if d, ok := ev.Data.(NodeStartData); ok {
 		d.ResumedFrom = resumedFrom
+		ev.Data = d
+	}
+	return ev
+}
+
+// WithContextID stamps a node_failed/node_cancelled event's ContextID
+// post-construction, same pattern as WithResumedFrom/WithTrace - a node can
+// establish a real transport session before it ultimately fails or is
+// cancelled, and that id must reach the dag_node record the same way
+// NodeDoneData's already does (see runlog.PersistNodeEvent).
+func WithContextID(ev SSEEvent, contextID string) SSEEvent {
+	if contextID == "" {
+		return ev
+	}
+	switch d := ev.Data.(type) {
+	case NodeFailedData:
+		d.ContextID = contextID
+		ev.Data = d
+	case NodeCancelledData:
+		d.ContextID = contextID
 		ev.Data = d
 	}
 	return ev

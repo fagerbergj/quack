@@ -32,6 +32,16 @@ type DagNodeRecord struct {
 	Agent     string     `json:"agent"`
 	Status    NodeStatus `json:"status,omitempty"`
 	ContextID string     `json:"context_id,omitempty"`
+	// Started: true once this node has reached StatusRunning at least once -
+	// the only reliable "a real session was ever created" signal shared by
+	// both transports. A native node's ContextID never changes from its
+	// mint-time placeholder (that's correct - the placeholder IS its real,
+	// live session identity), so ContextID alone can't distinguish "native,
+	// always resumable" from "ACP, failed/cancelled before ever
+	// establishing a session" - Resumable() needs this bit precisely
+	// because CanTransition allows queued -> failed/cancelled directly,
+	// with no run in between.
+	Started bool `json:"started,omitempty"`
 }
 
 const dagNodeJSONSchema = `{
@@ -41,7 +51,8 @@ const dagNodeJSONSchema = `{
     "node_id": {"type": "string"},
     "agent": {"type": "string"},
     "status": {"type": "string"},
-    "context_id": {"type": "string"}
+    "context_id": {"type": "string"},
+    "started": {"type": "boolean"}
   }
 }`
 
@@ -108,6 +119,9 @@ func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 		return fmt.Errorf("dag_node %s: illegal status transition %s -> %s", nodeID, rec.Status, status)
 	}
 	rec.Status = status
+	if status == StatusRunning {
+		rec.Started = true
+	}
 	lineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
 	_, _, err = c.SaveStructured(ctx, kindDagNode, rec, nodeID, lineage)
 	return err
@@ -142,17 +156,20 @@ func UpdateDagNodeContext(ctx context.Context, artifacts artifact.Service, appNa
 
 // Resumable reports whether list_nodes/create_plan-edit_plan reuse should
 // offer this node for reassignment, and why: only a node that has actually
-// finished a run (terminal status) has a session worth resuming - a node
-// still queued has none yet, and one running/paused is already live
-// (nodeIsRunning already blocks reassigning those at plan-authoring time).
+// finished a run (terminal status) AND actually started at some point has a
+// session worth resuming - a node still queued has none yet, one
+// running/paused is already live (nodeIsRunning already blocks reassigning
+// those at plan-authoring time), and a node that went straight from queued
+// to failed/cancelled (CanTransition allows this - an admission/setup
+// failure, or a cancel before dispatch) never created one either.
 func (r DagNodeRecord) Resumable() (bool, string) {
 	switch r.Status {
-	case StatusDone:
-		return true, "done - continues its own session"
-	case StatusFailed:
-		return true, "failed - continues its own session"
-	case StatusCancelled:
-		return true, "cancelled - continues its own session"
+	case StatusDone, StatusFailed, StatusCancelled:
+		if !r.Started {
+			return false, "no session recorded"
+		}
+		verb := map[NodeStatus]string{StatusDone: "done", StatusFailed: "failed", StatusCancelled: "cancelled"}[r.Status]
+		return true, verb + " - continues its own session"
 	case StatusRunning:
 		return false, "currently running"
 	case StatusPaused, StatusNeedsInput:
