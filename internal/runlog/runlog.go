@@ -208,9 +208,8 @@ type DriveResult struct {
 	// NodeNeedsInputData (mirrors PlanID's Data-required rule).
 	Paused     bool
 	NeedsInput stream.NodeNeedsInputData
-	// Model/Usage come from the top-level (NodeID == "") agent_complete -
-	// the orchestrator's own reply. Empty for a DAG turn (PlanID != ""),
-	// which credits tokens per-node on DagNode instead - see StampTurn.
+	// Model/Usage come from the top-level (NodeID == "") agent_complete, the
+	// orchestrator's own reply - stamped regardless of PlanID (see StampTurn).
 	Model string
 	Usage store.TurnUsage
 }
@@ -281,9 +280,11 @@ func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.
 
 // StampTurn stamps the orchestrator's model + token usage on the turn row - the
 // tail every dispatch path (REST, SDK extensions) must share rather than duplicate
-// (#831's lesson applied to model/usage stamping, not just the drain loop). A DAG turn (res.PlanID != "") is a no-op here: its tokens are already on DagNode, per node.
+// (#831's lesson applied to model/usage stamping, not just the drain loop). Stamped
+// for a DAG turn too: the orchestrator's own planning tokens are otherwise never
+// recorded anywhere (DagNode only ever carries the workers' tokens).
 func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res DriveResult) {
-	if res.Model == "" || res.PlanID != "" {
+	if res.Model == "" {
 		return
 	}
 	if err := st.SetTurnUsage(ctx, chatID, turnID, res.Model, res.Usage); err != nil {

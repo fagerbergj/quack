@@ -52,8 +52,43 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, m
 		Toolsets: toolsets,
 		Mode:     mode,
 	}
-	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
+	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain), HoistInstructionCallback(prompt)}
 	return llmagent.New(cfg)
+}
+
+// HoistInstructionCallback moves own's text to the front of the assembled
+// SystemInstruction. ADK's toolProcessor appends load_artifacts/preload_memory
+// text before instructionsRequestProcessor appends the agent's own instruction,
+// so a new artifact or memory name shifts the whole stable prompt's cache
+// prefix; this callback runs last (base_flow.go's callLLM, after every request
+// processor) and restores the stable prompt to byte 0.
+func HoistInstructionCallback(own func() string) llmagent.BeforeModelCallback {
+	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+		text := own()
+		if text == "" || req == nil || req.Config == nil || req.Config.SystemInstruction == nil {
+			return nil, nil
+		}
+		parts := req.Config.SystemInstruction.Parts
+		if len(parts) == 0 || parts[len(parts)-1] == nil {
+			return nil, nil
+		}
+		last := parts[len(parts)-1]
+		idx := strings.Index(last.Text, text)
+		if idx <= 0 {
+			return nil, nil // not present, or already leading
+		}
+		before := strings.TrimSuffix(last.Text[:idx], "\n\n")
+		after := strings.TrimPrefix(last.Text[idx+len(text):], "\n\n")
+		hoisted := text
+		if before != "" {
+			hoisted += "\n\n" + before
+		}
+		if after != "" {
+			hoisted += "\n\n" + after
+		}
+		last.Text = hoisted
+		return nil, nil
+	}
 }
 
 // steerCallback delivers a message queued against a RUNNING node on the round's

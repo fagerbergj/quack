@@ -27,6 +27,7 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -150,7 +151,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			Tools:                 judgeTools,
 			Toolsets:              skillsets,
 			GenerateContentConfig: judgeGenConfig(maxOutputTokens, thinkingLevel),
-			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced, receivedIDs)},
+			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced, receivedIDs), agent.HoistInstructionCallback(prompt)},
 		})
 		return a, reads, err
 	}

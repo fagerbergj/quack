@@ -3,7 +3,6 @@ package dag
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"iter"
 
 	"google.golang.org/adk/v2/model"
@@ -42,7 +41,13 @@ func NewBudgetedLLM(inner model.LLM, contextWindow int) model.LLM {
 	if contextWindow <= 0 {
 		return inner
 	}
-	budget := contextWindow - budgetOutputReserve
+	// No per-model output cap reaches this layer, so the flat reserve stays,
+	// capped at contextWindow/8 - a flat 20k reserve ate 61% of a 32k window.
+	reserve := budgetOutputReserve
+	if ceil := contextWindow / 8; ceil < reserve {
+		reserve = ceil
+	}
+	budget := contextWindow - reserve
 	if budget <= 0 {
 		// A window smaller than the reserve (a tiny test/rig config) still
 		// needs a positive budget to trim toward, or every call would trim to nothing.
@@ -100,7 +105,9 @@ func trimContentsToBudget(req *model.LLMRequest, budget int) {
 	if dropped == 0 {
 		return
 	}
-	note := fmt.Sprintf("[%d earlier message(s) omitted to fit the model's context window]", dropped)
+	// Fixed text, not a per-trim count: a changing byte here would move the
+	// cache divergence point on every repeated trim.
+	const note = "[earlier messages omitted to fit the model's context window]"
 	// Appended as an extra part on the surviving content at index 1, not a
 	// new same-role content spliced in - two consecutive user-role contents
 	// can 400 on some providers, and a single inserted content can't

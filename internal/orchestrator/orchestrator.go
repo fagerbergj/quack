@@ -30,6 +30,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -749,13 +750,14 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		}
 
 		ag, err := llmagent.New(llmagent.Config{
-			Name:        orchestratorName,
-			Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
-			Model:       o.model,
-			Instruction: o.sysPrompt,
-			Tools:       toolList,
-			Toolsets:    toolsets,
-			Mode:        llmagent.ModeChat,
+			Name:                 orchestratorName,
+			Description:          "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
+			Model:                o.model,
+			Instruction:          o.sysPrompt,
+			Tools:                toolList,
+			Toolsets:             toolsets,
+			Mode:                 llmagent.ModeChat,
+			BeforeModelCallbacks: []llmagent.BeforeModelCallback{agent.HoistInstructionCallback(func() string { return o.sysPrompt })},
 		})
 		if err != nil {
 			yield(stream.Errorf("orchestrator: build agent: "+err.Error()), nil)
