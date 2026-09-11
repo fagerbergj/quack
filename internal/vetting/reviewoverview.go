@@ -66,6 +66,10 @@ var reviewLabelOrder = []string{"blocking", "suggestion", "nit", "question"}
 // - also a decoration like "blocking (security):", which still matches on the bare label. The prefix class excludes '*' so a leading emoji can never swallow the bold markers meant for \*{0,2}.
 var commentLabelRe = regexp.MustCompile(`(?i)^\s*[^\pL\pN*]{0,4}\*{0,2}(blocking|suggestion|nit|question)\b[^:]*:\*{0,2}`)
 
+// metaNarrationRe matches only the exact auto-generated staging sentence,
+// never a paragraph that merely mentions a PR number or revision in passing.
+var metaNarrationRe = regexp.MustCompile(`(?i)^review staged for (this )?(pr|pull request) #?\d+ \(code_review revision \d+\):`)
+
 // sentenceAbbrevRe matches a trailing abbreviation (e.g/i.e/vs) right before
 // a candidate sentence-ending period - firstSentence skips the period there
 // rather than treating the abbreviation as the sentence's end.
@@ -121,6 +125,13 @@ func commentLabel(body string) (label, why string) {
 		remainder = strings.TrimSpace(rest)
 	}
 	return label, firstSentence(remainder)
+}
+
+// HasCommentLabel reports whether body opens with a Conventional Comments
+// label - an unlabeled finding never counts toward the verdict or Highlights.
+func HasCommentLabel(body string) bool {
+	label, _ := commentLabel(body)
+	return label != ""
 }
 
 // dedupeComments drops a repeat of the same finding: FindingIDs equal, or
@@ -186,13 +197,36 @@ func sha7(sha string) string {
 	return sha
 }
 
-// truncateRunes caps s at n runes, marking truncation with "…".
+// truncateRunes caps s at n runes at a word boundary, never mid-word, then
+// marks the cut with "…". Falls back to a hard cut when there's no space.
 func truncateRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
 		return s
 	}
-	return string(r[:n]) + "…"
+	cut := n
+	if cut < len(r) && r[cut] != ' ' && r[cut] != '\n' {
+		for cut > 0 && r[cut-1] != ' ' && r[cut-1] != '\n' {
+			cut--
+		}
+	}
+	if cut == 0 {
+		cut = n
+	}
+	return strings.TrimRight(string(r[:cut]), " \n") + "…"
+}
+
+// stripMetaNarration drops any paragraph of s that reads as the review's
+// own staging narration rather than review content (see metaNarrationRe).
+func stripMetaNarration(s string) string {
+	paras := strings.Split(s, "\n\n")
+	kept := paras[:0]
+	for _, p := range paras {
+		if !metaNarrationRe.MatchString(p) {
+			kept = append(kept, p)
+		}
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n\n"))
 }
 
 // legacySummaryDisplayCap: how much of a pre-migration record's free-text
@@ -247,7 +281,7 @@ func renderReviewOverview(in reviewOverviewInput) string {
 	}
 
 	// Section 4: takeaway.
-	if t := strings.TrimSpace(in.Takeaway); t != "" {
+	if t := strings.TrimSpace(in.Takeaway); t != "" && !metaNarrationRe.MatchString(t) {
 		sections = append(sections, t)
 	}
 
@@ -309,8 +343,13 @@ func renderReviewOverview(in reviewOverviewInput) string {
 
 	// Section 8: notes - the only free prose, plus a truncated legacy
 	// summary (pre-migration records that never had takeaway/verified/notes).
-	notes := in.Notes
-	if ls := strings.TrimSpace(in.LegacySummary); ls != "" {
+	var notes []string
+	for _, n := range in.Notes {
+		if !metaNarrationRe.MatchString(n) {
+			notes = append(notes, n)
+		}
+	}
+	if ls := stripMetaNarration(strings.TrimSpace(in.LegacySummary)); ls != "" {
 		notes = append([]string{truncateRunes(ls, legacySummaryDisplayCap)}, notes...)
 	}
 	if len(notes) > 0 {

@@ -704,27 +704,35 @@ func truncateForBlob(content, nodeID, kind string) string {
 	return content[:artifactref.InlineMaxBytes] + fmt.Sprintf("\n\n[truncated: %d bytes over the %d byte cap]", over, artifactref.InlineMaxBytes)
 }
 
-// LatestCodeReviewVerdict reads the synthesizer's own structured verdict (the code_review record the gate already wrote from write_code_review or
-// the answer tail, #1090 P2) - the authoritative source for the fan-out's
-// delivered event (#1184), since a native synthesizer's write_code_review leaves no VERDICT tail for mergeReviews' old fallback to find.
-func LatestCodeReviewVerdict(ctx context.Context, cfg Config) (verdict string, ok bool) {
+// LatestCodeReviewRecord reads the synthesizer's own code_review record -
+// its verdict and takeaway/verified/notes, when write_code_review wrote one.
+func LatestCodeReviewRecord(ctx context.Context, cfg Config) (rec CodeReviewRecord, ok bool) {
 	c := recordClient(cfg)
 	if c == nil {
-		return "", false
+		return CodeReviewRecord{}, false
 	}
 	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	if err != nil {
-		return "", false
+		return CodeReviewRecord{}, false
 	}
 	raw, _, _, _, found, lerr := c.LatestWithMeta(ctx, id)
 	if lerr != nil || !found {
-		return "", false
+		return CodeReviewRecord{}, false
 	}
-	var rec CodeReviewRecord
 	if json.Unmarshal(raw, &rec) != nil || rec.Verdict == "" {
-		return "", false
+		return CodeReviewRecord{}, false
 	}
-	return rec.Verdict, true
+	return rec, true
+}
+
+// firstCodeReviewDelivery reports whether this subject has never been
+// delivered before, for the Scope line's "first review" vs. "re-review".
+func firstCodeReviewDelivery(ctx context.Context, cfg Config) bool {
+	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	if err != nil {
+		return true
+	}
+	return len(listDeliveryRecords(ctx, cfg, id)) == 0
 }
 
 // resetToolWrittenIDs drains the ids written via any loopback MCP artifact-write tool this round (write_<kind>, write_artifact, edit_artifact - ToolWrittenStage, threaded through the registered

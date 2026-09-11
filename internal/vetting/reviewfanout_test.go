@@ -39,6 +39,7 @@ func TestReviewFanout_DeliversOnceWorstOfWhenAllTerminal(t *testing.T) {
 	}
 
 	// Second reviewer stages request_changes and finishes - still nothing delivered.
+	// Unlabeled body: bypasses the MCP tool's label enforcement on purpose.
 	commitDelivery(context.Background(), nil, cfg, "r2", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "request_changes", Body: "r2 found a bug",
 			Comments: []ReviewComment{{Path: "a.go", Line: 3, Body: "nil deref"}}}},
@@ -65,8 +66,11 @@ func TestReviewFanout_DeliversOnceWorstOfWhenAllTerminal(t *testing.T) {
 		if !strings.Contains(item.Body, "r1 looks fine") || !strings.Contains(item.Body, "r2 found a bug") || !strings.Contains(item.Body, "r3 looks fine") {
 			t.Fatalf("Body = %q, want findings from all three nodes", item.Body)
 		}
-		if len(item.Comments) != 1 || !strings.Contains(item.Comments[0].Body, "r2") {
+		if len(item.Comments) != 1 || item.Comments[0].SourceNode != "r2" {
 			t.Fatalf("Comments = %+v, want r2's finding attributed to r2", item.Comments)
+		}
+		if item.Comments[0].Body != "nil deref" {
+			t.Fatalf("Comments[0].Body = %q, want the finding unprefixed - provenance belongs in SourceNode, not the posted text", item.Comments[0].Body)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no delivery after every reviewer node finished")
@@ -400,6 +404,7 @@ func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
 	fanout.ExpectSynthesis()
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
+	// Unlabeled body: bypasses the MCP tool's label enforcement on purpose.
 	commitDelivery(context.Background(), nil, cfg, "review-backend", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "request_changes", Body: "backend bug",
 			Comments: []ReviewComment{{Path: "a.go", Line: 3, Body: "nil deref"}}}},
@@ -439,8 +444,11 @@ func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
 		if item.Event != "request_changes" {
 			t.Fatalf("Event = %q, want request_changes (worst-of)", item.Event)
 		}
-		if len(item.Comments) != 1 || !strings.Contains(item.Comments[0].Body, "review-backend") {
+		if len(item.Comments) != 1 || item.Comments[0].SourceNode != "review-backend" {
 			t.Fatalf("Comments = %+v, want the backend finding attributed", item.Comments)
+		}
+		if item.Comments[0].Body != "nil deref" {
+			t.Fatalf("Comments[0].Body = %q, want the finding unprefixed - provenance belongs in SourceNode, not the posted text", item.Comments[0].Body)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no delivery after the synthesizer finished")
@@ -483,8 +491,11 @@ func TestReviewFanout_SynthesizerStructuredAnswerRendersFixedFormat(t *testing.T
 		if item.Body != want {
 			t.Fatalf("Body =\n%q\nwant:\n%q", item.Body, want)
 		}
-		if len(item.Comments) != 1 || !strings.Contains(item.Comments[0].Body, "slice-a") {
+		if len(item.Comments) != 1 || item.Comments[0].SourceNode != "slice-a" {
 			t.Fatalf("Comments = %+v, want slice-a's finding attributed for GitHub posting", item.Comments)
+		}
+		if item.Comments[0].Body != "blocking: nil deref on the error path. Crashes on a failed lookup." {
+			t.Fatalf("Comments[0].Body = %q, want the finding unprefixed - provenance belongs in SourceNode, not the posted text", item.Comments[0].Body)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no delivery after the synthesizer finished")
