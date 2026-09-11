@@ -330,9 +330,9 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   const facets = computeFacets(chats)
   const filtered = filterChats(chats, filterState)
 
-  // #722 group the sidebar by run state: running/queued first (no header),
-  // active chats below, archived in a collapsed section at bottom. Empty
-  // groups render nothing.
+  // #722 group the sidebar by run state: running first (no header), active
+  // chats below, archived in a collapsed section at bottom. Empty groups
+  // render nothing.
   const [archivedExpanded, setArchivedExpanded] = useState(false)
 
   function toggleArchived() {
@@ -343,12 +343,12 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
     })
   }
 
-  const runningQueued = useMemo<ChatSummary[]>(() => {
-    return filtered.filter(c => c.status === 'running' || c.status === 'queued')
+  const running = useMemo<ChatSummary[]>(() => {
+    return filtered.filter(c => c.status === 'running')
   }, [filtered])
 
   const active = useMemo<ChatSummary[]>(() => {
-    return filtered.filter(c => c.status !== 'running' && c.status !== 'queued')
+    return filtered.filter(c => c.status !== 'running')
   }, [filtered])
 
   // #809: archivedChats is server-scoped (status=archived) already - no
@@ -408,15 +408,15 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
         />
       </div>
       <div className="flex-1 overflow-y-auto overscroll-contain chat-list-scroll">
-        {(runningQueued.length === 0 && active.length === 0 && archived.length === 0) && chats.length === 0 && (
+        {(running.length === 0 && active.length === 0 && archived.length === 0) && chats.length === 0 && (
           <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">No conversations yet</div>
         )}
-        {(runningQueued.length === 0 && active.length === 0 && archived.length === 0) && chats.length > 0 && (
+        {(running.length === 0 && active.length === 0 && archived.length === 0) && chats.length > 0 && (
           <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">No matches</div>
         )}
 
-        {/* Active groups: running/queued then idle — empty groups render nothing */}
-        {runningQueued.map(s => (
+        {/* Active groups: running then idle — empty groups render nothing */}
+        {running.map(s => (
           <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onArchive={onArchive} />
         ))}
         {active.map(s => (

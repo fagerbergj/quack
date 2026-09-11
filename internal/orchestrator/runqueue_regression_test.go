@@ -1,14 +1,12 @@
 package orchestrator
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -19,42 +17,6 @@ func redirectSlogForTest(buf *strings.Builder) func() {
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
 	return func() { slog.SetDefault(prev) }
-}
-
-// A run cancelled while queued must never fall through to execution (#1016).
-// Before the fix, acquireRun's acquired=false was ignored and the plan ran
-// on a dead ctx - here that dereferences the zero-value Orchestrator's nil executor.
-func TestRunNeverExecutesOnCancelledQueuedContext(t *testing.T) {
-	o := &Orchestrator{}
-	o.SetMaxActiveRuns(1)
-
-	hold, acquired := o.acquireRun(context.Background())
-	if !acquired {
-		t.Fatal("failed to occupy the only slot")
-	}
-	defer hold()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan []error, 1)
-	go func() {
-		var errs []error
-		for _, err := range o.Run(ctx, "user", "chat-1", SourceApp, "hi", nil) {
-			errs = append(errs, err)
-		}
-		done <- errs
-	}()
-
-	time.Sleep(50 * time.Millisecond) // let the goroutine queue behind the held slot
-	cancel()
-
-	select {
-	case errs := <-done:
-		if len(errs) == 0 {
-			t.Fatal("expected an error event for a run cancelled while queued")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run never returned after its ctx was cancelled while queued")
-	}
 }
 
 // The stopped latch (#1016): a panicking yield must be recovered once and

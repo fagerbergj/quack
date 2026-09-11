@@ -477,14 +477,10 @@ type CompactionConfig struct {
 // (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM the GPU pool doesn't know about.
 const defaultMaxActiveNodes = 32
 
-// defaultMaxActiveRuns: host disk/CPU ceiling on concurrent run SETUP
-// (clone/jail), which happens before any node reaches the #1007 GPU ledger.
-const defaultMaxActiveRuns = 8
-
 type DagConfig struct {
-	// MaxActiveRuns caps concurrent RUNS server-wide. Not a GPU knob (#1007:
-	// models.<m>.limits.sessions is that, and since #1067 it bounds orchestrator
-	// turns too) - it is back only as the setup guard, and as the one way to bound how many runs - and so how many chats show as running - at once. 0 = defaultMaxActiveRuns.
+	// MaxActiveRuns is deprecated (#1028): chat state derives from node rows
+	// now, there is no run-level admission left to cap. Kept as a no-op so an
+	// already-deployed quack.yaml with "max_active_runs: N" doesn't crash-loop.
 	MaxActiveRuns int `yaml:"max_active_runs"`
 
 	// MaxActiveNodes caps concurrently-running nodes WITHIN ONE RUN (each run
@@ -1242,11 +1238,8 @@ func (c *Config) validate() error {
 	if c.Dag.MaxActiveNodes < 1 {
 		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")
 	}
-	if c.Dag.MaxActiveRuns == 0 {
-		c.Dag.MaxActiveRuns = defaultMaxActiveRuns
-	}
-	if c.Dag.MaxActiveRuns < 1 {
-		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
+	if c.Dag.MaxActiveRuns != 0 {
+		slog.Warn("dag.max_active_runs is deprecated and ignored; chat state derives from node rows now", "component", "config")
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

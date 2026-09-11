@@ -17,6 +17,14 @@ import (
 // than genuinely mid-run - resuming it would burn a run slot on stale work.
 const staleResumePlanCeiling = 24 * time.Hour
 
+// bootResumeConcurrency bounds how many chats resume at once on restart -
+// these runs skip node-level admission's own backpressure (their host disk/CPU
+// cost, jail+clone, all lands before that ledger sees them), so nothing else
+// caps a restart with many resumable chats from hammering the host at once. A
+// plain constant, not config (#1028 retired dag.max_active_runs): this is a
+// boot-only concurrency knob, not something a deploy needs to tune.
+const bootResumeConcurrency = 8
+
 // resumeGuardArchivedOrStale is boot resume's cheap admissibility check
 // (#1176): an archived chat's paused nodes must never be resumed. A human
 // pause (dag.PauseUser) is a deliberate decision boot must not override,
@@ -101,10 +109,7 @@ func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
 // in turn - each re-entry is the scoped "node + descendants" subset, so a
 // second paused sibling is not covered by the first node's walk.
 //
-// maxConcurrent bounds how many chats resume at once - these runs skip the
-// orchestrator's own run admission (their slot died with the old process, see
-// RetryNodeResumed), so nothing else caps a restart with many resumable
-// chats from hammering the host at once; the rest just wait their turn here.
+// maxConcurrent bounds how many chats resume at once - see bootResumeConcurrency.
 func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, maxConcurrent int) {
 	byChat := map[string][]store.ResumableNode{}
 	var order []string
@@ -177,7 +182,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 				"chat", chatID, "node", n.NodeID, "plan", n.PlanID, "latest", plan.ID)
 			continue
 		}
-		res = runlog.Drive(plan.TurnID, st, pub, orch.RetryNodeResumed(runCtx, userID, chatID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), func(err error) {
+		res = runlog.Drive(plan.TurnID, st, pub, orch.RetryNode(runCtx, userID, chatID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), func(err error) {
 			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
 		})
 	}

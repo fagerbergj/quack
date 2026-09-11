@@ -868,11 +868,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if ledgerStore != nil {
 		orch.SetLedger(ledgerStore)
 	}
-	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
-	// any node reaches the GPU ledger. Also the only cap on how many runs are
-	// live at once, which is what the UI shows as running (#1067).
-	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
-	// is gone, capacity bounds throughput naturally via the Admission ledger.
 	orchRef.Store(orch)
 	if hooks != nil {
 		hooks.pauser = executor
@@ -880,7 +875,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// After the orchestrator exists: re-enter each resumed node's graph. The
 	// store-side reconcile already ran at boot, so a crash here leaves the
 	// nodes paused and the next boot picks them up again.
-	startResumedNodes(ctx, resumeNodes, orch, st, runHub, bootEventLog, cfg.Dag.MaxActiveRuns)
+	startResumedNodes(ctx, resumeNodes, orch, st, runHub, bootEventLog, bootResumeConcurrency)
 	for _, start := range startSweeps {
 		start()
 	}

@@ -69,9 +69,6 @@ type Orchestrator struct {
 	memAgent    adkagent.Agent
 	artifacts   artifact.Service
 	ledgerStore ledger.LedgerStore
-	runDeadline time.Duration
-	runAdmit    *dag.Admission
-	queuedChats sync.Map
 	// nodeSessions best-effort reaps a chat's per-DAG-node ADK sessions
 	// (deterministic "<chatID>:<nodeID>" ids - see internal/agent.WorkerSessionID)
 	// alongside the chat-level one ResetSession already deletes. nil (e.g.
@@ -175,57 +172,6 @@ func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
 	o.memAgent = memAgent
 }
 
-// SetRunDeadline bounds execution time, not queue wait. Zero = unbounded.
-func (o *Orchestrator) SetRunDeadline(d time.Duration) { o.runDeadline = d }
-
-// runAdmissionSpec: a fake "model" key run-level scheduling counts against
-// via dag.Admission's sessions dimension (a plain per-key counting cap -
-// unlike the residency dimension, which caps distinct models, not count).
-var runAdmissionSpec = dag.AdmissionSpec{Model: "orchestrator-run"}
-
-// SetMaxActiveRuns caps concurrent runs server-wide via the same admission
-// queue (dag.Admission) node scheduling uses, instead of a second
-// parallel implementation. RetryNodeResumed (boot resume) bypasses this
-// admission entirely (#1176) - the caller caps its own concurrency
-// instead (serve.startResumedNodes), so this limit is not a true ceiling on concurrent runs while resumes are in flight.
-func (o *Orchestrator) SetMaxActiveRuns(n int) {
-	if n >= 1 {
-		o.runAdmit = dag.NewAdmission(map[string]int{runAdmissionSpec.Model: n}, nil, nil, 0)
-	}
-}
-
-// RunAdmissionUsage reports the run-level admission's current (used, limit),
-// for callers explaining a queued chat's wait (#1176). ok is false when no
-// cap is configured (SetMaxActiveRuns never called, or n < 1).
-func (o *Orchestrator) RunAdmissionUsage() (used, limit int, ok bool) {
-	if o.runAdmit == nil {
-		return 0, 0, false
-	}
-	return o.runAdmit.Usage(runAdmissionSpec)
-}
-
-// acquireRun blocks until a run slot is free, or ctx is cancelled while
-// queued. A cancelled wait never reserves a slot: the caller must check
-// acquired and return without executing.
-func (o *Orchestrator) acquireRun(ctx context.Context) (release func(), acquired bool) {
-	if o.runAdmit == nil {
-		return func() {}, true
-	}
-	// Only spanned once it actually blocks. Without this a queued run that never
-	// acquires emits a childless "quack.run" root whose latency is pure waiting.
-	var span oteltrace.Span
-	onQueued := func() { _, span = otelobs.Start(ctx, "run.queue") }
-	acquired = o.runAdmit.Admit(ctx, runAdmissionSpec, onQueued)
-	if span != nil {
-		span.SetAttributes(attribute.Bool("acquired", acquired))
-		otelobs.End(span, nil)
-	}
-	if !acquired {
-		return func() {}, false
-	}
-	return func() { o.runAdmit.Release(runAdmissionSpec) }, true
-}
-
 // newSafeYield serializes concurrent node goroutines onto one yield and stops
 // after a panicking call: a second goroutine re-entering the panicked yield
 // makes Go replace the real panic value and kill the process (#1016).
@@ -257,12 +203,6 @@ func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent,
 		}
 		return true
 	}
-}
-
-// Queued reports whether chatID is waiting to be admitted (queued), not yet executing.
-func (o *Orchestrator) Queued(chatID string) bool {
-	_, ok := o.queuedChats.Load(chatID)
-	return ok
 }
 
 // CancelNode stops one node of the active DAG run. Cooperative: next gate boundary.
@@ -309,21 +249,11 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 	return o.executor.SetNodeTaskOverride(chatID, nodeID, task)
 }
 
-// RetryNode re-runs a finished node and its descendants with optional guidance.
-// It counts against MaxActiveRuns like any other run.
+// RetryNode re-runs a finished node and its descendants with optional
+// guidance - both a REST-triggered retry and boot resume re-entering a node
+// a previous process left paused (#1028: no run-level admission left to
+// distinguish the two, node-level dag.Admission still gates the work itself).
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
-	return o.retryNode(ctx, userID, chatID, seeded, nodeID, guidance, true)
-}
-
-// RetryNodeResumed re-enters a node a previous process left admitted (boot
-// resume, #1176): the node's run slot was already reserved by the process
-// that died, and that reservation is gone with it, so re-acquiring one here
-// would let boot resume starve fresh work out of the admission queue.
-func (o *Orchestrator) RetryNodeResumed(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
-	return o.retryNode(ctx, userID, chatID, seeded, nodeID, guidance, false)
-}
-
-func (o *Orchestrator) retryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string, admit bool) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// A retry/resume is its own run, not a continuation of whatever
 		// finished run left this node retryable - it needs its own trace so
@@ -331,16 +261,6 @@ func (o *Orchestrator) retryNode(ctx context.Context, userID, chatID string, see
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, chatID))
 		defer otelobs.End(span, nil)
-		if admit {
-			release, acquired := o.acquireRun(ctx)
-			defer release()
-			if !acquired {
-				yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
-				return
-			}
-		}
-		// quack_runs_active must count this run whether or not it went
-		// through admission - Run/RunBoundPlan already do (#1176).
 		otelobs.RunStarted()
 		defer otelobs.RunFinished()
 		plan, ok := o.stashedPlan(ctx, userID, chatID)
@@ -433,16 +353,9 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		ctx, span = otelobs.Start(ctx, "run.bound", attribute.String(otelobs.ChatIDKey, sessionID))
-		otelobs.RunQueued()
-		queued := true
-		o.queuedChats.Store(sessionID, struct{}{})
+		otelobs.RunStarted()
 		defer func() {
-			o.queuedChats.Delete(sessionID)
-			if queued {
-				otelobs.RunUnqueued()
-			} else {
-				otelobs.RunFinished()
-			}
+			otelobs.RunFinished()
 			otelobs.End(span, nil)
 		}()
 		origYield := yield
@@ -457,23 +370,6 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		// Run/RetryNode wrap it, RunBoundPlan must too.
 		safeYield := newSafeYield(yield)
 
-		release, acquired := o.acquireRun(ctx)
-		defer release()
-		if !acquired {
-			// Queued run's ctx was cancelled before a slot freed: never execute
-			// on a dead context (#1016).
-			safeYield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
-			return
-		}
-		o.queuedChats.Delete(sessionID)
-		otelobs.RunUnqueued()
-		queued = false
-		otelobs.RunStarted()
-		if o.runDeadline > 0 {
-			var deadlineCancel context.CancelFunc
-			ctx, deadlineCancel = context.WithTimeout(ctx, o.runDeadline)
-			defer deadlineCancel()
-		}
 		o.executor.ResetNodeCancels(sessionID)
 
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
@@ -564,16 +460,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
-		otelobs.RunQueued()
-		queued := true
-		o.queuedChats.Store(sessionID, struct{}{})
+		otelobs.RunStarted()
 		defer func() {
-			o.queuedChats.Delete(sessionID)
-			if queued {
-				otelobs.RunUnqueued()
-			} else {
-				otelobs.RunFinished()
-			}
+			otelobs.RunFinished()
 			otelobs.End(span, nil)
 		}()
 		origYield := yield
@@ -585,23 +474,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			return origYield(ev, err)
 		}
 
-		release, acquired := o.acquireRun(ctx)
-		defer release()
-		if !acquired {
-			// Queued run's ctx was cancelled before a slot freed: never execute
-			// on a dead context (#1016).
-			yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
-			return
-		}
-		o.queuedChats.Delete(sessionID)
-		otelobs.RunUnqueued()
-		queued = false
-		otelobs.RunStarted()
-		if o.runDeadline > 0 {
-			var deadlineCancel context.CancelFunc
-			ctx, deadlineCancel = context.WithTimeout(ctx, o.runDeadline)
-			defer deadlineCancel()
-		}
 		o.executor.ResetNodeCancels(sessionID)
 		planCache := tools.NewPlanCache()
 		o.maybeMineUserMemory(ctx, userID, sessionID, source, message)

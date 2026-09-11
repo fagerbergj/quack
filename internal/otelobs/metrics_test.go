@@ -125,15 +125,14 @@ func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) 
 	}
 }
 
-// TestRunGauge_CountsARunThatSkippedAdmission pins #1176: RetryNode's boot-
-// resume path (RetryNodeResumed) never calls acquireRun, but must still call
-// RunStarted/RunFinished around its work - quack.runs.active has to count a resumed node the same as any other run, or the metric undercounts load.
-func TestRunGauge_CountsARunThatSkippedAdmission(t *testing.T) {
+// TestRunGauge_CountsAResumedRun pins #1176: a boot-resumed node still counts
+// toward quack.runs.active, or the metric undercounts load.
+func TestRunGauge_CountsAResumedRun(t *testing.T) {
 	reader := newTestMeter(t)
 
-	RunStarted() // no acquireRun call precedes this - the resumed-node shape
+	RunStarted()
 	if got := sumTotal(t, reader, "quack.runs.active"); got != 1 {
-		t.Fatalf("quack.runs.active = %d after RunStarted with no admission, want 1", got)
+		t.Fatalf("quack.runs.active = %d after RunStarted, want 1", got)
 	}
 	RunFinished()
 	if got := sumTotal(t, reader, "quack.runs.active"); got != 0 {

@@ -774,71 +774,12 @@ func waitFor(t *testing.T, timeout time.Duration, msg string, cond func() bool) 
 	}
 }
 
-// TestUpdateChat_ArchiveCancelsQueuedRun pins the fix for "archived chats
-// remain in the queue": archiving a chat whose run is still waiting behind
-// max_active_runs cancels it via the same hub path a user Stop uses, and the chat's status settles away from queued/running rather than firing later.
-func TestUpdateChat_ArchiveCancelsQueuedRun(t *testing.T) {
-	bm := &blockingModel{entered: make(chan struct{}, 1), unblock: make(chan struct{})}
-	h := newTestHandlerWithModel(t, bm)
-	h.orch.SetMaxActiveRuns(1)
-	ctx := context.Background()
-
-	chatA := mustCreateChat(t, h)
-	chatB := mustCreateChat(t, h)
-
-	// Chat A takes the one slot and holds it inside the model call.
-	h.startRun(chatA, "turn-a", "hello", nil)
-	select {
-	case <-bm.entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("chat A never reached the model - it should have acquired the only slot immediately")
-	}
-
-	// Chat B is admitted but can't acquire - it queues behind A.
-	h.startRun(chatB, "turn-b", "hello", nil)
-	waitFor(t, 2*time.Second, "chat B admitted to the queue", func() bool { return h.orch.Queued(chatB) })
-
-	cB, err := h.store.GetChat(ctx, chatB)
-	if err != nil {
-		t.Fatalf("GetChat chat B: %v", err)
-	}
-	if status, _ := h.liveOrStampedStatus(*cB); status != schema.ChatStatusQueued {
-		t.Fatalf("chat B status before archive = %q, want queued", status)
-	}
-
-	trueVal := true
-	rec := patchUpdateChat(t, h, chatB, schema.UpdateChatBody{Archived: &trueVal})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("archive status = %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-
-	waitFor(t, 2*time.Second, "chat B's queued run cancelled", func() bool { return !h.orch.Queued(chatB) })
-	waitFor(t, 2*time.Second, "chat B's run fully unregistered", func() bool { return !h.hub.HasRegisteredRun(chatB) })
-
-	cB, err = h.store.GetChat(ctx, chatB)
-	if err != nil {
-		t.Fatalf("GetChat chat B after archive: %v", err)
-	}
-	if status, _ := h.liveOrStampedStatus(*cB); status == schema.ChatStatusQueued || status == schema.ChatStatusRunning {
-		t.Errorf("chat B status after archive+cancel = %q, want settled, not left queued/running", status)
-	}
-
-	// Chat A's unrelated run must be untouched by archiving chat B.
-	if !h.hub.HasRegisteredRun(chatA) {
-		t.Error("chat A's run was cancelled by archiving chat B")
-	}
-
-	close(bm.unblock)
-	waitFor(t, 2*time.Second, "chat A's run finished", func() bool { return !h.hub.HasRegisteredRun(chatA) })
-}
-
-// TestUpdateChat_ArchiveLeavesRunningRunAlone is the flip side: archiving a
-// chat whose run has already left the queue and is executing must not cancel
-// it - the archive handler's cancel path only reaches a still-queued run.
+// TestUpdateChat_ArchiveLeavesRunningRunAlone pins that archiving a chat
+// never cancels its in-flight run (#1028: there is no queued state left to
+// cancel out from under - a run either isn't dispatched yet or is already executing).
 func TestUpdateChat_ArchiveLeavesRunningRunAlone(t *testing.T) {
 	bm := &blockingModel{entered: make(chan struct{}, 1), unblock: make(chan struct{})}
 	h := newTestHandlerWithModel(t, bm)
-	h.orch.SetMaxActiveRuns(1)
 
 	chatA := mustCreateChat(t, h)
 	h.startRun(chatA, "turn-a", "hello", nil)

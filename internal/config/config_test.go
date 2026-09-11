@@ -166,6 +166,26 @@ orchestrator: { provider: default, model: m }
 	}
 }
 
+// TestLoadAcceptsDeprecatedMaxActiveRuns pins that dag.max_active_runs - a
+// real key in prod's config until #1028 - still loads (as a no-op, logging a
+// warning) rather than tripping strict unknown-field parsing.
+func TestLoadAcceptsDeprecatedMaxActiveRuns(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+dag: { max_active_runs: 6 }
+`))
+	if err != nil {
+		t.Fatalf("deprecated dag.max_active_runs must still load: %v", err)
+	}
+}
+
 // TestLoadRejectsDeprecatedCompactionEngine pins that session.compaction.engine
 // - the no-op shim removed after #1239 - is now an unknown field like any
 // other, so a stale deployed quack.yaml fails loudly at load, not silently ignored.

@@ -59,12 +59,13 @@ func TestStampRunOutcome_Interrupted(t *testing.T) {
 	}
 }
 
-// TestLiveOrStampedStatus_InterruptedMapsToFailed proves the wire-facing
-// summary (ListChats) reports an interrupted chat as failed, same as
-// #738's existing ActiveTurnID fallback.
-func TestLiveOrStampedStatus_InterruptedMapsToFailed(t *testing.T) {
+// TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed proves the wire-facing
+// summary (ListChats) reports a chat a killed process left mid-run, with no
+// resumable node to explain it (#1028: ScanOrphanedRuns leaves ActiveTurnID
+// set rather than stamping a dedicated "interrupted" status), as failed.
+func TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed(t *testing.T) {
 	h := newTestHandler(t)
-	c := store.Chat{ID: "chat-x", RunStatus: store.RunStatusInterrupted}
+	c := store.Chat{ID: "chat-x", ActiveTurnID: "turn-1"}
 	status, _ := h.liveOrStampedStatus(c)
 	if status != schema.ChatStatusFailed {
 		t.Errorf("status = %q, want failed", status)

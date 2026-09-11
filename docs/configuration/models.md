@@ -73,15 +73,14 @@ orchestrator:
 
 ## How many runs may be live at once
 
-`limits.sessions` bounds GPU work, not how many runs exist. A run holds a workspace clone from the moment it starts, and a live run is what the UI shows as a running chat - so tightening `sessions` alone reduces concurrent *generation* without reducing the number of chats showing as running.
+`limits.sessions` bounds GPU work, not how many runs exist. There is no separate cap on live runs - a chat's state is derived from its own nodes rather than admitted against a server-wide counter (#1028), so `limits.sessions` is the only knob left for run concurrency.
 
 ```yaml
 dag:
-  max_active_runs: 2      # concurrent runs server-wide; default 8
   max_active_nodes: 32    # concurrent nodes WITHIN one run; default 32
 ```
 
-`max_active_runs` is a host disk/CPU guard on run setup and the cap on how many runs are live, not a GPU knob - `limits.sessions` is that. Set both when you want few runs in flight *and* few of them generating.
+`dag.max_active_runs` is deprecated: quack still accepts the key so an existing config doesn't crash-loop, but logs a boot warning and ignores it. Remove it from your config.
 
 ## The judge is a separate model
 

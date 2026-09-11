@@ -18,13 +18,10 @@ const (
 	RunStatusIdle       = "idle"
 	RunStatusFailed     = "failed"
 	RunStatusNeedsInput = "needs_input"
-	// RunStatusInterrupted marks a run the server cut short itself (shutdown's
-	// force-cancel, or a boot scan finding a killed process's leftover) -
-	// distinct from RunStatusFailed; wire-surfaces as ChatStatusFailed.
-	RunStatusInterrupted = "interrupted"
 	// RunStatusPaused marks a chat whose nodes the server itself suspended
 	// (shutdown drain, or a hard kill reconciled at boot) and intends to
-	// resume on its own. Distinct from RunStatusInterrupted: nothing is asked of the user, so it must not wire-surface as failed (#962).
+	// resume on its own - nothing is asked of the user, so it must not
+	// wire-surface as failed (#962).
 	RunStatusPaused = "paused"
 )
 
@@ -84,6 +81,20 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 	return RunStatusIdle, "", ""
 }
 
+// ChatHasRunningNode reports whether any of a plan's node rows is currently
+// StatusRunning - the node-row source of truth chat "running" status derives
+// from (#1028), on top of the in-memory Hub signal: the Hub only knows about
+// a run this process itself dispatched, so a node resumed by a fresh process
+// (#1366) reads running here before the Hub catches up.
+func ChatHasRunningNode(nodes []DagNode) bool {
+	for _, n := range nodes {
+		if n.Status == string(dag.StatusRunning) {
+			return true
+		}
+	}
+	return false
+}
+
 // orchestratorGiveUpError reports the classified model-gateway error when the
 // orchestrator's own planning loop (orchestrator.go's Run, before any DAG plan exists) exhausted its retries because every call to the model failed (#1156). The orchestrator's own model calls stamp an empty node/agent in ledger.Coords, so that's the key inference's failure tracker holds it under - same tracker #1109's dag.emptyNodeError reads for a DAG node, reused here via its exported classification helper (inference.SanitizeGatewayError) rather than a second copy of the format.
 // Deliberately does NOT clear the tracker (unlike dag.emptyNodeError, which consumes it once into a persisted DagNode.Error column): this is called on every read of a chat's terminal status - including well after the run ended, e.g. GetChat - and clearing here would make the SECOND read fall back to idle while the first-stamped Chat.RunStatus still says failed; the next real model call for this chat (success or otherwise) naturally supersedes the record via RecordCallResult's own nil-err clear.
@@ -117,12 +128,22 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 }
 
 // ScanOrphanedRuns reconciles every chat a killed process left mid-run
-// (ActiveTurnID set, or already interrupted/paused): a chat with suspended
-// nodes is stamped RunStatusPaused - the server resumes those itself, so calling it interrupted would tell the user to resend a message that is already coming back; everything else keeps the old RunStatusInterrupted. It deliberately does not touch pending_question: the node row owns the HITL question now, and blanking the chat's copy destroyed resume state (#957); returns the paused and interrupted chat ids for the caller to log. Startup-only: the scan is table-wide with no per-chat liveness check, so calling it once the Hub has registered runs would stamp a live chat.
-func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, interrupted []string, err error) {
+// (ActiveTurnID set, or already paused): a chat with suspended nodes is
+// stamped RunStatusPaused - the server resumes those itself, so telling the
+// user to resend a message would be wrong. A chat with no suspended node (no
+// #1366 node to resume from - e.g. the process died mid-planning, before any
+// DAG node existed) is left untouched: its ActiveTurnID stays set, which the
+// read path already reports as failed (#738's crash fallback) with no
+// separate "interrupted" status needed (#1028). It deliberately does not
+// touch pending_question: the node row owns the HITL question now, and
+// blanking the chat's copy destroyed resume state (#957); returns the paused
+// and left-untouched chat ids for the caller to log/clean up (#1213).
+// Startup-only: the scan is table-wide with no per-chat liveness check, so
+// calling it once the Hub has registered runs would stamp a live chat.
+func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode []string, err error) {
 	var chats []Chat
 	if err := s.db.WithContext(ctx).
-		Where("active_turn_id <> ? OR run_status IN ?", "", []string{RunStatusInterrupted, RunStatusPaused}).
+		Where("active_turn_id <> ? OR run_status = ?", "", RunStatusPaused).
 		Find(&chats).Error; err != nil {
 		return nil, nil, err
 	}
@@ -131,18 +152,18 @@ func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, interrupted []str
 		return nil, nil, err
 	}
 	for _, c := range chats {
-		status := RunStatusInterrupted
 		if suspended[c.ID] {
-			status = RunStatusPaused
 			paused = append(paused, c.ID)
-		} else {
-			interrupted = append(interrupted, c.ID)
+			if err := s.stampRunStatusKeepingQuestion(ctx, c.ID, RunStatusPaused); err != nil {
+				slog.Warn("scan orphaned runs: stamp failed", "component", "store", "chat", c.ID, "err", err)
+			}
+			continue
 		}
-		if err := s.stampRunStatusKeepingQuestion(ctx, c.ID, status); err != nil {
-			slog.Warn("scan orphaned runs: stamp failed", "component", "store", "chat", c.ID, "err", err)
+		if c.ActiveTurnID != "" {
+			noResumableNode = append(noResumableNode, c.ID)
 		}
 	}
-	return paused, interrupted, nil
+	return paused, noResumableNode, nil
 }
 
 // stampRunStatusKeepingQuestion is StampRunOutcome minus the pending_question

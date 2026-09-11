@@ -23,10 +23,13 @@ func newRunStatusTestStore(t *testing.T) *Store {
 	return st
 }
 
-// TestScanOrphanedRuns_FlipsCrashedActiveTurnID is #738's crash case: a
-// process died with ActiveTurnID set. A boot scan must convert that into a
-// clean RunStatusInterrupted stamp, not leave the chat reading as stuck.
-func TestScanOrphanedRuns_FlipsCrashedActiveTurnID(t *testing.T) {
+// TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback is #738's
+// crash case updated for #1028: a process died with ActiveTurnID set and no
+// resumable node. The scan reports it (for the caller's clone-dir cleanup
+// and boot log, #1213) but does NOT stamp a status - ActiveTurnID stays set,
+// which the read path's existing crash fallback already reports as failed,
+// so there is nothing left for a dedicated "interrupted" status to do.
+func TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback(t *testing.T) {
 	st := newRunStatusTestStore(t)
 	ctx := context.Background()
 	if err := st.SetChatOrigin(ctx, "chat-crashed", "u1", ""); err != nil {
@@ -48,65 +51,33 @@ func TestScanOrphanedRuns_FlipsCrashedActiveTurnID(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("GetChat: %v, %v", c, err)
 	}
-	if c.RunStatus != RunStatusInterrupted {
-		t.Errorf("RunStatus = %q, want %q", c.RunStatus, RunStatusInterrupted)
-	}
-	if c.ActiveTurnID != "" {
-		t.Errorf("ActiveTurnID = %q, want cleared", c.ActiveTurnID)
+	if c.ActiveTurnID != "turn-1" {
+		t.Errorf("ActiveTurnID = %q, want left as turn-1 for the crash fallback to read", c.ActiveTurnID)
 	}
 }
 
-// TestScanOrphanedRuns_ReSurfacesAlreadyInterrupted proves a chat a previous
-// shutdown already marked interrupted is picked up again at the next boot
-// too - it stays visible until someone actually resumes it.
-func TestScanOrphanedRuns_ReSurfacesAlreadyInterrupted(t *testing.T) {
-	st := newRunStatusTestStore(t)
-	ctx := context.Background()
-	if err := st.SetChatOrigin(ctx, "chat-interrupted", "u1", ""); err != nil {
-		t.Fatalf("SetChatOrigin: %v", err)
+// TestChatHasRunningNode pins #1028's Done-when: a chat with a running node
+// reads running, one with none reads idle (no running node found).
+func TestChatHasRunningNode(t *testing.T) {
+	cases := []struct {
+		name  string
+		nodes []DagNode
+		want  bool
+	}{
+		{"no nodes", nil, false},
+		{"all done", []DagNode{{NodeID: "n1", Status: string(dag.StatusDone)}}, false},
+		{"one running", []DagNode{
+			{NodeID: "n1", Status: string(dag.StatusDone)},
+			{NodeID: "n2", Status: string(dag.StatusRunning)},
+		}, true},
+		{"paused, not running", []DagNode{{NodeID: "n1", Status: string(dag.StatusPaused)}}, false},
 	}
-	if err := st.StampRunOutcome(ctx, "chat-interrupted", RunStatusInterrupted, ""); err != nil {
-		t.Fatalf("StampRunOutcome: %v", err)
-	}
-
-	_, ids, err := st.ScanOrphanedRuns(ctx)
-	if err != nil {
-		t.Fatalf("ScanOrphanedRuns: %v", err)
-	}
-	if len(ids) != 1 || ids[0] != "chat-interrupted" {
-		t.Fatalf("ids = %v, want [chat-interrupted]", ids)
-	}
-}
-
-// TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID is #920's compound
-// state: a chat already stamped interrupted (a previous shutdown's drain) that
-// ALSO still carries an ActiveTurnID - the shape a process killed before its stamp landed leaves behind. Both halves must settle in one scan, because a leftover ActiveTurnID is what makes the chat read as permanently busy; recovering it by hand with an UPDATE is not a recovery path.
-func TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID(t *testing.T) {
-	st := newRunStatusTestStore(t)
-	ctx := context.Background()
-	if err := st.SetChatOrigin(ctx, "chat-wedged", "u1", ""); err != nil {
-		t.Fatalf("SetChatOrigin: %v", err)
-	}
-	if err := st.StampRunOutcome(ctx, "chat-wedged", RunStatusInterrupted, ""); err != nil {
-		t.Fatalf("StampRunOutcome: %v", err)
-	}
-	if err := st.MarkRunActive(ctx, "chat-wedged", "turn-abandoned"); err != nil {
-		t.Fatalf("MarkRunActive: %v", err)
-	}
-
-	if _, _, err := st.ScanOrphanedRuns(ctx); err != nil {
-		t.Fatalf("ScanOrphanedRuns: %v", err)
-	}
-
-	c, err := st.GetChat(ctx, "chat-wedged")
-	if err != nil || c == nil {
-		t.Fatalf("GetChat: %v, %v", c, err)
-	}
-	if c.ActiveTurnID != "" {
-		t.Fatalf("ActiveTurnID = %q, want cleared - the chat is still wedged after boot", c.ActiveTurnID)
-	}
-	if c.RunStatus != RunStatusInterrupted {
-		t.Errorf("RunStatus = %q, want %q", c.RunStatus, RunStatusInterrupted)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ChatHasRunningNode(tc.nodes); got != tc.want {
+				t.Errorf("ChatHasRunningNode(%+v) = %v, want %v", tc.nodes, got, tc.want)
+			}
+		})
 	}
 }
 
