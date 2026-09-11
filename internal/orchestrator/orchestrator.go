@@ -647,7 +647,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
 			return
 		}
-		runStep := func(stepCtx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, bool, error) {
+		runStep := func(stepCtx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, error) {
 			return o.executor.RunPlanStep(stepCtx, plan, AppName, userID, sessionID, seeded, run)
 		}
 		finalizeStep := func(stepCtx context.Context, plan dag.Plan, outputs map[string]string) string {
@@ -1084,31 +1084,84 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 	safeYield(tools.DagPlanEvent(ctx, plan), nil)
 
-	outputs, paused, err := o.executor.ResumePlanStep(ctx, plan, AppName, userID, sessionID, seeded, run, pend.id, message)
+	outputs, needsInput, err := o.executor.ResumePlanStep(ctx, plan, AppName, userID, sessionID, seeded, run, pend.id, message)
 	if err != nil {
 		safeYield(stream.Errorf("resume: "+err.Error()), nil)
 		return
 	}
-	if paused {
+	if len(needsInput) > 0 {
 		yield(stream.Done(), nil)
 		return
 	}
 
+	var anyFailed bool
 	out := outputs[pend.nodeID]
-	var status string
 	for i := range rec.Assignments {
 		if rec.Assignments[i].NodeID == pend.nodeID {
 			// Shares execute.go's own success/failure decision (paused=false:
 			// the step already confirmed it isn't) - a resumed node with
 			// empty output is exactly as "failed" as a freshly-run one, and
 			// must not silently finalize on it (#slice3 review).
-			status = tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false)
+			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false) == "failed" {
+				anyFailed = true
+			}
 		}
 	}
 	if _, _, serr := dag.SaveDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID, "", rec); serr != nil {
 		slog.Warn("resume: dag_plan update failed", "component", "orchestrator", "err", serr)
 	}
-	if status == "done" && rec.Delivery != nil {
+
+	// B's completion may have unblocked dependents (B -> C, C terminal) that
+	// the paused-node-only resume dispatch above never ran - without this,
+	// finalizing on rec.Assignments right here would deliver a terminal
+	// node's still-empty result (#slice3 review: no delivery ever fires).
+	// Keep driving newly-unblocked assignments the same way execute.go
+	// drives a fresh step, round by round, until nothing more is unblocked
+	// or a round itself pauses/errors - ending the turn either way, exactly
+	// like a fresh execute() step would.
+	turnEnded := false
+	for {
+		next := unblockedByDeps(rec.Assignments)
+		if len(next) == 0 {
+			break
+		}
+		roundSeeded := map[string]string{}
+		for _, a := range rec.Assignments {
+			if a.TaskID != "" {
+				roundSeeded[a.NodeID] = a.Result
+			}
+		}
+		roundOutputs, roundNeedsInput, rerr := o.executor.RunPlanStep(ctx, plan, AppName, userID, sessionID, roundSeeded, next)
+		if rerr != nil {
+			safeYield(stream.Errorf("resume: "+rerr.Error()), nil)
+			turnEnded = true
+		}
+		for i := range rec.Assignments {
+			nid := rec.Assignments[i].NodeID
+			if !next[nid] {
+				continue
+			}
+			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], roundOutputs[nid], roundNeedsInput[nid]) == "failed" {
+				anyFailed = true
+			}
+		}
+		if _, _, serr := dag.SaveDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID, "", rec); serr != nil {
+			slog.Warn("resume: dag_plan update failed", "component", "orchestrator", "err", serr)
+		}
+		if rerr != nil {
+			return
+		}
+		if len(roundNeedsInput) > 0 {
+			turnEnded = true
+			break
+		}
+	}
+	if turnEnded {
+		yield(stream.Done(), nil)
+		return
+	}
+
+	if !anyFailed && rec.Delivery != nil {
 		final := map[string]string{}
 		for _, a := range rec.Assignments {
 			final[a.NodeID] = a.Result
@@ -1116,6 +1169,39 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID))
 	}
 	yield(stream.Done(), nil)
+}
+
+// unblockedByDeps returns the not-yet-run assignments (TaskID == "") whose
+// every dependency has already run (TaskID set, success or failure - "ran"
+// is what unblocks a dependent, same convention partitionAssignments and
+// execute.go's own dispatch already use). Scoped to what a resume turn
+// should keep driving after a paused node completes - not everything still
+// pending regardless of relation to it (an edit_plan addition unrelated to
+// this resume waits for its own execute call, like any other partial step).
+func unblockedByDeps(assignments []dag.Assignment) map[string]bool {
+	ran := make(map[string]bool, len(assignments))
+	for _, a := range assignments {
+		if a.TaskID != "" {
+			ran[a.NodeID] = true
+		}
+	}
+	next := map[string]bool{}
+	for _, a := range assignments {
+		if a.TaskID != "" {
+			continue
+		}
+		ready := true
+		for _, dep := range a.DependsOn {
+			if !ran[dep] {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			next[a.NodeID] = true
+		}
+	}
+	return next
 }
 
 func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {

@@ -18,10 +18,10 @@ type fakeRunStep struct {
 	lastRun    map[string]bool
 	lastSeeded map[string]string
 	outputs    map[string]string
-	paused     bool
+	needsInput map[string]bool
 }
 
-func (f *fakeRunStep) run(_ context.Context, _ dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, bool, error) {
+func (f *fakeRunStep) run(_ context.Context, _ dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, error) {
 	f.calls++
 	f.lastRun = run
 	f.lastSeeded = seeded
@@ -31,7 +31,7 @@ func (f *fakeRunStep) run(_ context.Context, _ dag.Plan, seeded map[string]strin
 			out[id] = v
 		}
 	}
-	return out, f.paused, nil
+	return out, f.needsInput, nil
 }
 
 // execResults reads out["results"] (a []any of map[string]any, the shape a
@@ -111,7 +111,7 @@ func TestExecuteTool_PausedStepMarksNodePausedAndEndsTurn(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "impl-1", Agent: "code-implementer"}})
 	cache := NewPlanCache()
-	step := &fakeRunStep{paused: true} // no output for impl-1 - it's waiting on the user
+	step := &fakeRunStep{needsInput: map[string]bool{"impl-1": true}} // no output for impl-1 - it's waiting on the user
 
 	tl, err := NewExecuteTool(planner, c, cache, nil, step.run, nil, nil, "ask the user something", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
@@ -143,6 +143,73 @@ func TestExecuteTool_PausedStepMarksNodePausedAndEndsTurn(t *testing.T) {
 	}
 	if rec2.Assignments[0].TaskID != "" {
 		t.Errorf("persisted task_id = %q, want empty for a paused assignment", rec2.Assignments[0].TaskID)
+	}
+}
+
+// TestExecuteTool_MixedPausedAndFailedReportsEachCorrectly pins the
+// reviewer's finding (#slice3 review): ApplyAssignmentOutcome used to take
+// the whole step's aggregate "did anything pause" flag, so a genuinely
+// failed node (empty output, nothing to do with a question) sharing a step
+// with a paused one was reported "paused" too - misleading, and it means
+// the model doesn't learn a real failure happened. Each node's own status
+// must come from whether THAT node itself paused, not the step overall.
+func TestExecuteTool_MixedPausedAndFailedReportsEachCorrectly(t *testing.T) {
+	rec := dag.DagPlanRecord{
+		PlanID: "p1",
+		Assignments: []dag.Assignment{
+			{NodeID: "ask-1", Task: "ask the user something"},
+			{NodeID: "impl-1", Task: "do the thing"},
+		},
+	}
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{
+		{NodeID: "ask-1", Agent: "code-implementer"},
+		{NodeID: "impl-1", Agent: "code-implementer"},
+	})
+	cache := NewPlanCache()
+	// ask-1 parks on a question (no output, needsInput); impl-1 genuinely
+	// fails (no output, NOT in needsInput) - same step, same empty output,
+	// different reasons.
+	step := &fakeRunStep{needsInput: map[string]bool{"ask-1": true}}
+
+	tl, err := NewExecuteTool(planner, c, cache, nil, step.run, nil, nil, "do it", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	out, err := rt.Run(newExecToolCtx(), map[string]any{"plan_id": "p1"})
+	if err != nil {
+		t.Fatalf("execute Run: %v", err)
+	}
+	list, ok := out["results"].([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("out[results] = %#v, want exactly two entries", out["results"])
+	}
+	statuses := map[string]string{}
+	for _, e := range list {
+		entry := e.(map[string]any)
+		statuses[entry["node_id"].(string)] = entry["status"].(string)
+	}
+	if statuses["ask-1"] != "paused" {
+		t.Errorf("ask-1 status = %q, want paused", statuses["ask-1"])
+	}
+	if statuses["impl-1"] != "failed" {
+		t.Errorf("impl-1 status = %q, want failed (it never asked a question - reporting it paused would be misleading)", statuses["impl-1"])
+	}
+
+	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	byID := map[string]dag.Assignment{}
+	for _, a := range rec2.Assignments {
+		byID[a.NodeID] = a
+	}
+	if byID["ask-1"].TaskID != "" {
+		t.Errorf("ask-1 persisted task_id = %q, want empty - a paused assignment must stay eligible to run again", byID["ask-1"].TaskID)
+	}
+	if byID["impl-1"].TaskID == "" {
+		t.Error("impl-1 persisted task_id is empty, want a minted one - a failed assignment still gets one (execute.go's own design)")
 	}
 }
 

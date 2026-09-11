@@ -96,6 +96,46 @@ func TestBudgetedLLMNeverOrphansACallOrResponse(t *testing.T) {
 	}
 }
 
+// TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole pins the reviewer's
+// finding (#slice3 review): the three tests above only exercise tool-loop
+// layouts (back-to-back FunctionCall/FunctionResponse pairs), where the
+// pairing rule happens to already drop two at a time. A plain multi-turn
+// TEXT chat (no tool calls at all) alternates strictly user/model/user/...;
+// dropping a single content from the middle - as the old code did for
+// anything that wasn't a FunctionCall - joins its two neighbors into an
+// adjacent SAME role, exactly the shape the note-splice comment already
+// calls unsafe. Every surviving content here must still alternate role with
+// its neighbor.
+func TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole(t *testing.T) {
+	rec := &recordingBudgetLLM{}
+	const contextWindow = budgetOutputReserve + 200 // usable budget = 200 tokens - tight
+	llm := NewBudgetedLLM(rec, contextWindow)
+
+	blob := strings.Repeat("x", 300)
+	contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "start: " + blob}}}}
+	for round := 0; round < 10; round++ {
+		contents = append(contents,
+			&genai.Content{Role: "model", Parts: []*genai.Part{{Text: blob}}},
+			&genai.Content{Role: "user", Parts: []*genai.Part{{Text: blob}}},
+		)
+	}
+	req := &model.LLMRequest{Contents: contents}
+	drainLLM(llm.GenerateContent(context.Background(), req, false))
+
+	got := rec.got.Contents
+	if len(got) < 2 {
+		t.Fatalf("Contents = %v, want at least 2 survivors (Contents[0] plus the current query)", got)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1] == nil || got[i] == nil {
+			continue
+		}
+		if got[i-1].Role == got[i].Role {
+			t.Fatalf("Contents[%d] and [%d] are both role %q after trimming a plain text chat - alternation broken", i-1, i, got[i].Role)
+		}
+	}
+}
+
 // TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory pins the rig
 // regression (#slice3 review): on a chat with history, Contents[0] is the
 // SESSION's first-ever turn, not this invocation's own query - which is

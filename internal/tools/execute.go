@@ -35,9 +35,12 @@ type AssignmentFreshnessFunc func(ctx agent.Context, planID, agentName, contextI
 
 // RunStepFunc runs exactly the nodes named in run - fresh dispatches, never
 // retries - seeding every other node's output from seeded, and returns what
-// each ran node produced plus whether any of them parked on a HITL question.
+// each ran node produced plus which run-set node(s), if any, parked on a
+// HITL question (nil/empty when none did) - the per-node detail
+// ApplyAssignmentOutcome needs to tell a genuinely failed sibling from a
+// paused one in the same step, not just whether ANYTHING paused.
 // The orchestrator wires this to dag.Executor.RunPlanStep; a test can fake it directly.
-type RunStepFunc func(ctx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (outputs map[string]string, paused bool, err error)
+type RunStepFunc func(ctx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (outputs map[string]string, needsInput map[string]bool, err error)
 
 // FinalizeAnswerFunc turns a plan's accumulated node outputs into the user-
 // facing answer (terminal node output, formatted if needed) - the
@@ -107,9 +110,11 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				"a preview of its result, its artifacts, and task_id. A rejection comes back as an error naming what " +
 				"to fix, so edit_plan and call execute again. If the plan does not yet declare `delivery`, this is a " +
 				"partial step - read the results, then either edit_plan to add the next assignment(s) (a dependency " +
-				"on a node that already ran hands it that node's result) or call execute again once you have. Once " +
-				"the plan declares `delivery`, this call is terminal: the answer is shown to the user directly, and " +
-				"you must output nothing further - no acknowledgement, no restatement, and never say a specialist " +
+				"on a node that already ran hands it that node's result) or call execute again once you have. A " +
+				"`failed` assignment cannot be retried within this plan - edit_plan refuses to remove or reassign it " +
+				"once it has run; call create_plan for a fresh attempt at that work instead of trying edit_plan again. " +
+				"Once the plan declares `delivery`, this call is terminal: the answer is shown to the user directly, " +
+				"and you must output nothing further - no acknowledgement, no restatement, and never say a specialist " +
 				"will respond (the work is already done).",
 		},
 		func(tc agent.Context, a executeArgs) (executeResult, error) {
@@ -235,7 +240,7 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			cache.Put(*plan)
 			cache.SetSelected(plan.ID)
 
-			// Re-emits dag_plan with the judged, fully-assembled shape - create_plan/edit_plan already sent an earlier draft.
+			// Emits the plan's only dag_plan event, with the judged, fully-assembled shape.
 			if yieldFn, ok := stream.YieldFromContext(tc); ok {
 				yieldFn(DagPlanEvent(tc, *plan))
 			}
@@ -244,13 +249,14 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			// call get dispatched - a done one keeps its recorded task_id/result forever.
 			run, seeded := partitionAssignments(rec.Assignments)
 			var outputs map[string]string
-			var stepPaused bool
+			var needsInput map[string]bool
 			if runStep != nil {
-				outputs, stepPaused, err = runStep(tc, *plan, seeded, run)
+				outputs, needsInput, err = runStep(tc, *plan, seeded, run)
 				if err != nil {
 					return executeResult{}, fmt.Errorf("execute: run: %w", err)
 				}
 			}
+			stepPaused := len(needsInput) > 0
 
 			results := make([]assignmentResult, 0, len(run))
 			var stepFailed bool
@@ -260,7 +266,7 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 					continue
 				}
 				out := outputs[nid]
-				status := ApplyAssignmentOutcome(&rec.Assignments[i], out, stepPaused)
+				status := ApplyAssignmentOutcome(&rec.Assignments[i], out, needsInput[nid])
 				if status == "failed" {
 					stepFailed = true
 				}

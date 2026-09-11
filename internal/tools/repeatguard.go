@@ -264,7 +264,11 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 		if n > repeatThreshold+repeatHardStopAfter {
 			return nil, g.hardStop(ctx, sessionID, chatID, nodeID, n)
 		}
-		return nil, g.refuse(sessionID, n)
+		// Adjacency trips on 3 identical ARGUMENTS alone - that's the whole
+		// point, catching a tool whose result varies slightly even on a
+		// genuine repeat (e.g. a fresh revision number) - so it hasn't
+		// confirmed the result also matches.
+		return nil, g.refuse(sessionID, n, false)
 	}
 	// Cross-call: same tool+args recurring with the SAME result even with
 	// other tool calls (or other args to this tool) sitting between - the
@@ -276,7 +280,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 		if cn > repeatThreshold+repeatHardStopAfter {
 			return nil, g.hardStop(ctx, sessionID, chatID, nodeID, cn)
 		}
-		return nil, g.refuse(sessionID, cn)
+		return nil, g.refuse(sessionID, cn, true) // crossStreak fingerprints args AND result - this tier HAS confirmed it
 	}
 
 	resource, hasResource := resourceFingerprint(argsJSON)
@@ -310,15 +314,23 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 // else). n is whichever check's own occurrence count tripped, so
 // consecutive refusals for the same key are never byte-identical (the model
 // can tell it's still being refused, not stuck on a cached response).
-func (g *repeatGuard) refuse(sessionID string, n int) error {
+// sameResult is only true for the cross-call tier, which fingerprints args
+// AND result - the adjacency tier trips on identical arguments alone, so
+// claiming it also got the same result would be false for the exact tools
+// it's meant to catch (e.g. a fresh artifact revision number every call).
+func (g *repeatGuard) refuse(sessionID string, n int, sameResult bool) error {
 	slog.Warn("tool call refused: identical call repeated", "component", "tools",
 		"tool", g.Name(), "consecutive", n, "session", sessionID)
+	result := ""
+	if sameResult {
+		result = " and got the same result"
+	}
 	return fmt.Errorf(
 		"REFUSED (attempt %d): this is the %s consecutive time you issued this exact %s call with these exact "+
-			"arguments and got the same result - it is already in the conversation above. Re-issuing it again will "+
+			"arguments%s - it is already in the conversation above. Re-issuing it again will "+
 			"END THIS TURN as a failure. Take a DIFFERENT action: use the result you already have, try a different "+
 			"tool or different arguments, or if you are finished, stop calling tools and write your final answer now.",
-		n-repeatThreshold+1, ordinal(n), g.Name())
+		n-repeatThreshold+1, ordinal(n), g.Name(), result)
 }
 
 // hardStop is the one tier that actually ends the turn: the model kept

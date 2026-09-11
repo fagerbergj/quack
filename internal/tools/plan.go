@@ -70,8 +70,13 @@ func summarizeAttachments(parts []*genai.Part) []attachmentMeta {
 }
 
 // genAIPlanStep: not a registered semconv attribute - the dag_plan revision
-// this execute call saved, so the ledger's per-turn "plan" events read as a
-// growing plan's numbered steps, not one flat event per call.
+// THIS execute call saved (SaveStructured's own revision counter), monotonic
+// per execute call but NOT a 1-based execute-step index: create_plan's own
+// save is revision 1, and every edit_plan save between executes bumps it
+// too, so e.g. create -> edit -> edit -> execute emits step=4 for the FIRST
+// executed step. Still strictly increasing per execute, so ordering the
+// ledger's per-turn "plan" events by it works - a future consumer just
+// shouldn't assume step N means the Nth execute call.
 const genAIPlanStep = "quack.plan.step"
 
 // emitPlanEvent: records a gen_ai "plan" ledger event once execute has run

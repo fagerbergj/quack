@@ -82,12 +82,16 @@ func trimContentsToBudget(req *model.LLMRequest, budget int) {
 	dropped := 0
 	i := 1
 	for i < lastUser && estimateTokens(req.Contents)+overhead > budget {
-		end := i + 1
-		if hasFunctionCall(req.Contents[i]) {
-			if end >= lastUser {
-				break // the paired response is the pinned content - can't drop either half
-			}
-			end++
+		// Always drop a complete round (this content plus the very next
+		// one), never a single content alone - a chat alternates roles
+		// strictly, so dropping just one joins its two neighbors into an
+		// adjacent SAME role (#slice3 review), exactly what the note-splice
+		// below already treats as unsafe. A FunctionCall's own response is
+		// exactly the next content in a well-formed session, so this still
+		// keeps that pair together as before.
+		end := i + 2
+		if end > lastUser {
+			break // would consume or split across the pinned content
 		}
 		req.Contents = append(req.Contents[:i], req.Contents[end:]...)
 		dropped += end - i

@@ -38,11 +38,13 @@ func PlanStepSessionID(chatID string) string { return chatID + planStepSessionSu
 // RunPlanIncrement dispatches through) requires a live sub-scheduler, which
 // only a workflow.NewDynamicNode body provides (see its doc), so this wraps
 // the call in its own disposable workflow+runner rather than driving it
-// directly from ctx. paused reports whether any run-set node parked on a
-// HITL question - see ResumePlanStep to answer it.
-func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool) (outputs map[string]string, paused bool, err error) {
+// directly from ctx. needsInput names exactly the run-set node(s) that
+// parked on a HITL question this round (nil/empty when none did) - see
+// ResumePlanStep to answer one; a caller that only needs to know WHETHER
+// anything paused can check len(needsInput) > 0.
+func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool) (outputs map[string]string, needsInput map[string]bool, err error) {
 	if len(run) == 0 {
-		return map[string]string{}, false, nil
+		return map[string]string{}, nil, nil
 	}
 	// Every node in run gets queued first, fresh hire or reused - the only
 	// lawful way into "running" for a REUSED node, whose prior status can be
@@ -68,10 +70,11 @@ func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, 
 // from that step (a sibling that already finished needs no seat here -
 // dag_plan's own task_id already marks it done); workflowagent.New's runner
 // (see its own doc) detects the FunctionResponse and resumes the SAME
-// session's paused RunState instead of starting the step over.
-func (e *Executor) ResumePlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool, interruptID, answer string) (outputs map[string]string, paused bool, err error) {
+// session's paused RunState instead of starting the step over. needsInput is
+// RunPlanStep's own (the resumed node re-asking is exactly the same shape).
+func (e *Executor) ResumePlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool, interruptID, answer string) (outputs map[string]string, needsInput map[string]bool, err error) {
 	if len(run) == 0 {
-		return map[string]string{}, false, nil
+		return map[string]string{}, nil, nil
 	}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{
 		FunctionResponse: &genai.FunctionResponse{
@@ -86,7 +89,7 @@ func (e *Executor) ResumePlanStep(ctx context.Context, plan Plan, appName, userI
 // driveStep builds the disposable per-chat workflow+runner RunPlanStep/
 // ResumePlanStep share and drives it with content - "run" (fresh dispatch)
 // or an adk_request_input answer (resume).
-func (e *Executor) driveStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool, content *genai.Content) (outputs map[string]string, paused bool, err error) {
+func (e *Executor) driveStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool, content *genai.Content) (outputs map[string]string, needsInput map[string]bool, err error) {
 	nodeOutputs := make(map[string]string)
 	stepNode := workflow.NewDynamicNode[any, string]("__exec-step",
 		func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
@@ -101,11 +104,11 @@ func (e *Executor) driveStep(ctx context.Context, plan Plan, appName, userID, ch
 		}, workflow.NodeConfig{})
 	wf, err := workflowagent.New(workflowagent.Config{Name: "orchestrator-plan-step", Edges: workflow.Chain(workflow.Start, stepNode)})
 	if err != nil {
-		return nil, false, fmt.Errorf("dag: plan step workflow: %w", err)
+		return nil, nil, fmt.Errorf("dag: plan step workflow: %w", err)
 	}
 	r, err := runner.New(runner.Config{AppName: appName, Agent: wf, SessionService: e.sessions, ArtifactService: e.artifacts, AutoCreateSession: true})
 	if err != nil {
-		return nil, false, fmt.Errorf("dag: plan step runner: %w", err)
+		return nil, nil, fmt.Errorf("dag: plan step runner: %w", err)
 	}
 
 	sink, _ := stream.YieldFromContext(ctx)
@@ -121,7 +124,7 @@ func (e *Executor) driveStep(ctx context.Context, plan Plan, appName, userID, ch
 	runSess := PlanStepSessionID(chatID)
 	for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
 		if rerr != nil {
-			return nodeOutputs, ds.Paused(), rerr
+			return nodeOutputs, ds.NeedsInput(), rerr
 		}
 		if ev == nil {
 			continue
@@ -129,5 +132,5 @@ func (e *Executor) driveStep(ctx context.Context, plan Plan, appName, userID, ch
 		ds.Handle(ev)
 	}
 	ds.Finish()
-	return nodeOutputs, ds.Paused(), nil
+	return nodeOutputs, ds.NeedsInput(), nil
 }
