@@ -8,7 +8,9 @@ description: >
 
 # Plan Work
 
-A plan is a list of **assignments**: each ties a node (a person doing one agent's job) to a `task`, with `depends_on` naming the assignments whose results it receives. `create_plan` starts one, `edit_plan` changes it, `execute` runs whatever has not run yet and returns each node's result. Agents come from the **Agents** list in your system prompt; call `list_nodes` first when a node already hired could take the next task (`node_id` continues its session instead of `agent` hiring a fresh one).
+A plan is a list of **assignments**: each ties a node (a person doing one agent's job) to a `task`, with `depends_on` naming the assignments whose results it receives. `create_plan` starts one, `edit_plan` changes it, `execute` runs whatever has not run yet and returns each node's result.
+
+Every assignment is either `{agent, task, depends_on}` - hires a new node, `agent` being an exact name from the **Agents** list in your system prompt - or `{node_id, task, depends_on}`, reassigning a node `list_nodes` showed you, which continues its own session. One of `agent` and `node_id` is required on every assignment, including the second and third. A sibling being hired in the same call has no id yet, so name its 0-based position in this `assignments` array instead of inventing one.
 
 **Before every execute, ask: if this runs as written, does the user get back what they asked to receive?** Name the artifact the request wants and find the assignment whose own task produces it. Exploring, investigating or "producing a report" never satisfies a request for a plan, a review or shipped code; it can only feed the assignment that produces the real thing.
 
