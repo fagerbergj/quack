@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/adk/v2/agent"
+
 	quackagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -40,8 +42,14 @@ func listDagNodeRecords(ctx context.Context, c *recordstore.Client) ([]dag.DagNo
 	}
 	out := make([]dag.DagNodeRecord, 0, len(summaries))
 	for _, s := range summaries {
+		// Fail closed on a real read error, unlike !ok (genuinely no record) -
+		// silently dropping a live node here strands a later reference to it
+		// behind an unrelated "unknown node id" error.
 		raw, _, ok, err := c.Latest(ctx, s.ID)
-		if err != nil || !ok {
+		if err != nil {
+			return nil, fmt.Errorf("list dag_node records: read %s: %w", s.ID, err)
+		}
+		if !ok {
 			continue
 		}
 		var rec dag.DagNodeRecord
@@ -79,6 +87,29 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	return strings.TrimSpace(s)
+}
+
+// AssignmentMetaFunc optionally stamps assignment.meta.<extension> at plan
+// creation/edit - never model-authored. Called once per upserted assignment
+// when this dispatch carries a trigger (githubSetup non-nil); a non-empty
+// return is merged under Meta["github"].
+type AssignmentMetaFunc func(ctx agent.Context, a dag.Assignment) map[string]any
+
+// stampAssignmentMeta runs onAssignment over assignments in place - a nil
+// hook or no trigger this dispatch (githubSetup nil) are both no-ops, since
+// meta.github only ever describes a GitHub-triggered dispatch's own branch.
+func stampAssignmentMeta(tc agent.Context, assignments []dag.Assignment, onAssignment AssignmentMetaFunc, githubSetup *dag.Setup) {
+	if onAssignment == nil || githubSetup == nil {
+		return
+	}
+	for i := range assignments {
+		if m := onAssignment(tc, assignments[i]); len(m) > 0 {
+			if assignments[i].Meta == nil {
+				assignments[i].Meta = map[string]map[string]any{}
+			}
+			assignments[i].Meta["github"] = m
+		}
+	}
 }
 
 // assignmentInput is one entry of create_plan/edit_plan's `assignments`

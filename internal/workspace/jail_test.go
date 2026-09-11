@@ -327,6 +327,47 @@ func TestRemoveChatScope(t *testing.T) {
 	}
 }
 
+// TestRemoveACPState covers node reuse's chat-archive/delete cleanup: every
+// ACP state dir this chat's nodes ever created is removed (the nodeID varies
+// per dir, chatID stays fixed), a sibling chat's dir survives, and a chat
+// with none yet is a clean no-op.
+func TestRemoveACPState(t *testing.T) {
+	j := newTestJail(t)
+	n1, err := j.ACPStateDir("alice", "chat1", "node1")
+	if err != nil {
+		t.Fatalf("ACPStateDir n1: %v", err)
+	}
+	n2, err := j.ACPStateDir("alice", "chat1", "node2")
+	if err != nil {
+		t.Fatalf("ACPStateDir n2: %v", err)
+	}
+	other, err := j.ACPStateDir("alice", "chat2", "node1")
+	if err != nil {
+		t.Fatalf("ACPStateDir other chat: %v", err)
+	}
+
+	if err := j.RemoveACPState("alice", "chat1"); err != nil {
+		t.Fatalf("RemoveACPState: %v", err)
+	}
+	for _, dir := range []string{n1, n2} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("chat1's ACP state dir %q still exists after RemoveACPState: %v", dir, err)
+		}
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("chat2's ACP state dir should survive chat1's RemoveACPState: %v", err)
+	}
+
+	// A chat with no ACP state dirs yet is a clean no-op.
+	if err := j.RemoveACPState("alice", "chat-never-used-acp"); err != nil {
+		t.Errorf("RemoveACPState on a chat with none = %v, want nil (no-op)", err)
+	}
+
+	if err := j.RemoveACPState("alice", ""); !errors.Is(err, ErrInvalidChatID) {
+		t.Errorf("RemoveACPState(empty) = %v, want ErrInvalidChatID", err)
+	}
+}
+
 func TestJailHomeDirIsSiblingNotNestedInARepo(t *testing.T) {
 	j := newTestJail(t)
 	// Simulate a cloned repo living directly under the user's jail root, the

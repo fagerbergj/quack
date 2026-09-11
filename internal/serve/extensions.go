@@ -261,6 +261,64 @@ func findDeliverer(exts []builtSDKExtension) (extsdk.Deliverer, string) {
 	return found, foundName
 }
 
+// AssignmentFreshnessChecker and AssignmentMetaExtension are not yet part of
+// extsdk.Extension - adding them there is a separate quack-extensions
+// change; the GitHub extension's real implementation lands in that repo,
+// not here. Defined on quack's own side so an extension CAN already
+// implement them today via Go's structural typing, detected the same
+// optional-interface way as GitCredentialSource/Deliverer above.
+type AssignmentFreshnessChecker interface {
+	// BeforeAssignment judges a reused node's assignment (about to resume its
+	// prior session) fresh or stale - e.g. the GitHub extension comparing
+	// a.Meta["github"]["base_sha"] against the branch's current tip.
+	BeforeAssignment(ctx context.Context, a dag.Assignment) (fresh bool, reason string)
+}
+
+// AssignmentMetaExtension stamps assignment.meta.<extension> at plan
+// creation/edit - extension-owned, never model-authored.
+type AssignmentMetaExtension interface {
+	OnAssignment(ctx context.Context, a dag.Assignment) map[string]any
+}
+
+// findAssignmentFreshnessChecker: same detection/ambiguity rule as
+// findGitCredentialSource.
+func findAssignmentFreshnessChecker(exts []builtSDKExtension) (AssignmentFreshnessChecker, string) {
+	var found AssignmentFreshnessChecker
+	var foundName string
+	for _, e := range exts {
+		c, ok := e.ext.(AssignmentFreshnessChecker)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement AssignmentFreshnessChecker; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", e.name)
+			continue
+		}
+		found, foundName = c, e.name
+	}
+	return found, foundName
+}
+
+// findAssignmentMetaExtension: same detection/ambiguity rule as findGitCredentialSource.
+func findAssignmentMetaExtension(exts []builtSDKExtension) (AssignmentMetaExtension, string) {
+	var found AssignmentMetaExtension
+	var foundName string
+	for _, e := range exts {
+		m, ok := e.ext.(AssignmentMetaExtension)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement AssignmentMetaExtension; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", e.name)
+			continue
+		}
+		found, foundName = m, e.name
+	}
+	return found, foundName
+}
+
 // findRecoverer mirrors findDeliverer for sdk.DeliveryRecoverer.
 func findRecoverer(exts []builtSDKExtension) (extsdk.DeliveryRecoverer, string) {
 	var found extsdk.DeliveryRecoverer

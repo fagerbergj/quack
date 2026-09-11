@@ -23,10 +23,10 @@ import (
 const kindDagNode = "dag_node"
 
 // DagNodeRecord is the "dag_node" kind's structured body. ContextID is the
-// A2A contextId minted for this node when it's created - for a pi/ACP node
-// it's whatever id that transport uses, stored in the same field. Slice 1
-// only stores it; nothing reads it back yet (no cross-turn node reuse -
-// that's slice 2).
+// A2A contextId minted for this node when it's created for a native node
+// (stable for the node's life); an ACP/pi node overwrites it once its first
+// round establishes a real transport session id (UpdateDagNodeContext), so a
+// later reuse has something session/load can actually resume.
 type DagNodeRecord struct {
 	NodeID    string     `json:"node_id"`
 	Agent     string     `json:"agent"`
@@ -83,6 +83,11 @@ func validateDagNode(raw json.RawMessage) error {
 // store row. ok=false when this chat has no dag_node record for nodeID (a
 // config-bound workflow node, which never went through create_plan/
 // edit_plan) - a silent no-op, fail-open like every other episodic write.
+// Refuses an illegal transition against the record's OWN last-read status
+// (CanTransition) rather than applying status unconditionally - this read
+// is independent of runlog's own store-row check, so an interleaved
+// cancel/done pair can't leave this record's mirror on a stale non-terminal
+// status forever (list_nodes/nodeIsRunning both read this record, not the store row).
 func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus) error {
 	if artifacts == nil || chatID == "" || nodeID == "" {
 		return nil
@@ -99,10 +104,62 @@ func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 	if rec.Status == status {
 		return nil
 	}
+	if !CanTransition(rec.Status, status) {
+		return fmt.Errorf("dag_node %s: illegal status transition %s -> %s", nodeID, rec.Status, status)
+	}
 	rec.Status = status
 	lineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
 	_, _, err = c.SaveStructured(ctx, kindDagNode, rec, nodeID, lineage)
 	return err
+}
+
+// UpdateDagNodeContext overwrites nodeID's persisted ContextID - the ACP
+// transport's real session id, learned only after its first round
+// establishes one (dag/graph.go, at node completion). Same fail-open/no-op
+// shape as UpdateDagNodeStatus; unlike status this has no transition table,
+// a transport id is just replaced.
+func UpdateDagNodeContext(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID, contextID string) error {
+	if artifacts == nil || chatID == "" || nodeID == "" || contextID == "" {
+		return nil
+	}
+	c := recordstore.New(artifacts, appName, userID, chatID)
+	raw, _, ok, err := c.Latest(ctx, kindDagNode+":"+nodeID)
+	if err != nil || !ok {
+		return err
+	}
+	var rec DagNodeRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return fmt.Errorf("dag_node: stored content doesn't unmarshal: %w", err)
+	}
+	if rec.ContextID == contextID {
+		return nil
+	}
+	rec.ContextID = contextID
+	lineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
+	_, _, err = c.SaveStructured(ctx, kindDagNode, rec, nodeID, lineage)
+	return err
+}
+
+// Resumable reports whether list_nodes/create_plan-edit_plan reuse should
+// offer this node for reassignment, and why: only a node that has actually
+// finished a run (terminal status) has a session worth resuming - a node
+// still queued has none yet, and one running/paused is already live
+// (nodeIsRunning already blocks reassigning those at plan-authoring time).
+func (r DagNodeRecord) Resumable() (bool, string) {
+	switch r.Status {
+	case StatusDone:
+		return true, "done - continues its own session"
+	case StatusFailed:
+		return true, "failed - continues its own session"
+	case StatusCancelled:
+		return true, "cancelled - continues its own session"
+	case StatusRunning:
+		return false, "currently running"
+	case StatusPaused, StatusNeedsInput:
+		return false, "paused - resolve or cancel it first"
+	default:
+		return false, "queued - hasn't run yet"
+	}
 }
 
 // MintNodeID names the next node id for agent given every node id already

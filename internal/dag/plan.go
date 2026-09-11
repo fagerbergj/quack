@@ -70,6 +70,12 @@ type Node struct {
 	ContextWindow int
 	// Artifact: episodic record name this node writes on gate pass (#1006).
 	Artifact string
+	// ResumedFrom: this node's dag_node ContextID at plan-build time, set
+	// only when the assignment named an existing (terminal-status) node id -
+	// "" for a freshly minted node. Seeds an ACP node's session/load and
+	// drives the "continues" ledger/UI signal for both transports; a native
+	// node resumes automatically off its own stable A2A contextID regardless.
+	ResumedFrom string
 }
 
 func terminalIDs(nodes []Node) []string {

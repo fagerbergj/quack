@@ -218,10 +218,11 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 		return
 	}
 	payload, err := json.Marshal(struct {
-		NodeID string `json:"node_id"`
-		Turn   string `json:"turn"`
-		Round  int    `json:"round"`
-	}{NodeID: nodeID, Turn: turnID, Round: rounds})
+		NodeID      string `json:"node_id"`
+		Turn        string `json:"turn"`
+		Round       int    `json:"round"`
+		ResumedFrom string `json:"resumed_from,omitempty"`
+	}{NodeID: nodeID, Turn: turnID, Round: rounds, ResumedFrom: cfg.ResumedFrom})
 	if err != nil {
 		return
 	}

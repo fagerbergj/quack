@@ -109,6 +109,10 @@ type Config struct {
 	// instance NewJudgeFactory closes over) - stamped with per-round coords
 	// the same way workerModel is, so its metrics don't rely on ctx alone.
 	JudgeModel model.LLM
+	// ResumedFrom: dag.Node.ResumedFrom passed through - "" for a fresh
+	// node. Seeds an ACP node's first-round session/load id and marks the
+	// node.started ledger entry/stream event as a continuation.
+	ResumedFrom string
 }
 
 // SetupBranch mirrors dag.Plan.Setup delivery fields.

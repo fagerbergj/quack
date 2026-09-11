@@ -80,6 +80,27 @@ type Orchestrator struct {
 	// every turn's runner.Config - nil leaves the chat session uncompacted,
 	// same as before #A3.
 	compaction *compaction.Config
+	// assignmentFreshness/assignmentMeta: optional extension hooks (see
+	// SetAssignmentFreshnessCheck/SetAssignmentMetaHook) - nil until an
+	// extension implementing the optional interface is active.
+	assignmentFreshness tools.AssignmentFreshnessFunc
+	assignmentMeta      tools.AssignmentMetaFunc
+}
+
+// SetAssignmentFreshnessCheck wires execute's optional per-reused-node
+// staleness check (design: an extension's BeforeAssignment hook, e.g. the
+// GitHub extension comparing assignment.meta.github.base_sha against the
+// branch's current tip). nil (no active extension implements it) means
+// every reused node is always treated as fresh.
+func (o *Orchestrator) SetAssignmentFreshnessCheck(fn tools.AssignmentFreshnessFunc) {
+	o.assignmentFreshness = fn
+}
+
+// SetAssignmentMetaHook wires create_plan/edit_plan's optional per-assignment
+// meta stamp (design: an extension's OnAssignment hook) - nil skips it, so
+// assignment.meta.<extension> stays unset until an extension supplies one.
+func (o *Orchestrator) SetAssignmentMetaHook(fn tools.AssignmentMetaFunc) {
+	o.assignmentMeta = fn
 }
 
 // SetCompaction wires adk/v2's native runner-level compaction (built via
@@ -613,19 +634,20 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: list_nodes tool: "+err.Error()), nil)
 			return
 		}
-		createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds)
+		createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds, o.assignmentMeta)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: create_plan tool: "+err.Error()), nil)
 			return
 		}
-		editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds)
+		editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds, o.assignmentMeta)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
 			return
 		}
 		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, history, message, attachments,
 			githubSetup, allowedKinds,
-			tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx))
+			tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx),
+			orchestratorName, o.assignmentFreshness)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return
@@ -635,14 +657,12 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: choice tool: "+err.Error()), nil)
 			return
 		}
-		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's doc.
+		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's
+		// doc. Wrapped as one pass over the whole toolList below, once every
+		// tool this turn offers (DAG tools plus memory/artifact tools appended
+		// after) is assembled - the identical-call loop class RepeatWrap guards
+		// against applies to any of them, not just the five DAG tools.
 		repeats := tools.NewRepeatStates()
-		for _, wrapped := range []*tool.Tool{&listNodesTool, &createPlanTool, &editPlanTool, &execTool, &choiceTool} {
-			if *wrapped, err = tools.RepeatWrap(*wrapped, repeats); err != nil {
-				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
-				return
-			}
-		}
 
 		var toolsets []tool.Toolset
 		if o.skillTS != nil {
@@ -705,6 +725,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 				return
 			}
 			toolList = append(toolList, writeKindTools...)
+		}
+
+		for i, t := range toolList {
+			if toolList[i], err = tools.RepeatWrap(t, repeats); err != nil {
+				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
+				return
+			}
 		}
 
 		ag, err := llmagent.New(llmagent.Config{

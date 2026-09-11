@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
@@ -17,7 +19,15 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
+
+// AssignmentFreshnessFunc optionally judges whether a reused node's prior
+// context is still fresh before execute resumes it - e.g. the GitHub
+// extension checking assignment.meta.github.base_sha against the branch's
+// current tip. fresh=false runs the same node id on a brand-new session
+// instead of resuming; nil skips the check (always fresh).
+type AssignmentFreshnessFunc func(ctx agent.Context, a dag.Assignment) (fresh bool, reason string)
 
 type executeArgs struct {
 	PlanID string `json:"plan_id"` // the plan_id create_plan/edit_plan returned
@@ -36,8 +46,11 @@ const ExecPlanKey = "orch.exec.plan"
 // review-deliverable, review-fanout, the plan judge, against this
 // conversation's history/message), provisions Setup, and selects the plan
 // for the executor. A rejection surfaces as a tool error - edit_plan and
-// call execute again.
-func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCache, provision func(ctx context.Context, userID, chatID string, plan *dag.Plan) error, history []dag.HistoryTurn, message string, attachments []*genai.Part, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool) (tool.Tool, error) {
+// call execute again, and is also recorded as a judge_round anchored to
+// nodeID (the authoring lineage id) so the artifact panel shows it. Every
+// assignment naming a terminal (already-run) node id resumes that node's
+// own session, unless freshnessCheck says it's stale.
+func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCache, provision func(ctx context.Context, userID, chatID string, plan *dag.Plan) error, history []dag.HistoryTurn, message string, attachments []*genai.Part, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool, nodeID string, freshnessCheck AssignmentFreshnessFunc) (tool.Tool, error) {
 	return functiontool.New[executeArgs, executeResult](
 		functiontool.Config{
 			Name: "execute",
@@ -65,10 +78,26 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
 			nodeAgent := make(map[string]string, len(nodes))
+			resumedFrom := make(map[string]string, len(nodes))
 			for _, n := range nodes {
 				nodeAgent[n.NodeID] = n.Agent
+				if resumable, _ := n.Resumable(); resumable && n.ContextID != "" {
+					resumedFrom[n.NodeID] = n.ContextID
+				}
 			}
-			rawNodes, err := dag.AssignmentsToRawNodes(rec.Assignments, nodeAgent)
+			if freshnessCheck != nil {
+				for _, a := range rec.Assignments {
+					if resumedFrom[a.NodeID] == "" {
+						continue
+					}
+					if fresh, reason := freshnessCheck(tc, a); !fresh {
+						slog.Info("reused node's context is stale; running a fresh session",
+							"component", "execute", "node", a.NodeID, "reason", reason)
+						delete(resumedFrom, a.NodeID)
+					}
+				}
+			}
+			rawNodes, err := dag.AssignmentsToRawNodes(rec.Assignments, nodeAgent, resumedFrom)
 			if err != nil {
 				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
@@ -89,6 +118,9 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				if errors.As(err, &rejected) {
 					reason = rejected.Reason
 					cache.RecordRejection(reason)
+					if _, _, jerr := vetting.SavePlanRejectionJudgeRound(tc, c, nodeID, tc.InvocationID(), reason); jerr != nil {
+						slog.Warn("plan rejection judge_round save failed", "component", "execute", "err", jerr)
+					}
 				}
 				inference.RecordPlanRejection(tc.SessionID(), reason)
 				return executeResult{}, fmt.Errorf("execute: %w", err)
@@ -117,6 +149,20 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				if err := provision(tc, tc.UserID(), tc.SessionID(), plan); err != nil {
 					return executeResult{}, fmt.Errorf("execute: %w", err)
 				}
+			}
+
+			// Stamps the plan record's own lifecycle past "planned" (nothing
+			// else advances it - a later slice owns "done") and records each
+			// assignment's dispatch task_id. Best-effort: a store hiccup here
+			// must not block a plan the judge already accepted.
+			running := rec
+			running.Status = "running"
+			for i := range running.Assignments {
+				running.Assignments[i].TaskID = uuid.NewString()
+			}
+			runLineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
+			if _, _, serr := c.SaveStructured(tc, "dag_plan", running, "", runLineage); serr != nil {
+				slog.Warn("execute: dag_plan running/task_id update failed", "component", "execute", "err", serr)
 			}
 
 			planJSON, err := json.Marshal(*plan)

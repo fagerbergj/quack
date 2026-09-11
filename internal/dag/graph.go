@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	gateFailedKey = "quack.gate_failed/"
-	gateScoreKey  = "quack.gate_score/"
-	gatePassedKey = "quack.gate_passed/"
-	gateRoundsKey = "quack.gate_rounds/"
+	gateFailedKey  = "quack.gate_failed/"
+	gateScoreKey   = "quack.gate_score/"
+	gatePassedKey  = "quack.gate_passed/"
+	gateRoundsKey  = "quack.gate_rounds/"
+	gateContextKey = "quack.gate_context/" // this round's resumable transport context id, "" for a native node
 )
 
 // nodeScopedWorker: fresh worker/model/tools per DAG node.
@@ -40,10 +41,11 @@ type nodeScopedWorker interface {
 	// already-built tools' writes carry the round's real lineage (#1123).
 	// sink lets this node's own A2A server re-emit a `compaction` SSE event
 	// (#1185 follow-up) - nil is a valid "no active hub" no-op.
-	// release(paused): paused=false ("done") reaps this node's own worker
-	// session (#A2); paused=true (a HITL park) must leave it so a resumed
-	// dispatch - a brand new ForNode call, but to the SAME deterministic
-	// session id - still finds its prior history.
+	// release(paused): closes this node's own per-dispatch A2A server;
+	// the underlying worker session itself now outlives every dispatch
+	// (paused or not) and is only reaped at chat archive/delete, so a later
+	// reuse - a brand new ForNode call to the SAME deterministic session id -
+	// always finds its prior history.
 	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(paused bool), err error)
 }
 
@@ -53,7 +55,7 @@ type nodeScopedWorker interface {
 // (#1123) - must match the userID the rest of the chat's artifacts (e.g. the
 // orchestrator's own writes) were saved under, or a node's list/read/edit
 // would silently see nothing.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent), sessions session.Service) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
@@ -121,6 +123,7 @@ func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string 
 func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(string) vetting.Config, chatID, source string) vetting.Config {
 	cfg := cfgFor(node.AgentName)
 	cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
+	cfg.ResumedFrom = node.ResumedFrom
 	cfg.Checks = node.Checks
 	cfg.Workdir = node.Workdir
 	cfg.NodeID = workspaceNodeID(plan, node)
@@ -174,7 +177,7 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 	return cfg
 }
 
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(paused bool), admission *Admission, spec AdmissionSpec,
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), release func(paused bool), admission *Admission, spec AdmissionSpec,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sessions session.Service) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
@@ -228,6 +231,14 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				ReadOnly:        cfg.ReadOnly,
 				InvocationID:    ctx.InvocationID(),
 				ChatID:          chatID, // real chat scope; the ADK session id below is a retry-only alias
+				// ACPSessionID seeded from the reused node's prior context: a
+				// no-op for a fresh node (empty) or a native node (never read
+				// by the ACP transport); an ACP node's resolveNode passes it to
+				// session/load as this round's priorSessionID.
+				ACPSessionID: cfg.ResumedFrom,
+			}
+			if cfg.ResumedFrom != "" {
+				slog.Info("node resuming its own session", "component", "dag", "node", node.ID, "resumed_from", cfg.ResumedFrom)
 			}
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
@@ -312,14 +323,23 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				return answer, nil
 			}
 			if err == nil {
+				// Read before UnregisterAdvisorThread's defer fires: for an ACP
+				// node this is the real transport session id its first round
+				// established (SetAdvisorThreadSessionID); for a native node it's
+				// whatever was seeded above (harmless - never consulted there).
+				contextID := ""
+				if at, ok := vetting.LookupAdvisorThread(token); ok {
+					contextID = at.ACPSessionID
+				}
 				if recordGate != nil {
-					recordGate(node.ID, res.Score, res.Passed, res.Rounds)
+					recordGate(node.ID, res.Score, res.Passed, res.Rounds, contextID)
 				}
 				st := ctx.State()
 				_ = st.Set(gateFailedKey+node.ID, !res.Passed)
 				_ = st.Set(gateScoreKey+node.ID, res.Score)
 				_ = st.Set(gatePassedKey+node.ID, res.Passed)
 				_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
+				_ = st.Set(gateContextKey+node.ID, contextID)
 			}
 			return answer, err
 		},

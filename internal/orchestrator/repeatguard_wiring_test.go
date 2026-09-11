@@ -9,6 +9,7 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 
@@ -84,5 +85,44 @@ func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 	if !strings.Contains(answer, "stopping") {
 		t.Fatalf("answer = %q, want the model's own recovery text once the repeat guard refused it - "+
 			"if this never arrives, create_plan isn't actually guarded and the run would loop forever", answer)
+	}
+}
+
+// repeatWriteArtifactStub is repeatLoopStub's twin for write_artifact - a
+// hand-built tool appended AFTER the DAG tools (orchestrator.go), the class
+// the repeat guard used to skip entirely.
+type repeatWriteArtifactStub struct{}
+
+func (*repeatWriteArtifactStub) Name() string { return "repeatWriteArtifactStub" }
+
+func (s *repeatWriteArtifactStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if lastToolResponseContains(req, "REFUSED") {
+			yield(stubText("Understood, stopping."), nil)
+			return
+		}
+		yield(stubCall("write_artifact", map[string]any{"kind": "text", "mime": "text/plain", "bytes": "aGVsbG8="}), nil)
+	}
+}
+
+// TestOrchestratorRepeatGuardCoversAppendedTools proves the guard wraps the
+// WHOLE final tool list, not just the five DAG tools set up before memory/
+// artifact tools are appended - a model spamming an identical write_artifact
+// call must be refused too.
+func TestOrchestratorRepeatGuardCoversAppendedTools(t *testing.T) {
+	stub := &repeatWriteArtifactStub{}
+	sessions := session.InMemoryService()
+	ex := dag.NewExecutor(sessions, nil, nil, vetting.NewJudgeFactory(stub, nil, nil),
+		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	planner := dag.NewPlanner(nil, nil, nil)
+	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	o.SetArtifacts(artifact.InMemoryService())
+
+	runTurn(t, o, "write the same artifact over and over")
+
+	answer := o.LatestAnswer(context.Background(), "u", "chat")
+	if !strings.Contains(answer, "stopping") {
+		t.Fatalf("answer = %q, want the model's own recovery text once the repeat guard refused write_artifact - "+
+			"if this never arrives, tools appended after the DAG five aren't guarded", answer)
 	}
 }

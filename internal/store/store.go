@@ -1022,8 +1022,22 @@ func truncateTitle(title string, maxLen int) string {
 // ArchiveChat toggles the archived flag on a chat.
 // Archiving never touches UpdatedAt so that archive/unarchive doesn't reorder
 // the recency-sorted chat list - UpdateColumn (not Update) is required for that: GORM auto-stamps UpdatedAt on any plain Update/Updates call by field-name convention, and only UpdateColumn/UpdateColumns skip that.
+// Archiving (not unarchiving) also reaps every per-node worker session this
+// chat's nodes hold open - the same best-effort ReapNodeSessions DeleteChat
+// runs, since node reuse now keeps those sessions alive past a single node's
+// completion; archive is the first point in a chat's life where they're safe
+// to let go (unarchiving to keep working starts those nodes fresh, same as if they'd never run).
 func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error {
-	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).UpdateColumn("archived", archived).Error
+	if err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).UpdateColumn("archived", archived).Error; err != nil {
+		return err
+	}
+	if archived {
+		if err := s.ReapNodeSessions(ctx, id); err != nil {
+			slog.Warn("chat archived but its per-node worker sessions could not be reaped",
+				"component", "store", "chat", id, "err", err)
+		}
+	}
+	return nil
 }
 
 // SaveTurn persists a new turn at the next available sequence position.

@@ -25,8 +25,11 @@ type createPlanArgs struct {
 // per assignment. githubSetup, when non-nil, always overrides Setup: the
 // GitHub extension already knows the real repo/branch/PR, so the model's
 // guess never wins. Saves the same dag_plan/dag_node records edit_plan and
-// the artifact panel read.
-func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string) (tool.Tool, error) {
+// the artifact panel read. nodeID is the AUTHORING lineage id stamped on
+// those records (e.g. "orchestrator") - unrelated to a dag_node's own
+// node_id, which upsertNodes mints separately. onAssignment, when non-nil,
+// stamps assignment.meta.github on a GitHub-triggered dispatch.
+func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
 	artifactDesc := "`assignments[].checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its " +
 		"commands: the trust gate derives a code node's checks from the repo itself after the node clones it."
 	return functiontool.New[createPlanArgs, planUpsertResult](
@@ -65,6 +68,7 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			if err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
+			stampAssignmentMeta(tc, assignments, onAssignment, githubSetup)
 			setup := a.Setup
 			if githubSetup != nil {
 				s := *githubSetup
@@ -90,7 +94,10 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			for _, n := range minted {
 				nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
 				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
-					return planUpsertResult{}, fmt.Errorf("create_plan: save dag_node %s: %w", n.NodeID, err)
+					// The dag_plan revision above already saved - a bare error here
+					// leaves a live plan referencing a node list_nodes won't show yet.
+					return planUpsertResult{}, fmt.Errorf("create_plan: save dag_node %s: %w; "+
+						"the plan was already saved - call create_plan again to replace it", n.NodeID, err)
 				}
 			}
 

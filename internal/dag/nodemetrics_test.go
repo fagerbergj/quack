@@ -51,7 +51,7 @@ func TestNodeDoneReportsDurationAndGateResult(t *testing.T) {
 // isn't visible to a fresh Get at that moment. Recording it must round-trip.
 func TestRecordedGateResultIsReadableImmediately(t *testing.T) {
 	e := &Executor{}
-	e.recordGateResult("chat-1", "n1", 0.85, true, 2)
+	e.recordGateResult("chat-1", "n1", 0.85, true, 2, "")
 
 	got := e.gateScore(t.Context(), "quack", "local", "chat-1", "n1")
 	if got.score != 0.85 || !got.passed || got.rounds != 2 {

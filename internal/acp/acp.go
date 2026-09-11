@@ -254,10 +254,9 @@ type promptDone struct {
 // (draft -> judge -> revise -> ...): the shim holds pi alive for its own
 // stdio session's life, so a second session/prompt on the SAME connection carries history forward with no re-init and no transcript replay (#1006).
 type pinnedProc struct {
-	h           *procHandle
-	sessID      sdk.SessionId
-	toolNames   []string
-	acpStateDir string
+	h         *procHandle
+	sessID    sdk.SessionId
+	toolNames []string
 }
 
 // pinned: advisorToken -> the node's pinned process - shared across every
@@ -265,8 +264,11 @@ type pinnedProc struct {
 // per node instance, vetting.AdvisorThreadToken).
 var pinned sync.Map
 
-// ClosePinnedSession kills token's pinned process and removes its ACP state
-// dir - wired to vetting.NodeSessionClosed since acp can't import vetting.
+// ClosePinnedSession kills token's pinned OS process - wired to
+// vetting.NodeSessionClosed since acp can't import vetting. Its ACP state
+// dir (the pi shim's own on-disk session) is left in place: a node's
+// session now survives past this single dispatch for later reuse, and is
+// only removed at chat archive/delete (workspace.Jail.RemoveACPState).
 func ClosePinnedSession(token string) {
 	if v, ok := pinned.LoadAndDelete(token); ok {
 		closePinnedProc(v.(*pinnedProc))
@@ -286,9 +288,6 @@ func CloseAllPinnedSessions() {
 
 func closePinnedProc(pp *pinnedProc) {
 	pp.h.close(nil)
-	if pp.acpStateDir != "" {
-		_ = os.RemoveAll(pp.acpStateDir)
-	}
 }
 
 // round drives one subprocess round. Separated from runPrompt for testability.
@@ -345,7 +344,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	var pinOK bool
 	defer func() {
 		if pinOK && advisorToken != "" {
-			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames, acpStateDir: caps.ACPStateDir})
+			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames})
 			return
 		}
 		if advisorToken != "" {

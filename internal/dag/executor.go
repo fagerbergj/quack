@@ -103,9 +103,11 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	// failure lookup below must use this, not the raw plan node id, or the
 	// record the recorder wrote is never found (#1109 re-review finding).
 	scopeByID := make(map[string]string, len(plan.Nodes))
+	resumedFromByID := make(map[string]string, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		agentByID[n.ID] = n.AgentName
 		scopeByID[n.ID] = workspaceNodeID(plan, n)
+		resumedFromByID[n.ID] = n.ResumedFrom
 	}
 	ds := newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, scopeByID, yield, nodeOutputs, func(nodeID string) gateScore {
 		return e.gateScore(ctx, appName, userID, sessionID, nodeID)
@@ -117,6 +119,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		return e.NodeQueueGuidance(cancelKey, nodeID, gen)
 	})
 	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
+	ds.resumedFromByID = resumedFromByID
 	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds}
 }
 
@@ -185,8 +188,8 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 	}
 	sink, _ := stream.YieldFromContext(ctx)
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
-		func(nodeID string, score float64, passed bool, rounds int) {
-			e.recordGateResult(chatID, nodeID, score, passed, rounds)
+		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
+			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
 		}, e.admission, e.specFor, artifacts, e.walLedger, nil, sink, e.sessions) // retry never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
@@ -204,6 +207,9 @@ type gateScore struct {
 	score  float64
 	passed bool
 	rounds int
+	// contextID: the ACP transport session id this round established, "" for
+	// a native node or one that never got one - see graph.go's recordGate call.
+	contextID string
 }
 
 // SilentGapError is the true silent-gap message (#568): empty output with no
@@ -228,8 +234,8 @@ func emptyNodeError(chatID, nodeID, agent string) string {
 
 func gateResultKey(chatID, nodeID string) string { return chatID + "\x00" + nodeID }
 
-func (e *Executor) recordGateResult(chatID, nodeID string, score float64, passed bool, rounds int) {
-	e.gateResults.Store(gateResultKey(chatID, nodeID), gateScore{score: score, passed: passed, rounds: rounds})
+func (e *Executor) recordGateResult(chatID, nodeID string, score float64, passed bool, rounds int, contextID string) {
+	e.gateResults.Store(gateResultKey(chatID, nodeID), gateScore{score: score, passed: passed, rounds: rounds, contextID: contextID})
 }
 
 func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, nodeID string) gateScore {
@@ -259,6 +265,9 @@ func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, no
 	}
 	if v, err := st.Get(gateRoundsKey + nodeID); err == nil {
 		g.rounds = toInt(v)
+	}
+	if v, err := st.Get(gateContextKey + nodeID); err == nil {
+		g.contextID, _ = v.(string)
 	}
 	return g
 }
@@ -293,6 +302,10 @@ type dagStream struct {
 	// every test, which is safe (handle's switch guards it) and keeps every
 	// existing newDagStream(...) test call site unchanged.
 	deliveredOf func(string) bool
+	// resumedFromByID: per-node dag.Node.ResumedFrom, keyed the same way as
+	// agentByID. Same "set post-construction" reason as deliveredOf; a nil
+	// map reads as "" everywhere, the fresh-node default.
+	resumedFromByID map[string]string
 
 	started     map[string]bool
 	doneEmitted map[string]bool
@@ -365,7 +378,8 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	if !s.started[node] {
 		s.started[node] = true
 		s.startedAt[node] = time.Now()
-		if !s.emit(stream.WithTrace(stream.NodeStart(node, s.agentByID[node]), s.traceID)) {
+		ev := stream.WithResumedFrom(stream.NodeStart(node, s.agentByID[node]), s.resumedFromByID[node])
+		if !s.emit(stream.WithTrace(ev, s.traceID)) {
 			return false
 		}
 	}
@@ -607,6 +621,7 @@ func (s *dagStream) nodeDoneData(node string) stream.NodeDoneData {
 		d.JudgeFinalScore = g.score
 		d.JudgePassed = g.passed
 		d.JudgeRounds = int32(g.rounds)
+		d.ContextID = g.contextID
 	}
 	return d
 }

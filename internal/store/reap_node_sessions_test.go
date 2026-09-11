@@ -68,6 +68,55 @@ func TestDeleteChat_ReapsPerNodeWorkerSessions(t *testing.T) {
 	}
 }
 
+// TestArchiveChat_ReapsPerNodeWorkerSessionsOnlyWhenArchiving: node reuse
+// keeps a node's own worker session alive past its dispatch (release no
+// longer reaps it) - archiving is the first point in a chat's life it's
+// safe to let go, the same sweep DeleteChat already runs. Un-archiving must
+// not trigger it (nothing to reap after the first archive; a re-run must
+// stay a no-op, not an error).
+func TestArchiveChat_ReapsPerNodeWorkerSessionsOnlyWhenArchiving(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+
+	c, err := st.CreateChat(ctx, "sys")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	chatID := c.ID
+
+	resp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: "code-implementer", UserID: "A2A_USER_" + chatID + ":n1", SessionID: chatID + ":n1"})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	if err := st.Sessions.AppendEvent(ctx, resp.Session, session.NewEvent(ctx, "test")); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	if err := st.ArchiveChat(ctx, chatID, false); err != nil {
+		t.Fatalf("ArchiveChat(false): %v", err)
+	}
+	if resp, err := st.Sessions.Get(ctx, &session.GetRequest{AppName: "code-implementer", UserID: "A2A_USER_" + chatID + ":n1", SessionID: chatID + ":n1"}); err != nil || resp == nil || resp.Session == nil {
+		t.Fatalf("node session reaped by ArchiveChat(false), want it left alone: %v", err)
+	}
+
+	if err := st.ArchiveChat(ctx, chatID, true); err != nil {
+		t.Fatalf("ArchiveChat(true): %v", err)
+	}
+	if resp, err := st.Sessions.Get(ctx, &session.GetRequest{AppName: "code-implementer", UserID: "A2A_USER_" + chatID + ":n1", SessionID: chatID + ":n1"}); err == nil && resp != nil && resp.Session != nil {
+		t.Error("node session still present after ArchiveChat(true), want reaped")
+	}
+
+	// The chat itself must still be archived and readable - the reap is a
+	// side effect, never a reason to fail the archive.
+	got, err := st.GetChat(ctx, chatID)
+	if err != nil || got == nil || !got.Archived {
+		t.Fatalf("GetChat after ArchiveChat(true) = %+v, err=%v, want archived=true", got, err)
+	}
+}
+
 // TestReapNodeSessions_UnderscoreDoesNotWidenMatch is a regression test for
 // the ADK audit's A2 finding: ReapNodeSessions built its LIKE pattern from
 // the raw chat id, and SQL LIKE treats a bare "_" as "match any one character" - a chat id containing a literal underscore (plausible: GitHub repo names allow them, e.g. "ext:github:owner/my_repo#42") could sweep a different chat's still-live worker session that merely differs by one character at that position. likeEscape backslash-escapes the wildcard before it reaches the query.

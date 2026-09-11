@@ -653,6 +653,18 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		deliver = sdkDeliverAdapter{deliverer: deliverer}.Deliver
 		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
 	}
+	freshnessChecker, freshnessCheckerName := findAssignmentFreshnessChecker(sdkExts)
+	var assignmentFreshness tools.AssignmentFreshnessFunc
+	if freshnessChecker != nil {
+		assignmentFreshness = func(ctx adkagent.Context, a dag.Assignment) (bool, string) { return freshnessChecker.BeforeAssignment(ctx, a) }
+		slog.Info("extension supplies assignment freshness checks", "component", "startup", "extension", freshnessCheckerName)
+	}
+	metaExtension, metaExtensionName := findAssignmentMetaExtension(sdkExts)
+	var assignmentMeta tools.AssignmentMetaFunc
+	if metaExtension != nil {
+		assignmentMeta = func(ctx adkagent.Context, a dag.Assignment) map[string]any { return metaExtension.OnAssignment(ctx, a) }
+		slog.Info("extension supplies assignment meta", "component", "startup", "extension", metaExtensionName)
+	}
 	if ledgerStore != nil {
 		// #1144 P5: chat/turn/plan writes go through AppendIntent too now.
 		st.SetWALLedger(ledgerStore)
@@ -822,6 +834,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// a prod config without it silently dropped every plan record (#1122).
 	orch.SetArtifacts(artifacts)
 	orch.SetNodeSessionReaper(st.ReapNodeSessions)
+	orch.SetAssignmentFreshnessCheck(assignmentFreshness)
+	orch.SetAssignmentMetaHook(assignmentMeta)
 	// Same source of truth as buildAgents' per-node compactionFor
 	// (cfg.Session.Compaction) - built once here for the orchestrator's own
 	// long-lived chat session, which buildAgents never sees (#A3).
@@ -1426,10 +1440,11 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 					_ = srv.Close()
 					return nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
 				}
-				// track's release also reaps the deterministic worker session this node's first dispatch
-				// creates (agent.scopeMessage) - otherwise every node execution leaks a Postgres
-				// sessions/events row forever (#A2).
-				release := nodeServers.track(srv, sessions, wag.Name(), agent.WorkerSessionUser(workerContextID), workerContextID)
+				// The deterministic worker session (agent.scopeMessage) this node's
+				// first dispatch creates now outlives this dispatch - reaped only
+				// at chat archive/delete (store.Store.ReapNodeSessions), so a
+				// later reuse always finds it.
+				release := nodeServers.track(srv)
 				return client, wm, builtins, setRoundCoords, release, nil
 			},
 		}

@@ -24,8 +24,11 @@ type editPlanArgs struct {
 // NewEditPlanTool: upserts assignments (keyed by node_id, same shape as
 // create_plan - agent hires, node_id reassigns) into the chat's current
 // plan, drops assignments named in `remove`, and updates setup/delivery
-// when given. Unmentioned assignments are left exactly as they are.
-func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string) (tool.Tool, error) {
+// when given. Unmentioned assignments are left exactly as they are. nodeID
+// is the AUTHORING lineage id stamped on the saved records (e.g.
+// "orchestrator") - unrelated to a dag_node's own node_id. onAssignment,
+// when non-nil, stamps assignment.meta.github on a GitHub-triggered dispatch.
+func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
 	return functiontool.New[editPlanArgs, planUpsertResult](
 		functiontool.Config{
 			Name: "edit_plan",
@@ -80,6 +83,7 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				for _, n := range minted {
 					nodeAgent[n.NodeID] = n.Agent
 				}
+				stampAssignmentMeta(tc, upserts, onAssignment, githubSetup)
 			}
 
 			rec := current
@@ -105,7 +109,10 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			for _, n := range minted {
 				nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
 				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
-					return planUpsertResult{}, fmt.Errorf("edit_plan: save dag_node %s: %w", n.NodeID, err)
+					// The dag_plan revision above already saved - a bare error here
+					// leaves a live plan referencing a node list_nodes won't show yet.
+					return planUpsertResult{}, fmt.Errorf("edit_plan: save dag_node %s: %w; "+
+						"the plan was already saved - call edit_plan again to replace it", n.NodeID, err)
 				}
 			}
 

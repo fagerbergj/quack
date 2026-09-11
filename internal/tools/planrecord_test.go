@@ -182,8 +182,13 @@ func TestBuildNodeSummariesReportsTerminalStatusAndContextID(t *testing.T) {
 		t.Fatalf("before = %+v, want status queued (setup for this test)", before)
 	}
 
+	// Realistic transition sequence: queued -> running -> done. CanTransition
+	// rejects a bare queued -> done jump.
+	if err := dag.UpdateDagNodeStatus(ctx, svc, "quack", "u1", "chat1", "impl-1", dag.StatusRunning); err != nil {
+		t.Fatalf("UpdateDagNodeStatus (running): %v", err)
+	}
 	if err := dag.UpdateDagNodeStatus(ctx, svc, "quack", "u1", "chat1", "impl-1", dag.StatusDone); err != nil {
-		t.Fatalf("UpdateDagNodeStatus: %v", err)
+		t.Fatalf("UpdateDagNodeStatus (done): %v", err)
 	}
 
 	after, err := buildNodeSummaries(ctx, c, notRunning)
@@ -246,5 +251,46 @@ func TestUpsertNodesAllowsAgentWhenDeliveryUnrestricted(t *testing.T) {
 	}
 	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", []string{"review"}); err != nil {
 		t.Errorf("agent's delivery kind IS allowed: %v", err)
+	}
+}
+
+// TestBuildNodeSummariesResumable covers list_nodes' resumable/reason field:
+// a terminal (done) node is resumable, a live one is not regardless of what
+// its stored status says (nodeIsRunning outranks it), and a never-run node
+// isn't either.
+func TestBuildNodeSummariesResumable(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	ctx := context.Background()
+	svc := artifact.InMemoryService()
+	c := recordstore.New(svc, "quack", "u1", "chat1")
+	nodes := []dag.DagNodeRecord{
+		{NodeID: "impl-1", Agent: "code-implementer", Status: dag.StatusDone},
+		{NodeID: "impl-2", Agent: "code-implementer", Status: dag.StatusQueued},
+		{NodeID: "impl-3", Agent: "code-implementer", Status: dag.StatusDone}, // will report as live below
+	}
+	for _, n := range nodes {
+		if _, _, err := c.SaveStructured(ctx, "dag_node", n, n.NodeID, recordstore.Lineage{}); err != nil {
+			t.Fatalf("seed dag_node %s: %v", n.NodeID, err)
+		}
+	}
+
+	nodeIsRunning := func(id string) bool { return id == "impl-3" }
+	out, err := buildNodeSummaries(ctx, c, nodeIsRunning)
+	if err != nil {
+		t.Fatalf("buildNodeSummaries: %v", err)
+	}
+	byID := map[string]nodeSummary{}
+	for _, s := range out {
+		byID[s.NodeID] = s
+	}
+
+	if s := byID["impl-1"]; !s.Resumable || s.Reason == "" {
+		t.Errorf("impl-1 (done, idle) = %+v, want resumable with a reason", s)
+	}
+	if s := byID["impl-2"]; s.Resumable {
+		t.Errorf("impl-2 (never run) = %+v, want not resumable", s)
+	}
+	if s := byID["impl-3"]; s.Resumable || s.Reason != "currently running" {
+		t.Errorf("impl-3 (live) = %+v, want not resumable, reason \"currently running\"", s)
 	}
 }
