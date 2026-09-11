@@ -121,6 +121,22 @@ func TestEditPlanRejectsAlreadyDeliveredPlan(t *testing.T) {
 	}
 }
 
+// TestEditPlanRejectsNoOpCall pins the rig regression (#slice3 review): a
+// model that calls edit_plan with only plan_id and nothing to change (no
+// assignments, remove, setup, or delivery) got a happy no-op result and
+// looped it eight times against the same execute rejection. A no-op must
+// error and name what the tool actually accepts.
+func TestEditPlanRejectsNoOpCall(t *testing.T) {
+	rt, _, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"plan_id": planID})
+	if err == nil {
+		t.Fatal("want an error for an edit_plan call with nothing to change")
+	}
+	if !strings.Contains(err.Error(), "nothing to change") || !strings.Contains(err.Error(), planID) {
+		t.Errorf("err = %v, want it to say nothing to change and echo the plan_id", err)
+	}
+}
+
 // TestEditPlanUpsertReplacesExistingAssignment covers reassigning a node
 // list_nodes already showed instead of hiring a redundant one.
 func TestEditPlanUpsertReplacesExistingAssignment(t *testing.T) {

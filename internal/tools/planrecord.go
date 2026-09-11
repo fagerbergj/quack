@@ -14,9 +14,7 @@ import (
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
-	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/recordstore"
-	"github.com/fagerbergj/quack/internal/stream"
 )
 
 const dagPlanRecordID = "dag_plan:main"
@@ -307,25 +305,3 @@ func toAssignmentOutputs(assignments []dag.Assignment, nodeAgent map[string]stri
 	return out
 }
 
-// planRecordEvent builds the dag_plan SSE event from a saved record, the
-// same event shape the DAG view has always consumed (stream.DagPlan) -
-// create_plan/edit_plan emit it so the view updates before execute runs.
-func planRecordEvent(ctx context.Context, rec dag.DagPlanRecord, nodeAgent map[string]string) stream.SSEEvent {
-	nodes := make([]stream.DagNodeDef, len(rec.Assignments))
-	for i, a := range rec.Assignments {
-		agentName := nodeAgent[a.NodeID]
-		info, _ := dag.AgentInfoFor(agentName)
-		nodes[i] = stream.DagNodeDef{ID: a.NodeID, Agent: agentName, Task: a.Task, DependsOn: a.DependsOn, ContextWindow: info.ContextWindow, Artifact: info.DefaultArtifact}
-	}
-	return stream.WithTrace(stream.DagPlan(rec.PlanID, nodes, planRecordEdges(rec.Assignments)), otelobs.TraceIDOf(ctx))
-}
-
-func planRecordEdges(assignments []dag.Assignment) []stream.DagEdgeDef {
-	var edges []stream.DagEdgeDef
-	for _, a := range assignments {
-		for _, dep := range a.DependsOn {
-			edges = append(edges, stream.DagEdgeDef{From: dep, To: a.NodeID})
-		}
-	}
-	return edges
-}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/recordstore"
-	"github.com/fagerbergj/quack/internal/stream"
 )
 
 type createPlanArgs struct {
@@ -103,9 +102,10 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 				}
 			}
 
-			if yieldFn, ok := stream.YieldFromContext(tc); ok {
-				yieldFn(planRecordEvent(tc, rec, nodeAgent))
-			}
+			// No dag_plan event here: the plan is still a draft (execute hasn't
+			// run it), and node cards must not appear in the UI before then -
+			// list_nodes shows the draft's assignments as text meanwhile.
+			// execute's own DagPlanEvent is the only dag_plan emission.
 			return planUpsertResult{
 				PlanID: rec.PlanID, Assignments: toAssignmentOutputs(rec.Assignments, nodeAgent),
 				Setup: rec.Setup, Delivery: rec.Delivery, Summary: summarizePlanRecord(rec, nodeAgent),

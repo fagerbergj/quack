@@ -10,7 +10,6 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/recordstore"
-	"github.com/fagerbergj/quack/internal/stream"
 )
 
 type editPlanArgs struct {
@@ -36,14 +35,15 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			Description: "Tool to change the chat's current plan: upsert assignments (same shape as create_plan - " +
 				"`agent` hires a new node, `node_id` from list_nodes reassigns one) keyed by node_id, drop " +
 				"assignments by node_id with `remove`, and/or update `setup`/`delivery`. Assignments not named " +
-				"here are left exactly as they are. When this dispatch already came with a repo/base_ref (a GitHub " +
-				"trigger), a `setup.repo`/`setup.base_ref` override must match it exactly - omit them to keep the " +
-				"trigger's own values. Errors name the field and the fix: unknown agent, unknown depends_on id, a " +
-				"dependency cycle, an empty task, a node currently running, the same node_id twice in one call, a " +
-				"`remove` id not in the current plan, a setup override that disagrees with the trigger, hiring " +
-				"an agent whose only deliverable this dispatch does not allow, or a plan that already delivered. Call " +
-				"after create_plan to correct or extend a plan before execute; call list_nodes first to reuse a " +
-				"node instead of hiring a new one.",
+				"here are left exactly as they are. Call with at least one of assignments/remove/setup/delivery set - " +
+				"a call that changes nothing is rejected, it is not a valid way to re-read the plan (use list_nodes). " +
+				"When this dispatch already came with a repo/base_ref (a GitHub trigger), a `setup.repo`/`setup.base_ref` " +
+				"override must match it exactly - omit them to keep the trigger's own values. Errors name the field and " +
+				"the fix: unknown agent, unknown depends_on id, a dependency cycle, an empty task, a node currently " +
+				"running, the same node_id twice in one call, a `remove` id not in the current plan, a setup override " +
+				"that disagrees with the trigger, hiring an agent whose only deliverable this dispatch does not allow, " +
+				"a plan that already delivered, or a call with nothing to change. Call after create_plan to correct or " +
+				"extend a plan before execute; call list_nodes first to reuse a node instead of hiring a new one.",
 		},
 		func(tc agent.Context, a editPlanArgs) (planUpsertResult, error) {
 			current, _, ok, err := loadDagPlan(tc, c)
@@ -58,6 +58,10 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			}
 			if current.Status == "done" {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - it's finished, not editable; start a new plan for further work", current.PlanID)
+			}
+			if len(a.Assignments) == 0 && len(a.Remove) == 0 && a.Setup == nil && a.Delivery == nil {
+				return planUpsertResult{}, fmt.Errorf("edit_plan: nothing to change - got plan_id %q with no assignments, remove, setup, "+
+					"or delivery; edit_plan accepts assignments (each with node_id or agent), remove, setup, and/or delivery - set at least one", a.PlanID)
 			}
 			if err := dag.ValidateSetupOverride(a.Setup, githubSetup); err != nil {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
@@ -120,9 +124,10 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				}
 			}
 
-			if yieldFn, ok := stream.YieldFromContext(tc); ok {
-				yieldFn(planRecordEvent(tc, rec, nodeAgent))
-			}
+			// No dag_plan event here: node cards must not appear (or gain new
+			// ones) until execute actually dispatches them - execute's own
+			// DagPlanEvent is the only dag_plan emission (list_nodes shows the
+			// draft's current assignments as text meanwhile).
 			return planUpsertResult{
 				PlanID: rec.PlanID, Assignments: toAssignmentOutputs(rec.Assignments, nodeAgent),
 				Setup: rec.Setup, Delivery: rec.Delivery, Summary: summarizePlanRecord(rec, nodeAgent),
