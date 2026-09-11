@@ -53,6 +53,9 @@ export interface NodeState {
   judgePassed?: boolean
   // OTel trace id for this node's run; render via clientConfig.traceUrl(). ""/absent when otel is disabled.
   traceId?: string
+  // Set when this dispatch reused an existing node id (node_start's
+  // resumed_from) - the prior context it continues on. Absent for a fresh node.
+  resumedFrom?: string
   steers?: string[]   // guidance folded in when a queued message was delivered, in order
   // Local, optimistic tracking of the node's message queue - add/edit/remove
   // responses tell the caller what changed; there's no separate SSE sync event
@@ -859,7 +862,7 @@ export class ChatStore {
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
         // shows true elapsed time instead of restarting from the replay moment.
-        onNodeStart: (nodeId, _agent, startedAtMs, traceId) => updateNodeState(nodeId, { status: 'running', startedAt: anchorTime(startedAtMs), traceId }),
+        onNodeStart: (nodeId, _agent, startedAtMs, traceId, resumedFrom) => updateNodeState(nodeId, { status: 'running', startedAt: anchorTime(startedAtMs), traceId, resumedFrom }),
         onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => {
           // finishedAtMs is the server's own clock; only an older server with no
           // such field falls back to Date.now() (wrong on replay/reconnect).
