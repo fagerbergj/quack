@@ -635,6 +635,14 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: choice tool: "+err.Error()), nil)
 			return
 		}
+		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's doc.
+		repeats := tools.NewRepeatStates()
+		for _, wrapped := range []*tool.Tool{&listNodesTool, &createPlanTool, &editPlanTool, &execTool, &choiceTool} {
+			if *wrapped, err = tools.RepeatWrap(*wrapped, repeats); err != nil {
+				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
+				return
+			}
+		}
 
 		var toolsets []tool.Toolset
 		if o.skillTS != nil {

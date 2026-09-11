@@ -170,3 +170,14 @@ func resourceFingerprint(argsJSON []byte) (string, bool) {
 func repeatWrap(t tool.Tool, states *repeatStates) (tool.Tool, error) {
 	return newRepeatGuard(t, states)
 }
+
+// NewRepeatStates and RepeatWrap expose the identical-call breaker to a
+// caller outside this package that builds tools individually rather than
+// through Build - the orchestrator's own hand-built list_nodes/create_plan/
+// edit_plan/execute, which Build's registry loop never sees and so never
+// wrapped (a model that keeps sending the same malformed create_plan call
+// had nothing stopping it - see the QA rig's 386-call loop this closes).
+func NewRepeatStates() *repeatStates { return newRepeatStates() }
+
+// RepeatWrap is repeatWrap, exported for the same reason as NewRepeatStates.
+func RepeatWrap(t tool.Tool, states *repeatStates) (tool.Tool, error) { return repeatWrap(t, states) }
