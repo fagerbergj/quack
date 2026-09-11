@@ -728,6 +728,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		}
 
 		for i, t := range toolList {
+			// memory.NewPreload() and similar request-mutating-only tools have
+			// no Run for a model to repeat - nothing to guard, leave as-is.
+			if !tools.SupportsRepeatGuard(t) {
+				continue
+			}
 			if toolList[i], err = tools.RepeatWrap(t, repeats); err != nil {
 				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
 				return

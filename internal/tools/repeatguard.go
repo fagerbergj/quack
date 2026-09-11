@@ -181,3 +181,15 @@ func NewRepeatStates() *repeatStates { return newRepeatStates() }
 
 // RepeatWrap is repeatWrap, exported for the same reason as NewRepeatStates.
 func RepeatWrap(t tool.Tool, states *repeatStates) (tool.Tool, error) { return repeatWrap(t, states) }
+
+// SupportsRepeatGuard reports whether t can be passed to RepeatWrap - false
+// for a tool with no Run (e.g. memory.NewPreload(), which only mutates the
+// request and is never independently "called" by the model, so it has
+// nothing a repeated-call loop could target). A caller wrapping a
+// heterogeneous list built outside Build's own registry (which only ever
+// holds runnable function tools) should check this first and leave a
+// non-runnable tool as-is, rather than treat RepeatWrap's error as fatal.
+func SupportsRepeatGuard(t tool.Tool) bool {
+	_, ok := t.(runnableTool)
+	return ok
+}
