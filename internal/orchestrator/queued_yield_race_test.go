@@ -35,13 +35,19 @@ func (s *slowOrchStub) GenerateContent(ctx context.Context, req *model.LLMReques
 // depends_on names its siblings by their 0-based position in this same
 // call's assignments array - node ids are minted, so a brand-new sibling has
 // none yet to reference by name.
+// delivery is declared so the plan is complete (#slice3) - execute ends the
+// turn once it runs, matching what this test's single scripted reply
+// (auto-executed, never re-authored) assumes.
 func planCallQueueing() *model.LLMResponse {
-	return stubCall("create_plan", map[string]any{"assignments": []any{
-		map[string]any{"agent": "web-researcher", "task": "research qualities"},
-		map[string]any{"agent": "web-researcher", "task": "research when"},
-		map[string]any{"agent": "web-researcher", "task": "research conventions"},
-		map[string]any{"agent": "synthesizer", "task": "synthesize", "depends_on": []any{"0", "1", "2"}},
-	}})
+	return stubCall("create_plan", map[string]any{
+		"assignments": []any{
+			map[string]any{"agent": "web-researcher", "task": "research qualities"},
+			map[string]any{"agent": "web-researcher", "task": "research when"},
+			map[string]any{"agent": "web-researcher", "task": "research conventions"},
+			map[string]any{"agent": "synthesizer", "task": "synthesize", "depends_on": []any{"0", "1", "2"}},
+		},
+		"delivery": map[string]any{"kind": "comment"},
+	})
 }
 
 // TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield reproduces
