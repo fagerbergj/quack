@@ -40,6 +40,11 @@ func AgentInfoFor(name string) (AgentInfo, bool) {
 	return AgentInfo{}, false
 }
 
+// AgentNames returns the current agent roster's names, sorted - for a
+// validation error that needs to show the model its options (e.g. "give
+// node_id ... or agent: one of <AgentNames>").
+func AgentNames() []string { return agentNameList() }
+
 func agentNameList() []string {
 	agentRosterMu.RLock()
 	defer agentRosterMu.RUnlock()

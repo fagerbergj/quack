@@ -94,6 +94,35 @@ type assignmentInput struct {
 	Rubric    string   `json:"rubric,omitempty"`
 }
 
+// validateAllowedDeliveryKind rejects hiring or reassigning agent when its
+// job is coupled to a Delivery.Kind (dag.RequiredDeliveryKind) this dispatch
+// doesn't allow - deterministic, at plan-authoring time, so a node whose
+// output could never be delivered doesn't burn a full run's tokens only to
+// be refused at delivery. allowedKinds empty means unrestricted (a plain
+// chat dispatch, no GitHub trigger narrowing it).
+func validateAllowedDeliveryKind(agent string, allowedKinds []string) error {
+	kind, ok := dag.RequiredDeliveryKind(agent)
+	if !ok || len(allowedKinds) == 0 {
+		return nil
+	}
+	for _, k := range allowedKinds {
+		if k == kind {
+			return nil
+		}
+	}
+	return fmt.Errorf("agent: %q only delivers as %q, which this dispatch does not allow (allowed: %s)",
+		agent, kind, strings.Join(allowedKinds, ", "))
+}
+
+// describeAssignmentInput renders the fields this assignment actually parsed
+// to - a rejection naming node_id/agent as both empty tells the model those
+// exact keys are missing, so it isn't left guessing what it sent versus what
+// the schema silently dropped (an unrecognized key like `agent_name` never
+// reaches this struct at all).
+func describeAssignmentInput(in assignmentInput) string {
+	return fmt.Sprintf("node_id=%q agent=%q task=%q", in.NodeID, in.Agent, firstLine(in.Task))
+}
+
 // assignmentOutput is one assignment in create_plan/edit_plan's response -
 // same shape as assignmentInput but always carries the resolved node_id and
 // agent (minted ids the model must see to depend on or hire the node again).
@@ -136,7 +165,7 @@ func resolveNodeIndex(ref string, n int) (int, bool) {
 // (quackagent.WorkerSessionID) - the same deterministic id the native A2A
 // path (internal/serve buildAgents) independently recomputes when it
 // actually dispatches to this node, so the stored value is never a guess.
-func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, nodeIsLive func(nodeID string) bool, chatID string) ([]dag.Assignment, []dag.DagNodeRecord, error) {
+func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, nodeIsLive func(nodeID string) bool, chatID string, allowedKinds []string) ([]dag.Assignment, []dag.DagNodeRecord, error) {
 	known := make(map[string]dag.DagNodeRecord, len(existingNodes))
 	var existingIDs []string
 	for _, n := range existingNodes {
@@ -159,9 +188,15 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 			if nodeIsLive != nil && nodeIsLive(in.NodeID) {
 				return nil, nil, fmt.Errorf("assignments[%d].node_id: %q is currently running - wait for it to finish before reassigning it", i, in.NodeID)
 			}
+			if err := validateAllowedDeliveryKind(n.Agent, allowedKinds); err != nil {
+				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
+			}
 			nodeIDs[i] = n.NodeID
 		case in.Agent != "":
 			if err := dag.ValidateAgentName(in.Agent); err != nil {
+				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
+			}
+			if err := validateAllowedDeliveryKind(in.Agent, allowedKinds); err != nil {
 				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
 			}
 			id := dag.MintNodeID(in.Agent, existingIDs)
@@ -171,7 +206,8 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 			minted = append(minted, rec)
 			nodeIDs[i] = id
 		default:
-			return nil, nil, fmt.Errorf("assignments[%d]: give node_id to reassign an existing node or agent to hire a new one", i)
+			return nil, nil, fmt.Errorf("assignments[%d]: has neither node_id nor agent set (%s) - give node_id "+
+				"(an existing node from list_nodes) or agent (one of: %s)", i, describeAssignmentInput(in), strings.Join(dag.AgentNames(), ", "))
 		}
 	}
 
