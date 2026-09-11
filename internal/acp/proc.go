@@ -232,7 +232,7 @@ func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) e
 }
 
 // RequestPermission routes the ask to the safety judge (Options.PermissionJudge) -
-// the pi-acp shim's checkPolicy escalates only a .env read here. No judge configured ⇒ allow, matching the single-tenant container-is-the-boundary posture.
+// the pi-acp shim's checkPolicy hard-blocks git push/clone and escalates only a .env read here. No judge configured ⇒ allow (single-tenant container is the boundary).
 func (c *clientHandler) RequestPermission(ctx contextT, p sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
 	title := ""
 	if p.ToolCall.Title != nil {

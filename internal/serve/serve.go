@@ -1525,7 +1525,7 @@ func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
 }
 
 // piACPEnv generates PI_ACP_CONFIG: only the fields the pi-acp shim reads
-// (tools/pi-acp/pi-acp.mjs). git push carries no deny here (#936) - spawnEnv strips its remote-auth credentials instead, so delivery stays gate-owned.
+// (tools/pi-acp/pi-acp.mjs). No permission data here - git push stays denied via the shim's checkPolicy (mcp-client.mjs), not this payload.
 func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey

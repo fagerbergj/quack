@@ -156,9 +156,8 @@ agents:
     judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
     # The worker is an EXTERNAL coding agent over ACP (internal/acp): the pi-acp shim
     # drives pi from PI_ACP_CONFIG (endpoint, model, context/output limits, skill
-    # paths). git push runs with credentials stripped, not denied, so delivery stays
-    # gate-owned. The gate reads commits off the clone itself (vetting.augmentFromRepo).
-    # No quack tools, no memory.
+    # paths). git push stays denied inside the subprocess, so delivery stays gate-owned;
+    # the gate reads commits off the clone itself (vetting.augmentFromRepo). No quack tools, no memory.
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
