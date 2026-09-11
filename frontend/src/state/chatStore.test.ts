@@ -1598,6 +1598,59 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
   })
 })
 
+// Incremental planning (#slice3): execute() re-sends dag_plan with the SAME
+// plan_id every step, its node list only ever grown - the DAG view must keep
+// earlier steps' node cards (status, runs, answer) instead of wiping them
+// back to "queued" each time the plan grows.
+describe('ChatStore - a growing plan (same plan_id) keeps earlier steps\' node cards', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  it('a second dag_plan with the same plan_id merges in the new node without resetting the done one', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    // Step 1: plan with node "a", which then runs to completion.
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+    es.emit('node_start', '{"node_id":"a","agent":"researcher"}')
+    es.emit('node_done', '{"node_id":"a","output_preview":"A-RESULT"}')
+    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('done')
+
+    // Step 2: execute() grows the SAME plan (same plan_id) with node "b".
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[' +
+      '{"id":"a","agent":"researcher","task":"t","depends_on":[]},' +
+      '{"id":"b","agent":"code-implementer","task":"t2","depends_on":["a"]}' +
+      '],"edges":[{"from":"a","to":"b"}]}')
+
+    const dag = store.get('c').live?.dag
+    // "a" is still done - its card was not reset to queued by the grown plan.
+    expect(dag?.nodeStates['a']?.status).toBe('done')
+    expect(dag?.nodeStates['a']?.outputPreview).toBe('A-RESULT')
+    // "b" is the newly-added node, freshly queued.
+    expect(dag?.nodeStates['b']?.status).toBe('queued')
+    expect(dag?.nodes).toHaveLength(2)
+  })
+
+  it('a dag_plan with a DIFFERENT plan_id still resets (a genuinely new plan, #463)', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    es.emit('dag_plan', '{"plan_id":"p1","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+    es.emit('node_start', '{"node_id":"a","agent":"researcher"}')
+    es.emit('node_done', '{"node_id":"a","output_preview":"A-RESULT"}')
+
+    es.emit('dag_plan', '{"plan_id":"p2","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+
+    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('queued')
+  })
+})
+
 // Issue #463 (part 3, live repro): the hub only publishes NEW events, so a
 // client attaching after a run's events already fired gets no replay at all.
 // attach() used to lift the in-progress turn into a BLANK `live` on that assumption - with nothing ever arriving to fill it, the pane rendered empty (earlier history intact, but nothing to show for the visibly "Running" run). Fix: seed `live` from what GET /chats/{id} already persisted for that turn, so it renders immediately.

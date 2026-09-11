@@ -843,21 +843,29 @@ export class ChatStore {
         onDagPlan: plan => {
           const s = this.states.get(chatId)
           if (!s?.live) return
-          // #463: when a fresh DAG arrives (e.g. after pre-DAG orchestrator
-          // narration, or a new hub dispatch replaying into the same LiveTurn),
-          // purge stale top-level accumulators that don't belong under this DAG.
-          const nodeStates: Record<string, NodeState> = {}
-          for (const n of plan.nodes) nodeStates[n.id] = { status: 'queued' }
+          // A growing plan (incremental planning, #slice3) re-sends dag_plan
+          // with the SAME planId on every execute step, its node list only
+          // ever appended to - merge so earlier steps' node cards survive.
+          // #463's reset still applies to a genuinely NEW plan (e.g. after
+          // pre-DAG orchestrator narration, or a new hub dispatch replaying
+          // into the same LiveTurn): purge stale top-level accumulators that
+          // don't belong under that DAG.
+          const prevDag = s.live.dag
+          const grown = prevDag?.planId === plan.planId
+          const nodeStates: Record<string, NodeState> = grown ? { ...prevDag.nodeStates } : {}
+          for (const n of plan.nodes) {
+            if (!nodeStates[n.id]) nodeStates[n.id] = { status: 'queued' }
+          }
           const dag: DagTurnState = {
             planId: plan.planId,
             nodes: plan.nodes,
             edges: plan.edges,
             nodeStates,
-            nodeRuns: {},
-            nodeAnswer: {},
-            startedAt: anchorTime(plan.startedAtMs),
+            nodeRuns: grown ? prevDag.nodeRuns : {},
+            nodeAnswer: grown ? prevDag.nodeAnswer : {},
+            startedAt: grown ? prevDag.startedAt : anchorTime(plan.startedAtMs),
           }
-          this.write(chatId, { ...s, live: { ...s.live, dag, text: '', runs: [] } })
+          this.write(chatId, { ...s, live: { ...s.live, dag, text: grown ? s.live.text : '', runs: grown ? s.live.runs : [] } })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
