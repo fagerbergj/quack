@@ -52,7 +52,7 @@ func askTool(orch *orchestrator.Orchestrator) mcp.ToolHandlerFor[AskInput, any] 
 		return orch.Run(ctx, userID, sessionID, orchestrator.SourceApp, message, nil)
 	}
 	pending := func(ctx context.Context, sessionID string) (orchestrator.PendingQuestion, bool) {
-		return orchestrator.LatestPendingQuestion(orch.PriorEvents(ctx, userID, sessionID))
+		return orch.LatestPendingQuestion(ctx, userID, sessionID)
 	}
 	return newAskHandler(run, pending)
 }

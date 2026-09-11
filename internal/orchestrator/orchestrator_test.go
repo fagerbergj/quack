@@ -176,6 +176,62 @@ func TestLatestPendingQuestion(t *testing.T) {
 	}
 }
 
+// TestPendingQuestionChecksPlanStepSession verifies a chat-level pending-question
+// lookup finds a node interrupt parked in the plan-step session (dag.PlanStepSessionID,
+// where execute()'s incremental dispatch runs nodes) even though the chat's own
+// session never saw it.
+func TestPendingQuestionChecksPlanStepSession(t *testing.T) {
+	svc := session.InMemoryService()
+	ctx := context.Background()
+	const userID, chatID = "u1", "c1"
+	if _, err := svc.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: userID, SessionID: chatID}); err != nil {
+		t.Fatalf("Create chat session: %v", err)
+	}
+	stepSessionID := dag.PlanStepSessionID(chatID)
+	stepResp, err := svc.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: userID, SessionID: stepSessionID})
+	if err != nil {
+		t.Fatalf("Create plan-step session: %v", err)
+	}
+	o := &Orchestrator{sessions: svc}
+
+	if _, ok := o.PendingQuestion(ctx, userID, chatID); ok {
+		t.Fatal("no question parked yet: expected no pending question")
+	}
+
+	ev := session.NewEvent(ctx, "test")
+	ev.RequestedInput = &session.RequestInput{InterruptID: "hitl-web-researcher-1-r1", Message: "which source?"}
+	if err := svc.AppendEvent(ctx, stepResp.Session, ev); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	q, ok := o.PendingQuestion(ctx, userID, chatID)
+	if !ok || q != "which source?" {
+		t.Fatalf("PendingQuestion = (%q, %v), want (%q, true)", q, ok, "which source?")
+	}
+
+	pq, ok := o.LatestPendingQuestion(ctx, userID, chatID)
+	if !ok {
+		t.Fatal("LatestPendingQuestion: expected a pending question")
+	}
+	pend, isNode := pq.NodeInterrupt()
+	if !isNode || pend.nodeID != "web-researcher-1" {
+		t.Fatalf("expected node interrupt for web-researcher-1, got %+v isNode=%v", pend, isNode)
+	}
+
+	// Answering (the resume path's own FunctionResponse shape) clears it.
+	answerEv := session.NewEvent(ctx, "test")
+	answerEv.Author = "user"
+	answerEv.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{
+		FunctionResponse: &genai.FunctionResponse{ID: "hitl-web-researcher-1-r1", Name: workflow.WorkflowInputFunctionCallName, Response: map[string]any{"payload": "wikipedia"}},
+	}}}
+	if err := svc.AppendEvent(ctx, stepResp.Session, answerEv); err != nil {
+		t.Fatalf("AppendEvent answer: %v", err)
+	}
+	if _, ok := o.PendingQuestion(ctx, userID, chatID); ok {
+		t.Fatal("after answer: expected no pending question")
+	}
+}
+
 // TestOrchestratorReturnType is a compile-time check that Run returns SSEEvent,
 // not *session.Event. A later integration test in internal/agent covers the full
 // A2A round trip; this package test only covers the orchestrator's own logic.
