@@ -148,7 +148,7 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		_ = f.conn.SessionUpdate(ctx, sdk.SessionNotification{SessionId: p.SessionId, Update: u})
 	}
 	switch f.mode {
-	case "echo":
+	case "echo", "resume-echo":
 		// Sends back exactly what it received (over the wire, a real
 		// subprocess boundary) - tests assert on the emitted text to prove
 		// what the harness actually assembled and sent (#688's MCP tools block), not just what a helper function would produce in isolation.
@@ -412,6 +412,82 @@ func TestRound_PinnedProcessReusedAcrossRounds(t *testing.T) {
 	}
 	if pid2 := v.(*pinnedProc).h.cmd.Process.Pid; pid2 != pid1 {
 		t.Fatalf("round 2 ran under pid %d, want the SAME pid %d as round 1", pid2, pid1)
+	}
+}
+
+// TestRound_PreambleOnlyOnFreshSession: a pinned session's round 2 must not
+// resend the preamble already in its own conversation.
+func TestRound_PreambleOnlyOnFreshSession(t *testing.T) {
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New("code-implementer", "external coder", Options{
+		Command:  []string{os.Args[0]},
+		Env:      []string{"QUACK_ACP_FAKE=echo"},
+		Home:     t.TempDir(),
+		Jail:     jail,
+		UserID:   "u1",
+		Preamble: "PREAMBLE-TEXT",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "tok-preamble"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	round := func() string {
+		var specs []eventSpec
+		if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+			specs = append(specs, s)
+			return true
+		}); err != nil {
+			t.Fatalf("round: %v", err)
+		}
+		return specs[len(specs)-1].parts[0].Text
+	}
+
+	if first := round(); !strings.Contains(first, "PREAMBLE-TEXT") {
+		t.Fatalf("round 1 (fresh session) must include the preamble, got: %q", first)
+	}
+	if second := round(); strings.Contains(second, "PREAMBLE-TEXT") {
+		t.Fatalf("round 2 on the pinned session must not resend the preamble, got: %q", second)
+	}
+}
+
+// TestRound_PreambleResentOnResumedSession: session/load runs on a fresh
+// process, so it must still get the preamble - round 1's process is gone.
+func TestRound_PreambleResentOnResumedSession(t *testing.T) {
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New("code-implementer", "external coder", Options{
+		Command:  []string{os.Args[0]},
+		Env:      []string{"QUACK_ACP_FAKE=resume-echo"},
+		Home:     t.TempDir(),
+		Jail:     jail,
+		UserID:   "u1",
+		Preamble: "PREAMBLE-TEXT",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "tok-preamble-resume"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	var specs []eventSpec
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "prior-s1", func(s eventSpec) bool {
+		specs = append(specs, s)
+		return true
+	}); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	got := specs[len(specs)-1].parts[0].Text
+	if !strings.Contains(got, "PREAMBLE-TEXT") {
+		t.Fatalf("a resumed session's fresh process must still get the preamble, got: %q", got)
 	}
 }
 

@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,5 +45,44 @@ func TestAcpSkillPathsNoDuplicateWhenOnDisk(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("acpSkillPaths(%q) returned review-code %d times, want exactly 1 (the on-disk copy, no extracted duplicate): %v", vendor, count, paths)
+	}
+}
+
+// TestAcpSkillFrontmatters_Scoped: a declared skills: list scopes the ACP
+// roster to just those names.
+func TestAcpSkillFrontmatters_Scoped(t *testing.T) {
+	src := newSkillSource(nil)
+	all, err := src.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatalf("ListFrontmatters: %v", err)
+	}
+	if len(all) < 2 {
+		t.Fatalf("builtin skill source has only %d skills, need at least 2 to prove scoping", len(all))
+	}
+
+	scoped, err := acpSkillFrontmatters(context.Background(), src, []string{"review-code"})
+	if err != nil {
+		t.Fatalf("acpSkillFrontmatters: %v", err)
+	}
+	if len(scoped) != 1 || scoped[0].Name != "review-code" {
+		t.Fatalf("acpSkillFrontmatters(..., [review-code]) = %v, want exactly the one named skill", scoped)
+	}
+}
+
+// TestAcpSkillFrontmatters_EmptyFallsBackToFullLibrary: no shipped ACP agent
+// config declares skills: yet, so an empty list must still get every skill.
+func TestAcpSkillFrontmatters_EmptyFallsBackToFullLibrary(t *testing.T) {
+	src := newSkillSource(nil)
+	all, err := src.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatalf("ListFrontmatters: %v", err)
+	}
+
+	got, err := acpSkillFrontmatters(context.Background(), src, nil)
+	if err != nil {
+		t.Fatalf("acpSkillFrontmatters: %v", err)
+	}
+	if len(got) != len(all) {
+		t.Fatalf("acpSkillFrontmatters(..., nil) = %d skills, want the full library (%d)", len(got), len(all))
 	}
 }

@@ -2218,8 +2218,8 @@ workflows:
 	}
 }
 
-// TestAcpAgentSkillsWarns: skills: on an ACP-harness agent is silently
-// ignored at runtime (workers get the full library), so loading must warn.
+// TestAcpAgentSkillsWarns: skills: on an ACP-harness agent now scopes its
+// roster, so loading must note that (not warn it has no effect).
 func TestAcpAgentSkillsWarns(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
@@ -2251,8 +2251,8 @@ workspace:
 		t.Fatalf("LoadForSandbox: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "no effect on an ACP-harness agent") || !strings.Contains(out, "agent=code-reviewer") {
-		t.Errorf("expected a warning naming code-reviewer, got: %q", out)
+	if !strings.Contains(out, "scopes this ACP-harness agent's roster") || !strings.Contains(out, "agent=code-reviewer") {
+		t.Errorf("expected a note naming code-reviewer, got: %q", out)
 	}
 }
 

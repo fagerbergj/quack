@@ -249,6 +249,51 @@ func TestTranslate_UsageRidesFinalEvent(t *testing.T) {
 	}
 }
 
+// TestTranslate_UsageMetaCarriesCachedTokens: usage_update's _meta breakdown
+// must reach PromptTokenCount/CachedContentTokenCount/CandidatesTokenCount.
+func TestTranslate_UsageMetaCarriesCachedTokens(t *testing.T) {
+	tr := newTranslator("/work")
+	tr.translate(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{
+		Used: 1234, Size: 65536,
+		Meta: map[string]any{
+			"quack_prompt_tokens":     float64(900),
+			"quack_cached_tokens":     float64(600),
+			"quack_completion_tokens": float64(300),
+		},
+	}})
+	tr.translate(sdk.UpdateAgentMessageText("done"))
+	final := finalSpec(tr)
+	if final.usage == nil {
+		t.Fatal("usage lost")
+	}
+	if final.usage.PromptTokenCount != 900 {
+		t.Errorf("PromptTokenCount = %d, want 900", final.usage.PromptTokenCount)
+	}
+	if final.usage.CachedContentTokenCount != 600 {
+		t.Errorf("CachedContentTokenCount = %d, want 600", final.usage.CachedContentTokenCount)
+	}
+	if final.usage.CandidatesTokenCount != 300 {
+		t.Errorf("CandidatesTokenCount = %d, want 300", final.usage.CandidatesTokenCount)
+	}
+	// The shim must send cached as a subset of prompt (OpenAI-style), not pi's
+	// own non-overlapping input/cacheRead split - see pi-acp.mjs's usage_update.
+	if final.usage.CachedContentTokenCount > final.usage.PromptTokenCount {
+		t.Errorf("cached (%d) exceeds prompt (%d)", final.usage.CachedContentTokenCount, final.usage.PromptTokenCount)
+	}
+}
+
+// TestTranslate_UsageNoMetaStaysZero: an agent that never sets _meta (or a
+// non-pi ACP agent) must not panic and must report zero, not garbage.
+func TestTranslate_UsageNoMetaStaysZero(t *testing.T) {
+	tr := newTranslator("/work")
+	tr.translate(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{Used: 1234, Size: 65536}})
+	tr.translate(sdk.UpdateAgentMessageText("done"))
+	final := finalSpec(tr)
+	if final.usage.PromptTokenCount != 0 || final.usage.CachedContentTokenCount != 0 || final.usage.CandidatesTokenCount != 0 {
+		t.Fatalf("expected zero breakdown with no _meta, got %+v", final.usage)
+	}
+}
+
 // A delete kind has a direct native twin (delete_path) - the frontend's
 // DeletePathView reads args.path + result.deleted.
 func TestTranslate_DeleteKindMapsToDeletePath(t *testing.T) {

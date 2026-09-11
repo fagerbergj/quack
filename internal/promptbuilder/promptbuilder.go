@@ -17,14 +17,15 @@ import (
 //go:embed writing.md
 var writing string
 
-// Agent: assembles layered system prompt for native or ACP agents.
-func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, behaviour, grading, workspace string) string {
+// Agent: assembles layered system prompt for native or ACP agents. acp is
+// true only for the ACP shape, which has no load_skill tool.
+func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, acp bool, behaviour, grading, workspace string) string {
 	var caps strings.Builder
 	if tl := toolLines(tools); tl != "" {
 		caps.WriteString("### Tools\n\n")
 		caps.WriteString(tl)
 	}
-	if sl := skillLines(skills); sl != "" {
+	if sl := skillLines(skills, !acp); sl != "" {
 		if caps.Len() > 0 {
 			caps.WriteString("\n")
 		}
@@ -47,7 +48,7 @@ func Orchestrator(agentRoster string, skills []*skill.Frontmatter, behaviour str
 		caps.WriteString(r)
 		caps.WriteString("\n")
 	}
-	if sl := skillLines(skills); sl != "" {
+	if sl := skillLines(skills, true); sl != "" {
 		caps.WriteString("\n### Skills\n\n")
 		caps.WriteString(sl)
 	}
@@ -109,13 +110,18 @@ func toolLines(tools []tool.Tool) string {
 	return sb.String()
 }
 
-// skillLines: load_skill hint plus one bullet per skill, or "" if none.
-func skillLines(skills []*skill.Frontmatter) string {
+// skillLines: one bullet per skill; loadable agents also get a load_skill
+// hint - ACP has no such tool, pi loads skills itself.
+func skillLines(skills []*skill.Frontmatter, loadable bool) string {
 	if len(skills) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("Use `load_skill(name)` to load a skill's full instructions before applying it.\n\n")
+	if loadable {
+		sb.WriteString("Use `load_skill(name)` to load a skill's full instructions before applying it.\n\n")
+	} else {
+		sb.WriteString("These skills are already available in your working environment - apply them directly.\n\n")
+	}
 	for _, s := range skills {
 		fmt.Fprintf(&sb, "- `%s` - %s\n", s.Name, s.Description)
 	}
