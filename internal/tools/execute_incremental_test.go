@@ -19,19 +19,25 @@ type fakeRunStep struct {
 	lastSeeded map[string]string
 	outputs    map[string]string
 	needsInput map[string]bool
+	notStarted map[string]bool // run-set node ids that never reached running (a dependency paused first, #slice3 review)
 }
 
-func (f *fakeRunStep) run(_ context.Context, _ dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, error) {
+func (f *fakeRunStep) run(_ context.Context, _ dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, map[string]bool, error) {
 	f.calls++
 	f.lastRun = run
 	f.lastSeeded = seeded
 	out := make(map[string]string, len(run))
+	started := make(map[string]bool, len(run))
 	for id := range run {
+		if f.notStarted[id] {
+			continue
+		}
+		started[id] = true
 		if v, ok := f.outputs[id]; ok {
 			out[id] = v
 		}
 	}
-	return out, f.needsInput, nil
+	return out, f.needsInput, started, nil
 }
 
 // execResults reads out["results"] (a []any of map[string]any, the shape a
@@ -210,6 +216,80 @@ func TestExecuteTool_MixedPausedAndFailedReportsEachCorrectly(t *testing.T) {
 	}
 	if byID["impl-1"].TaskID == "" {
 		t.Error("impl-1 persisted task_id is empty, want a minted one - a failed assignment still gets one (execute.go's own design)")
+	}
+}
+
+// TestExecuteTool_NeverStartedDependentStaysQueuedNotFailed pins the second
+// #slice3 review's blocking regression: a node whose dependency pauses first
+// in the same runSubset never gets its own goroutine dispatched (topo layers
+// abort on the first error), so runStep reports it in neither outputs nor
+// needsInput. Marking that "failed" (as ApplyAssignmentOutcome's default
+// branch used to, unconditionally) mints a task_id that editplan.go then
+// refuses to ever reassign - the plan is stuck forever. It must instead be
+// left exactly as before the call: empty task_id, reported "queued".
+func TestExecuteTool_NeverStartedDependentStaysQueuedNotFailed(t *testing.T) {
+	rec := dag.DagPlanRecord{
+		PlanID: "p1",
+		Assignments: []dag.Assignment{
+			{NodeID: "ask-1", Task: "ask the direction"},
+			{NodeID: "close-1", Task: "close it out", DependsOn: []string{"ask-1"}},
+		},
+		Delivery: &dag.Delivery{Kind: "comment"},
+	}
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "asker"}, {Name: "closer"}}, nil, nil)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{
+		{NodeID: "ask-1", Agent: "asker"},
+		{NodeID: "close-1", Agent: "closer"},
+	})
+	cache := NewPlanCache()
+	// ask-1 pauses; close-1 is in the run set but never reaches running - the
+	// exact shape runDAGSubset produces when an earlier layer's node parks.
+	step := &fakeRunStep{needsInput: map[string]bool{"ask-1": true}, notStarted: map[string]bool{"close-1": true}}
+	finalizeCalled := false
+	finalize := func(_ context.Context, _ dag.Plan, _ map[string]string) string {
+		finalizeCalled = true
+		return "SHOULD NOT HAPPEN"
+	}
+
+	tl, err := NewExecuteTool(planner, c, cache, nil, step.run, finalize, nil, "ask the direction", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	ctx := newExecToolCtx()
+	out, err := rt.Run(ctx, map[string]any{"plan_id": "p1"})
+	if err != nil {
+		t.Fatalf("execute Run: %v", err)
+	}
+	list, ok := out["results"].([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("out[results] = %#v, want exactly two entries", out["results"])
+	}
+	statuses := map[string]string{}
+	for _, e := range list {
+		entry := e.(map[string]any)
+		statuses[entry["node_id"].(string)] = entry["status"].(string)
+	}
+	if statuses["ask-1"] != "paused" {
+		t.Errorf("ask-1 status = %q, want paused", statuses["ask-1"])
+	}
+	if statuses["close-1"] != "queued" {
+		t.Errorf("close-1 status = %q, want queued - it never started, and must not be marked failed", statuses["close-1"])
+	}
+	if finalizeCalled {
+		t.Error("finalize was called though the delivering node never ran")
+	}
+
+	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	byID := map[string]dag.Assignment{}
+	for _, a := range rec2.Assignments {
+		byID[a.NodeID] = a
+	}
+	if byID["close-1"].TaskID != "" {
+		t.Errorf("close-1 persisted task_id = %q, want empty - a never-started node must stay dispatchable", byID["close-1"].TaskID)
 	}
 }
 

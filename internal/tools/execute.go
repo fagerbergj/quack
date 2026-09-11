@@ -35,12 +35,14 @@ type AssignmentFreshnessFunc func(ctx agent.Context, planID, agentName, contextI
 
 // RunStepFunc runs exactly the nodes named in run - fresh dispatches, never
 // retries - seeding every other node's output from seeded, and returns what
-// each ran node produced plus which run-set node(s), if any, parked on a
-// HITL question (nil/empty when none did) - the per-node detail
-// ApplyAssignmentOutcome needs to tell a genuinely failed sibling from a
-// paused one in the same step, not just whether ANYTHING paused.
+// each ran node produced, which run-set node(s), if any, parked on a HITL
+// question (nil/empty when none did), and which run-set node(s) actually
+// reached running - a node whose dependency paused earlier in the SAME step
+// is requested but never dispatched, and must be told apart from a node that
+// ran and produced nothing (ApplyAssignmentOutcome must only be called for
+// the latter).
 // The orchestrator wires this to dag.Executor.RunPlanStep; a test can fake it directly.
-type RunStepFunc func(ctx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (outputs map[string]string, needsInput map[string]bool, err error)
+type RunStepFunc func(ctx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (outputs map[string]string, needsInput map[string]bool, started map[string]bool, err error)
 
 // FinalizeAnswerFunc turns a plan's accumulated node outputs into the user-
 // facing answer (terminal node output, formatted if needed) - the
@@ -58,7 +60,7 @@ type executeArgs struct {
 // separate list_nodes round-trip.
 type assignmentResult struct {
 	NodeID    string   `json:"node_id"`
-	Status    string   `json:"status"` // "done" | "failed" | "paused"
+	Status    string   `json:"status"` // "done" | "failed" | "paused" | "queued" (requested this step but never dispatched - a dependency paused first)
 	Summary   string   `json:"summary,omitempty"`
 	Artifacts []string `json:"artifacts,omitempty"`
 	TaskID    string   `json:"task_id"`
@@ -240,7 +242,9 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			cache.Put(*plan)
 			cache.SetSelected(plan.ID)
 
-			// Emits the plan's only dag_plan event, with the judged, fully-assembled shape.
+			// Emits the judged, fully-assembled plan - the resume path
+			// (startIncrementalNodeRun) re-emits dag_plan again after each
+			// of its own rounds, so this is not the plan's only one.
 			if yieldFn, ok := stream.YieldFromContext(tc); ok {
 				yieldFn(DagPlanEvent(tc, *plan))
 			}
@@ -250,11 +254,15 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			run, seeded := partitionAssignments(rec.Assignments)
 			var outputs map[string]string
 			var needsInput map[string]bool
+			var started map[string]bool
 			if runStep != nil {
-				outputs, needsInput, err = runStep(tc, *plan, seeded, run)
+				outputs, needsInput, started, err = runStep(tc, *plan, seeded, run)
 				if err != nil {
 					return executeResult{}, fmt.Errorf("execute: run: %w", err)
 				}
+			} else {
+				// No run function wired (a test double) - treat the whole run set as started.
+				started = run
 			}
 			stepPaused := len(needsInput) > 0
 
@@ -263,6 +271,12 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			for i := range rec.Assignments {
 				nid := rec.Assignments[i].NodeID
 				if !run[nid] {
+					continue
+				}
+				// A dependency pausing earlier aborted runDAGSubset before this
+				// node dispatched - leave it untouched so it stays reassignable.
+				if !started[nid] {
+					results = append(results, assignmentResult{NodeID: nid, Status: "queued", TaskID: rec.Assignments[i].TaskID})
 					continue
 				}
 				out := outputs[nid]

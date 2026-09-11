@@ -647,7 +647,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
 			return
 		}
-		runStep := func(stepCtx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, error) {
+		runStep := func(stepCtx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, map[string]bool, error) {
 			return o.executor.RunPlanStep(stepCtx, plan, AppName, userID, sessionID, seeded, run)
 		}
 		finalizeStep := func(stepCtx context.Context, plan dag.Plan, outputs map[string]string) string {
@@ -1084,7 +1084,7 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 	safeYield(tools.DagPlanEvent(ctx, plan), nil)
 
-	outputs, needsInput, err := o.executor.ResumePlanStep(ctx, plan, AppName, userID, sessionID, seeded, run, pend.id, message)
+	outputs, needsInput, started, err := o.executor.ResumePlanStep(ctx, plan, AppName, userID, sessionID, seeded, run, pend.id, message)
 	if err != nil {
 		safeYield(stream.Errorf("resume: "+err.Error()), nil)
 		return
@@ -1097,7 +1097,7 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	var anyFailed bool
 	out := outputs[pend.nodeID]
 	for i := range rec.Assignments {
-		if rec.Assignments[i].NodeID == pend.nodeID {
+		if rec.Assignments[i].NodeID == pend.nodeID && started[pend.nodeID] {
 			// Shares execute.go's own success/failure decision (paused=false:
 			// the step already confirmed it isn't) - a resumed node with
 			// empty output is exactly as "failed" as a freshly-run one, and
@@ -1131,7 +1131,7 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 				roundSeeded[a.NodeID] = a.Result
 			}
 		}
-		roundOutputs, roundNeedsInput, rerr := o.executor.RunPlanStep(ctx, plan, AppName, userID, sessionID, roundSeeded, next)
+		roundOutputs, roundNeedsInput, roundStarted, rerr := o.executor.RunPlanStep(ctx, plan, AppName, userID, sessionID, roundSeeded, next)
 		if rerr != nil {
 			safeYield(stream.Errorf("resume: "+rerr.Error()), nil)
 			turnEnded = true
@@ -1139,6 +1139,11 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 		for i := range rec.Assignments {
 			nid := rec.Assignments[i].NodeID
 			if !next[nid] {
+				continue
+			}
+			// Same hazard as execute.go's own step: a sibling pausing first
+			// can leave nid requested but never dispatched - leave it untouched.
+			if !roundStarted[nid] {
 				continue
 			}
 			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], roundOutputs[nid], roundNeedsInput[nid]) == "failed" {
@@ -1171,13 +1176,13 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	yield(stream.Done(), nil)
 }
 
-// unblockedByDeps returns the not-yet-run assignments (TaskID == "") whose
-// every dependency has already run (TaskID set, success or failure - "ran"
-// is what unblocks a dependent, same convention partitionAssignments and
-// execute.go's own dispatch already use). Scoped to what a resume turn
-// should keep driving after a paused node completes - not everything still
-// pending regardless of relation to it (an edit_plan addition unrelated to
-// this resume waits for its own execute call, like any other partial step).
+// unblockedByDeps returns every not-yet-run assignment (TaskID == "") whose
+// dependencies (if any) have already run (TaskID set, success or failure -
+// "ran" is what unblocks a dependent, same convention partitionAssignments
+// and execute.go's own dispatch already use). Not scoped to the resumed
+// node's own chain: a dependency-free assignment an unrelated edit_plan call
+// added is just as "ready" and comes back here too - same as a fresh
+// execute() step would dispatch it.
 func unblockedByDeps(assignments []dag.Assignment) map[string]bool {
 	ran := make(map[string]bool, len(assignments))
 	for _, a := range assignments {

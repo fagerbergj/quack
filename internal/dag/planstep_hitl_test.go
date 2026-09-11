@@ -50,7 +50,7 @@ func TestRunPlanStep_HITLPauseThenResume(t *testing.T) {
 
 	// ---- Step 1: fresh dispatch - parks on the question ----
 	run := map[string]bool{"n1": true}
-	outputs1, needsInput1, err := ex.RunPlanStep(ctx, plan, "quack", "u", "chat", nil, run)
+	outputs1, needsInput1, _, err := ex.RunPlanStep(ctx, plan, "quack", "u", "chat", nil, run)
 	if err != nil {
 		t.Fatalf("step 1: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRunPlanStep_HITLPauseThenResume(t *testing.T) {
 	}
 
 	// ---- Step 2: the answer arrives (StartNode's own content shape) - n1 resumes and finishes ----
-	outputs2, needsInput2, err := ex.ResumePlanStep(ctx, plan, "quack", "u", "chat", nil, run, "hitl-n1-r1", "north")
+	outputs2, needsInput2, _, err := ex.ResumePlanStep(ctx, plan, "quack", "u", "chat", nil, run, "hitl-n1-r1", "north")
 	if err != nil {
 		t.Fatalf("step 2: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestRunPlanStep_ReusedNodeEmitsNodeQueuedFirst(t *testing.T) {
 	})
 
 	run := map[string]bool{"n1": true}
-	if _, needsInput, err := ex.RunPlanStep(ctx, plan, "quack", "u", "chat", nil, run); err != nil || len(needsInput) > 0 {
+	if _, needsInput, _, err := ex.RunPlanStep(ctx, plan, "quack", "u", "chat", nil, run); err != nil || len(needsInput) > 0 {
 		t.Fatalf("step 1: needsInput=%v err=%v", needsInput, err)
 	}
 	if got := seq[len(seq)-1]; got != "done:n1" {
@@ -131,7 +131,7 @@ func TestRunPlanStep_ReusedNodeEmitsNodeQueuedFirst(t *testing.T) {
 	// Step 2: n1 reassigned (still the same node id, e.g. edit_plan gave it
 	// a new task) - a fresh RunPlanStep call, reusing an already-"done" node.
 	seq = nil
-	if _, needsInput, err := ex.RunPlanStep(ctx, plan, "quack", "u", "chat", nil, run); err != nil || len(needsInput) > 0 {
+	if _, needsInput, _, err := ex.RunPlanStep(ctx, plan, "quack", "u", "chat", nil, run); err != nil || len(needsInput) > 0 {
 		t.Fatalf("step 2: needsInput=%v err=%v", needsInput, err)
 	}
 	if len(seq) < 2 || seq[0] != "queued:n1" {

@@ -148,6 +148,11 @@ func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
 // not just whether ANY node paused.
 func (s *DagStream) NeedsInput() map[string]bool { return s.ds.needsInput }
 
+// Started reports which run-set nodes actually reached running (node_start
+// emitted) - a node whose dependency paused earlier can be requested but
+// never dispatched, and the caller must not treat that as "ran and failed".
+func (s *DagStream) Started() map[string]bool { return s.ds.started }
+
 func (s *DagStream) Finish() {
 	s.ds.flush()
 	if len(s.ds.needsInput) == 0 {
