@@ -664,7 +664,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	metaExtension, metaExtensionName := findAssignmentMetaExtension(sdkExts)
 	var assignmentMeta tools.AssignmentMetaFunc
 	if metaExtension != nil {
-		assignmentMeta = func(ctx adkagent.Context, a dag.Assignment) map[string]any { return metaExtension.OnAssignment(ctx, a) }
+		assignmentMeta = func(ctx adkagent.Context, a dag.Assignment) (string, map[string]any) {
+			return metaExtensionName, metaExtension.OnAssignment(ctx, a)
+		}
 		slog.Info("extension supplies assignment meta", "component", "startup", "extension", metaExtensionName)
 	}
 	if ledgerStore != nil {

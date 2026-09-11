@@ -169,15 +169,14 @@ func TestCreatePlanWorkdirEscapeRejected(t *testing.T) {
 	}
 }
 
-// TestCreatePlanStampsAssignmentMetaOnGitHubTrigger: onAssignment, when
-// this dispatch carries a trigger, stamps its return under
-// assignment.meta.github - extension-owned, never model-authored.
+// TestCreatePlanStampsAssignmentMetaOnGitHubTrigger: onAssignment stamps its
+// return under assignment.meta.<key> - extension-owned, never model-authored.
 func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	onAssignment := func(_ agent.Context, a dag.Assignment) map[string]any {
-		return map[string]any{"base_sha": "deadbeef"}
+	onAssignment := func(_ agent.Context, a dag.Assignment) (string, map[string]any) {
+		return "github", map[string]any{"base_sha": "deadbeef"}
 	}
 	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, onAssignment)
 	if err != nil {
@@ -201,16 +200,15 @@ func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 	}
 }
 
-// TestCreatePlanNoMetaHookWithoutTrigger: onAssignment must not run on a
-// plain chat dispatch (no trigger) even when supplied - meta.github only
-// ever describes a GitHub-triggered dispatch's own branch.
-func TestCreatePlanNoMetaHookWithoutTrigger(t *testing.T) {
+// TestCreatePlanMetaHookRunsRegardlessOfTrigger: onAssignment is generic
+// over whichever extension implements AssignmentMetaExtension (like
+// AssignmentFreshnessFunc, it isn't gated on a GitHub trigger) - it still
+// runs on a plain chat dispatch, keyed by whatever name the hook itself returns.
+func TestCreatePlanMetaHookRunsRegardlessOfTrigger(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	var called bool
-	onAssignment := func(_ agent.Context, a dag.Assignment) map[string]any {
-		called = true
-		return map[string]any{"base_sha": "deadbeef"}
+	onAssignment := func(_ agent.Context, a dag.Assignment) (string, map[string]any) {
+		return "acme", map[string]any{"ticket": "ACME-42"}
 	}
 	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, onAssignment)
 	if err != nil {
@@ -221,7 +219,12 @@ func TestCreatePlanNoMetaHookWithoutTrigger(t *testing.T) {
 	if _, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"assignments": assignments}); err != nil {
 		t.Fatalf("create_plan Run: %v", err)
 	}
-	if called {
-		t.Error("onAssignment was called with no trigger this dispatch, want it skipped")
+
+	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	if got := rec.Assignments[0].Meta["acme"]["ticket"]; got != "ACME-42" {
+		t.Errorf("assignment.meta.acme.ticket = %v, want %q (a second, non-GitHub extension's own key)", got, "ACME-42")
 	}
 }

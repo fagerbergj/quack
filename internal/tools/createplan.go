@@ -28,7 +28,8 @@ type createPlanArgs struct {
 // the artifact panel read. nodeID is the AUTHORING lineage id stamped on
 // those records (e.g. "orchestrator") - unrelated to a dag_node's own
 // node_id, which upsertNodes mints separately. onAssignment, when non-nil,
-// stamps assignment.meta.github on a GitHub-triggered dispatch.
+// stamps assignment.meta.<extension> - whichever active extension supplies
+// it, keyed by its own name (e.g. "github").
 func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
 	artifactDesc := "`assignments[].checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its " +
 		"commands: the trust gate derives a code node's checks from the repo itself after the node clones it."
@@ -68,7 +69,7 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			if err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
-			stampAssignmentMeta(tc, assignments, onAssignment, githubSetup)
+			stampAssignmentMeta(tc, assignments, onAssignment)
 			setup := a.Setup
 			if githubSetup != nil {
 				s := *githubSetup

@@ -264,9 +264,9 @@ func TestBuildNodeSummariesResumable(t *testing.T) {
 	svc := artifact.InMemoryService()
 	c := recordstore.New(svc, "quack", "u1", "chat1")
 	nodes := []dag.DagNodeRecord{
-		{NodeID: "impl-1", Agent: "code-implementer", Status: dag.StatusDone},
+		{NodeID: "impl-1", Agent: "code-implementer", Status: dag.StatusDone, Started: true},
 		{NodeID: "impl-2", Agent: "code-implementer", Status: dag.StatusQueued},
-		{NodeID: "impl-3", Agent: "code-implementer", Status: dag.StatusDone}, // will report as live below
+		{NodeID: "impl-3", Agent: "code-implementer", Status: dag.StatusDone, Started: true}, // will report as live below
 	}
 	for _, n := range nodes {
 		if _, _, err := c.SaveStructured(ctx, "dag_node", n, n.NodeID, recordstore.Lineage{}); err != nil {
@@ -292,5 +292,34 @@ func TestBuildNodeSummariesResumable(t *testing.T) {
 	}
 	if s := byID["impl-3"]; s.Resumable || s.Reason != "currently running" {
 		t.Errorf("impl-3 (live) = %+v, want not resumable, reason \"currently running\"", s)
+	}
+}
+
+// TestBuildNodeSummariesReportsLastTaskID closes out Assignment.TaskID's
+// write side (execute.go stamps it on dispatch): list_nodes must read it
+// back, or the field is dead weight nothing ever surfaces.
+func TestBuildNodeSummariesReportsLastTaskID(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	ctx := context.Background()
+	svc := artifact.InMemoryService()
+	c := recordstore.New(svc, "quack", "u1", "chat1")
+	if _, _, err := c.SaveStructured(ctx, "dag_node",
+		dag.DagNodeRecord{NodeID: "impl-1", Agent: "code-implementer", Status: dag.StatusDone, Started: true}, "impl-1", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed dag_node: %v", err)
+	}
+	plan := dag.DagPlanRecord{
+		PlanID:      "p1",
+		Assignments: []dag.Assignment{{NodeID: "impl-1", Task: "keep going", TaskID: "task-abc-123"}},
+	}
+	if _, _, err := c.SaveStructured(ctx, "dag_plan", plan, "", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed dag_plan: %v", err)
+	}
+
+	out, err := buildNodeSummaries(ctx, c, nil)
+	if err != nil {
+		t.Fatalf("buildNodeSummaries: %v", err)
+	}
+	if len(out) != 1 || out[0].LastTaskID != "task-abc-123" {
+		t.Fatalf("out = %+v, want impl-1 with last_task_id=task-abc-123", out)
 	}
 }

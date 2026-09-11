@@ -91,24 +91,27 @@ func firstLine(s string) string {
 
 // AssignmentMetaFunc optionally stamps assignment.meta.<extension> at plan
 // creation/edit - never model-authored. Called once per upserted assignment
-// when this dispatch carries a trigger (githubSetup non-nil); a non-empty
-// return is merged under Meta["github"].
-type AssignmentMetaFunc func(ctx agent.Context, a dag.Assignment) map[string]any
+// regardless of trigger; key is the supplying extension's own name (empty
+// key or empty meta is a no-op for that assignment) - the hook itself
+// decides whether it has anything to contribute this dispatch, the same way
+// AssignmentFreshnessFunc isn't gated on a trigger either.
+type AssignmentMetaFunc func(ctx agent.Context, a dag.Assignment) (key string, meta map[string]any)
 
 // stampAssignmentMeta runs onAssignment over assignments in place - a nil
-// hook or no trigger this dispatch (githubSetup nil) are both no-ops, since
-// meta.github only ever describes a GitHub-triggered dispatch's own branch.
-func stampAssignmentMeta(tc agent.Context, assignments []dag.Assignment, onAssignment AssignmentMetaFunc, githubSetup *dag.Setup) {
-	if onAssignment == nil || githubSetup == nil {
+// hook is a no-op.
+func stampAssignmentMeta(tc agent.Context, assignments []dag.Assignment, onAssignment AssignmentMetaFunc) {
+	if onAssignment == nil {
 		return
 	}
 	for i := range assignments {
-		if m := onAssignment(tc, assignments[i]); len(m) > 0 {
-			if assignments[i].Meta == nil {
-				assignments[i].Meta = map[string]map[string]any{}
-			}
-			assignments[i].Meta["github"] = m
+		key, m := onAssignment(tc, assignments[i])
+		if key == "" || len(m) == 0 {
+			continue
 		}
+		if assignments[i].Meta == nil {
+			assignments[i].Meta = map[string]map[string]any{}
+		}
+		assignments[i].Meta[key] = m
 	}
 }
 

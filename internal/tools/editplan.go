@@ -27,7 +27,8 @@ type editPlanArgs struct {
 // when given. Unmentioned assignments are left exactly as they are. nodeID
 // is the AUTHORING lineage id stamped on the saved records (e.g.
 // "orchestrator") - unrelated to a dag_node's own node_id. onAssignment,
-// when non-nil, stamps assignment.meta.github on a GitHub-triggered dispatch.
+// when non-nil, stamps assignment.meta.<extension> - whichever active
+// extension supplies it, keyed by its own name (e.g. "github").
 func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
 	return functiontool.New[editPlanArgs, planUpsertResult](
 		functiontool.Config{
@@ -83,7 +84,7 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				for _, n := range minted {
 					nodeAgent[n.NodeID] = n.Agent
 				}
-				stampAssignmentMeta(tc, upserts, onAssignment, githubSetup)
+				stampAssignmentMeta(tc, upserts, onAssignment)
 			}
 
 			rec := current

@@ -23,7 +23,7 @@ func resumeTestPlan(t *testing.T) (*recordstore.Client, *PlanCache) {
 		Assignments: []dag.Assignment{{NodeID: "impl-1", Task: "keep going"}},
 	}
 	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{
-		{NodeID: "impl-1", Agent: "code-implementer", Status: dag.StatusDone, ContextID: "prior-acp-session"},
+		{NodeID: "impl-1", Agent: "code-implementer", Status: dag.StatusDone, ContextID: "prior-acp-session", Started: true},
 	})
 	return c, NewPlanCache()
 }
@@ -48,6 +48,70 @@ func TestExecuteTool_ResumesTerminalNode(t *testing.T) {
 	}
 	if len(got.Nodes) != 1 || got.Nodes[0].ResumedFrom != "prior-acp-session" {
 		t.Fatalf("plan.Nodes = %+v, want impl-1 with ResumedFrom=prior-acp-session", got.Nodes)
+	}
+}
+
+// TestExecuteTool_ResumesFailedNodeWithRealSession: an ACP node that failed
+// AFTER establishing a real transport session (Started=true, ContextID =
+// the real session, not the mint-time placeholder) is still reused,
+// threading that real id into ResumedFrom for graph.go to seed as
+// session/load's target - not a doomed guess.
+func TestExecuteTool_ResumesFailedNodeWithRealSession(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	rec := dag.DagPlanRecord{
+		PlanID:      "p1",
+		Assignments: []dag.Assignment{{NodeID: "impl-1", Task: "keep going"}},
+	}
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{
+		{NodeID: "impl-1", Agent: "code-implementer", Status: dag.StatusFailed, ContextID: "acp-real-session-on-failure", Started: true},
+	})
+	cache := NewPlanCache()
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	if _, err := rt.Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err != nil {
+		t.Fatalf("execute Run: %v", err)
+	}
+	got, ok := cache.Get("p1")
+	if !ok {
+		t.Fatal("plan not found in cache")
+	}
+	if len(got.Nodes) != 1 || got.Nodes[0].ResumedFrom != "acp-real-session-on-failure" {
+		t.Fatalf("plan.Nodes = %+v, want impl-1 resumed with the real session id", got.Nodes)
+	}
+}
+
+// TestExecuteTool_NeverStartedFailedNodeIsNotResumed: a node that failed
+// before ever running (Started=false) has no real session - execute must
+// never thread its leftover mint-time placeholder into ResumedFrom.
+func TestExecuteTool_NeverStartedFailedNodeIsNotResumed(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	rec := dag.DagPlanRecord{
+		PlanID:      "p1",
+		Assignments: []dag.Assignment{{NodeID: "impl-1", Task: "keep going"}},
+	}
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{
+		{NodeID: "impl-1", Agent: "code-implementer", Status: dag.StatusFailed, ContextID: "chat1:impl-1", Started: false},
+	})
+	cache := NewPlanCache()
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	if _, err := rt.Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err != nil {
+		t.Fatalf("execute Run: %v", err)
+	}
+	got, ok := cache.Get("p1")
+	if !ok {
+		t.Fatal("plan not found in cache")
+	}
+	if len(got.Nodes) != 1 || got.Nodes[0].ResumedFrom != "" {
+		t.Fatalf("plan.Nodes = %+v, want impl-1 NOT resumed (never started)", got.Nodes)
 	}
 }
 
