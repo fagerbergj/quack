@@ -108,3 +108,17 @@ func TestBuildTaskContextItemsScopedToTheNodeThatNamesThem(t *testing.T) {
 		t.Errorf("fix-build node prompt leaked another check's annotation detail:\n%s", got)
 	}
 }
+
+// TestRenderUpstreamForJudgeCarriesGateFailedAndNoAnswerMarkers pins the
+// same gate-failed/no-answer warnings buildTask gives the worker: without
+// them the judge can read a flagged upstream answer as if it were trustworthy.
+func TestRenderUpstreamForJudgeCarriesGateFailedAndNoAnswerMarkers(t *testing.T) {
+	upstream := map[string]string{"explore": "the bug is in graph.go:262"}
+	got := renderUpstreamForJudge(upstream, []string{"explore", "missing"}, map[string]bool{"explore": true})
+	if !strings.Contains(got, "FAILED independent quality vetting") {
+		t.Errorf("judge upstream section missing the gate-failed warning for a flagged dependency:\n%s", got)
+	}
+	if !strings.Contains(got, "produced NO answer") {
+		t.Errorf("judge upstream section missing the no-answer note for a dependency with no output:\n%s", got)
+	}
+}

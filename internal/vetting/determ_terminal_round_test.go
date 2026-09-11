@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"testing"
 
@@ -30,8 +31,10 @@ func (m *alwaysPassModel) GenerateContent(_ context.Context, req *model.LLMReque
 			return
 		}
 		m.workerCalls++
-		yield(stubText("A thorough answer with plenty of substance so sufficient_length passes easily. "+
-			"It restates the finding, explains the mechanism, and closes with a recommendation."), nil)
+		// Text varies by call so the revise-dedup guard (identical answer skips
+		// the round) doesn't mask what this test targets: the terminal round's own judge skip.
+		yield(stubText(fmt.Sprintf("A thorough answer #%d with plenty of substance so sufficient_length passes easily. "+
+			"It restates the finding, explains the mechanism, and closes with a recommendation.", m.workerCalls)), nil)
 	}
 }
 

@@ -81,3 +81,60 @@ func TestEmptyReviseStopsRoundLoop(t *testing.T) {
 		t.Fatalf("worker calls = %d, want 2 (1 draft + 1 empty revise)", stub.workerCalls)
 	}
 }
+
+// identicalReviseModel: revise returns the same text as the draft (byte-for-byte),
+// unlike emptyReviseModel which returns "".
+type identicalReviseModel struct {
+	workerCalls int
+	judgeCalls  int
+}
+
+func (m *identicalReviseModel) Name() string { return "stub-identical-revise" }
+
+func (m *identicalReviseModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if stubHasTool(req, submitVerdictTool) {
+			m.judgeCalls++
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.4, "feedback": "tighten the claims"}), nil)
+			return
+		}
+		m.workerCalls++
+		yield(stubText("This is the initial draft answer, long enough to be judged."), nil)
+	}
+}
+
+// TestIdenticalReviseStopsRoundLoop proves a revise that returns the same
+// bytes as the current answer ends the round loop instead of re-judging
+// content the judge already scored (node.go's revise guard).
+func TestIdenticalReviseStopsRoundLoop(t *testing.T) {
+	stub := &identicalReviseModel{}
+	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "Answer."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{JudgeRounds: 3, Threshold: 0.7, Rubric: "score the answer 0-10"}
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runner.New(runner.Config{AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stub.judgeCalls != 1 {
+		t.Fatalf("judge calls = %d, want exactly 1 (round loop must stop after an identical revise, not burn the remaining %d JudgeRounds)", stub.judgeCalls, cfg.JudgeRounds)
+	}
+	if stub.workerCalls != 2 {
+		t.Fatalf("worker calls = %d, want 2 (1 draft + 1 identical revise)", stub.workerCalls)
+	}
+}
