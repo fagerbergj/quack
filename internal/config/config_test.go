@@ -39,7 +39,7 @@ agents:
     bundle: agents/code-reviewer
     provider: default
     model: ${QUACK_CODER_MODEL}
-    acp: { command: ["opencode", "acp"], read_only: true }
+    acp: { command: ["node", "pi-acp.mjs"], read_only: true }
   image-reader:
     bundle: agents/image-reader
     provider: default
@@ -1695,7 +1695,7 @@ agents:
     provider: default
     model: c-model
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "pi-acp.mjs"]
       allow_clone: true
 `))
 	if err == nil {
@@ -2243,7 +2243,7 @@ agents:
     provider: default
     model: ${QUACK_CODER_MODEL}
     skills: [contribute]
-    acp: { command: ["opencode", "acp"], read_only: true }
+    acp: { command: ["node", "pi-acp.mjs"], read_only: true }
 workspace:
   root: /tmp/quack-acp-skills-warn-test
 `))

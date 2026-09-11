@@ -47,8 +47,8 @@ type Options struct {
 	IdleTimeout     time.Duration
 	PermissionJudge func(ctx context.Context, toolName, title string, input map[string]any) (allow bool, reason string)
 	Replay          *replay.Session
-	// ModelName: the model this agent's opencode config binds it to
-	// (OPENCODE_CONFIG_CONTENT) - attrs the round's gen_ai metrics.
+	// ModelName: the model this agent's PI_ACP_CONFIG binds it to -
+	// attrs the round's gen_ai metrics.
 	ModelName string
 	// Pricing: nil = no price table entry for ModelName, cost metric skipped.
 	Pricing *config.ModelPricing
@@ -531,7 +531,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 			return abortCtx.Err()
 		case <-idleTimer.C():
 			a.gracefulCancel(h, sessID, done)
-			return fmt.Errorf("acp: no activity for %s - treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
+			return fmt.Errorf("acp: no activity for %s - treating the ACP agent as wedged%s", a.opts.IdleTimeout, h.stderrTail())
 		}
 	}
 }

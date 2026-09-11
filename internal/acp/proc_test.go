@@ -161,7 +161,7 @@ func TestSpawnEnvAllowsLocalGitPush(t *testing.T) {
 func TestWrappedArgvLandlock(t *testing.T) {
 	cwd := t.TempDir()
 	a := &Agent{opts: Options{
-		Command: []string{"opencode", "acp"},
+		Command: []string{"pi-acp", "run"},
 		Caps:    workspace.Caps{Sandbox: workspace.SandboxLandlock},
 		ExtraRO: []string{"/skills"},
 	}}
@@ -173,19 +173,19 @@ func TestWrappedArgvLandlock(t *testing.T) {
 	if !strings.Contains(joined, cwd) {
 		t.Errorf("wrappedArgv landlock = %v, want the node dir %q granted", argv, cwd)
 	}
-	if !strings.HasSuffix(joined, "opencode acp") {
+	if !strings.HasSuffix(joined, "pi-acp run") {
 		t.Errorf("wrappedArgv landlock = %v, want the original command preserved past --", argv)
 	}
 }
 
 // TestWrappedArgvBwrap (#921): bwrap wraps the ACP child too, as identity bind
 // mounts - the node dir bound at its own path (never SandboxWorkRoot: quack and
-// opencode trade absolute paths over JSON-RPC), the skill paths read-only, and the original command past "--".
+// the ACP subprocess trade absolute paths over JSON-RPC), the skill paths read-only, and the original command past "--".
 func TestWrappedArgvBwrap(t *testing.T) {
 	cwd := t.TempDir()
 	home := t.TempDir()
 	a := &Agent{opts: Options{
-		Command: []string{"opencode", "acp"},
+		Command: []string{"pi-acp", "run"},
 		Caps:    workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: home},
 		ExtraRO: []string{"/skills"},
 	}}
@@ -204,7 +204,7 @@ func TestWrappedArgvBwrap(t *testing.T) {
 			t.Errorf("wrappedArgv bwrap remapped the node dir onto %s: %v", workspace.SandboxWorkRoot, argv)
 		}
 	}
-	if !strings.HasSuffix(strings.Join(argv, " "), "-- opencode acp") {
+	if !strings.HasSuffix(strings.Join(argv, " "), "-- pi-acp run") {
 		t.Errorf("wrappedArgv bwrap = %v, want the original command preserved past --", argv)
 	}
 }
@@ -213,10 +213,10 @@ func TestWrappedArgvBwrap(t *testing.T) {
 // Command is spawned exactly as configured.
 func TestWrappedArgvUnwrappedUnderNone(t *testing.T) {
 	for _, mode := range []workspace.SandboxMode{workspace.SandboxNone, ""} {
-		a := &Agent{opts: Options{Command: []string{"opencode", "acp"}, Caps: workspace.Caps{Sandbox: mode}}}
+		a := &Agent{opts: Options{Command: []string{"pi-acp", "run"}, Caps: workspace.Caps{Sandbox: mode}}}
 		argv := a.wrappedArgv(t.TempDir(), a.opts.Caps)
-		if len(argv) != 2 || argv[0] != "opencode" || argv[1] != "acp" {
-			t.Errorf("mode %q: wrappedArgv = %v, want unchanged [opencode acp]", mode, argv)
+		if len(argv) != 2 || argv[0] != "pi-acp" || argv[1] != "run" {
+			t.Errorf("mode %q: wrappedArgv = %v, want unchanged [pi-acp run]", mode, argv)
 		}
 	}
 }
@@ -269,32 +269,30 @@ func TestSpawnEnvOperatorOverridesJavaToolOptions(t *testing.T) {
 	}
 }
 
-// TestWrappedArgvBwrapAcpHandshake (#921) is the one thing an argv assertion
-// cannot prove: that wrapping the ACP child in a bwrap namespace does not
-// break the protocol it speaks. It spawns a REAL `opencode acp` through the production seam pair (wrappedArgv + spawnEnv), writes an ACP `initialize` frame to its stdin and reads the reply off stdout - no LLM endpoint needed, the handshake precedes any model call. Skips (loudly) where bwrap or opencode is unavailable, like every other sandbox test here.
+// TestWrappedArgvBwrapAcpHandshake (#921) is the one thing an argv assertion cannot prove: that wrapping the
+// ACP child in a bwrap namespace does not break the protocol it speaks - a real `initialize` round-trip through the production seam pair (wrappedArgv + spawnEnv). Skips (loudly) where bwrap or node is unavailable.
 func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 	if _, err := workspace.ResolveSandbox(workspace.SandboxBwrap); err != nil {
 		t.Skipf("SKIPPING ACP sandbox test: bubblewrap is not usable here (%v)", err)
 	}
-	opencode, err := exec.LookPath("opencode")
-	if err != nil {
-		t.Skipf("SKIPPING ACP sandbox test: opencode is not on PATH (%v)", err)
-	}
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skipf("SKIPPING ACP sandbox test: node is not on PATH (%v)", err)
+	}
+	shim, err := filepath.Abs("../../tools/pi-acp/pi-acp.mjs")
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	cwd, home := t.TempDir(), t.TempDir()
 	caps := workspace.Caps{
 		Sandbox: workspace.SandboxBwrap, WorkRoot: cwd, HomeDir: home,
 		ScratchDir: filepath.Join(home, "tmp", "handshake"), ReadOnly: true,
-		// In the image opencode and node live under /usr (already in the
-		// sandbox's system view); a dev host keeps them elsewhere, which is
-		// exactly what exec_path/ExtraPath is for.
-		ExtraPath: []string{filepath.Dir(opencode), filepath.Dir(node)},
+		// In the image node lives under /usr (already in the sandbox's system
+		// view); a dev host keeps it elsewhere, which is exactly what exec_path/ExtraPath is for.
+		ExtraPath: []string{filepath.Dir(node)},
 	}
-	a := &Agent{opts: Options{Command: []string{opencode, "acp"}, Caps: caps, Home: home}}
+	a := &Agent{opts: Options{Command: []string{node, shim}, ExtraRO: []string{filepath.Dir(shim)}, Caps: caps, Home: home}}
 
 	argv := a.wrappedArgv(cwd, caps)
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -313,7 +311,7 @@ func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 	cmd.Stderr = &stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("spawn wrapped opencode: %v", err)
+		t.Fatalf("spawn wrapped pi-acp: %v", err)
 	}
 	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
 

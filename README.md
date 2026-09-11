@@ -50,7 +50,7 @@ Quack is a Go monorepo built on **[Google ADK for Go][adk]**. Clients hand it a 
 ```mermaid
 flowchart TB
   subgraph Clients
-    OC["Opencode"]
+    OC["MCP client"]
     CC["Claude Code"]
     SPA["Web SPA"]
     GH["GitHub App<br/>labels + /quack"]
@@ -89,7 +89,7 @@ flowchart TB
 - **Models, tools, stores, auth, workspace sandboxing** - the full configuration reference: [`docs/configuration/`](docs/configuration/).
 - **API surface** - REST, MCP, A2A, and streaming: [`docs/api.md`](docs/api.md).
 - **Observability** - OTel traces and metrics, emission-only: [`docs/configuration/observability.md`](docs/configuration/observability.md).
-- **Clients** - the CLI ([`docs/cli.md`](docs/cli.md)) and the web SPA ([`docs/ui.md`](docs/ui.md)); Opencode and Claude Code talk to quack over MCP, the GitHub App over its own webhook ([`docs/extensions/github.md`](docs/extensions/github.md)).
+- **Clients** - the CLI ([`docs/cli.md`](docs/cli.md)) and the web SPA ([`docs/ui.md`](docs/ui.md)); Claude Code and other MCP clients talk to quack over MCP, the GitHub App over its own webhook ([`docs/extensions/github.md`](docs/extensions/github.md)).
 
 ## Documentation
 

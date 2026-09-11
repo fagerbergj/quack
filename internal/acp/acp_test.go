@@ -119,7 +119,7 @@ func (f *fakeAgent) HandleExtensionMethod(ctx context.Context, method string, pa
 func (f *fakeAgent) Initialize(ctx context.Context, _ sdk.InitializeRequest) (sdk.InitializeResponse, error) {
 	return sdk.InitializeResponse{
 		ProtocolVersion: sdk.ProtocolVersionNumber,
-		// http:true mirrors a real opencode negotiation - lets a test with a
+		// http:true mirrors a real pi negotiation - lets a test with a
 		// registered MemSecret exercise the actual mcpServers/mcpToolNames
 		// path (acp.go's round) instead of it short-circuiting to "none". LoadSession:true only for the "resume*" modes - a real agent that never advertises it must never see session/load sent its way.
 		AgentCapabilities: sdk.AgentCapabilities{

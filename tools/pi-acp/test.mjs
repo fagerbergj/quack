@@ -14,10 +14,10 @@ import { tmpdir } from "node:os";
 const here = dirname(fileURLToPath(import.meta.url));
 const env = { ...process.env };
 if (!process.env.PI_ACP_REAL) env.PI_ACP_PI_CMD = join(here, "fake-pi.mjs");
-if (!env.OPENCODE_CONFIG_CONTENT)
-  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    provider: { quack: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "unused" }, models: { stub: { limit: { context: 65536, output: 32768 } } } } },
-    skills: { paths: ["/opt/quack/skills"] },
+if (!env.PI_ACP_CONFIG)
+  env.PI_ACP_CONFIG = JSON.stringify({
+    endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub",
+    context_window: 65536, max_output_tokens: 32768, skill_paths: ["/opt/quack/skills"],
   });
 
 // Stub OTLP collector: records every span POSTed to /v1/traces.
@@ -66,7 +66,7 @@ const mcpSrv = createServer((req, res) => {
 await new Promise((r) => mcpSrv.listen(0, "127.0.0.1", r));
 const mcpUrl = `http://127.0.0.1:${mcpSrv.address().port}/secret123`;
 
-// ACP_CMD overrides the target, e.g. "opencode acp" for a comparison run.
+// ACP_CMD overrides the target, e.g. a rival ACP agent's argv for a comparison run.
 const argv = process.env.ACP_CMD ? process.env.ACP_CMD.split(" ") : ["node", join(here, "pi-acp.mjs")];
 const shim = spawn(argv[0], argv.slice(1), { env, stdio: ["pipe", "pipe", "inherit"] });
 const pending = new Map();
@@ -110,7 +110,7 @@ const piDir = join(tmpdir(), "pi-acp-" + sess.sessionId);
 if (!process.env.ACP_CMD) {
   // the shim materialized skills + bridge into the pi config dir
   assert.ok(statSync(piDir).isDirectory(), "no pi config dir for this session id");
-  const wantSkills = JSON.parse(env.OPENCODE_CONFIG_CONTENT).skills?.paths;
+  const wantSkills = JSON.parse(env.PI_ACP_CONFIG).skill_paths;
   if (wantSkills) {
     const settings = JSON.parse(readFileSync(join(piDir, "settings.json"), "utf8"));
     assert.deepEqual(settings.skills, wantSkills);
@@ -121,8 +121,8 @@ if (!process.env.ACP_CMD) {
   readFileSync(join(piDir, "extensions", "quackmcp.ts")); // extension generated
 
   const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
-  assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's limit.context");
-  assert.equal(models.providers.quack.models[0].maxTokens, 32768, "maxTokens not plumbed from config's limit.output");
+  assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's context_window");
+  assert.equal(models.providers.quack.models[0].maxTokens, 32768, "maxTokens not plumbed from config's max_output_tokens");
 }
 
 const prompt = process.env.PI_ACP_REAL
@@ -160,7 +160,7 @@ if (!process.env.ACP_CMD) {
 if (process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   // Real end-to-end resume proof: round 2 on a FRESH shim process must carry
   // round 1's turn into the model's prefix (mock-openai.mjs's GET /requests).
-  const base = new URL(JSON.parse(env.OPENCODE_CONFIG_CONTENT).provider.quack.options.baseURL);
+  const base = new URL(JSON.parse(env.PI_ACP_CONFIG).endpoint);
   const before = await fetch(`${base.origin}/requests`).then((r) => r.json());
   const { shim: shim2, call: call2 } = connectShim(env);
   await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
@@ -323,8 +323,8 @@ otlpSrv.close();
 // no limit.context configured -> omit contextWindow rather than write 0, so
 // pi keeps its own default instead of tripping provider-composer's reject.
 if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
-  const noLimitEnv = { ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify({
-    provider: { quack: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "unused" }, models: { stub: {} } } },
+  const noLimitEnv = { ...env, PI_ACP_CONFIG: JSON.stringify({
+    endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub",
   }) };
   const { shim: shim2, call: call2 } = connectShim(noLimitEnv);
   await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });

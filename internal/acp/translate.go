@@ -195,7 +195,7 @@ const mcpMetaKey = "quack_mcp_tool"
 
 // mcpIdentity resolves an ACP tool call back to the real quack MCP tool name.
 // pi-acp sets _meta[mcpMetaKey] directly; an agent that can't touch _meta
-// (e.g. opencode) still registers the tool as "<mcpServerName>_<tool>" and surfaces that as its title, so stripping the prefix there works too.
+// (e.g. gemini-cli) still registers the tool as "<mcpServerName>_<tool>" and surfaces that as its title, so stripping the prefix there works too.
 func mcpIdentity(meta map[string]any, title string) (string, bool) {
 	if v, _ := meta[mcpMetaKey].(string); v != "" {
 		return v, true

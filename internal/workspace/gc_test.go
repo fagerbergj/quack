@@ -188,7 +188,7 @@ func TestSweepHomeTmpReapsScratchDirEntries(t *testing.T) {
 }
 
 // growHome writes an n-byte file into the user's agent home, simulating
-// opencode.db/snapshot/tool-output growth from a completed round.
+// agent-state.db/snapshot/tool-output growth from a completed round.
 func growHome(t *testing.T, jail *Jail, userID, name string, n int) {
 	t.Helper()
 	home, err := jail.HomeDir(userID)
@@ -205,7 +205,7 @@ func growHome(t *testing.T, jail *Jail, userID, name string, n int) {
 // whole - never edited, the directory is gone and recreated empty.
 func TestSweepAgentHomeResetsPastQuotaWhenIdle(t *testing.T) {
 	jail := newTestJail(t)
-	growHome(t, jail, "alice", "opencode.db", 100)
+	growHome(t, jail, "alice", "agent-state.db", 100)
 
 	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, never, nil)
 	if res.HomeReset != 1 {
@@ -218,8 +218,8 @@ func TestSweepAgentHomeResetsPastQuotaWhenIdle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(home, "opencode.db")); !os.IsNotExist(err) {
-		t.Errorf("opencode.db should have been reclaimed, stat err = %v", err)
+	if _, err := os.Stat(filepath.Join(home, "agent-state.db")); !os.IsNotExist(err) {
+		t.Errorf("agent-state.db should have been reclaimed, stat err = %v", err)
 	}
 }
 
@@ -228,7 +228,7 @@ func TestSweepAgentHomeResetsPastQuotaWhenIdle(t *testing.T) {
 // sweepChatScopes must also keep the shared home untouched while that chat has a round in flight, even though it's well past HomeMaxBytes.
 func TestSweepAgentHomeSkipsLiveChat(t *testing.T) {
 	jail := newTestJail(t)
-	growHome(t, jail, "alice", "opencode.db", 100)
+	growHome(t, jail, "alice", "agent-state.db", 100)
 	touch(t, filepath.Join(jail.Root(), "alice", "live-chat", "repo", "README.md"), time.Now())
 
 	isActive := func(chatID string) bool { return chatID == "live-chat" }
@@ -240,7 +240,7 @@ func TestSweepAgentHomeSkipsLiveChat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(home, "opencode.db")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, "agent-state.db")); err != nil {
 		t.Errorf("a live user's agent home must never be reaped: %v", err)
 	}
 }
@@ -250,7 +250,7 @@ func TestSweepAgentHomeSkipsLiveChat(t *testing.T) {
 // inactive, the reaper must not touch the shared home either.
 func TestSweepAgentHomeNilActiveFailsClosed(t *testing.T) {
 	jail := newTestJail(t)
-	growHome(t, jail, "alice", "opencode.db", 100)
+	growHome(t, jail, "alice", "agent-state.db", 100)
 
 	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, nil, nil)
 	if res.HomeReset != 0 {
@@ -262,7 +262,7 @@ func TestSweepAgentHomeNilActiveFailsClosed(t *testing.T) {
 // a quota basis: a home under HomeMaxBytes survives untouched.
 func TestSweepAgentHomeBelowQuotaLeavesItAlone(t *testing.T) {
 	jail := newTestJail(t)
-	growHome(t, jail, "alice", "opencode.db", 10)
+	growHome(t, jail, "alice", "agent-state.db", 10)
 
 	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, never, nil)
 	if res.HomeReset != 0 {
@@ -275,7 +275,7 @@ func TestSweepAgentHomeBelowQuotaLeavesItAlone(t *testing.T) {
 // MkdirAll makes this true by construction - prove it survives a reset.
 func TestSweepAgentHomeResetStaysUsable(t *testing.T) {
 	jail := newTestJail(t)
-	growHome(t, jail, "alice", "opencode.db", 100)
+	growHome(t, jail, "alice", "agent-state.db", 100)
 
 	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, never, nil)
 	if res.HomeReset != 1 {
@@ -285,7 +285,7 @@ func TestSweepAgentHomeResetStaysUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HomeDir after reset: %v", err)
 	}
-	probe := filepath.Join(home, "opencode.db")
+	probe := filepath.Join(home, "agent-state.db")
 	if err := os.WriteFile(probe, []byte("fresh round"), 0o600); err != nil {
 		t.Fatalf("a run reusing the reclaimed home could not write to it: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestSweepAgentHomeBoundsGrowthAcrossManySweeps(t *testing.T) {
 // user and the bytes freed, not just "something happened".
 func TestSweepAgentHomeLogsWhatWasFreed(t *testing.T) {
 	jail := newTestJail(t)
-	growHome(t, jail, "alice", "opencode.db", 100)
+	growHome(t, jail, "alice", "agent-state.db", 100)
 
 	var buf bytes.Buffer
 	restore := slog.Default()

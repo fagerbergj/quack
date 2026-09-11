@@ -42,7 +42,7 @@ func TestExampleConfigsLoad(t *testing.T) {
 			for name, a := range c.Agents {
 				if a.Acp != nil && len(a.Acp.Command) > 0 {
 					if got, want := a.Acp.Command[0], "node"; got != want {
-						t.Errorf("agent %s acp.command[0] = %q, want %q (pi-acp shim; opencode left the image)", name, got, want)
+						t.Errorf("agent %s acp.command[0] = %q, want %q (pi-acp shim)", name, got, want)
 					}
 				}
 			}

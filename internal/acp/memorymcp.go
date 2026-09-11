@@ -53,12 +53,12 @@ func registerCheckMermaidTool(srv *mcp.Server) {
 
 // Memory MCP surface: per-run loopback server scoped by unguessable per-node secret.
 
-// mcpServerName: loopback server name; opencode prefixes tools with "<name>_".
+// mcpServerName: loopback server name; the pi-acp shim prefixes tools with "<name>_".
 const mcpServerName = "quackmcp"
 
 // Tool names shared between registrations and mcpToolNames.
 // toolRecallMemory matches the native registry tool's name exactly, same
-// convention as toolStageMemory - opencode's own "<server>_<tool>" prefix (mcpServerName) is what keeps it collision-free (#630), not a locally unique name, so it must read identically to a worker on either surface.
+// convention as toolStageMemory - the pi-acp shim's "<server>_<tool>" prefix (mcpServerName) is what keeps it collision-free (#630), not a locally unique name, so it must read identically to a worker on either surface.
 const (
 	toolLoadMemory    = "load_memory"
 	toolStageMemory   = "stage_memory"

@@ -20,7 +20,7 @@ var errToolUnfinished = errors.New("acp: round ended with the tool call still ru
 
 // turnSpans emits one child span per ACP tool call under quack.acp.prompt,
 // started and ended as the session updates arrive, so a long round exports
-// telemetry WHILE it runs rather than in one burst at the end (#924). Tool call is the granularity: thought and message chunks arrive per token (the 1,845 chat_events of a single review), tool calls arrive in the tens to low hundreds. The spans carry no model-named attribute - that is what types a span as a Langfuse GENERATION and folds wall-clock into per-model aggregates (#927/#930) - and opencode's own model calls go straight to llm-swap with no trace context, so they are neither nested nor linked here.
+// telemetry WHILE it runs rather than in one burst at the end (#924). Tool call is the granularity: thought and message chunks arrive per token (the 1,845 chat_events of a single review), tool calls arrive in the tens to low hundreds. The spans carry no model-named attribute - that is what types a span as a Langfuse GENERATION and folds wall-clock into per-model aggregates (#927/#930) - and the ACP agent's own model calls go straight to llm-swap with no trace context, so they are neither nested nor linked here.
 type turnSpans struct {
 	ctx   context.Context // the prompt span's context: these hang off it
 	agent string

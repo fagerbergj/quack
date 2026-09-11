@@ -34,7 +34,7 @@ Event names: `response_created`, `agent_start`, `agent_thinking`, `agent_tool_ca
 
 ## MCP
 
-Mounted at `/api/v1/mcp` (Streamable HTTP, `internal/server/mcp`) - this is how Opencode and Claude Code drive quack.
+Mounted at `/api/v1/mcp` (Streamable HTTP, `internal/server/mcp`) - this is how Claude Code and other MCP clients drive quack.
 
 ## A2A - internal, not a client-facing face
 
