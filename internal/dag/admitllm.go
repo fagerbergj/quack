@@ -41,8 +41,26 @@ func (a *AdmittingLLM) GenerateContent(ctx context.Context, req *model.LLMReques
 			yield(nil, ctx.Err())
 			return
 		}
-		defer a.admission.Release(a.spec)
+		released := false
+		release := func() {
+			if !released {
+				released = true
+				a.admission.Release(a.spec)
+			}
+		}
+		defer release() // fallback: an error, cancellation, or early consumer exit before a complete response
 		for resp, err := range a.LLM.GenerateContent(ctx, req, stream) {
+			// Release BEFORE yielding the complete response, not after the whole
+			// iterator returns: the caller (ADK's own flow) runs tool calls
+			// synchronously in reaction to this yield, nested inside this same
+			// iteration - for the orchestrator, that includes execute() running
+			// a DAG node through this exact admission pool (RunPlanStep). Holding
+			// the reservation across that nested call deadlocks the node it just
+			// queued: the turn's own reservation never frees until the node it's
+			// waiting on is admitted, which can't happen while the turn holds it.
+			if resp != nil && !resp.Partial {
+				release()
+			}
 			if !yield(resp, err) {
 				return
 			}

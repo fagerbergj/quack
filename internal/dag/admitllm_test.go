@@ -98,6 +98,47 @@ func TestAdmittingLLMDoesNotDeadlockNodesOnSameModel(t *testing.T) {
 	}
 }
 
+// TestAdmittingLLMReleasesBeforeYieldingCompleteResponse pins the production
+// deadlock this fixes (#slice3 review): ADK's own flow runs tool calls
+// synchronously INSIDE the yield callback, nested in the same iteration -
+// for the orchestrator, that's execute() admitting a DAG node through this
+// exact pool (dag.Executor.RunPlanStep). The reservation must be gone
+// before the complete response is yielded, not after the whole
+// GenerateContent call returns, or a same-size nested Admit inside that
+// yield - exactly what a tool call triggers - blocks forever: the turn's
+// own reservation never frees until the node it's waiting on is admitted,
+// which can't happen while the turn holds it.
+func TestAdmittingLLMReleasesBeforeYieldingCompleteResponse(t *testing.T) {
+	spec := AdmissionSpec{Model: "m"}
+	a := NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
+	f := &fakeLLM{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	close(f.release) // nothing to block entry on for this test
+	llm := NewAdmittingLLM(f, a, spec, nil)
+
+	sawComplete := false
+	for resp, err := range llm.GenerateContent(context.Background(), nil, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		if resp == nil || resp.Partial {
+			continue
+		}
+		sawComplete = true
+		// The nested call a tool (e.g. execute()) would make from inside
+		// ADK's own flow, right here in reaction to this same yield.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ok := a.Admit(ctx, spec, func() {})
+		cancel()
+		if !ok {
+			t.Fatal("nested Admit (same size, from inside the yield) blocked - reservation still held")
+		}
+		a.Release(spec)
+	}
+	if !sawComplete {
+		t.Fatal("never saw a complete (non-partial) response to test against")
+	}
+}
+
 func TestNewAdmittingLLMUnwrapsWhenUnenforced(t *testing.T) {
 	f := &fakeLLM{}
 	if got := NewAdmittingLLM(f, nil, AdmissionSpec{Model: "m"}, nil); got != model.LLM(f) {
