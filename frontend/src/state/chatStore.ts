@@ -843,17 +843,8 @@ export class ChatStore {
         onDagPlan: plan => {
           const s = this.states.get(chatId)
           if (!s?.live) return
-          // A growing plan (incremental planning, #slice3) re-sends dag_plan
-          // with the SAME planId on every execute step, its node list only
-          // ever appended to - merge so earlier steps' node cards survive.
-          // The orchestrator's OWN top-level run (load_skill/list_nodes/
-          // create_plan, and - #slice3 - the turn continues past dag_plan
-          // with more execute calls after it) must survive every dag_plan,
-          // new plan or grown: #463 only ever needed the stale-narration-TEXT
-          // purge on a genuinely new plan, never runs - purging runs here
-          // orphaned onAgentToolCall's later appends (no run left to append
-          // to), which is why the orchestrator's own activity stopped
-          // rendering the moment a plan arrived.
+          // Same planId means the plan grew: keep earlier node cards. The orchestrator's
+          // own run is never purged here, since its execute calls continue after dag_plan.
           const prevDag = s.live.dag
           const grown = prevDag?.planId === plan.planId
           const nodeStates: Record<string, NodeState> = grown ? { ...prevDag.nodeStates } : {}
