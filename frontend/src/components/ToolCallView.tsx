@@ -115,7 +115,9 @@ function KeyValueBlock({ data }: { data: Record<string, unknown> }) {
       {entries.map(([k, v]) => (
         <div key={k} className="flex gap-2">
           <span className="text-gray-500 dark:text-gray-400 shrink-0">{k}</span>
-          <span className="text-gray-700 dark:text-gray-200 font-mono break-all">{String(v)}</span>
+          <span className={typeof v === 'string' && v.length > 60
+            ? 'text-gray-700 dark:text-gray-200 whitespace-pre-wrap break-words'
+            : 'text-gray-700 dark:text-gray-200 font-mono break-all'}>{String(v)}</span>
         </div>
       ))}
     </div>
