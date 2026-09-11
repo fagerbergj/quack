@@ -23,12 +23,11 @@ func newRunStatusTestStore(t *testing.T) *Store {
 	return st
 }
 
-// TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback is #738's
-// crash case updated for #1028: a process died with ActiveTurnID set and no
-// resumable node. The scan reports it (for the caller's clone-dir cleanup
-// and boot log, #1213) but does NOT stamp a status - ActiveTurnID stays set,
-// which the read path's existing crash fallback already reports as failed,
-// so there is nothing left for a dedicated "interrupted" status to do.
+// TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback is the crash
+// case: a process died with ActiveTurnID set and no resumable node. The scan
+// reports it (for the caller's clone-dir cleanup and boot log) but does not
+// stamp a status - ActiveTurnID stays set for the read path's crash fallback
+// to report as failed.
 func TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback(t *testing.T) {
 	st := newRunStatusTestStore(t)
 	ctx := context.Background()
@@ -56,8 +55,8 @@ func TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback(t *testing.T) 
 	}
 }
 
-// TestChatHasRunningNode pins #1028's Done-when: a chat with a running node
-// reads running, one with none reads idle (no running node found).
+// TestChatHasRunningNode pins that a chat with a running node reads true,
+// and one with none reads false.
 func TestChatHasRunningNode(t *testing.T) {
 	cases := []struct {
 		name  string

@@ -166,9 +166,9 @@ orchestrator: { provider: default, model: m }
 	}
 }
 
-// TestLoadAcceptsDeprecatedMaxActiveRuns pins that dag.max_active_runs - a
-// real key in prod's config until #1028 - still loads (as a no-op, logging a
-// warning) rather than tripping strict unknown-field parsing.
+// TestLoadAcceptsDeprecatedMaxActiveRuns pins that dag.max_active_runs still
+// loads (as a no-op, logging a warning) rather than tripping strict
+// unknown-field parsing - a real key in already-deployed configs.
 func TestLoadAcceptsDeprecatedMaxActiveRuns(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:

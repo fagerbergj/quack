@@ -251,8 +251,7 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 
 // RetryNode re-runs a finished node and its descendants with optional
 // guidance - both a REST-triggered retry and boot resume re-entering a node
-// a previous process left paused (#1028: no run-level admission left to
-// distinguish the two, node-level dag.Admission still gates the work itself).
+// a previous process left paused; node-level dag.Admission still gates the work.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// A retry/resume is its own run, not a continuation of whatever

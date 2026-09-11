@@ -97,9 +97,7 @@ func runsActiveGauge(t *testing.T, reader *metric.ManualReader) int64 {
 
 // TestRetryNode_CountsTowardRunsActiveGauge drives RetryNode to completion
 // (not the otelobs primitives directly) and asserts quack.runs.active goes
-// 0 -> 1 -> 0, both for a fresh REST-triggered retry and for the boot-resume
-// shape (#1028 merged the two call paths into one - RetryNode alone now
-// covers what RetryNode/RetryNodeResumed split before).
+// 0 -> 1 -> 0, covering both a fresh REST-triggered retry and a boot resume.
 func TestRetryNode_CountsTowardRunsActiveGauge(t *testing.T) {
 	reader := metric.NewManualReader()
 	mp := metric.NewMeterProvider(metric.WithReader(reader))

@@ -8,11 +8,10 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// TestChatStatus_RunningNodeReadsRunningWithoutHub pins #1028's Done-when: a
-// chat's status derives from its latest plan's node rows, not only from the
-// in-memory Hub - the boot-resume gap this closes, where a freshly resumed
-// node (#1366) is running on disk before this process's own Hub has
-// registered the run (see internal/serve/boot.go's startResumedNodes).
+// TestChatStatus_RunningNodeReadsRunningWithoutHub pins that chat status
+// derives from the latest plan's node rows, not only the in-memory Hub -
+// the boot-resume gap this closes, where a freshly resumed node is running
+// on disk before this process's own Hub has registered the run.
 func TestChatStatus_RunningNodeReadsRunningWithoutHub(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

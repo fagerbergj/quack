@@ -179,12 +179,11 @@ func TestResumeGuardArchivedOrStale(t *testing.T) {
 	}
 }
 
-// TestBoundedGoRun_CapsConcurrency pins #1176 review: startResumedNodes must
-// cap concurrency itself (bootResumeConcurrency), or a restart with many
+// TestBoundedGoRun_CapsConcurrency pins that startResumedNodes caps
+// concurrency itself (bootResumeConcurrency), or a restart with many
 // resumable chats hammers the host at once. Dispatch order is not guaranteed
-// (the semaphore acquire lives inside each goroutine, see finding 1), so this
-// only pins the concurrency ceiling: at most `limit` of the 5 ids may be
-// running at once.
+// (the semaphore acquire lives inside each goroutine), so this only pins the
+// concurrency ceiling: at most `limit` of the 5 ids may be running at once.
 func TestBoundedGoRun_CapsConcurrency(t *testing.T) {
 	const limit = 2
 	ids := []string{"c1", "c2", "c3", "c4", "c5"}
@@ -215,7 +214,7 @@ func TestBoundedGoRun_CapsConcurrency(t *testing.T) {
 	}
 }
 
-// TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore pins finding 1: beyond bootResumeConcurrency,
+// TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore pins that beyond bootResumeConcurrency,
 // boundedGoRun must dispatch every id and return without waiting - it runs synchronously from
 // buildFromConfig before ListenAndServe, so blocking means the HTTP listener never opens and
 // the semaphore must be acquired inside each goroutine (a driveResume takes minutes to hours).

@@ -18,10 +18,8 @@ const (
 	RunStatusIdle       = "idle"
 	RunStatusFailed     = "failed"
 	RunStatusNeedsInput = "needs_input"
-	// RunStatusPaused marks a chat whose nodes the server itself suspended
-	// (shutdown drain, or a hard kill reconciled at boot) and intends to
-	// resume on its own - nothing is asked of the user, so it must not
-	// wire-surface as failed (#962).
+	// RunStatusPaused marks a chat whose nodes the server suspended (shutdown
+	// drain, or a boot reconcile) and intends to resume itself - not failed.
 	RunStatusPaused = "paused"
 )
 
@@ -81,11 +79,8 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 	return RunStatusIdle, "", ""
 }
 
-// ChatHasRunningNode reports whether any of a plan's node rows is currently
-// StatusRunning - the node-row source of truth chat "running" status derives
-// from (#1028), on top of the in-memory Hub signal: the Hub only knows about
-// a run this process itself dispatched, so a node resumed by a fresh process
-// (#1366) reads running here before the Hub catches up.
+// ChatHasRunningNode reports whether any node row is StatusRunning - the
+// derived signal a resumed node needs before the in-memory Hub catches up.
 func ChatHasRunningNode(nodes []DagNode) bool {
 	for _, n := range nodes {
 		if n.Status == string(dag.StatusRunning) {
@@ -128,18 +123,13 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 }
 
 // ScanOrphanedRuns reconciles every chat a killed process left mid-run
-// (ActiveTurnID set, or already paused): a chat with suspended nodes is
-// stamped RunStatusPaused - the server resumes those itself, so telling the
-// user to resend a message would be wrong. A chat with no suspended node (no
-// #1366 node to resume from - e.g. the process died mid-planning, before any
-// DAG node existed) is left untouched: its ActiveTurnID stays set, which the
-// read path already reports as failed (#738's crash fallback) with no
-// separate "interrupted" status needed (#1028). It deliberately does not
-// touch pending_question: the node row owns the HITL question now, and
-// blanking the chat's copy destroyed resume state (#957); returns the paused
-// and left-untouched chat ids for the caller to log/clean up (#1213).
-// Startup-only: the scan is table-wide with no per-chat liveness check, so
-// calling it once the Hub has registered runs would stamp a live chat.
+// (ActiveTurnID set, or already paused): a chat with a suspended node is
+// stamped paused, since the server resumes it itself. A chat with no
+// suspended node is left untouched - its ActiveTurnID stays set, so the read
+// path's existing crash fallback reports it failed. Does not touch
+// pending_question: the node row owns the HITL question now. Startup-only:
+// the scan is table-wide with no per-chat liveness check, so calling it once
+// the Hub has registered runs would stamp a live chat.
 func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode []string, err error) {
 	var chats []Chat
 	if err := s.db.WithContext(ctx).

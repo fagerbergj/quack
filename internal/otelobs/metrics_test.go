@@ -125,7 +125,7 @@ func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) 
 	}
 }
 
-// TestRunGauge_CountsAResumedRun pins #1176: a boot-resumed node still counts
+// TestRunGauge_CountsAResumedRun pins that a boot-resumed node still counts
 // toward quack.runs.active, or the metric undercounts load.
 func TestRunGauge_CountsAResumedRun(t *testing.T) {
 	reader := newTestMeter(t)

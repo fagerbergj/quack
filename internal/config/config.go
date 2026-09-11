@@ -478,9 +478,9 @@ type CompactionConfig struct {
 const defaultMaxActiveNodes = 32
 
 type DagConfig struct {
-	// MaxActiveRuns is deprecated (#1028): chat state derives from node rows
-	// now, there is no run-level admission left to cap. Kept as a no-op so an
-	// already-deployed quack.yaml with "max_active_runs: N" doesn't crash-loop.
+	// MaxActiveRuns is deprecated: there is no run-level admission left to
+	// cap. Kept as a no-op so an already-deployed quack.yaml with
+	// "max_active_runs: N" doesn't crash-loop.
 	MaxActiveRuns int `yaml:"max_active_runs"`
 
 	// MaxActiveNodes caps concurrently-running nodes WITHIN ONE RUN (each run

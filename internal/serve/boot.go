@@ -18,11 +18,10 @@ import (
 const staleResumePlanCeiling = 24 * time.Hour
 
 // bootResumeConcurrency bounds how many chats resume at once on restart -
-// these runs skip node-level admission's own backpressure (their host disk/CPU
-// cost, jail+clone, all lands before that ledger sees them), so nothing else
-// caps a restart with many resumable chats from hammering the host at once. A
-// plain constant, not config (#1028 retired dag.max_active_runs): this is a
-// boot-only concurrency knob, not something a deploy needs to tune.
+// these runs skip node-level admission's own backpressure (their host
+// disk/CPU cost, jail+clone, lands before that ledger sees them), so nothing
+// else caps a restart with many resumable chats from hammering the host.
+// A plain constant: a boot-only knob, not something a deploy needs to tune.
 const bootResumeConcurrency = 8
 
 // resumeGuardArchivedOrStale is boot resume's cheap admissibility check

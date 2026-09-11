@@ -775,8 +775,8 @@ func waitFor(t *testing.T, timeout time.Duration, msg string, cond func() bool) 
 }
 
 // TestUpdateChat_ArchiveLeavesRunningRunAlone pins that archiving a chat
-// never cancels its in-flight run (#1028: there is no queued state left to
-// cancel out from under - a run either isn't dispatched yet or is already executing).
+// never cancels its in-flight run - a run either isn't dispatched yet or is
+// already executing, with no queued state in between to cancel out from under.
 func TestUpdateChat_ArchiveLeavesRunningRunAlone(t *testing.T) {
 	bm := &blockingModel{entered: make(chan struct{}, 1), unblock: make(chan struct{})}
 	h := newTestHandlerWithModel(t, bm)

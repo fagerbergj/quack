@@ -238,8 +238,8 @@ func TestBootFailsUnresumableNode(t *testing.T) {
 	}
 
 	// An unresumable node is marked failed before ScanOrphanedRuns runs, so the chat has no
-	// paused node; a real jail proves removeStaleCloneDir fires on that path (#1213), not
-	// just that a nil jail is tolerated.
+	// paused node; a real jail proves removeStaleCloneDir fires on that path, not just that
+	// a nil jail is tolerated.
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
