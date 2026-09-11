@@ -100,7 +100,7 @@ createInterface({ input: process.stdin }).on("line", async (l) => {
     await guardedCall(cfg, "read", { path: "app/.env.prod" });           // ask -> deny
   }
   out({ type: "message_start", message: { role: "assistant" } });
-  out({ type: "message_update", usage: { input: 10, output: 1, cacheRead: 6, totalTokens: 99 }, assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "done: hi" } });
+  out({ type: "message_update", usage: { input: 10, output: 1, cacheRead: 6, cacheWrite: 3, totalTokens: 99 }, assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "done: hi" } });
   out({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done: hi" }], stopReason: "stop", usage: { input: 10, output: 2, totalTokens: 99 } } });
   out({ type: "agent_end", messages: [], willRetry: false });
   out({ type: "agent_settled" });

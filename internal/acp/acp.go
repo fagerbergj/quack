@@ -426,9 +426,9 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		}
 	}
 
-	// A pinned process or a resumed session already holds the preamble in its
-	// own conversation - resending it doubles every round's prompt.
-	if a.opts.Preamble != "" && !fromPinned && !resumed {
+	// Skip only for a live pinned process - a resumed session is a new
+	// process that may have missed a preamble change since round 1.
+	if a.opts.Preamble != "" && !fromPinned {
 		outbound = a.opts.Preamble + "\n\n" + outbound
 	}
 

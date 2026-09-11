@@ -275,6 +275,11 @@ func TestTranslate_UsageMetaCarriesCachedTokens(t *testing.T) {
 	if final.usage.CandidatesTokenCount != 300 {
 		t.Errorf("CandidatesTokenCount = %d, want 300", final.usage.CandidatesTokenCount)
 	}
+	// The shim must send cached as a subset of prompt (OpenAI-style), not pi's
+	// own non-overlapping input/cacheRead split - see pi-acp.mjs's usage_update.
+	if final.usage.CachedContentTokenCount > final.usage.PromptTokenCount {
+		t.Errorf("cached (%d) exceeds prompt (%d)", final.usage.CachedContentTokenCount, final.usage.PromptTokenCount)
+	}
 }
 
 // TestTranslate_UsageNoMetaStaysZero: an agent that never sets _meta (or a

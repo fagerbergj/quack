@@ -48,8 +48,8 @@ func TestAcpSkillPathsNoDuplicateWhenOnDisk(t *testing.T) {
 	}
 }
 
-// TestAcpSkillFrontmatters_Scoped: the ACP roster is scoped to the agent's
-// declared skills, not every builtin skill.
+// TestAcpSkillFrontmatters_Scoped: a declared skills: list scopes the ACP
+// roster to just those names.
 func TestAcpSkillFrontmatters_Scoped(t *testing.T) {
 	src := newSkillSource(nil)
 	all, err := src.ListFrontmatters(context.Background())
@@ -67,12 +67,22 @@ func TestAcpSkillFrontmatters_Scoped(t *testing.T) {
 	if len(scoped) != 1 || scoped[0].Name != "review-code" {
 		t.Fatalf("acpSkillFrontmatters(..., [review-code]) = %v, want exactly the one named skill", scoped)
 	}
+}
 
-	none, err := acpSkillFrontmatters(context.Background(), src, nil)
+// TestAcpSkillFrontmatters_EmptyFallsBackToFullLibrary: no shipped ACP agent
+// config declares skills: yet, so an empty list must still get every skill.
+func TestAcpSkillFrontmatters_EmptyFallsBackToFullLibrary(t *testing.T) {
+	src := newSkillSource(nil)
+	all, err := src.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatalf("ListFrontmatters: %v", err)
+	}
+
+	got, err := acpSkillFrontmatters(context.Background(), src, nil)
 	if err != nil {
 		t.Fatalf("acpSkillFrontmatters: %v", err)
 	}
-	if len(none) != 0 {
-		t.Fatalf("acpSkillFrontmatters(..., nil) = %d skills, want 0 - an agent with no skills: key must not get the whole roster", len(none))
+	if len(got) != len(all) {
+		t.Fatalf("acpSkillFrontmatters(..., nil) = %d skills, want the full library (%d)", len(got), len(all))
 	}
 }
