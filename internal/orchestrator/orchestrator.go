@@ -644,7 +644,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
 			return
 		}
-		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, history, message, attachments,
+		runStep := func(stepCtx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, bool, error) {
+			return o.executor.RunPlanStep(stepCtx, plan, AppName, userID, sessionID, seeded, run)
+		}
+		finalizeStep := func(stepCtx context.Context, plan dag.Plan, outputs map[string]string) string {
+			return o.finalizeAnswer(stepCtx, plan, outputs, sessionID)
+		}
+		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, runStep, finalizeStep, history, message, attachments,
 			githubSetup, allowedKinds,
 			tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx),
 			orchestratorName, o.assignmentFreshness)
@@ -880,20 +886,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			}
 		}
 
-		if planID, selected := planCache.Selected(); selected {
-			if plan, ok := planCache.Get(planID); ok {
-				nodeOutputs := make(map[string]string)
-				paused, rerr := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, nil, safeYield, nodeOutputs, nil)
-				if rerr != nil {
-					safeYield(stream.Errorf("orchestrator: plan run: "+rerr.Error()), nil)
-					return
-				}
-				if !paused {
-					planCache.SetDelivered(o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID))
-				}
-			}
-		}
-
+		// The execute tool itself ran every step's assignments (dag.Executor.RunPlanStep)
+		// and set planCache.Delivered once a step declared delivery - nothing left to run here.
 		o.persistAnswer(ctx, userID, sessionID, planCache.Delivered())
 		safeYield(stream.Done(), nil)
 	}

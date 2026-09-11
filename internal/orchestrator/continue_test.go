@@ -142,11 +142,19 @@ func stubCall(name string, args map[string]any) *model.LLMResponse {
 	}
 }
 
-// planCall is the orchestrator authoring a one-assignment plan, the way it does live.
+// planCall is the orchestrator authoring a one-assignment plan, the way it
+// does live. It declares delivery so the plan is COMPLETE (not a partial
+// step, #slice3) - execute ends the turn once it runs, matching what nearly
+// every test using this helper already assumes ("one execute call finishes
+// the run"). A test that specifically wants a partial (no-delivery) first
+// step builds its own create_plan call instead - see incremental_plan_test.go.
 func planCall() *model.LLMResponse {
-	return stubCall("create_plan", map[string]any{"assignments": []any{map[string]any{
-		"agent": "web-researcher", "task": "research the thing",
-	}}})
+	return stubCall("create_plan", map[string]any{
+		"assignments": []any{map[string]any{
+			"agent": "web-researcher", "task": "research the thing",
+		}},
+		"delivery": map[string]any{"kind": "comment"},
+	})
 }
 
 // executeCall commits the plan create_plan cached.
@@ -185,8 +193,10 @@ func planIDFromRequest(req *model.LLMRequest) (string, bool) {
 
 // newTestOrch builds an Orchestrator over an in-memory session service, a real
 // planner + executor (one web-researcher agent backed by the same stub), and the
-// stub as the orchestrator's model.
-func newTestOrch(t *testing.T, stub *orchStub) *Orchestrator {
+// stub as the orchestrator's model. stub only needs to satisfy model.LLM - a
+// test that must intercept the base orchStub's routing (e.g. to script a
+// growth step) embeds orchStub in its own type and overrides GenerateContent.
+func newTestOrch(t *testing.T, stub model.LLM) *Orchestrator {
 	t.Helper()
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "ROLE:researcher",
