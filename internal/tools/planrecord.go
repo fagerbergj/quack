@@ -304,4 +304,3 @@ func toAssignmentOutputs(assignments []dag.Assignment, nodeAgent map[string]stri
 	}
 	return out
 }
-
