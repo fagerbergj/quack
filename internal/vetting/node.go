@@ -832,15 +832,15 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, ctrl, emit, log); paused {
 				return "", GateResult{}, ierr // ErrNodePaused (wrapping ADK's park sentinel)
 			}
-			if strings.TrimSpace(revised) == "" {
-				// Revise round ended on a tool call with no trailing text (finalSpec
-				// answer_len 0). That's only a true no-op if the tool call didn't
-				// change what would be delivered (act unchanged, e.g. a re-read of a file) - a search, stage_review_comment or edit_artifact call DOES move act, and the prior verdict never saw it, so it must be judged before delivery instead of going out un-vetted.
+			if strings.TrimSpace(revised) == "" || revised == answer {
+				// No-op revise (empty or byte-identical to what the judge already scored)
+				// only skips re-judging if act is unchanged too - a tool call can still move
+				// act (e.g. stage_review_comment) without the prior verdict having seen it.
 				if reflect.DeepEqual(act, actFor(answer)) {
-					log.Info("revise produced no text and no new activity; keeping current verdict", "round", round)
+					log.Info("revise produced no change; keeping current verdict", "round", round)
 					break
 				}
-				log.Info("revise produced no text but staged new activity; re-judging unchanged answer against it", "round", round)
+				log.Info("revise produced no text change but staged new activity; re-judging unchanged answer against it", "round", round)
 				continue
 			}
 			answer = revised

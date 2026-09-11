@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/artifact"
@@ -259,6 +260,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			refreshed := refreshSetup != nil && refreshSetup(ctx, node, cfg)
 
 			upstream := upstreamFromInput(in, node.DependsOn)
+			cfg.UpstreamAnswers = renderUpstreamForJudge(upstream, node.DependsOn)
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			prompt := buildTask(plan, effectiveNode, upstream, gateFailed)
 			if refreshed {
@@ -433,6 +435,18 @@ func readGateFailed(ctx adkagent.Context, dependsOn []string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// renderUpstreamForJudge: same upstream outputs buildTask hands the worker,
+// rendered for the judge so it can check claims like "the file identified upstream" instead of taking them on faith.
+func renderUpstreamForJudge(upstream map[string]string, dependsOn []string) string {
+	var sb strings.Builder
+	for _, dep := range dependsOn {
+		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
+			fmt.Fprintf(&sb, "--- from %q ---\n%s\n\n", dep, out)
+		}
+	}
+	return sb.String()
 }
 
 func upstreamFromInput(in any, dependsOn []string) map[string]string {

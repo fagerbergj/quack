@@ -494,7 +494,7 @@ func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "irrelevant outer question"}}}
 	changedFiles := "diff --git a/internal/foo.go b/internal/foo.go\n--- a/internal/foo.go\n+++ b/internal/foo.go\n@@ -1,1 +1,1 @@\n-old\n+new\n"
 
-	prompt := buildJudgePrompt("", "rubric text", nodeTask, question, "answer text", changedFiles, workerActivity{}, "")
+	prompt := buildJudgePrompt("", "rubric text", nodeTask, "", question, "answer text", changedFiles, workerActivity{}, "")
 
 	if !strings.Contains(prompt, changedFiles) {
 		t.Errorf("judge prompt missing the actual diff content:\n%s", prompt)
@@ -515,7 +515,7 @@ func TestBuildJudgePromptSectionOrder(t *testing.T) {
 	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: build failed"}}
 	known := judgeKnownFailuresSection(det, 0.7)
 
-	prompt := buildJudgePrompt("the constitution", "the rubric", "the node task",
+	prompt := buildJudgePrompt("the constitution", "the rubric", "the node task", "",
 		questionContent("the question"), "the answer being scored", "the changed files diff", act, known)
 
 	sections := []string{"the constitution", "the rubric", "the node task", "the question",
@@ -542,8 +542,8 @@ func TestBuildJudgePromptStablePrefixIsByteIdentical(t *testing.T) {
 	act := workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="a.go")`}}}
 	known := judgeKnownFailuresSection(map[string]criterionScore{"checks_pass": {Score: 0, Reason: "build failed"}}, 0.7)
 
-	first := buildJudgePrompt(constitution, rubric, task, question, "the first answer", "diff one", act, known)
-	second := buildJudgePrompt(constitution, rubric, task, question, "a wholly different second answer", "diff one", act, known)
+	first := buildJudgePrompt(constitution, rubric, task, "", question, "the first answer", "diff one", act, known)
+	second := buildJudgePrompt(constitution, rubric, task, "", question, "a wholly different second answer", "diff one", act, known)
 
 	const answerHeader = "\n\nAnswer to judge:\n"
 	want := strings.Index(first, answerHeader) + len(answerHeader)
@@ -605,8 +605,8 @@ func TestBuildJudgePrompt_NoKnownFailuresOmitsSection(t *testing.T) {
 	}
 
 	q := questionContent("do the task")
-	withoutArg := buildJudgePrompt("", "rubric text", "", q, "the answer", "", workerActivity{}, "")
-	withEmptyKnown := buildJudgePrompt("", "rubric text", "", q, "the answer", "", workerActivity{}, known)
+	withoutArg := buildJudgePrompt("", "rubric text", "", "", q, "the answer", "", workerActivity{}, "")
+	withEmptyKnown := buildJudgePrompt("", "rubric text", "", "", q, "the answer", "", workerActivity{}, known)
 	if withEmptyKnown != withoutArg {
 		t.Errorf("prompt changed even though nothing failed deterministically:\n--- want ---\n%s\n--- got ---\n%s", withoutArg, withEmptyKnown)
 	}

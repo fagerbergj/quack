@@ -21,8 +21,10 @@ func TestJudgePromptSharedPrefixAcrossRounds(t *testing.T) {
 	ans1 := strings.Repeat("Round 1 answer: the per-id lock is correct.\n", 40)
 	ans2 := strings.Repeat("Round 2 answer: the per-id lock is correct and the map is guarded.\n", 40)
 
-	p1 := buildJudgePrompt(constitution, rubric, task, question, ans1, diff, act, "")
-	p2 := buildJudgePrompt(constitution, rubric, task, question, ans2, diff, act, "")
+	upstream := "--- from \"explore-1\" ---\nThe bug is in internal/dag/graph.go:262, upstreamFromInput.\n\n"
+
+	p1 := buildJudgePrompt(constitution, rubric, task, upstream, question, ans1, diff, act, "")
+	p2 := buildJudgePrompt(constitution, rubric, task, upstream, question, ans2, diff, act, "")
 
 	shared := commonPrefixLen(p1, p2)
 	frac := float64(shared) / float64(len(p2))
@@ -32,5 +34,26 @@ func TestJudgePromptSharedPrefixAcrossRounds(t *testing.T) {
 		t.Fatalf("judge prompt round1->round2 shared prefix = %.1f%% of round 2, want >= %.0f%% - "+
 			"a section that changes every round has moved ahead of the answer, killing the prefix cache",
 			100*frac, 100*minFraction)
+	}
+}
+
+// TestJudgePromptUpstreamSection proves the upstream-output section appears
+// only when the node has upstream input, and sits ahead of the answer.
+func TestJudgePromptUpstreamSection(t *testing.T) {
+	task := "Fix the bug at the file and line identified in the previous exploration task."
+	question := questionContent("Fix the reported bug")
+	upstream := "--- from \"explore-1\" ---\nThe bug is in internal/dag/graph.go:262, upstreamFromInput.\n\n"
+
+	withUpstream := buildJudgePrompt("", "rubric", task, upstream, question, "the fix", "", workerActivity{}, "")
+	if !strings.Contains(withUpstream, "OUTPUT FROM UPSTREAM NODES") || !strings.Contains(withUpstream, "graph.go:262") {
+		t.Fatalf("judge prompt with upstream output missing the upstream section:\n%s", withUpstream)
+	}
+	if idx, ans := strings.Index(withUpstream, "graph.go:262"), strings.Index(withUpstream, "the fix"); idx < 0 || ans < idx {
+		t.Fatalf("upstream section must precede the answer being judged")
+	}
+
+	withoutUpstream := buildJudgePrompt("", "rubric", task, "", question, "the fix", "", workerActivity{}, "")
+	if strings.Contains(withoutUpstream, "OUTPUT FROM UPSTREAM NODES") {
+		t.Fatalf("judge prompt with no upstream input must not carry the upstream section:\n%s", withoutUpstream)
 	}
 }

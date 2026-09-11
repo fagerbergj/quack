@@ -320,7 +320,7 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 // answer being judged) trails last, so the whole prefix ahead of it stays a prompt-cache hit across rounds instead of dying at the first volatile byte. judgePromptBuilds counts buildJudgePrompt calls - test-only seam proving fitJudgeAnswer's prompt isn't thrown away and rebuilt by runJudgeRound.
 var judgePromptBuilds atomic.Int64
 
-func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
+func buildJudgePrompt(constitution, rubric, nodeTask, upstreamAnswers string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
 	judgePromptBuilds.Add(1)
 	var sb strings.Builder
 	if constitution != "" {
@@ -337,6 +337,11 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 		sb.WriteString("\n\nThe request below is BACKGROUND: it is the whole job, most of which belongs to " +
 			"OTHER nodes. Do NOT penalise this node for work the task above does not ask of it - a read-only " +
 			"research node that committed no code has not failed; that was never its job.")
+	}
+	if strings.TrimSpace(upstreamAnswers) != "" {
+		sb.WriteString("\n\nOUTPUT FROM UPSTREAM NODES this node's task depends on - verify claims like " +
+			"\"the file/function identified above\" against this, don't take them on faith:\n")
+		sb.WriteString(boundExcerpt(upstreamAnswers, maxUpstreamAnswersChars))
 	}
 	sb.WriteString("\n\nUser's question:\n")
 	sb.WriteString(contentPlainText(question))
@@ -549,7 +554,7 @@ func judgeCharBudget(cfg Config) int {
 // first call reuses it instead of rebuilding the identical ~244KB string. shrinkFactor < 1.0 = harder clamp for retry.
 func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, shrinkFactor float64) (string, string) {
 	budget := judgeCharBudget(cfg)
-	full := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
+	full := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, cfg.UpstreamAnswers, question, answer, changedFiles, act, knownFailures)
 	over := len(full) - budget
 	if over <= 0 && shrinkFactor >= 1.0 {
 		return answer, full
@@ -566,7 +571,7 @@ func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, k
 		return answer, full
 	}
 	clamped := boundExcerpt(answer, target)
-	return clamped, buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, clamped, changedFiles, act, knownFailures)
+	return clamped, buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, cfg.UpstreamAnswers, question, clamped, changedFiles, act, knownFailures)
 }
 
 // judgeRetryAttempts/judgeRetryBaseDelay: backoff for transient model-endpoint faults.
@@ -820,7 +825,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 
 	promptText := prebuilt
 	if promptText == "" {
-		promptText = buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
+		promptText = buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, cfg.UpstreamAnswers, question, answer, changedFiles, act, knownFailures)
 	}
 	// Stamp advisor-thread token so judge resolves fs tools into the worker's node scope.
 	if cfg.AdvisorToken != "" {
@@ -1172,6 +1177,7 @@ const (
 	maxPreviousAnswerChars   = 16_000
 	maxActivitySectionChars  = 32_000
 	maxFeedbackChars         = 16_000
+	maxUpstreamAnswersChars  = 24_000
 )
 
 // boundExcerpt: head+tail excerpt with truncation marker. Favours head at 60/40.

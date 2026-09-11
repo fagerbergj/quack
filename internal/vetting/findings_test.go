@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"slices"
 	"strings"
@@ -216,8 +217,10 @@ func (m *reviewGateStub) GenerateContent(_ context.Context, req *model.LLMReques
 			}), nil)
 			return
 		}
-		atomic.AddInt32(&m.workerCalls, 1)
-		yield(stubText("Reviewed the change."), nil)
+		n := atomic.AddInt32(&m.workerCalls, 1)
+		// Text varies by call so the revise-dedup guard doesn't mask this
+		// test's target: the terminal round's own deterministic-only judge skip.
+		yield(stubText(fmt.Sprintf("Reviewed the change (%d).", n)), nil)
 	}
 }
 
