@@ -415,6 +415,48 @@ func TestRound_PinnedProcessReusedAcrossRounds(t *testing.T) {
 	}
 }
 
+// TestRound_PreambleOnlyOnFreshSession pins perf-audit-1: the preamble
+// (agent prompt + memory + skill roster) already lives in a pinned session's
+// own conversation from round 1, so round 2+ must not resend it.
+func TestRound_PreambleOnlyOnFreshSession(t *testing.T) {
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New("code-implementer", "external coder", Options{
+		Command:  []string{os.Args[0]},
+		Env:      []string{"QUACK_ACP_FAKE=echo"},
+		Home:     t.TempDir(),
+		Jail:     jail,
+		UserID:   "u1",
+		Preamble: "PREAMBLE-TEXT",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "tok-preamble"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	round := func() string {
+		var specs []eventSpec
+		if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+			specs = append(specs, s)
+			return true
+		}); err != nil {
+			t.Fatalf("round: %v", err)
+		}
+		return specs[len(specs)-1].parts[0].Text
+	}
+
+	if first := round(); !strings.Contains(first, "PREAMBLE-TEXT") {
+		t.Fatalf("round 1 (fresh session) must include the preamble, got: %q", first)
+	}
+	if second := round(); strings.Contains(second, "PREAMBLE-TEXT") {
+		t.Fatalf("round 2 on the pinned session must not resend the preamble, got: %q", second)
+	}
+}
+
 // TestClosePinnedSession_KillsProcessAndClearsRegistry pins the node-finish
 // path itself (vetting.UnregisterAdvisorThread -> NodeSessionClosed ->
 // ClosePinnedSession, wired in serve.go): a node that finishes normally after pinning a process must not leave that process running - this is the #1309 leak class (a per-node resource with no teardown on the happy path), not just the abort/failure exits the other tests already cover.

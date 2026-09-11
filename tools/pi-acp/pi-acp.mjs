@@ -231,7 +231,16 @@ function onPiEvent(ev) {
       else if (e.type === "thinking_delta")
         notify({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: e.delta } });
       if (ev.usage?.totalTokens)
-        notify({ sessionUpdate: "usage_update", used: ev.usage.totalTokens, size: 0 });
+        // ACP's usage_update has no prompt/cached/completion split - carry pi's own
+        // Usage breakdown through _meta so dag_nodes.cached_tokens isn't always 0.
+        notify({
+          sessionUpdate: "usage_update", used: ev.usage.totalTokens, size: 0,
+          _meta: {
+            quack_prompt_tokens: ev.usage.input,
+            quack_cached_tokens: ev.usage.cacheRead,
+            quack_completion_tokens: ev.usage.output,
+          },
+        });
       break;
     }
     case "tool_execution_start": {

@@ -109,9 +109,33 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		name, args := t.mapToolCall(p)
 		out = append(out, t.pairSpec(id, name, args, p, *up.Status == sdk.ToolCallStatusFailed, up.RawOutput))
 	case u.UsageUpdate != nil:
-		t.usage = &genai.GenerateContentResponseUsageMetadata{TotalTokenCount: int32(u.UsageUpdate.Used)}
+		um := &genai.GenerateContentResponseUsageMetadata{TotalTokenCount: int32(u.UsageUpdate.Used)}
+		// ACP's SessionUsageUpdate has no prompt/cached/completion breakdown
+		// (github.com/coder/acp-go-sdk's SessionUsageUpdate: only cost/size/used),
+		// so pi-acp carries pi's own Usage split through the _meta extension field.
+		um.PromptTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackPromptTokensMetaKey)
+		um.CachedContentTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackCachedTokensMetaKey)
+		um.CandidatesTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackCompletionTokensMetaKey)
+		t.usage = um
 	}
 	return out
+}
+
+// _meta keys pi-acp sets on usage_update, mirroring pi's own Usage shape
+// (input/cacheRead/output) - see mcpMetaKey for the same _meta convention.
+const (
+	quackPromptTokensMetaKey     = "quack_prompt_tokens"
+	quackCachedTokensMetaKey     = "quack_cached_tokens"
+	quackCompletionTokensMetaKey = "quack_completion_tokens"
+)
+
+// usageMetaInt reads one numeric _meta field - JSON numbers decode as
+// float64 into a map[string]any, so a plain type assertion to int fails silently.
+func usageMetaInt(meta map[string]any, key string) int32 {
+	if v, ok := meta[key].(float64); ok {
+		return int32(v)
+	}
+	return 0
 }
 
 // bufferThought appends one thinking delta to the open batch, flushing it

@@ -215,7 +215,11 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   const tu = updates.find((u) => u.sessionUpdate === "tool_call_update");
   assert.equal(tu.status, "completed");
   assert.equal(tu.rawOutput.output, "hi\n");
-  assert.ok(updates.some((u) => u.sessionUpdate === "usage_update" && u.used === 99));
+  const usageUpdate = updates.find((u) => u.sessionUpdate === "usage_update" && u.used === 99);
+  assert.ok(usageUpdate, "no usage_update with used === 99");
+  assert.equal(usageUpdate._meta?.quack_prompt_tokens, 10, "prompt tokens missing from usage_update _meta");
+  assert.equal(usageUpdate._meta?.quack_cached_tokens, 6, "cached tokens missing from usage_update _meta");
+  assert.equal(usageUpdate._meta?.quack_completion_tokens, 1, "completion tokens missing from usage_update _meta");
 }
 // OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
 if (!process.env.ACP_CMD) {

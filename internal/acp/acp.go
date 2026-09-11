@@ -204,9 +204,6 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		// (branch/HEAD/dir listing drift once a round commits anything), so
 		// leading with it broke the prompt-cache prefix from round 2 on.
 		outbound := prompt + "\n\n" + environmentBlock(ctx, cwd, caps)
-		if a.opts.Preamble != "" {
-			outbound = a.opts.Preamble + "\n\n" + outbound
-		}
 		stopped := false
 		err = a.round(ctx, cwd, memSecret, caps, outbound, steerChatID, steerNodeID, advisorToken, priorSessionID, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
@@ -320,6 +317,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	var sessID sdk.SessionId
 	var toolNames []string
 	fromPinned := false
+	resumed := false
 	if advisorToken != "" {
 		if v, ok := pinned.Load(advisorToken); ok {
 			pp := v.(*pinnedProc)
@@ -383,7 +381,6 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		// round (a live pinned process, above, is now the common path for
 		// every round after it - #1006, perf audit finding 8).
 		sessID = sdk.SessionId(priorSessionID)
-		resumed := false
 		if priorSessionID != "" && initResp.AgentCapabilities.LoadSession {
 			_, err = h.conn.LoadSession(ictx, sdk.LoadSessionRequest{Cwd: cwd, McpServers: mcpServers, SessionId: sessID})
 			resumed = err == nil
@@ -427,6 +424,12 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		if a.opts.UnregisterLiveSteer != nil {
 			defer a.opts.UnregisterLiveSteer(steerChatID, steerNodeID)
 		}
+	}
+
+	// A pinned process or a session/load resume already holds the preamble in its
+	// own conversation - resending it doubles the prompt every round (perf audit finding 1).
+	if a.opts.Preamble != "" && !fromPinned && !resumed {
+		outbound = a.opts.Preamble + "\n\n" + outbound
 	}
 
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound

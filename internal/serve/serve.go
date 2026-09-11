@@ -1237,7 +1237,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				gateCfgs[name] = agentGateCfg
 				grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
 			}
-			skillFms, err := builtinSkillSrc.ListFrontmatters(context.Background())
+			skillFms, err := acpSkillFrontmatters(context.Background(), builtinSkillSrc, ac.Skills)
 			if err != nil {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
 			}
@@ -1246,7 +1246,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				behaviour += "\n\n" + g
 			}
 			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
-			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading, wsBlock)
+			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, true, behaviour, grading, wsBlock)
 			env := opencodeEnv(prov, ac, acpSkillPaths(pluginSkillDirs), workspaceCaps)
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
@@ -1706,6 +1706,14 @@ func acpSkillPaths(skillDirs []string) []string {
 		}
 	}
 	return out
+}
+
+// acpSkillFrontmatters scopes an ACP agent's roster to its declared skills -
+// the same skillsource.Scoped call the native branch makes; an unscoped
+// list here put all builtin skills in every ACP round's preamble regardless
+// of ac.Skills (perf audit finding 3).
+func acpSkillFrontmatters(ctx context.Context, src skill.Source, names []string) ([]*skill.Frontmatter, error) {
+	return skillsource.Scoped(src, names).ListFrontmatters(ctx)
 }
 
 // contentText flattens a content's text parts (for advisor-thread marker extraction).
