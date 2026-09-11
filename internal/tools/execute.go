@@ -63,12 +63,18 @@ type assignmentResult struct {
 
 // executeResult.Status: "running" while the plan may still grow (this step
 // declared no delivery yet - more nodes can follow via edit_plan),
-// "delivered" once a step's plan declares delivery and that step has run,
-// "paused" when a node in this step is waiting on a question it asked the
-// user - do not call execute/edit_plan again until it's answered.
+// "delivered" once a step's plan declares delivery and that step's
+// delivering node(s) succeeded, "paused" when a node in this step is
+// waiting on a question it asked the user - do not call execute/edit_plan
+// again until it's answered.
 type executeResult struct {
 	Status  string             `json:"status"`
-	Results []assignmentResult `json:"results"`
+	Results []assignmentResult `json:"results,omitempty"`
+	// Message: set instead of Results when this call had nothing new to run
+	// (every assignment already has a task_id) - names the plan's current
+	// status so the model doesn't re-issue the identical call expecting a
+	// different answer.
+	Message string `json:"message,omitempty"`
 }
 
 // ExecPlanKey: session-state key for the selected plan (full JSON), so a retry finds it in persisted session.
@@ -116,6 +122,25 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			}
 			if a.PlanID != "" && a.PlanID != rec.PlanID {
 				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q - the current plan is %q", a.PlanID, rec.PlanID)
+			}
+
+			// Nothing new since the last execute call: skip the judge/run/
+			// finalize pipeline entirely rather than silently re-running it on
+			// an unchanged plan - a model that calls execute again expecting a
+			// different answer needs a clear "nothing to do" instead (#slice3
+			// review: this was the CI hang - execute doesn't end the turn on
+			// its own, so a model re-issuing this with nothing new spun
+			// forever). Only "plan is genuinely done" ends the turn here; the
+			// repeat guard (orchestrator.go) is the backstop for a model that
+			// keeps calling this anyway on a still-partial plan.
+			if run, _ := partitionAssignments(rec.Assignments); len(run) == 0 {
+				if rec.Status == "done" {
+					tc.Actions().SkipSummarization = true
+				}
+				return executeResult{
+					Status:  runningStatus(rec.Status),
+					Message: fmt.Sprintf("nothing new to run - plan %s status %q; every assignment has already run", rec.PlanID, rec.Status),
+				}, nil
 			}
 
 			nodes, err := listDagNodeRecords(tc, c)
@@ -173,6 +198,12 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			// assemble() mints its own fresh plan.ID - overwrite it with the
 			// record's, the id the model actually knows and referenced.
 			plan.ID = rec.PlanID
+			// The judge and checkReviewDeliverable read plan.Delivery, which
+			// assemble() may have resolved from an explicit-but-kindless
+			// declaration (see assemble's own doc) - sync it back onto rec so
+			// execute's own delivering decision below reads the SAME resolved
+			// value the judge just judged, never a stale, less-resolved one.
+			rec.Delivery = plan.Delivery
 			// Nodes get the ask-only background and per-node context detail.
 			plan.WorkerBackground = workerAsk
 			plan.ContextItems = contextItems
@@ -223,6 +254,7 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 
 			results := make([]assignmentResult, 0, len(run))
 			now := time.Now().UTC()
+			var stepFailed bool
 			for i := range rec.Assignments {
 				nid := rec.Assignments[i].NodeID
 				if !run[nid] {
@@ -243,6 +275,7 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				default:
 					rec.Assignments[i].TaskID = uuid.NewString()
 					status = "failed"
+					stepFailed = true
 				}
 				arts, _ := nodeArtifactIDs(tc, c, nid)
 				results = append(results, assignmentResult{
@@ -250,7 +283,12 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				})
 			}
 
-			delivering := rec.Delivery != nil && !stepPaused
+			// Only deliver when this step's own run actually succeeded - a
+			// failed or paused delivering node must not mark the plan done and
+			// finalize on garbage; the orchestrator needs the turn to stay
+			// open so it can see the failure and react (retry the node,
+			// edit_plan, or answer around it).
+			delivering := rec.Delivery != nil && !stepPaused && !stepFailed
 			rec.Status = "running"
 			if delivering {
 				rec.Status = "done"
@@ -273,11 +311,13 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				// End the llmagent turn: either delivery has fired (nothing
 				// more to plan) or a node is waiting on the user (calling
 				// execute/edit_plan again now would just repeat this step).
+				// A failed step deliberately does NOT end the turn - the
+				// model needs to see the failure and act on it.
 				// ponytail: synthesizer node IS the loop-back. Add a caller-side knob when orchestrator needs to reshape.
 				tc.Actions().SkipSummarization = true
 			}
 
-			slog.Info("execute: plan step ran", "component", "execute", "plan", plan.ID, "ran", len(results), "delivering", delivering, "paused", stepPaused)
+			slog.Info("execute: plan step ran", "component", "execute", "plan", plan.ID, "ran", len(results), "delivering", delivering, "paused", stepPaused, "failed", stepFailed)
 			status := "running"
 			switch {
 			case delivering:
@@ -305,6 +345,15 @@ func partitionAssignments(assignments []dag.Assignment) (run map[string]bool, se
 		}
 	}
 	return run, seeded
+}
+
+// runningStatus maps a dag_plan record's own status to executeResult's
+// vocabulary for the "nothing new to run" short-circuit.
+func runningStatus(recStatus string) string {
+	if recStatus == "done" {
+		return "delivered"
+	}
+	return "running"
 }
 
 // previewText caps a node's raw output to a short preview for the model's
