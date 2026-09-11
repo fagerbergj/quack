@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -611,6 +612,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 				o.resumeNodeRun(ctx, userID, sessionID, message, pend, yield)
 				return
 			}
+		} else if pend, ok := o.pendingStepInterrupt(ctx, userID, sessionID); ok {
+			o.startIncrementalNodeRun(ctx, userID, sessionID, message, pend, yield)
+			return
 		}
 		history := buildHistory(prior)
 		var githubSetup *dag.Setup
@@ -1023,13 +1027,92 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 // StartNode is the "start a paused node" transition: it re-enters the
 // stashed plan's graph at the node that paused. A node parked on a question
 // (pause_reason awaiting_input, i.e. an unanswered HITL interrupt in the session) takes message as the answer; a node paused by a user or by shutdown needs no message and simply resumes at its last gate boundary.
+// A node paused mid-incremental-step (dag.PlanStepSessionID, not the chat
+// session - see startIncrementalNodeRun) is checked separately, since that
+// resume re-enters a structurally different wrapper than the whole-plan graph.
 func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
 	o.executor.StartNode(sessionID, nodeID)
-	var pend *pendingInterrupt
 	if p, ok := latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, sessionID)); ok && p.nodeID == nodeID {
-		pend = &p
+		o.startNodeRun(ctx, userID, sessionID, message, &p, nodeID, yield)
+		return
 	}
-	o.startNodeRun(ctx, userID, sessionID, message, pend, nodeID, yield)
+	if p, ok := o.pendingStepInterrupt(ctx, userID, sessionID); ok && p.nodeID == nodeID {
+		o.startIncrementalNodeRun(ctx, userID, sessionID, message, p, yield)
+		return
+	}
+	o.startNodeRun(ctx, userID, sessionID, message, nil, nodeID, yield)
+}
+
+// pendingStepInterrupt checks a plan's own dedicated incremental-step
+// session for a paused node - RunPlanStep runs there, not on the chat
+// session (see dag.PlanStepSessionID's doc: a nested runner.Run on the live
+// chat session would risk corrupting its event/branch bookkeeping).
+func (o *Orchestrator) pendingStepInterrupt(ctx context.Context, userID, sessionID string) (pendingInterrupt, bool) {
+	return latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, dag.PlanStepSessionID(sessionID)))
+}
+
+// startIncrementalNodeRun answers a node paused mid-incremental-step
+// (dag.Executor.ResumePlanStep) and persists its result onto the dag_plan
+// record exactly like execute() does for a freshly-run assignment, so a
+// later execute/list_nodes call sees it as done. Unlike startNodeRun (which
+// always finalizes once the whole graph stops pausing), finishing here only
+// means THIS assignment is done - the plan may still be partial, so the
+// answer is only finalized when the plan's own declared delivery covers it.
+func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sessionID, message string, pend pendingInterrupt, yield func(stream.SSEEvent, error) bool) {
+	plan, ok := o.stashedPlan(ctx, userID, sessionID)
+	if !ok {
+		yield(stream.Errorf("resume: no plan in session to resume"), nil)
+		return
+	}
+	recordSvc := o.artifacts
+	if recordSvc == nil {
+		recordSvc = artifact.InMemoryService()
+	}
+	rec, _, ok, err := dag.LoadDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID)
+	if err != nil || !ok {
+		yield(stream.Errorf("resume: no plan record to resume"), nil)
+		return
+	}
+	run := map[string]bool{pend.nodeID: true}
+	seeded := map[string]string{}
+	for _, a := range rec.Assignments {
+		if a.TaskID != "" {
+			seeded[a.NodeID] = a.Result
+		}
+	}
+
+	safeYield := newSafeYield(yield)
+	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
+	safeYield(tools.DagPlanEvent(ctx, plan), nil)
+
+	outputs, paused, err := o.executor.ResumePlanStep(ctx, plan, AppName, userID, sessionID, seeded, run, pend.id, message)
+	if err != nil {
+		safeYield(stream.Errorf("resume: "+err.Error()), nil)
+		return
+	}
+	if paused {
+		yield(stream.Done(), nil)
+		return
+	}
+
+	out := outputs[pend.nodeID]
+	for i := range rec.Assignments {
+		if rec.Assignments[i].NodeID == pend.nodeID {
+			rec.Assignments[i].TaskID = uuid.NewString()
+			rec.Assignments[i].Result = out
+		}
+	}
+	if _, _, serr := dag.SaveDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID, "", rec); serr != nil {
+		slog.Warn("resume: dag_plan update failed", "component", "orchestrator", "err", serr)
+	}
+	if rec.Delivery != nil {
+		final := map[string]string{}
+		for _, a := range rec.Assignments {
+			final[a.NodeID] = a.Result
+		}
+		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID))
+	}
+	yield(stream.Done(), nil)
 }
 
 func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {

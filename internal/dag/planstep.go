@@ -19,10 +19,18 @@ import (
 )
 
 // planStepSessionSuffix names the dedicated ADK session a plan's incremental
-// steps run under - separate from the chat session so a step's own workflow
-// bookkeeping never interleaves with the orchestrator's live tool-calling
-// turn on the same session id.
+// steps run under. Kept separate from the chat session because RunPlanStep
+// runs synchronously from inside the execute TOOL CALL, nested inside the
+// orchestrator's own live runner.Run on the chat session - a second
+// runner.Run against that same session while the first is mid-iteration
+// risks corrupting its event/branch bookkeeping, so this step gets its own.
 const planStepSessionSuffix = "::plan-step"
+
+// PlanStepSessionID is the ADK session a plan's incremental steps run under -
+// exported so the orchestrator's own pending-question/resume lookups (which
+// otherwise only ever scan the chat session) know where to also look for a
+// node paused mid-step.
+func PlanStepSessionID(chatID string) string { return chatID + planStepSessionSuffix }
 
 // RunPlanStep runs exactly the nodes named in run and streams their events
 // through ctx's yield chain (stream.YieldFromContext) - the same one the
@@ -31,25 +39,42 @@ const planStepSessionSuffix = "::plan-step"
 // only a workflow.NewDynamicNode body provides (see its doc), so this wraps
 // the call in its own disposable workflow+runner rather than driving it
 // directly from ctx. paused reports whether any run-set node parked on a
-// HITL question (needsInput) - see the ponytail note below.
-//
-// ponytail: a node that pauses here isn't auto-resumable from chat yet -
-// LatestPendingQuestion/resumeNodeRun (orchestrator.go) only scan the CHAT
-// session, not this dedicated plan-step one, and this wrapper (plain
-// workflowagent, unlike RunPlanAsGraph's newPlanWrapper) has no
-// ReconstructRunState/Resume path to re-enter with an answer either. The
-// node itself is NOT stuck (workflow.RunNode's ErrNodeInterrupted surfaces
-// as a clean node_needs_input event, not a hang) and CancelNode/StopNode
-// still reaches it (e.controls is keyed by chatID, independent of this
-// session) - only the "answer it" path is missing. Upgrade path: switch this
-// wrapper to workflow.New + newPlanWrapper (nativegraph.go) and add a
-// ResumePlanStep mirroring RunPlanAsGraph's resume content shape, then wire
-// it into orchestrator.Run()'s pending-interrupt check for this session.
+// HITL question - see ResumePlanStep to answer it.
 func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool) (outputs map[string]string, paused bool, err error) {
-	nodeOutputs := make(map[string]string)
 	if len(run) == 0 {
-		return nodeOutputs, false, nil
+		return map[string]string{}, false, nil
 	}
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "run"}}}
+	return e.driveStep(ctx, plan, appName, userID, chatID, seeded, run, content)
+}
+
+// ResumePlanStep answers a node's question from a prior RunPlanStep call
+// that parked on it (interruptID/answer - the same adk_request_input
+// FunctionResponse shape orchestrator.go's startNodeRun already builds for a
+// whole-plan resume). run must name exactly the node(s) still unresolved
+// from that step (a sibling that already finished needs no seat here -
+// dag_plan's own task_id already marks it done); workflowagent.New's runner
+// (see its own doc) detects the FunctionResponse and resumes the SAME
+// session's paused RunState instead of starting the step over.
+func (e *Executor) ResumePlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool, interruptID, answer string) (outputs map[string]string, paused bool, err error) {
+	if len(run) == 0 {
+		return map[string]string{}, false, nil
+	}
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{
+		FunctionResponse: &genai.FunctionResponse{
+			ID:       interruptID,
+			Name:     workflow.WorkflowInputFunctionCallName,
+			Response: map[string]any{"payload": answer},
+		},
+	}}}
+	return e.driveStep(ctx, plan, appName, userID, chatID, seeded, run, content)
+}
+
+// driveStep builds the disposable per-chat workflow+runner RunPlanStep/
+// ResumePlanStep share and drives it with content - "run" (fresh dispatch)
+// or an adk_request_input answer (resume).
+func (e *Executor) driveStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool, content *genai.Content) (outputs map[string]string, paused bool, err error) {
+	nodeOutputs := make(map[string]string)
 	stepNode := workflow.NewDynamicNode[any, string]("__exec-step",
 		func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			out, rerr := e.RunPlanIncrement(nctx, plan, chatID, seeded, run)
@@ -80,8 +105,7 @@ func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, 
 	ds := e.NewDagStream(ctx, plan, appName, userID, chatID, chatID, yield, nodeOutputs)
 	ds.ScopeToStep(run)
 
-	runSess := chatID + planStepSessionSuffix
-	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "run"}}}
+	runSess := PlanStepSessionID(chatID)
 	for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return nodeOutputs, ds.Paused(), rerr

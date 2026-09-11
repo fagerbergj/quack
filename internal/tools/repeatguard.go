@@ -19,17 +19,24 @@ import (
 type repeatGuard struct {
 	inner  runnableTool
 	states *repeatStates
-	// tripped reaches dag.Executor.RepeatGuardTripped to end the node's round -
-	// a returned tool error alone can't: ADK folds it into a function
-	// response and keeps the model's turn going.
+	// tripped reaches dag.Executor.RepeatGuardTripped to end a WORKER NODE's
+	// round on a hard stop - a returned tool error alone can't: ADK folds it
+	// into a function response and keeps the model's turn going. nil for a
+	// tool that's never node-scoped (nodeScope(ctx) then always resolves
+	// nodeID=="") - see Run()'s orchestrator branch, which ends the
+	// ORCHESTRATOR's own turn directly instead, without needing a
+	// caller-supplied callback for it.
 	tripped func(chatID, nodeID, msg string) bool
 }
 
 // repeatThreshold: consecutive identical calls before refusal (1st=run, 2nd=retry, 3rd=refused).
 const repeatThreshold = 3
 
-// repeatHardStopAfter: further identical calls the model can make after
-// being refused before its node's turn is force-ended.
+// repeatHardStopAfter: further identical calls a WORKER NODE's model can
+// make after being refused before its round is force-ended via tripped. The
+// orchestrator has no such grace period - its own turn already ends at the
+// first refusal (Run()'s orchestrator branch), so it never reaches this
+// tier in the same turn.
 const repeatHardStopAfter = 2
 
 // repeatStates: tracks last call fingerprint per session.
@@ -129,8 +136,11 @@ func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 const pathFailThreshold = 3
 
 // Run: refuses if byte-identical triple or resource-failure churn; once the
-// model repeats a refused call repeatHardStopAfter more times, ends the
-// node's round instead of refusing forever.
+// model repeats a refused call repeatHardStopAfter more times, ends a
+// worker node's round. A call never scoped to a worker node (nodeScope
+// resolves nodeID=="") is the orchestrator's own - its turn ends on the
+// first refusal instead of waiting for the hard-stop tier, since it has no
+// gate/continuation loop of its own to keep it going.
 func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
@@ -138,27 +148,30 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	}
 	sessionID := ctx.SessionID()
 	fingerprint := g.Name() + ":" + string(argsJSON)
+	chatID, nodeID := nodeScope(ctx)
 
 	n := g.states.observe(sessionID, fingerprint)
 	if n > repeatThreshold+repeatHardStopAfter {
 		msg := fmt.Sprintf("tool-call loop: %s called with identical arguments %d consecutive times despite being refused; node terminated", g.Name(), n)
 		slog.Warn("tool call loop: ending node turn", "component", "tools",
 			"tool", g.Name(), "consecutive", n, "session", sessionID)
-		if chatID, nodeID := nodeScope(ctx); nodeID != "" && g.tripped != nil {
+		if nodeID != "" && g.tripped != nil {
 			g.tripped(chatID, nodeID, msg)
 		}
+		g.endTurnIfOrchestrator(ctx, nodeID)
 		g.states.resetSession(sessionID) // a retry (e.g. revise) starts with a fresh budget, not an already-blown one
 		return nil, errors.New(msg)
 	}
 	if n >= repeatThreshold {
 		slog.Warn("tool call refused: identical call repeated", "component", "tools",
 			"tool", g.Name(), "consecutive", n, "session", sessionID)
+		g.endTurnIfOrchestrator(ctx, nodeID)
 		return nil, fmt.Errorf(
-			"REFUSED (attempt %d): this is the %dth consecutive time you issued this exact %s call with these exact arguments. "+
-				"Its result has not changed - it is already in the conversation above. Re-issuing it again will END THIS NODE'S TURN "+
+			"REFUSED (attempt %d): this is the %s consecutive time you issued this exact %s call with these exact arguments. "+
+				"Its result has not changed - it is already in the conversation above. Re-issuing it again will END THIS TURN "+
 				"as a failure. Take a DIFFERENT action: use the result you already have, try a different tool or different arguments, "+
 				"or if you are finished, stop calling tools and write your final answer now.",
-			n-repeatThreshold+1, n, g.Name())
+			n-repeatThreshold+1, ordinal(n), g.Name())
 	}
 
 	resource, hasResource := resourceFingerprint(argsJSON)
@@ -167,6 +180,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 		if fails := g.states.resourceFailCount(sessionID, resourceKey); fails >= pathFailThreshold {
 			slog.Warn("tool call refused: repeated failures against same resource", "component", "tools",
 				"tool", g.Name(), "resource", resource, "consecutive_fails", fails, "session", sessionID)
+			g.endTurnIfOrchestrator(ctx, nodeID)
 			return nil, fmt.Errorf(
 				"REFUSED: %s against %q has now failed %d times in a row with varying arguments. Varying the arguments "+
 					"further is not working - the problem is with %q itself or your understanding of it, not the "+
@@ -183,6 +197,17 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	return result, runErr
 }
 
+// endTurnIfOrchestrator ends the calling turn outright when this call isn't
+// node-scoped (nodeID=="") - the orchestrator's own tools (create_plan/
+// edit_plan/execute/list_nodes), which have no gate/continuation loop of
+// their own to keep re-issuing the refused call, unlike a worker node's
+// tools, which go through the tripped/hard-stop tier above instead.
+func (g *repeatGuard) endTurnIfOrchestrator(ctx agent.Context, nodeID string) {
+	if nodeID == "" {
+		ctx.Actions().SkipSummarization = true
+	}
+}
+
 // resourceFingerprint extracts the `path` or `url` field from tool args for failure-streak tracking.
 func resourceFingerprint(argsJSON []byte) (string, bool) {
 	var m map[string]any
@@ -195,6 +220,24 @@ func resourceFingerprint(argsJSON []byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// ordinal renders n in English ordinal form (1st, 2nd, 3rd, 4th, 11th, ...)
+// for the refusal message - a plain "%dth" prints "3th".
+func ordinal(n int) string {
+	if n%100 >= 11 && n%100 <= 13 {
+		return fmt.Sprintf("%dth", n)
+	}
+	switch n % 10 {
+	case 1:
+		return fmt.Sprintf("%dst", n)
+	case 2:
+		return fmt.Sprintf("%dnd", n)
+	case 3:
+		return fmt.Sprintf("%drd", n)
+	default:
+		return fmt.Sprintf("%dth", n)
+	}
 }
 
 // repeatWrap applies the identical-call breaker.

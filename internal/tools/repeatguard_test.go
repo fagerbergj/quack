@@ -138,12 +138,18 @@ func TestRepeatGuardResourceFailAllowsGenuineDifference(t *testing.T) {
 
 // repeatCtx mirrors cd_test.go's fakeCtx surface (functiontool.Run touches
 // more of Context than just SessionID), with a configurable session id.
+// content carries the advisor-thread marker nodeScope resolves (chatID,
+// nodeID) from when set (newRepeatCtxWithAdvisorThread) - nil by default,
+// matching an orchestrator-level call, which is never node-scoped.
 type repeatCtx struct {
 	adkagent.StrictContextMock
 	sid     string
 	state   *fakeState
 	content *genai.Content
+	actions session.EventActions
 }
+
+func (c *repeatCtx) Actions() *session.EventActions { return &c.actions }
 
 func (c *repeatCtx) UserContent() *genai.Content                          { return c.content }
 func (c *repeatCtx) InvocationID() string                                 { return "inv" }
@@ -172,6 +178,58 @@ func newRepeatCtxWithAdvisorThread(t *testing.T, sid, chatID, nodeID string) *re
 	c := newRepeatCtx(sid)
 	c.content = &genai.Content{Parts: []*genai.Part{{Text: "do the task\n\n" + vetting.AdvisorThreadMarker(token)}}}
 	return c
+}
+
+// TestRepeatGuardEndsOrchestratorTurnOnRefuse pins #1362's settled direction
+// for the orchestrator specifically: a call that is never node-scoped
+// (nodeScope resolves nodeID=="" - the orchestrator's own hand-built tools,
+// which have no gate/continuation loop of their own) forces the caller's
+// turn to end the moment it refuses, whether or not the model heeds the
+// error.
+func TestRepeatGuardEndsOrchestratorTurnOnRefuse(t *testing.T) {
+	calls := 0
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtx("s1") // no advisor thread: nodeScope resolves nodeID=="", the orchestrator's own shape
+	args := map[string]any{"q": "same"}
+
+	for i := 1; i <= 2; i++ {
+		if _, err := rg.Run(ctx, args); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		if ctx.actions.SkipSummarization {
+			t.Fatalf("call %d: SkipSummarization set before any refusal", i)
+		}
+	}
+	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "REFUSED") {
+		t.Fatalf("3rd call: want REFUSED, got %v", err)
+	}
+	if !ctx.actions.SkipSummarization {
+		t.Error("SkipSummarization = false after a refusal, want true - an orchestrator-scoped refusal must end the caller's turn")
+	}
+}
+
+// A worker-node-scoped call must never touch Actions on a mere refusal - the
+// gate's own continuation/give-up logic owns that decision; only the
+// hard-stop tier (TestRepeatGuardEndsRoundAfterRefusalIgnored) ends its round, via tripped.
+func TestRepeatGuardWorkerNodeRefusalLeavesActionsAlone(t *testing.T) {
+	calls := 0
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
+	args := map[string]any{"q": "same"}
+	for i := 1; i <= 3; i++ {
+		rg.Run(ctx, args)
+	}
+	if ctx.actions.SkipSummarization {
+		t.Error("SkipSummarization = true for a node-scoped refusal, want untouched")
+	}
 }
 
 // The breaker: 1st and 2nd identical calls run; the 3rd is refused with a
