@@ -211,7 +211,7 @@ func repeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, 
 func NewRepeatStates() *repeatStates { return newRepeatStates() }
 
 // RepeatWrap is repeatWrap, exported for the same reason as NewRepeatStates.
-func RepeatWrap(t tool.Tool, states *repeatStates) (tool.Tool, error) { return repeatWrap(t, states) }
+func RepeatWrap(t tool.Tool, states *repeatStates) (tool.Tool, error) { return repeatWrap(t, states, nil) }
 
 // SupportsRepeatGuard reports whether t can be passed to RepeatWrap - false
 // for a tool with no Run (e.g. memory.NewPreload(), which only mutates the
