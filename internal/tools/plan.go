@@ -69,9 +69,15 @@ func summarizeAttachments(parts []*genai.Part) []attachmentMeta {
 	return out
 }
 
-// emitPlanEvent: records a gen_ai "plan" ledger event once execute has built
-// and judged a runnable dag.Plan from the current dag_plan record.
-func emitPlanEvent(tc agent.Context, p *dag.Plan) {
+// genAIPlanStep: not a registered semconv attribute - the dag_plan revision
+// this execute call saved, so the ledger's per-turn "plan" events read as a
+// growing plan's numbered steps, not one flat event per call.
+const genAIPlanStep = "quack.plan.step"
+
+// emitPlanEvent: records a gen_ai "plan" ledger event once execute has run
+// one step of the current dag_plan record. step is the revision
+// SaveStructured returned for it, <= 0 (a store error) to omit the attribute.
+func emitPlanEvent(tc agent.Context, p *dag.Plan, step int) {
 	if !otelobs.LoggingEnabled("quack.planner") {
 		return
 	}
@@ -79,6 +85,9 @@ func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 	attrs := []attribute.KeyValue{
 		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlan),
 		attribute.String(otelobs.GenAIWorkflowName, p.ID),
+	}
+	if step > 0 {
+		attrs = append(attrs, attribute.Int(genAIPlanStep, step))
 	}
 	// The planner's actual ask - history/message/attachments Build stamped onto p - not a
 	// reconstruction from the plan it produced.

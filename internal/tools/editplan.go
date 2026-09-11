@@ -129,8 +129,11 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 }
 
 // removeAssignments drops every assignment whose node_id is in remove.
-// Errors on a remove id naming no current assignment - a typo must not
-// silently no-op.
+// Errors on a remove id naming no current assignment (a typo must not
+// silently no-op) or one that already ran (dag.Assignment.TaskID != "") -
+// a done assignment's task_id/result is load-bearing (execute's seed map for
+// any dependent added later), so removing it is a one-line error, not a
+// silent history rewrite.
 func removeAssignments(assignments []dag.Assignment, remove []string) ([]dag.Assignment, error) {
 	if len(remove) == 0 {
 		return assignments, nil
@@ -139,13 +142,17 @@ func removeAssignments(assignments []dag.Assignment, remove []string) ([]dag.Ass
 	for _, id := range remove {
 		drop[id] = true
 	}
-	present := make(map[string]bool, len(assignments))
+	byID := make(map[string]dag.Assignment, len(assignments))
 	for _, a := range assignments {
-		present[a.NodeID] = true
+		byID[a.NodeID] = a
 	}
 	for _, id := range remove {
-		if !present[id] {
+		a, present := byID[id]
+		if !present {
 			return nil, fmt.Errorf("remove: unknown node id %q - not in the current plan", id)
+		}
+		if a.TaskID != "" {
+			return nil, fmt.Errorf("remove: %q already ran - editing or removing a done assignment is not allowed", id)
 		}
 	}
 	out := make([]dag.Assignment, 0, len(assignments))

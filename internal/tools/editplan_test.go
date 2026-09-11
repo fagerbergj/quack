@@ -62,6 +62,31 @@ func TestEditPlanRemoveUnknownNodeIDRejected(t *testing.T) {
 	}
 }
 
+// TestEditPlanRemoveAlreadyRanAssignmentRejected pins #slice3: an
+// assignment that already ran (task_id set) is load-bearing history -
+// execute's seed map for any dependent added later - so removing it is a
+// one-line error, not a silent rewrite.
+func TestEditPlanRemoveAlreadyRanAssignmentRejected(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	rec.Assignments[0].TaskID = "already-dispatched"
+	rec.Assignments[0].Result = "the result"
+	if _, _, err := c.SaveStructured(newFakeCtx(), "dag_plan", rec, "", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed already-ran assignment: %v", err)
+	}
+
+	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"plan_id": planID, "remove": []string{"web-researcher-1"}})
+	if err == nil {
+		t.Fatal("want an error removing an assignment that already ran")
+	}
+	if !strings.Contains(err.Error(), "already ran") {
+		t.Errorf("err = %v, want it to say the assignment already ran", err)
+	}
+}
+
 // TestEditPlanUpsertReplacesExistingAssignment covers reassigning a node
 // list_nodes already showed instead of hiring a redundant one.
 func TestEditPlanUpsertReplacesExistingAssignment(t *testing.T) {
