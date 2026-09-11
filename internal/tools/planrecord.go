@@ -140,7 +140,15 @@ type assignmentInput struct {
 // rejection text). agent stays optional - node_id is the other valid way to
 // fill it in - only its value, when given, is constrained; node_id stays
 // free-form (minted ids aren't known ahead of a call).
-func assignmentInputSchema[T any]() (*jsonschema.Schema, error) {
+//
+// githubSetup, when non-nil (a trigger-backed dispatch), drops `setup` from
+// the schema entirely: the trigger's own setup always overwrites rec.Setup
+// regardless of what's submitted (createplan.go/editplan.go), so offering
+// the model a property it cannot actually change only invites a wrong
+// guess it then has to recover from (#slice3 review: a rig run rejected a
+// good plan on setup.repo, and the model's corrected retry dropped `agent`
+// instead - two separate mistakes stacked into one dead end).
+func assignmentInputSchema[T any](githubSetup *dag.Setup) (*jsonschema.Schema, error) {
 	schema, err := jsonschema.For[T](nil)
 	if err != nil {
 		return nil, fmt.Errorf("derive input schema: %w", err)
@@ -158,7 +166,38 @@ func assignmentInputSchema[T any]() (*jsonschema.Schema, error) {
 	for i, n := range names {
 		agentProp.Enum[i] = n
 	}
+	if githubSetup != nil {
+		delete(schema.Properties, "setup")
+		required := schema.Required[:0]
+		for _, r := range schema.Required {
+			if r != "setup" {
+				required = append(required, r)
+			}
+		}
+		schema.Required = required
+		// jsonschema.For derives a CLOSED schema (additionalProperties:
+		// false) for a Go struct, which would 400 the whole call the instant
+		// a model sends `setup` anyway despite it not being offered - the
+		// one case this must NOT reject (it's still a real, valid
+		// createPlanArgs/editPlanArgs field; setupIgnoredNote is what
+		// handles it, in the handler, not a schema-level rejection).
+		schema.AdditionalProperties = nil
+	}
 	return schema, nil
+}
+
+// setupIgnoredNote reports the line to append to create_plan/edit_plan's
+// result summary when the model submitted a `setup` the trigger's own
+// setup overrides outright (githubSetup != nil) - "" when there's nothing
+// to note (a plain chat, or the model omitted setup as the schema now
+// asks). The trigger's setup wins unconditionally regardless of repo,
+// base_ref, or any other field the model sent - there's nothing left to
+// validate, only to say so.
+func setupIgnoredNote(submitted, githubSetup *dag.Setup) string {
+	if githubSetup == nil || submitted == nil {
+		return ""
+	}
+	return fmt.Sprintf("\nsetup ignored: this run clones %s@%s from the trigger", githubSetup.Repo, githubSetup.BaseRef)
 }
 
 // validateAllowedDeliveryKind rejects hiring or reassigning agent when its

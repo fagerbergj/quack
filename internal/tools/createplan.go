@@ -32,9 +32,22 @@ type createPlanArgs struct {
 func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
 	artifactDesc := "`assignments[].checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its " +
 		"commands: the trust gate derives a code node's checks from the repo itself after the node clones it."
-	schema, err := assignmentInputSchema[createPlanArgs]()
+	schema, err := assignmentInputSchema[createPlanArgs](githubSetup)
 	if err != nil {
 		return nil, fmt.Errorf("create_plan: %w", err)
+	}
+	setupDesc := " Every plan whose deliverable touches GitHub declares `setup` " +
+		"({repo, base_ref, work_branch} - the branch the work happens on) and `delivery` ({kind: " +
+		"\"pull_request\"|\"review\"|\"comment\"}); the harness runs both AFTER the trust gate, deterministically " +
+		"- a node never pushes, opens a PR, or posts a review itself. Put the real repo/PR in a node's `task` " +
+		"text, never a guessed one."
+	if githubSetup != nil {
+		// setup isn't even in this call's schema: the trigger's own repo/base_ref
+		// always wins, so there's nothing for the model to usefully set.
+		setupDesc = fmt.Sprintf(" This dispatch already came with its own repo/base_ref (a GitHub trigger) - "+
+			"this run clones %s@%s regardless, so `setup` isn't offered here; declare `delivery` ({kind: "+
+			"\"pull_request\"|\"review\"|\"comment\"}) if the deliverable touches GitHub. Put the real PR/issue "+
+			"context in a node's `task` text.", githubSetup.Repo, githubSetup.BaseRef)
 	}
 	return functiontool.New[createPlanArgs, planUpsertResult](
 		functiontool.Config{
@@ -47,23 +60,14 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 				"HANDOFF not a data dependency: this assignment runs after the named ids and receives their " +
 				"result, nothing else - either a real node_id or, for a sibling being hired in this SAME call, " +
 				"that sibling's 0-based position in this `assignments` array, since a brand-new node has no id yet). " +
-				artifactDesc + " Every plan whose deliverable touches GitHub declares `setup` " +
-				"({repo, base_ref, work_branch} - the branch the work happens on) and `delivery` ({kind: " +
-				"\"pull_request\"|\"review\"|\"comment\"}); the harness runs both AFTER the trust gate, deterministically " +
-				"- a node never pushes, opens a PR, or posts a review itself. When this dispatch already came with a " +
-				"repo/base_ref (a GitHub trigger), `setup.repo`/`setup.base_ref` must match it exactly if set at all - " +
-				"omit them and the trigger's own values apply. Put the real repo/PR in a node's `task` text, never a " +
-				"guessed one. Hiring an agent whose only deliverable this dispatch does not allow (e.g. a " +
-				"`code-reviewer` when only a pull request can be delivered) is rejected. Returns the plan " +
+				artifactDesc + setupDesc + " Hiring an agent whose only deliverable this dispatch does not allow " +
+				"(e.g. a `code-reviewer` when only a pull request can be delivered) is rejected. Returns the plan " +
 				"(assignments with minted node_ids) - call edit_plan to change it, or execute to run it. Do NOT " +
 				"call for tasks you can answer directly.",
 		},
 		func(tc agent.Context, a createPlanArgs) (planUpsertResult, error) {
 			if len(a.Assignments) == 0 {
 				return planUpsertResult{}, fmt.Errorf("create_plan: assignments must be non-empty")
-			}
-			if err := dag.ValidateSetupOverride(a.Setup, githubSetup); err != nil {
-				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
 			existing, err := listDagNodeRecords(tc, c)
 			if err != nil {
@@ -113,7 +117,8 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			// execute's own DagPlanEvent is the only dag_plan emission.
 			return planUpsertResult{
 				PlanID: rec.PlanID, Assignments: toAssignmentOutputs(rec.Assignments, nodeAgent),
-				Setup: rec.Setup, Delivery: rec.Delivery, Summary: summarizePlanRecord(rec, nodeAgent),
+				Setup: rec.Setup, Delivery: rec.Delivery,
+				Summary: summarizePlanRecord(rec, nodeAgent) + setupIgnoredNote(a.Setup, githubSetup),
 			}, nil
 		},
 	)

@@ -169,13 +169,14 @@ func TestGitHubSetupWorkBranchOverrideStillWins(t *testing.T) {
 	}
 }
 
-// TestCreatePlanRejectsWholesaleMismatchedSetup is the QA rig's owner rule:
-// a planner-invented setup.repo/base_ref that disagrees with the trigger's
-// own is rejected outright, not silently discarded in favor of the
-// trigger's - a hallucinated repo belongs in the rejection the model sees,
-// not a plan that quietly runs against a different repo than its own task
-// text describes.
-func TestCreatePlanRejectsWholesaleMismatchedSetup(t *testing.T) {
+// TestCreatePlanIgnoresWholesaleMismatchedSetup supersedes the QA rig's
+// original owner rule (#slice3 review): a planner-invented setup.repo/
+// base_ref that disagrees with the trigger's own used to be rejected
+// outright, costing the model its whole (otherwise valid) plan over a field
+// it can't actually change - the trigger's own setup always wins regardless
+// (rec.Setup, TestGitHubSetupWorkBranchOverrideStillWins above). It's
+// accepted and silently ignored now, noted in the summary instead.
+func TestCreatePlanIgnoresWholesaleMismatchedSetup(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main", WorkBranch: "feat/real-pr-head"}
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
@@ -191,8 +192,13 @@ func TestCreatePlanRejectsWholesaleMismatchedSetup(t *testing.T) {
 			"work_branch": "planner-invented-branch",
 		},
 	}
-	if _, err := crt.Run(planToolCtx{newFakeCtx()}, args); err == nil || !strings.Contains(err.Error(), "setup.repo") {
-		t.Fatalf("err = %v, want a setup.repo mismatch rejection", err)
+	res, err := crt.Run(planToolCtx{newFakeCtx()}, args)
+	if err != nil {
+		t.Fatalf("create_plan Run: %v, want the mismatched setup ignored, not rejected", err)
+	}
+	summary, _ := res["summary"].(string)
+	if !strings.Contains(summary, "setup ignored") {
+		t.Errorf("summary = %q, want a setup-ignored note", summary)
 	}
 }
 

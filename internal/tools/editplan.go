@@ -29,9 +29,19 @@ type editPlanArgs struct {
 // when non-nil, stamps assignment.meta.<extension> - whichever active
 // extension supplies it, keyed by its own name (e.g. "github").
 func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
-	schema, err := assignmentInputSchema[editPlanArgs]()
+	schema, err := assignmentInputSchema[editPlanArgs](githubSetup)
 	if err != nil {
 		return nil, fmt.Errorf("edit_plan: %w", err)
+	}
+	changeList := "assignments/remove/setup/delivery"
+	setupDesc := ", and/or update `setup`/`delivery`"
+	setupOverride := "a setup override that disagrees with the trigger, "
+	if githubSetup != nil {
+		// setup isn't even in this call's schema: the trigger's own repo/base_ref
+		// always wins, so there's nothing for the model to usefully set.
+		changeList = "assignments/remove/delivery"
+		setupDesc = ", and/or update `delivery`; `setup` isn't offered here - this dispatch's repo/base_ref is fixed by its trigger"
+		setupOverride = ""
 	}
 	return functiontool.New[editPlanArgs, planUpsertResult](
 		functiontool.Config{
@@ -39,16 +49,15 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			InputSchema: schema,
 			Description: "Tool to change the chat's current plan: upsert assignments (same shape as create_plan - " +
 				"`agent` hires a new node, `node_id` from list_nodes reassigns one) keyed by node_id, drop " +
-				"assignments by node_id with `remove`, and/or update `setup`/`delivery`. Assignments not named " +
-				"here are left exactly as they are. Call with at least one of assignments/remove/setup/delivery set - " +
+				"assignments by node_id with `remove`" + setupDesc + ". Assignments not named " +
+				"here are left exactly as they are. Call with at least one of " + changeList + " set - " +
 				"a call that changes nothing is rejected, it is not a valid way to re-read the plan (use list_nodes). " +
-				"When this dispatch already came with a repo/base_ref (a GitHub trigger), a `setup.repo`/`setup.base_ref` " +
-				"override must match it exactly - omit them to keep the trigger's own values. Errors name the field and " +
-				"the fix: unknown agent, unknown depends_on id, a dependency cycle, an empty task, a node currently " +
-				"running, the same node_id twice in one call, a `remove` id not in the current plan, a setup override " +
-				"that disagrees with the trigger, hiring an agent whose only deliverable this dispatch does not allow, " +
-				"a plan that already delivered, or a call with nothing to change. Call after create_plan to correct or " +
-				"extend a plan before execute; call list_nodes first to reuse a node instead of hiring a new one.",
+				"Errors name the field and the fix: unknown agent, unknown depends_on id, a dependency cycle, an " +
+				"empty task, a node currently running, the same node_id twice in one call, a `remove` id not in " +
+				"the current plan, " + setupOverride + "hiring an agent whose only deliverable this dispatch does " +
+				"not allow, a plan that already delivered, or a call with nothing to change. Call after create_plan " +
+				"to correct or extend a plan before execute; call list_nodes first to reuse a node instead of " +
+				"hiring a new one.",
 		},
 		func(tc agent.Context, a editPlanArgs) (planUpsertResult, error) {
 			current, _, ok, err := loadDagPlan(tc, c)
@@ -67,9 +76,6 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			if len(a.Assignments) == 0 && len(a.Remove) == 0 && a.Setup == nil && a.Delivery == nil {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: nothing to change - got plan_id %q with no assignments, remove, setup, "+
 					"or delivery; edit_plan accepts assignments (each with node_id or agent), remove, setup, and/or delivery - set at least one", a.PlanID)
-			}
-			if err := dag.ValidateSetupOverride(a.Setup, githubSetup); err != nil {
-				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
 			}
 
 			remaining, err := removeAssignments(current.Assignments, a.Remove)
@@ -135,7 +141,8 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			// draft's current assignments as text meanwhile).
 			return planUpsertResult{
 				PlanID: rec.PlanID, Assignments: toAssignmentOutputs(rec.Assignments, nodeAgent),
-				Setup: rec.Setup, Delivery: rec.Delivery, Summary: summarizePlanRecord(rec, nodeAgent),
+				Setup: rec.Setup, Delivery: rec.Delivery,
+				Summary: summarizePlanRecord(rec, nodeAgent) + setupIgnoredNote(a.Setup, githubSetup),
 			}, nil
 		},
 	)

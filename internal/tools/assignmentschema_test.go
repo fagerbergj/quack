@@ -38,6 +38,69 @@ func TestEditPlanEmitsAgentEnum(t *testing.T) {
 	assertAssignmentAgentEnum(t, tl.(runnableTool), []string{"code-implementer", "web-researcher"})
 }
 
+// TestCreatePlanSchemaOmitsSetupWhenTriggerBacked and
+// TestEditPlanSchemaOmitsSetupWhenTriggerBacked pin the other half of the
+// rig regression (#slice3 review): the trigger's own setup always
+// overwrites rec.Setup regardless of what's submitted, so a trigger-backed
+// dispatch's schema must not even offer `setup` - a property the model
+// can't actually change only invites a wrong guess (the rig's own repro:
+// rejected on setup.repo, then the corrected retry dropped `agent`
+// instead). A plain chat (no trigger) keeps `setup`.
+func TestCreatePlanSchemaOmitsSetupWhenTriggerBacked(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	assertSetupSchemaPresence(t, tl.(runnableTool), false)
+}
+
+func TestCreatePlanSchemaKeepsSetupOnPlainChat(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	assertSetupSchemaPresence(t, tl.(runnableTool), true)
+}
+
+func TestEditPlanSchemaOmitsSetupWhenTriggerBacked(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
+	tl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewEditPlanTool: %v", err)
+	}
+	assertSetupSchemaPresence(t, tl.(runnableTool), false)
+}
+
+func TestEditPlanSchemaKeepsSetupOnPlainChat(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	tl, err := NewEditPlanTool(c, "orchestrator", nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewEditPlanTool: %v", err)
+	}
+	assertSetupSchemaPresence(t, tl.(runnableTool), true)
+}
+
+func assertSetupSchemaPresence(t *testing.T, tl runnableTool, wantPresent bool) {
+	t.Helper()
+	decl := tl.Declaration()
+	schema, ok := decl.ParametersJsonSchema.(*jsonschema.Schema)
+	if !ok {
+		t.Fatalf("ParametersJsonSchema = %T, want *jsonschema.Schema", decl.ParametersJsonSchema)
+	}
+	_, present := schema.Properties["setup"]
+	if present != wantPresent {
+		t.Errorf("schema.Properties[setup] present = %v, want %v (properties: %v)", present, wantPresent, schema.Properties)
+	}
+}
+
 // assertAssignmentAgentEnum digs assignments[].agent's Enum out of tl's
 // actual Declaration() - what functiontool.New resolved and the model
 // receives, not just assignmentInputSchema's own return value - and checks

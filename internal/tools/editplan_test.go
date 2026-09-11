@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -204,10 +205,12 @@ func TestEditPlanRejectionMintsNoOrphanNodes(t *testing.T) {
 	}
 }
 
-// TestEditPlanSetupRepoMismatchRejected mirrors create_plan's regression
-// test: edit_plan must reject a setup override that disagrees with the
-// trigger's own repo, before touching the plan record.
-func TestEditPlanSetupRepoMismatchRejected(t *testing.T) {
+// TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote mirrors
+// create_plan's own regression test (#slice3 review): edit_plan must accept
+// a setup override that disagrees with the trigger's own repo, ignore it
+// (the trigger's setup always overwrites rec.Setup regardless), and say so
+// in the summary - not reject the whole call over a field it can't change.
+func TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
@@ -229,11 +232,22 @@ func TestEditPlanSetupRepoMismatchRejected(t *testing.T) {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
 	ert := editTl.(runnableTool)
-	_, err = ert.Run(planToolCtx{newFakeCtx()}, map[string]any{
+	editRes, err := ert.Run(planToolCtx{newFakeCtx()}, map[string]any{
 		"plan_id": planID,
 		"setup":   map[string]any{"repo": "https://github.com/quack-org/quack.git", "base_ref": "main", "work_branch": "main"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "setup.repo") {
-		t.Errorf("err = %v, want a setup.repo mismatch rejection", err)
+	if err != nil {
+		t.Fatalf("edit_plan Run: %v, want the wrong setup ignored, not rejected", err)
+	}
+	summary, _ := editRes["summary"].(string)
+	if !strings.Contains(summary, "setup ignored") || !strings.Contains(summary, githubSetup.Repo) {
+		t.Errorf("summary = %q, want a setup-ignored note naming the trigger's own repo", summary)
+	}
+	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	if rec.Setup == nil || rec.Setup.Repo != githubSetup.Repo {
+		t.Errorf("rec.Setup = %+v, want the trigger's own setup, not the model's guess", rec.Setup)
 	}
 }

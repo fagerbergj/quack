@@ -48,43 +48,6 @@ func TestNewPlannerSyncsAgentRoster(t *testing.T) {
 	}
 }
 
-func TestValidateSetupOverrideNilsAreNoops(t *testing.T) {
-	if err := ValidateSetupOverride(nil, &Setup{Repo: "https://x/y.git"}); err != nil {
-		t.Errorf("nil submitted: %v", err)
-	}
-	if err := ValidateSetupOverride(&Setup{Repo: "https://x/y.git"}, nil); err != nil {
-		t.Errorf("nil trigger (no trigger-supplied setup): %v", err)
-	}
-}
-
-func TestValidateSetupOverrideRejectsRepoMismatch(t *testing.T) {
-	trigger := &Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	submitted := &Setup{Repo: "https://github.com/quack-org/quack.git"}
-	err := ValidateSetupOverride(submitted, trigger)
-	if err == nil || !strings.Contains(err.Error(), "setup.repo") || !strings.Contains(err.Error(), trigger.Repo) {
-		t.Errorf("err = %v, want it to name setup.repo and the trigger's real repo", err)
-	}
-}
-
-func TestValidateSetupOverrideRejectsBaseRefMismatch(t *testing.T) {
-	trigger := &Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	submitted := &Setup{Repo: trigger.Repo, BaseRef: "main"}
-	err := ValidateSetupOverride(submitted, trigger)
-	if err == nil || !strings.Contains(err.Error(), "setup.base_ref") {
-		t.Errorf("err = %v, want it to name setup.base_ref", err)
-	}
-}
-
-func TestValidateSetupOverrideAcceptsMatchOrOmitted(t *testing.T) {
-	trigger := &Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	if err := ValidateSetupOverride(&Setup{Repo: trigger.Repo, BaseRef: trigger.BaseRef}, trigger); err != nil {
-		t.Errorf("exact match: %v", err)
-	}
-	if err := ValidateSetupOverride(&Setup{WorkBranch: "feat/x"}, trigger); err != nil {
-		t.Errorf("repo/base_ref omitted, only work_branch set: %v", err)
-	}
-}
-
 func TestValidateWorkdir(t *testing.T) {
 	cases := []struct {
 		workdir string
