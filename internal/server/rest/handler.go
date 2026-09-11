@@ -214,7 +214,7 @@ func chatsScopeFor(params schema.ListChatsParams) (store.ChatsScope, error) {
 }
 
 // ListChats is a single table read (#738: status is a stamp on the chat row - see
-// store.StampRunOutcome - plus cheap in-memory hub/queue checks, not a per-chat DB read).
+// store.StampRunOutcome - plus a cheap in-memory hub check, not a per-chat DB read).
 // It's also a conditional GET: an unchanged page costs a 304 with no body, so the SPA's 5s poll is cheap on the wire when nothing changed (still no TTL - every poll reaches this handler and revalidates against the live rows). The ETag is hashed from the marshaled page body, which embeds NextPageToken, so it varies with page token and limit as well as content - a stale ETag from a different page never reads as a match.
 func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schema.ListChatsParams) {
 	limit := 0
@@ -328,7 +328,6 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
-		QueueInfo:       h.queueInfo(status),
 		GithubUrl:       strPtr(c.GithubURL),
 		GithubRepo:      strPtr(c.GithubRepo),
 		GithubState:     detailStateVal(c.GithubState),
@@ -501,12 +500,6 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 			return
 		}
 		c.Archived = *body.Archived
-		// A run still waiting behind max_active_runs must not fire later against
-		// an archived chat - cancel it the same id-guarded way a user Stop does.
-		// A run already executing (Queued false) is left alone.
-		if *body.Archived && h.orch.Queued(chatID) && c.ActiveTurnID != "" {
-			h.hub.CancelResponse(chatID, c.ActiveTurnID)
-		}
 		// Best-effort: reap any ACP node's on-disk session now that ArchiveChat
 		// (store) has already reaped their ADK worker sessions - the pair node
 		// reuse defers from node-completion to here.
@@ -801,20 +794,6 @@ func (h *Handler) loadPlanNode(w http.ResponseWriter, r *http.Request, chatID, n
 		current = dag.NodeStatus(dn.Status)
 	}
 	return dp, dn, current, true
-}
-
-// queueInfo explains what a queued chat is waiting on (#1176) - keep it to
-// what the admission ledger already knows, no separate holder registry.
-func (h *Handler) queueInfo(status schema.ChatStatus) *string {
-	if status != schema.ChatStatusQueued {
-		return nil
-	}
-	used, limit, ok := h.orch.RunAdmissionUsage()
-	if !ok {
-		return nil
-	}
-	s := fmt.Sprintf("queued: waiting for a run slot (%d/%d active)", used, limit)
-	return &s
 }
 
 // chatArchived reports whether chatID is archived - #1176: RetryNode's
@@ -1521,7 +1500,7 @@ func (h *Handler) chatTotalTokens(ctx context.Context, chatID string) int64 {
 	return totals[chatID]
 }
 
-// Builds a ChatSummary from the chat row alone: queued/running are cheap in-memory checks,
+// Builds a ChatSummary from the chat row alone: running is a cheap in-memory hub check,
 // everything else is the stamp StampRunOutcome left at the last run's end - no turns/session
 // read per chat (#738; that per-chat read is what GetChat's chatStatus below still does, which is fine there since GetChat already loads turns for the full detail body). totalTokens is the chat's compact token count for the sidebar (see ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
 func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary {
@@ -1534,7 +1513,6 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary 
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
-		QueueInfo:       h.queueInfo(status),
 		GithubUrl:       strPtr(c.GithubURL),
 		GithubRepo:      strPtr(c.GithubRepo),
 		GithubState:     stateVal(c.GithubState),
@@ -1547,13 +1525,10 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary 
 	return s
 }
 
-// liveOrStampedStatus resolves queued/running live, else the chat row's stamped outcome.
+// liveOrStampedStatus resolves running live, else the chat row's stamped outcome.
 // A non-empty ActiveTurnID with no live signal means the run that set it died before
 // StampRunOutcome could clear it - report failed rather than trust a stale idle/needs_input stamp from a run before that one (#738 test 3; single-instance Hub, see stream.NewHub).
 func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string) {
-	if h.orch.Queued(c.ID) {
-		return schema.ChatStatusQueued, nil
-	}
 	if h.hub.Active(c.ID) {
 		return schema.ChatStatusRunning, nil
 	}
@@ -1564,24 +1539,34 @@ func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string)
 	case store.RunStatusNeedsInput:
 		q := c.PendingQuestion
 		return schema.ChatStatusNeedsInput, &q
-	case store.RunStatusFailed, store.RunStatusInterrupted:
+	case store.RunStatusFailed, store.RunStatusInterruptedLegacy:
 		return schema.ChatStatusFailed, nil
 	default:
 		return schema.ChatStatusIdle, nil
 	}
 }
 
-// Computes a chat's LIVE derived status: queued (waiting on max_active_runs), running (hub
-// has a live run), needs_input (prior events end on an unanswered question), failed (last
-// DAG node failed, no answer), or idle. Used by GetChat, which loads turns regardless for the detail body, so this per-chat computation costs nothing extra there.
+// Computes a chat's LIVE derived status: running (hub or a node row says so),
+// needs_input, failed, or idle. Used by GetChat, which already loads turns.
 func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
-	if h.orch.Queued(chatID) {
-		return schema.ChatStatusQueued, nil
-	}
-	if h.hub.Active(chatID) {
+	if h.hub.Active(chatID) || h.chatHasRunningNode(ctx, chatID) {
 		return schema.ChatStatusRunning, nil
 	}
 	return h.terminalStatus(ctx, chatID, turns)
+}
+
+// chatHasRunningNode trusts a running row with no staleness check, and is
+// deliberately GetChat-only (#738 keeps ListChats to one table read) - do not add this to toSummary.
+func (h *Handler) chatHasRunningNode(ctx context.Context, chatID string) bool {
+	plan, err := h.store.GetLatestDagPlan(ctx, chatID)
+	if err != nil || plan == nil {
+		return false
+	}
+	nodes, err := h.store.GetDagNodes(ctx, plan.ID)
+	if err != nil {
+		return false
+	}
+	return store.ChatHasRunningNode(nodes)
 }
 
 // terminalStatus is chatStatus without the live queued/running checks: the outcome a run

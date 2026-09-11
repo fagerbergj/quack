@@ -56,8 +56,7 @@ All under the `quack.*` namespace (`internal/otelobs/metrics.go`), meter name `g
 
 | Metric | Type | Attributes | What it's for |
 | --- | --- | --- | --- |
-| `quack.runs.active` | UpDownCounter | — | Orchestrator runs currently holding a concurrency slot. |
-| `quack.runs.queued` | UpDownCounter | — | Runs admitted but waiting on a server-wide run slot (unbounded by default since #1007; nodes queue on model/provider capacity instead). |
+| `quack.runs.active` | UpDownCounter | — | Orchestrator runs currently in flight. |
 | `quack.nodes.active` | UpDownCounter | — | DAG nodes currently in flight. |
 | `quack.worker.round.duration` | Histogram (s) | `agent`, `model`, `stage` (`worker`/`judge`/`revise`) | Per-round wall time, drawn from the same window as `quack.worker.round`'s span so the two can never disagree. |
 | `quack.judge.score` | Histogram (0–1) | `agent` | The weakest-link score from every judge round, any agent. |
@@ -72,7 +71,7 @@ All under the `quack.*` namespace (`internal/otelobs/metrics.go`), meter name `g
 
 `quack.delivery.outcome=none`, `quack.gate.checks.skipped`, and `quack.judge.unavailable` are the three "silent gap" signals worth alerting on directly — each exists specifically because quack has shipped a real incident where the corresponding failure mode looked identical to success until someone went looking (a fabricated exploration scoring high, a phantom delivery, a judge round dying without a verdict).
 
-The active/queued/in-flight gauges (`quack.runs.active`, `quack.runs.queued`, `quack.nodes.active`) don't survive a hard process kill — the process that incremented one never runs its matching decrement, so a restart orphans the gauge high until the new process starts fresh at 0. Treat them as advisory around a deploy; the durable event log and Tempo traces are the source of truth for what was actually in flight.
+The in-flight gauges (`quack.runs.active`, `quack.nodes.active`) don't survive a hard process kill — the process that incremented one never runs its matching decrement, so a restart orphans the gauge high until the new process starts fresh at 0. Treat them as advisory around a deploy; the durable event log and Tempo traces are the source of truth for what was actually in flight.
 
 ## Logs
 

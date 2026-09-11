@@ -351,10 +351,10 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
       store.seed(activeChatId, detail.turns, detail.usage)
       setSeededChatId(activeChatId)
       // Reconnect to a run still in progress (this browser after a refresh): the
-      // POST body stream is gone, so subscribe to the hub while detail.status is running/queued - the hub's authoritative "a run is live", true through EVERY phase (the DAG check alone misses pre-DAG phases; queued counts because response_created publishes at admission); attach no-ops if this client already streams.
+      // POST body stream is gone, so subscribe to the hub while detail.status is running.
       // A FINISHED DAG turn also attaches (#1290): chat_events durably keeps the last run's events (bounded to one run, wiped at the NEXT run's start) and replays them from seq 0 through the same handlers - one parser. It is the only record of the judge/revise sub-run cards (node_states has no per-run breakdown); without this a reload loses them. Archived stays detached - read-only focus.
       const lastTurn = detail.turns[detail.turns.length - 1]
-      if (chatBelongsInActiveList(detail) && (detail.status === 'running' || detail.status === 'queued' || (lastTurn && dagFromTurn(lastTurn) != null))) {
+      if (chatBelongsInActiveList(detail) && (detail.status === 'running' || (lastTurn && dagFromTurn(lastTurn) != null))) {
         store.attach(activeChatId)
       }
     }).catch(() => {})
@@ -407,7 +407,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     if (!activeChatId || !activeChat?.status || activeChat.archived) return
     if (seededChatId !== activeChatId) return // wait for the getChat effect's own attach - see seededChatId above
     const s = activeChat.status
-    if (s === 'running' || s === 'queued') {
+    if (s === 'running') {
       store.attach(activeChatId)
     }
   }, [activeChatId, activeChat?.status, activeChat?.archived, seededChatId])

@@ -44,7 +44,6 @@ function countByLabelValue(chats: ChatSummary[], dim: string): Map<string, { cou
 }
 
 const STATUS_LABELS: Record<ChatSummary['status'], string> = {
-  queued: 'Queued',
   running: 'Running',
   needs_input: 'Needs input',
   failed: 'Failed',

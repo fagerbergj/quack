@@ -32,7 +32,7 @@ export const CustomLabel: Story = {
 export const ChatVariant: Story = {
   render: () => (
     <div className="flex items-center gap-4">
-      {(['running', 'needs_input', 'queued', 'failed', 'done', 'idle'] as const).map(status => (
+      {(['running', 'needs_input', 'failed', 'done', 'idle'] as const).map(status => (
         <div key={status} className="flex items-center gap-1.5">
           <StatusDot status={status} variant="chat" />
           <span className="text-xs text-gray-600 dark:text-gray-300">{status}{status === 'done' || status === 'idle' ? ' (no dot)' : ''}</span>

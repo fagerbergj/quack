@@ -97,7 +97,7 @@ func TestShutdownPersistsPausedNodes(t *testing.T) {
 
 // TestBootResumesPausedNodes is the second half: a fresh store handle over
 // the same database reconciles that persisted state into a node to start,
-// and stamps the chat paused rather than interrupted.
+// and stamps the chat paused so it reads as resuming, not failed.
 func TestBootResumesPausedNodes(t *testing.T) {
 	st, chatID := threeNodeChat(t)
 	ctx := context.Background()
@@ -131,10 +131,8 @@ func TestBootResumesPausedNodes(t *testing.T) {
 	}
 }
 
-// TestBootRemovesStaleCloneDirForInterruptedChat is #1213's third leg: a
-// chat with no resumable node (killed with nothing paused) is marked
-// interrupted, and the retry must never inherit that run's shared-repo
-// clone - including a Go module cache left read-only inside it.
+// TestBootRemovesStaleCloneDirForInterruptedChat pins that a chat with no
+// resumable node still gets its stale clone dir removed.
 func TestBootRemovesStaleCloneDirForInterruptedChat(t *testing.T) {
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -146,7 +144,7 @@ func TestBootRemovesStaleCloneDirForInterruptedChat(t *testing.T) {
 		t.Fatalf("SetChatOrigin: %v", err)
 	}
 	// No dag nodes at all: nothing for ResumePausedDagNodes to hand back, so
-	// ScanOrphanedRuns classifies the chat as interrupted, not paused.
+	// ScanOrphanedRuns leaves it out of the paused list.
 	if err := st.MarkRunActive(ctx, chatID, "turn-1"); err != nil {
 		t.Fatalf("MarkRunActive: %v", err)
 	}
@@ -237,9 +235,8 @@ func TestBootFailsUnresumableNode(t *testing.T) {
 		t.Fatalf("pause n2: %v", err)
 	}
 
-	// An unresumable node is marked failed before ScanOrphanedRuns runs, so the chat lands
-	// `interrupted` with no paused node; a real jail proves removeStaleCloneDir fires on that
-	// path (#1213), not just that a nil jail is tolerated.
+	// A real jail proves removeStaleCloneDir fires here too, not just that a
+	// nil jail is tolerated.
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)

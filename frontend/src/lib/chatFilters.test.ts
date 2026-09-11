@@ -73,15 +73,6 @@ describe('computeFacets', () => {
     expect(keys).toContain('origin')
   })
 
-  // #417: queued (admitted but waiting behind max_active_runs) is a distinct
-  // ChatStatus from running - it must appear in the status facet with its own
-  // label, not fold into or get dropped alongside running.
-  it('labels a queued chat distinctly from a running one', () => {
-    const facets = computeFacets([DIRECT, chat({ id: 'q1', status: 'queued' })])
-    const byKey = Object.fromEntries(facets.map(f => [f.key, f]))
-    const byValue = Object.fromEntries(byKey.status.options.map((o: { value: string; label: string }) => [o.value, o.label]))
-    expect(byValue.queued).toBe('Queued')
-  })
 
   // origin.labels dimensions are extension-supplied and data-driven - a
   // "tags" dimension becomes its own facet, keyed label:tags so it can never

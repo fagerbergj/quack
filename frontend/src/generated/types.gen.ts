@@ -5,10 +5,10 @@ export type ClientOptions = {
 };
 
 /**
- * A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+ * A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
  *
  */
-export type ChatStatus = 'queued' | 'running' | 'needs_input' | 'failed' | 'idle';
+export type ChatStatus = 'running' | 'needs_input' | 'failed' | 'idle';
 
 /**
  * Generic provenance for an extension-dispatched chat: how the SPA should present and group it, without the SPA knowing which extension produced it. Server-stamped only - an extension can set this only via Dispatch, never through a writable API.
@@ -68,10 +68,6 @@ export type ChatSummary = {
      * The unanswered question blocking the chat, present only when status is `needs_input`.
      */
     pending_question?: string;
-    /**
-     * What a `queued` chat is waiting on, e.g. "waiting for a run slot (2/2 active)". Present only when status is `queued`.
-     */
-    queue_info?: string;
     /**
      * Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
      */

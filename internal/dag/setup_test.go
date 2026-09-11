@@ -3,10 +3,12 @@ package dag
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -232,6 +234,64 @@ func TestProvision_MarksProvisionedAndSkipsOnSecondCall(t *testing.T) {
 	if got := calls.get(); got != 1 {
 		t.Fatalf("setupFn called %d times total, want exactly 1 (Provision then runPlanSetup must not double-clone)", got)
 	}
+}
+
+// TestProvision_LimitsConcurrentSetup: the (provisionSlots+1)th concurrent
+// Provision call must wait for a slot, not clone unbounded.
+func TestProvision_LimitsConcurrentSetup(t *testing.T) {
+	started := make(chan struct{}, provisionSlots+1)
+	release := make(chan struct{})
+	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error {
+		started <- struct{}{}
+		<-release
+		return nil
+	}}
+	newPlan := func(i int) *Plan {
+		return &Plan{
+			Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: fmt.Sprintf("quack/work-%d", i)},
+			Nodes: []Node{{ID: "impl", AgentName: implementerAgent}},
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < provisionSlots; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_ = ex.Provision(context.Background(), "u", "c", newPlan(i))
+		}(i)
+	}
+	for i := 0; i < provisionSlots; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of %d provisions started", i, provisionSlots)
+		}
+	}
+
+	ninthDone := make(chan struct{})
+	go func() {
+		_ = ex.Provision(context.Background(), "u", "c", newPlan(provisionSlots))
+		close(ninthDone)
+	}()
+	select {
+	case <-started:
+		t.Fatal("9th Provision started before a slot freed")
+	case <-ninthDone:
+		t.Fatal("9th Provision returned before a slot freed")
+	case <-time.After(100 * time.Millisecond):
+		// correctly blocked
+	}
+
+	release <- struct{}{} // free exactly one slot
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("9th Provision never started after a slot freed")
+	}
+	close(release) // let every remaining call finish
+	wg.Wait()
+	<-ninthDone
 }
 
 // TestProvision_ClonefailureIsHumanReadable pins #848's other half: a clone

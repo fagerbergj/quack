@@ -33,10 +33,7 @@ func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, 
 	if !follow {
 		return exitCode(string(detail.Status))
 	}
-	// queued counts too: its run already has a live hub topic (response_created
-	// publishes at admission, before the max_active_runs slot is acquired), same
-	// as the frontend's reconnect-on-refresh check in pages/Chat.tsx.
-	if detail.Status != schema.ChatStatusRunning && detail.Status != schema.ChatStatusQueued {
+	if detail.Status != schema.ChatStatusRunning {
 		fmt.Fprintln(out, "(nothing running)")
 		return exitCode(string(detail.Status))
 	}
@@ -61,9 +58,6 @@ func printChatSnapshot(out io.Writer, d schema.ChatDetail) {
 	}
 	if d.PendingQuestion != nil && *d.PendingQuestion != "" {
 		fmt.Fprintf(out, "question: %s\n", *d.PendingQuestion)
-	}
-	if d.QueueInfo != nil && *d.QueueInfo != "" {
-		fmt.Fprintln(out, *d.QueueInfo)
 	}
 	if dagItem, ok := lastTurnDag(d.Turns); ok {
 		fmt.Fprintln(out)

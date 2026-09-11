@@ -59,12 +59,22 @@ func TestStampRunOutcome_Interrupted(t *testing.T) {
 	}
 }
 
-// TestLiveOrStampedStatus_InterruptedMapsToFailed proves the wire-facing
-// summary (ListChats) reports an interrupted chat as failed, same as
-// #738's existing ActiveTurnID fallback.
-func TestLiveOrStampedStatus_InterruptedMapsToFailed(t *testing.T) {
+// TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed proves a stuck
+// ActiveTurnID with no resumable node reads as failed, not idle.
+func TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed(t *testing.T) {
 	h := newTestHandler(t)
-	c := store.Chat{ID: "chat-x", RunStatus: store.RunStatusInterrupted}
+	c := store.Chat{ID: "chat-x", ActiveTurnID: "turn-1"}
+	status, _ := h.liveOrStampedStatus(c)
+	if status != schema.ChatStatusFailed {
+		t.Errorf("status = %q, want failed", status)
+	}
+}
+
+// TestLiveOrStampedStatus_LegacyInterruptedRowMapsToFailed pins that a chat
+// row a pre-existing database stamped "interrupted" still reads as failed.
+func TestLiveOrStampedStatus_LegacyInterruptedRowMapsToFailed(t *testing.T) {
+	h := newTestHandler(t)
+	c := store.Chat{ID: "chat-legacy", RunStatus: store.RunStatusInterruptedLegacy}
 	status, _ := h.liveOrStampedStatus(c)
 	if status != schema.ChatStatusFailed {
 		t.Errorf("status = %q, want failed", status)

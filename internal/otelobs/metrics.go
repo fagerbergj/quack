@@ -24,7 +24,6 @@ func InitMetricsForTesting(meter metric.Meter) error {
 
 type metrics struct {
 	runsActive       metric.Int64UpDownCounter
-	runsQueued       metric.Int64UpDownCounter
 	nodesActive      metric.Int64UpDownCounter
 	roundDur         metric.Float64Histogram // attrs: agent, model, stage
 	judgeScore       metric.Float64Histogram // attrs: agent
@@ -50,10 +49,6 @@ func initMetrics(meter metric.Meter) error {
 	var err error
 	if m2.runsActive, err = meter.Int64UpDownCounter("quack.runs.active",
 		metric.WithDescription("orchestrator runs currently in flight")); err != nil {
-		return err
-	}
-	if m2.runsQueued, err = meter.Int64UpDownCounter("quack.runs.queued",
-		metric.WithDescription("orchestrator runs admitted but waiting for a concurrency slot")); err != nil {
 		return err
 	}
 	if m2.nodesActive, err = meter.Int64UpDownCounter("quack.nodes.active",
@@ -125,7 +120,7 @@ func initMetrics(meter metric.Meter) error {
 	return nil
 }
 
-// RunStarted/RunFinished and RunQueued/RunUnqueued track active/queued runs.
+// RunStarted/RunFinished track quack.runs.active.
 func RunStarted() {
 	if m != nil {
 		m.runsActive.Add(context.Background(), 1)
@@ -134,18 +129,6 @@ func RunStarted() {
 func RunFinished() {
 	if m != nil {
 		m.runsActive.Add(context.Background(), -1)
-	}
-}
-
-// RunQueued/RunUnqueued track quack.runs.queued.
-func RunQueued() {
-	if m != nil {
-		m.runsQueued.Add(context.Background(), 1)
-	}
-}
-func RunUnqueued() {
-	if m != nil {
-		m.runsQueued.Add(context.Background(), -1)
 	}
 }
 
