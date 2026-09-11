@@ -64,12 +64,13 @@ func (b *BudgetedLLM) GenerateContent(ctx context.Context, req *model.LLMRequest
 // always dropped together with its paired response content, never split:
 // most providers 400 on an orphaned one or the other.
 func trimContentsToBudget(req *model.LLMRequest, budget int) {
-	if budget <= 0 || estimateTokens(req.Contents) <= budget {
+	overhead := estimateOverhead(req)
+	if budget <= 0 || estimateTokens(req.Contents)+overhead <= budget {
 		return
 	}
 	dropped := 0
 	i := 1
-	for i < len(req.Contents) && estimateTokens(req.Contents) > budget {
+	for i < len(req.Contents) && estimateTokens(req.Contents)+overhead > budget {
 		end := i + 1
 		if hasFunctionCall(req.Contents[i]) && end < len(req.Contents) {
 			end++
@@ -80,10 +81,38 @@ func trimContentsToBudget(req *model.LLMRequest, budget int) {
 	if dropped == 0 {
 		return
 	}
-	note := &genai.Content{Role: "user", Parts: []*genai.Part{{
-		Text: fmt.Sprintf("[%d earlier message(s) omitted to fit the model's context window]", dropped),
-	}}}
-	req.Contents = append(req.Contents[:1], append([]*genai.Content{note}, req.Contents[1:]...)...)
+	note := fmt.Sprintf("[%d earlier message(s) omitted to fit the model's context window]", dropped)
+	// Appended as an extra part on the surviving content at index 1, not a
+	// new same-role content spliced in - two consecutive user-role contents
+	// can 400 on some providers, and a single inserted content can't
+	// preserve alternation between two opposite-role neighbors anyway.
+	if len(req.Contents) > 1 && req.Contents[1] != nil {
+		req.Contents[1].Parts = append([]*genai.Part{{Text: note}}, req.Contents[1].Parts...)
+		return
+	}
+	req.Contents = append(req.Contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: note}}})
+}
+
+// estimateOverhead accounts for the parts of a request trimContentsToBudget
+// never touches - the system instruction and tool-declaration schemas are
+// sent on every call regardless of how much of Contents survives trimming,
+// so excluding them understates the real prompt size (a ~7KB system prompt
+// plus large create_plan/edit_plan/execute schemas is ~2k tokens on its own).
+func estimateOverhead(req *model.LLMRequest) int {
+	chars := 0
+	if req.Config != nil && req.Config.SystemInstruction != nil {
+		for _, p := range req.Config.SystemInstruction.Parts {
+			if p != nil {
+				chars += len(p.Text)
+			}
+		}
+	}
+	if len(req.Tools) > 0 {
+		if b, err := json.Marshal(req.Tools); err == nil {
+			chars += len(b)
+		}
+	}
+	return chars / budgetCharsPerToken
 }
 
 func hasFunctionCall(c *genai.Content) bool {
