@@ -47,7 +47,7 @@ func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup
 	}
 	planID, _ := cres["plan_id"].(string)
 
-	execTl, err := NewExecuteTool(planner, c, cache, nil, nil, "", nil, githubSetup, nil, "", nil, false, "orchestrator", nil)
+	execTl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "", nil, githubSetup, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestExecuteToolStampsPlanOnly(t *testing.T) {
 	}
 	planID, _ := cres["plan_id"].(string)
 
-	execTl, err := NewExecuteTool(planner, c, cache, nil, nil, "", nil, nil, nil, "", nil, true, "orchestrator", nil)
+	execTl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "", nil, nil, nil, "", nil, true, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -169,13 +169,14 @@ func TestGitHubSetupWorkBranchOverrideStillWins(t *testing.T) {
 	}
 }
 
-// TestCreatePlanRejectsWholesaleMismatchedSetup is the QA rig's owner rule:
-// a planner-invented setup.repo/base_ref that disagrees with the trigger's
-// own is rejected outright, not silently discarded in favor of the
-// trigger's - a hallucinated repo belongs in the rejection the model sees,
-// not a plan that quietly runs against a different repo than its own task
-// text describes.
-func TestCreatePlanRejectsWholesaleMismatchedSetup(t *testing.T) {
+// TestCreatePlanIgnoresWholesaleMismatchedSetup supersedes the QA rig's
+// original owner rule (#slice3 review): a planner-invented setup.repo/
+// base_ref that disagrees with the trigger's own used to be rejected
+// outright, costing the model its whole (otherwise valid) plan over a field
+// it can't actually change - the trigger's own setup always wins regardless
+// (rec.Setup, TestGitHubSetupWorkBranchOverrideStillWins above). It's
+// accepted and silently ignored now, noted in the summary instead.
+func TestCreatePlanIgnoresWholesaleMismatchedSetup(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main", WorkBranch: "feat/real-pr-head"}
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
@@ -191,8 +192,13 @@ func TestCreatePlanRejectsWholesaleMismatchedSetup(t *testing.T) {
 			"work_branch": "planner-invented-branch",
 		},
 	}
-	if _, err := crt.Run(planToolCtx{newFakeCtx()}, args); err == nil || !strings.Contains(err.Error(), "setup.repo") {
-		t.Fatalf("err = %v, want a setup.repo mismatch rejection", err)
+	res, err := crt.Run(planToolCtx{newFakeCtx()}, args)
+	if err != nil {
+		t.Fatalf("create_plan Run: %v, want the mismatched setup ignored, not rejected", err)
+	}
+	summary, _ := res["summary"].(string)
+	if !strings.Contains(summary, "setup ignored") {
+		t.Errorf("summary = %q, want a setup-ignored note", summary)
 	}
 }
 
@@ -270,7 +276,7 @@ func TestEmitPlanEvent_ProducesWellFormedEvent(t *testing.T) {
 	defer restore()
 
 	plan := &dag.Plan{ID: "plan-123", Nodes: []dag.Node{{ID: "impl", AgentName: "code-implementer"}}}
-	emitPlanEvent(newFakeCtx(), plan)
+	emitPlanEvent(newFakeCtx(), plan, 1)
 
 	if len(capExp.records) != 1 {
 		t.Fatalf("got %d records, want 1", len(capExp.records))
@@ -292,6 +298,31 @@ func TestEmitPlanEvent_ProducesWellFormedEvent(t *testing.T) {
 	if attrs["gen_ai.output.messages"].AsString() == "" {
 		t.Error("gen_ai.output.messages missing the marshaled plan")
 	}
+	if got := attrs["quack.plan.step"].AsInt64(); got != 1 {
+		t.Errorf("quack.plan.step = %d, want 1 - the dag_plan revision this step saved", got)
+	}
+}
+
+// TestEmitPlanEvent_OmitsStepWhenNonPositive: a rejected step never reaches
+// SaveStructured, so it has no revision to record - the ledger event must
+// not claim step 0/negative as if it were a real one.
+func TestEmitPlanEvent_OmitsStepAttributeWhenNonPositive(t *testing.T) {
+	capExp := &recordCapture{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	plan := &dag.Plan{ID: "plan-789", Nodes: []dag.Node{{ID: "impl", AgentName: "code-implementer"}}}
+	emitPlanEvent(newFakeCtx(), plan, 0)
+
+	attrs := map[string]attribute.Value{}
+	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
+		attrs[string(kv.Key)] = kv.Value
+		return true
+	})
+	if _, ok := attrs["quack.plan.step"]; ok {
+		t.Error("quack.plan.step present for step<=0, want it omitted")
+	}
 }
 
 // TestEmitPlanEvent_RecordsInputMessages is issue #635: replaying a planning
@@ -311,7 +342,7 @@ func TestEmitPlanEvent_RecordsInputMessages(t *testing.T) {
 		UserMessage: "fix the flaky test",
 		Attachments: []*genai.Part{{InlineData: &genai.Blob{MIMEType: "image/png", Data: blobBytes}}},
 	}
-	emitPlanEvent(newFakeCtx(), plan)
+	emitPlanEvent(newFakeCtx(), plan, 1)
 
 	if len(capExp.records) != 1 {
 		t.Fatalf("got %d records, want 1", len(capExp.records))
@@ -462,7 +493,7 @@ func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 	}
 	planID, _ := cres["plan_id"].(string)
 
-	execTl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, nil, "", nil, githubSetup, nil, "", nil, false, "orchestrator", nil)
+	execTl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, nil, nil, nil, "", nil, githubSetup, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}

@@ -1530,9 +1530,13 @@ describe('ChatStore.attach - a fresh attach has no cursor, replays from 0 (#1090
 })
 
 // Issue #463: when a fresh dag_plan arrives on a LiveTurn that has
-// accumulated top-level content (pre-DAG orchestrator narration, replays
-// into an old turn), the stale text/runs bleed into the new DAG scope. Fix: onDagPlan also resets live.text and live.runs when creating a fresh DAG.
-describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () => {
+// accumulated stale top-level TEXT (pre-DAG orchestrator narration, replays
+// into an old turn), it bleeds into the new DAG scope. Fix: onDagPlan resets
+// live.text on a fresh DAG. live.runs is NOT reset here (#slice3 review): the
+// orchestrator's own top-level run (load_skill/list_nodes/create_plan, and
+// its later execute calls) must survive a dag_plan, or onAgentToolCall's
+// later appends have no run left to append to.
+describe('ChatStore - fresh dag_plan resets stale top-level text (#463)', () => {
   let store: ChatStore
   beforeEach(() => {
     vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
@@ -1540,7 +1544,7 @@ describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () =
     store = new ChatStore()
   })
 
-  it('a fresh dag_plan emitted into a live turn that has accumulated stale text + runs clears them', () => {
+  it('a fresh dag_plan emitted into a live turn that has accumulated stale text clears it but keeps the run', () => {
     store.seed('c', [dagTurn('in_progress')])
     store.attach('c')
     const es = FakeEventSource.last!
@@ -1554,9 +1558,95 @@ describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () =
     // FINALLY a dag_plan arrives - signals a fresh DAG for a new run.
     es.emit('dag_plan', '{"plan_id":"p-new","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
 
-    // #463: stale top-level content must be purged when replacing with a fresh DAG.
+    // #463: stale top-level TEXT must be purged when replacing with a fresh DAG...
     expect(store.get('c').live?.text).toBe('')
+    // ...but the orchestrator's own run survives - it isn't stale, it's still live.
+    expect(store.get('c').live?.runs).toHaveLength(1)
+  })
+})
+
+// #slice3 review (reviewer finding): a turn attach() lifts can carry its own
+// SEEDED top-level activity (a quack:activity item) - the #463 test above
+// never catches this because its dagTurn fixture has no such item, so its
+// seeded `runs` is always empty. A re-attach whose lifted turn's activity
+// belongs to a genuinely earlier/unrelated run (not THIS stream's own) must
+// not have that stale activity render under a brand-new plan; the
+// orchestrator's own live run (this stream's own top-level agent_start
+// actually fires) must still survive - the owner's original bug report,
+// not to be regressed by this purge.
+describe('ChatStore - seeded activity purged only when this stream never saw its own top-level start (#slice3)', () => {
+  function dagTurnWithActivity(planId: string): Turn {
+    return {
+      id: 't1', created_at: '', input: { role: 'user', content: 'hi' },
+      output: [
+        {
+          type: 'quack:activity', id: 't1:activity', status: 'completed',
+          tool_calls: [{ call_id: 'c1', name: 'load_skill', args: {}, result: {} }],
+        },
+        {
+          type: 'quack:dag', id: planId, status: 'in_progress', plan_id: planId,
+          nodes: [{ id: 'a', agent: 'researcher', task: 't', depends_on: [] }], edges: [], node_states: {},
+        },
+      ],
+    }
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+  })
+
+  it('purges seeded runs when a fresh plan arrives with no top-level agent_start seen', () => {
+    const store = new ChatStore()
+    store.seed('c', [dagTurnWithActivity('old-plan')])
+    store.attach('c')
+    expect(store.get('c').live?.runs).toHaveLength(1) // seeded from the lifted turn's own activity
+
+    const es = FakeEventSource.last!
+    // A genuinely different plan, with no agent_start for THIS stream first.
+    es.emit('dag_plan', '{"plan_id":"new-plan","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+
     expect(store.get('c').live?.runs).toEqual([])
+  })
+
+  it('keeps the run once this stream has seen its own top-level agent_start, even with seeded activity present', () => {
+    const store = new ChatStore()
+    store.seed('c', [dagTurnWithActivity('old-plan')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    // This stream's OWN top-level run actually starts - the owner's bug
+    // report shape (create_plan -> dag_plan within the same live turn).
+    es.emit('agent_start', '{"run_id":"orchestrator","stage":"worker"}')
+    es.emit('dag_plan', '{"plan_id":"new-plan","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+
+    expect(store.get('c').live?.runs?.length).toBeGreaterThan(0)
+  })
+})
+
+// #slice3 review: the orchestrator's turn continues past dag_plan (create_plan
+// -> dag_plan -> more execute calls, no delivery yet) - its own top-level run
+// must keep accumulating tool calls across that dag_plan, not get orphaned.
+describe('ChatStore - orchestrator run survives dag_plan mid-turn (#slice3)', () => {
+  it('agent_tool_call(create_plan) -> dag_plan -> agent_tool_call(execute) all land on the same run', () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    const store = new ChatStore()
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    es.emit('agent_start', '{"run_id":"orchestrator","stage":"worker"}')
+    es.emit('agent_tool_call', '{"run_id":"orchestrator","call_id":"1","name":"create_plan","args":{}}')
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+    es.emit('agent_tool_call', '{"run_id":"orchestrator","call_id":"2","name":"execute","args":{}}')
+
+    const runs = store.get('c').live?.runs
+    expect(runs).toHaveLength(1)
+    const toolNames = runs?.[0].activity
+      .filter((a): a is Extract<typeof a, { kind: 'tool' }> => a.kind === 'tool')
+      .map(a => a.tool.name)
+    expect(toolNames).toEqual(['create_plan', 'execute'])
   })
 })
 
@@ -1595,6 +1685,59 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
     expect(dag).toBeDefined()
     expect(dag?.nodeStates['a']?.status).toBe('queued')
     expect(es.closed).toBe(false) // still streaming
+  })
+})
+
+// Incremental planning (#slice3): execute() re-sends dag_plan with the SAME
+// plan_id every step, its node list only ever grown - the DAG view must keep
+// earlier steps' node cards (status, runs, answer) instead of wiping them
+// back to "queued" each time the plan grows.
+describe('ChatStore - a growing plan (same plan_id) keeps earlier steps\' node cards', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  it('a second dag_plan with the same plan_id merges in the new node without resetting the done one', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    // Step 1: plan with node "a", which then runs to completion.
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+    es.emit('node_start', '{"node_id":"a","agent":"researcher"}')
+    es.emit('node_done', '{"node_id":"a","output_preview":"A-RESULT"}')
+    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('done')
+
+    // Step 2: execute() grows the SAME plan (same plan_id) with node "b".
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[' +
+      '{"id":"a","agent":"researcher","task":"t","depends_on":[]},' +
+      '{"id":"b","agent":"code-implementer","task":"t2","depends_on":["a"]}' +
+      '],"edges":[{"from":"a","to":"b"}]}')
+
+    const dag = store.get('c').live?.dag
+    // "a" is still done - its card was not reset to queued by the grown plan.
+    expect(dag?.nodeStates['a']?.status).toBe('done')
+    expect(dag?.nodeStates['a']?.outputPreview).toBe('A-RESULT')
+    // "b" is the newly-added node, freshly queued.
+    expect(dag?.nodeStates['b']?.status).toBe('queued')
+    expect(dag?.nodes).toHaveLength(2)
+  })
+
+  it('a dag_plan with a DIFFERENT plan_id still resets (a genuinely new plan, #463)', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    es.emit('dag_plan', '{"plan_id":"p1","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+    es.emit('node_start', '{"node_id":"a","agent":"researcher"}')
+    es.emit('node_done', '{"node_id":"a","output_preview":"A-RESULT"}')
+
+    es.emit('dag_plan', '{"plan_id":"p2","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+
+    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('queued')
   })
 })
 

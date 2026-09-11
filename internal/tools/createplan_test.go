@@ -108,12 +108,14 @@ func TestCreatePlanNodeCurrentlyRunningRejected(t *testing.T) {
 	}
 }
 
-// TestCreatePlanSetupRepoMismatchRejected is the QA rig regression test: a
-// model-submitted setup.repo that disagrees with the trigger's own repo must
-// be rejected immediately, without ever reaching the plan judge - the
-// trigger's setup always overrides at execute time regardless, so a
-// mismatched override is either hallucination or a stale assumption.
-func TestCreatePlanSetupRepoMismatchRejected(t *testing.T) {
+// TestCreatePlanTriggerBackedIgnoresSubmittedSetupWithNote is the QA rig
+// regression test (#slice3 review): a model-submitted setup that disagrees
+// with the trigger's own repo used to be rejected outright, which cost the
+// model its own correct plan over a field it can't actually change (the
+// trigger's setup always overwrites rec.Setup regardless). Now it's
+// accepted, the submitted setup is silently ignored (rec.Setup is still the
+// trigger's), and the result summary says so.
+func TestCreatePlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
@@ -122,24 +124,30 @@ func TestCreatePlanSetupRepoMismatchRejected(t *testing.T) {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
 	rt := tl.(runnableTool)
-	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
 		"assignments": []map[string]any{{"agent": "code-reviewer", "task": "review it"}},
 		"setup":       map[string]any{"repo": "https://github.com/quack-org/quack.git", "base_ref": "main", "work_branch": "main"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "setup.repo") {
-		t.Fatalf("err = %v, want a setup.repo mismatch rejection", err)
-	}
-	nodes, err := listDagNodeRecords(newFakeCtx(), c)
 	if err != nil {
-		t.Fatalf("listDagNodeRecords: %v", err)
+		t.Fatalf("create_plan Run: %v, want the wrong setup ignored, not rejected", err)
 	}
-	if len(nodes) != 0 {
-		t.Errorf("dag_node records = %+v, want none - the rejection must happen before any node is minted", nodes)
+	summary, _ := res["summary"].(string)
+	if !strings.Contains(summary, "setup ignored") || !strings.Contains(summary, githubSetup.Repo) || !strings.Contains(summary, githubSetup.BaseRef) {
+		t.Errorf("summary = %q, want a setup-ignored note naming the trigger's own repo/base_ref", summary)
+	}
+	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	if rec.Setup == nil || rec.Setup.Repo != githubSetup.Repo {
+		t.Errorf("rec.Setup = %+v, want the trigger's own setup, not the model's guess", rec.Setup)
 	}
 }
 
-// TestCreatePlanSetupBaseRefMatchingTriggerAccepted covers the non-mismatch
-// path: an explicit setup that matches the trigger exactly is not rejected.
+// TestCreatePlanSetupBaseRefMatchingTriggerAccepted covers the (now
+// unremarkable) case where the submitted setup happens to match the
+// trigger exactly - still accepted, still ignored in favor of the
+// trigger's own copy.
 func TestCreatePlanSetupBaseRefMatchingTriggerAccepted(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")

@@ -122,6 +122,8 @@ type RawNode struct {
 	Artifact string `json:"artifact,omitempty"`
 	// ResumedFrom: see Node.ResumedFrom - carried through unchanged by assemble.
 	ResumedFrom string `json:"resumed_from,omitempty"`
+	// Result: see Node.Result - carried through unchanged by assemble.
+	Result string `json:"result,omitempty"`
 }
 
 // ValidateArtifactKind rejects an artifact selector outside the registered
@@ -149,7 +151,7 @@ func AssignmentsToRawNodes(assignments []Assignment, nodeAgent, resumedFrom map[
 		out = append(out, RawNode{
 			ID: a.NodeID, Agent: agent, Task: a.Task, Rubric: a.Rubric,
 			DependsOn: a.DependsOn, Checks: a.Checks, Workdir: a.Workdir,
-			ResumedFrom: resumedFrom[a.NodeID],
+			ResumedFrom: resumedFrom[a.NodeID], Result: a.Result,
 		})
 	}
 	return out, nil
@@ -242,6 +244,10 @@ func emitPlanRejectedEvent(ctx context.Context, plan *Plan, reason string) {
 	)
 }
 
+// resultPreviewLen caps how much of an already-run node's result the judge
+// sees - enough to judge progress, not a full re-read of the output.
+const resultPreviewLen = 600
+
 func planSummary(p *Plan) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
@@ -251,6 +257,12 @@ func planSummary(p *Plan) string {
 			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
 		}
 		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
+		if r := strings.TrimSpace(n.Result); r != "" {
+			if len(r) > resultPreviewLen {
+				r = r[:resultPreviewLen] + "…"
+			}
+			fmt.Fprintf(&sb, "\n    ALREADY RAN, result: %s", r)
+		}
 	}
 	if p.Setup != nil {
 		fmt.Fprintf(&sb, "\nsetup: repo=%q base_ref=%q work_branch=%q", p.Setup.Repo, p.Setup.BaseRef, p.Setup.WorkBranch)
@@ -260,7 +272,7 @@ func planSummary(p *Plan) string {
 	if p.Delivery != nil {
 		fmt.Fprintf(&sb, "\ndelivery: kind=%q", p.Delivery.Kind)
 	} else {
-		sb.WriteString("\ndelivery: (none declared)")
+		sb.WriteString("\ndelivery: (none declared - this step may be a partial plan, more nodes to follow)")
 	}
 	return sb.String()
 }
@@ -280,15 +292,12 @@ func planSummary(p *Plan) string {
 // Ceiling: a plan WITH a code-reviewer node always passes even if that
 // node's task text never actually calls stage_review - this only catches
 // the structurally-impossible case, not a lazy reviewer task.
+//
+// Fires only off an EXPLICITLY declared plan.Delivery, never a dispatch's
+// merely-allowed kinds: a step with no reviewer node yet may just be
+// partial, waiting on delivery to be declared once the plan grows there.
 func checkReviewDeliverable(plan *Plan) error {
-	expectsReview := plan.Delivery != nil && plan.Delivery.Kind == "review"
-	for _, k := range plan.AllowedDeliveryKinds {
-		if k == "review" {
-			expectsReview = true
-			break
-		}
-	}
-	if !expectsReview {
+	if plan.Delivery == nil || plan.Delivery.Kind != "review" {
 		return nil
 	}
 	for _, n := range plan.Nodes {
@@ -362,6 +371,19 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
 	}
+	// A delivery object present but with an empty kind asks the harness to
+	// infer it from a single-kind dispatch; omitting delivery entirely means
+	// "not yet" and is NEVER inferred (#slice3 review: the judge and execute
+	// must agree on whether delivery is declared - inferring it from mere
+	// omission made every step of a single-kind-trigger dispatch look
+	// "final" to the judge while execute still treated it as partial).
+	if delivery != nil && delivery.Kind == "" {
+		def := DefaultDeliveryFromAllowedKinds(allowedKinds)
+		if def == nil {
+			return nil, fmt.Errorf("delivery.kind: required - this dispatch allows more than one delivery kind (%s), so it can't be inferred", strings.Join(allowedKinds, ", "))
+		}
+		delivery = def
+	}
 	if err := validateDelivery(delivery); err != nil {
 		return nil, err
 	}
@@ -371,9 +393,6 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	}
 	ids := make(map[string]bool, len(nodes))
 	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, AllowedDeliveryKinds: allowedKinds}
-	if plan.Delivery == nil {
-		plan.Delivery = DefaultDeliveryFromAllowedKinds(allowedKinds)
-	}
 	for _, n := range nodes {
 		if n.ID == "" {
 			return nil, fmt.Errorf("node missing id")
@@ -414,6 +433,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			ContextWindow: agentInfo.ContextWindow,
 			Artifact:      artifactKind,
 			ResumedFrom:   n.ResumedFrom,
+			Result:        n.Result,
 		})
 	}
 
@@ -488,12 +508,10 @@ func validateChecks(checks, checkCommands []string) error {
 
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
 
-// DefaultDeliveryFromAllowedKinds fills in Delivery when the triggering
-// dispatch (a GitHub review/implement/plan-only extension run, or any other
-// caller of tools.WithAllowedDeliveryKinds) grants exactly one kind: the
-// extension already knows how the result reaches GitHub, so the model isn't
-// required to declare it too. nil when the dispatch is unrestricted or grants
-// a genuine choice among several kinds - the model still decides those.
+// DefaultDeliveryFromAllowedKinds resolves an explicit-but-kindless delivery
+// declaration when the triggering dispatch grants exactly one kind. nil when
+// the dispatch is unrestricted or grants a genuine choice among several -
+// the model must name the kind itself in that case.
 func DefaultDeliveryFromAllowedKinds(allowed []string) *Delivery {
 	if len(allowed) != 1 || !deliveryKinds[allowed[0]] {
 		return nil

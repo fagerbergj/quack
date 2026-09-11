@@ -1,10 +1,13 @@
 package runlog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -241,5 +244,95 @@ func TestDriveRecoversPoisonedRangeState(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Drive never returned - a poisoned rangefunc panic likely killed this goroutine")
+	}
+}
+
+// waitForNodeStoreStatus polls the runlog store row (not the dag_node
+// record) for status - PersistNodeEvent's own "from" comes from here.
+func waitForNodeStoreStatus(t *testing.T, st *store.Store, planID, nodeID, want string) *store.DagNode {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got, err := st.GetDagNode(context.Background(), planID, nodeID)
+		if err == nil && got != nil && got.Status == want {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GetDagNode: %+v err=%v, node never reached status %q", got, err, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestPersistNodeEventReusedNodeTransitionsThroughQueued is the QA rig
+// regression (#slice3 review): "persistNodeEvent: dag_node status update
+// failed ... illegal status transition done -> running" for a node reused
+// in a later incremental step. dag.CanTransition refuses done -> running
+// directly (only done -> queued -> running is legal) - the incremental step
+// path was starting a reused node straight into node_start without a
+// node_queued first, unlike the fresh-hire path. With that fixed
+// (RunPlanStep now queues every node in its run set), the same sequence a
+// real reuse produces - node_queued, node_start, node_done - must carry the
+// STORE row and the dag_node RECORD through done -> queued -> running ->
+// done with no illegal-transition warning logged.
+func TestPersistNodeEventReusedNodeTransitionsThroughQueued(t *testing.T) {
+	dag.SetAgentRoster([]dag.AgentInfo{{Name: "code-implementer"}})
+	st := newTestStore(t)
+	svc := artifact.InMemoryService()
+	st.SetArtifactService(svc)
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if err := st.SaveDagPlan(ctx, c.ID, "p1", "turn-1", `{"plan_id":"p1"}`); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	userID := st.SessionUserForChat(ctx, c.ID)
+	rc := recordstore.New(svc, artifactref.AppName, userID, c.ID)
+	seed := dag.DagNodeRecord{NodeID: "n1", Agent: "code-implementer", Status: dag.StatusDone, Started: true}
+	if _, _, err := rc.SaveStructured(ctx, "dag_node", seed, "n1", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed dag_node record: %v", err)
+	}
+
+	// Step 1: n1's real first run - establishes the STORE row's own "done"
+	// too (independent of the record seeded above), through the normal
+	// queued -> running -> done sequence a fresh dispatch takes.
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeQueued, Data: stream.NodeQueuedData{NodeID: "n1"}})
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeStart, Data: stream.NodeStartData{NodeID: "n1", Agent: "code-implementer"}})
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{NodeID: "n1"}})
+	waitForNodeStoreStatus(t, st, "p1", "n1", "done")
+
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(restore)
+
+	// Step 2: n1 reassigned - the fixed incremental step path queues before running.
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeQueued, Data: stream.NodeQueuedData{NodeID: "n1"}})
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeStart, Data: stream.NodeStartData{NodeID: "n1", Agent: "code-implementer"}})
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{NodeID: "n1"}})
+
+	waitForNodeStoreStatus(t, st, "p1", "n1", "done")
+	if strings.Contains(buf.String(), "illegal") {
+		t.Errorf("want no illegal-transition warning logged, got: %s", buf.String())
+	}
+
+	var got dag.DagNodeRecord
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		raw, _, ok, rerr := rc.Latest(ctx, "dag_node:n1")
+		if rerr == nil && ok {
+			if uerr := json.Unmarshal(raw, &got); uerr != nil {
+				t.Fatalf("unmarshal dag_node: %v", uerr)
+			}
+			if got.Status == dag.StatusDone {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dag_node record never settled back to done (got %+v)", got)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

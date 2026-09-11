@@ -70,9 +70,12 @@ func (s *attachStub) GenerateContent(_ context.Context, req *model.LLMRequest, _
 			yield(attachStubCall("execute", map[string]any{"plan_id": id}), nil)
 			return
 		}
-		yield(attachStubCall("create_plan", map[string]any{"assignments": []any{map[string]any{
-			"agent": "media", "task": "describe the attached image",
-		}}}), nil)
+		// delivery is declared so the plan is complete (#slice3) - execute
+		// ends the turn once it runs, matching this stub's single-shot flow.
+		yield(attachStubCall("create_plan", map[string]any{
+			"assignments": []any{map[string]any{"agent": "media", "task": "describe the attached image"}},
+			"delivery":    map[string]any{"kind": "comment"},
+		}), nil)
 	}
 }
 

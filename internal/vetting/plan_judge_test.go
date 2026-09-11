@@ -419,6 +419,25 @@ func TestPlanJudgeRejectsExplorationTerminalForImplementRequest(t *testing.T) {
 // TestPlanRubricStatesTerminalOutputIsTheAnswer pins the architectural fact the
 // judge twice confabulated away: it accepted a lone code-explorer plan because the findings "will be used to write the plan in the final response". No such
 // step exists - buildPlanGraph enforces one terminal node and its output is delivered verbatim - so the rubric has to say so.
+// TestPlanRubricStatesProgressFramingForPartialPlans pins #slice3: a plan
+// with no delivery declared is a legitimate partial step, not a defect - the
+// judge must ask whether THIS step makes progress given what already ran,
+// not whether the plan is finished.
+func TestPlanRubricStatesProgressFramingForPartialPlans(t *testing.T) {
+	mustContain := []string{
+		"A plan is not required to be complete",
+		"built incrementally",
+		"Makes progress toward what was asked, given the whole conversation and what already ran",
+		"A plan with no delivery declared is a STATEMENT that more work follows, not a defect",
+		"only require that this step is a genuine, non-redundant move toward that eventual terminal node",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(planRubricInstruction, s) {
+			t.Errorf("progress-framing rubric text missing expected phrase: %q", s)
+		}
+	}
+}
+
 func TestPlanRubricStatesTerminalOutputIsTheAnswer(t *testing.T) {
 	r := planRubricInstruction
 	for _, want := range []string{

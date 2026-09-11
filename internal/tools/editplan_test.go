@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -59,6 +60,81 @@ func TestEditPlanRemoveUnknownNodeIDRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ghost-1") {
 		t.Errorf("err = %v, want it to name the unknown id", err)
+	}
+}
+
+// TestEditPlanRemoveAlreadyRanAssignmentRejected pins #slice3: an
+// assignment that already ran (task_id set) is load-bearing history -
+// execute's seed map for any dependent added later - so removing it is a
+// one-line error, not a silent rewrite.
+func TestEditPlanRemoveAlreadyRanAssignmentRejected(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	rec.Assignments[0].TaskID = "already-dispatched"
+	rec.Assignments[0].Result = "the result"
+	if _, _, err := c.SaveStructured(newFakeCtx(), "dag_plan", rec, "", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed already-ran assignment: %v", err)
+	}
+
+	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"plan_id": planID, "remove": []string{"web-researcher-1"}})
+	if err == nil {
+		t.Fatal("want an error removing an assignment that already ran")
+	}
+	if !strings.Contains(err.Error(), "already ran") {
+		t.Errorf("err = %v, want it to say the assignment already ran", err)
+	}
+}
+
+// TestEditPlanRejectsAlreadyDeliveredPlan pins #slice3 review: a plan whose
+// status is already "done" (delivered) must return a clear error rather
+// than mutate a finished record - there is no more work a done plan can take.
+func TestEditPlanRejectsAlreadyDeliveredPlan(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	rec.Status = "done"
+	if _, _, err := c.SaveStructured(newFakeCtx(), "dag_plan", rec, "", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed done plan: %v", err)
+	}
+
+	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"plan_id":     planID,
+		"assignments": []map[string]any{{"agent": "web-researcher", "task": "more work"}},
+	})
+	if err == nil {
+		t.Fatal("want an error editing an already-delivered plan")
+	}
+	if !strings.Contains(err.Error(), "already delivered") {
+		t.Errorf("err = %v, want it to say the plan already delivered", err)
+	}
+
+	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	if len(rec2.Assignments) != 1 {
+		t.Errorf("assignments = %+v, want the record untouched (still 1)", rec2.Assignments)
+	}
+}
+
+// TestEditPlanRejectsNoOpCall pins the rig regression (#slice3 review): a
+// model that calls edit_plan with only plan_id and nothing to change (no
+// assignments, remove, setup, or delivery) got a happy no-op result and
+// looped it eight times against the same execute rejection. A no-op must
+// error and name what the tool actually accepts.
+func TestEditPlanRejectsNoOpCall(t *testing.T) {
+	rt, _, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"plan_id": planID})
+	if err == nil {
+		t.Fatal("want an error for an edit_plan call with nothing to change")
+	}
+	if !strings.Contains(err.Error(), "nothing to change") || !strings.Contains(err.Error(), planID) {
+		t.Errorf("err = %v, want it to say nothing to change and echo the plan_id", err)
 	}
 }
 
@@ -129,10 +205,12 @@ func TestEditPlanRejectionMintsNoOrphanNodes(t *testing.T) {
 	}
 }
 
-// TestEditPlanSetupRepoMismatchRejected mirrors create_plan's regression
-// test: edit_plan must reject a setup override that disagrees with the
-// trigger's own repo, before touching the plan record.
-func TestEditPlanSetupRepoMismatchRejected(t *testing.T) {
+// TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote mirrors
+// create_plan's own regression test (#slice3 review): edit_plan must accept
+// a setup override that disagrees with the trigger's own repo, ignore it
+// (the trigger's setup always overwrites rec.Setup regardless), and say so
+// in the summary - not reject the whole call over a field it can't change.
+func TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
@@ -154,11 +232,22 @@ func TestEditPlanSetupRepoMismatchRejected(t *testing.T) {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
 	ert := editTl.(runnableTool)
-	_, err = ert.Run(planToolCtx{newFakeCtx()}, map[string]any{
+	editRes, err := ert.Run(planToolCtx{newFakeCtx()}, map[string]any{
 		"plan_id": planID,
 		"setup":   map[string]any{"repo": "https://github.com/quack-org/quack.git", "base_ref": "main", "work_branch": "main"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "setup.repo") {
-		t.Errorf("err = %v, want a setup.repo mismatch rejection", err)
+	if err != nil {
+		t.Fatalf("edit_plan Run: %v, want the wrong setup ignored, not rejected", err)
+	}
+	summary, _ := editRes["summary"].(string)
+	if !strings.Contains(summary, "setup ignored") || !strings.Contains(summary, githubSetup.Repo) {
+		t.Errorf("summary = %q, want a setup-ignored note naming the trigger's own repo", summary)
+	}
+	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	if rec.Setup == nil || rec.Setup.Repo != githubSetup.Repo {
+		t.Errorf("rec.Setup = %+v, want the trigger's own setup, not the model's guess", rec.Setup)
 	}
 }

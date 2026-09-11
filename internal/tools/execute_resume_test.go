@@ -34,7 +34,7 @@ func resumeTestPlan(t *testing.T) (*recordstore.Client, *PlanCache) {
 func TestExecuteTool_ResumesTerminalNode(t *testing.T) {
 	c, cache := resumeTestPlan(t)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestExecuteTool_ResumesFailedNodeWithRealSession(t *testing.T) {
 	})
 	cache := NewPlanCache()
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestExecuteTool_NeverStartedFailedNodeIsNotResumed(t *testing.T) {
 	})
 	cache := NewPlanCache()
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestExecuteTool_FreshnessCheckClearsStaleResume(t *testing.T) {
 		sawNodeID = a.NodeID
 		return false, "branch moved past the node's cloned base_sha"
 	})
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", freshness)
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", freshness)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestExecuteTool_FreshnessCheckClearsStaleResume(t *testing.T) {
 func TestExecuteTool_StampsTaskIDAndRunningStatus(t *testing.T) {
 	c, cache := resumeTestPlan(t)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestExecuteTool_RejectionSavesAnchoredJudgeRound(t *testing.T) {
 	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "impl-1", Agent: "code-implementer"}})
 	cache := NewPlanCache()
 
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}

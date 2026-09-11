@@ -10,13 +10,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/v2/agent"
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
-	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/recordstore"
-	"github.com/fagerbergj/quack/internal/stream"
 )
 
 const dagPlanRecordID = "dag_plan:main"
@@ -130,6 +129,67 @@ type assignmentInput struct {
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
 	Rubric    string   `json:"rubric,omitempty"`
+}
+
+// assignmentInputSchema derives T's (createPlanArgs/editPlanArgs) default
+// input schema - the same derivation functiontool.New would otherwise do
+// implicitly (jsonschema.For) - and constrains assignments[].agent to the
+// CURRENT agent roster. A contract the tool itself enforces, not a
+// model-specific prompt hint (#slice3 review: a small model omitted `agent`
+// in most of its create_plan calls even after the roster was named in the
+// rejection text). agent stays optional - node_id is the other valid way to
+// fill it in - only its value, when given, is constrained; node_id stays
+// free-form (minted ids aren't known ahead of a call).
+//
+// githubSetup, when non-nil (a trigger-backed dispatch), stops ADVERTISING
+// `setup` as useful - a one-line Description saying it's ignored on this
+// run - rather than dropping the property outright: jsonschema.For closes
+// the object (additionalProperties: false), and ADK's functiontool really
+// validates a call against this schema before unmarshalling it, so removing
+// `setup` from Properties would make a model that sends it anyway fail
+// schema validation - the one outcome this must NOT produce (a real,
+// accepted createPlanArgs/editPlanArgs field; setupIgnoredNote in the
+// handler is what actually handles it). Widening AdditionalProperties
+// instead would silently swallow a genuinely misspelled key (e.g.
+// "assignmnets") rather than rejecting it by name, which is worse.
+func assignmentInputSchema[T any](githubSetup *dag.Setup) (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[T](nil)
+	if err != nil {
+		return nil, fmt.Errorf("derive input schema: %w", err)
+	}
+	assignments, ok := schema.Properties["assignments"]
+	if !ok || assignments.Items == nil {
+		return nil, fmt.Errorf("derive input schema: assignments[].items missing")
+	}
+	agentProp, ok := assignments.Items.Properties["agent"]
+	if !ok {
+		return nil, fmt.Errorf("derive input schema: assignments[].agent missing")
+	}
+	names := dag.AgentNames()
+	agentProp.Enum = make([]any, len(names))
+	for i, n := range names {
+		agentProp.Enum[i] = n
+	}
+	if githubSetup != nil {
+		if setupProp, ok := schema.Properties["setup"]; ok {
+			setupProp.Description = fmt.Sprintf("Ignored on this run: the trigger fixes repo/base_ref to %s@%s.", githubSetup.Repo, githubSetup.BaseRef)
+		}
+	}
+	return schema, nil
+}
+
+// setupIgnoredNote reports the line to append to create_plan/edit_plan's
+// result summary when the model submitted a `setup` the trigger's own
+// setup overrides outright (githubSetup != nil) - "" when there's nothing
+// to note (a plain chat, or the model omitted setup as the schema now
+// asks). The trigger's setup wins unconditionally regardless of repo,
+// base_ref, or any other field the model sent - there's nothing left to
+// validate, only to say so.
+func setupIgnoredNote(submitted, githubSetup *dag.Setup) string {
+	if githubSetup == nil || submitted == nil {
+		return ""
+	}
+	return fmt.Sprintf("\nsetup ignored: this run clones %s@%s from the trigger", githubSetup.Repo, githubSetup.BaseRef)
 }
 
 // validateAllowedDeliveryKind rejects hiring or reassigning agent when its
@@ -305,27 +365,4 @@ func toAssignmentOutputs(assignments []dag.Assignment, nodeAgent map[string]stri
 		out[i] = assignmentOutput{NodeID: a.NodeID, Agent: nodeAgent[a.NodeID], Task: a.Task, DependsOn: a.DependsOn}
 	}
 	return out
-}
-
-// planRecordEvent builds the dag_plan SSE event from a saved record, the
-// same event shape the DAG view has always consumed (stream.DagPlan) -
-// create_plan/edit_plan emit it so the view updates before execute runs.
-func planRecordEvent(ctx context.Context, rec dag.DagPlanRecord, nodeAgent map[string]string) stream.SSEEvent {
-	nodes := make([]stream.DagNodeDef, len(rec.Assignments))
-	for i, a := range rec.Assignments {
-		agentName := nodeAgent[a.NodeID]
-		info, _ := dag.AgentInfoFor(agentName)
-		nodes[i] = stream.DagNodeDef{ID: a.NodeID, Agent: agentName, Task: a.Task, DependsOn: a.DependsOn, ContextWindow: info.ContextWindow, Artifact: info.DefaultArtifact}
-	}
-	return stream.WithTrace(stream.DagPlan(rec.PlanID, nodes, planRecordEdges(rec.Assignments)), otelobs.TraceIDOf(ctx))
-}
-
-func planRecordEdges(assignments []dag.Assignment) []stream.DagEdgeDef {
-	var edges []stream.DagEdgeDef
-	for _, a := range assignments {
-		for _, dep := range a.DependsOn {
-			edges = append(edges, stream.DagEdgeDef{From: dep, To: a.NodeID})
-		}
-	}
-	return edges
 }

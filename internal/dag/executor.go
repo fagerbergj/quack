@@ -94,6 +94,10 @@ func (s *DagStream) ScopeToResume(nodeIDs []string) {
 	}
 }
 
+// ScopeToStep: restricts terminal sweep to exactly run, unlike
+// ScopeToRetry/ScopeToResume - a step's descendants haven't run yet.
+func (s *DagStream) ScopeToStep(run map[string]bool) { s.only = run }
+
 // NewDagStream: builds a router for one plan's gate-node events.
 func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID, sessionID, cancelKey string, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string) *DagStream {
 	agentByID := make(map[string]string, len(plan.Nodes))
@@ -138,6 +142,16 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 
 // Finish: flushes last run and emits node_done for remaining nodes. Call after runner loop.
 func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
+
+// NeedsInput reports which nodes this stream saw pause on a HITL question -
+// a caller reporting per-assignment status (execute.go) needs the node id,
+// not just whether ANY node paused.
+func (s *DagStream) NeedsInput() map[string]bool { return s.ds.needsInput }
+
+// Started reports which run-set nodes actually reached running (node_start
+// emitted) - a node whose dependency paused earlier can be requested but
+// never dispatched, and the caller must not treat that as "ran and failed".
+func (s *DagStream) Started() map[string]bool { return s.ds.started }
 
 func (s *DagStream) Finish() {
 	s.ds.flush()
@@ -185,6 +199,20 @@ func (s *DagStream) Finish() {
 // class of staleness could in principle reach one of those too, add if it
 // shows up in practice.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
+	e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
+	return e.runSubset(ctx, plan, chatID, seeded, retrySet(plan, nodeID))
+}
+
+// RunPlanIncrement runs exactly the nodes named in run as fresh dispatches -
+// never retries - seeding every other node's output from seeded so a new
+// node depending on an already-run one still sees its result.
+func (e *Executor) RunPlanIncrement(ctx adkagent.Context, plan Plan, chatID string, seeded map[string]string, run map[string]bool) (map[string]string, error) {
+	return e.runSubset(ctx, plan, chatID, seeded, run)
+}
+
+// runSubset builds gate nodes for plan and dispatches exactly the ids in run
+// through them - the ADK plumbing shared by RetryPlanInNode and RunPlanIncrement.
+func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, seeded map[string]string, run map[string]bool) (map[string]string, error) {
 	source := ledger.CoordsFromContext(ctx).Source
 	var userID string
 	artifacts := e.artifacts
@@ -194,18 +222,17 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 		// No session, no real userID - artifact tools would scope to "" and
 		// silently see nothing, so skip building them rather than lie about scope.
 		artifacts = nil
-		slog.Warn("retry: no session, skipping artifact tools", "component", "dag", "chat_id", chatID, "node_id", nodeID)
+		slog.Warn("dag: no session, skipping artifact tools", "component", "dag", "chat_id", chatID)
 	}
-	e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
 	sink, _ := stream.YieldFromContext(ctx)
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.specFor, artifacts, e.walLedger, nil, sink, e.sessions) // retry never re-runs setup, so nothing to refresh
+		}, e.admission, e.specFor, artifacts, e.walLedger, nil, sink, e.sessions) // a subset run never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}
-	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, retrySet(plan, nodeID))
+	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, run)
 }
 
 // resetNativeWorkerSession deletes nodeID's deterministic A2A worker session

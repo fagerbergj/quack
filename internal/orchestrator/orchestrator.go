@@ -611,6 +611,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 				o.resumeNodeRun(ctx, userID, sessionID, message, pend, yield)
 				return
 			}
+		} else if pend, ok := o.pendingStepInterrupt(ctx, userID, sessionID); ok {
+			o.startIncrementalNodeRun(ctx, userID, sessionID, message, pend, yield)
+			return
 		}
 		history := buildHistory(prior)
 		var githubSetup *dag.Setup
@@ -644,7 +647,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
 			return
 		}
-		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, history, message, attachments,
+		runStep := func(stepCtx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, map[string]bool, error) {
+			return o.executor.RunPlanStep(stepCtx, plan, AppName, userID, sessionID, seeded, run)
+		}
+		finalizeStep := func(stepCtx context.Context, plan dag.Plan, outputs map[string]string) string {
+			return o.finalizeAnswer(stepCtx, plan, outputs, sessionID)
+		}
+		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, runStep, finalizeStep, history, message, attachments,
 			githubSetup, allowedKinds,
 			tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx),
 			orchestratorName, o.assignmentFreshness)
@@ -880,20 +889,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			}
 		}
 
-		if planID, selected := planCache.Selected(); selected {
-			if plan, ok := planCache.Get(planID); ok {
-				nodeOutputs := make(map[string]string)
-				paused, rerr := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, nil, safeYield, nodeOutputs, nil)
-				if rerr != nil {
-					safeYield(stream.Errorf("orchestrator: plan run: "+rerr.Error()), nil)
-					return
-				}
-				if !paused {
-					planCache.SetDelivered(o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID))
-				}
-			}
-		}
-
+		// The execute tool itself ran every step's assignments (dag.Executor.RunPlanStep)
+		// and set planCache.Delivered once a step declared delivery - nothing left to run here.
 		o.persistAnswer(ctx, userID, sessionID, planCache.Delivered())
 		safeYield(stream.Done(), nil)
 	}
@@ -1029,13 +1026,187 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 // StartNode is the "start a paused node" transition: it re-enters the
 // stashed plan's graph at the node that paused. A node parked on a question
 // (pause_reason awaiting_input, i.e. an unanswered HITL interrupt in the session) takes message as the answer; a node paused by a user or by shutdown needs no message and simply resumes at its last gate boundary.
+// A node paused mid-incremental-step (dag.PlanStepSessionID, not the chat
+// session - see startIncrementalNodeRun) is checked separately, since that
+// resume re-enters a structurally different wrapper than the whole-plan graph.
 func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
 	o.executor.StartNode(sessionID, nodeID)
-	var pend *pendingInterrupt
 	if p, ok := latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, sessionID)); ok && p.nodeID == nodeID {
-		pend = &p
+		o.startNodeRun(ctx, userID, sessionID, message, &p, nodeID, yield)
+		return
 	}
-	o.startNodeRun(ctx, userID, sessionID, message, pend, nodeID, yield)
+	if p, ok := o.pendingStepInterrupt(ctx, userID, sessionID); ok && p.nodeID == nodeID {
+		o.startIncrementalNodeRun(ctx, userID, sessionID, message, p, yield)
+		return
+	}
+	o.startNodeRun(ctx, userID, sessionID, message, nil, nodeID, yield)
+}
+
+// pendingStepInterrupt checks a plan's own dedicated incremental-step
+// session for a paused node - RunPlanStep runs there, not on the chat
+// session (see dag.PlanStepSessionID's doc: a nested runner.Run on the live
+// chat session would risk corrupting its event/branch bookkeeping).
+func (o *Orchestrator) pendingStepInterrupt(ctx context.Context, userID, sessionID string) (pendingInterrupt, bool) {
+	return latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, dag.PlanStepSessionID(sessionID)))
+}
+
+// startIncrementalNodeRun answers a node paused mid-incremental-step
+// (dag.Executor.ResumePlanStep) and persists its result onto the dag_plan
+// record exactly like execute() does for a freshly-run assignment, so a
+// later execute/list_nodes call sees it as done. Unlike startNodeRun (which
+// always finalizes once the whole graph stops pausing), finishing here only
+// means THIS assignment is done - the plan may still be partial, so the
+// answer is only finalized when the plan's own declared delivery covers it.
+func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sessionID, message string, pend pendingInterrupt, yield func(stream.SSEEvent, error) bool) {
+	plan, ok := o.stashedPlan(ctx, userID, sessionID)
+	if !ok {
+		yield(stream.Errorf("resume: no plan in session to resume"), nil)
+		return
+	}
+	recordSvc := o.artifacts
+	if recordSvc == nil {
+		recordSvc = artifact.InMemoryService()
+	}
+	rec, _, ok, err := dag.LoadDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID)
+	if err != nil || !ok {
+		yield(stream.Errorf("resume: no plan record to resume"), nil)
+		return
+	}
+	run := map[string]bool{pend.nodeID: true}
+	seeded := map[string]string{}
+	for _, a := range rec.Assignments {
+		if a.TaskID != "" {
+			seeded[a.NodeID] = a.Result
+		}
+	}
+
+	safeYield := newSafeYield(yield)
+	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
+	safeYield(tools.DagPlanEvent(ctx, plan), nil)
+
+	outputs, needsInput, started, err := o.executor.ResumePlanStep(ctx, plan, AppName, userID, sessionID, seeded, run, pend.id, message)
+	if err != nil {
+		safeYield(stream.Errorf("resume: "+err.Error()), nil)
+		return
+	}
+	if len(needsInput) > 0 {
+		yield(stream.Done(), nil)
+		return
+	}
+
+	var anyFailed bool
+	out := outputs[pend.nodeID]
+	for i := range rec.Assignments {
+		if rec.Assignments[i].NodeID == pend.nodeID && started[pend.nodeID] {
+			// Shares execute.go's own success/failure decision (paused=false:
+			// the step already confirmed it isn't) - a resumed node with
+			// empty output is exactly as "failed" as a freshly-run one, and
+			// must not silently finalize on it (#slice3 review).
+			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false) == "failed" {
+				anyFailed = true
+			}
+		}
+	}
+	if _, _, serr := dag.SaveDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID, "", rec); serr != nil {
+		slog.Warn("resume: dag_plan update failed", "component", "orchestrator", "err", serr)
+	}
+
+	// B's completion may have unblocked dependents (B -> C, C terminal) that
+	// the paused-node-only resume dispatch above never ran - without this,
+	// finalizing on rec.Assignments right here would deliver a terminal
+	// node's still-empty result (#slice3 review: no delivery ever fires).
+	// Keep driving newly-unblocked assignments the same way execute.go
+	// drives a fresh step, round by round, until nothing more is unblocked
+	// or a round itself pauses/errors - ending the turn either way, exactly
+	// like a fresh execute() step would.
+	turnEnded := false
+	for {
+		next := unblockedByDeps(rec.Assignments)
+		if len(next) == 0 {
+			break
+		}
+		roundSeeded := map[string]string{}
+		for _, a := range rec.Assignments {
+			if a.TaskID != "" {
+				roundSeeded[a.NodeID] = a.Result
+			}
+		}
+		roundOutputs, roundNeedsInput, roundStarted, rerr := o.executor.RunPlanStep(ctx, plan, AppName, userID, sessionID, roundSeeded, next)
+		if rerr != nil {
+			safeYield(stream.Errorf("resume: "+rerr.Error()), nil)
+			turnEnded = true
+		}
+		for i := range rec.Assignments {
+			nid := rec.Assignments[i].NodeID
+			if !next[nid] {
+				continue
+			}
+			// Same hazard as execute.go's own step: a sibling pausing first
+			// can leave nid requested but never dispatched - leave it untouched.
+			if !roundStarted[nid] {
+				continue
+			}
+			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], roundOutputs[nid], roundNeedsInput[nid]) == "failed" {
+				anyFailed = true
+			}
+		}
+		if _, _, serr := dag.SaveDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID, "", rec); serr != nil {
+			slog.Warn("resume: dag_plan update failed", "component", "orchestrator", "err", serr)
+		}
+		if rerr != nil {
+			return
+		}
+		if len(roundNeedsInput) > 0 {
+			turnEnded = true
+			break
+		}
+	}
+	if turnEnded {
+		yield(stream.Done(), nil)
+		return
+	}
+
+	if !anyFailed && rec.Delivery != nil {
+		final := map[string]string{}
+		for _, a := range rec.Assignments {
+			final[a.NodeID] = a.Result
+		}
+		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID))
+	}
+	yield(stream.Done(), nil)
+}
+
+// unblockedByDeps returns every not-yet-run assignment (TaskID == "") whose
+// dependencies (if any) have already run (TaskID set, success or failure -
+// "ran" is what unblocks a dependent, same convention partitionAssignments
+// and execute.go's own dispatch already use). Not scoped to the resumed
+// node's own chain: a dependency-free assignment an unrelated edit_plan call
+// added is just as "ready" and comes back here too - same as a fresh
+// execute() step would dispatch it.
+func unblockedByDeps(assignments []dag.Assignment) map[string]bool {
+	ran := make(map[string]bool, len(assignments))
+	for _, a := range assignments {
+		if a.TaskID != "" {
+			ran[a.NodeID] = true
+		}
+	}
+	next := map[string]bool{}
+	for _, a := range assignments {
+		if a.TaskID != "" {
+			continue
+		}
+		ready := true
+		for _, dep := range a.DependsOn {
+			if !ran[dep] {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			next[a.NodeID] = true
+		}
+	}
+	return next
 }
 
 func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {

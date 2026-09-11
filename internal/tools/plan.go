@@ -69,9 +69,20 @@ func summarizeAttachments(parts []*genai.Part) []attachmentMeta {
 	return out
 }
 
-// emitPlanEvent: records a gen_ai "plan" ledger event once execute has built
-// and judged a runnable dag.Plan from the current dag_plan record.
-func emitPlanEvent(tc agent.Context, p *dag.Plan) {
+// genAIPlanStep: not a registered semconv attribute - the dag_plan revision
+// THIS execute call saved (SaveStructured's own revision counter), monotonic
+// per execute call but NOT a 1-based execute-step index: create_plan's own
+// save is revision 1, and every edit_plan save between executes bumps it
+// too, so e.g. create -> edit -> edit -> execute emits step=4 for the FIRST
+// executed step. Still strictly increasing per execute, so ordering the
+// ledger's per-turn "plan" events by it works - a future consumer just
+// shouldn't assume step N means the Nth execute call.
+const genAIPlanStep = "quack.plan.step"
+
+// emitPlanEvent: records a gen_ai "plan" ledger event once execute has run
+// one step of the current dag_plan record. step is the revision
+// SaveStructured returned for it, <= 0 (a store error) to omit the attribute.
+func emitPlanEvent(tc agent.Context, p *dag.Plan, step int) {
 	if !otelobs.LoggingEnabled("quack.planner") {
 		return
 	}
@@ -79,6 +90,9 @@ func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 	attrs := []attribute.KeyValue{
 		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlan),
 		attribute.String(otelobs.GenAIWorkflowName, p.ID),
+	}
+	if step > 0 {
+		attrs = append(attrs, attribute.Int(genAIPlanStep, step))
 	}
 	// The planner's actual ask - history/message/attachments Build stamped onto p - not a
 	// reconstruction from the plan it produced.

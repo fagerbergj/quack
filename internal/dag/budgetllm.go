@@ -60,23 +60,42 @@ func (b *BudgetedLLM) GenerateContent(ctx context.Context, req *model.LLMRequest
 
 // trimContentsToBudget drops the oldest complete tool-call/response rounds
 // until the request's estimated size fits budget. req.Contents[0] - the
-// invocation's own opening turn - is never dropped. A FunctionCall content is
-// always dropped together with its paired response content, never split:
-// most providers 400 on an orphaned one or the other.
+// session's very first turn, not this invocation's own - is never dropped,
+// and neither is the last user-role content: on a chat with history,
+// Contents[0] is long past this invocation's actual query, so pinning only
+// it left the real current turn (or, mid tool-loop, its latest
+// FunctionResponse - also role "user") exposed to the same front-to-back
+// trim as everything else. Most chat templates require the message list to
+// END on a user turn to know where to generate from; losing it 500s with
+// "no user query found" rather than degrading gracefully. A FunctionCall
+// content is always dropped together with its paired response content,
+// never split: most providers 400 on an orphaned one or the other.
 func trimContentsToBudget(req *model.LLMRequest, budget int) {
 	overhead := estimateOverhead(req)
 	if budget <= 0 || estimateTokens(req.Contents)+overhead <= budget {
 		return
 	}
+	lastUser := len(req.Contents) - 1
+	for lastUser > 0 && (req.Contents[lastUser] == nil || req.Contents[lastUser].Role != "user") {
+		lastUser--
+	}
 	dropped := 0
 	i := 1
-	for i < len(req.Contents) && estimateTokens(req.Contents)+overhead > budget {
-		end := i + 1
-		if hasFunctionCall(req.Contents[i]) && end < len(req.Contents) {
-			end++
+	for i < lastUser && estimateTokens(req.Contents)+overhead > budget {
+		// Always drop a complete round (this content plus the very next
+		// one), never a single content alone - a chat alternates roles
+		// strictly, so dropping just one joins its two neighbors into an
+		// adjacent SAME role (#slice3 review), exactly what the note-splice
+		// below already treats as unsafe. A FunctionCall's own response is
+		// exactly the next content in a well-formed session, so this still
+		// keeps that pair together as before.
+		end := i + 2
+		if end > lastUser {
+			break // would consume or split across the pinned content
 		}
 		req.Contents = append(req.Contents[:i], req.Contents[end:]...)
 		dropped += end - i
+		lastUser -= end - i
 	}
 	if dropped == 0 {
 		return

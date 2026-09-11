@@ -672,6 +672,13 @@ export class ChatStore {
     onError: (msg: string) => void,
     onTitle?: (title: string) => void,
   ): AgentStreamHandlers {
+      // Set once THIS stream's own top-level (no-node) run actually starts -
+      // distinguishes the orchestrator's own live activity from runs merely
+      // SEEDED from a lingering/lifted LiveTurn (attach(), #463 shape: the
+      // seed came from a PRIOR run's turn, which always carries a
+      // quack:activity item once it has tool calls). onDagPlan reads this to
+      // decide whether seeded runs are stale enough to purge.
+      let sawTopLevelAgentStart = false
       const updateNodeRuns = (nodeId: string | undefined, fn: (runs: AgentRun[]) => AgentRun[]) => {
         if (!nodeId) return
         const s = this.states.get(chatId)
@@ -766,6 +773,7 @@ export class ChatStore {
             }
           } else {
             resetTopLevelText()
+            sawTopLevelAgentStart = true
           }
           return d.nodeId
             ? updateNodeRuns(d.nodeId, r => startRun(r, runArgs(d)))
@@ -843,21 +851,36 @@ export class ChatStore {
         onDagPlan: plan => {
           const s = this.states.get(chatId)
           if (!s?.live) return
-          // #463: when a fresh DAG arrives (e.g. after pre-DAG orchestrator
-          // narration, or a new hub dispatch replaying into the same LiveTurn),
-          // purge stale top-level accumulators that don't belong under this DAG.
-          const nodeStates: Record<string, NodeState> = {}
-          for (const n of plan.nodes) nodeStates[n.id] = { status: 'queued' }
+          // Same planId means the plan grew: keep earlier node cards. The orchestrator's
+          // own run is never purged here, since its execute calls continue after dag_plan.
+          const prevDag = s.live.dag
+          const grown = prevDag?.planId === plan.planId
+          const nodeStates: Record<string, NodeState> = grown ? { ...prevDag.nodeStates } : {}
+          for (const n of plan.nodes) {
+            if (!nodeStates[n.id]) nodeStates[n.id] = { status: 'queued' }
+          }
           const dag: DagTurnState = {
             planId: plan.planId,
             nodes: plan.nodes,
             edges: plan.edges,
             nodeStates,
-            nodeRuns: {},
-            nodeAnswer: {},
-            startedAt: anchorTime(plan.startedAtMs),
+            nodeRuns: grown ? prevDag.nodeRuns : {},
+            nodeAnswer: grown ? prevDag.nodeAnswer : {},
+            startedAt: grown ? prevDag.startedAt : anchorTime(plan.startedAtMs),
           }
-          this.write(chatId, { ...s, live: { ...s.live, dag, text: '', runs: [] } })
+          // A FRESH plan whose runs were only ever SEEDED (attach(), never
+          // this stream's own agent_start) belong to whatever turn they were
+          // lifted from, not this plan - purge them (#463 shape for seeded
+          // runs: a re-attach lifts an unrelated completed turn, which
+          // always carries a quack:activity item once it has tool calls, so
+          // its stale narration/tool-calls would otherwise render under the
+          // new plan). The orchestrator's own live run (this stream's real
+          // agent_start already fired) is never purged - see above.
+          const purgeSeededRuns = !grown && !sawTopLevelAgentStart
+          this.write(chatId, {
+            ...s,
+            live: { ...s.live, dag, text: grown ? s.live.text : '', runs: purgeSeededRuns ? [] : s.live.runs },
+          })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay

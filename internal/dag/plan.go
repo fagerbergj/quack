@@ -76,6 +76,10 @@ type Node struct {
 	// drives the "continues" ledger/UI signal for both transports; a native
 	// node resumes automatically off its own stable A2A contextID regardless.
 	ResumedFrom string
+	// Result: this node's output from an earlier execute step, carried from
+	// Assignment.Result - "" for a node not yet run. Lets the plan judge see
+	// what already happened when judging a growing plan (planSummary).
+	Result string
 }
 
 func terminalIDs(nodes []Node) []string {
