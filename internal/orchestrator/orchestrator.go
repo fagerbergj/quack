@@ -607,23 +607,24 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			planRC = planRC.WithLedger(o.ledgerStore)
 		}
 		nodeIsRunning := func(nodeID string) bool { return o.executor.NodeIsLive(sessionID, nodeID) }
+		allowedKinds := tools.AllowedDeliveryKindsFromContext(ctx)
 		listNodesTool, err := tools.NewListNodesTool(planRC, nodeIsRunning)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: list_nodes tool: "+err.Error()), nil)
 			return
 		}
-		createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning)
+		createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: create_plan tool: "+err.Error()), nil)
 			return
 		}
-		editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning)
+		editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
 			return
 		}
 		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, history, message, attachments,
-			githubSetup, tools.AllowedDeliveryKindsFromContext(ctx),
+			githubSetup, allowedKinds,
 			tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx))
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)

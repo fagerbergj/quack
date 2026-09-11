@@ -16,7 +16,7 @@ func newCreatePlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning fu
 	t.Helper()
 	dag.NewPlanner(roster, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning)
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestCreatePlanSetupRepoMismatchRejected(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestCreatePlanSetupBaseRefMatchingTriggerAccepted(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}

@@ -26,7 +26,7 @@ type createPlanArgs struct {
 // GitHub extension already knows the real repo/branch/PR, so the model's
 // guess never wins. Saves the same dag_plan/dag_node records edit_plan and
 // the artifact panel read.
-func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool) (tool.Tool, error) {
+func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string) (tool.Tool, error) {
 	artifactDesc := "`assignments[].checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its " +
 		"commands: the trust gate derives a code node's checks from the repo itself after the node clones it."
 	return functiontool.New[createPlanArgs, planUpsertResult](
@@ -45,8 +45,10 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 				"- a node never pushes, opens a PR, or posts a review itself. When this dispatch already came with a " +
 				"repo/base_ref (a GitHub trigger), `setup.repo`/`setup.base_ref` must match it exactly if set at all - " +
 				"omit them and the trigger's own values apply. Put the real repo/PR in a node's `task` text, never a " +
-				"guessed one. Returns the plan (assignments with minted node_ids) - call edit_plan to change it, or " +
-				"execute to run it. Do NOT call for tasks you can answer directly.",
+				"guessed one. Hiring an agent whose only deliverable this dispatch does not allow (e.g. a " +
+				"`code-reviewer` when only a pull request can be delivered) is rejected. Returns the plan " +
+				"(assignments with minted node_ids) - call edit_plan to change it, or execute to run it. Do NOT " +
+				"call for tasks you can answer directly.",
 		},
 		func(tc agent.Context, a createPlanArgs) (planUpsertResult, error) {
 			if len(a.Assignments) == 0 {
@@ -59,7 +61,7 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			if err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
-			assignments, minted, err := upsertNodes(a.Assignments, existing, nodeIsRunning, tc.SessionID())
+			assignments, minted, err := upsertNodes(a.Assignments, existing, nodeIsRunning, tc.SessionID(), allowedKinds)
 			if err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}

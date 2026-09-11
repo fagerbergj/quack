@@ -37,6 +37,26 @@ const (
 )
 const explorerAgent = "code-explorer"
 
+// agentDeliveryKind maps a job whose work IS a specific delivery mechanism -
+// same hardcoded-name ceiling as checkReviewDeliverable below (no other
+// machine-readable declaration of this exists) - to the Delivery.Kind that
+// work can only reach GitHub through.
+var agentDeliveryKind = map[string]string{
+	reviewerAgent:    "review",
+	implementerAgent: "pull_request",
+}
+
+// RequiredDeliveryKind reports the Delivery.Kind agent's job is coupled to,
+// ok=false for an agent with no such coupling (research/synthesis agents can
+// feed any delivery kind). Lets create_plan/edit_plan reject hiring an agent
+// whose only possible delivery isn't in this dispatch's allowed set BEFORE
+// the node runs, rather than discovering it after a full node execution
+// burns real tokens only to have delivery itself refuse the result.
+func RequiredDeliveryKind(agent string) (kind string, ok bool) {
+	kind, ok = agentDeliveryKind[agent]
+	return kind, ok
+}
+
 // reviewChurnThreshold: max lines before reviewer must fan out.
 const reviewChurnThreshold = 800
 

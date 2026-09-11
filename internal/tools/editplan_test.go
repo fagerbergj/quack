@@ -16,7 +16,7 @@ func newEditPlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning func
 	t.Helper()
 	dag.NewPlanner(roster, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning)
+	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -29,7 +29,7 @@ func newEditPlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning func
 	}
 	planID, _ := res["plan_id"].(string)
 
-	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nodeIsRunning)
+	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nodeIsRunning, nil)
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestEditPlanSetupRepoMismatchRejected(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil)
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestEditPlanSetupRepoMismatchRejected(t *testing.T) {
 	}
 	planID, _ := res["plan_id"].(string)
 
-	editTl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil)
+	editTl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil, nil)
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
