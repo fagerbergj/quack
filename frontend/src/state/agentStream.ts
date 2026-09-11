@@ -169,7 +169,9 @@ export interface AgentStreamHandlers {
   // DAG lifecycle
   onDagPlan?: (plan: DagPlanPayload) => void
   onNodeQueued?: (nodeId: string) => void
-  onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number, traceId?: string) => void
+  // resumedFrom: present only when this dispatch reused an existing node id -
+  // the prior context it continues on.
+  onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number, traceId?: string, resumedFrom?: string) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   // finishedAtMs: see AgentCompletePayload.finishedAtMs.
   onNodeFailed?: (nodeId: string, error: string, finishedAtMs?: number) => void
@@ -322,11 +324,12 @@ function dispatchAgentEvent(
       if (hasStringField(parsed, 'node_id')) handlers.onNodeQueued?.(parsed.node_id)
       return true
     case 'node_start': {
-      const p = parsed as { node_id?: string; agent?: string; started_at_ms?: number; trace_id?: string }
+      const p = parsed as { node_id?: string; agent?: string; started_at_ms?: number; trace_id?: string; resumed_from?: string }
       if (typeof p.node_id === 'string') {
         handlers.onNodeStart?.(p.node_id, typeof p.agent === 'string' ? p.agent : '',
           typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
-          typeof p.trace_id === 'string' ? p.trace_id : undefined)
+          typeof p.trace_id === 'string' ? p.trace_id : undefined,
+          typeof p.resumed_from === 'string' ? p.resumed_from : undefined)
       }
       return true
     }

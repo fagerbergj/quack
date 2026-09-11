@@ -450,9 +450,10 @@ func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
 	}
 }
 
-// TestClosePinnedSession_RemovesACPStateDir: node-finish must remove the
-// persisted session dir, not leave it for a TTL sweep that doesn't cover it.
-func TestClosePinnedSession_RemovesACPStateDir(t *testing.T) {
+// TestClosePinnedSession_KeepsACPStateDir: node-finish must NOT remove the
+// persisted session dir - a later reuse resumes it via session/load, so only
+// chat archive/delete (workspace.Jail.RemoveACPState) may remove it.
+func TestClosePinnedSession_KeepsACPStateDir(t *testing.T) {
 	a := testAgent(t, "pin")
 	token := "tok-close-pinned-state-dir"
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
@@ -471,8 +472,8 @@ func TestClosePinnedSession_RemovesACPStateDir(t *testing.T) {
 
 	ClosePinnedSession(token)
 
-	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
-		t.Fatalf("ACPStateDir %q still exists after ClosePinnedSession: %v", stateDir, err)
+	if _, err := os.Stat(stateDir); err != nil {
+		t.Fatalf("ACPStateDir %q was removed by ClosePinnedSession: %v", stateDir, err)
 	}
 }
 

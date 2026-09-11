@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/dag"
@@ -16,7 +18,7 @@ func newCreatePlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning fu
 	t.Helper()
 	dag.NewPlanner(roster, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -115,7 +117,7 @@ func TestCreatePlanSetupRepoMismatchRejected(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -142,7 +144,7 @@ func TestCreatePlanSetupBaseRefMatchingTriggerAccepted(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -164,5 +166,65 @@ func TestCreatePlanWorkdirEscapeRejected(t *testing.T) {
 	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"assignments": assignments})
 	if err == nil || !strings.Contains(err.Error(), "workdir") {
 		t.Errorf("err = %v, want a workdir rejection", err)
+	}
+}
+
+// TestCreatePlanStampsAssignmentMetaOnGitHubTrigger: onAssignment stamps its
+// return under assignment.meta.<key> - extension-owned, never model-authored.
+func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
+	onAssignment := func(_ agent.Context, _, _ string, a dag.Assignment) (string, map[string]any) {
+		return "github", map[string]any{"base_sha": "deadbeef"}
+	}
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, onAssignment)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	assignments := []map[string]any{{"agent": "code-implementer", "task": "keep going"}}
+	if _, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"assignments": assignments}); err != nil {
+		t.Fatalf("create_plan Run: %v", err)
+	}
+
+	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	if len(rec.Assignments) != 1 {
+		t.Fatalf("assignments = %+v, want exactly 1", rec.Assignments)
+	}
+	if got := rec.Assignments[0].Meta["github"]["base_sha"]; got != "deadbeef" {
+		t.Errorf("assignment.meta.github.base_sha = %v, want %q", got, "deadbeef")
+	}
+}
+
+// TestCreatePlanMetaHookRunsRegardlessOfTrigger: onAssignment is generic
+// over whichever extension implements AssignmentMetaExtension (like
+// AssignmentFreshnessFunc, it isn't gated on a GitHub trigger) - it still
+// runs on a plain chat dispatch, keyed by whatever name the hook itself returns.
+func TestCreatePlanMetaHookRunsRegardlessOfTrigger(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	onAssignment := func(_ agent.Context, _, _ string, a dag.Assignment) (string, map[string]any) {
+		return "acme", map[string]any{"ticket": "ACME-42"}
+	}
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, onAssignment)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	assignments := []map[string]any{{"agent": "code-implementer", "task": "keep going"}}
+	if _, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"assignments": assignments}); err != nil {
+		t.Fatalf("create_plan Run: %v", err)
+	}
+
+	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	if got := rec.Assignments[0].Meta["acme"]["ticket"]; got != "ACME-42" {
+		t.Errorf("assignment.meta.acme.ticket = %v, want %q (a second, non-GitHub extension's own key)", got, "ACME-42")
 	}
 }

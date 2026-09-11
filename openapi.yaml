@@ -467,7 +467,9 @@ paths:
 
         DAG events: `dag_plan` ({"plan_id","nodes","edges","trace_id"})
         signals a quack:dag output item has been added; `node_queued`
-        ({"node_id"}), `node_start` ({"node_id","agent","trace_id"}),
+        ({"node_id"}), `node_start` ({"node_id","agent","trace_id",
+        "resumed_from"} - `resumed_from` is present only when this dispatch
+        reused an existing node id, naming the prior context it continues on),
         `node_done` ({"node_id","finished_at_ms",...metadata}),
         `node_failed` ({"node_id","error","finished_at_ms"}), `node_cancelled`
         ({"node_id","finished_at_ms"}), and

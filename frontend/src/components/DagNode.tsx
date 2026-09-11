@@ -541,6 +541,14 @@ export const DagNode = memo(function DagNode({
             <Icon name="mail" className="w-3 h-3" /> steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
           </span>
         )}
+        {state.resumedFrom && (
+          <span
+            className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
+            title={`This node picked up where it left off, on its own prior session (${state.resumedFrom})`}
+          >
+            <Icon name="history" className="w-3 h-3" /> continues
+          </span>
+        )}
         {/* The named state leads the metadata group so that below `medium`
             it wraps onto the muted second line with the model/tokens instead
             of squeezing the agent name off the first (a needs_input node

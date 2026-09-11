@@ -16,26 +16,36 @@ type listNodesArgs struct{}
 
 // nodeSummary is one entry of list_nodes' response.
 type nodeSummary struct {
-	NodeID    string   `json:"node_id"`
-	Agent     string   `json:"agent"`
-	Status    string   `json:"status"`
-	ContextID string   `json:"context_id,omitempty"`
-	LastTask  string   `json:"last_task,omitempty"`
-	Artifacts []string `json:"artifacts,omitempty"`
+	NodeID    string `json:"node_id"`
+	Agent     string `json:"agent"`
+	Status    string `json:"status"`
+	ContextID string `json:"context_id,omitempty"`
+	LastTask  string `json:"last_task,omitempty"`
+	// LastTaskID: the A2A task_id execute recorded for this node's current
+	// assignment (dag.Assignment.TaskID) - lets a caller correlate this
+	// dispatch with its A2A task without re-deriving it.
+	LastTaskID string   `json:"last_task_id,omitempty"`
+	Artifacts  []string `json:"artifacts,omitempty"`
+	// Resumable: true when naming this node_id in create_plan/edit_plan
+	// continues its own session with the new task as its next turn, instead
+	// of a "currently running"/"hasn't run yet" rejection. Reason always says why (or why not).
+	Resumable bool   `json:"resumable"`
+	Reason    string `json:"reason"`
 }
 
 // NewListNodesTool: this chat's nodes - people already hired to do an
 // agent's job, with id, agent, live status, A2A context_id, the first line
-// of their latest assignment, and the artifacts they've written.
-// nodeIsRunning is nil-safe.
+// of their latest assignment, the artifacts they've written, and whether
+// reassigning them resumes their own session. nodeIsRunning is nil-safe.
 func NewListNodesTool(c *recordstore.Client, nodeIsRunning func(nodeID string) bool) (tool.Tool, error) {
 	return functiontool.New[listNodesArgs, string](
 		functiontool.Config{
 			Name: "list_nodes",
 			Description: "List this chat's nodes: people already hired to do an agent's job, with their id, " +
-				"agent, live status, A2A context_id, the first line of their current assignment, and the " +
-				"artifacts they've written. Call before create_plan/edit_plan to reuse an existing node instead " +
-				"of hiring a new one for the same job.",
+				"agent, live status, A2A context_id, the first line and task_id of their current assignment, " +
+				"the artifacts they've written, and `resumable` (true when this node has finished a run, so " +
+				"naming its node_id in create_plan/edit_plan continues that same session with the new task). " +
+				"Call before create_plan/edit_plan to reuse an existing node instead of hiring a new one for the same job.",
 		},
 		func(ctx agent.Context, _ listNodesArgs) (string, error) {
 			summaries, err := buildNodeSummaries(ctx, c, nodeIsRunning)
@@ -60,9 +70,11 @@ func buildNodeSummaries(ctx context.Context, c *recordstore.Client, nodeIsRunnin
 		return nil, err
 	}
 	lastTask := map[string]string{}
+	lastTaskID := map[string]string{}
 	if plan, _, ok, _ := loadDagPlan(ctx, c); ok {
 		for _, a := range plan.Assignments {
 			lastTask[a.NodeID] = firstLine(a.Task)
+			lastTaskID[a.NodeID] = a.TaskID
 		}
 	}
 	out := make([]nodeSummary, 0, len(nodes))
@@ -72,9 +84,15 @@ func buildNodeSummaries(ctx context.Context, c *recordstore.Client, nodeIsRunnin
 			status = "running"
 		}
 		arts, _ := nodeArtifactIDs(ctx, c, n.NodeID)
+		resumable, reason := n.Resumable()
+		if nodeIsRunning != nil && nodeIsRunning(n.NodeID) {
+			// Live truth outranks the stored status snapshot.
+			resumable, reason = false, "currently running"
+		}
 		out = append(out, nodeSummary{
 			NodeID: n.NodeID, Agent: n.Agent, Status: status, ContextID: n.ContextID,
-			LastTask: lastTask[n.NodeID], Artifacts: arts,
+			LastTask: lastTask[n.NodeID], LastTaskID: lastTaskID[n.NodeID], Artifacts: arts,
+			Resumable: resumable, Reason: reason,
 		})
 	}
 	return out, nil

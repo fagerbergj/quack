@@ -571,6 +571,27 @@ func saveJudgeRoundRecord(ctx context.Context, cfg Config, nodeID, turnID string
 	return id, rev, nil
 }
 
+// SavePlanRejectionJudgeRound persists a plan-judge rejection as a judge_round
+// record (round 0) anchored to nodeID - the authoring lineage id (e.g.
+// "orchestrator"), since a plan rejection concerns the whole plan, not one
+// dag_node - so the artifact panel surfaces it the same way a node's own
+// judge round shows up. The tool's own error is what the model sees; this is
+// purely the durable trail. c nil (no artifact service) is a fail-open no-op.
+func SavePlanRejectionJudgeRound(ctx context.Context, c *recordstore.Client, nodeID, turnID, reason string) (id string, revision int, err error) {
+	if c == nil {
+		return "", 0, nil
+	}
+	rec := JudgeRoundRecord{Turn: turnID, Round: 0, Passed: false, Criteria: []JudgeCriterion{{Name: "plan", Score: 0, Feedback: reason}}}
+	hint := judgeRoundHint(turnID, nodeID, 0)
+	lineage := recordstore.Lineage{NodeID: nodeID, SavedAt: time.Now().UTC(), Author: "judge", TurnID: turnID}
+	id, rev, err := c.SaveStructured(ctx, kindJudgeRound, rec, hint, lineage)
+	if err != nil {
+		slog.Warn("plan rejection judge_round save failed", "component", "vetting", "node", nodeID, "err", err)
+		return "", 0, fmt.Errorf("vetting: plan rejection judge_round save: %w", err)
+	}
+	return id, rev, nil
+}
+
 // loadEpisodicRoundState seeds state from the store for a fresh invocation
 // (nil passed in) - test case 7: a second RunGatedRefine on the same chat
 // must see round 1's findings as already-known, not as new.

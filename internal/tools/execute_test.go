@@ -45,7 +45,7 @@ func seedPlanRecord(t *testing.T, rec dag.DagPlanRecord, nodes []dag.DagNodeReco
 func TestNewExecuteToolMetadata(t *testing.T) {
 	planner := dag.NewPlanner(nil, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, nil, "", nil, nil, nil, "", nil, false)
+	tl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, nil, "", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 	ex := dag.NewExecutor(nil, nil, nil, nil, nil, nil)
 	ex.SetSetup(func(context.Context, string, string, string, dag.Setup) error { return gitFatal })
 
-	tl, err := NewExecuteTool(planner, c, cache, ex.Provision, nil, "implement it", nil, nil, nil, "", nil, false)
+	tl, err := NewExecuteTool(planner, c, cache, ex.Provision, nil, "implement it", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestExecuteTool_ProvisionsSetupBeforeSelecting(t *testing.T) {
 		return nil
 	})
 
-	tl, err := NewExecuteTool(planner, c, cache, ex.Provision, nil, "implement it", nil, nil, nil, "", nil, false)
+	tl, err := NewExecuteTool(planner, c, cache, ex.Provision, nil, "implement it", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}

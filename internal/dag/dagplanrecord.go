@@ -32,15 +32,16 @@ type Assignment struct {
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
 	Rubric    string   `json:"rubric,omitempty"`
-	// TaskID, Result, Meta, ForkOf: reserved for a later slice (the A2A
-	// task_id this assignment dispatches as and its result; per-extension
-	// namespaced context, e.g. meta["github"] = {repo,base_sha,workdir};
-	// cross-turn node reuse) - accepted and persisted, not yet written or
-	// interpreted by anything.
-	TaskID string                    `json:"task_id,omitempty"`
-	Result string                    `json:"result,omitempty"`
-	Meta   map[string]map[string]any `json:"meta,omitempty"`
-	ForkOf string                    `json:"fork_of,omitempty"`
+	// TaskID: the A2A task_id this assignment dispatched as, recorded once execute runs it.
+	TaskID string `json:"task_id,omitempty"`
+	Result string `json:"result,omitempty"`
+	// Meta: per-extension namespaced context (meta["github"] = {base_sha,
+	// ...}) written only by an extension's SDK hook at plan creation, never
+	// by the model - the freshness check at execute reads it back.
+	Meta map[string]map[string]any `json:"meta,omitempty"`
+	// ForkOf: reserved for a later slice (dynamic DAGs/session forking) -
+	// accepted and persisted, not yet written or interpreted by anything.
+	ForkOf string `json:"fork_of,omitempty"`
 }
 
 // DagPlanRecord is the "dag_plan" kind's structured body. Assignment.NodeID
@@ -139,7 +140,7 @@ func validateDagPlanRecord(raw json.RawMessage) error {
 		return fmt.Errorf("assignments: %w", err)
 	}
 	if err := validateDelivery(rec.Delivery); err != nil {
-		return fmt.Errorf("delivery.kind: %w", err)
+		return err // already prefixed "delivery.kind: " - wrapping again would double it
 	}
 	return nil
 }

@@ -261,6 +261,59 @@ func findDeliverer(exts []builtSDKExtension) (extsdk.Deliverer, string) {
 	return found, foundName
 }
 
+// toSDKAssignment converts quack's own dag.Assignment into the sdk's wire
+// shape for the two node-reuse hooks below - the one place that crosses the
+// SDK boundary, so an extension never sees quack's internal type. planID,
+// agentName and contextID aren't on dag.Assignment itself (agent/context
+// are dag_node facts, plan id is a dag_plan fact - dag.Assignment carries
+// none of the three), so every caller threads them through from whichever
+// record it already read them off.
+func toSDKAssignment(planID, agentName, contextID string, a dag.Assignment) extsdk.Assignment {
+	return extsdk.Assignment{
+		PlanID: planID, NodeID: a.NodeID, Agent: agentName, Task: a.Task,
+		DependsOn: a.DependsOn, ContextID: contextID, TaskID: a.TaskID, Meta: a.Meta,
+	}
+}
+
+// findAssignmentFreshnessChecker: same detection/ambiguity rule as
+// findGitCredentialSource.
+func findAssignmentFreshnessChecker(exts []builtSDKExtension) (extsdk.AssignmentFreshnessChecker, string) {
+	var found extsdk.AssignmentFreshnessChecker
+	var foundName string
+	for _, e := range exts {
+		c, ok := e.ext.(extsdk.AssignmentFreshnessChecker)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement AssignmentFreshnessChecker; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", e.name)
+			continue
+		}
+		found, foundName = c, e.name
+	}
+	return found, foundName
+}
+
+// findAssignmentMetaExtension: same detection/ambiguity rule as findGitCredentialSource.
+func findAssignmentMetaExtension(exts []builtSDKExtension) (extsdk.AssignmentMetaExtension, string) {
+	var found extsdk.AssignmentMetaExtension
+	var foundName string
+	for _, e := range exts {
+		m, ok := e.ext.(extsdk.AssignmentMetaExtension)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement AssignmentMetaExtension; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", e.name)
+			continue
+		}
+		found, foundName = m, e.name
+	}
+	return found, foundName
+}
+
 // findRecoverer mirrors findDeliverer for sdk.DeliveryRecoverer.
 func findRecoverer(exts []builtSDKExtension) (extsdk.DeliveryRecoverer, string) {
 	var found extsdk.DeliveryRecoverer

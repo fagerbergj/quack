@@ -20,13 +20,12 @@ func (stubLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Se
 	return func(func(*model.LLMResponse, error) bool) {}
 }
 
-// TestPerNodeServersTrackReapsWorkerSession is a regression test for the ADK
-// audit's A2 finding: a node's A2A worker session (internal/agent.
-// WorkerSessionID) used to be created and never deleted, leaking a Postgres
-// sessions/events row for every DAG node execution ever run. track()'s
-// release must now delete that exact (app, user, id) triple alongside
-// closing the A2A server.
-func TestPerNodeServersTrackReapsWorkerSession(t *testing.T) {
+// TestPerNodeServersTrackNeverReapsWorkerSession: node reuse needs a node's
+// A2A worker session (internal/agent.WorkerSessionID) to survive past a
+// single dispatch, paused or not - only chat archive/delete
+// (store.ReapNodeSessions) reaps it now. release must still close the A2A
+// server, and stay idempotent, without touching the session at all.
+func TestPerNodeServersTrackNeverReapsWorkerSession(t *testing.T) {
 	ctx := context.Background()
 	sessions := session.InMemoryService()
 	const appName, userID, sessID = "worker-bundle", "A2A_USER_chat-1:n1", "chat-1:n1"
@@ -38,49 +37,21 @@ func TestPerNodeServersTrackReapsWorkerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := agent.Serve(worker, session.InMemoryService(), nil, nil, agent.Compaction{}, "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	p := newPerNodeServers()
-	release := p.track(srv, sessions, appName, userID, sessID)
-	release(false)
+	for _, paused := range []bool{false, true} {
+		srv, err := agent.Serve(worker, session.InMemoryService(), nil, nil, agent.Compaction{}, "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := newPerNodeServers()
+		release := p.track(srv)
+		release(paused)
 
-	if _, err := sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: sessID}); err == nil {
-		t.Fatal("worker session still present after release(false)")
-	}
-
-	// Idempotent: a second release() (e.g. shutdown's closeAll racing a
-	// node's own release) must not panic or error on the already-deleted row.
-	release(false)
-}
-
-// TestPerNodeServersTrackKeepsSessionOnPause is the HITL-park regression: release(true)
-// closes the A2A server (a resume gets a fresh one) but leaves the deterministic worker
-// session alone, so a resumed dispatch to the SAME session id finds its prior history.
-func TestPerNodeServersTrackKeepsSessionOnPause(t *testing.T) {
-	ctx := context.Background()
-	sessions := session.InMemoryService()
-	const appName, userID, sessID = "worker-bundle", "A2A_USER_chat-1:n1", "chat-1:n1"
-	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: appName, UserID: userID, SessionID: sessID}); err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-
-	worker, err := llmagent.New(llmagent.Config{Name: "w", Description: "w", Model: stubLLM{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err := agent.Serve(worker, session.InMemoryService(), nil, nil, agent.Compaction{}, "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	p := newPerNodeServers()
-	release := p.track(srv, sessions, appName, userID, sessID)
-	release(true)
-
-	if _, err := sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: sessID}); err != nil {
-		t.Fatalf("worker session reaped despite release(true): %v", err)
+		if _, err := sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: sessID}); err != nil {
+			t.Fatalf("release(%v) reaped the worker session: %v", paused, err)
+		}
+		// Idempotent: a second release() (e.g. shutdown's closeAll racing a
+		// node's own release) must not panic.
+		release(paused)
 	}
 }

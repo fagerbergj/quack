@@ -251,6 +251,10 @@ type NodeStartData struct {
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 	// TraceID cross-references the OTel trace for this node; "" when otel is disabled.
 	TraceID string `json:"trace_id,omitempty"`
+	// ResumedFrom: non-empty when this dispatch reused an existing node id -
+	// the prior context/session it continues on. Drives the node card's
+	// "continues" line; "" for a freshly minted node.
+	ResumedFrom string `json:"resumed_from,omitempty"`
 }
 
 // `node_done` event payload. Completion stats are summed across all runs; omitted when zero.
@@ -274,6 +278,10 @@ type NodeDoneData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node finished - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
+	// ContextID: this node's resumable transport context/session id at
+	// completion - "" for a native node (see dag_node's own ContextID
+	// instead) or an ACP node that never established one.
+	ContextID string `json:"context_id,omitempty"`
 }
 
 // `node_failed` event payload.
@@ -283,6 +291,9 @@ type NodeFailedData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node failed - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
+	// ContextID: see NodeDoneData.ContextID - a failed node can still have
+	// established a real transport session before failing.
+	ContextID string `json:"context_id,omitempty"`
 }
 
 // `node_cancelled` event payload: node stopped by the user, rendered neutrally (not as red failure).
@@ -291,6 +302,8 @@ type NodeCancelledData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node was cancelled - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
+	// ContextID: see NodeDoneData.ContextID.
+	ContextID string `json:"context_id,omitempty"`
 }
 
 // NodeCancelled builds a node_cancelled event, stamping FinishedAtMs now (see NodeDone).
@@ -448,6 +461,40 @@ func WithTrace(ev SSEEvent, traceID string) SSEEvent {
 		ev.Data = d
 	case DagPlanData:
 		d.TraceID = traceID
+		ev.Data = d
+	}
+	return ev
+}
+
+// WithResumedFrom stamps a node_start event's ResumedFrom post-construction,
+// same pattern as WithTrace - keeps NodeStart's existing two-arg call sites
+// (tests included) unchanged for the common fresh-node case.
+func WithResumedFrom(ev SSEEvent, resumedFrom string) SSEEvent {
+	if resumedFrom == "" {
+		return ev
+	}
+	if d, ok := ev.Data.(NodeStartData); ok {
+		d.ResumedFrom = resumedFrom
+		ev.Data = d
+	}
+	return ev
+}
+
+// WithContextID stamps a node_failed/node_cancelled event's ContextID
+// post-construction, same pattern as WithResumedFrom/WithTrace - a node can
+// establish a real transport session before it ultimately fails or is
+// cancelled, and that id must reach the dag_node record the same way
+// NodeDoneData's already does (see runlog.PersistNodeEvent).
+func WithContextID(ev SSEEvent, contextID string) SSEEvent {
+	if contextID == "" {
+		return ev
+	}
+	switch d := ev.Data.(type) {
+	case NodeFailedData:
+		d.ContextID = contextID
+		ev.Data = d
+	case NodeCancelledData:
+		d.ContextID = contextID
 		ev.Data = d
 	}
 	return ev

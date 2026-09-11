@@ -838,7 +838,8 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 }
 
 // ReapNodeSessions deletes every per-DAG-node ADK session this chat owns: each node's A2A worker session (internal/agent.WorkerSessionID, "<chatID>:<nodeID>") and its in-node retry session ("<chatID>::retry"), across whichever agent bundle's AppName ran that node - the ADK schema's session PK is (app_name, user_id, id) with events cascading on delete (google.golang.org/adk/v2/session/database), so one raw sweep on id reaps both tables without knowing which bundle a node used.
-// This is the backstop for a node whose own release() never ran (crash, abandoned dynamic node) - the normal path deletes its session immediately (internal/serve/nativeagent.go perNodeServers.track).
+// A node's own worker session now lives until this runs (chat archive/delete) - node reuse needs it to survive
+// past a single dispatch, so internal/serve/nativeagent.go's perNodeServers.track no longer reaps it at completion.
 // It does not reach ask_advisor consult sessions (internal/vetting AdvisorSessionID keys those "<planID>/<nodeID>:advisor" - not chatID prefixed); those are reaped at node-done by internal/dag.newGatedNode.
 func (s *Store) ReapNodeSessions(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Exec("DELETE FROM sessions WHERE id = ? OR id LIKE ? ESCAPE '\\'",
@@ -1022,8 +1023,22 @@ func truncateTitle(title string, maxLen int) string {
 // ArchiveChat toggles the archived flag on a chat.
 // Archiving never touches UpdatedAt so that archive/unarchive doesn't reorder
 // the recency-sorted chat list - UpdateColumn (not Update) is required for that: GORM auto-stamps UpdatedAt on any plain Update/Updates call by field-name convention, and only UpdateColumn/UpdateColumns skip that.
+// Archiving (not unarchiving) also reaps every per-node worker session this
+// chat's nodes hold open - the same best-effort ReapNodeSessions DeleteChat
+// runs, since node reuse now keeps those sessions alive past a single node's
+// completion; archive is the first point in a chat's life where they're safe
+// to let go (unarchiving to keep working starts those nodes fresh, same as if they'd never run).
 func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error {
-	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).UpdateColumn("archived", archived).Error
+	if err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).UpdateColumn("archived", archived).Error; err != nil {
+		return err
+	}
+	if archived {
+		if err := s.ReapNodeSessions(ctx, id); err != nil {
+			slog.Warn("chat archived but its per-node worker sessions could not be reaped",
+				"component", "store", "chat", id, "err", err)
+		}
+	}
+	return nil
 }
 
 // SaveTurn persists a new turn at the next available sequence position.

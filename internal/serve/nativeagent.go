@@ -1,13 +1,11 @@
 package serve
 
 import (
-	"context"
 	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 
 	"github.com/fagerbergj/quack/internal/agent"
@@ -54,14 +52,13 @@ func newPerNodeServers() *perNodeServers {
 // call more than once; only the first call's argument and effects apply),
 // untracks before closing so a concurrent closeAll sweep can never double-close.
 //
-// release(paused) also deletes the deterministic worker session (sessAppName,
-// sessUserID, sessID) this node's A2A server created (agent.scopeMessage) -
-// otherwise every node execution leaks a Postgres sessions/events row that
-// nothing else ever reaps (#A2). paused=true (a HITL park) skips the delete:
-// a resumed dispatch is a brand new ForNode call to this SAME session id,
-// and must still find its prior history. sessions nil (no persistent store,
-// e.g. tests) also skips it.
-func (p *perNodeServers) track(srv *agent.A2AServer, sessions session.Service, sessAppName, sessUserID, sessID string) func(paused bool) {
+// release only closes this dispatch's own per-node A2A server. The
+// deterministic worker session (agent.scopeMessage) it served now outlives
+// every dispatch, paused or not - a node's later reuse (a brand new ForNode
+// call to the SAME session id) must always find its prior history, so the
+// only place that session gets reaped is chat archive/delete
+// (store.Store.ReapNodeSessions), not a single node's completion.
+func (p *perNodeServers) track(srv *agent.A2AServer) func(paused bool) {
 	p.mu.Lock()
 	p.open[srv] = struct{}{}
 	p.mu.Unlock()
@@ -72,11 +69,6 @@ func (p *perNodeServers) track(srv *agent.A2AServer, sessions session.Service, s
 			delete(p.open, srv)
 			p.mu.Unlock()
 			_ = srv.Close()
-			if sessions != nil && !paused {
-				_ = sessions.Delete(context.Background(), &session.DeleteRequest{
-					AppName: sessAppName, UserID: sessUserID, SessionID: sessID,
-				})
-			}
 		})
 	}
 }

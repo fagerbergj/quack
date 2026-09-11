@@ -261,6 +261,32 @@ func (j *Jail) RemoveChatScope(userID, chatID string) error {
 	return nil
 }
 
+// RemoveACPState deletes every ACP state dir this chat's nodes ever created
+// (ACPStateDir globs by chatID+nodeID; the nodeID varies per node, so this
+// wildcards it). Lives under HomeDir, not the chat's own scope root - a
+// node's session must survive a mid-chat clone re-provision - so it needs
+// its own removal call at chat archive/delete rather than riding
+// RemoveChatScope. Empty chatID rejected, same reason as RemoveChatScope.
+func (j *Jail) RemoveACPState(userID, chatID string) error {
+	if strings.TrimSpace(chatID) == "" {
+		return ErrInvalidChatID
+	}
+	home, err := j.HomeDir(userID)
+	if err != nil {
+		return err
+	}
+	matches, err := filepath.Glob(filepath.Join(home, "acp-state", ChatDirName(chatID)+"__*"))
+	if err != nil {
+		return fmt.Errorf("workspace: glob acp state for chat %q: %w", chatID, err)
+	}
+	for _, dir := range matches {
+		if err := RemoveAllForce(dir); err != nil {
+			return fmt.Errorf("workspace: remove acp state %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
 // Reports whether path is root or a descendant. Both must be Clean'd absolute paths.
 func withinRoot(root, path string) bool {
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))

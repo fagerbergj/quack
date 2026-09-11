@@ -507,6 +507,15 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		if *body.Archived && h.orch.Queued(chatID) && c.ActiveTurnID != "" {
 			h.hub.CancelResponse(chatID, c.ActiveTurnID)
 		}
+		// Best-effort: reap any ACP node's on-disk session now that ArchiveChat
+		// (store) has already reaped their ADK worker sessions - the pair node
+		// reuse defers from node-completion to here.
+		if *body.Archived && h.jail != nil {
+			if err := h.jail.RemoveACPState(userID, chatID); err != nil {
+				slog.Warn("acp state cleanup failed; chat archived anyway",
+					"component", "rest", "chat", chatID, "err", err)
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, h.toSummary(*c, h.chatTotalTokens(r.Context(), chatID)))
@@ -523,6 +532,10 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 	if h.jail != nil {
 		if err := h.jail.RemoveChatScope(userID, chatID); err != nil {
 			slog.Warn("per-chat workspace cleanup failed; chat deleted anyway",
+				"component", "rest", "chat", chatID, "err", err)
+		}
+		if err := h.jail.RemoveACPState(userID, chatID); err != nil {
+			slog.Warn("acp state cleanup failed; chat deleted anyway",
 				"component", "rest", "chat", chatID, "err", err)
 		}
 	}

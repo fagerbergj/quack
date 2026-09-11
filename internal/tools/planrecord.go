@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/adk/v2/agent"
+
 	quackagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -40,8 +42,14 @@ func listDagNodeRecords(ctx context.Context, c *recordstore.Client) ([]dag.DagNo
 	}
 	out := make([]dag.DagNodeRecord, 0, len(summaries))
 	for _, s := range summaries {
+		// Fail closed on a real read error, unlike !ok (genuinely no record) -
+		// silently dropping a live node here strands a later reference to it
+		// behind an unrelated "unknown node id" error.
 		raw, _, ok, err := c.Latest(ctx, s.ID)
-		if err != nil || !ok {
+		if err != nil {
+			return nil, fmt.Errorf("list dag_node records: read %s: %w", s.ID, err)
+		}
+		if !ok {
 			continue
 		}
 		var rec dag.DagNodeRecord
@@ -79,6 +87,36 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	return strings.TrimSpace(s)
+}
+
+// AssignmentMetaFunc optionally stamps assignment.meta.<extension> at plan
+// creation/edit - never model-authored. Called once per upserted assignment
+// regardless of trigger; key is the supplying extension's own name (empty
+// key or empty meta is a no-op for that assignment) - the hook itself
+// decides whether it has anything to contribute this dispatch, the same way
+// AssignmentFreshnessFunc isn't gated on a trigger either. planID/agentName
+// aren't on dag.Assignment itself - passed through so the sdk.Assignment
+// conversion at the wiring site (internal/serve) can populate the sdk
+// struct fully.
+type AssignmentMetaFunc func(ctx agent.Context, planID, agentName string, a dag.Assignment) (key string, meta map[string]any)
+
+// stampAssignmentMeta runs onAssignment over assignments in place - a nil
+// hook is a no-op. nodeAgent resolves each assignment's node id to its
+// hired agent name (already built by the caller for the response echo).
+func stampAssignmentMeta(tc agent.Context, planID string, nodeAgent map[string]string, assignments []dag.Assignment, onAssignment AssignmentMetaFunc) {
+	if onAssignment == nil {
+		return
+	}
+	for i := range assignments {
+		key, m := onAssignment(tc, planID, nodeAgent[assignments[i].NodeID], assignments[i])
+		if key == "" || len(m) == 0 {
+			continue
+		}
+		if assignments[i].Meta == nil {
+			assignments[i].Meta = map[string]map[string]any{}
+		}
+		assignments[i].Meta[key] = m
+	}
 }
 
 // assignmentInput is one entry of create_plan/edit_plan's `assignments`

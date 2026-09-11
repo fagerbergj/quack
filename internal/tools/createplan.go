@@ -25,8 +25,12 @@ type createPlanArgs struct {
 // per assignment. githubSetup, when non-nil, always overrides Setup: the
 // GitHub extension already knows the real repo/branch/PR, so the model's
 // guess never wins. Saves the same dag_plan/dag_node records edit_plan and
-// the artifact panel read.
-func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string) (tool.Tool, error) {
+// the artifact panel read. nodeID is the AUTHORING lineage id stamped on
+// those records (e.g. "orchestrator") - unrelated to a dag_node's own
+// node_id, which upsertNodes mints separately. onAssignment, when non-nil,
+// stamps assignment.meta.<extension> - whichever active extension supplies
+// it, keyed by its own name (e.g. "github").
+func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
 	artifactDesc := "`assignments[].checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its " +
 		"commands: the trust gate derives a code node's checks from the repo itself after the node clones it."
 	return functiontool.New[createPlanArgs, planUpsertResult](
@@ -65,13 +69,6 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			if err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
-			setup := a.Setup
-			if githubSetup != nil {
-				s := *githubSetup
-				setup = &s
-			}
-			rec := dag.DagPlanRecord{PlanID: uuid.NewString(), Assignments: assignments, Setup: setup, Delivery: a.Delivery, Status: "planned"}
-
 			nodeAgent := map[string]string{}
 			for _, n := range existing {
 				nodeAgent[n.NodeID] = n.Agent
@@ -79,6 +76,15 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			for _, n := range minted {
 				nodeAgent[n.NodeID] = n.Agent
 			}
+
+			planID := uuid.NewString()
+			stampAssignmentMeta(tc, planID, nodeAgent, assignments, onAssignment)
+			setup := a.Setup
+			if githubSetup != nil {
+				s := *githubSetup
+				setup = &s
+			}
+			rec := dag.DagPlanRecord{PlanID: planID, Assignments: assignments, Setup: setup, Delivery: a.Delivery, Status: "planned"}
 
 			// dag_plan (which validates) saves before any minted dag_node, so a
 			// rejected call leaves no orphan "hired" node behind for list_nodes.
@@ -90,7 +96,10 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			for _, n := range minted {
 				nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
 				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
-					return planUpsertResult{}, fmt.Errorf("create_plan: save dag_node %s: %w", n.NodeID, err)
+					// The dag_plan revision above already saved - a bare error here
+					// leaves a live plan referencing a node list_nodes won't show yet.
+					return planUpsertResult{}, fmt.Errorf("create_plan: save dag_node %s: %w; "+
+						"the plan was already saved - call create_plan again to replace it", n.NodeID, err)
 				}
 			}
 

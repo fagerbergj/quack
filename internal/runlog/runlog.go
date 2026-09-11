@@ -294,10 +294,14 @@ func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res 
 // PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal transitions
 // are logged, write proceeds. Synchronous on purpose: one goroutine per event gave
 // no ordering, so a node_done write could be overwritten by an earlier event's later-scheduled goroutine, leaving a finished node stuck at running. Lifecycle events are a handful per node.
+// The store row (UpsertDagNode) and the dag_node record (UpdateDagNodeStatus/Context) below
+// are two independent, non-transactional writes - a failure between them leaves the two
+// transiently out of sync until this node's next lifecycle event.
 func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
 	var nodeID string
 	var to dag.NodeStatus
+	var contextID string // ACP transport session id learned this round, "" for a native node
 	n := store.DagNode{PlanID: planID}
 	switch d := ev.Data.(type) {
 	case stream.NodeQueuedData:
@@ -316,9 +320,11 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 		n.CachedTokens = d.CachedTokens
 		n.DurationMs, n.JudgeRounds = d.DurationMs, d.JudgeRounds
 		n.JudgeFinalScore, n.JudgePassed = d.JudgeFinalScore, d.JudgePassed
+		contextID = d.ContextID
 	case stream.NodeFailedData:
 		nodeID, to = d.NodeID, dag.StatusFailed
 		n.NodeID, n.Status, n.Error, n.FinishedAt = d.NodeID, string(to), d.Error, &t
+		contextID = d.ContextID
 	case stream.NodeNeedsInputData:
 		nodeID, to = d.NodeID, dag.StatusNeedsInput
 		n.NodeID, n.Status = d.NodeID, string(to)
@@ -330,6 +336,7 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 	case stream.NodeCancelledData:
 		nodeID, to = d.NodeID, dag.StatusCancelled
 		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
+		contextID = d.ContextID
 	default:
 		return
 	}
@@ -351,6 +358,13 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 	userID := st.SessionUserForChat(ctx, chatID)
 	if err := dag.UpdateDagNodeStatus(ctx, st.Artifacts(), artifactref.AppName, userID, chatID, nodeID, to); err != nil {
 		slog.Warn("persistNodeEvent: dag_node status update failed", "component", "dag",
+			"chat", chatID, "node_id", nodeID, "err", err)
+	}
+	// An ACP node's real transport session id, once learned, replaces the
+	// record's ContextID so a later reuse's session/load has something real
+	// to resume - a no-op for a native node (contextID stays "").
+	if err := dag.UpdateDagNodeContext(ctx, st.Artifacts(), artifactref.AppName, userID, chatID, nodeID, contextID); err != nil {
+		slog.Warn("persistNodeEvent: dag_node context update failed", "component", "dag",
 			"chat", chatID, "node_id", nodeID, "err", err)
 	}
 }

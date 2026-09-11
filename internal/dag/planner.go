@@ -120,6 +120,8 @@ type RawNode struct {
 	// assemble validates it, or falls back to the assigned agent's own
 	// bundle-declared default when unset.
 	Artifact string `json:"artifact,omitempty"`
+	// ResumedFrom: see Node.ResumedFrom - carried through unchanged by assemble.
+	ResumedFrom string `json:"resumed_from,omitempty"`
 }
 
 // ValidateArtifactKind rejects an artifact selector outside the registered
@@ -132,8 +134,12 @@ func ValidateArtifactKind(kind string) error { return recordstore.ValidateArtifa
 // RawNode input, resolving each assignment's agent from nodeAgent (the join
 // a dag_plan record can't make on its own - it only ever stores node ids;
 // execute resolves this from the matching dag_node records before calling
-// Build). Errors when an assignment references a node id with no such entry.
-func AssignmentsToRawNodes(assignments []Assignment, nodeAgent map[string]string) ([]RawNode, error) {
+// Build). resumedFrom, keyed by node id, carries each reused node's prior
+// dag_node ContextID (execute only populates an entry for a node whose
+// record is already terminal - see tools.buildResumedFrom); nil or a
+// missing entry both mean "fresh node". Errors when an assignment
+// references a node id with no such entry.
+func AssignmentsToRawNodes(assignments []Assignment, nodeAgent, resumedFrom map[string]string) ([]RawNode, error) {
 	out := make([]RawNode, 0, len(assignments))
 	for _, a := range assignments {
 		agent, ok := nodeAgent[a.NodeID]
@@ -143,6 +149,7 @@ func AssignmentsToRawNodes(assignments []Assignment, nodeAgent map[string]string
 		out = append(out, RawNode{
 			ID: a.NodeID, Agent: agent, Task: a.Task, Rubric: a.Rubric,
 			DependsOn: a.DependsOn, Checks: a.Checks, Workdir: a.Workdir,
+			ResumedFrom: resumedFrom[a.NodeID],
 		})
 	}
 	return out, nil
@@ -406,6 +413,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			Workdir:       n.Workdir,
 			ContextWindow: agentInfo.ContextWindow,
 			Artifact:      artifactKind,
+			ResumedFrom:   n.ResumedFrom,
 		})
 	}
 

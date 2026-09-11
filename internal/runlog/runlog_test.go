@@ -2,12 +2,18 @@ package runlog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/adk/v2/artifact"
+
+	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -129,6 +135,66 @@ func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 	if n.PromptTokens != 100 || n.CompletionTokens != 40 || n.ReasoningTokens != 8 ||
 		n.TotalTokens != 148 || n.CachedTokens != 60 || n.Model != "m" {
 		t.Errorf("persisted node = %+v, want all token fields copied (cached=60)", n)
+	}
+}
+
+// TestPersistNodeEvent_FailedAndCancelledCarryContextID is the blocking-
+// review regression: a node that ends failed or cancelled - not just done -
+// must still get its real transport context id (established before it
+// failed) written onto the dag_node record, or a later reuse threads the
+// stale mint-time placeholder into session/load instead.
+func TestPersistNodeEvent_FailedAndCancelledCarryContextID(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ev   stream.SSEEvent
+	}{
+		{"failed", stream.SSEEvent{Name: stream.EventNodeFailed, Data: stream.NodeFailedData{NodeID: "n1", Error: "boom", ContextID: "real-session-failed"}}},
+		{"cancelled", stream.SSEEvent{Name: stream.EventNodeCancelled, Data: stream.NodeCancelledData{NodeID: "n1", ContextID: "real-session-cancelled"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dag.SetAgentRoster([]dag.AgentInfo{{Name: "code-implementer"}})
+			st := newTestStore(t)
+			svc := artifact.InMemoryService()
+			st.SetArtifactService(svc)
+			ctx := context.Background()
+			c, err := st.CreateChat(ctx, "")
+			if err != nil {
+				t.Fatalf("CreateChat: %v", err)
+			}
+			if err := st.SaveDagPlan(ctx, c.ID, "p1", "turn-1", `{"plan_id":"p1"}`); err != nil {
+				t.Fatalf("SaveDagPlan: %v", err)
+			}
+			userID := st.SessionUserForChat(ctx, c.ID)
+			rc := recordstore.New(svc, artifactref.AppName, userID, c.ID)
+			seed := dag.DagNodeRecord{NodeID: "n1", Agent: "code-implementer", Status: dag.StatusRunning, ContextID: "placeholder", Started: true}
+			if _, _, err := rc.SaveStructured(ctx, "dag_node", seed, "n1", recordstore.Lineage{}); err != nil {
+				t.Fatalf("seed dag_node: %v", err)
+			}
+
+			PersistNodeEvent(st, c.ID, "p1", tc.ev)
+
+			var got dag.DagNodeRecord
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				raw, _, ok, err := rc.Latest(ctx, "dag_node:n1")
+				if err == nil && ok {
+					if uerr := json.Unmarshal(raw, &got); uerr != nil {
+						t.Fatalf("unmarshal dag_node: %v", uerr)
+					}
+					if got.ContextID != "placeholder" {
+						break
+					}
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("dag_node ContextID never updated off the placeholder (got %+v)", got)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			wantID := "real-session-" + tc.name
+			if got.ContextID != wantID {
+				t.Errorf("dag_node.ContextID = %q, want %q", got.ContextID, wantID)
+			}
+		})
 	}
 }
 
