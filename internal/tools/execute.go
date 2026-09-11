@@ -253,7 +253,6 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			}
 
 			results := make([]assignmentResult, 0, len(run))
-			now := time.Now().UTC()
 			var stepFailed bool
 			for i := range rec.Assignments {
 				nid := rec.Assignments[i].NodeID
@@ -261,20 +260,8 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 					continue
 				}
 				out := outputs[nid]
-				status := "done"
-				switch {
-				case strings.TrimSpace(out) != "":
-					rec.Assignments[i].TaskID = uuid.NewString()
-					rec.Assignments[i].Result = out
-				case stepPaused:
-					// Parked on a HITL question, not failed: leave task_id
-					// unset so this assignment is still "to run" next step -
-					// see planstep.go's ponytail note on why it can't resume
-					// in place yet.
-					status = "paused"
-				default:
-					rec.Assignments[i].TaskID = uuid.NewString()
-					status = "failed"
+				status := ApplyAssignmentOutcome(&rec.Assignments[i], out, stepPaused)
+				if status == "failed" {
 					stepFailed = true
 				}
 				arts, _ := nodeArtifactIDs(tc, c, nid)
@@ -293,7 +280,7 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			if delivering {
 				rec.Status = "done"
 			}
-			runLineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: now}
+			runLineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
 			_, step, serr := c.SaveStructured(tc, "dag_plan", rec, "", runLineage)
 			if serr != nil {
 				slog.Warn("execute: dag_plan step update failed", "component", "execute", "err", serr)
@@ -345,6 +332,31 @@ func partitionAssignments(assignments []dag.Assignment) (run map[string]bool, se
 		}
 	}
 	return run, seeded
+}
+
+// ApplyAssignmentOutcome updates a's TaskID/Result from one attempt's output
+// - a fresh step's dispatch (execute.go) or a mid-step HITL resume
+// (orchestrator.startIncrementalNodeRun) - and returns its status
+// ("done"/"failed"/"paused"). The single place either path decides whether
+// an assignment succeeded, so the two can never drift apart on what counts
+// as a failure (#slice3 review). paused=false always reports "done" or
+// "failed", never "paused" - a resume calls this only after confirming the
+// step itself finished (dag.Executor's own paused flag already false).
+func ApplyAssignmentOutcome(a *dag.Assignment, output string, paused bool) (status string) {
+	switch {
+	case strings.TrimSpace(output) != "":
+		a.TaskID = uuid.NewString()
+		a.Result = output
+		return "done"
+	case paused:
+		// Parked on a HITL question, not failed: leave task_id unset so
+		// this assignment is still "to run" - see dag.PlanStepSessionID's
+		// doc for how a later answer resumes it in place.
+		return "paused"
+	default:
+		a.TaskID = uuid.NewString()
+		return "failed"
+	}
 }
 
 // runningStatus maps a dag_plan record's own status to executeResult's

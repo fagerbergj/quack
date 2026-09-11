@@ -40,8 +40,8 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				"trigger), a `setup.repo`/`setup.base_ref` override must match it exactly - omit them to keep the " +
 				"trigger's own values. Errors name the field and the fix: unknown agent, unknown depends_on id, a " +
 				"dependency cycle, an empty task, a node currently running, the same node_id twice in one call, a " +
-				"`remove` id not in the current plan, a setup override that disagrees with the trigger, or hiring " +
-				"an agent whose only deliverable this dispatch does not allow. Call " +
+				"`remove` id not in the current plan, a setup override that disagrees with the trigger, hiring " +
+				"an agent whose only deliverable this dispatch does not allow, or a plan that already delivered. Call " +
 				"after create_plan to correct or extend a plan before execute; call list_nodes first to reuse a " +
 				"node instead of hiring a new one.",
 		},
@@ -55,6 +55,9 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			}
 			if a.PlanID != "" && a.PlanID != current.PlanID {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: plan_id %q is stale - the current plan is %q", a.PlanID, current.PlanID)
+			}
+			if current.Status == "done" {
+				return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - it's finished, not editable; start a new plan for further work", current.PlanID)
 			}
 			if err := dag.ValidateSetupOverride(a.Setup, githubSetup); err != nil {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)

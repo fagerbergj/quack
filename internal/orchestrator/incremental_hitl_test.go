@@ -165,3 +165,68 @@ func TestOrchestrator_NodePausedMidStep_StartNodeResumesAndFinishes(t *testing.T
 		t.Errorf("answer = %q, want the asker's post-resume output - delivery must have finalized", answer)
 	}
 }
+
+// failingHITLOrchStub is hitlOrchStub except every worker round after the
+// initial question comes back empty - the gate's own continuation loop and
+// writer-recovery fallback (internal/vetting/node.go) both run out on empty
+// text too, so the node ends in ErrNodeEmpty, same as any other failed node.
+// Keyed on "asked" rather than prompt content: the continuation and
+// writer-recovery prompts don't carry the same "they answered" marker the
+// post-resume prompt does, so a content match only reproduces a second
+// pause, not the failure this test needs.
+type failingHITLOrchStub struct {
+	orchStub
+	asked bool
+}
+
+func (s *failingHITLOrchStub) GenerateContent(ctx context.Context, req *model.LLMRequest, isStream bool) iter.Seq2[*model.LLMResponse, error] {
+	if stubHasTool(req, "submit_verdict") || stubHasTool(req, "create_plan") {
+		return s.orchStub.GenerateContent(ctx, req, isStream)
+	}
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if !s.asked {
+			s.asked = true
+			yield(stubCall(vetting.AskToolName, map[string]any{"question": "which direction?"}), nil)
+			return
+		}
+		yield(stubText(""), nil) // every round from here on: the worker produces nothing
+	}
+}
+
+// TestOrchestrator_ResumedNodeFails_ReportsFailedAndDoesNotFinalize pins the
+// shared-guard fix (#slice3 review): a resumed node that finishes with empty
+// output is exactly as failed as a freshly-run one - it must not be
+// silently marked done, and a plan whose delivery depended on it must not
+// finalize on the failure.
+func TestOrchestrator_ResumedNodeFails_ReportsFailedAndDoesNotFinalize(t *testing.T) {
+	stub := &failingHITLOrchStub{orchStub: orchStub{replies: []*model.LLMResponse{askerPlanCall()}}}
+	o := newHITLTestOrch(t, stub, newHITLAskTool(t))
+
+	evs := runTurn(t, o, "ask the direction")
+	if hasEvent(evs, stream.EventError) {
+		t.Fatalf("turn 1 surfaced an error; events=%v", evs)
+	}
+	pend, ok := o.pendingStepInterrupt(context.Background(), "u", "chat")
+	if !ok || pend.nodeID != "asker-1" {
+		t.Fatalf("pendingStepInterrupt = (%+v, %v), want asker-1's paused question", pend, ok)
+	}
+
+	var resumeEvs []stream.SSEEvent
+	collect := func(ev stream.SSEEvent, err error) bool {
+		if err == nil {
+			resumeEvs = append(resumeEvs, ev)
+		}
+		return true
+	}
+	o.StartNode(context.Background(), "u", "chat", "asker-1", "north", collect)
+
+	if hasEvent(resumeEvs, stream.EventError) {
+		t.Fatalf("StartNode resume surfaced an error; events=%v", resumeEvs)
+	}
+	if got := countEvent(resumeEvs, stream.EventNodeFailed); got != 1 {
+		t.Errorf("resume: node_failed events = %d, want 1; events=%v", got, resumeEvs)
+	}
+	if answer := o.LatestAnswer(context.Background(), "u", "chat"); answer != "" {
+		t.Errorf("answer = %q, want empty - a failed delivering node must not finalize", answer)
+	}
+}

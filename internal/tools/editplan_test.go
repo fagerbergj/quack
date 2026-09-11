@@ -87,6 +87,40 @@ func TestEditPlanRemoveAlreadyRanAssignmentRejected(t *testing.T) {
 	}
 }
 
+// TestEditPlanRejectsAlreadyDeliveredPlan pins #slice3 review: a plan whose
+// status is already "done" (delivered) must return a clear error rather
+// than mutate a finished record - there is no more work a done plan can take.
+func TestEditPlanRejectsAlreadyDeliveredPlan(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	rec.Status = "done"
+	if _, _, err := c.SaveStructured(newFakeCtx(), "dag_plan", rec, "", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed done plan: %v", err)
+	}
+
+	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"plan_id":     planID,
+		"assignments": []map[string]any{{"agent": "web-researcher", "task": "more work"}},
+	})
+	if err == nil {
+		t.Fatal("want an error editing an already-delivered plan")
+	}
+	if !strings.Contains(err.Error(), "already delivered") {
+		t.Errorf("err = %v, want it to say the plan already delivered", err)
+	}
+
+	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	if err != nil || !ok {
+		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
+	}
+	if len(rec2.Assignments) != 1 {
+		t.Errorf("assignments = %+v, want the record untouched (still 1)", rec2.Assignments)
+	}
+}
+
 // TestEditPlanUpsertReplacesExistingAssignment covers reassigning a node
 // list_nodes already showed instead of hiring a redundant one.
 func TestEditPlanUpsertReplacesExistingAssignment(t *testing.T) {

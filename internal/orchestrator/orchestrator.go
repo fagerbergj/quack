@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -1096,16 +1095,20 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	}
 
 	out := outputs[pend.nodeID]
+	var status string
 	for i := range rec.Assignments {
 		if rec.Assignments[i].NodeID == pend.nodeID {
-			rec.Assignments[i].TaskID = uuid.NewString()
-			rec.Assignments[i].Result = out
+			// Shares execute.go's own success/failure decision (paused=false:
+			// the step already confirmed it isn't) - a resumed node with
+			// empty output is exactly as "failed" as a freshly-run one, and
+			// must not silently finalize on it (#slice3 review).
+			status = tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false)
 		}
 	}
 	if _, _, serr := dag.SaveDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID, "", rec); serr != nil {
 		slog.Warn("resume: dag_plan update failed", "component", "orchestrator", "err", serr)
 	}
-	if rec.Delivery != nil {
+	if status == "done" && rec.Delivery != nil {
 		final := map[string]string{}
 		for _, a := range rec.Assignments {
 			final[a.NodeID] = a.Result
