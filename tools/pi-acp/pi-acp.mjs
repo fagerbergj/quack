@@ -22,7 +22,7 @@ const prov = (() => {
   const p = ocCfg.provider?.quack;
   if (!p) return null;
   const model = Object.keys(p.models)[0];
-  return { baseUrl: p.options.baseURL, apiKey: p.options.apiKey || "unused", model, contextWindow: p.models[model]?.limit?.context };
+  return { baseUrl: p.options.baseURL, apiKey: p.options.apiKey || "unused", model, contextWindow: p.models[model]?.limit?.context, maxTokens: p.models[model]?.limit?.output };
 })();
 
 // PI_ACP_STATE_DIR (quack: Jail.ACPStateDir) keeps pi's session files out of
@@ -54,6 +54,8 @@ function ensurePiDir(sessionId) {
     // omit rather than write 0/undefined: pi's provider-composer rejects
     // contextWindow <= 0 and falls back to its own 128000 default anyway.
     if (prov.contextWindow > 0) modelEntry.contextWindow = prov.contextWindow;
+    // unset -> pi's 16384 default, which caps reasoning+answer on the same request.
+    if (prov.maxTokens > 0) modelEntry.maxTokens = prov.maxTokens;
     writeFileSync(join(dir, "models.json"), JSON.stringify({
       providers: {
         quack: {
