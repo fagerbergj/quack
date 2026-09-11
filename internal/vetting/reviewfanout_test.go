@@ -39,6 +39,7 @@ func TestReviewFanout_DeliversOnceWorstOfWhenAllTerminal(t *testing.T) {
 	}
 
 	// Second reviewer stages request_changes and finishes - still nothing delivered.
+	// Unlabeled body: bypasses the MCP tool's label enforcement on purpose.
 	commitDelivery(context.Background(), nil, cfg, "r2", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "request_changes", Body: "r2 found a bug",
 			Comments: []ReviewComment{{Path: "a.go", Line: 3, Body: "nil deref"}}}},
@@ -403,6 +404,7 @@ func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
 	fanout.ExpectSynthesis()
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
+	// Unlabeled body: bypasses the MCP tool's label enforcement on purpose.
 	commitDelivery(context.Background(), nil, cfg, "review-backend", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "request_changes", Body: "backend bug",
 			Comments: []ReviewComment{{Path: "a.go", Line: 3, Body: "nil deref"}}}},

@@ -344,12 +344,7 @@ func TestMergeReviewsNoVerdictAnywhereIsComment(t *testing.T) {
 }
 
 // TestMergeReviewsTwoSlicesOneUnlabeledFindingSynthesizerRecordOwnsSummary
-// reproduces the #1377 fan-out bug directly against mergeReviews: two
-// slices each stage one finding (one properly labeled, one not) and the
-// synthesizer's own code_review record - not its raw chat reply - supplies
-// takeaway/verified/notes. The merged body must carry no slice-id prefix,
-// put only the labeled finding in Highlights, and render the record's own
-// Verified/Notes sections rather than any staging narration.
+// proves the merge prefers the synthesizer's own record over its chat reply.
 func TestMergeReviewsTwoSlicesOneUnlabeledFindingSynthesizerRecordOwnsSummary(t *testing.T) {
 	terminal := map[string]reviewFanoutEntry{
 		"code-reviewer-1": {ok: true, item: StagedDelivery{Kind: "review",
@@ -402,10 +397,8 @@ func TestMergeReviewsTwoSlicesOneUnlabeledFindingSynthesizerRecordOwnsSummary(t 
 	}
 }
 
-// TestReviewFanout_ScopeFromFirstReviewerWins proves the Scope line (section
-// 3, otherwise absent from a fan-out review entirely) renders from whichever
-// reviewer node resolves it first - later reports are ignored, the same
-// first-wins pattern RecordClone already uses.
+// TestReviewFanout_ScopeFromFirstReviewerWins proves the Scope line renders
+// from the first reviewer to resolve it; later reports are ignored.
 func TestReviewFanout_ScopeFromFirstReviewerWins(t *testing.T) {
 	f := &ReviewFanout{terminal: map[string]reviewFanoutEntry{
 		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Event: "approve"}},

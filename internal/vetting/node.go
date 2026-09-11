@@ -1061,8 +1061,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// merged, worst-of-verdict review exactly once, when every reviewer node in the plan has finished.
 	if cfg.ReviewFanout != nil && !cfg.IsReviewer {
 		// Synthesizer node (#965): its answer is the plan's consolidated review - hand it to the fan-in, which delivers exactly once. The
-		// structured code_review record (#1184) is read here rather than
-		// parsed from act.answer, since a native write_code_review leaves no VERDICT tail in the answer text and carries the takeaway/verified/notes fields directly.
+		// structured code_review record is read here, not act.answer - a
+		// native write_code_review leaves no VERDICT tail to parse from it.
 		rec, haveRec := LatestCodeReviewRecord(ctx, cfg)
 		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer, rec, haveRec)
 		if deliverNow {

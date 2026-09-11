@@ -66,13 +66,9 @@ var reviewLabelOrder = []string{"blocking", "suggestion", "nit", "question"}
 // - also a decoration like "blocking (security):", which still matches on the bare label. The prefix class excludes '*' so a leading emoji can never swallow the bold markers meant for \*{0,2}.
 var commentLabelRe = regexp.MustCompile(`(?i)^\s*[^\pL\pN*]{0,4}\*{0,2}(blocking|suggestion|nit|question)\b[^:]*:\*{0,2}`)
 
-// metaNarrationRe matches a takeaway/note/summary paragraph that narrates
-// the review's own staging call (a revision number, its own inline-comment
-// tally, "staged for PR #N") instead of the code under review. This only
-// leaks in when a caller falls back to its raw chat reply instead of its
-// structured takeaway/verified/notes fields - rejected here, the one
-// renderer every review body goes through, rather than left to a prompt.
-var metaNarrationRe = regexp.MustCompile(`(?i)\bstaged for (this )?(pr|pull request)\b|\bcode_review revision\b|\d+\s+inline comments?\s*\+\s*\d+\s+summary notes?`)
+// metaNarrationRe matches only the exact auto-generated staging sentence,
+// never a paragraph that merely mentions a PR number or revision in passing.
+var metaNarrationRe = regexp.MustCompile(`(?i)^review staged for (this )?(pr|pull request) #?\d+ \(code_review revision \d+\):`)
 
 // sentenceAbbrevRe matches a trailing abbreviation (e.g/i.e/vs) right before
 // a candidate sentence-ending period - firstSentence skips the period there
@@ -132,9 +128,7 @@ func commentLabel(body string) (label, why string) {
 }
 
 // HasCommentLabel reports whether body opens with a Conventional Comments
-// label - the check every stage_review_comment call must pass, single
-// reviewer or fan-out slice alike, so a finding always counts toward the
-// verdict line and is eligible for the Highlights table.
+// label - an unlabeled finding never counts toward the verdict or Highlights.
 func HasCommentLabel(body string) bool {
 	label, _ := commentLabel(body)
 	return label != ""
@@ -203,18 +197,18 @@ func sha7(sha string) string {
 	return sha
 }
 
-// truncateRunes caps s at n runes, backing up to the nearest preceding
-// space so a review overview never ends mid-word, then marks the cut with
-// "…". Falls back to a hard cut only when the truncated span has no space
-// to back up to at all.
+// truncateRunes caps s at n runes at a word boundary, never mid-word, then
+// marks the cut with "…". Falls back to a hard cut when there's no space.
 func truncateRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
 		return s
 	}
 	cut := n
-	for cut > 0 && r[cut-1] != ' ' && r[cut-1] != '\n' {
-		cut--
+	if cut < len(r) && r[cut] != ' ' && r[cut] != '\n' {
+		for cut > 0 && r[cut-1] != ' ' && r[cut-1] != '\n' {
+			cut--
+		}
 	}
 	if cut == 0 {
 		cut = n

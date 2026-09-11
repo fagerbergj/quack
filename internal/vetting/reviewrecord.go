@@ -704,12 +704,8 @@ func truncateForBlob(content, nodeID, kind string) string {
 	return content[:artifactref.InlineMaxBytes] + fmt.Sprintf("\n\n[truncated: %d bytes over the %d byte cap]", over, artifactref.InlineMaxBytes)
 }
 
-// LatestCodeReviewRecord reads the synthesizer's own structured code_review
-// record (the one the gate already wrote from write_code_review or the
-// answer tail, #1090 P2) - the authoritative source for the fan-out's
-// delivered verdict AND its takeaway/verified/notes (#1184), since a native
-// synthesizer's write_code_review leaves no VERDICT tail for mergeReviews'
-// answer-parsing fallback to find.
+// LatestCodeReviewRecord reads the synthesizer's own code_review record -
+// its verdict and takeaway/verified/notes, when write_code_review wrote one.
 func LatestCodeReviewRecord(ctx context.Context, cfg Config) (rec CodeReviewRecord, ok bool) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -729,9 +725,8 @@ func LatestCodeReviewRecord(ctx context.Context, cfg Config) (rec CodeReviewReco
 	return rec, true
 }
 
-// firstCodeReviewDelivery reports whether this chat's code_review subject
-// has never been delivered before - the Scope line's "first review, whole
-// PR" vs. "re-review" distinction, same signal renderReviewFromArtifact uses.
+// firstCodeReviewDelivery reports whether this subject has never been
+// delivered before, for the Scope line's "first review" vs. "re-review".
 func firstCodeReviewDelivery(ctx context.Context, cfg Config) bool {
 	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	if err != nil {

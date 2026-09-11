@@ -196,8 +196,7 @@ func TestRenderReviewOverview_LegacySummaryTruncated(t *testing.T) {
 }
 
 // TestRenderReviewOverview_LegacySummaryTruncatedAtWordBoundary proves a long
-// summary is cut at a word boundary, never mid-word - a review overview
-// ending "...turn kee…" reads as broken output.
+// summary is cut at a word boundary, never mid-word.
 func TestRenderReviewOverview_LegacySummaryTruncatedAtWordBoundary(t *testing.T) {
 	words := strings.Repeat("orchestrator ", legacySummaryDisplayCap/6)
 	got := renderReviewOverview(reviewOverviewInput{Verdict: "comment", LegacySummary: words})
@@ -210,11 +209,16 @@ func TestRenderReviewOverview_LegacySummaryTruncatedAtWordBoundary(t *testing.T)
 	}
 }
 
-// TestRenderReviewOverview_StripsMetaNarration proves a takeaway/note/legacy
-// summary that narrates the review's own staging call (revision number, its
-// own inline-comment tally) is dropped rather than shown to the reader - the
-// #1377 fan-out bug, where the synthesizer's raw chat reply substituted for
-// its structured fields.
+// TestTruncateRunes_ExactWordBoundaryKeepsTheWord proves a cut landing
+// exactly at a space keeps the preceding word instead of dropping it.
+func TestTruncateRunes_ExactWordBoundaryKeepsTheWord(t *testing.T) {
+	if got := truncateRunes("hello world here", 11); got != "hello world…" {
+		t.Fatalf("truncateRunes = %q, want %q", got, "hello world…")
+	}
+}
+
+// TestRenderReviewOverview_StripsMetaNarration proves the exact
+// auto-generated staging sentence is dropped, not shown to the reader.
 func TestRenderReviewOverview_StripsMetaNarration(t *testing.T) {
 	narration := "Review staged for PR #1377 (code_review revision 6): request_changes, 5 inline comments + 2 summary notes."
 
@@ -238,6 +242,23 @@ func TestRenderReviewOverview_StripsMetaNarration(t *testing.T) {
 	}
 	if !strings.Contains(got, "A real explanation of the change.") {
 		t.Fatalf("the substantive paragraph was dropped along with the narration: %q", got)
+	}
+}
+
+// TestRenderReviewOverview_MetaNarrationOnlyMatchesGeneratedSentence proves
+// real content that merely mentions a PR number or revision count survives.
+func TestRenderReviewOverview_MetaNarrationOnlyMatchesGeneratedSentence(t *testing.T) {
+	cases := []string{
+		"This PR fixes a bug where a comment staged for PR #1380 was lost on retry.",
+		"The migration bumps the schema's code_review revision counter to 3.",
+	}
+	for _, c := range cases {
+		if got := renderReviewOverview(reviewOverviewInput{Verdict: "comment", Takeaway: c}); !strings.Contains(got, c) {
+			t.Errorf("legitimate takeaway wrongly stripped: %q, got %q", c, got)
+		}
+		if got := renderReviewOverview(reviewOverviewInput{Verdict: "comment", Notes: []string{c}}); !strings.Contains(got, c) {
+			t.Errorf("legitimate note wrongly stripped: %q, got %q", c, got)
+		}
 	}
 }
 

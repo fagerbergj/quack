@@ -23,12 +23,10 @@ type ReviewFanout struct {
 	synthWanted bool
 	synthDone   bool
 	synthBody   string // raw chat reply, last-resort fallback only (see mergeReviews)
-	// synthHaveRecord/synthVerdict/synthTakeaway/synthVerified/synthNotes:
-	// the synthesizer's own code_review record, when it wrote one via
-	// write_code_review - the same structured fields a single reviewer's
-	// stage_review carries, preferred over parsing synthBody's free text.
+	// The synthesizer's own code_review record fields, preferred over
+	// parsing synthBody's free text when it wrote one (synthHaveRecord).
 	synthHaveRecord bool
-	synthVerdict    string // authoritative over synthBody's tail (#1184)
+	synthVerdict    string
 	synthTakeaway   string
 	synthVerified   []string
 	synthNotes      []string
@@ -39,10 +37,8 @@ type ReviewFanout struct {
 	cloneURL string
 	branch   string
 
-	// scopeKnown/scopeHead/scopeFiles/scopeFirstReview: the PR's diff scope
-	// (Scope line, section 3), resolved by whichever reviewer node reports
-	// it first - mirrors cloneURL/branch, since every reviewer node in the
-	// fan-out reviews the same PR.
+	// The PR's diff scope, resolved by whichever reviewer node reports it
+	// first - every reviewer node in the fan-out reviews the same PR.
 	scopeKnown       bool
 	scopeHead        string
 	scopeFiles       int
@@ -70,10 +66,8 @@ func (f *ReviewFanout) Clone() (cloneURL, branch string) {
 	return f.cloneURL, f.branch
 }
 
-// RecordScope captures the PR's diff scope (head sha, changed-file count,
-// first-review-or-not) the first reviewer node to resolve it wins - every
-// reviewer node in the fan-out reviews the same PR, so the first resolution
-// is authoritative for the whole run, same pattern as RecordClone.
+// RecordScope captures the PR's diff scope, first reviewer node to resolve
+// it wins - mirrors RecordClone, since every reviewer reviews the same PR.
 func (f *ReviewFanout) RecordScope(head string, files int, firstReview bool) {
 	if head == "" {
 		return
@@ -156,12 +150,8 @@ func (f *ReviewFanout) ExpectSynthesis() {
 	f.mu.Unlock()
 }
 
-// FinishSynthesis records the synthesizer node's terminal outcome. answer is
-// its raw chat reply - a last-resort fallback (see mergeReviews) for when the
-// synthesizer never wrote a code_review record at all. rec/haveRecord carry
-// that record's structured takeaway/verified/notes/verdict when it exists -
-// the same fields a single reviewer's stage_review call produces, and
-// authoritative over answer's free text. Same exactly-once deliver contract as Finish.
+// FinishSynthesis records the synthesizer node's terminal outcome: rec's
+// fields when it wrote a code_review record, else answer as a raw fallback.
 func (f *ReviewFanout) FinishSynthesis(answer string, rec CodeReviewRecord, haveRecord bool) (merged StagedDelivery, deliver bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -191,19 +181,8 @@ func (f *ReviewFanout) deliverIfReady() (StagedDelivery, bool) {
 // plain comment.
 var verdictRank = map[string]int{"comment": 0, "approve": 1, "request_changes": 2}
 
-// mergeReviews (mu held, called from deliverIfReady): the synthesizer's
-// structured code_review record is authoritative when it wrote one
-// (synthHaveRecord) - the same takeaway/verified/notes/verdict fields a
-// single reviewer's stage_review produces, rendered through the same
-// renderer. Absent that, this falls back to the synthesizer's answer-tail
-// VERDICT, then to worst-of over slices that staged one (#867's defense: an
-// early slice request_changes still beats a later synthesizer approve,
-// since worst-of only ever raises the verdict, never lowers it). A slice
-// with no event (V4: slices stage findings only, #1150) doesn't participate
-// in worst-of at all - it used to default to "comment", the exact bug #1184
-// reports. Findings are merged regardless of which verdict wins; a
-// failed/cancelled sibling contributes no verdict but is named in the body
-// rather than silently dropped.
+// mergeReviews (mu held): the synthesizer's own code_review record wins
+// when it wrote one, else its answer tail, else worst-of over the slices.
 func (f *ReviewFanout) mergeReviews() StagedDelivery {
 	ids := make([]string, 0, len(f.terminal))
 	for id := range f.terminal {
@@ -289,11 +268,8 @@ func (f *ReviewFanout) mergeReviews() StagedDelivery {
 			legacySummary = f.synthBody
 		}
 	}
-	// The synthesizer's own structured code_review verdict is authoritative
-	// over its answer-tail parse above, but still worst-of against a slice's
-	// verdict rather than overwriting it outright - #867's defense (an early
-	// slice request_changes must survive a later synthesizer approve) holds
-	// regardless of which form the synthesizer's verdict took.
+	// Still worst-of against a slice's verdict, never overwrites it outright:
+	// an early slice request_changes must survive a later synthesizer approve.
 	if f.synthVerdict != "" && (!haveVerdict || verdictRank[f.synthVerdict] > verdictRank[verdict]) {
 		verdict = f.synthVerdict
 		haveVerdict = true

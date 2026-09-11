@@ -468,12 +468,10 @@ func TestReviewFanoutMergedDeliveryCarriesReviewerCloneURL(t *testing.T) {
 	}
 }
 
-// #1377: a synthesizer node that wrote a real code_review record via
-// write_code_review must have commitDelivery read that record's
-// takeaway/verified/notes/verdict (LatestCodeReviewRecord), not fall back to
-// parsing its raw chat reply - proves the node.go wiring, not just mergeReviews' own unit tests.
+// proves commitDelivery reads a real code_review record's fields end to
+// end, not just mergeReviews' own unit tests against a struct literal.
 func TestReviewFanout_SynthesizerCodeReviewRecordFlowsThroughCommitDelivery(t *testing.T) {
-	const planID = "plan-1377"
+	const planID = "plan-record-flow"
 	fanout := GetReviewFanout(planID, 1)
 	fanout.ExpectSynthesis()
 	defer ResetReviewFanout(planID)

@@ -80,10 +80,8 @@ func TestReviewMCP_StageToolsLandInBuffer(t *testing.T) {
 	}
 }
 
-// TestReviewMCP_StageReviewCommentRequiresLabel pins the one choke point
-// every reviewer node's findings pass through: a body with no Conventional
-// Comments label is rejected, loudly, rather than staged and later
-// rendered uncounted.
+// TestReviewMCP_StageReviewCommentRequiresLabel proves an unlabeled body is
+// rejected loudly rather than staged and rendered uncounted.
 func TestReviewMCP_StageReviewCommentRequiresLabel(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
