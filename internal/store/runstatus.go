@@ -21,6 +21,9 @@ const (
 	// RunStatusPaused marks a chat whose nodes the server suspended (shutdown
 	// drain, or a boot reconcile) and intends to resume itself - not failed.
 	RunStatusPaused = "paused"
+	// RunStatusInterruptedLegacy is the retired stamp; a pre-existing database
+	// row can still carry it, so the read path keeps mapping it to failed.
+	RunStatusInterruptedLegacy = "interrupted"
 )
 
 // MarkRunActive records that chatID has turnID in flight, so a crash before

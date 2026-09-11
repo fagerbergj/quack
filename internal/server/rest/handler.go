@@ -214,7 +214,7 @@ func chatsScopeFor(params schema.ListChatsParams) (store.ChatsScope, error) {
 }
 
 // ListChats is a single table read (#738: status is a stamp on the chat row - see
-// store.StampRunOutcome - plus cheap in-memory hub/queue checks, not a per-chat DB read).
+// store.StampRunOutcome - plus a cheap in-memory hub check, not a per-chat DB read).
 // It's also a conditional GET: an unchanged page costs a 304 with no body, so the SPA's 5s poll is cheap on the wire when nothing changed (still no TTL - every poll reaches this handler and revalidates against the live rows). The ETag is hashed from the marshaled page body, which embeds NextPageToken, so it varies with page token and limit as well as content - a stale ETag from a different page never reads as a match.
 func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schema.ListChatsParams) {
 	limit := 0
@@ -1500,7 +1500,7 @@ func (h *Handler) chatTotalTokens(ctx context.Context, chatID string) int64 {
 	return totals[chatID]
 }
 
-// Builds a ChatSummary from the chat row alone: queued/running are cheap in-memory checks,
+// Builds a ChatSummary from the chat row alone: running is a cheap in-memory hub check,
 // everything else is the stamp StampRunOutcome left at the last run's end - no turns/session
 // read per chat (#738; that per-chat read is what GetChat's chatStatus below still does, which is fine there since GetChat already loads turns for the full detail body). totalTokens is the chat's compact token count for the sidebar (see ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
 func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary {
@@ -1539,7 +1539,7 @@ func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string)
 	case store.RunStatusNeedsInput:
 		q := c.PendingQuestion
 		return schema.ChatStatusNeedsInput, &q
-	case store.RunStatusFailed:
+	case store.RunStatusFailed, store.RunStatusInterruptedLegacy:
 		return schema.ChatStatusFailed, nil
 	default:
 		return schema.ChatStatusIdle, nil
@@ -1555,8 +1555,8 @@ func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.T
 	return h.terminalStatus(ctx, chatID, turns)
 }
 
-// chatHasRunningNode checks chatID's latest plan - closes the boot-resume gap
-// where a resumed node runs before the Hub, which only tracks its own dispatches.
+// chatHasRunningNode trusts a running row with no staleness check, and is
+// deliberately GetChat-only (#738 keeps ListChats to one table read) - do not add this to toSummary.
 func (h *Handler) chatHasRunningNode(ctx context.Context, chatID string) bool {
 	plan, err := h.store.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {

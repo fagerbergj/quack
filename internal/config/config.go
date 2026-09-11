@@ -1237,8 +1237,12 @@ func (c *Config) validate() error {
 	if c.Dag.MaxActiveNodes < 1 {
 		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")
 	}
+	if c.Dag.MaxActiveRuns < 0 {
+		return fmt.Errorf("config: dag.max_active_runs must be >= 0 (got %d)", c.Dag.MaxActiveRuns)
+	}
 	if c.Dag.MaxActiveRuns != 0 {
-		slog.Warn("dag.max_active_runs is deprecated and ignored; chat state derives from node rows now", "component", "config")
+		slog.Warn("dag.max_active_runs is deprecated and ignored; chat state derives from node rows now",
+			"component", "config", "value", c.Dag.MaxActiveRuns)
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

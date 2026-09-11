@@ -69,3 +69,14 @@ func TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed(t *testing.T) {
 		t.Errorf("status = %q, want failed", status)
 	}
 }
+
+// TestLiveOrStampedStatus_LegacyInterruptedRowMapsToFailed pins that a chat
+// row a pre-existing database stamped "interrupted" still reads as failed.
+func TestLiveOrStampedStatus_LegacyInterruptedRowMapsToFailed(t *testing.T) {
+	h := newTestHandler(t)
+	c := store.Chat{ID: "chat-legacy", RunStatus: store.RunStatusInterruptedLegacy}
+	status, _ := h.liveOrStampedStatus(c)
+	if status != schema.ChatStatusFailed {
+		t.Errorf("status = %q, want failed", status)
+	}
+}

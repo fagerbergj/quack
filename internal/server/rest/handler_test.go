@@ -167,8 +167,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 }
 
 // TestChatStatusRunning: the hub having a live topic for the chat wins over
-// needs_input/failed/idle (checked before them; queued, checked before running,
-// is orchestrator-only state this test's chat never enters - see TestQueuedReportsAdmittedButNotAcquired in the orchestrator package).
+// needs_input/failed/idle.
 func TestChatStatusRunning(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -734,8 +733,7 @@ func TestUpdateChat_TitleOnlyStillTouchesUpdatedAt(t *testing.T) {
 }
 
 // blockingModel is a model.LLM whose GenerateContent blocks until unblock is
-// closed or ctx is cancelled - holds the one global run slot open on demand so
-// a second chat's run can be driven into a genuinely queued state.
+// closed or ctx is cancelled - a run that stays in flight on demand.
 type blockingModel struct {
 	entered chan struct{}
 	unblock chan struct{}
