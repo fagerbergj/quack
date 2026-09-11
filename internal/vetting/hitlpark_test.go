@@ -11,11 +11,12 @@ import (
 // parkCtrl records what the HITL park told the node state machine.
 type parkCtrl struct{ question string }
 
-func (p *parkCtrl) Cancelled() bool        { return false }
-func (p *parkCtrl) Paused() bool           { return p.question != "" }
-func (p *parkCtrl) TakeQueued() string     { return "" }
-func (p *parkCtrl) PauseForInput(q string) { p.question = q }
-func (p *parkCtrl) MarkDelivered()         {}
+func (p *parkCtrl) Cancelled() bool               { return false }
+func (p *parkCtrl) Paused() bool                  { return p.question != "" }
+func (p *parkCtrl) TakeQueued() string            { return "" }
+func (p *parkCtrl) PauseForInput(q string)        { p.question = q }
+func (p *parkCtrl) MarkDelivered()                {}
+func (p *parkCtrl) RepeatFailure() (string, bool) { return "", false }
 
 // TestParkForInput: a worker question folds into the one pause path -
 // markPaused(awaiting_input) with the question - and returns ErrNodePaused,

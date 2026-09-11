@@ -85,6 +85,11 @@ type NodeControl interface {
 	// dagStream can report NodeDone even if a pause/cancel flag races in
 	// right after (the delivered==true call site below).
 	MarkDelivered()
+	// RepeatFailure reports (and clears) a hard-stop message the repeat
+	// guard left via dag.Executor.RepeatGuardTripped, so the round's error
+	// is reported as a real failure, not the user-cancel path's silent
+	// empty continue-but-warn.
+	RepeatFailure() (string, bool)
 }
 
 const AskToolName = "ask_user"
@@ -410,6 +415,18 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 
 	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
 	paused := func() bool { return ctrl != nil && ctrl.Paused() }
+	// repeatFailed checks the repeat guard's hard-stop note before the
+	// generic cancelled() check below - a repeat-guard abort must surface as
+	// a real failure, not the cancelled path's silent empty continue-but-warn.
+	repeatFailed := func() (error, bool) {
+		if ctrl == nil {
+			return nil, false
+		}
+		if msg, ok := ctrl.RepeatFailure(); ok {
+			return errors.New(msg), true
+		}
+		return nil, false
+	}
 	// Judge SSE stage:judge (never written to session).
 	sink, _ := stream.YieldFromContext(ctx)
 
@@ -470,8 +487,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 					workerInput(withUserAnswer(prompt, turns), attachments),
 					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), "hitl", promptEmit)
 				if err != nil {
+					if lerr, ok := repeatFailed(); ok {
+						log.Error("post-answer worker run terminated: repeat guard", "err", lerr)
+						return "", GateResult{}, lerr
+					}
 					if cancelled() {
-						return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+						return "", GateResult{}, nil // round aborted mid-flight by CancelNode, not a real failure
 					}
 					log.Error("post-answer worker run failed", "err", err)
 					return "", GateResult{}, err
@@ -491,8 +512,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 						workerInput(withConfirmDecision(prompt, turns), attachments),
 						fmt.Sprintf("worker-confirm-r%d%s", cscan.pauses, sfx), "confirm", promptEmit)
 					if err != nil {
+						if lerr, ok := repeatFailed(); ok {
+							log.Error("post-decision worker run terminated: repeat guard", "err", lerr)
+							return "", GateResult{}, lerr
+						}
 						if cancelled() {
-							return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+							return "", GateResult{}, nil // round aborted mid-flight by CancelNode, not a real failure
 						}
 						log.Error("post-decision worker run failed", "err", err)
 						return "", GateResult{}, err
@@ -503,8 +528,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		if !resumed {
 			answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, "draft", promptEmit)
 			if err != nil {
+				if lerr, ok := repeatFailed(); ok {
+					log.Error("worker draft terminated: repeat guard", "err", lerr)
+					return "", GateResult{}, lerr
+				}
 				if cancelled() {
-					return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+					return "", GateResult{}, nil // round aborted mid-flight by CancelNode, not a real failure
 				}
 				// Log before returning (ADK swallows node errors into silent empty completion).
 				log.Error("worker draft failed", "run", "worker-r0", "err", err)
@@ -531,9 +560,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly, hasDeliverTarget, cfg.IsReviewer, cfg.ExistingPR)+markerLine,
 					fmt.Sprintf("worker-cont%d%s", attempt, sfx), "continuation", promptEmit)
 				if err != nil {
+					if lerr, ok := repeatFailed(); ok {
+						log.Error("worker continuation terminated: repeat guard", "attempt", attempt, "err", lerr)
+						contSpan.End()
+						return "", GateResult{}, lerr
+					}
 					if cancelled() {
 						contSpan.End()
-						return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+						return "", GateResult{}, nil // round aborted mid-flight by CancelNode, not a real failure
 					}
 					log.Error("worker continuation failed", "attempt", attempt, "err", err)
 					contSpan.End()
@@ -787,6 +821,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			revised, rerr := runWorkerNodeTraced(ctx, reviseCtx, cfg, workerModel, workerNode, revisePrompt, reviseRunID, "revise", promptEmit)
 			rspan.end(stream.AgentCompleteData{RunID: reviseRunID, Stage: stream.StageRevise, Round: round}, rerr)
 			if rerr != nil {
+				if lerr, ok := repeatFailed(); ok {
+					log.Error("revision worker terminated: repeat guard", "round", round, "err", lerr)
+					return "", GateResult{}, lerr
+				}
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
 			}

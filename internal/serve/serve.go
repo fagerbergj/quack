@@ -714,6 +714,10 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		ex := executorRef.Load()
 		return ex != nil && ex.NodeCancelled(chatID, nodeID)
 	}
+	repeatGuardTripped := func(chatID, nodeID, msg string) bool {
+		ex := executorRef.Load()
+		return ex != nil && ex.RepeatGuardTripped(chatID, nodeID, msg)
+	}
 	registerLiveSteer := func(chatID, nodeID string, f func(string) bool) {
 		if ex := executorRef.Load(); ex != nil {
 			ex.SetNodeLiveSteer(chatID, nodeID, f)
@@ -736,7 +740,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -1016,7 +1020,7 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := func(ctx context.Context) memory.Scope {
@@ -1364,25 +1368,26 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			var builtins []tool.Tool
 			if len(toolNames) > 0 {
 				if builtins, err = tools.Build(toolNames, tools.Deps{
-					WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
-					Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
-					Summarizer:      wm,
-					Cache:           urlCache,
-					Advisor:         advisorAgent,
-					Sessions:        sessions,
-					Workspace:       jail,
-					WorkspaceUserID: localUserID,
-					WorkspaceCaps:   workspaceCaps,
-					GitCredentials:  gitCredentials,
-					GitTokenSource:  gitTokenSource,
-					Guards:          cfg.Workspace.Guards,
-					SafetyJudge:     safetyJudge,
-					NodeCancelled:   nodeCancelled,
-					ExtTools:        extToolsByName,
-					Replayer:        nativeReplay,
-					Memory:          taskStore,
-					MemoryRole:      ac.Memory.Bucket,
-					Ledger:          ledgerStore,
+					WebSearch:          tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
+					Fetch:              tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
+					Summarizer:         wm,
+					Cache:              urlCache,
+					Advisor:            advisorAgent,
+					Sessions:           sessions,
+					Workspace:          jail,
+					WorkspaceUserID:    localUserID,
+					WorkspaceCaps:      workspaceCaps,
+					GitCredentials:     gitCredentials,
+					GitTokenSource:     gitTokenSource,
+					Guards:             cfg.Workspace.Guards,
+					SafetyJudge:        safetyJudge,
+					NodeCancelled:      nodeCancelled,
+					RepeatGuardTripped: repeatGuardTripped,
+					ExtTools:           extToolsByName,
+					Replayer:           nativeReplay,
+					Memory:             taskStore,
+					MemoryRole:         ac.Memory.Bucket,
+					Ledger:             ledgerStore,
 				}); err != nil {
 					return nil, nil, nil, fmt.Errorf("tools: %w", err)
 				}

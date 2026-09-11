@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -18,10 +19,18 @@ import (
 type repeatGuard struct {
 	inner  runnableTool
 	states *repeatStates
+	// tripped reaches dag.Executor.RepeatGuardTripped to end the node's round -
+	// a returned tool error alone can't: ADK folds it into a function
+	// response and keeps the model's turn going.
+	tripped func(chatID, nodeID, msg string) bool
 }
 
 // repeatThreshold: consecutive identical calls before refusal (1st=run, 2nd=retry, 3rd=refused).
 const repeatThreshold = 3
+
+// repeatHardStopAfter: further identical calls the model can make after
+// being refused before its node's turn is force-ended.
+const repeatHardStopAfter = 2
 
 // repeatStates: tracks last call fingerprint per session.
 // ponytail: entries never pruned - add if sessions number in the millions.
@@ -53,6 +62,15 @@ func (s *repeatStates) observe(sessionID, fingerprint string) int {
 	return st.count
 }
 
+// resetSession clears a session's streak counter after a hard stop, so a
+// retry (e.g. a revise round) starts with a fresh budget instead of
+// immediately hard-stopping again on its very first call.
+func (s *repeatStates) resetSession(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.last, sessionID)
+}
+
 // resourceFailCount returns consecutive-failure count without mutating.
 func (s *repeatStates) resourceFailCount(sessionID, resourceKey string) int {
 	s.mu.Lock()
@@ -73,12 +91,12 @@ func (s *repeatStates) observeResourceFail(sessionID, resourceKey string, failed
 	return s.fails[k]
 }
 
-func newRepeatGuard(inner tool.Tool, states *repeatStates) (tool.Tool, error) {
+func newRepeatGuard(inner tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
 		return nil, fmt.Errorf("tool %q does not support repeat guarding (not a runnable function tool)", inner.Name())
 	}
-	return &repeatGuard{inner: rt, states: states}, nil
+	return &repeatGuard{inner: rt, states: states, tripped: tripped}, nil
 }
 
 func (g *repeatGuard) Name() string        { return g.inner.Name() }
@@ -110,23 +128,36 @@ func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 // pathFailThreshold: consecutive failures against a (tool, resource) before refusing the next call.
 const pathFailThreshold = 3
 
-// Run: refuses if byte-identical triple or resource-failure churn.
+// Run: refuses if byte-identical triple or resource-failure churn; once the
+// model repeats a refused call repeatHardStopAfter more times, ends the
+// node's round instead of refusing forever.
 func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
 		return g.inner.Run(ctx, args) // unfingerprintable args: never block
 	}
 	sessionID := ctx.SessionID()
+	fingerprint := g.Name() + ":" + string(argsJSON)
 
-	n := g.states.observe(sessionID, g.Name()+":"+string(argsJSON))
+	n := g.states.observe(sessionID, fingerprint)
+	if n > repeatThreshold+repeatHardStopAfter {
+		msg := fmt.Sprintf("tool-call loop: %s called with identical arguments %d consecutive times despite being refused; node terminated", g.Name(), n)
+		slog.Warn("tool call loop: ending node turn", "component", "tools",
+			"tool", g.Name(), "consecutive", n, "session", sessionID)
+		if chatID, nodeID := nodeScope(ctx); nodeID != "" && g.tripped != nil {
+			g.tripped(chatID, nodeID, msg)
+		}
+		g.states.resetSession(sessionID) // a retry (e.g. revise) starts with a fresh budget, not an already-blown one
+		return nil, errors.New(msg)
+	}
 	if n >= repeatThreshold {
 		slog.Warn("tool call refused: identical call repeated", "component", "tools",
 			"tool", g.Name(), "consecutive", n, "session", sessionID)
 		return nil, fmt.Errorf(
 			"REFUSED (attempt %d): this is the %dth consecutive time you issued this exact %s call with these exact arguments. "+
-				"Its result has not changed - it is already in the conversation above. Re-issuing it again will be refused again. "+
-				"Take a DIFFERENT action: use the result you already have, try a different tool or different arguments, or if you "+
-				"are finished, stop calling tools and write your final answer now.",
+				"Its result has not changed - it is already in the conversation above. Re-issuing it again will END THIS NODE'S TURN "+
+				"as a failure. Take a DIFFERENT action: use the result you already have, try a different tool or different arguments, "+
+				"or if you are finished, stop calling tools and write your final answer now.",
 			n-repeatThreshold+1, n, g.Name())
 	}
 
@@ -167,8 +198,8 @@ func resourceFingerprint(argsJSON []byte) (string, bool) {
 }
 
 // repeatWrap applies the identical-call breaker.
-func repeatWrap(t tool.Tool, states *repeatStates) (tool.Tool, error) {
-	return newRepeatGuard(t, states)
+func repeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
+	return newRepeatGuard(t, states, tripped)
 }
 
 // NewRepeatStates and RepeatWrap expose the identical-call breaker to a
