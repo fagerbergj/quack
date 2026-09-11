@@ -96,6 +96,55 @@ func TestBudgetedLLMNeverOrphansACallOrResponse(t *testing.T) {
 	}
 }
 
+// TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory pins the rig
+// regression (#slice3 review): on a chat with history, Contents[0] is the
+// SESSION's first-ever turn, not this invocation's own query - which is
+// always the LAST content (whatever the model must respond to next, plain
+// text or a mid-loop FunctionResponse). A front-to-back trim that protects
+// only index 0 can erase that current query while older, larger history
+// survives, and the model server then 500s with "no user query found".
+func TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory(t *testing.T) {
+	rec := &recordingBudgetLLM{}
+	const contextWindow = budgetOutputReserve + 200 // usable budget = 200 tokens - tight
+	llm := NewBudgetedLLM(rec, contextWindow)
+
+	opening := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "session start: review this repo"}}}
+	contents := []*genai.Content{opening}
+	for round := 0; round < 10; round++ { // long tool rounds, from turns well before this one
+		contents = append(contents, bigCallResponsePair(400)...)
+	}
+	currentQuery := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "CURRENT_QUERY: what about the follow-up?"}}}
+	contents = append(contents, currentQuery)
+
+	req := &model.LLMRequest{Contents: contents}
+	drainLLM(llm.GenerateContent(context.Background(), req, false))
+
+	got := rec.got.Contents
+	if got[0] != opening {
+		t.Fatalf("Contents[0] = %+v, want the session's opening turn preserved", got[0])
+	}
+	if last := got[len(got)-1]; last != currentQuery {
+		t.Fatalf("last content = %+v, want the current invocation's own query preserved - "+
+			"the request must end on a user turn or the model server has nothing to answer", last)
+	}
+	for i, c := range got {
+		if hasFunctionCall(c) {
+			if i+1 >= len(got) {
+				t.Fatalf("Contents[%d] is a FunctionCall with no following content", i)
+			}
+			resp := false
+			for _, p := range got[i+1].Parts {
+				if p != nil && p.FunctionResponse != nil {
+					resp = true
+				}
+			}
+			if !resp {
+				t.Fatalf("Contents[%d] is a FunctionCall whose next content (%d) is not its FunctionResponse - pairing broken", i, i+1)
+			}
+		}
+	}
+}
+
 // TestNewBudgetedLLMUnwrapsWhenUnenforced mirrors AdmittingLLM's own no-op contract.
 func TestNewBudgetedLLMUnwrapsWhenUnenforced(t *testing.T) {
 	rec := &recordingBudgetLLM{}
