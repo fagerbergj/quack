@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"iter"
 	"strings"
 	"testing"
@@ -14,54 +13,38 @@ import (
 	"google.golang.org/adk/v2/session"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // repeatLoopStub scripts the QA rig's live failure (a 9B model sent the same
 // malformed create_plan call 386 times in a row - internal/tools' repeat
 // guard was never wired to the orchestrator's own hand-built tools, unlike a
-// worker node's tools.Build path, which always applied it). It keeps
-// re-issuing the identical bad call until it sees the guard's own "REFUSED"
-// text in the tool response, then stops - proving the guard now reaches
-// create_plan through the orchestrator's tool list.
-type repeatLoopStub struct{}
+// worker node's tools.Build path, which always applied it). Unlike a model
+// that reads the REFUSED error, this one IGNORES it and keeps re-issuing
+// the identical bad call forever - proving the guard's own hard-stop tier
+// (not the model choosing to stop) is what ultimately bounds it.
+type repeatLoopStub struct{ calls int }
 
-func (*repeatLoopStub) Name() string { return "repeatLoopStub" }
+func (s *repeatLoopStub) Name() string { return "repeatLoopStub" }
 
-func (s *repeatLoopStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (s *repeatLoopStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		if lastToolResponseContains(req, "REFUSED") {
-			yield(stubText("Understood, stopping."), nil)
-			return
-		}
+		s.calls++
 		yield(stubCall("create_plan", map[string]any{"assignments": []any{map[string]any{"task": "x"}}}), nil)
 	}
 }
 
-// lastToolResponseContains reports whether the most recent FunctionResponse
-// in req's history contains substr.
-func lastToolResponseContains(req *model.LLMRequest, substr string) bool {
-	for i := len(req.Contents) - 1; i >= 0; i-- {
-		c := req.Contents[i]
-		if c == nil {
-			continue
-		}
-		for _, p := range c.Parts {
-			if p == nil || p.FunctionResponse == nil {
-				continue
-			}
-			b, err := json.Marshal(p.FunctionResponse.Response)
-			return err == nil && strings.Contains(string(b), substr)
-		}
-	}
-	return false
-}
-
 // TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop is the QA rig
 // regression test: a model spamming the identical malformed create_plan
-// call must be refused by the 3rd attempt (the same identical-call breaker
-// tools.Build already applies to every worker node's own tools), not left
-// to repeat until the context window itself runs out.
+// call, ignoring every REFUSED error, must still terminate - via the
+// guard's own hard-stop tier once it keeps treading on regardless, and the
+// orchestrator's own bounded give-up (maxOrchestratorContinues) beyond
+// that - not left to repeat until the context window itself runs out. The
+// owner's settled direction (#slice3 review) is a SOFT refusal alone must
+// never end the turn (that denies the model any chance to self-correct
+// within it); this pins the other half - a model that ignores the soft
+// refusal anyway is still bounded.
 func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 	stub := &repeatLoopStub{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -79,36 +62,67 @@ func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher", Description: "researches the web"}}, nil, nil)
 	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
 
-	runTurn(t, o, "do the flaky retry loop review")
+	evs := runTurn(t, o, "do the flaky retry loop review")
 
+	// tools.repeatThreshold+repeatHardStopAfter+1 (3+2+1, unexported -
+	// mirrored here as a literal): the hard-stop tier fires on the call
+	// AFTER exceeding that sum, so one orchestrator invocation makes exactly
+	// this many stub calls before ending itself.
+	const guardAttemptsPerInvocation = 6
+	if stub.calls < 3 {
+		t.Fatalf("stub called only %d times; want it to at least reach the refusal tier", stub.calls)
+	}
+	// Bounded by the guard's own hard-stop tier times the orchestrator's own
+	// give-up budget (maxOrchestratorContinues+1 invocations) - generous
+	// headroom, not a tight step cap.
+	if maxCalls := guardAttemptsPerInvocation * (maxOrchestratorContinues + 1); stub.calls > maxCalls {
+		t.Fatalf("stub called %d times; want it bounded (<=%d) by the guard's hard-stop tier, not unbounded", stub.calls, maxCalls)
+	}
+	if !hasEvent(evs, stream.EventError) {
+		t.Fatalf("want an error event once the orchestrator gives up on the malformed call, events=%v", evs)
+	}
 	answer := o.LatestAnswer(context.Background(), "u", "chat")
-	if !strings.Contains(answer, "stopping") {
-		t.Fatalf("answer = %q, want the model's own recovery text once the repeat guard refused it - "+
-			"if this never arrives, create_plan isn't actually guarded and the run would loop forever", answer)
+	if strings.Contains(answer, "assignments") {
+		t.Fatalf("answer = %q, should not reflect a successful plan - the call never stopped being malformed", answer)
 	}
 }
 
 // repeatWriteArtifactStub is repeatLoopStub's twin for write_artifact - a
 // hand-built tool appended AFTER the DAG tools (orchestrator.go), the class
-// the repeat guard used to skip entirely.
-type repeatWriteArtifactStub struct{}
+// the repeat guard used to skip entirely. Unlike repeatLoopStub, this one
+// DOES correct itself once refused (different bytes) - the owner's settled
+// direction pins that a soft refusal must let a model that corrects proceed
+// within the SAME turn, not force it through a fresh wrapper-level retry.
+type repeatWriteArtifactStub struct{ calls int }
 
-func (*repeatWriteArtifactStub) Name() string { return "repeatWriteArtifactStub" }
+func (s *repeatWriteArtifactStub) Name() string { return "repeatWriteArtifactStub" }
 
-func (s *repeatWriteArtifactStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (s *repeatWriteArtifactStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		if lastToolResponseContains(req, "REFUSED") {
-			yield(stubText("Understood, stopping."), nil)
-			return
+		s.calls++
+		switch {
+		case s.calls <= 3:
+			// Identical spam - the 3rd is soft-refused (tools appended after
+			// the DAG five must be guarded too).
+			yield(stubCall("write_artifact", map[string]any{"kind": "text", "mime": "text/plain", "bytes": "aGVsbG8="}), nil)
+		case s.calls == 4:
+			// Corrects after the refusal (different bytes) - must be allowed
+			// to run, proving the turn stayed open past the soft refusal.
+			yield(stubCall("write_artifact", map[string]any{"kind": "text", "mime": "text/plain", "bytes": "Y29ycmVjdGVk"}), nil)
+		default:
+			yield(stubText("Understood, delivering the corrected write."), nil)
 		}
-		yield(stubCall("write_artifact", map[string]any{"kind": "text", "mime": "text/plain", "bytes": "aGVsbG8="}), nil)
 	}
 }
 
 // TestOrchestratorRepeatGuardCoversAppendedTools proves the guard wraps the
 // WHOLE final tool list, not just the five DAG tools set up before memory/
-// artifact tools are appended - a model spamming an identical write_artifact
-// call must be refused too.
+// artifact tools are appended (a model spamming an identical write_artifact
+// call must be refused too), AND that a model correcting its call right
+// after the refusal succeeds within the SAME turn - exactly 5 stub
+// invocations (3 identical + 1 corrected + the final text), never needing a
+// wrapper-level retry (#slice3 review: ending the turn on the first
+// refusal used to deny exactly this recovery).
 func TestOrchestratorRepeatGuardCoversAppendedTools(t *testing.T) {
 	stub := &repeatWriteArtifactStub{}
 	sessions := session.InMemoryService()
@@ -118,11 +132,16 @@ func TestOrchestratorRepeatGuardCoversAppendedTools(t *testing.T) {
 	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
 	o.SetArtifacts(artifact.InMemoryService())
 
-	runTurn(t, o, "write the same artifact over and over")
+	runTurn(t, o, "write the same artifact, then correct it")
 
+	if stub.calls != 5 {
+		t.Fatalf("stub called %d times; want exactly 5 (3 identical + 1 corrected + final text) - "+
+			"more means the turn ended too early and needed a wrapper-level retry to recover", stub.calls)
+	}
 	answer := o.LatestAnswer(context.Background(), "u", "chat")
-	if !strings.Contains(answer, "stopping") {
-		t.Fatalf("answer = %q, want the model's own recovery text once the repeat guard refused write_artifact - "+
-			"if this never arrives, tools appended after the DAG five aren't guarded", answer)
+	if !strings.Contains(answer, "delivering") {
+		t.Fatalf("answer = %q, want the model's own text after its corrected write_artifact call succeeded - "+
+			"if this never arrives, tools appended after the DAG five aren't guarded, or the corrected retry "+
+			"couldn't proceed within the same turn", answer)
 	}
 }

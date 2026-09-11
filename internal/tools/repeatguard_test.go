@@ -180,13 +180,16 @@ func newRepeatCtxWithAdvisorThread(t *testing.T, sid, chatID, nodeID string) *re
 	return c
 }
 
-// TestRepeatGuardEndsOrchestratorTurnOnRefuse pins #1362's settled direction
-// for the orchestrator specifically: a call that is never node-scoped
-// (nodeScope resolves nodeID=="" - the orchestrator's own hand-built tools,
-// which have no gate/continuation loop of their own) forces the caller's
-// turn to end the moment it refuses, whether or not the model heeds the
-// error.
-func TestRepeatGuardEndsOrchestratorTurnOnRefuse(t *testing.T) {
+// TestRepeatGuardOrchestratorSoftRefuseLeavesTurnOpen pins the owner's
+// settled direction for this guard (#slice3 review, a rig regression):
+// return the error to the model and let the turn continue - ending it on
+// the very first refusal denied the model any chance to correct a mistake
+// (e.g. a missing `agent` field) and retry within the same turn. A call
+// that is never node-scoped (nodeScope resolves nodeID=="" - the
+// orchestrator's own hand-built tools) must NOT touch SkipSummarization on
+// a mere soft refusal; only the hard-stop tier
+// (TestRepeatGuardEndsOrchestratorTurnOnHardStop) does.
+func TestRepeatGuardOrchestratorSoftRefuseLeavesTurnOpen(t *testing.T) {
 	calls := 0
 	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil)
 	if err != nil {
@@ -200,15 +203,54 @@ func TestRepeatGuardEndsOrchestratorTurnOnRefuse(t *testing.T) {
 		if _, err := rg.Run(ctx, args); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
-		if ctx.actions.SkipSummarization {
-			t.Fatalf("call %d: SkipSummarization set before any refusal", i)
-		}
 	}
 	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "REFUSED") {
 		t.Fatalf("3rd call: want REFUSED, got %v", err)
 	}
+	if ctx.actions.SkipSummarization {
+		t.Error("SkipSummarization = true after a single soft refusal, want the turn left open for the model to correct and retry")
+	}
+
+	// The model corrects (different args): the call runs normally, no
+	// leftover effect from the earlier refusal.
+	if _, err := rg.Run(ctx, map[string]any{"q": "corrected"}); err != nil {
+		t.Fatalf("corrected call: want it to run, got %v", err)
+	}
+	if ctx.actions.SkipSummarization {
+		t.Error("SkipSummarization = true after a corrected retry, want untouched")
+	}
+}
+
+// TestRepeatGuardEndsOrchestratorTurnOnHardStop is
+// TestRepeatGuardEndsRoundAfterRefusalIgnored's orchestrator-side twin: a
+// call never scoped to a worker node ends the CALLING turn directly via
+// SkipSummarization once the model keeps re-issuing the refused call
+// regardless (repeatHardStopAfter times past the soft-refusal threshold) -
+// not on the first refusal.
+func TestRepeatGuardEndsOrchestratorTurnOnHardStop(t *testing.T) {
+	calls := 0
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtx("s1")
+	args := map[string]any{"q": "same"}
+
+	for i := 1; i <= repeatThreshold+repeatHardStopAfter; i++ {
+		rg.Run(ctx, args)
+		if i < repeatThreshold+repeatHardStopAfter && ctx.actions.SkipSummarization {
+			t.Fatalf("call %d: SkipSummarization set before the hard-stop tier", i)
+		}
+	}
+	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "tool-call loop") {
+		t.Fatalf("call after %d refusals: want the hard-stop error, got %v", repeatThreshold+repeatHardStopAfter, err)
+	}
 	if !ctx.actions.SkipSummarization {
-		t.Error("SkipSummarization = false after a refusal, want true - an orchestrator-scoped refusal must end the caller's turn")
+		t.Error("SkipSummarization = false after the hard-stop tier, want true - the orchestrator's turn must end")
+	}
+	if calls != repeatThreshold-1 {
+		t.Fatalf("tool executed %d times; want %d (refusals must not execute)", calls, repeatThreshold-1)
 	}
 }
 
@@ -295,17 +337,20 @@ func TestRepeatGuardResets(t *testing.T) {
 // different tools (edit_plan/execute), so neither tool's own calls were ever
 // back-to-back. The streak must be keyed per (session, tool, args), not per
 // "last call in the session" - so identical calls to ONE tool still add up
-// toward refusal even with other tool calls sitting between them.
+// toward refusal even with other tool calls sitting between them. Uses
+// "execute" - crossCalls tracking is scoped to the orchestrator's own plan
+// tools (crossCallTools); a tool outside that list is covered by
+// TestRepeatGuardCrossCallScopedToPlanTools below.
 func TestRepeatGuardCountsAcrossInterleavedOtherCalls(t *testing.T) {
 	calls := 0
 	states := newRepeatStates()
-	g, _ := newRepeatGuard(newRepeatTestTool(t, &calls), states, nil)
+	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "execute", &calls), states, nil)
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 	args := map[string]any{"q": "same"}
 
 	other := 0
-	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "echo2", &other), states, nil)
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil)
 	rog := og.(*repeatGuard)
 
 	for i := 1; i <= 2; i++ {
@@ -321,6 +366,81 @@ func TestRepeatGuardCountsAcrossInterleavedOtherCalls(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("tool executed %d times; want 2 (3rd refused before running)", calls)
+	}
+}
+
+// TestRepeatGuardCrossCallScopedToPlanTools pins the reviewer's blocker
+// (#slice3 review): a tool outside crossCallTools (a worker's read_file,
+// read_artifact, ...) must never be cross-refused, even on an identical
+// (session, tool, args) key recurring with the SAME result across other
+// tool calls - re-reading the exact same resource late in a long
+// incremental-planning session is a legitimate no-op, not a loop. Only the
+// (unaffected) adjacency check still applies to it.
+func TestRepeatGuardCrossCallScopedToPlanTools(t *testing.T) {
+	calls := 0
+	states := newRepeatStates()
+	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "read_artifact", &calls), states, nil)
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtx("s1")
+	args := map[string]any{"q": "same-id"}
+
+	other := 0
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil)
+	rog := og.(*repeatGuard)
+
+	for i := 1; i <= 5; i++ {
+		if _, err := rg.Run(ctx, args); err != nil {
+			t.Fatalf("read_artifact call %d: want it to run (not a plan tool, never cross-refused), got %v", i, err)
+		}
+		if _, err := rog.Run(ctx, map[string]any{"q": fmt.Sprintf("edit %d", i)}); err != nil {
+			t.Fatalf("interleaved edit_plan call %d: %v", i, err)
+		}
+	}
+	if calls != 5 {
+		t.Fatalf("tool executed %d times; want 5 (never refused)", calls)
+	}
+}
+
+// TestRepeatGuardCrossCallHardStopAfterIgnoredRefusal is the cross-call
+// tier's own hard-stop, mirroring the adjacency one: a model stuck
+// alternating two plan tools with the SAME args+result on one of them, that
+// keeps going even after being refused, must still end the turn eventually
+// - not be refused forever.
+func TestRepeatGuardCrossCallHardStopAfterIgnoredRefusal(t *testing.T) {
+	calls := 0
+	states := newRepeatStates()
+	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "execute", &calls), states, nil)
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtx("s1")
+	args := map[string]any{"q": "same"}
+
+	other := 0
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil)
+	rog := og.(*repeatGuard)
+
+	interleave := func(i int) {
+		if _, err := rog.Run(ctx, map[string]any{"q": fmt.Sprintf("edit %d", i)}); err != nil {
+			t.Fatalf("interleaved edit_plan call %d: %v", i, err)
+		}
+	}
+
+	// Two real runs to build the cross streak, then keep re-issuing through
+	// the soft-refusal tier (repeatHardStopAfter more identical attempts).
+	for i := 1; i <= repeatThreshold+repeatHardStopAfter; i++ {
+		rg.Run(ctx, args)
+		interleave(i)
+		if i < repeatThreshold+repeatHardStopAfter && ctx.actions.SkipSummarization {
+			t.Fatalf("call %d: SkipSummarization set before the hard-stop tier", i)
+		}
+	}
+	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "tool-call loop") {
+		t.Fatalf("call after repeated cross-call refusals: want the hard-stop error, got %v", err)
+	}
+	if !ctx.actions.SkipSummarization {
+		t.Error("SkipSummarization = false after the cross-call hard-stop tier, want true")
+	}
+	if calls != repeatThreshold-1 {
+		t.Fatalf("execute ran %d times; want %d (refusals must not execute)", calls, repeatThreshold-1)
 	}
 }
 

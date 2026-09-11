@@ -33,11 +33,15 @@ type repeatGuard struct {
 // repeatThreshold: consecutive identical calls before refusal (1st=run, 2nd=retry, 3rd=refused).
 const repeatThreshold = 3
 
-// repeatHardStopAfter: further identical calls a WORKER NODE's model can
-// make after being refused before its round is force-ended via tripped. The
-// orchestrator has no such grace period - its own turn already ends at the
-// first refusal (Run()'s orchestrator branch), so it never reaches this
-// tier in the same turn.
+// repeatHardStopAfter: further identical calls the model can make after
+// being refused before the turn is force-ended - for a worker node via
+// tripped, for the orchestrator's own tools via SkipSummarization (Run()'s
+// hardStop). The owner's settled direction for this guard: return the error
+// to the model and let it try something else; only end the turn outright
+// once it keeps treading on the same refused call regardless of caller -
+// ending it on the very first refusal denied the model any chance to
+// correct and retry within the same turn (a rig regression: a missing
+// `agent` field refused, then the turn ended before the model could resupply it).
 const repeatHardStopAfter = 2
 
 // repeatStates: tracks last call fingerprint per session (adjacency), plus
@@ -51,8 +55,10 @@ const repeatHardStopAfter = 2
 // write_artifact's own fresh revision number); crossCalls catches the same
 // tool+args recurring with the SAME result despite other calls between
 // occurrences, without flagging a result that keeps changing (e.g.
-// execute's own per-round judge feedback).
+// execute's own per-round judge feedback). crossCalls tracking is further
+// scoped to crossCallTools (below) - see that doc for why.
 // ponytail: entries never pruned - add if sessions number in the millions.
+// crossCalls specifically stays bounded regardless (see crossCallTools).
 type repeatStates struct {
 	mu         sync.Mutex
 	last       map[string]*repeatState
@@ -214,14 +220,31 @@ func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 // pathFailThreshold: consecutive failures against a (tool, resource) before refusing the next call.
 const pathFailThreshold = 3
 
+// crossCallTools: repeatGuard's cross-call streak (crossCalls) only applies
+// to the orchestrator's own plan tools, where a same-args-same-result
+// repeat can never be useful progress - unlike a worker node's own tools
+// (read_file, read_artifact, ...), where re-reading the exact same resource
+// late in a long incremental-planning session is a legitimate no-op, not a
+// loop (#slice3 review). This also bounds crossCalls' own memory: none of
+// these names are ever in a worker node's tool list (registry.go's Build
+// has no constructor for any of them - they're hand-built in
+// orchestrator.go), so the long-lived repeatStates a worker agent's tools
+// share across every chat never populates crossCalls at all; the
+// orchestrator's own repeatStates (orchestrator.go) is rebuilt fresh every
+// turn regardless, so entries never outlive the turn that created them.
+var crossCallTools = map[string]bool{"create_plan": true, "edit_plan": true, "execute": true}
+
 // Run: refuses on an immediate back-to-back identical call, a same-tool
 // identical-args-identical-result streak persisting across other calls
-// between occurrences, or resource-failure churn; once the model repeats a
-// refused call repeatHardStopAfter more times, ends a worker node's round.
-// A call never scoped to a worker node (nodeScope resolves nodeID=="") is
-// the orchestrator's own - its turn ends on the first refusal instead of
-// waiting for the hard-stop tier, since it has no gate/continuation loop of
-// its own to keep it going.
+// between occurrences (crossCallTools only), or resource-failure churn.
+// Every refusal returns the error to the model and lets the turn continue -
+// the owner's settled direction is to end the turn only once the model
+// keeps re-issuing the refused call regardless (repeatHardStopAfter more
+// times): ending it on the first refusal gave the model no chance to
+// correct and retry within the same turn. A worker node's round ends via
+// tripped; the orchestrator's own turn (nodeScope resolves nodeID=="", it
+// has no gate/continuation loop of its own) ends directly via
+// SkipSummarization - same hard-stop tier, different mechanism per caller.
 func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
@@ -231,34 +254,29 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	fingerprint := g.Name() + ":" + string(argsJSON)
 	crossKey := sessionID + "|" + fingerprint
 	chatID, nodeID := nodeScope(ctx)
+	crossTracked := crossCallTools[g.Name()]
 
 	// Adjacency: this exact call immediately repeated, regardless of
 	// result - catches a tool whose own result always differs a little
 	// even on a genuine immediate repeat (e.g. a fresh artifact revision
 	// number on an otherwise byte-identical write).
-	n := g.states.observe(sessionID, fingerprint)
-	if n > repeatThreshold+repeatHardStopAfter {
-		msg := fmt.Sprintf("tool-call loop: %s called with identical arguments %d consecutive times despite being refused; node terminated", g.Name(), n)
-		slog.Warn("tool call loop: ending node turn", "component", "tools",
-			"tool", g.Name(), "consecutive", n, "session", sessionID)
-		if nodeID != "" && g.tripped != nil {
-			g.tripped(chatID, nodeID, msg)
+	if n := g.states.observe(sessionID, fingerprint); n >= repeatThreshold {
+		if n > repeatThreshold+repeatHardStopAfter {
+			return nil, g.hardStop(ctx, sessionID, chatID, nodeID, n)
 		}
-		g.endTurnIfOrchestrator(ctx, nodeID)
-		g.states.resetSession(sessionID) // a retry (e.g. revise) starts with a fresh budget, not an already-blown one
-		return nil, errors.New(msg)
-	}
-	if n >= repeatThreshold {
-		return nil, g.refuse(ctx, sessionID, nodeID, n)
+		return nil, g.refuse(sessionID, n)
 	}
 	// Cross-call: same tool+args recurring with the SAME result even with
 	// other tool calls (or other args to this tool) sitting between - the
 	// shape a model stuck alternating two tools takes (e.g.
 	// edit_plan/execute). Never trips on a result that keeps changing
 	// (e.g. execute's own per-round judge feedback).
-	if g.states.crossStreak(crossKey) >= repeatThreshold-1 {
+	if crossTracked && g.states.crossStreak(crossKey) >= repeatThreshold-1 {
 		cn := g.states.recordCrossRefusal(crossKey)
-		return nil, g.refuse(ctx, sessionID, nodeID, cn)
+		if cn > repeatThreshold+repeatHardStopAfter {
+			return nil, g.hardStop(ctx, sessionID, chatID, nodeID, cn)
+		}
+		return nil, g.refuse(sessionID, cn)
 	}
 
 	resource, hasResource := resourceFingerprint(argsJSON)
@@ -267,7 +285,6 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 		if fails := g.states.resourceFailCount(sessionID, resourceKey); fails >= pathFailThreshold {
 			slog.Warn("tool call refused: repeated failures against same resource", "component", "tools",
 				"tool", g.Name(), "resource", resource, "consecutive_fails", fails, "session", sessionID)
-			g.endTurnIfOrchestrator(ctx, nodeID)
 			return nil, fmt.Errorf(
 				"REFUSED: %s against %q has now failed %d times in a row with varying arguments. Varying the arguments "+
 					"further is not working - the problem is with %q itself or your understanding of it, not the "+
@@ -281,20 +298,21 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	if hasResource {
 		g.states.observeResourceFail(sessionID, resourceKey, runErr != nil)
 	}
-	g.states.observeCrossResult(crossKey, resultFingerprint(result, runErr))
+	if crossTracked {
+		g.states.observeCrossResult(crossKey, resultFingerprint(result, runErr))
+	}
 	return result, runErr
 }
 
-// refuse logs, ends the orchestrator's own turn when this call isn't
-// node-scoped, and builds the REFUSED error both the adjacency and
-// cross-call checks return - n is whichever check's own occurrence count
-// tripped, so consecutive refusals for the same key are never
-// byte-identical (the model can tell it's still being refused, not stuck on
-// a cached response).
-func (g *repeatGuard) refuse(ctx agent.Context, sessionID, nodeID string, n int) error {
+// refuse logs and builds the REFUSED error both the adjacency and
+// cross-call soft-refusal tiers return - the turn is NOT ended here (the
+// owner's settled direction: return the error, let the model try something
+// else). n is whichever check's own occurrence count tripped, so
+// consecutive refusals for the same key are never byte-identical (the model
+// can tell it's still being refused, not stuck on a cached response).
+func (g *repeatGuard) refuse(sessionID string, n int) error {
 	slog.Warn("tool call refused: identical call repeated", "component", "tools",
 		"tool", g.Name(), "consecutive", n, "session", sessionID)
-	g.endTurnIfOrchestrator(ctx, nodeID)
 	return fmt.Errorf(
 		"REFUSED (attempt %d): this is the %s consecutive time you issued this exact %s call with these exact "+
 			"arguments and got the same result - it is already in the conversation above. Re-issuing it again will "+
@@ -303,15 +321,26 @@ func (g *repeatGuard) refuse(ctx agent.Context, sessionID, nodeID string, n int)
 		n-repeatThreshold+1, ordinal(n), g.Name())
 }
 
-// endTurnIfOrchestrator ends the calling turn outright when this call isn't
-// node-scoped (nodeID=="") - the orchestrator's own tools (create_plan/
-// edit_plan/execute/list_nodes), which have no gate/continuation loop of
-// their own to keep re-issuing the refused call, unlike a worker node's
-// tools, which go through the tripped/hard-stop tier above instead.
-func (g *repeatGuard) endTurnIfOrchestrator(ctx agent.Context, nodeID string) {
-	if nodeID == "" {
+// hardStop is the one tier that actually ends the turn: the model kept
+// re-issuing the refused call regardless of the REFUSED error
+// (repeatHardStopAfter times past the soft-refusal threshold). A worker
+// node's round ends via tripped (dag.Executor.RepeatGuardTripped - a
+// returned error alone can't, ADK just folds it into a function response
+// and keeps the model's turn going); the orchestrator's own turn, which has
+// no such round to end, ends directly via SkipSummarization. Either way the
+// session's streaks reset, so a subsequent retry (e.g. a revise round)
+// starts with a fresh budget instead of an already-blown one.
+func (g *repeatGuard) hardStop(ctx agent.Context, sessionID, chatID, nodeID string, n int) error {
+	msg := fmt.Sprintf("tool-call loop: %s called with identical arguments and the same result %d times despite being refused; turn terminated", g.Name(), n)
+	slog.Warn("tool call loop: ending the turn", "component", "tools",
+		"tool", g.Name(), "consecutive", n, "session", sessionID)
+	if nodeID != "" && g.tripped != nil {
+		g.tripped(chatID, nodeID, msg)
+	} else if nodeID == "" {
 		ctx.Actions().SkipSummarization = true
 	}
+	g.states.resetSession(sessionID)
+	return errors.New(msg)
 }
 
 // resourceFingerprint extracts the `path` or `url` field from tool args for failure-streak tracking.
