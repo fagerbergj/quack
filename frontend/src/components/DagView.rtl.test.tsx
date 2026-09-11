@@ -46,9 +46,12 @@ describe('DagView renders a growing plan', () => {
 
     rerender(<ChatStoreProvider><DagView dag={stepTwo} /></ChatStoreProvider>)
 
-    // "a" is still there and still reads as done - its card was not wiped.
+    // "a" is still there and its StatusDot still reads "done" - its card
+    // was not wiped back to queued (the merge bug this pins).
     expect(screen.getByText('Web researcher')).toBeTruthy()
-    // "b" is the newly-added node.
+    expect(screen.getByText('done')).toBeTruthy()
+    // "b" is the newly-added node, freshly queued.
     expect(screen.getByText('code-implementer')).toBeTruthy()
+    expect(screen.getByText('queued')).toBeTruthy()
   })
 })

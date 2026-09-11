@@ -1565,6 +1565,65 @@ describe('ChatStore - fresh dag_plan resets stale top-level text (#463)', () => 
   })
 })
 
+// #slice3 review (reviewer finding): a turn attach() lifts can carry its own
+// SEEDED top-level activity (a quack:activity item) - the #463 test above
+// never catches this because its dagTurn fixture has no such item, so its
+// seeded `runs` is always empty. A re-attach whose lifted turn's activity
+// belongs to a genuinely earlier/unrelated run (not THIS stream's own) must
+// not have that stale activity render under a brand-new plan; the
+// orchestrator's own live run (this stream's own top-level agent_start
+// actually fires) must still survive - the owner's original bug report,
+// not to be regressed by this purge.
+describe('ChatStore - seeded activity purged only when this stream never saw its own top-level start (#slice3)', () => {
+  function dagTurnWithActivity(planId: string): Turn {
+    return {
+      id: 't1', created_at: '', input: { role: 'user', content: 'hi' },
+      output: [
+        {
+          type: 'quack:activity', id: 't1:activity', status: 'completed',
+          tool_calls: [{ call_id: 'c1', name: 'load_skill', args: {}, result: {} }],
+        },
+        {
+          type: 'quack:dag', id: planId, status: 'in_progress', plan_id: planId,
+          nodes: [{ id: 'a', agent: 'researcher', task: 't', depends_on: [] }], edges: [], node_states: {},
+        },
+      ],
+    }
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+  })
+
+  it('purges seeded runs when a fresh plan arrives with no top-level agent_start seen', () => {
+    const store = new ChatStore()
+    store.seed('c', [dagTurnWithActivity('old-plan')])
+    store.attach('c')
+    expect(store.get('c').live?.runs).toHaveLength(1) // seeded from the lifted turn's own activity
+
+    const es = FakeEventSource.last!
+    // A genuinely different plan, with no agent_start for THIS stream first.
+    es.emit('dag_plan', '{"plan_id":"new-plan","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+
+    expect(store.get('c').live?.runs).toEqual([])
+  })
+
+  it('keeps the run once this stream has seen its own top-level agent_start, even with seeded activity present', () => {
+    const store = new ChatStore()
+    store.seed('c', [dagTurnWithActivity('old-plan')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    // This stream's OWN top-level run actually starts - the owner's bug
+    // report shape (create_plan -> dag_plan within the same live turn).
+    es.emit('agent_start', '{"run_id":"orchestrator","stage":"worker"}')
+    es.emit('dag_plan', '{"plan_id":"new-plan","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+
+    expect(store.get('c').live?.runs?.length).toBeGreaterThan(0)
+  })
+})
+
 // #slice3 review: the orchestrator's turn continues past dag_plan (create_plan
 // -> dag_plan -> more execute calls, no delivery yet) - its own top-level run
 // must keep accumulating tool calls across that dag_plan, not get orphaned.

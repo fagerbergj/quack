@@ -672,6 +672,13 @@ export class ChatStore {
     onError: (msg: string) => void,
     onTitle?: (title: string) => void,
   ): AgentStreamHandlers {
+      // Set once THIS stream's own top-level (no-node) run actually starts -
+      // distinguishes the orchestrator's own live activity from runs merely
+      // SEEDED from a lingering/lifted LiveTurn (attach(), #463 shape: the
+      // seed came from a PRIOR run's turn, which always carries a
+      // quack:activity item once it has tool calls). onDagPlan reads this to
+      // decide whether seeded runs are stale enough to purge.
+      let sawTopLevelAgentStart = false
       const updateNodeRuns = (nodeId: string | undefined, fn: (runs: AgentRun[]) => AgentRun[]) => {
         if (!nodeId) return
         const s = this.states.get(chatId)
@@ -766,6 +773,7 @@ export class ChatStore {
             }
           } else {
             resetTopLevelText()
+            sawTopLevelAgentStart = true
           }
           return d.nodeId
             ? updateNodeRuns(d.nodeId, r => startRun(r, runArgs(d)))
@@ -860,7 +868,19 @@ export class ChatStore {
             nodeAnswer: grown ? prevDag.nodeAnswer : {},
             startedAt: grown ? prevDag.startedAt : anchorTime(plan.startedAtMs),
           }
-          this.write(chatId, { ...s, live: { ...s.live, dag, text: grown ? s.live.text : '' } })
+          // A FRESH plan whose runs were only ever SEEDED (attach(), never
+          // this stream's own agent_start) belong to whatever turn they were
+          // lifted from, not this plan - purge them (#463 shape for seeded
+          // runs: a re-attach lifts an unrelated completed turn, which
+          // always carries a quack:activity item once it has tool calls, so
+          // its stale narration/tool-calls would otherwise render under the
+          // new plan). The orchestrator's own live run (this stream's real
+          // agent_start already fired) is never purged - see above.
+          const purgeSeededRuns = !grown && !sawTopLevelAgentStart
+          this.write(chatId, {
+            ...s,
+            live: { ...s.live, dag, text: grown ? s.live.text : '', runs: purgeSeededRuns ? [] : s.live.runs },
+          })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
