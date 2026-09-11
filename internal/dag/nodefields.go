@@ -25,21 +25,6 @@ func SetAgentRoster(agents []AgentInfo) {
 	agentRoster = agents
 }
 
-// AgentInfoFor returns the current roster's entry for name, ok=false if
-// unknown - the display lookup (context window, default artifact kind)
-// create_plan/edit_plan use to build the dag_plan SSE event before execute
-// (and its own Build call) resolves the same values authoritatively.
-func AgentInfoFor(name string) (AgentInfo, bool) {
-	agentRosterMu.RLock()
-	defer agentRosterMu.RUnlock()
-	for _, a := range agentRoster {
-		if a.Name == name {
-			return a, true
-		}
-	}
-	return AgentInfo{}, false
-}
-
 // AgentNames returns the current agent roster's names, sorted - for a
 // validation error that needs to show the model its options (e.g. "give
 // node_id ... or agent: one of <AgentNames>").
