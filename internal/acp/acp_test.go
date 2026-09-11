@@ -415,9 +415,8 @@ func TestRound_PinnedProcessReusedAcrossRounds(t *testing.T) {
 	}
 }
 
-// TestRound_PreambleOnlyOnFreshSession pins perf-audit-1: the preamble
-// (agent prompt + memory + skill roster) already lives in a pinned session's
-// own conversation from round 1, so round 2+ must not resend it.
+// TestRound_PreambleOnlyOnFreshSession: a pinned session's round 2 must not
+// resend the preamble already in its own conversation.
 func TestRound_PreambleOnlyOnFreshSession(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

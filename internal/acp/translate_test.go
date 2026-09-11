@@ -249,9 +249,8 @@ func TestTranslate_UsageRidesFinalEvent(t *testing.T) {
 	}
 }
 
-// TestTranslate_UsageMetaCarriesCachedTokens pins perf audit finding 5:
-// ACP's usage_update has no prompt/cached/completion split, so pi-acp
-// carries pi's Usage breakdown through _meta - without it dag_nodes.cached_tokens is always 0.
+// TestTranslate_UsageMetaCarriesCachedTokens: usage_update's _meta breakdown
+// must reach PromptTokenCount/CachedContentTokenCount/CandidatesTokenCount.
 func TestTranslate_UsageMetaCarriesCachedTokens(t *testing.T) {
 	tr := newTranslator("/work")
 	tr.translate(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{

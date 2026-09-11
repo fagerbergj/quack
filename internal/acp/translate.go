@@ -110,9 +110,8 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		out = append(out, t.pairSpec(id, name, args, p, *up.Status == sdk.ToolCallStatusFailed, up.RawOutput))
 	case u.UsageUpdate != nil:
 		um := &genai.GenerateContentResponseUsageMetadata{TotalTokenCount: int32(u.UsageUpdate.Used)}
-		// ACP's SessionUsageUpdate has no prompt/cached/completion breakdown
-		// (github.com/coder/acp-go-sdk's SessionUsageUpdate: only cost/size/used),
-		// so pi-acp carries pi's own Usage split through the _meta extension field.
+		// ACP's usage_update has no prompt/cached/completion split, so pi-acp
+		// carries pi's own breakdown through the _meta extension field.
 		um.PromptTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackPromptTokensMetaKey)
 		um.CachedContentTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackCachedTokensMetaKey)
 		um.CandidatesTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackCompletionTokensMetaKey)

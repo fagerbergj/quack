@@ -48,10 +48,8 @@ func TestAcpSkillPathsNoDuplicateWhenOnDisk(t *testing.T) {
 	}
 }
 
-// TestAcpSkillFrontmatters_Scoped proves perf audit finding 3: the ACP
-// roster must be scoped to the agent's declared skills, same as the native
-// branch's skillsource.Scoped call - not every builtin skill regardless of
-// ac.Skills.
+// TestAcpSkillFrontmatters_Scoped: the ACP roster is scoped to the agent's
+// declared skills, not every builtin skill.
 func TestAcpSkillFrontmatters_Scoped(t *testing.T) {
 	src := newSkillSource(nil)
 	all, err := src.ListFrontmatters(context.Background())

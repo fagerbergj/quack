@@ -1709,9 +1709,7 @@ func acpSkillPaths(skillDirs []string) []string {
 }
 
 // acpSkillFrontmatters scopes an ACP agent's roster to its declared skills -
-// the same skillsource.Scoped call the native branch makes; an unscoped
-// list here put all builtin skills in every ACP round's preamble regardless
-// of ac.Skills (perf audit finding 3).
+// the same skillsource.Scoped call the native branch makes.
 func acpSkillFrontmatters(ctx context.Context, src skill.Source, names []string) ([]*skill.Frontmatter, error) {
 	return skillsource.Scoped(src, names).ListFrontmatters(ctx)
 }

@@ -18,10 +18,7 @@ import (
 var writing string
 
 // Agent: assembles layered system prompt for native or ACP agents. acp is
-// false for a native agent's roster (which never reaches here - its own
-// SkillToolset renders that instead, see build.go) and true for an ACP
-// agent, which has no load_skill tool at all - pi loads skills itself from
-// the paths quack writes into its settings.
+// true only for the ACP shape, which has no load_skill tool.
 func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, acp bool, behaviour, grading, workspace string) string {
 	var caps strings.Builder
 	if tl := toolLines(tools); tl != "" {
@@ -113,9 +110,8 @@ func toolLines(tools []tool.Tool) string {
 	return sb.String()
 }
 
-// skillLines: one bullet per skill, or "" if none. loadable agents get a
-// load_skill hint; an ACP agent has no such tool - its skills are already on
-// disk, loaded by pi itself.
+// skillLines: one bullet per skill; loadable agents also get a load_skill
+// hint - ACP has no such tool, pi loads skills itself.
 func skillLines(skills []*skill.Frontmatter, loadable bool) string {
 	if len(skills) == 0 {
 		return ""

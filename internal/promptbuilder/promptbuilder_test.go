@@ -53,10 +53,8 @@ func TestAgentLayers(t *testing.T) {
 	}
 }
 
-// TestAgentSkillsRendered verifies a native (loadable) agent's declared skill
-// scope renders as a Skills subsection with the load_skill hint (A1 -
-// previously only Orchestrator did this; a specialist had no way to learn
-// its bound skill names exist at all).
+// TestAgentSkillsRendered: a loadable agent's skill scope renders as a
+// Skills subsection with the load_skill hint.
 func TestAgentSkillsRendered(t *testing.T) {
 	skills := []*skill.Frontmatter{
 		{Name: "research-git-repos", Description: "clone and read a repo locally"},
@@ -70,11 +68,8 @@ func TestAgentSkillsRendered(t *testing.T) {
 	}
 }
 
-// TestAgentACPNoFabricatedTools verifies the ACP shape (nil tools, real
-// skills, acp=true) never fabricates a Tools section - an external coding
-// agent has no quack tools, so the Capabilities layer must carry only what's
-// real - and never tells the agent to call load_skill, a tool ACP agents do
-// not have (perf audit finding 3: pi loads skills itself from disk).
+// TestAgentACPNoFabricatedTools: the ACP shape never fabricates a Tools
+// section and never tells the agent to call load_skill, a tool it lacks.
 func TestAgentACPNoFabricatedTools(t *testing.T) {
 	skills := []*skill.Frontmatter{{Name: "ponytail", Description: "laziest thing that works"}}
 	out := promptbuilder.Agent("code-implementer", "implements code", nil, skills, true, "## Ground rules\nCommit atomically.", "", "")
