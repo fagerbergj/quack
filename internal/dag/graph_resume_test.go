@@ -126,4 +126,3 @@ func TestNewGatedNode_FreshNodeHasNoACPSessionID(t *testing.T) {
 		t.Errorf("AdvisorTask.ACPSessionID = %q, want empty for a fresh node", stub.seen)
 	}
 }
-

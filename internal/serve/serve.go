@@ -656,7 +656,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	freshnessChecker, freshnessCheckerName := findAssignmentFreshnessChecker(sdkExts)
 	var assignmentFreshness tools.AssignmentFreshnessFunc
 	if freshnessChecker != nil {
-		assignmentFreshness = func(ctx adkagent.Context, a dag.Assignment) (bool, string) { return freshnessChecker.BeforeAssignment(ctx, a) }
+		assignmentFreshness = func(ctx adkagent.Context, a dag.Assignment) (bool, string) {
+			return freshnessChecker.BeforeAssignment(ctx, a)
+		}
 		slog.Info("extension supplies assignment freshness checks", "component", "startup", "extension", freshnessCheckerName)
 	}
 	metaExtension, metaExtensionName := findAssignmentMetaExtension(sdkExts)

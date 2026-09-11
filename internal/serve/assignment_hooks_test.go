@@ -85,4 +85,3 @@ func TestFindAssignmentMetaExtension(t *testing.T) {
 		t.Errorf("meta = %+v, want base_sha forwarded", meta)
 	}
 }
-
