@@ -16,7 +16,7 @@ const env = { ...process.env };
 if (!process.env.PI_ACP_REAL) env.PI_ACP_PI_CMD = join(here, "fake-pi.mjs");
 if (!env.OPENCODE_CONFIG_CONTENT)
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    provider: { quack: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "unused" }, models: { stub: { limit: { context: 65536 } } } } },
+    provider: { quack: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "unused" }, models: { stub: { limit: { context: 65536, output: 32768 } } } } },
     skills: { paths: ["/opt/quack/skills"] },
   });
 
@@ -122,6 +122,7 @@ if (!process.env.ACP_CMD) {
 
   const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
   assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's limit.context");
+  assert.equal(models.providers.quack.models[0].maxTokens, 32768, "maxTokens not plumbed from config's limit.output");
 }
 
 const prompt = process.env.PI_ACP_REAL
@@ -324,5 +325,6 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   const sess2 = await call2("session/new", { cwd: process.cwd(), mcpServers: [] });
   const models2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "models.json"), "utf8"));
   assert.ok(!("contextWindow" in models2.providers.quack.models[0]), "contextWindow written when unset");
+  assert.ok(!("maxTokens" in models2.providers.quack.models[0]), "maxTokens written when unset");
   shim2.stdin.end();
 }
