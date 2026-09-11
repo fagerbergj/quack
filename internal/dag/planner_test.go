@@ -705,26 +705,23 @@ func TestBuildAcceptsEachValidDeliveryKind(t *testing.T) {
 	}
 }
 
-// #888: a quack:review dispatch (explorer + synthesizer, no code-reviewer)
-// was accepted by the LLM plan judge - nothing in that plan could ever stage
-// a formal review, so the answer posted as a bare issue comment and merge automation saw no review. checkReviewDeliverable is deterministic and runs unconditionally, so it must reject this shape even when a permissive judge would have waved it through.
-func TestBuildRejectsReviewDispatchWithoutReviewerNode(t *testing.T) {
-	judge, calls, _, _ := fakePlanJudge(true, "", nil) // judge would accept - the deterministic check must still fire
+// A partial step (no reviewer yet, delivery undeclared) in a dispatch that
+// merely ALLOWS review among several kinds is not yet the structurally-
+// impossible case #888 guards against - the model hasn't committed to
+// "review" as this plan's delivery, so checkReviewDeliverable must not fire
+// off the dispatch's allowed kinds alone (a partial plan is valid, more
+// nodes to follow - #slice3).
+func TestBuildAllowsPartialReviewDispatchWhenDeliveryUndeclared(t *testing.T) {
+	judge, calls, _, _ := fakePlanJudge(true, "", nil)
 	p := NewPlanner([]AgentInfo{{Name: explorerAgent}, {Name: "synthesizer"}}, nil, judge)
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "explore", Agent: explorerAgent, Task: "Read the diff and form a verdict."},
-		{ID: "synth", Agent: "synthesizer", Task: "Post the verdict.", DependsOn: []string{"explore"}},
 	}, nil, nil, nil, "Review PR #888.", nil, []string{"review", "comment"})
-	if err == nil {
-		t.Fatal("Build: expected rejection - a review dispatch with no code-reviewer node can never stage a review")
+	if err != nil {
+		t.Fatalf("Build: a partial step with delivery undeclared must not be rejected for lacking a reviewer node yet: %v", err)
 	}
-	if !strings.Contains(err.Error(), reviewerAgent) {
-		t.Errorf("Build error = %q, want it to name %q as the fix", err, reviewerAgent)
-	}
-	// The deterministic check runs before the (expensive, sometimes-wrong) LLM
-	// judge and short-circuits Build - the judge must never even be called.
-	if *calls != 0 {
-		t.Errorf("plan judge calls = %d, want 0 - the deterministic check must short-circuit before it", *calls)
+	if *calls != 1 {
+		t.Errorf("plan judge calls = %d, want 1 - the deterministic check must not short-circuit a legitimately partial plan", *calls)
 	}
 }
 
@@ -928,7 +925,25 @@ func TestPlanSummaryIncludesSetupAndDelivery(t *testing.T) {
 func TestPlanSummaryNotesAbsentSetupAndDelivery(t *testing.T) {
 	plan := &Plan{Nodes: []Node{{ID: "r", AgentName: "web-researcher"}}}
 	got := planSummary(plan)
-	if !strings.Contains(got, "setup: (none declared)") || !strings.Contains(got, "delivery: (none declared)") {
+	if !strings.Contains(got, "setup: (none declared)") || !strings.Contains(got, "delivery: (none declared") {
 		t.Errorf("planSummary = %q, want it to note setup/delivery are absent", got)
+	}
+}
+
+// TestPlanSummaryShowsAlreadyRanResult: the plan judge judges a growing
+// plan's WHOLE shape on every step, so an already-run node's result (carried
+// from dag.Assignment.Result via AssignmentsToRawNodes/assemble) must appear
+// in the summary the judge reads, not just its task.
+func TestPlanSummaryShowsAlreadyRanResult(t *testing.T) {
+	plan := &Plan{Nodes: []Node{
+		{ID: "r", AgentName: "web-researcher", Task: "find the file", Result: "FOUND: internal/foo/bar.go defines it"},
+		{ID: "impl", AgentName: "code-implementer", Task: "add the comment", DependsOn: []string{"r"}},
+	}}
+	got := planSummary(plan)
+	if !strings.Contains(got, "ALREADY RAN") || !strings.Contains(got, "FOUND: internal/foo/bar.go defines it") {
+		t.Errorf("planSummary = %q, want it to show r's already-ran result", got)
+	}
+	if strings.Contains(got, "impl") && strings.Contains(got[strings.Index(got, "- impl"):], "ALREADY RAN") {
+		t.Errorf("planSummary = %q, want impl (never run) to carry no ALREADY RAN marker", got)
 	}
 }

@@ -122,6 +122,8 @@ type RawNode struct {
 	Artifact string `json:"artifact,omitempty"`
 	// ResumedFrom: see Node.ResumedFrom - carried through unchanged by assemble.
 	ResumedFrom string `json:"resumed_from,omitempty"`
+	// Result: see Node.Result - carried through unchanged by assemble.
+	Result string `json:"result,omitempty"`
 }
 
 // ValidateArtifactKind rejects an artifact selector outside the registered
@@ -149,7 +151,7 @@ func AssignmentsToRawNodes(assignments []Assignment, nodeAgent, resumedFrom map[
 		out = append(out, RawNode{
 			ID: a.NodeID, Agent: agent, Task: a.Task, Rubric: a.Rubric,
 			DependsOn: a.DependsOn, Checks: a.Checks, Workdir: a.Workdir,
-			ResumedFrom: resumedFrom[a.NodeID],
+			ResumedFrom: resumedFrom[a.NodeID], Result: a.Result,
 		})
 	}
 	return out, nil
@@ -242,6 +244,10 @@ func emitPlanRejectedEvent(ctx context.Context, plan *Plan, reason string) {
 	)
 }
 
+// resultPreviewLen caps how much of an already-run node's result the judge
+// sees - enough to judge progress, not a full re-read of the output.
+const resultPreviewLen = 600
+
 func planSummary(p *Plan) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
@@ -251,6 +257,12 @@ func planSummary(p *Plan) string {
 			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
 		}
 		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
+		if r := strings.TrimSpace(n.Result); r != "" {
+			if len(r) > resultPreviewLen {
+				r = r[:resultPreviewLen] + "…"
+			}
+			fmt.Fprintf(&sb, "\n    ALREADY RAN, result: %s", r)
+		}
 	}
 	if p.Setup != nil {
 		fmt.Fprintf(&sb, "\nsetup: repo=%q base_ref=%q work_branch=%q", p.Setup.Repo, p.Setup.BaseRef, p.Setup.WorkBranch)
@@ -260,7 +272,7 @@ func planSummary(p *Plan) string {
 	if p.Delivery != nil {
 		fmt.Fprintf(&sb, "\ndelivery: kind=%q", p.Delivery.Kind)
 	} else {
-		sb.WriteString("\ndelivery: (none declared)")
+		sb.WriteString("\ndelivery: (none declared - this step may be a partial plan, more nodes to follow)")
 	}
 	return sb.String()
 }
@@ -280,15 +292,12 @@ func planSummary(p *Plan) string {
 // Ceiling: a plan WITH a code-reviewer node always passes even if that
 // node's task text never actually calls stage_review - this only catches
 // the structurally-impossible case, not a lazy reviewer task.
+//
+// Fires only off an EXPLICITLY declared plan.Delivery, never a dispatch's
+// merely-allowed kinds: a step with no reviewer node yet may just be
+// partial, waiting on delivery to be declared once the plan grows there.
 func checkReviewDeliverable(plan *Plan) error {
-	expectsReview := plan.Delivery != nil && plan.Delivery.Kind == "review"
-	for _, k := range plan.AllowedDeliveryKinds {
-		if k == "review" {
-			expectsReview = true
-			break
-		}
-	}
-	if !expectsReview {
+	if plan.Delivery == nil || plan.Delivery.Kind != "review" {
 		return nil
 	}
 	for _, n := range plan.Nodes {
@@ -414,6 +423,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			ContextWindow: agentInfo.ContextWindow,
 			Artifact:      artifactKind,
 			ResumedFrom:   n.ResumedFrom,
+			Result:        n.Result,
 		})
 	}
 
