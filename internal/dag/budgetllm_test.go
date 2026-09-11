@@ -132,7 +132,7 @@ func TestBudgetedLLMNeverOrphansACallOrResponse(t *testing.T) {
 // its neighbor.
 func TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = budgetOutputReserve + 200 // usable budget = 200 tokens - tight
+	const contextWindow = 800 // reserve capped at contextWindow/4 = 200, so budget = 600 - tight
 	llm := NewBudgetedLLM(rec, contextWindow)
 
 	blob := strings.Repeat("x", 300)
@@ -169,7 +169,7 @@ func TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole(t *testing.T) {
 // survives, and the model server then 500s with "no user query found".
 func TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = budgetOutputReserve + 200 // usable budget = 200 tokens - tight
+	const contextWindow = 800 // reserve capped at contextWindow/4 = 200, so budget = 600 - tight
 	llm := NewBudgetedLLM(rec, contextWindow)
 
 	opening := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "session start: review this repo"}}}
@@ -206,11 +206,9 @@ func TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory(t *testing.T) {
 				t.Fatalf("Contents[%d] is a FunctionCall whose next content (%d) is not its FunctionResponse - pairing broken", i, i+1)
 			}
 		}
-// TestNewBudgetedLLMCapsReserveAtContextWindow8 is the regression test for
-// finding 2: a flat 20_000-token reserve left the rig's 32768-token window
-// with only 12768 usable, when measured orchestrator output peaks at ~1.1k.
-// Below the flat 20k, the reserve caps at contextWindow/8 instead.
-func TestNewBudgetedLLMCapsReserveAtContextWindow8(t *testing.T) {
+	}
+}
+
 // Below the flat 20k, the reserve caps at contextWindow/4 instead.
 func TestNewBudgetedLLMCapsReserveAtContextWindow4(t *testing.T) {
 	rec := &recordingBudgetLLM{}
