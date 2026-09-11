@@ -89,9 +89,8 @@ type Config struct {
 	User       string // observability only; resolved from the ADK session, not caller-set
 	Source     string // observability only; run origin (extension name or a fixed app value)
 	Task       string // delivery check; empty = no check
-	// UpstreamAnswers: rendered output of this node's dependencies (buildJudgePrompt
-	// bounds it with boundExcerpt) - the worker already gets it (buildTask); the
-	// judge needs it too to verify claims like "the file/line found upstream".
+	// UpstreamAnswers: this node's dependency output, same as buildTask gives
+	// the worker - the judge needs it too to verify upstream-sourced claims.
 	UpstreamAnswers string
 	Workdir         string          // for Checks; ignored when Checks empty
 	ChatID          string          // per-chat workspace scope

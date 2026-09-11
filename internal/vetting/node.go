@@ -833,9 +833,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				return "", GateResult{}, ierr // ErrNodePaused (wrapping ADK's park sentinel)
 			}
 			if strings.TrimSpace(revised) == "" || revised == answer {
-				// No-op revise (empty or byte-identical to what the judge already scored)
-				// only skips re-judging if act is unchanged too - a tool call can still move
-				// act (e.g. stage_review_comment) without the prior verdict having seen it.
+				// No-op revise (empty or identical) only skips re-judging if act is
+				// unchanged too - a tool call can move act without the answer text changing.
 				if reflect.DeepEqual(act, actFor(answer)) {
 					log.Info("revise produced no change; keeping current verdict", "round", round)
 					break

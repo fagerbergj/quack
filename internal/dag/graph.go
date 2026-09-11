@@ -260,8 +260,8 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			refreshed := refreshSetup != nil && refreshSetup(ctx, node, cfg)
 
 			upstream := upstreamFromInput(in, node.DependsOn)
-			cfg.UpstreamAnswers = renderUpstreamForJudge(upstream, node.DependsOn)
 			gateFailed := readGateFailed(ctx, node.DependsOn)
+			cfg.UpstreamAnswers = renderUpstreamForJudge(upstream, node.DependsOn, gateFailed)
 			prompt := buildTask(plan, effectiveNode, upstream, gateFailed)
 			if refreshed {
 				prompt += refreshedNote
@@ -437,13 +437,20 @@ func readGateFailed(ctx adkagent.Context, dependsOn []string) map[string]bool {
 	return out
 }
 
-// renderUpstreamForJudge: same upstream outputs buildTask hands the worker,
-// rendered for the judge so it can check claims like "the file identified upstream" instead of taking them on faith.
-func renderUpstreamForJudge(upstream map[string]string, dependsOn []string) string {
+// renderUpstreamForJudge: same upstream outputs and gate-failed/no-answer
+// markers buildTask hands the worker, so the judge can't read a flagged upstream answer as trustworthy.
+func renderUpstreamForJudge(upstream map[string]string, dependsOn []string, gateFailed map[string]bool) string {
 	var sb strings.Builder
 	for _, dep := range dependsOn {
 		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
-			fmt.Fprintf(&sb, "--- from %q ---\n%s\n\n", dep, out)
+			fmt.Fprintf(&sb, "--- from %q ---\n", dep)
+			if gateFailed[dep] {
+				sb.WriteString("⚠ WARNING: this input FAILED independent quality vetting (unverified claims or missing citations). Treat its claims with suspicion:\n\n")
+			}
+			sb.WriteString(out)
+			sb.WriteString("\n\n")
+		} else {
+			fmt.Fprintf(&sb, "--- from %q ---\n⚠ NOTE: this upstream node produced NO answer - it failed; there is no data to verify against for its part.\n\n", dep)
 		}
 	}
 	return sb.String()

@@ -316,7 +316,7 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 }
 
 // buildJudgePrompt: assembles judge's user message. Order is constitution →
-// rubric → task → question → ledger → changed files → known failures → commit-hygiene evidence → answer: every section that is byte-identical round to round leads, and the one section that changes every round (the
+// rubric → task → upstream → question → ledger → changed files → known failures → commit-hygiene evidence → answer: every section that is byte-identical round to round leads, and the one section that changes every round (the
 // answer being judged) trails last, so the whole prefix ahead of it stays a prompt-cache hit across rounds instead of dying at the first volatile byte. judgePromptBuilds counts buildJudgePrompt calls - test-only seam proving fitJudgeAnswer's prompt isn't thrown away and rebuilt by runJudgeRound.
 var judgePromptBuilds atomic.Int64
 
@@ -1177,7 +1177,9 @@ const (
 	maxPreviousAnswerChars   = 16_000
 	maxActivitySectionChars  = 32_000
 	maxFeedbackChars         = 16_000
-	maxUpstreamAnswersChars  = 24_000
+	// maxUpstreamAnswersChars is fixed regardless of JudgeContextWindow; on a
+	// small window fitJudgeAnswer's minJudgeAnswerChars floor absorbs the pressure by clamping the answer, never this section.
+	maxUpstreamAnswersChars = 24_000
 )
 
 // boundExcerpt: head+tail excerpt with truncation marker. Favours head at 60/40.
