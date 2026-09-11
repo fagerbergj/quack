@@ -44,6 +44,19 @@ func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, 
 	if len(run) == 0 {
 		return map[string]string{}, false, nil
 	}
+	// Every node in run gets queued first, fresh hire or reused - the only
+	// lawful way into "running" for a REUSED node, whose prior status can be
+	// terminal (done/failed/cancelled -> queued -> running; CanTransition
+	// refuses a direct done -> running, #slice3 review's rig regression). A
+	// fresh node's own queued -> queued (or the empty-status default) is
+	// just an idempotent re-queue. ResumePlanStep must NOT do this: its node
+	// is mid-flight (paused/needs_input), and queued isn't a legal target
+	// from there - driveStep, which both share, stays untouched.
+	if sink, ok := stream.YieldFromContext(ctx); ok {
+		for nid := range run {
+			sink(stream.NodeQueued(nid))
+		}
+	}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "run"}}}
 	return e.driveStep(ctx, plan, appName, userID, chatID, seeded, run, content)
 }

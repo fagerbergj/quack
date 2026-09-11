@@ -85,3 +85,59 @@ func TestRunPlanStep_HITLPauseThenResume(t *testing.T) {
 		t.Fatalf("step 2: node_done = %v, want exactly one for n1", done)
 	}
 }
+
+// TestRunPlanStep_ReusedNodeEmitsNodeQueuedFirst pins the QA rig regression
+// (#slice3 review): "persistNodeEvent: dag_node status update failed ...
+// illegal status transition done -> running" for a node reassigned in a
+// later incremental step - dag.CanTransition refuses a direct done ->
+// running (only done -> queued -> running is legal), so RunPlanStep must
+// emit node_queued for a REUSED node exactly as a fresh dispatch does, not
+// jump straight to node_start.
+func TestRunPlanStep_ReusedNodeEmitsNodeQueuedFirst(t *testing.T) {
+	stub := &graphStub{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "worker", Model: stub, Description: "worker", Instruction: "ROLE:worker",
+	})
+	if err != nil {
+		t.Fatalf("worker agent: %v", err)
+	}
+	ex := NewExecutor(session.InMemoryService(),
+		map[string]adkagent.Agent{"worker": worker}, nil,
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := Plan{ID: "p", UserMessage: "go", Nodes: []Node{
+		{ID: "n1", AgentName: "worker", Task: "PLAIN-TASK"},
+	}}
+
+	var seq []string
+	ctx := stream.WithYield(context.Background(), func(ev stream.SSEEvent) {
+		switch d := ev.Data.(type) {
+		case stream.NodeQueuedData:
+			seq = append(seq, "queued:"+d.NodeID)
+		case stream.NodeStartData:
+			seq = append(seq, "start:"+d.NodeID)
+		case stream.NodeDoneData:
+			seq = append(seq, "done:"+d.NodeID)
+		}
+	})
+
+	run := map[string]bool{"n1": true}
+	if _, paused, err := ex.RunPlanStep(ctx, plan, "quack", "u", "chat", nil, run); err != nil || paused {
+		t.Fatalf("step 1: paused=%v err=%v", paused, err)
+	}
+	if got := seq[len(seq)-1]; got != "done:n1" {
+		t.Fatalf("step 1: last event = %q, want done:n1; seq=%v", got, seq)
+	}
+
+	// Step 2: n1 reassigned (still the same node id, e.g. edit_plan gave it
+	// a new task) - a fresh RunPlanStep call, reusing an already-"done" node.
+	seq = nil
+	if _, paused, err := ex.RunPlanStep(ctx, plan, "quack", "u", "chat", nil, run); err != nil || paused {
+		t.Fatalf("step 2: paused=%v err=%v", paused, err)
+	}
+	if len(seq) < 2 || seq[0] != "queued:n1" {
+		t.Fatalf("step 2: events = %v, want to start with queued:n1 (a reused node must queue before running)", seq)
+	}
+	if seq[len(seq)-1] != "done:n1" {
+		t.Fatalf("step 2: last event = %q, want done:n1", seq[len(seq)-1])
+	}
+}
