@@ -422,8 +422,8 @@ type WorkspaceGCConfig struct {
 	ChatTTLHours    int   `yaml:"chat_ttl_hours"`
 	ScratchTTLHours int   `yaml:"scratch_ttl_hours"`
 	IntervalHours   int   `yaml:"interval_hours"`
-	// HomeMaxMB bounds the ACP agent's shared $HOME (opencode.db, snapshot,
-	// tool-output, log) - the one directory nothing else ever collects. Reset
+	// HomeMaxMB bounds the ACP agent's shared $HOME (its own private state -
+	// caches, DBs, logs) - the one directory nothing else ever collects. Reset
 	// whole, only when none of the user's chats have a round in flight.
 	HomeMaxMB int `yaml:"home_max_mb"`
 }
@@ -555,9 +555,10 @@ type AcpAgentConfig struct {
 	Env        map[string]string `yaml:"env"`
 	McpServers []string          `yaml:"mcp_servers"`
 	ReadOnly   bool              `yaml:"read_only"`
-	// AllowClone lifts the git clone deny for this agent (code-explorer reads
-	// third-party repos the gate never provisions). Requires ReadOnly - see
-	// validate - and takes effect only under a sandbox that enforces a boundary on the ACP child, landlock or bwrap (serve.opencodeEnv / workspace.EnforcesBoundary).
+	// AllowClone is meant to lift the git clone deny for this agent
+	// (code-explorer reads third-party repos the gate never provisions).
+	// Requires ReadOnly - see validate. Currently has no runtime effect: the
+	// pi-acp shim's own clone deny (tools/pi-acp/mcp-client.mjs) is unconditional and doesn't consult this field.
 	AllowClone bool `yaml:"allow_clone"`
 }
 

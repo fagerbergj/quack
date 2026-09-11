@@ -23,9 +23,9 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestMemoryMCPServers_SSEWireShape pins the session/new wire shape opencode
-// requires: an SSE server with type "sse" and a non-null headers array. The
-// original Http variant (type unset, headers nil) serialized to {"type":"","headers":null,...}, which opencode rejected with -32602 and killed the ACP subprocess - breaking every code node. Guard against regress.
+// TestMemoryMCPServers_SSEWireShape pins the session/new wire shape a strict
+// ACP client requires: an SSE server with type "sse" and a non-null headers
+// array. The original Http variant (type unset, headers nil) serialized to {"type":"","headers":null,...}, which a strict ACP subprocess rejected with -32602 and killed the connection - breaking every code node. Guard against regress.
 func TestMemoryMCPServers_SSEWireShape(t *testing.T) {
 	caps := sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}}
 
@@ -50,7 +50,7 @@ func TestMemoryMCPServers_SSEWireShape(t *testing.T) {
 		t.Errorf("Type = %q, want \"sse\"", s.Sse.Type)
 	}
 	if s.Sse.Headers == nil {
-		t.Error("Headers is nil; opencode needs a non-null array")
+		t.Error("Headers is nil; a strict ACP client needs a non-null array")
 	}
 	// And the marshaled JSON must carry type:"sse" and headers:[] (not null).
 	b, err := json.Marshal(s)
@@ -434,7 +434,7 @@ func TestMemoryMCPURL_LoopbackOnly(t *testing.T) {
 
 // TestMemoryMCP_NamespaceIsSurfaceNeutral pins the shared per-node server's
 // name: "quackmcp" - surface-neutral (not "quack-memory", since it also
-// serves review/PR tools) and distinct from bare "quack" (opencode's own config names quack's LLM provider "quack" in the same config, so a collision there suppresses the tool prefix entirely). Checks both the server's own identity (initialize handshake) and the Name handed to opencode in session/new (memoryMCPServers - the one that drives the tool prefix).
+// serves review/PR tools) and distinct from bare "quack" (the pi-acp shim names pi's own LLM provider "quack" in its models.json, so a collision there suppresses the tool prefix entirely). Checks both the server's own identity (initialize handshake) and the Name handed to the ACP subprocess in session/new (memoryMCPServers - the one that drives the tool prefix).
 func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})
@@ -454,13 +454,13 @@ func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 		t.Fatalf("expected one SSE server, got %#v", servers)
 	}
 	if got := servers[0].Sse.Name; got != "quackmcp" {
-		t.Errorf("session/new server name = %q, want \"quackmcp\" - this is what opencode prefixes tool names with", got)
+		t.Errorf("session/new server name = %q, want \"quackmcp\" - this is what the pi-acp shim prefixes tool names with", got)
 	}
 }
 
 // TestReviewMCP_ToolNamesUnprefixed pins the review + PR tool names the ACP
 // agent prompts (agents/code-reviewer, agents/code-implementer) hardcode: the
-// wire-level MCP tool name is always the bare "stage_review_comment" etc, and opencode adds the "quack_" prefix client-side, so these strings - the ones grepped for elsewhere - must never change without a matching prompt update.
+// wire-level MCP tool name is always the bare "stage_review_comment" etc, and the pi-acp shim adds the "quackmcp_" prefix client-side, so these strings - the ones grepped for elsewhere - must never change without a matching prompt update.
 func TestReviewMCP_ToolNamesUnprefixed(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})

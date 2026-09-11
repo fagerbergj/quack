@@ -370,7 +370,7 @@ func TestTranslate_MCPMetaResolvesRealToolName(t *testing.T) {
 	}
 }
 
-// A third-party ACP agent (e.g. opencode) can't set _meta, but it registers
+// A third-party ACP agent (e.g. gemini-cli) can't set _meta, but it registers
 // quack's MCP tools under "<mcpServerName>_<tool>" the same way pi-acp does -
 // stripping that prefix off the title works without any agent-side change.
 func TestTranslate_MCPTitlePrefixResolvesRealToolName(t *testing.T) {

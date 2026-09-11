@@ -95,7 +95,7 @@ func traceparentEnv(ctx context.Context) []string {
 
 // wrappedArgv is the subprocess argv actually exec'd: a.opts.Command wrapped
 // through the SAME sandbox seam every other child runs inside
-// (workspace.WrapArgv) - RW (or RO, per caps.ReadOnly - #754) is cwd's own scope (the node dir), RO adds the skill paths opencode needs to read (ExtraRO) on top of the caps' own system + exec_path grants. landlock applies them as a ruleset, bwrap as identity bind mounts (#921); `none` passes Command through unchanged.
+// (workspace.WrapArgv) - RW (or RO, per caps.ReadOnly - #754) is cwd's own scope (the node dir), RO adds the skill paths the ACP agent needs to read (ExtraRO) on top of the caps' own system + exec_path grants. landlock applies them as a ruleset, bwrap as identity bind mounts (#921); `none` passes Command through unchanged.
 func (a *Agent) wrappedArgv(cwd string, caps workspace.Caps) []string {
 	return workspace.WrapArgv(cwd, a.opts.Command, caps, a.opts.ExtraRO, nil)
 }
@@ -109,7 +109,7 @@ func (a *Agent) spawnEnv(caps workspace.Caps) []string {
 
 // start spawns the agent subprocess rooted at cwd and wires the ACP
 // connection - or, when Options.Replay is set, wires the SAME connection
-// machinery against a recorded conversation instead (startReplay): no subprocess, no opencode binary (#604). Fork-replay (#605): when the session is in fork mode and this round's stream goes live (startReplay returns a *replay.ForkSignal), start falls through to startLive - the SAME real-subprocess path a never-replayed round takes, so "live" for ACP needs no separate delegate object, only the opts every round already carries (Command, Env, Caps, ...).
+// machinery against a recorded conversation instead (startReplay): no subprocess, no ACP agent binary (#604). Fork-replay (#605): when the session is in fork mode and this round's stream goes live (startReplay returns a *replay.ForkSignal), start falls through to startLive - the SAME real-subprocess path a never-replayed round takes, so "live" for ACP needs no separate delegate object, only the opts every round already carries (Command, Env, Caps, ...).
 func (a *Agent) start(ctx context.Context, cwd string, caps workspace.Caps) (*procHandle, error) {
 	if a.opts.Replay != nil {
 		h, err := a.startReplay(ctx)
@@ -123,7 +123,7 @@ func (a *Agent) start(ctx context.Context, cwd string, caps workspace.Caps) (*pr
 	return a.startLive(ctx, cwd, caps)
 }
 
-// startLive spawns a real opencode subprocess and wires the ACP connection -
+// startLive spawns a real ACP subprocess and wires the ACP connection -
 // the only path before #605 added fork-replay's live fallback.
 func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) (*procHandle, error) {
 	h := &procHandle{
@@ -166,7 +166,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) 
 
 // startReplay resolves this round's recorded invoke_agent entry (the SAME
 // ledger.Coords seam inference.NewReplayModel and the tools' replay stubs
-// read - ledger.CoordsFromContext) and wires the ACP connection over a replayAgentIO instead of a real subprocess's pipes: h.cmd stays nil (close then has nothing to kill/wait on), so the gate's view of this round is reproduced with no opencode binary at all.
+// read - ledger.CoordsFromContext) and wires the ACP connection over a replayAgentIO instead of a real subprocess's pipes: h.cmd stays nil (close then has nothing to kill/wait on), so the gate's view of this round is reproduced with no ACP agent binary at all.
 func (a *Agent) startReplay(ctx context.Context) (*procHandle, error) {
 	sent, received, err := a.opts.Replay.NextInvokeAgent(ledger.CoordsFromContext(ctx), a.name)
 	if err != nil {
@@ -233,7 +233,8 @@ func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) e
 
 // RequestPermission routes the ask to the safety judge (Options.
 // PermissionJudge) - the ACP twin of the native guard ladder's judge tier.
-// The generated permission config already allows everything a round legitimately needs, so an ask is by construction the exceptional case (a directory escape, a .env read, opencode's doom_loop detector); the judge decides it with context. No judge configured ⇒ allow, matching the single-tenant container-is-the-boundary posture.
+// The pi-acp shim's checkPolicy (tools/pi-acp/mcp-client.mjs) hard-blocks git
+// push/clone and escalates only a .env read here; the judge decides it with context. No judge configured ⇒ allow, matching the single-tenant container-is-the-boundary posture.
 func (c *clientHandler) RequestPermission(ctx contextT, p sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
 	title := ""
 	if p.ToolCall.Title != nil {

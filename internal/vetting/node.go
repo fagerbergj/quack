@@ -96,7 +96,7 @@ const AskToolName = "ask_user"
 
 const memoryCommitTimeout = 3 * time.Minute
 
-// envScaffoldRe matches a leading opencode <env>...</env> preamble.
+// envScaffoldRe strips a leading <env>...</env> preamble an ACP agent echoes into its answer.
 var envScaffoldRe = regexp.MustCompile(`(?s)^\s*<env>.*?</env>\s*`)
 
 // stripLeadingEnvScaffold drops a leading <env> block so an answer that is

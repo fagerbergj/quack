@@ -85,7 +85,7 @@ func TestFork_StrictModeStillNeverSpawns(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, err := New("code-implementer", "external coder", Options{
-		Command: []string{"/nonexistent/opencode-must-not-spawn"},
+		Command: []string{"/nonexistent/pi-acp-must-not-spawn"},
 		Home:    t.TempDir(),
 		Jail:    jail,
 		UserID:  "u1",

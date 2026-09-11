@@ -48,7 +48,7 @@ func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
 	// silently succeeding against a real subprocess.
 	jail := live.opts.Jail
 	replayed, err := New("code-implementer", "external coder", Options{
-		Command: []string{"/nonexistent/opencode-must-not-spawn"},
+		Command: []string{"/nonexistent/pi-acp-must-not-spawn"},
 		Home:    t.TempDir(),
 		Jail:    jail,
 		UserID:  "u1",
@@ -116,7 +116,7 @@ func TestPlayback_MissingExchangeIsMissError(t *testing.T) {
 	}
 
 	replayed, err := New("code-implementer", "external coder", Options{
-		Command: []string{"/nonexistent/opencode-must-not-spawn"},
+		Command: []string{"/nonexistent/pi-acp-must-not-spawn"},
 		Home:    t.TempDir(),
 		Jail:    live.opts.Jail,
 		UserID:  "u1",

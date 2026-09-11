@@ -773,7 +773,7 @@ func ChildPath(caps Caps) string {
 
 // WrapArgv: the ONE seam for callers outside RunArgv/newChildCmd (e.g. ACP).
 // Deliberately does NOT apply caps.Limits (#798, reverting #646): a one-shot
-// check's ceilings do not transfer to a long-lived agent process. Measured on the live deployment, EACH limit alone stopped opencode reaching its first ACP message - RLIMIT_FSIZE 1024MB against an opencode.db already at 1.27GB (a WAL checkpoint extends the file, so EFBIG), and RLIMIT_AS 8192MB against a V8 process that reserves a huge virtual region before it runs anything. Both surfaced as the same opaque SQLite error. Any fixed FSIZE is a date rather than a bound while the agent's DB grows, so this seam grants no ceiling at all and the container's own quota is the boundary here.
+// check's ceilings do not transfer to a long-lived agent process. Measured on the live deployment, EACH limit alone stopped the ACP agent reaching its first ACP message - RLIMIT_FSIZE 1024MB against its own DB already at 1.27GB (a WAL checkpoint extends the file, so EFBIG), and RLIMIT_AS 8192MB against a V8 process that reserves a huge virtual region before it runs anything. Both surfaced as the same opaque SQLite error. Any fixed FSIZE is a date rather than a bound while the agent's DB grows, so this seam grants no ceiling at all and the container's own quota is the boundary here.
 func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) []string {
 	if len(argv) == 0 || !EnforcesBoundary(caps.Sandbox) {
 		if caps.ReadOnly {
@@ -792,7 +792,7 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 
 // EnforcesBoundary reports whether mode gives a WrapArgv'd child an
 // OS-enforced path boundary (work tree per caps.ReadOnly, $HOME/$TMPDIR
-// writable, nothing else reachable). The gate on capabilities that REST on that boundary - acp.allow_clone and the wide external_directory it needs, see serve.opencodeEnv. SandboxNone never qualifies.
+// writable, nothing else reachable). SandboxNone never qualifies.
 func EnforcesBoundary(mode SandboxMode) bool {
 	return mode == SandboxLandlock || mode == SandboxBwrap
 }

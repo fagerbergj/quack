@@ -49,9 +49,9 @@ func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 	t.Cleanup(func() { ts.Close() })
 	cs := connectMCP(t, ts, secret)
 
-	// The server's own advertised name is what opencode prefixes onto every
-	// tool it exposes for this session (memoryMCPServers hands opencode the
-	// SAME name via session/new's mcpServers - see memorymcp.go).
+	// The server's own advertised name is what the pi-acp shim prefixes onto
+	// every tool it exposes for this session (memoryMCPServers hands the
+	// shim the SAME name via session/new's mcpServers - see memorymcp.go).
 	serverName := cs.InitializeResult().ServerInfo.Name
 	if serverName != mcpServerName {
 		t.Fatalf("server advertised name %q, want the mcpServerName const %q", serverName, mcpServerName)
@@ -100,8 +100,8 @@ func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 	}
 
 	// Prove the tools genuinely work end to end (the bare name is what THIS
-	// server understands; opencode's client-side rename is a layer quack's
-	// server never sees, so it can't be exercised without a real opencode round-trip - see the PR body for a live one run against this binary).
+	// server understands; the shim's client-side rename is a layer quack's
+	// server never sees, so it can't be exercised without a real ACP round-trip - see the PR body for a live one run against this binary).
 	call := func(name string, args map[string]any) *mcp.CallToolResult {
 		t.Helper()
 		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})

@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1247,7 +1246,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
 			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, true, behaviour, grading, wsBlock)
-			env := opencodeEnv(prov, ac, acpSkillPaths(pluginSkillDirs), workspaceCaps)
+			env := piACPEnv(prov, ac, acpSkillPaths(pluginSkillDirs))
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 			if safetyJudge != nil {
@@ -1525,103 +1524,36 @@ func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
 	return env
 }
 
-// opencodeEnv generates OPENCODE_CONFIG_CONTENT for an ACP agent: provider, model, headless permission policy.
-func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string, caps workspace.Caps) []string {
+// piACPEnv generates PI_ACP_CONFIG for an ACP agent: the flat set of fields
+// the pi-acp shim actually reads (tools/pi-acp/pi-acp.mjs) - endpoint, key,
+// model, context/output limits, and skill roots. git push reaches the
+// subprocess unblocked by config (#936): the ACP child's spawnEnv
+// (internal/acp.spawnEnv) strips its authority to authenticate to any real
+// remote instead, so delivery stays gate-owned without a command deny.
+func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey
 	if apiKey == "" {
 		apiKey = "unused"
 	}
-	modelCfg := m{}
-	if ac.ContextWindow > 0 {
-		modelCfg["limit"] = m{"context": ac.ContextWindow, "output": 32768}
-	}
-	// git push is left allowed here (#936): the ACP child's spawnEnv
-	// (internal/acp.spawnEnv) strips its authority to authenticate to any real
-	// remote (GIT_ASKPASS/GIT_SSH_COMMAND=/bin/false, GIT_TERMINAL_PROMPT=0), so
-	// denying the command outright is no longer needed to keep delivery
-	// gate-owned - it only broke the project's own tests, which push to a local
-	// test remote. Clone is still denied (#579) except for a read-only
-	// acp.allow_clone agent, which is chartered to read third-party repos the
-	// gate never provisions. Clone plus the wide external_directory it needs
-	// (the clone lands outside cwd, #346) rest on the RO work tree, so clone is
-	// allowed only in a mode that OS-enforces it on the ACP child - landlock or
-	// bwrap, both of which WrapArgv wraps (#921). Under `none` there is no
-	// boundary at all, so allow_clone degrades to denied rather than to
-	// unbounded.
-	allowClone := ac.Acp != nil && ac.Acp.AllowClone && workspace.EnforcesBoundary(caps.Sandbox)
-	if ac.Acp != nil && ac.Acp.AllowClone && !allowClone {
-		slog.Warn("acp.allow_clone ignored: clone needs the read-only work tree OS-enforced, which sandbox: none cannot do for the ACP child",
-			"component", "acp", "sandbox", caps.Sandbox)
-	}
-	bash := m{
-		"*": "allow",
-	}
-	// external_directory governs opencode's native write/edit tool, not bash -
-	// bash writes already reach $TMPDIR/opencode and caps.HomeDir (the OS
-	// filesystem permits it), but this map was `deny` for both, so the native
-	// tool disagreed with the environment block that calls them writable
-	// (#949). "**" (not "*") matches across path separators, since opencode's
-	// matcher treats "*" the way most globs do - opencode/* did not match
-	// opencode/probe/…, only opencode's direct children.
-	extDir := m{"*": "deny"}
-	if allowClone {
-		extDir = m{"*": "allow"}
-	} else {
-		bash["git clone"] = "deny"
-		bash["git clone *"] = "deny"
-		bash["gh repo clone"] = "deny"
-		bash["gh repo clone *"] = "deny"
-		if tmp := workspace.SandboxTmpDir(caps); tmp != "" {
-			extDir[tmp+"/**"] = "allow"
-		}
-		if caps.HomeDir != "" {
-			extDir[caps.HomeDir+"/**"] = "allow"
-		}
-	}
 	cfg := m{
-		"provider": m{"quack": m{
-			"npm":     "@ai-sdk/openai-compatible",
-			"name":    "quack-bound provider",
-			"options": m{"baseURL": prov.Endpoint, "apiKey": apiKey},
-			"models":  m{ac.Model: modelCfg},
-		}},
-		"model": "quack/" + ac.Model,
-		"permission": m{
-			"bash":               bash,
-			"external_directory": extDir,
-			"doom_loop":          "deny",
-			"read":               m{"*.env": "deny", "*.env.*": "deny"},
-		},
+		"endpoint": prov.Endpoint,
+		"api_key":  apiKey,
+		"model":    ac.Model,
+	}
+	if ac.ContextWindow > 0 {
+		cfg["context_window"] = ac.ContextWindow
+		// pi's own default (16384) caps reasoning+answer on the same request.
+		cfg["max_output_tokens"] = 32768
 	}
 	if len(skillPaths) > 0 {
-		cfg["skills"] = m{"paths": skillPaths}
-	}
-	if len(ac.Acp.McpServers) > 0 {
-		servers := m{}
-		for i, u := range ac.Acp.McpServers {
-			servers[mcpServerName(u, i)] = m{"type": "remote", "url": u, "enabled": true}
-		}
-		cfg["mcp"] = servers
+		cfg["skill_paths"] = skillPaths
 	}
 	content, err := json.Marshal(cfg)
 	if err != nil {
 		return nil
 	}
-	return []string{"OPENCODE_CONFIG_CONTENT=" + string(content)}
-}
-
-// mcpServerName derives a config key from an MCP URL's registrable domain.
-func mcpServerName(raw string, i int) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() == "" {
-		return fmt.Sprintf("mcp-%d", i)
-	}
-	labels := strings.Split(u.Hostname(), ".")
-	if n := len(labels); n >= 2 {
-		return labels[n-2]
-	}
-	return labels[0]
+	return []string{"PI_ACP_CONFIG=" + string(content)}
 }
 
 // extractedDotagentsSkillsDir is where the embedded dotagents skills are
@@ -1689,7 +1621,7 @@ func ensureExtractedDotagentsSkillNames(missing []string) {
 
 // acpSkillPaths: quack's own skills/, then each configured plugin's skills/ (internal/plugin), then -
 // only for names not found on disk - the extracted dotagentsEmbeddedSkills dir. Same by-NAME backfill as
-// newSkillSource: a dev checkout must not also get the extracted copy (opencode may error or shadow).
+// newSkillSource: a dev checkout must not also get the extracted copy (pi's skill loader may error or shadow).
 func acpSkillPaths(skillDirs []string) []string {
 	var out []string
 	if abs, err := filepath.Abs("skills"); err == nil {

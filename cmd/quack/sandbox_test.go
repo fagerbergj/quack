@@ -33,7 +33,7 @@ agents:
     provider: default
     model: m
     acp:
-      command: ["opencode", "acp"]
+      command: ["pi-acp"]
       read_only: true
 stores:
   default:
@@ -94,7 +94,7 @@ agents:
     provider: default
     model: m
     acp:
-      command: ["opencode", "acp"]
+      command: ["pi-acp"]
       read_only: true
 stores:
   default:

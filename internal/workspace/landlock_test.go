@@ -304,11 +304,11 @@ func TestResolveSandboxLandlockSucceeds(t *testing.T) {
 // isolation's future extraRW). The bwrap and none halves live in wrapargv_bwrap_test.go.
 func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 	dir := t.TempDir()
-	argv := []string{"opencode", "acp"}
+	argv := []string{"pi-acp", "run"}
 	caps := Caps{Sandbox: SandboxLandlock}
 	got := WrapArgv(dir, argv, caps, []string{"/skills"}, []string{"/extra-rw"})
 	joined := strings.Join(got, " ")
-	for _, want := range []string{SandboxExecArg, dir, "/skills", "/extra-rw", "opencode acp"} {
+	for _, want := range []string{SandboxExecArg, dir, "/skills", "/extra-rw", "pi-acp run"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("WrapArgv(landlock) = %v, missing %q", got, want)
 		}
@@ -317,10 +317,10 @@ func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 
 // TestWrapArgvLandlockCarriesNoLimits (#798, reverting #646): the ACP wrap
 // path must NOT carry rlimits. On the live deployment each limit alone
-// stopped opencode before its first ACP message - FSIZE 1024MB against a 1.27GB opencode.db, and AS 8192MB against V8's startup reservation - both reported as the same opaque "Failed query: PRAGMA wal_checkpoint(PASSIVE)". This asserts the absence so the next edit to WrapArgv can't silently restore it.
+// stopped the ACP agent before its first ACP message - FSIZE 1024MB against a 1.27GB DB, and AS 8192MB against V8's startup reservation - both reported as the same opaque "Failed query: PRAGMA wal_checkpoint(PASSIVE)". This asserts the absence so the next edit to WrapArgv can't silently restore it.
 func TestWrapArgvLandlockCarriesNoLimits(t *testing.T) {
 	dir := t.TempDir()
-	argv := []string{"opencode", "acp"}
+	argv := []string{"pi-acp", "run"}
 	caps := Caps{Sandbox: SandboxLandlock, Limits: Limits{AddressSpaceMB: 8192, FileSizeMB: 1024}}
 	got := WrapArgv(dir, argv, caps, nil, nil)
 	joined := strings.Join(got, " ")
@@ -329,7 +329,7 @@ func TestWrapArgvLandlockCarriesNoLimits(t *testing.T) {
 			t.Errorf("WrapArgv carries %q; the agent subprocess must run with no rlimit ceiling (#798)\ngot: %v", bad, got)
 		}
 	}
-	if !strings.Contains(joined, "opencode acp") {
+	if !strings.Contains(joined, "pi-acp run") {
 		t.Errorf("WrapArgv dropped the command: %v", got)
 	}
 }

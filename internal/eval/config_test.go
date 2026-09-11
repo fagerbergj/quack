@@ -10,8 +10,8 @@ func testConfig() *config.Config {
 	return &config.Config{
 		Orchestrator: config.OrchestratorConfig{Model: "orch-old"},
 		Agents: map[string]config.AgentConfig{
-			"code-implementer": {Model: "coder-old", Acp: &config.AcpAgentConfig{Command: []string{"opencode", "acp"}}},
-			"code-reviewer":    {Model: "coder-old", Acp: &config.AcpAgentConfig{Command: []string{"opencode", "acp"}}},
+			"code-implementer": {Model: "coder-old", Acp: &config.AcpAgentConfig{Command: []string{"node", "pi-acp.mjs"}}},
+			"code-reviewer":    {Model: "coder-old", Acp: &config.AcpAgentConfig{Command: []string{"node", "pi-acp.mjs"}}},
 			"web-researcher":   {Model: "researcher-old"},
 			"synthesizer":      {Model: "researcher-old"},
 			"image-reader":     {Model: "image-old", Inputs: []string{"text", "image"}},

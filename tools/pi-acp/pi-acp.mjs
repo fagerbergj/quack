@@ -13,17 +13,14 @@ import { Otel } from "./otel.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// Model/endpoint/skills come from OPENCODE_CONFIG_CONTENT, the env quack
-// already generates for every ACP agent (serve.go opencodeEnv) - zero Go changes.
-const ocCfg = process.env.OPENCODE_CONFIG_CONTENT
-  ? JSON.parse(process.env.OPENCODE_CONFIG_CONTENT)
+// Model/endpoint/skills come from PI_ACP_CONFIG, the flat env quack already
+// generates for every ACP agent (serve.go piACPEnv) - zero Go changes needed here.
+const cfg = process.env.PI_ACP_CONFIG
+  ? JSON.parse(process.env.PI_ACP_CONFIG)
   : {};
-const prov = (() => {
-  const p = ocCfg.provider?.quack;
-  if (!p) return null;
-  const model = Object.keys(p.models)[0];
-  return { baseUrl: p.options.baseURL, apiKey: p.options.apiKey || "unused", model, contextWindow: p.models[model]?.limit?.context, maxTokens: p.models[model]?.limit?.output };
-})();
+const prov = cfg.model
+  ? { baseUrl: cfg.endpoint, apiKey: cfg.api_key || "unused", model: cfg.model, contextWindow: cfg.context_window, maxTokens: cfg.max_output_tokens }
+  : null;
 
 // PI_ACP_STATE_DIR (quack: Jail.ACPStateDir) keeps pi's session files out of
 // TMPDIR - the round's own documented scratch space, not a session store.
@@ -68,9 +65,9 @@ function ensurePiDir(sessionId) {
       },
     }));
   }
-  // Skills: same roots opencode gets via skills.paths (serve.go acpSkillPaths).
-  if (ocCfg.skills?.paths?.length)
-    writeFileSync(join(dir, "settings.json"), JSON.stringify({ skills: ocCfg.skills.paths }));
+  // Skills: same roots the shim gets via skill_paths (serve.go acpSkillPaths).
+  if (cfg.skill_paths?.length)
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ skills: cfg.skill_paths }));
   return dir;
 }
 

@@ -51,9 +51,8 @@ func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) stri
 			writable = append(writable, caps.HomeDir)
 		}
 		fmt.Fprintf(&b, "filesystem: writable: %s\n", strings.Join(writable, ", "))
-		// `cp -a`, not `git clone --local`: clone is denied for every ACP agent
-		// without acp.allow_clone (opencodeEnv), which is all of them but the
-		// explorer - so naming clone here hands the reviewer advice its own permissions reject. A copy is allowed everywhere and carries go.mod just the same.
+		// `cp -a`, not `git clone --local`: a copy needs no per-agent check of
+		// whether clone is allowed here, and it carries go.mod just the same.
 		b.WriteString("reads and execution work anywhere; in-tree writes (npm install, go build artifacts, file edits) fail. To run code against this tree, copy it into a writable path first (`cp -a \"$PWD\" \"$TMPDIR/probe\"`) - the copy carries go.mod, so language-level rules like Go's internal/ visibility still resolve.\n")
 	}
 	b.WriteString("</environment_context>")

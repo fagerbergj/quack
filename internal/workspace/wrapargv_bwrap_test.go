@@ -141,7 +141,7 @@ func TestWrapArgvReadOnlyBuildDirsWritableEndToEnd(t *testing.T) {
 // needed): bwrap leads, the work tree is bound at its IDENTITY path (never childArgv's SandboxWorkRoot remap - the ACP child trades absolute paths with quack over JSON-RPC), read-only per caps.ReadOnly, and the command survives past "--" with no rlimit ceiling (#798).
 func TestWrapArgvBwrapShape(t *testing.T) {
 	dir := t.TempDir()
-	argv := []string{"opencode", "acp"}
+	argv := []string{"pi-acp", "run"}
 	caps := acpCaps(t, SandboxBwrap, dir, true)
 	caps.Limits = Limits{AddressSpaceMB: 8192, FileSizeMB: 1024}
 
@@ -177,7 +177,7 @@ func TestWrapArgvBwrapShape(t *testing.T) {
 			t.Errorf("WrapArgv(bwrap) carries %q; the agent subprocess must run with no rlimit ceiling (#798): %v", bad, got)
 		}
 	}
-	if !strings.HasSuffix(strings.Join(got, " "), "-- opencode acp") {
+	if !strings.HasSuffix(strings.Join(got, " "), "-- pi-acp run") {
 		t.Errorf("WrapArgv(bwrap) dropped the command: %v", got)
 	}
 }
@@ -187,7 +187,7 @@ func TestWrapArgvBwrapShape(t *testing.T) {
 // /proc under --unshare-pid would leak the real PID table back in, and the host /dev its device nodes. landlockGrants names both (/dev RW, /proc RO).
 func TestWrapArgvBwrapKeepsOwnMounts(t *testing.T) {
 	dir := t.TempDir()
-	got := WrapArgv(dir, []string{"opencode", "acp"}, Caps{Sandbox: SandboxBwrap, WorkRoot: dir}, nil, nil)
+	got := WrapArgv(dir, []string{"pi-acp", "run"}, Caps{Sandbox: SandboxBwrap, WorkRoot: dir}, nil, nil)
 	joined := strings.Join(got, "\x00")
 	for _, owned := range []string{"/proc", "/dev", "/tmp"} {
 		for _, flag := range []string{"--bind-try", "--ro-bind-try"} {
@@ -206,10 +206,10 @@ func TestWrapArgvBwrapKeepsOwnMounts(t *testing.T) {
 // that rest on a boundary (EnforcesBoundary) must say so.
 func TestWrapArgvNoneStaysUnwrapped(t *testing.T) {
 	dir := t.TempDir()
-	argv := []string{"opencode", "acp"}
+	argv := []string{"pi-acp", "run"}
 	for _, mode := range []SandboxMode{SandboxNone, ""} {
 		got := WrapArgv(dir, argv, Caps{Sandbox: mode, HomeDir: t.TempDir()}, []string{"/skills"}, nil)
-		if len(got) != 2 || got[0] != "opencode" || got[1] != "acp" {
+		if len(got) != 2 || got[0] != "pi-acp" || got[1] != "run" {
 			t.Errorf("mode %q: WrapArgv = %v, want argv unchanged", mode, got)
 		}
 		if EnforcesBoundary(mode) {

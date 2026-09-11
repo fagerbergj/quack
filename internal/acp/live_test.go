@@ -11,12 +11,13 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestLive_OpencodeRound drives one REAL `opencode acp` round against a live
-// OpenAI-compatible endpoint - the smoke harness for the integration, not a CI test. Run it by hand:
-// QUACK_ACP_LIVE=1 QUACK_LLM_ENDPOINT=http://host:port/v1 QUACK_CODER_MODEL=qwen3-coder-next go test ./internal/acp/ -run TestLive_OpencodeRound -v -timeout 10m
-func TestLive_OpencodeRound(t *testing.T) {
+// TestLive_PiRound drives one REAL pi-acp round (tools/pi-acp/pi-acp.mjs
+// driving pi) against a live OpenAI-compatible endpoint - the smoke harness
+// for the integration, not a CI test. Run it by hand:
+// QUACK_ACP_LIVE=1 QUACK_LLM_ENDPOINT=http://host:port/v1 QUACK_CODER_MODEL=qwen3-coder-next go test ./internal/acp/ -run TestLive_PiRound -v -timeout 10m
+func TestLive_PiRound(t *testing.T) {
 	if os.Getenv("QUACK_ACP_LIVE") == "" {
-		t.Skip("live test: set QUACK_ACP_LIVE=1 (needs opencode on PATH and a live endpoint)")
+		t.Skip("live test: set QUACK_ACP_LIVE=1 (needs node, pi, and a live endpoint on PATH)")
 	}
 	endpoint, model := os.Getenv("QUACK_LLM_ENDPOINT"), os.Getenv("QUACK_CODER_MODEL")
 	if endpoint == "" || model == "" {
@@ -24,23 +25,20 @@ func TestLive_OpencodeRound(t *testing.T) {
 	}
 	type m = map[string]any
 	cfg := m{
-		"provider": m{"quack": m{
-			"npm":     "@ai-sdk/openai-compatible",
-			"name":    "quack live test",
-			"options": m{"baseURL": endpoint, "apiKey": "unused"},
-			"models":  m{model: m{}},
-		}},
-		"model": "quack/" + model,
-		"permission": m{
-			"bash": m{"git push": "deny", "git push *": "deny", "*": "allow"},
-		},
+		"endpoint": endpoint,
+		"api_key":  "unused",
+		"model":    model,
 	}
 	// The same skills injection production uses (serve.acpSkillPaths): quack's
-	// shipped skill library, discovered by opencode's skills.paths glob.
+	// shipped skill library, discovered by pi's skill_paths glob.
 	if skills, err := filepath.Abs("../../skills"); err == nil {
-		cfg["skills"] = m{"paths": []string{skills}}
+		cfg["skill_paths"] = []string{skills}
 	}
 	content, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shim, err := filepath.Abs("../../tools/pi-acp/pi-acp.mjs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +47,8 @@ func TestLive_OpencodeRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, err := New("code-implementer", "external coder", Options{
-		Command:      []string{"opencode", "acp"},
-		Env:          []string{"OPENCODE_CONFIG_CONTENT=" + string(content)},
+		Command:      []string{"node", shim},
+		Env:          []string{"PI_ACP_CONFIG=" + string(content)},
 		Home:         t.TempDir(),
 		Jail:         jail,
 		UserID:       "live",

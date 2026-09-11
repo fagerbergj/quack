@@ -179,7 +179,7 @@ func TestWrapArgvScratchDirGrantedUnderBwrap(t *testing.T) {
 	if got := SandboxTmpDir(caps); got != scratch {
 		t.Errorf("SandboxTmpDir(bwrap) = %q, want the scratch dir %q", got, scratch)
 	}
-	got := WrapArgv(dir, []string{"opencode", "acp"}, caps, nil, nil)
+	got := WrapArgv(dir, []string{"pi-acp", "run"}, caps, nil, nil)
 	if !strings.Contains(strings.Join(got, "\x00"), "--bind-try\x00"+scratch+"\x00"+scratch) {
 		t.Errorf("WrapArgv(bwrap) = %v, missing the scratch dir RW bind %q", got, scratch)
 	}
@@ -193,8 +193,8 @@ func TestWrapArgvScratchDirUnwrappedUnderNone(t *testing.T) {
 	scratch := t.TempDir()
 	for _, mode := range []SandboxMode{SandboxNone, ""} {
 		caps := Caps{Sandbox: mode, ScratchDir: scratch}
-		got := WrapArgv(dir, []string{"opencode", "acp"}, caps, nil, nil)
-		if len(got) != 2 || got[0] != "opencode" || got[1] != "acp" {
+		got := WrapArgv(dir, []string{"pi-acp", "run"}, caps, nil, nil)
+		if len(got) != 2 || got[0] != "pi-acp" || got[1] != "run" {
 			t.Errorf("mode %q: WrapArgv = %v, want argv unchanged", mode, got)
 		}
 		if strings.Contains(strings.Join(got, " "), scratch) {

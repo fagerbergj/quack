@@ -1,7 +1,8 @@
 package agent
 
-// These prompts follow GOOSE/OpenHands, not opencode: opencode blanks an old tool result in place and keeps the call, which works when a huge-context
-// frontier model rarely triggers prune - on quack's 65k local-model window it fired constantly and the agent kept re-reading the same files. Instead, DROP old turns and replace them with one knowledge-dense summary framed as
+// These prompts follow GOOSE/OpenHands's drop-and-summarize strategy, not the
+// blank-the-old-result-in-place one some coding agents use - that works when a huge-context
+// frontier model rarely triggers prune, but on quack's 65k local-model window it fired constantly and the agent kept re-reading the same files. Instead, DROP old turns and replace them with one knowledge-dense summary framed as
 // a handoff to the agent itself: "ALL TECHNICAL CONTENT" preserved, files/code state kept in full, "OK to make it MUCH LONGER than a normal summary".
 const compactionSystemPrompt = `You are compacting the context of a coding/research session.
 
