@@ -195,6 +195,52 @@ func TestRenderReviewOverview_LegacySummaryTruncated(t *testing.T) {
 	}
 }
 
+// TestRenderReviewOverview_LegacySummaryTruncatedAtWordBoundary proves a long
+// summary is cut at a word boundary, never mid-word - a review overview
+// ending "...turn kee…" reads as broken output.
+func TestRenderReviewOverview_LegacySummaryTruncatedAtWordBoundary(t *testing.T) {
+	words := strings.Repeat("orchestrator ", legacySummaryDisplayCap/6)
+	got := renderReviewOverview(reviewOverviewInput{Verdict: "comment", LegacySummary: words})
+	trimmed := strings.TrimSuffix(got, "…")
+	if trimmed == got {
+		t.Fatalf("summary was not truncated at all: %q", got)
+	}
+	if strings.HasSuffix(trimmed, "orchestrat") || !strings.HasSuffix(trimmed, "orchestrator") {
+		t.Fatalf("truncation cut mid-word: %q", got)
+	}
+}
+
+// TestRenderReviewOverview_StripsMetaNarration proves a takeaway/note/legacy
+// summary that narrates the review's own staging call (revision number, its
+// own inline-comment tally) is dropped rather than shown to the reader - the
+// #1377 fan-out bug, where the synthesizer's raw chat reply substituted for
+// its structured fields.
+func TestRenderReviewOverview_StripsMetaNarration(t *testing.T) {
+	narration := "Review staged for PR #1377 (code_review revision 6): request_changes, 5 inline comments + 2 summary notes."
+
+	got := renderReviewOverview(reviewOverviewInput{Verdict: "comment", Takeaway: narration})
+	if strings.Contains(got, "staged for PR") {
+		t.Fatalf("narration takeaway leaked through: %q", got)
+	}
+
+	got = renderReviewOverview(reviewOverviewInput{Verdict: "comment", Notes: []string{narration, "a real note"}})
+	if strings.Contains(got, "staged for PR") {
+		t.Fatalf("narration note leaked through: %q", got)
+	}
+	if !strings.Contains(got, "a real note") {
+		t.Fatalf("a legitimate note alongside the narration was dropped too: %q", got)
+	}
+
+	got = renderReviewOverview(reviewOverviewInput{Verdict: "comment",
+		LegacySummary: narration + "\n\n## What the PR does\n\nA real explanation of the change."})
+	if strings.Contains(got, "staged for PR") {
+		t.Fatalf("narration paragraph in the legacy summary leaked through: %q", got)
+	}
+	if !strings.Contains(got, "A real explanation of the change.") {
+		t.Fatalf("the substantive paragraph was dropped along with the narration: %q", got)
+	}
+}
+
 // TestCommentLabel_Variants pins the Conventional-Comments label parsing
 // against every variant the design names, plus a decorated label.
 func TestCommentLabel_Variants(t *testing.T) {
@@ -230,6 +276,9 @@ func TestCommentLabel_Variants(t *testing.T) {
 		label, why := commentLabel(c.body)
 		if label != c.wantLabel || why != c.wantWhy {
 			t.Errorf("commentLabel(%q) = (%q, %q), want (%q, %q)", c.body, label, why, c.wantLabel, c.wantWhy)
+		}
+		if got := HasCommentLabel(c.body); got != (c.wantLabel != "") {
+			t.Errorf("HasCommentLabel(%q) = %v, want %v", c.body, got, c.wantLabel != "")
 		}
 	}
 }

@@ -153,6 +153,9 @@ type ReviewComment struct {
 	// overview renderer dedupe a finding that was both written natively
 	// (write_finding) and staged as an inline comment for the same issue.
 	FindingID string
+	// SourceNode: the reviewer node that staged this finding in a fan-out
+	// review - lineage only, never rendered into the posted body.
+	SourceNode string
 }
 
 // DeliveryContext: staged set + clone coordinates for extension delivery.

@@ -468,6 +468,69 @@ func TestReviewFanoutMergedDeliveryCarriesReviewerCloneURL(t *testing.T) {
 	}
 }
 
+// #1377: a synthesizer node that wrote a real code_review record via
+// write_code_review must have commitDelivery read that record's
+// takeaway/verified/notes/verdict (LatestCodeReviewRecord), not fall back to
+// parsing its raw chat reply - proves the node.go wiring, not just mergeReviews' own unit tests.
+func TestReviewFanout_SynthesizerCodeReviewRecordFlowsThroughCommitDelivery(t *testing.T) {
+	const planID = "plan-1377"
+	fanout := GetReviewFanout(planID, 1)
+	fanout.ExpectSynthesis()
+	defer ResetReviewFanout(planID)
+
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+	artifacts := artifact.InMemoryService()
+	chatID := "ext:github:owner-repo-1377"
+
+	reviewerCfg := Config{Deliver: deliver, IsReviewer: true, ReviewFanout: fanout, ChatID: chatID, User: "u1", Artifacts: artifacts}
+	commitDelivery(context.Background(), nil, reviewerCfg, "code-reviewer-1", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review",
+			Comments: []ReviewComment{{Path: "internal/dag/executor.go", Line: 149, Body: "blocking: NeedsInput has no caller anywhere."}}}},
+	}, GateResult{Passed: true})
+
+	// What write_code_review actually saves - the synthesizer's structured
+	// record, not a VERDICT/TAKEAWAY answer tail.
+	synthCfg := Config{Deliver: deliver, ReviewFanout: fanout, ChatID: chatID, User: "u1", Artifacts: artifacts}
+	rec := CodeReviewRecord{
+		Verdict:  "request_changes",
+		Takeaway: "One blocking issue across the slices.",
+		Verified: []string{"ran go test ./internal/dag/..."},
+		Notes:    []string{"worth a follow-up on the doc comment"},
+	}
+	if _, _, err := recordClient(synthCfg).SaveStructured(context.Background(), kindCodeReview, rec, SubjectHint(chatID), recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed code_review: %v", err)
+	}
+	commitDelivery(context.Background(), nil, synthCfg, "synthesize", workerActivity{
+		answer: "Staged: request_changes, 1 blocking.",
+	}, GateResult{Passed: true})
+
+	select {
+	case dc := <-done:
+		body := dc.Items[0].Body
+		if !strings.Contains(body, "One blocking issue across the slices.") {
+			t.Fatalf("Body missing the record's takeaway: %q", body)
+		}
+		if !strings.Contains(body, "### Verified") || !strings.Contains(body, "ran go test") {
+			t.Fatalf("Body missing the record's Verified section: %q", body)
+		}
+		if !strings.Contains(body, "### Notes") || !strings.Contains(body, "follow-up") {
+			t.Fatalf("Body missing the record's Notes section: %q", body)
+		}
+		if strings.Contains(body, "Staged: request_changes") {
+			t.Fatalf("Body must not carry the synthesizer's own chat reply as narration: %q", body)
+		}
+		if len(dc.Items[0].Comments) != 1 || strings.HasPrefix(dc.Items[0].Comments[0].Body, "[") {
+			t.Fatalf("Comments = %+v, want the finding posted with no slice-id prefix", dc.Items[0].Comments)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver never fired")
+	}
+}
+
 // #1187: a run-level cancel landing the instant Deliver returns (shutdown
 // drain, hub.CancelRun) must not lose the post-delivery bookkeeping - the
 // GitHub side effect already happened, so the delivery_record completion must still be written even though the caller's context is now Done.

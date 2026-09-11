@@ -78,10 +78,16 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		Name:        toolStageReviewComment,
 		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment. Duplicates (same path, line, and body) are rejected with the existing id, not double-staged.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
-		if strings.TrimSpace(args.Path) == "" || args.Line <= 0 || strings.TrimSpace(args.Body) == "" {
+		body := strings.TrimSpace(args.Body)
+		if strings.TrimSpace(args.Path) == "" || args.Line <= 0 || body == "" {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review_comment needs a path, a positive line, and a non-empty body"}}}, nil, nil
 		}
-		id, dup := review.AddComment(strings.TrimSpace(args.Path), args.Line, strings.TrimSpace(args.Body))
+		// The one choke every reviewer node's findings share - an unlabeled
+		// finding otherwise renders uncounted and never makes Highlights.
+		if !vetting.HasCommentLabel(body) {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review_comment's body must open with a Conventional Comments label: blocking:, suggestion:, nit:, or question: (e.g. \"blocking: nil deref on the unchecked input\")"}}}, nil, nil
+		}
+		id, dup := review.AddComment(strings.TrimSpace(args.Path), args.Line, body)
 		if dup {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("duplicate of %s; not staged", id)}}}, nil, nil
 		}

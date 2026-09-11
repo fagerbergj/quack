@@ -267,7 +267,7 @@ func TestMergeReviewsSynthesizerOwnsVerdict(t *testing.T) {
 		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Event: "approve"}},
 	}
 	synthBody := "Consolidated review.\n\nVERDICT: request_changes\n"
-	merged := mergeReviews(terminal, synthBody, "")
+	merged := (&ReviewFanout{terminal: terminal, synthBody: synthBody, synthVerdict: ""}).mergeReviews()
 	if merged.Event != "request_changes" {
 		t.Fatalf("merged verdict = %q, want request_changes (synthesizer-owned, not slices' worst-of)", merged.Event)
 	}
@@ -280,7 +280,7 @@ func TestMergeReviewsSlicesOnlyNitsPassesAsComment(t *testing.T) {
 	terminal := map[string]reviewFanoutEntry{
 		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Event: "comment"}},
 	}
-	merged := mergeReviews(terminal, "", "")
+	merged := (&ReviewFanout{terminal: terminal, synthBody: "", synthVerdict: ""}).mergeReviews()
 	if merged.Event != "comment" {
 		t.Fatalf("merged verdict = %q, want comment", merged.Event)
 	}
@@ -295,7 +295,7 @@ func TestMergeReviewsStructuredVerdictApprove(t *testing.T) {
 		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Body: "b"}},
 		"slice-c": {ok: true, item: StagedDelivery{Kind: "review", Body: "c"}},
 	}
-	merged := mergeReviews(terminal, "Consolidated review.", "approve")
+	merged := (&ReviewFanout{terminal: terminal, synthBody: "Consolidated review.", synthVerdict: "approve"}).mergeReviews()
 	if merged.Event != "approve" {
 		t.Fatalf("merged verdict = %q, want approve", merged.Event)
 	}
@@ -309,7 +309,7 @@ func TestMergeReviewsStructuredVerdictRequestChanges(t *testing.T) {
 		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Body: "b"}},
 		"slice-c": {ok: true, item: StagedDelivery{Kind: "review", Body: "c"}},
 	}
-	merged := mergeReviews(terminal, "Consolidated review.", "request_changes")
+	merged := (&ReviewFanout{terminal: terminal, synthBody: "Consolidated review.", synthVerdict: "request_changes"}).mergeReviews()
 	if merged.Event != "request_changes" {
 		t.Fatalf("merged verdict = %q, want request_changes", merged.Event)
 	}
@@ -323,7 +323,7 @@ func TestMergeReviewsSliceRequestChangesBeatsStructuredApprove(t *testing.T) {
 		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Event: "request_changes", Body: "blocking bug"}},
 		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Body: "b"}},
 	}
-	merged := mergeReviews(terminal, "Consolidated review.", "approve")
+	merged := (&ReviewFanout{terminal: terminal, synthBody: "Consolidated review.", synthVerdict: "approve"}).mergeReviews()
 	if merged.Event != "request_changes" {
 		t.Fatalf("merged verdict = %q, want request_changes (slice wins over synthesizer approve)", merged.Event)
 	}
@@ -337,9 +337,88 @@ func TestMergeReviewsNoVerdictAnywhereIsComment(t *testing.T) {
 		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Body: "a"}},
 		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Body: "b"}},
 	}
-	merged := mergeReviews(terminal, "Consolidated review with no verdict line.", "")
+	merged := (&ReviewFanout{terminal: terminal, synthBody: "Consolidated review with no verdict line.", synthVerdict: ""}).mergeReviews()
 	if merged.Event != "comment" {
 		t.Fatalf("merged verdict = %q, want comment", merged.Event)
+	}
+}
+
+// TestMergeReviewsTwoSlicesOneUnlabeledFindingSynthesizerRecordOwnsSummary
+// reproduces the #1377 fan-out bug directly against mergeReviews: two
+// slices each stage one finding (one properly labeled, one not) and the
+// synthesizer's own code_review record - not its raw chat reply - supplies
+// takeaway/verified/notes. The merged body must carry no slice-id prefix,
+// put only the labeled finding in Highlights, and render the record's own
+// Verified/Notes sections rather than any staging narration.
+func TestMergeReviewsTwoSlicesOneUnlabeledFindingSynthesizerRecordOwnsSummary(t *testing.T) {
+	terminal := map[string]reviewFanoutEntry{
+		"code-reviewer-1": {ok: true, item: StagedDelivery{Kind: "review",
+			Comments: []ReviewComment{{Path: "internal/dag/executor.go", Line: 149, Body: "blocking: NeedsInput has no caller anywhere."}}}},
+		"code-reviewer-2": {ok: true, item: StagedDelivery{Kind: "review",
+			Comments: []ReviewComment{{Path: "internal/tools/plan.go", Line: 74, Body: "Low (doc precision): numbered steps overstates the revision."}}}},
+	}
+	f := &ReviewFanout{
+		terminal:        terminal,
+		synthBody:       "Staged: request_changes, 1 blocking, 1 nit.",
+		synthHaveRecord: true,
+		synthVerdict:    "request_changes",
+		synthTakeaway:   "One blocking issue and one doc nit across two slices.",
+		synthVerified:   []string{"ran go test ./internal/dag/... and ./internal/tools/..."},
+		synthNotes:      []string{"the doc nit is pre-existing but worth a follow-up"},
+	}
+	merged := f.mergeReviews()
+
+	if strings.Contains(merged.Body, "[code-reviewer-1]") || strings.Contains(merged.Body, "[code-reviewer-2]") {
+		t.Fatalf("Body still carries a slice-id prefix: %q", merged.Body)
+	}
+	for _, c := range merged.Comments {
+		if strings.HasPrefix(c.Body, "[") {
+			t.Errorf("posted comment carries a bracket prefix: %q", c.Body)
+		}
+	}
+	if len(merged.Comments) != 2 {
+		t.Fatalf("Comments = %+v, want both findings posted even though one has no recognized label", merged.Comments)
+	}
+	if merged.Comments[0].SourceNode != "code-reviewer-1" || merged.Comments[1].SourceNode != "code-reviewer-2" {
+		t.Fatalf("Comments not attributed by SourceNode: %+v", merged.Comments)
+	}
+	if !strings.Contains(merged.Body, "### Highlights") || !strings.Contains(merged.Body, "internal/dag/executor.go:149") {
+		t.Fatalf("Body missing the Highlights table for the labeled blocking finding: %q", merged.Body)
+	}
+	if strings.Contains(merged.Body, "internal/tools/plan.go:74") {
+		t.Fatalf("Body must not put the unlabeled finding in Highlights: %q", merged.Body)
+	}
+	if !strings.Contains(merged.Body, "### Verified") || !strings.Contains(merged.Body, "ran go test") {
+		t.Fatalf("Body missing the synthesizer's Verified section: %q", merged.Body)
+	}
+	if !strings.Contains(merged.Body, "### Notes") || !strings.Contains(merged.Body, "follow-up") {
+		t.Fatalf("Body missing the synthesizer's Notes section: %q", merged.Body)
+	}
+	if strings.Contains(merged.Body, "Staged: request_changes") {
+		t.Fatalf("Body must not carry the synthesizer's own tool-call narration: %q", merged.Body)
+	}
+	if merged.Event != "request_changes" {
+		t.Fatalf("Event = %q, want request_changes", merged.Event)
+	}
+}
+
+// TestReviewFanout_ScopeFromFirstReviewerWins proves the Scope line (section
+// 3, otherwise absent from a fan-out review entirely) renders from whichever
+// reviewer node resolves it first - later reports are ignored, the same
+// first-wins pattern RecordClone already uses.
+func TestReviewFanout_ScopeFromFirstReviewerWins(t *testing.T) {
+	f := &ReviewFanout{terminal: map[string]reviewFanoutEntry{
+		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Event: "approve"}},
+	}}
+	f.RecordScope("abc1234", 3, true)
+	f.RecordScope("def5678", 9, false) // later report must not win
+
+	merged := f.mergeReviews()
+	if !strings.Contains(merged.Body, "Scope: first review, whole PR (3 files)") {
+		t.Fatalf("Body missing the first-reported Scope line: %q", merged.Body)
+	}
+	if !strings.Contains(merged.Body, "head abc1234") {
+		t.Fatalf("Body missing the first-reported head sha: %q", merged.Body)
 	}
 }
 

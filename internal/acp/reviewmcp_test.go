@@ -80,6 +80,47 @@ func TestReviewMCP_StageToolsLandInBuffer(t *testing.T) {
 	}
 }
 
+// TestReviewMCP_StageReviewCommentRequiresLabel pins the one choke point
+// every reviewer node's findings pass through: a body with no Conventional
+// Comments label is rejected, loudly, rather than staged and later
+// rendered uncounted.
+func TestReviewMCP_StageReviewCommentRequiresLabel(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	review := &vetting.ReviewStage{}
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: review})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "stage_review_comment",
+		Arguments: map[string]any{"path": "a.go", "line": 3, "body": "Note: this looks off"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool stage_review_comment (unlabeled): %v", err)
+	}
+	if !res.IsError || !strings.Contains(toolResultText(t, res), "Conventional Comments label") {
+		t.Fatalf("an unlabeled body must be rejected naming the requirement, got %+v", res)
+	}
+	if _, ok := review.Snapshot(); ok {
+		t.Fatal("a rejected comment must not be staged")
+	}
+
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "stage_review_comment",
+		Arguments: map[string]any{"path": "a.go", "line": 3, "body": "🚨 **blocking:** nil deref on the unchecked input"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool stage_review_comment (labeled): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("a labeled body must be accepted: %s", toolResultText(t, res))
+	}
+}
+
 // TestReviewMCP_StageReviewEnforcesCaps proves the tool boundary rejects a
 // missing takeaway and an over-cap notes list with an actionable error - the
 // same caps validateCodeReview enforces on a native write_code_review call (reviewrecord.go's CheckCodeReviewCaps), so the two surfaces can't drift.
@@ -213,7 +254,7 @@ func TestReviewMCP_ListAndUnstageByID(t *testing.T) {
 	t.Cleanup(func() { ts.Close() })
 	cs := connectMCP(t, ts, secret)
 
-	longBody := strings.Repeat("x", 200)
+	longBody := "nit: " + strings.Repeat("x", 200)
 	for _, c := range []struct {
 		path string
 		line int

@@ -1061,10 +1061,10 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// merged, worst-of-verdict review exactly once, when every reviewer node in the plan has finished.
 	if cfg.ReviewFanout != nil && !cfg.IsReviewer {
 		// Synthesizer node (#965): its answer is the plan's consolidated review - hand it to the fan-in, which delivers exactly once. The
-		// structured code_review verdict (#1184) is read here rather than
-		// parsed from act.answer, since a native write_code_review leaves no VERDICT tail in the answer text.
-		verdict, _ := LatestCodeReviewVerdict(ctx, cfg)
-		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer, verdict)
+		// structured code_review record (#1184) is read here rather than
+		// parsed from act.answer, since a native write_code_review leaves no VERDICT tail in the answer text and carries the takeaway/verified/notes fields directly.
+		rec, haveRec := LatestCodeReviewRecord(ctx, cfg)
+		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer, rec, haveRec)
 		if deliverNow {
 			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
 		}
@@ -1087,6 +1087,9 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		}
 		cloneURL, branch := resolveCloneCoordinates(cfg, act)
 		cfg.ReviewFanout.RecordClone(cloneURL, branch)
+		if scope := resolveReviewScope(cfg); scope.ok {
+			cfg.ReviewFanout.RecordScope(scope.head, scope.fileCount, firstCodeReviewDelivery(ctx, cfg))
+		}
 		merged, deliverNow := cfg.ReviewFanout.Finish(nodeID, item, hasItem, false)
 		if deliverNow {
 			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
@@ -1344,7 +1347,7 @@ func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg
 		merged, deliverNow = cfg.ReviewFanout.Finish(nodeID, item, hasItem, !hasItem)
 	} else {
 		// Empty answer falls the merge back to per-node concatenation (#965).
-		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("", "")
+		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("", CodeReviewRecord{}, false)
 	}
 	if deliverNow {
 		deliverMergedReview(ctx, sink, cfg, nodeID, merged)
