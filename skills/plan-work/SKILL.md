@@ -14,7 +14,7 @@ A plan is a list of **assignments**: each ties a node (a person doing one agent'
 
 ## Plan in steps when you cannot see the whole job yet
 
-Until the plan declares `delivery`, `execute` is a **step**: it runs the new assignments and hands you their results, and you continue. Use that when a later assignment depends on what an earlier one finds (which file, which function, whether the thing exists at all): run the explorer, read its result, then `edit_plan` to add the implementer with a task that names what was found and `depends_on` the explorer, and `execute` again. Once `delivery` is declared, `execute` is terminal: the answer goes to the user directly and you write nothing after it.
+Until the plan declares `delivery`, `execute` is a **step**: it runs the new assignments, returns each one's status and result preview in the same turn, and you continue. Use that when a later assignment depends on what an earlier one finds (which file, which function, whether the thing exists at all): run the explorer, read its result, then `edit_plan` to add the implementer with a task that names what was found and `depends_on` the explorer, and `execute` again. Once `delivery` is declared, `execute` is terminal: the answer goes to the user directly and you write nothing after it.
 
 When the shape is already clear, declare the whole plan in one call. Do not run steps to postpone thinking.
 
@@ -73,11 +73,11 @@ The node sees only its `task` text plus the results of what it `depends_on`, nev
 | Plan or research scoped to a repo | omit | `comment` |
 | No repository involved | omit | omit |
 
-On a GitHub-triggered chat the run already clones the trigger's repo and base ref, so `setup` is not offered; declare only `delivery`. Set `delivery.title` and `body` from the `pr-authoring` skill.
+`delivery` carries only `kind`; the PR title and body are written by the implementer node (its `stage_pr` call, per the `pr-authoring` skill), so put any wording requirements in that node's task. On a GitHub-triggered chat the run clones the trigger's repo and base ref and ignores a submitted `setup`; declare only `delivery`.
 
 `checks` and `workdir` on an assignment are optional and almost always omitted: you have not seen the repo, and the gate derives a code node's checks from its `package.json`, `go.mod`, or `Makefile` after the clone. Set them only when the user named the commands. Checks run in a fresh clone, so the task must tell the implementer to install dependencies first.
 
-`artifact` on an assignment names one of the registered record kinds listed in the tool description to save that node's output as a dedicated artifact.
+An agent's artifact kind is declared on its own bundle, never per assignment.
 
 ## Media
 
