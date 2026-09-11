@@ -371,6 +371,19 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
 	}
+	// A delivery object present but with an empty kind asks the harness to
+	// infer it from a single-kind dispatch; omitting delivery entirely means
+	// "not yet" and is NEVER inferred (#slice3 review: the judge and execute
+	// must agree on whether delivery is declared - inferring it from mere
+	// omission made every step of a single-kind-trigger dispatch look
+	// "final" to the judge while execute still treated it as partial).
+	if delivery != nil && delivery.Kind == "" {
+		def := DefaultDeliveryFromAllowedKinds(allowedKinds)
+		if def == nil {
+			return nil, fmt.Errorf("delivery.kind: required - this dispatch allows more than one delivery kind (%s), so it can't be inferred", strings.Join(allowedKinds, ", "))
+		}
+		delivery = def
+	}
 	if err := validateDelivery(delivery); err != nil {
 		return nil, err
 	}
@@ -380,9 +393,6 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	}
 	ids := make(map[string]bool, len(nodes))
 	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, AllowedDeliveryKinds: allowedKinds}
-	if plan.Delivery == nil {
-		plan.Delivery = DefaultDeliveryFromAllowedKinds(allowedKinds)
-	}
 	for _, n := range nodes {
 		if n.ID == "" {
 			return nil, fmt.Errorf("node missing id")
@@ -498,12 +508,10 @@ func validateChecks(checks, checkCommands []string) error {
 
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
 
-// DefaultDeliveryFromAllowedKinds fills in Delivery when the triggering
-// dispatch (a GitHub review/implement/plan-only extension run, or any other
-// caller of tools.WithAllowedDeliveryKinds) grants exactly one kind: the
-// extension already knows how the result reaches GitHub, so the model isn't
-// required to declare it too. nil when the dispatch is unrestricted or grants
-// a genuine choice among several kinds - the model still decides those.
+// DefaultDeliveryFromAllowedKinds resolves an explicit-but-kindless delivery
+// declaration when the triggering dispatch grants exactly one kind. nil when
+// the dispatch is unrestricted or grants a genuine choice among several -
+// the model must name the kind itself in that case.
 func DefaultDeliveryFromAllowedKinds(allowed []string) *Delivery {
 	if len(allowed) != 1 || !deliveryKinds[allowed[0]] {
 		return nil
