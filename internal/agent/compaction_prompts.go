@@ -1,9 +1,7 @@
 package agent
 
-// These prompts follow GOOSE/OpenHands's drop-and-summarize strategy, not the
-// blank-the-old-result-in-place one some coding agents use - that works when a huge-context
-// frontier model rarely triggers prune, but on quack's 65k local-model window it fired constantly and the agent kept re-reading the same files. Instead, DROP old turns and replace them with one knowledge-dense summary framed as
-// a handoff to the agent itself: "ALL TECHNICAL CONTENT" preserved, files/code state kept in full, "OK to make it MUCH LONGER than a normal summary".
+// These prompts follow GOOSE/OpenHands's drop-and-summarize strategy, not blank-the-old-result-in-place -
+// that works for a huge-context frontier model that rarely triggers prune, but fired constantly on quack's 65k local-model window and left the agent re-reading the same files.
 const compactionSystemPrompt = `You are compacting the context of a coding/research session.
 
 The conversation history you are given is being REMOVED from the agent's context and replaced by what you write. The only reader is THE AGENT ITSELF, continuing this same session - write a handoff to yourself, not a report for a human.

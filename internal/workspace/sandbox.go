@@ -790,9 +790,8 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 	return assembleSandboxExec(rw, ro, argv)
 }
 
-// EnforcesBoundary reports whether mode gives a WrapArgv'd child an
-// OS-enforced path boundary (work tree per caps.ReadOnly, $HOME/$TMPDIR
-// writable, nothing else reachable). SandboxNone never qualifies.
+// EnforcesBoundary reports whether mode gives a WrapArgv'd child an OS-enforced
+// path boundary (work tree per caps.ReadOnly, $HOME/$TMPDIR writable, nothing else reachable). SandboxNone never qualifies.
 func EnforcesBoundary(mode SandboxMode) bool {
 	return mode == SandboxLandlock || mode == SandboxBwrap
 }

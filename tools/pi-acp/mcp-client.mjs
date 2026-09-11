@@ -55,9 +55,8 @@ export class McpClient {
   }
 }
 
-// Permission policy: pi has no native equivalent, so this hardcodes the
-// subset that matters for delivery safety. Hard denies never leave the
-// process; "ask" escalates to quack's safety judge via the shim's loopback endpoint.
+// Permission policy: pi has no native equivalent, so this hardcodes the safety-critical
+// subset. Hard denies never leave the process; "ask" escalates to quack's safety judge via the shim's loopback endpoint.
 const DENY = [/^git push(\s|$)/, /^git clone(\s|$)/, /^gh repo clone(\s|$)/];
 const ENV_FILE = /(^|\/)[^/]*\.env(\.[^/]*)?$/;
 

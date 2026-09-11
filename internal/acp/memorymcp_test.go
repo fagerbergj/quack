@@ -23,9 +23,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestMemoryMCPServers_SSEWireShape pins the session/new wire shape a strict
-// ACP client requires: an SSE server with type "sse" and a non-null headers
-// array. The original Http variant (type unset, headers nil) serialized to {"type":"","headers":null,...}, which a strict ACP subprocess rejected with -32602 and killed the connection - breaking every code node. Guard against regress.
+// TestMemoryMCPServers_SSEWireShape pins the session/new wire shape a strict ACP
+// client requires: type "sse" and non-null headers, not {"type":"","headers":null,...} - a shape that has gotten a strict ACP subprocess to reject with -32602 and kill the connection, breaking every code node.
 func TestMemoryMCPServers_SSEWireShape(t *testing.T) {
 	caps := sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}}
 
@@ -432,9 +431,8 @@ func TestMemoryMCPURL_LoopbackOnly(t *testing.T) {
 	}
 }
 
-// TestMemoryMCP_NamespaceIsSurfaceNeutral pins the shared per-node server's
-// name: "quackmcp" - surface-neutral (not "quack-memory", since it also
-// serves review/PR tools) and distinct from bare "quack" (the pi-acp shim names pi's own LLM provider "quack" in its models.json, so a collision there suppresses the tool prefix entirely). Checks both the server's own identity (initialize handshake) and the Name handed to the ACP subprocess in session/new (memoryMCPServers - the one that drives the tool prefix).
+// TestMemoryMCP_NamespaceIsSurfaceNeutral pins the shared per-node server's name:
+// "quackmcp" - surface-neutral (not "quack-memory") and distinct from bare "quack" (the pi-acp shim's own LLM provider name), whose collision would suppress the tool prefix entirely.
 func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})
@@ -458,9 +456,8 @@ func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	}
 }
 
-// TestReviewMCP_ToolNamesUnprefixed pins the review + PR tool names the ACP
-// agent prompts (agents/code-reviewer, agents/code-implementer) hardcode: the
-// wire-level MCP tool name is always the bare "stage_review_comment" etc, and the pi-acp shim adds the "quackmcp_" prefix client-side, so these strings - the ones grepped for elsewhere - must never change without a matching prompt update.
+// TestReviewMCP_ToolNamesUnprefixed pins the review + PR tool names the ACP agent
+// prompts hardcode: the wire-level name is always the bare "stage_review_comment" etc; the pi-acp shim adds the "quackmcp_" prefix client-side, so these strings must never change without a matching prompt update.
 func TestReviewMCP_ToolNamesUnprefixed(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})

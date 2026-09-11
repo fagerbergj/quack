@@ -269,9 +269,8 @@ func TestSpawnEnvOperatorOverridesJavaToolOptions(t *testing.T) {
 	}
 }
 
-// TestWrappedArgvBwrapAcpHandshake (#921) is the one thing an argv assertion
-// cannot prove: that wrapping the ACP child in a bwrap namespace does not
-// break the protocol it speaks. It spawns the REAL pi-acp shim through the production seam pair (wrappedArgv + spawnEnv), writes an ACP `initialize` frame to its stdin and reads the reply off stdout - no LLM endpoint needed, the handshake precedes any model call (and no `pi` binary either: the shim answers `initialize` itself, before ever spawning one). Skips (loudly) where bwrap or node is unavailable, like every other sandbox test here.
+// TestWrappedArgvBwrapAcpHandshake (#921) is the one thing an argv assertion cannot prove: that wrapping the
+// ACP child in a bwrap namespace does not break the protocol it speaks - a real `initialize` round-trip through the production seam pair (wrappedArgv + spawnEnv). Skips (loudly) where bwrap or node is unavailable.
 func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 	if _, err := workspace.ResolveSandbox(workspace.SandboxBwrap); err != nil {
 		t.Skipf("SKIPPING ACP sandbox test: bubblewrap is not usable here (%v)", err)

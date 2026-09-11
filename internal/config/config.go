@@ -555,10 +555,8 @@ type AcpAgentConfig struct {
 	Env        map[string]string `yaml:"env"`
 	McpServers []string          `yaml:"mcp_servers"`
 	ReadOnly   bool              `yaml:"read_only"`
-	// AllowClone is meant to lift the git clone deny for this agent
-	// (code-explorer reads third-party repos the gate never provisions).
-	// Requires ReadOnly - see validate. Currently has no runtime effect: the
-	// pi-acp shim's own clone deny (tools/pi-acp/mcp-client.mjs) is unconditional and doesn't consult this field.
+	// AllowClone is meant to lift the git clone deny for code-explorer (reads
+	// third-party repos the gate never provisions); requires ReadOnly. Currently inert - the pi-acp shim's clone deny (mcp-client.mjs) is unconditional and ignores this field.
 	AllowClone bool `yaml:"allow_clone"`
 }
 

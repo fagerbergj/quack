@@ -1524,12 +1524,8 @@ func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
 	return env
 }
 
-// piACPEnv generates PI_ACP_CONFIG for an ACP agent: the flat set of fields
-// the pi-acp shim actually reads (tools/pi-acp/pi-acp.mjs) - endpoint, key,
-// model, context/output limits, and skill roots. git push reaches the
-// subprocess unblocked by config (#936): the ACP child's spawnEnv
-// (internal/acp.spawnEnv) strips its authority to authenticate to any real
-// remote instead, so delivery stays gate-owned without a command deny.
+// piACPEnv generates PI_ACP_CONFIG: only the fields the pi-acp shim reads
+// (tools/pi-acp/pi-acp.mjs). git push carries no deny here (#936) - spawnEnv strips its remote-auth credentials instead, so delivery stays gate-owned.
 func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey

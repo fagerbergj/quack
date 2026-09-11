@@ -231,10 +231,8 @@ func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) e
 	return nil
 }
 
-// RequestPermission routes the ask to the safety judge (Options.
-// PermissionJudge) - the ACP twin of the native guard ladder's judge tier.
-// The pi-acp shim's checkPolicy (tools/pi-acp/mcp-client.mjs) hard-blocks git
-// push/clone and escalates only a .env read here; the judge decides it with context. No judge configured ⇒ allow, matching the single-tenant container-is-the-boundary posture.
+// RequestPermission routes the ask to the safety judge (Options.PermissionJudge) -
+// the pi-acp shim's checkPolicy escalates only a .env read here. No judge configured ⇒ allow, matching the single-tenant container-is-the-boundary posture.
 func (c *clientHandler) RequestPermission(ctx contextT, p sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
 	title := ""
 	if p.ToolCall.Title != nil {

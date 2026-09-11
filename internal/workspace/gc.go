@@ -226,9 +226,8 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 	return removed, bytes
 }
 
-// sweepAgentHome resets a user's ACP agent home (its own caches/DBs/logs,
-// never quack's own state) whole once it exceeds maxBytes. The home is shared across every one of the user's
-// chats, so it has no TTL of its own; instead this only fires when anyChatActiveForUser proves none of them has a round in flight, the same isActive signal sweepChatScopes trusts to protect a live chat's clone.
+// sweepAgentHome resets a user's ACP agent home (its own caches/DBs/logs, never
+// quack's own state) whole once it exceeds maxBytes, but only once anyChatActiveForUser proves none of the user's chats have a round in flight.
 func sweepAgentHome(ctx context.Context, jail *Jail, maxBytes int64, isActive ActiveChatFunc) (reset int, bytes int64) {
 	userEntries, err := os.ReadDir(jail.Root())
 	if err != nil {

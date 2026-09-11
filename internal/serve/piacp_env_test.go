@@ -8,10 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// piACPEnv must carry the agent's configured context_window and a paired
-// max_output_tokens through as flat fields, and omit both entirely when
-// context_window is unset - the pi-acp shim reads context_window to set pi's
-// contextWindow instead of pi's 128000 default (pi-acp.mjs).
+// piACPEnv must carry context_window and max_output_tokens together, and omit
+// both when context_window is unset - unset falls back to pi's 128000 default instead of quack's configured one.
 func TestPiACPEnvContextWindow(t *testing.T) {
 	fields := func(ac config.AgentConfig) map[string]any {
 		env := piACPEnv(config.ProviderConfig{}, ac, nil)
@@ -40,9 +38,8 @@ func TestPiACPEnvContextWindow(t *testing.T) {
 	}
 }
 
-// TestPiACPEnvFlatShape pins the payload's field set: only what the pi-acp
-// shim reads (endpoint, api_key, model, context/output limits, skill_paths) -
-// no nested provider/permission/mcp block for pi to ignore.
+// TestPiACPEnvFlatShape pins the payload's field set to exactly what the
+// pi-acp shim reads - a stray extra key here is one pi silently ignores.
 func TestPiACPEnvFlatShape(t *testing.T) {
 	env := piACPEnv(config.ProviderConfig{Endpoint: "http://x/v1", APIKey: "k"},
 		config.AgentConfig{Model: "m", ContextWindow: 65536, Acp: &config.AcpAgentConfig{}},
