@@ -77,9 +77,8 @@ func TestRunChatList(t *testing.T) {
 	}
 }
 
-// TestRunChatListStatuses covers the plan's test case 1: STATUS renders for
-// every ChatStatus value and each row is uniquely grep-able by its status
-// (e.g. `grep needs_input` matches exactly the c2 row, not c1's "idle" or c4's "failed").
+// TestRunChatListStatuses: STATUS renders for every ChatStatus value, and
+// each row is uniquely grep-able by its status.
 func TestRunChatListStatuses(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
