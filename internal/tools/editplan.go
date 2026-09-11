@@ -84,7 +84,7 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				for _, n := range minted {
 					nodeAgent[n.NodeID] = n.Agent
 				}
-				stampAssignmentMeta(tc, upserts, onAssignment)
+				stampAssignmentMeta(tc, current.PlanID, nodeAgent, upserts, onAssignment)
 			}
 
 			rec := current

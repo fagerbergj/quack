@@ -94,17 +94,21 @@ func firstLine(s string) string {
 // regardless of trigger; key is the supplying extension's own name (empty
 // key or empty meta is a no-op for that assignment) - the hook itself
 // decides whether it has anything to contribute this dispatch, the same way
-// AssignmentFreshnessFunc isn't gated on a trigger either.
-type AssignmentMetaFunc func(ctx agent.Context, a dag.Assignment) (key string, meta map[string]any)
+// AssignmentFreshnessFunc isn't gated on a trigger either. planID/agentName
+// aren't on dag.Assignment itself - passed through so the sdk.Assignment
+// conversion at the wiring site (internal/serve) can populate the sdk
+// struct fully.
+type AssignmentMetaFunc func(ctx agent.Context, planID, agentName string, a dag.Assignment) (key string, meta map[string]any)
 
 // stampAssignmentMeta runs onAssignment over assignments in place - a nil
-// hook is a no-op.
-func stampAssignmentMeta(tc agent.Context, assignments []dag.Assignment, onAssignment AssignmentMetaFunc) {
+// hook is a no-op. nodeAgent resolves each assignment's node id to its
+// hired agent name (already built by the caller for the response echo).
+func stampAssignmentMeta(tc agent.Context, planID string, nodeAgent map[string]string, assignments []dag.Assignment, onAssignment AssignmentMetaFunc) {
 	if onAssignment == nil {
 		return
 	}
 	for i := range assignments {
-		key, m := onAssignment(tc, assignments[i])
+		key, m := onAssignment(tc, planID, nodeAgent[assignments[i].NodeID], assignments[i])
 		if key == "" || len(m) == 0 {
 			continue
 		}

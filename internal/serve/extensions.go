@@ -261,32 +261,27 @@ func findDeliverer(exts []builtSDKExtension) (extsdk.Deliverer, string) {
 	return found, foundName
 }
 
-// AssignmentFreshnessChecker and AssignmentMetaExtension are not yet part of
-// extsdk.Extension - adding them there is a separate quack-extensions
-// change; the GitHub extension's real implementation lands in that repo,
-// not here. Defined on quack's own side so an extension CAN already
-// implement them today via Go's structural typing, detected the same
-// optional-interface way as GitCredentialSource/Deliverer above.
-type AssignmentFreshnessChecker interface {
-	// BeforeAssignment judges a reused node's assignment (about to resume its
-	// prior session) fresh or stale - e.g. the GitHub extension comparing
-	// a.Meta["github"]["base_sha"] against the branch's current tip.
-	BeforeAssignment(ctx context.Context, a dag.Assignment) (fresh bool, reason string)
-}
-
-// AssignmentMetaExtension stamps assignment.meta.<extension> at plan
-// creation/edit - extension-owned, never model-authored.
-type AssignmentMetaExtension interface {
-	OnAssignment(ctx context.Context, a dag.Assignment) map[string]any
+// toSDKAssignment converts quack's own dag.Assignment into the sdk's wire
+// shape for the two node-reuse hooks below - the one place that crosses the
+// SDK boundary, so an extension never sees quack's internal type. planID,
+// agentName and contextID aren't on dag.Assignment itself (agent/context
+// are dag_node facts, plan id is a dag_plan fact - dag.Assignment carries
+// none of the three), so every caller threads them through from whichever
+// record it already read them off.
+func toSDKAssignment(planID, agentName, contextID string, a dag.Assignment) extsdk.Assignment {
+	return extsdk.Assignment{
+		PlanID: planID, NodeID: a.NodeID, Agent: agentName, Task: a.Task,
+		DependsOn: a.DependsOn, ContextID: contextID, TaskID: a.TaskID, Meta: a.Meta,
+	}
 }
 
 // findAssignmentFreshnessChecker: same detection/ambiguity rule as
 // findGitCredentialSource.
-func findAssignmentFreshnessChecker(exts []builtSDKExtension) (AssignmentFreshnessChecker, string) {
-	var found AssignmentFreshnessChecker
+func findAssignmentFreshnessChecker(exts []builtSDKExtension) (extsdk.AssignmentFreshnessChecker, string) {
+	var found extsdk.AssignmentFreshnessChecker
 	var foundName string
 	for _, e := range exts {
-		c, ok := e.ext.(AssignmentFreshnessChecker)
+		c, ok := e.ext.(extsdk.AssignmentFreshnessChecker)
 		if !ok {
 			continue
 		}
@@ -301,11 +296,11 @@ func findAssignmentFreshnessChecker(exts []builtSDKExtension) (AssignmentFreshne
 }
 
 // findAssignmentMetaExtension: same detection/ambiguity rule as findGitCredentialSource.
-func findAssignmentMetaExtension(exts []builtSDKExtension) (AssignmentMetaExtension, string) {
-	var found AssignmentMetaExtension
+func findAssignmentMetaExtension(exts []builtSDKExtension) (extsdk.AssignmentMetaExtension, string) {
+	var found extsdk.AssignmentMetaExtension
 	var foundName string
 	for _, e := range exts {
-		m, ok := e.ext.(AssignmentMetaExtension)
+		m, ok := e.ext.(extsdk.AssignmentMetaExtension)
 		if !ok {
 			continue
 		}

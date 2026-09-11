@@ -122,7 +122,7 @@ func TestExecuteTool_FreshnessCheckClearsStaleResume(t *testing.T) {
 	c, cache := resumeTestPlan(t)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	var sawNodeID string
-	freshness := AssignmentFreshnessFunc(func(_ agent.Context, a dag.Assignment) (bool, string) {
+	freshness := AssignmentFreshnessFunc(func(_ agent.Context, _, _, _ string, a dag.Assignment) (bool, string) {
 		sawNodeID = a.NodeID
 		return false, "branch moved past the node's cloned base_sha"
 	})

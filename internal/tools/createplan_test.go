@@ -175,7 +175,7 @@ func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	onAssignment := func(_ agent.Context, a dag.Assignment) (string, map[string]any) {
+	onAssignment := func(_ agent.Context, _, _ string, a dag.Assignment) (string, map[string]any) {
 		return "github", map[string]any{"base_sha": "deadbeef"}
 	}
 	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, onAssignment)
@@ -207,7 +207,7 @@ func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 func TestCreatePlanMetaHookRunsRegardlessOfTrigger(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	onAssignment := func(_ agent.Context, a dag.Assignment) (string, map[string]any) {
+	onAssignment := func(_ agent.Context, _, _ string, a dag.Assignment) (string, map[string]any) {
 		return "acme", map[string]any{"ticket": "ACME-42"}
 	}
 	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, onAssignment)

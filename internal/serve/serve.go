@@ -656,16 +656,16 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	freshnessChecker, freshnessCheckerName := findAssignmentFreshnessChecker(sdkExts)
 	var assignmentFreshness tools.AssignmentFreshnessFunc
 	if freshnessChecker != nil {
-		assignmentFreshness = func(ctx adkagent.Context, a dag.Assignment) (bool, string) {
-			return freshnessChecker.BeforeAssignment(ctx, a)
+		assignmentFreshness = func(ctx adkagent.Context, planID, agentName, contextID string, a dag.Assignment) (bool, string) {
+			return freshnessChecker.BeforeAssignment(ctx, toSDKAssignment(planID, agentName, contextID, a))
 		}
 		slog.Info("extension supplies assignment freshness checks", "component", "startup", "extension", freshnessCheckerName)
 	}
 	metaExtension, metaExtensionName := findAssignmentMetaExtension(sdkExts)
 	var assignmentMeta tools.AssignmentMetaFunc
 	if metaExtension != nil {
-		assignmentMeta = func(ctx adkagent.Context, a dag.Assignment) (string, map[string]any) {
-			return metaExtensionName, metaExtension.OnAssignment(ctx, a)
+		assignmentMeta = func(ctx adkagent.Context, planID, agentName string, a dag.Assignment) (string, map[string]any) {
+			return metaExtensionName, metaExtension.OnAssignment(ctx, toSDKAssignment(planID, agentName, "", a))
 		}
 		slog.Info("extension supplies assignment meta", "component", "startup", "extension", metaExtensionName)
 	}

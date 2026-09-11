@@ -26,8 +26,11 @@ import (
 // context is still fresh before execute resumes it - e.g. the GitHub
 // extension checking assignment.meta.github.base_sha against the branch's
 // current tip. fresh=false runs the same node id on a brand-new session
-// instead of resuming; nil skips the check (always fresh).
-type AssignmentFreshnessFunc func(ctx agent.Context, a dag.Assignment) (fresh bool, reason string)
+// instead of resuming; nil skips the check (always fresh). planID/agentName/
+// contextID aren't on dag.Assignment itself - passed through so the
+// sdk.Assignment conversion at the wiring site (internal/serve) can
+// populate the sdk struct fully.
+type AssignmentFreshnessFunc func(ctx agent.Context, planID, agentName, contextID string, a dag.Assignment) (fresh bool, reason string)
 
 type executeArgs struct {
 	PlanID string `json:"plan_id"` // the plan_id create_plan/edit_plan returned
@@ -90,7 +93,7 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 					if resumedFrom[a.NodeID] == "" {
 						continue
 					}
-					if fresh, reason := freshnessCheck(tc, a); !fresh {
+					if fresh, reason := freshnessCheck(tc, rec.PlanID, nodeAgent[a.NodeID], resumedFrom[a.NodeID], a); !fresh {
 						slog.Info("reused node's context is stale; running a fresh session",
 							"component", "execute", "node", a.NodeID, "reason", reason)
 						delete(resumedFrom, a.NodeID)

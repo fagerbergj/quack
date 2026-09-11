@@ -69,14 +69,6 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			if err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
-			stampAssignmentMeta(tc, assignments, onAssignment)
-			setup := a.Setup
-			if githubSetup != nil {
-				s := *githubSetup
-				setup = &s
-			}
-			rec := dag.DagPlanRecord{PlanID: uuid.NewString(), Assignments: assignments, Setup: setup, Delivery: a.Delivery, Status: "planned"}
-
 			nodeAgent := map[string]string{}
 			for _, n := range existing {
 				nodeAgent[n.NodeID] = n.Agent
@@ -84,6 +76,15 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			for _, n := range minted {
 				nodeAgent[n.NodeID] = n.Agent
 			}
+
+			planID := uuid.NewString()
+			stampAssignmentMeta(tc, planID, nodeAgent, assignments, onAssignment)
+			setup := a.Setup
+			if githubSetup != nil {
+				s := *githubSetup
+				setup = &s
+			}
+			rec := dag.DagPlanRecord{PlanID: planID, Assignments: assignments, Setup: setup, Delivery: a.Delivery, Status: "planned"}
 
 			// dag_plan (which validates) saves before any minted dag_node, so a
 			// rejected call leaves no orphan "hired" node behind for list_nodes.
