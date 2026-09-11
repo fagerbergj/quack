@@ -65,11 +65,14 @@ func TestBudgetedLLMTrimsAToolLoopGrowingPastTheWindow(t *testing.T) {
 // A changed note on a second trim would move the cache divergence point.
 func TestBudgetedLLMTrimNoteIsFixedText(t *testing.T) {
 	rec := &recordingBudgetLLM{}
-	const contextWindow = 8000
+	// 800: budget 600, so the pairs below overflow. Two pairs on the first
+	// call - one pair alone is the pinned last content and can never be trimmed.
+	const contextWindow = 800
 	llm := NewBudgetedLLM(rec, contextWindow)
 
 	opening := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review PR #1"}}}
 	contents := []*genai.Content{opening}
+	contents = append(contents, bigCallResponsePair(2000)...)
 	contents = append(contents, bigCallResponsePair(2000)...)
 	req := &model.LLMRequest{Contents: append([]*genai.Content(nil), contents...)}
 	drainLLM(llm.GenerateContent(context.Background(), req, false))

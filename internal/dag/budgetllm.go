@@ -46,13 +46,7 @@ func NewBudgetedLLM(inner model.LLM, contextWindow int) model.LLM {
 	if ceil := contextWindow / 4; ceil < reserve {
 		reserve = ceil
 	}
-	budget := contextWindow - reserve
-	if budget <= 0 {
-		// A window smaller than the reserve (a tiny test/rig config) still
-		// needs a positive budget to trim toward, or every call would trim to nothing.
-		budget = contextWindow / 2
-	}
-	return &BudgetedLLM{LLM: inner, budget: budget}
+	return &BudgetedLLM{LLM: inner, budget: contextWindow - reserve}
 }
 
 func (b *BudgetedLLM) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
