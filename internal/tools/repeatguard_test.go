@@ -263,8 +263,10 @@ func TestRepeatGuardRefusesThirdIdenticalCall(t *testing.T) {
 	}
 }
 
-// Different args, a different tool in between, or a different session all
-// reset consecutiveness - A,B,A is not a repeat.
+// Different args (to the same tool) each keep their own independent
+// adjacency and cross-call streaks - A,B,A,B never reaches a 3rd occurrence
+// of either - and a different session is always independent, even for the
+// exact same args.
 func TestRepeatGuardResets(t *testing.T) {
 	calls := 0
 	states := newRepeatStates()
@@ -272,30 +274,96 @@ func TestRepeatGuardResets(t *testing.T) {
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 
-	// A, A, B, A, A: never three consecutive identical - all run.
 	seq := []map[string]any{
-		{"q": "a"}, {"q": "a"}, {"q": "b"}, {"q": "a"}, {"q": "a"},
+		{"q": "a"}, {"q": "b"}, {"q": "a"}, {"q": "b"},
 	}
 	for i, a := range seq {
 		if _, err := rg.Run(ctx, a); err != nil {
 			t.Fatalf("call %d (%v): %v", i+1, a, err)
 		}
 	}
-	// Another tool's call between repeats resets too (shared states).
-	other := 0
-	g2, _ := newRepeatGuard(newNamedRepeatTestTool(t, "echo2", &other), states, nil)
-	if _, err := g2.(*repeatGuard).Run(ctx, map[string]any{"q": "a"}); err != nil {
-		t.Fatalf("other tool: %v", err)
-	}
-	if _, err := rg.Run(ctx, map[string]any{"q": "a"}); err != nil {
-		t.Fatalf("after other tool, identical call must run: %v", err)
-	}
-	// A different session is independent.
 	if _, err := rg.Run(newRepeatCtx("s2"), map[string]any{"q": "a"}); err != nil {
 		t.Fatalf("fresh session: %v", err)
 	}
-	if calls != 7 {
-		t.Fatalf("tool executed %d times; want 7", calls)
+	if calls != 5 {
+		t.Fatalf("tool executed %d times; want 5", calls)
+	}
+}
+
+// TestRepeatGuardCountsAcrossInterleavedOtherCalls pins the rig regression
+// (#slice3 review): the loop that slipped past the old guard alternated two
+// different tools (edit_plan/execute), so neither tool's own calls were ever
+// back-to-back. The streak must be keyed per (session, tool, args), not per
+// "last call in the session" - so identical calls to ONE tool still add up
+// toward refusal even with other tool calls sitting between them.
+func TestRepeatGuardCountsAcrossInterleavedOtherCalls(t *testing.T) {
+	calls := 0
+	states := newRepeatStates()
+	g, _ := newRepeatGuard(newRepeatTestTool(t, &calls), states, nil)
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtx("s1")
+	args := map[string]any{"q": "same"}
+
+	other := 0
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "echo2", &other), states, nil)
+	rog := og.(*repeatGuard)
+
+	for i := 1; i <= 2; i++ {
+		if _, err := rg.Run(ctx, args); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		if _, err := rog.Run(ctx, map[string]any{"q": "interleaved"}); err != nil {
+			t.Fatalf("interleaved other-tool call %d: %v", i, err)
+		}
+	}
+	if _, err := rg.Run(ctx, args); err == nil || !strings.Contains(err.Error(), "REFUSED") {
+		t.Fatalf("3rd identical call (with other-tool calls between each): want REFUSED, got %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("tool executed %d times; want 2 (3rd refused before running)", calls)
+	}
+}
+
+// TestRepeatGuardVaryingResultNeverRefuses pins the other half of the rig
+// regression: execute() was called with identical args every round -
+// interleaved with edit_plan calls, exactly the production shape, so
+// adjacency never sees two execute() calls back-to-back either - but its
+// own result (the judge's rejection reason) varied each time. Genuine
+// incremental progress, not a loop, and must never be refused no matter how
+// many rounds it takes.
+func TestRepeatGuardVaryingResultNeverRefuses(t *testing.T) {
+	round := 0
+	tl, err := functiontool.New[echoArgs, echoResult](
+		functiontool.Config{Name: "execute", Description: "execute"},
+		func(_ adkagent.Context, a echoArgs) (echoResult, error) {
+			round++
+			return echoResult{Out: fmt.Sprintf("rejected: round %d", round)}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := newRepeatStates()
+	g, err := newRepeatGuard(tl.(runnableTool), states, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := g.(*repeatGuard)
+	other := 0
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil)
+	rog := og.(*repeatGuard)
+	ctx := newRepeatCtx("s1")
+	args := map[string]any{"q": "same plan every time"}
+
+	for i := 1; i <= 10; i++ {
+		if _, err := rg.Run(ctx, args); err != nil {
+			t.Fatalf("execute call %d: want it to run (result varies each round), got %v", i, err)
+		}
+		if _, err := rog.Run(ctx, map[string]any{"q": fmt.Sprintf("no-op edit %d", i)}); err != nil {
+			t.Fatalf("interleaved edit_plan call %d: %v", i, err)
+		}
+	}
+	if round != 10 {
+		t.Fatalf("tool executed %d times; want 10 (never refused)", round)
 	}
 }
 
