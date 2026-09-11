@@ -1382,6 +1382,8 @@ func LatestPendingQuestion(events []*session.Event) (PendingQuestion, bool) {
 
 // pendingSessionEvents merges a chat's events with its plan-step session's
 // (dag.PlanStepSessionID) - execute()'s incremental dispatch runs nodes there, not on the chat session.
+// The timestamp merge is safe because the two sessions never carry an open interrupt at once:
+// Run short-circuits into resume before its tool loop could open the other.
 func (o *Orchestrator) pendingSessionEvents(ctx context.Context, userID, sessionID string) []*session.Event {
 	events := append(o.PriorEvents(ctx, userID, sessionID), o.PriorEvents(ctx, userID, dag.PlanStepSessionID(sessionID))...)
 	sort.SliceStable(events, func(i, j int) bool { return events[i].Timestamp.Before(events[j].Timestamp) })
