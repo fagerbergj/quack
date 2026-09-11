@@ -31,17 +31,6 @@ type executeResult struct {
 // ExecPlanKey: session-state key for the selected plan (full JSON), so a retry finds it in persisted session.
 const ExecPlanKey = "orch.exec.plan"
 
-// executeRejectionCap bounds how many times the plan judge may reject a plan
-// within one turn before execute refuses to run it again itself, without
-// ever calling the judge. A model that keeps calling create_plan/edit_plan/
-// execute in one long-running invocation grows the conversation by a full
-// plan-judge round each time; left uncapped, that growth can outrun the
-// model's context window before the orchestrator's own post-invocation
-// exhaustion check (a separate, turn-level guard) ever gets a chance to run.
-// Mirrors orchestrator.minRejectionsForExhaustion (a different package, same
-// number, cheap enough to keep in sync by eye rather than share).
-const executeRejectionCap = 2
-
 // NewExecuteTool: reads the chat's current dag_plan record and its
 // dag_node agents, runs planner.Build (unknown agent, cycle,
 // review-deliverable, review-fanout, the plan judge, against this
@@ -55,9 +44,7 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			Description: "Tool to execute the plan create_plan/edit_plan built. Pass the plan_id it returned. " +
 				"Reads the plan's latest revision, runs the plan judge against it and this conversation, and - " +
 				"if accepted - runs it; a rejection comes back as an error naming what to fix, so edit_plan and " +
-				"call execute again. After 2 rejections in one turn, execute refuses to try a third time - stop " +
-				"and answer the user directly explaining what's blocking a workable plan, do not keep editing. " +
-				"The plan's answer is shown to the user directly; after calling execute you " +
+				"call execute again. The plan's answer is shown to the user directly; after calling execute you " +
 				"must output nothing further - no acknowledgement, no restatement, and never say a specialist " +
 				"will respond (the work is already done).",
 		},
@@ -71,10 +58,6 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			}
 			if a.PlanID != "" && a.PlanID != rec.PlanID {
 				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q - the current plan is %q", a.PlanID, rec.PlanID)
-			}
-			if count, reason := cache.Rejections(); count >= executeRejectionCap {
-				return executeResult{}, fmt.Errorf("execute: the plan judge already rejected %d plan(s) this turn (most recently: %s) - "+
-					"stop calling create_plan/edit_plan/execute and answer the user directly, explaining what is blocking a workable plan", count, reason)
 			}
 
 			nodes, err := listDagNodeRecords(tc, c)
