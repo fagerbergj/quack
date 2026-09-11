@@ -85,7 +85,8 @@ func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJu
 // CheckCommands: configured check-command prefixes.
 func (p *Planner) CheckCommands() []string { return p.checkCommands }
 
-// RawNode is one DAG node the orchestrator submits to the plan tool.
+// RawNode is one DAG node Build/BuildBound assembles into a Plan - from a
+// dag_plan record's assignments (execute) or a bound workflow shape's config.
 type RawNode struct {
 	ID        string   `json:"id"`
 	Agent     string   `json:"agent"`

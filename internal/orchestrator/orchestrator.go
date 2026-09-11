@@ -875,8 +875,8 @@ const minRejectionsForExhaustion = 2
 func continuationContent() *genai.Content {
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: continuationMarker + "\n\n" +
 		"Nothing ran and the user is still waiting. You have already loaded the skills you need - do not load " +
-		"more, and do not think silently. Do ONE of these now:\n If you have already called `plan` and it returned a plan_id, you have NOT done the work: call `execute` with that plan_id NOW. Describing the plan, or saying it looks good, is not executing it." +
-		"- Call the `plan` tool with the nodes, then call `execute` with the plan_id it returns.\n" +
+		"more, and do not think silently. Do ONE of these now:\n If you have already called `create_plan` or `edit_plan` and it returned a plan_id, you have NOT done the work: call `execute` with that plan_id NOW. Describing the plan, or saying it looks good, is not executing it." +
+		"- Call `create_plan` with the assignments, then call `execute` with the plan_id it returns.\n" +
 		"- Or, if no plan is needed, answer the user directly in text.\n\n" +
 		"Do not end this turn without a plan call or an answer."}}}
 }
