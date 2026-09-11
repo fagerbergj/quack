@@ -9,9 +9,7 @@ import (
 )
 
 // TestChatStatus_RunningNodeReadsRunningWithoutHub pins that chat status
-// derives from the latest plan's node rows, not only the in-memory Hub -
-// the boot-resume gap this closes, where a freshly resumed node is running
-// on disk before this process's own Hub has registered the run.
+// derives from the latest plan's node rows, not only the in-memory Hub.
 func TestChatStatus_RunningNodeReadsRunningWithoutHub(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

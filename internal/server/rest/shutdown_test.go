@@ -59,9 +59,8 @@ func TestStampRunOutcome_Interrupted(t *testing.T) {
 	}
 }
 
-// TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed proves the wire-facing
-// summary (ListChats) reports a chat a killed process left mid-run, with no
-// resumable node, as failed - the crash fallback ScanOrphanedRuns relies on.
+// TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed proves a stuck
+// ActiveTurnID with no resumable node reads as failed, not idle.
 func TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed(t *testing.T) {
 	h := newTestHandler(t)
 	c := store.Chat{ID: "chat-x", ActiveTurnID: "turn-1"}

@@ -21,9 +21,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// gatedLLM blocks its worker call on hold, and signals started once entered -
-// lets the test observe quack.runs.active while RetryNode is genuinely
-// in-flight, not just before/after.
+// gatedLLM blocks its worker call on hold, signaling started once entered -
+// lets the test observe the gauge while RetryNode is genuinely in-flight.
 type gatedLLM struct {
 	started chan struct{}
 	hold    chan struct{}
@@ -44,8 +43,7 @@ func (g *gatedLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 }
 
 // retryNodeMetricsHarness wires one worker node behind a gatedLLM, with its
-// plan already stashed the way the execute tool leaves it - the shape
-// RetryNode re-enters via stashedPlan.
+// plan already stashed the way RetryNode re-enters it via stashedPlan.
 func retryNodeMetricsHarness(t *testing.T) (o *Orchestrator, gate *gatedLLM, userID, chatID string) {
 	t.Helper()
 	userID, chatID = "u1", "chat-1"
@@ -96,8 +94,7 @@ func runsActiveGauge(t *testing.T, reader *metric.ManualReader) int64 {
 }
 
 // TestRetryNode_CountsTowardRunsActiveGauge drives RetryNode to completion
-// (not the otelobs primitives directly) and asserts quack.runs.active goes
-// 0 -> 1 -> 0, covering both a fresh REST-triggered retry and a boot resume.
+// and asserts quack.runs.active goes 0 -> 1 -> 0.
 func TestRetryNode_CountsTowardRunsActiveGauge(t *testing.T) {
 	reader := metric.NewManualReader()
 	mp := metric.NewMeterProvider(metric.WithReader(reader))
@@ -105,9 +102,7 @@ func TestRetryNode_CountsTowardRunsActiveGauge(t *testing.T) {
 	if err := otelobs.InitMetricsForTesting(mp.Meter("test")); err != nil {
 		t.Fatalf("InitMetricsForTesting: %v", err)
 	}
-	// Prime the gauge so it has a data point before any assertion reads it -
-	// an UpDownCounter reports nothing until its first Add (metrics_test.go's
-	// own pattern).
+	// Prime the gauge: an UpDownCounter reports nothing until its first Add.
 	otelobs.RunStarted()
 	otelobs.RunFinished()
 

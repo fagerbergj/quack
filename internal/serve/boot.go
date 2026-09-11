@@ -17,11 +17,8 @@ import (
 // than genuinely mid-run - resuming it would burn a run slot on stale work.
 const staleResumePlanCeiling = 24 * time.Hour
 
-// bootResumeConcurrency bounds how many chats resume at once on restart -
-// these runs skip node-level admission's own backpressure (their host
-// disk/CPU cost, jail+clone, lands before that ledger sees them), so nothing
-// else caps a restart with many resumable chats from hammering the host.
-// A plain constant: a boot-only knob, not something a deploy needs to tune.
+// bootResumeConcurrency bounds how many chats resume dispatch at once on
+// restart, so a boot with many resumable chats doesn't fire them all at once.
 const bootResumeConcurrency = 8
 
 // resumeGuardArchivedOrStale is boot resume's cheap admissibility check

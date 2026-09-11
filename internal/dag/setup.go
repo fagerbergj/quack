@@ -77,6 +77,12 @@ func OverrideExistingPRHead(p *Plan, headRef string) error {
 	return nil
 }
 
+// provisionSlots bounds concurrent run SETUP (clone+jail) - that host cost
+// lands before any node reaches dag.Admission's GPU ledger.
+const provisionSlots = 8
+
+var provisionSem = make(chan struct{}, provisionSlots)
+
 // Provision clones+checks out plan.Setup, once. Called eagerly by the
 // execute tool (and RunBoundPlan) before the trust-gate run starts, so a
 // clone failure surfaces as that caller's own error - a tool-call error the
@@ -102,6 +108,12 @@ func (e *Executor) Provision(ctx context.Context, userID, chatID string, plan *P
 	if e.setupFn == nil {
 		return fmt.Errorf("dag: plan declares setup but no setup executor is configured")
 	}
+	select {
+	case provisionSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-provisionSem }()
 	dir := workspace.SetupCloneDir(workspace.SharedRepoScope)
 	if cerr := e.setupFn(ctx, userID, chatID, dir, *s); cerr != nil {
 		return &setupError{repo: s.Repo, cause: cerr}

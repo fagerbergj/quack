@@ -131,10 +131,8 @@ func TestBootResumesPausedNodes(t *testing.T) {
 	}
 }
 
-// TestBootRemovesStaleCloneDirForInterruptedChat is #1213's third leg: a
-// chat with no resumable node (killed with nothing paused) still gets its
-// stale clone dir removed, and the retry must never inherit that run's
-// shared-repo clone - including a Go module cache left read-only inside it.
+// TestBootRemovesStaleCloneDirForInterruptedChat pins that a chat with no
+// resumable node still gets its stale clone dir removed.
 func TestBootRemovesStaleCloneDirForInterruptedChat(t *testing.T) {
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -237,9 +235,8 @@ func TestBootFailsUnresumableNode(t *testing.T) {
 		t.Fatalf("pause n2: %v", err)
 	}
 
-	// An unresumable node is marked failed before ScanOrphanedRuns runs, so the chat has no
-	// paused node; a real jail proves removeStaleCloneDir fires on that path, not just that
-	// a nil jail is tolerated.
+	// A real jail proves removeStaleCloneDir fires here too, not just that a
+	// nil jail is tolerated.
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)

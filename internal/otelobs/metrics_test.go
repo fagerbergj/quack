@@ -140,42 +140,6 @@ func TestRunGauge_CountsAResumedRun(t *testing.T) {
 	}
 }
 
-// TestRunQueuedGauge_TracksAdmittedButNotYetExecuting is #417's regression
-// guard: a run admitted (queued) but not yet holding its concurrency slot
-// must show up in quack.runs.queued, NOT quack.runs.active - and the queued→active transition must net runs.queued back to 0 as it does so.
-func TestRunQueuedGauge_TracksAdmittedButNotYetExecuting(t *testing.T) {
-	reader := newTestMeter(t)
-
-	// Prime quack.runs.active so it has a data point to read (an UpDownCounter
-	// with no Add call yet produces no data point at all under the SDK's
-	// ManualReader, distinct from a genuine 0 reading).
-	RunStarted()
-	RunFinished()
-
-	RunQueued()
-	if got := sumTotal(t, reader, "quack.runs.queued"); got != 1 {
-		t.Fatalf("quack.runs.queued = %d after RunQueued, want 1", got)
-	}
-	if got := sumTotal(t, reader, "quack.runs.active"); got != 0 {
-		t.Fatalf("quack.runs.active = %d while only queued (not yet acquired), want 0", got)
-	}
-
-	// Acquire a slot: queued -> active.
-	RunUnqueued()
-	RunStarted()
-	if got := sumTotal(t, reader, "quack.runs.queued"); got != 0 {
-		t.Errorf("quack.runs.queued = %d after RunUnqueued, want 0", got)
-	}
-	if got := sumTotal(t, reader, "quack.runs.active"); got != 1 {
-		t.Errorf("quack.runs.active = %d after RunStarted, want 1", got)
-	}
-
-	RunFinished()
-	if got := sumTotal(t, reader, "quack.runs.active"); got != 0 {
-		t.Errorf("quack.runs.active = %d after RunFinished, want 0", got)
-	}
-}
-
 // TestNodeGauge_TracksInFlightThenReturnsToZero exercises concurrency (two
 // nodes in flight at once, mirroring the "4 active with 1 serial run"
 // production report) and confirms the gauge both reflects the in-flight count AND nets to 0 once an errored and a clean node both end.

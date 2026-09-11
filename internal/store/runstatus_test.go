@@ -23,11 +23,8 @@ func newRunStatusTestStore(t *testing.T) *Store {
 	return st
 }
 
-// TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback is the crash
-// case: a process died with ActiveTurnID set and no resumable node. The scan
-// reports it (for the caller's clone-dir cleanup and boot log) but does not
-// stamp a status - ActiveTurnID stays set for the read path's crash fallback
-// to report as failed.
+// TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback pins that a
+// process-killed chat with no resumable node keeps ActiveTurnID set.
 func TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback(t *testing.T) {
 	st := newRunStatusTestStore(t)
 	ctx := context.Background()

@@ -1546,10 +1546,8 @@ func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string)
 	}
 }
 
-// Computes a chat's LIVE derived status: running (hub has a live run, or the latest plan's
-// node rows say one is in flight), needs_input (prior events end on an unanswered question),
-// failed (last DAG node failed, no answer), or idle. Used by GetChat, which loads turns
-// regardless for the detail body, so the extra node-row read costs nothing extra there.
+// Computes a chat's LIVE derived status: running (hub or a node row says so),
+// needs_input, failed, or idle. Used by GetChat, which already loads turns.
 func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
 	if h.hub.Active(chatID) || h.chatHasRunningNode(ctx, chatID) {
 		return schema.ChatStatusRunning, nil
@@ -1557,9 +1555,8 @@ func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.T
 	return h.terminalStatus(ctx, chatID, turns)
 }
 
-// chatHasRunningNode wraps store.ChatHasRunningNode over chatID's latest
-// plan - closes the boot-resume gap where a resumed node is running on disk
-// before the Hub, which only knows about runs this process itself dispatched.
+// chatHasRunningNode checks chatID's latest plan - closes the boot-resume gap
+// where a resumed node runs before the Hub, which only tracks its own dispatches.
 func (h *Handler) chatHasRunningNode(ctx context.Context, chatID string) bool {
 	plan, err := h.store.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {

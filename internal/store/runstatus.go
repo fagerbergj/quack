@@ -122,14 +122,8 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 	return status, question, nodeError
 }
 
-// ScanOrphanedRuns reconciles every chat a killed process left mid-run
-// (ActiveTurnID set, or already paused): a chat with a suspended node is
-// stamped paused, since the server resumes it itself. A chat with no
-// suspended node is left untouched - its ActiveTurnID stays set, so the read
-// path's existing crash fallback reports it failed. Does not touch
-// pending_question: the node row owns the HITL question now. Startup-only:
-// the scan is table-wide with no per-chat liveness check, so calling it once
-// the Hub has registered runs would stamp a live chat.
+// ScanOrphanedRuns reconciles chats a killed process left mid-run: paused if
+// a node is suspended, else ActiveTurnID stays set for the crash fallback.
 func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode []string, err error) {
 	var chats []Chat
 	if err := s.db.WithContext(ctx).
