@@ -846,10 +846,14 @@ export class ChatStore {
           // A growing plan (incremental planning, #slice3) re-sends dag_plan
           // with the SAME planId on every execute step, its node list only
           // ever appended to - merge so earlier steps' node cards survive.
-          // #463's reset still applies to a genuinely NEW plan (e.g. after
-          // pre-DAG orchestrator narration, or a new hub dispatch replaying
-          // into the same LiveTurn): purge stale top-level accumulators that
-          // don't belong under that DAG.
+          // The orchestrator's OWN top-level run (load_skill/list_nodes/
+          // create_plan, and - #slice3 - the turn continues past dag_plan
+          // with more execute calls after it) must survive every dag_plan,
+          // new plan or grown: #463 only ever needed the stale-narration-TEXT
+          // purge on a genuinely new plan, never runs - purging runs here
+          // orphaned onAgentToolCall's later appends (no run left to append
+          // to), which is why the orchestrator's own activity stopped
+          // rendering the moment a plan arrived.
           const prevDag = s.live.dag
           const grown = prevDag?.planId === plan.planId
           const nodeStates: Record<string, NodeState> = grown ? { ...prevDag.nodeStates } : {}
@@ -865,7 +869,7 @@ export class ChatStore {
             nodeAnswer: grown ? prevDag.nodeAnswer : {},
             startedAt: grown ? prevDag.startedAt : anchorTime(plan.startedAtMs),
           }
-          this.write(chatId, { ...s, live: { ...s.live, dag, text: grown ? s.live.text : '', runs: grown ? s.live.runs : [] } })
+          this.write(chatId, { ...s, live: { ...s.live, dag, text: grown ? s.live.text : '' } })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay

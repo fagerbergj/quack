@@ -1530,9 +1530,13 @@ describe('ChatStore.attach - a fresh attach has no cursor, replays from 0 (#1090
 })
 
 // Issue #463: when a fresh dag_plan arrives on a LiveTurn that has
-// accumulated top-level content (pre-DAG orchestrator narration, replays
-// into an old turn), the stale text/runs bleed into the new DAG scope. Fix: onDagPlan also resets live.text and live.runs when creating a fresh DAG.
-describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () => {
+// accumulated stale top-level TEXT (pre-DAG orchestrator narration, replays
+// into an old turn), it bleeds into the new DAG scope. Fix: onDagPlan resets
+// live.text on a fresh DAG. live.runs is NOT reset here (#slice3 review): the
+// orchestrator's own top-level run (load_skill/list_nodes/create_plan, and
+// its later execute calls) must survive a dag_plan, or onAgentToolCall's
+// later appends have no run left to append to.
+describe('ChatStore - fresh dag_plan resets stale top-level text (#463)', () => {
   let store: ChatStore
   beforeEach(() => {
     vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
@@ -1540,7 +1544,7 @@ describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () =
     store = new ChatStore()
   })
 
-  it('a fresh dag_plan emitted into a live turn that has accumulated stale text + runs clears them', () => {
+  it('a fresh dag_plan emitted into a live turn that has accumulated stale text clears it but keeps the run', () => {
     store.seed('c', [dagTurn('in_progress')])
     store.attach('c')
     const es = FakeEventSource.last!
@@ -1554,9 +1558,36 @@ describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () =
     // FINALLY a dag_plan arrives - signals a fresh DAG for a new run.
     es.emit('dag_plan', '{"plan_id":"p-new","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
 
-    // #463: stale top-level content must be purged when replacing with a fresh DAG.
+    // #463: stale top-level TEXT must be purged when replacing with a fresh DAG...
     expect(store.get('c').live?.text).toBe('')
-    expect(store.get('c').live?.runs).toEqual([])
+    // ...but the orchestrator's own run survives - it isn't stale, it's still live.
+    expect(store.get('c').live?.runs).toHaveLength(1)
+  })
+})
+
+// #slice3 review: the orchestrator's turn continues past dag_plan (create_plan
+// -> dag_plan -> more execute calls, no delivery yet) - its own top-level run
+// must keep accumulating tool calls across that dag_plan, not get orphaned.
+describe('ChatStore - orchestrator run survives dag_plan mid-turn (#slice3)', () => {
+  it('agent_tool_call(create_plan) -> dag_plan -> agent_tool_call(execute) all land on the same run', () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    const store = new ChatStore()
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    es.emit('agent_start', '{"run_id":"orchestrator","stage":"worker"}')
+    es.emit('agent_tool_call', '{"run_id":"orchestrator","call_id":"1","name":"create_plan","args":{}}')
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+    es.emit('agent_tool_call', '{"run_id":"orchestrator","call_id":"2","name":"execute","args":{}}')
+
+    const runs = store.get('c').live?.runs
+    expect(runs).toHaveLength(1)
+    const toolNames = runs?.[0].activity
+      .filter((a): a is Extract<typeof a, { kind: 'tool' }> => a.kind === 'tool')
+      .map(a => a.tool.name)
+    expect(toolNames).toEqual(['create_plan', 'execute'])
   })
 })
 
