@@ -596,13 +596,36 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		if s, ok := tools.GitHubSetupFromContext(ctx); ok {
 			githubSetup = &s
 		}
-		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubSetup,
-			tools.AllowedDeliveryKindsFromContext(ctx), tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx), o.artifacts)
+		// The dag_node/dag_plan records ARE the plan's only state, so planning
+		// must still work with no artifact service configured (a test, a degraded deploy).
+		recordSvc := o.artifacts
+		if recordSvc == nil {
+			recordSvc = artifact.InMemoryService()
+		}
+		planRC := recordstore.New(recordSvc, artifactref.AppName, userID, sessionID)
+		if o.ledgerStore != nil {
+			planRC = planRC.WithLedger(o.ledgerStore)
+		}
+		nodeIsRunning := func(nodeID string) bool { return o.executor.NodeIsLive(sessionID, nodeID) }
+		allowedKinds := tools.AllowedDeliveryKindsFromContext(ctx)
+		listNodesTool, err := tools.NewListNodesTool(planRC, nodeIsRunning)
 		if err != nil {
-			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
+			yield(stream.Errorf("orchestrator: list_nodes tool: "+err.Error()), nil)
 			return
 		}
-		execTool, err := tools.NewExecuteTool(planCache, o.executor.Provision)
+		createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds)
+		if err != nil {
+			yield(stream.Errorf("orchestrator: create_plan tool: "+err.Error()), nil)
+			return
+		}
+		editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds)
+		if err != nil {
+			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
+			return
+		}
+		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, history, message, attachments,
+			githubSetup, allowedKinds,
+			tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx))
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return
@@ -612,13 +635,21 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: choice tool: "+err.Error()), nil)
 			return
 		}
+		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's doc.
+		repeats := tools.NewRepeatStates()
+		for _, wrapped := range []*tool.Tool{&listNodesTool, &createPlanTool, &editPlanTool, &execTool, &choiceTool} {
+			if *wrapped, err = tools.RepeatWrap(*wrapped, repeats); err != nil {
+				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
+				return
+			}
+		}
 
 		var toolsets []tool.Toolset
 		if o.skillTS != nil {
 			toolsets = []tool.Toolset{o.skillTS}
 		}
 
-		toolList := []tool.Tool{planTool, execTool, choiceTool}
+		toolList := []tool.Tool{listNodesTool, createPlanTool, editPlanTool, execTool, choiceTool}
 		var memSvc adkmemory.Service
 		if o.userMem != nil {
 			commitTool, err := tools.NewCommitMemoryTool(o.userMem, userID, sessionID, source)
@@ -853,8 +884,8 @@ const minRejectionsForExhaustion = 2
 func continuationContent() *genai.Content {
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: continuationMarker + "\n\n" +
 		"Nothing ran and the user is still waiting. You have already loaded the skills you need - do not load " +
-		"more, and do not think silently. Do ONE of these now:\n If you have already called `plan` and it returned a plan_id, you have NOT done the work: call `execute` with that plan_id NOW. Describing the plan, or saying it looks good, is not executing it." +
-		"- Call the `plan` tool with the nodes, then call `execute` with the plan_id it returns.\n" +
+		"more, and do not think silently. Do ONE of these now:\n If you have already called `create_plan` or `edit_plan` and it returned a plan_id, you have NOT done the work: call `execute` with that plan_id NOW. Describing the plan, or saying it looks good, is not executing it." +
+		"- Call `create_plan` with the assignments, then call `execute` with the plan_id it returns.\n" +
 		"- Or, if no plan is needed, answer the user directly in text.\n\n" +
 		"Do not end this turn without a plan call or an answer."}}}
 }

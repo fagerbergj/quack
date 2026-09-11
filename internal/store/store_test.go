@@ -941,3 +941,59 @@ func TestGetTurnsWithContent_NodesQueryIsConstant(t *testing.T) {
 		t.Errorf("query delta = %d at N=5, %d at N=20, want equal (constant, not N+1)", q5, q20)
 	}
 }
+
+// TestGetTurnsWithContent_RunningPlanShowsOneCardPerNode is the QA rig
+// regression test for "node progress does not show": a plan mid-execution
+// (one node done, one still running, one not yet started) must still fold
+// into one DagNode per node in the turn's content - the REST snapshot a
+// running chat's UI polls must never wait for the whole plan to finish
+// before any node card appears.
+func TestGetTurnsWithContent_RunningPlanShowsOneCardPerNode(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if err := st.SaveTurn(ctx, c.ID, "t1", ""); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+	if err := st.SaveDagPlan(ctx, c.ID, "p1", "t1", `{"plan_id":"p1"}`); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	for _, n := range []DagNode{
+		{NodeID: "code-implementer-1", PlanID: "p1", Status: "done"},
+		{NodeID: "code-reviewer-1", PlanID: "p1", Status: "running"},
+		{NodeID: "synthesizer-1", PlanID: "p1", Status: "queued"},
+	} {
+		if err := st.UpsertDagNode(ctx, n); err != nil {
+			t.Fatalf("UpsertDagNode %s: %v", n.NodeID, err)
+		}
+	}
+
+	turns, err := st.GetTurnsWithContent(ctx, chatAppName, "local", c.ID)
+	if err != nil {
+		t.Fatalf("GetTurnsWithContent: %v", err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("turns = %d, want 1", len(turns))
+	}
+	if turns[0].Plan == nil {
+		t.Fatal("turns[0].Plan is nil - a running plan must still show up")
+	}
+	if len(turns[0].Nodes) != 3 {
+		t.Fatalf("turns[0].Nodes = %+v, want one card per node (3) regardless of the plan's own completion state", turns[0].Nodes)
+	}
+	gotStatus := map[string]string{}
+	for _, n := range turns[0].Nodes {
+		gotStatus[n.NodeID] = n.Status
+	}
+	for id, want := range map[string]string{"code-implementer-1": "done", "code-reviewer-1": "running", "synthesizer-1": "queued"} {
+		if gotStatus[id] != want {
+			t.Errorf("node %s status = %q, want %q", id, gotStatus[id], want)
+		}
+	}
+}

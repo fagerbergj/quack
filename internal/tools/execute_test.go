@@ -6,9 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/session"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 // execToolCtx adds Actions() on top of planToolCtx - the execute tool's
@@ -23,8 +25,27 @@ func newExecToolCtx() *execToolCtx { return &execToolCtx{planToolCtx: planToolCt
 
 func (c *execToolCtx) Actions() *session.EventActions { return &c.actions }
 
+// seedPlanRecord writes nodes then rec into a fresh in-memory recordstore.Client,
+// the shape execute reads - the test-side equivalent of a prior
+// create_plan/edit_plan call.
+func seedPlanRecord(t *testing.T, rec dag.DagPlanRecord, nodes []dag.DagNodeRecord) *recordstore.Client {
+	t.Helper()
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	for _, n := range nodes {
+		if _, _, err := c.SaveStructured(context.Background(), "dag_node", n, n.NodeID, recordstore.Lineage{}); err != nil {
+			t.Fatalf("seed dag_node %s: %v", n.NodeID, err)
+		}
+	}
+	if _, _, err := c.SaveStructured(context.Background(), "dag_plan", rec, "", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed dag_plan: %v", err)
+	}
+	return c
+}
+
 func TestNewExecuteToolMetadata(t *testing.T) {
-	tl, err := NewExecuteTool(NewPlanCache(), nil)
+	planner := dag.NewPlanner(nil, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	tl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, nil, "", nil, nil, nil, "", nil, false)
 	if err != nil {
 		t.Fatalf("NewExecuteTool error: %v", err)
 	}
@@ -40,13 +61,14 @@ func TestNewExecuteToolMetadata(t *testing.T) {
 // unreachable repo must fail the execute TOOL CALL - a normal error result the
 // model can revise from (drop setup, or name a reachable repo), never a run-phase fatal; exercises the real dag.Executor.Provision through the tool's actual Run (mirroring dag/setup_test.go's fake-setupFn pattern for the git failure).
 func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
-	cache := NewPlanCache()
-	plan := dag.Plan{
-		ID:    "p1",
-		Nodes: []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
-		Setup: &dag.Setup{Repo: "https://github.com/chrishay-quack/quack.git", BaseRef: "main", WorkBranch: "quack/work"},
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	rec := dag.DagPlanRecord{
+		PlanID:      "p1",
+		Assignments: []dag.Assignment{{NodeID: "impl", Task: "implement it"}},
+		Setup:       &dag.Setup{Repo: "https://github.com/chrishay-quack/quack.git", BaseRef: "main", WorkBranch: "quack/work"},
 	}
-	cache.Put(plan)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "impl", Agent: "code-implementer"}})
+	cache := NewPlanCache()
 
 	// Mirrors runGit's real error shape (internal/tools/git.go): "git
 	// <argv...>: <stderr>" - what SetupClone actually returns.
@@ -55,7 +77,7 @@ func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 	ex := dag.NewExecutor(nil, nil, nil, nil, nil, nil)
 	ex.SetSetup(func(context.Context, string, string, string, dag.Setup) error { return gitFatal })
 
-	tl, err := NewExecuteTool(cache, ex.Provision)
+	tl, err := NewExecuteTool(planner, c, cache, ex.Provision, nil, "implement it", nil, nil, nil, "", nil, false)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -78,9 +100,8 @@ func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 	if strings.Contains(msg, "git clone") {
 		t.Errorf("execute error = %q, want the git argv dump stripped, not surfaced verbatim", msg)
 	}
-	// The turn must not die: nothing got selected, so the model can call plan
-	// again with a corrected Setup and retry execute - this is what "feeds
-	// back like every other tool error" means in practice.
+	// The turn must not die: nothing got selected, so the model can call
+	// edit_plan and retry execute.
 	if _, selected := cache.Selected(); selected {
 		t.Error("a failed provisioning must not select the plan - the model needs to be able to retry")
 	}
@@ -90,13 +111,14 @@ func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 // tool provisions plan.Setup itself (not just the run phase) before marking the
 // plan selected, and the cached plan read back carries Setup.Provisioned - so the run phase (runPlanSetup) skips it.
 func TestExecuteTool_ProvisionsSetupBeforeSelecting(t *testing.T) {
-	cache := NewPlanCache()
-	plan := dag.Plan{
-		ID:    "p1",
-		Nodes: []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
-		Setup: &dag.Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	rec := dag.DagPlanRecord{
+		PlanID:      "p1",
+		Assignments: []dag.Assignment{{NodeID: "impl", Task: "implement it"}},
+		Setup:       &dag.Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
 	}
-	cache.Put(plan)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "impl", Agent: "code-implementer"}})
+	cache := NewPlanCache()
 
 	var provisionCalls int
 	ex := dag.NewExecutor(nil, nil, nil, nil, nil, nil)
@@ -105,7 +127,7 @@ func TestExecuteTool_ProvisionsSetupBeforeSelecting(t *testing.T) {
 		return nil
 	})
 
-	tl, err := NewExecuteTool(cache, ex.Provision)
+	tl, err := NewExecuteTool(planner, c, cache, ex.Provision, nil, "implement it", nil, nil, nil, "", nil, false)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}

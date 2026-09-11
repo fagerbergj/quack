@@ -8,7 +8,8 @@ import (
 
 // This file threads the two per-node evidence scopings a GitHub trigger
 // computes (#664, consumer split) from the webhook dispatch boundary to
-// tools.NewPlanTool: values the model must never author itself, read exactly once at the top of Orchestrator.Run.
+// create_plan/edit_plan/execute: values the model must never author itself,
+// read exactly once at the top of Orchestrator.Run.
 
 type workerAskContextKey struct{}
 

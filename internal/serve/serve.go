@@ -746,7 +746,15 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	mediaAgents := make(map[string]bool)
 	for name, c := range clientMap {
 		ac := cfg.Agents[name]
-		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description(), ContextWindow: ac.ContextWindow})
+		// Re-reads a bundle buildAgents already loaded, rather than widen its
+		// already-long return signature for this one optional field.
+		var defaultArtifact string
+		if bundle, err := agent.LoadBundle(ac.Bundle); err != nil {
+			slog.Warn("agent bundle: re-read for default artifact failed", "component", "startup", "agent", name, "err", err)
+		} else {
+			defaultArtifact = bundle.Card.Artifact
+		}
+		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description(), ContextWindow: ac.ContextWindow, DefaultArtifact: defaultArtifact})
 		for _, inp := range ac.Inputs {
 			if inp == "image" || inp == "audio" {
 				mediaAgents[name] = true
@@ -806,6 +814,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// generating - holding across the DAG span would deadlock its own nodes. Wraps AFTER
 	// setDefaultAgent: that asserts on the concrete traced model, which the wrapper does not promote.
 	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
+	// Hard backstop under ADK's own compaction - see BudgetedLLM's doc for why.
+	orchLLM = dag.NewBudgetedLLM(orchLLM, cfg.Orchestrator.ContextWindow)
 	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	// Unconditional, like executor.SetArtifacts above: dag_plan persistence
 	// (#1095/#1118) must not depend on load_artifacts being in orchestrator.tools -

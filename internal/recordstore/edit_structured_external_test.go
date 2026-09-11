@@ -56,9 +56,9 @@ func TestEditArtifactStructuredFields(t *testing.T) {
 
 	t.Run("dag_plan nested array leaf", func(t *testing.T) {
 		c := newClient(t)
-		p := dag.Plan{ID: "p1", Nodes: []dag.Node{
-			{ID: "n1", AgentName: "coder", Task: "implement the fix"},
-			{ID: "n2", AgentName: "reviewer", Task: "review the fix"},
+		p := dag.DagPlanRecord{PlanID: "p1", Assignments: []dag.Assignment{
+			{NodeID: "coder-1", Task: "implement the fix"},
+			{NodeID: "reviewer-1", Task: "review the fix"},
 		}}
 		id, rev, err := c.SaveStructured(ctx, "dag_plan", p, "", recordstore.Lineage{})
 		if err != nil {
@@ -72,15 +72,15 @@ func TestEditArtifactStructuredFields(t *testing.T) {
 		if gotRev != rev+1 {
 			t.Fatalf("revision = %d, want %d", gotRev, rev+1)
 		}
-		var got dag.Plan
+		var got dag.DagPlanRecord
 		if err := json.Unmarshal(merged, &got); err != nil {
 			t.Fatalf("merged content is not valid JSON: %v\n%s", err, merged)
 		}
-		if got.Nodes[0].Task != newTask {
-			t.Fatalf("Nodes[0].Task = %q, want %q", got.Nodes[0].Task, newTask)
+		if got.Assignments[0].Task != newTask {
+			t.Fatalf("Assignments[0].Task = %q, want %q", got.Assignments[0].Task, newTask)
 		}
-		if got.Nodes[1].Task != "review the fix" {
-			t.Fatalf("Nodes[1].Task changed unexpectedly: %q", got.Nodes[1].Task)
+		if got.Assignments[1].Task != "review the fix" {
+			t.Fatalf("Assignments[1].Task changed unexpectedly: %q", got.Assignments[1].Task)
 		}
 	})
 
@@ -104,9 +104,9 @@ func TestEditArtifactStructuredFields(t *testing.T) {
 
 	t.Run("ambiguous match across two leaves conflicts", func(t *testing.T) {
 		c := newClient(t)
-		p := dag.Plan{ID: "p1", Nodes: []dag.Node{
-			{ID: "n1", Task: "same text"},
-			{ID: "n2", Task: "same text"},
+		p := dag.DagPlanRecord{PlanID: "p1", Assignments: []dag.Assignment{
+			{NodeID: "n1", Task: "same text"},
+			{NodeID: "n2", Task: "same text"},
 		}}
 		id, rev, err := c.SaveStructured(ctx, "dag_plan", p, "", recordstore.Lineage{})
 		if err != nil {

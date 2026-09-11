@@ -20,37 +20,42 @@ import (
 )
 
 // rejectedPlanModel always proposes a review-delivery plan that dag's own
-// OverrideExistingPRHead deterministically rejects (a review-only setup with
-// no real PR head ref in context - #1180's live repro), then ends its
-// invocation with no plan and no answer once it sees the rejection, so the
-// orchestrator's continuation loop tries again from scratch rather than
-// looping forever inside one invocation.
+// OverrideExistingPRHead deterministically rejects at execute time (a
+// review-only setup with no real PR head ref in context - #1180's live
+// repro), then ends its invocation with no plan and no answer once it sees
+// the rejection, so the orchestrator's continuation loop tries again from
+// scratch rather than looping forever inside one invocation.
 type rejectedPlanModel struct{}
 
 func (rejectedPlanModel) Name() string { return "rejected-plan-stub" }
 
 func (rejectedPlanModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		if len(req.Contents) > 0 {
-			last := req.Contents[len(req.Contents)-1]
-			for _, p := range last.Parts {
-				if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == "plan" {
-					// Rejected this invocation - stop (empty) so the orchestrator's bounded
-					// continuation loop re-drives the next attempt, not an in-invocation retry.
-					yield(&model.LLMResponse{
-						Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: ""}}},
-						FinishReason: genai.FinishReasonStop,
-						TurnComplete: true,
-					}, nil)
-					return
-				}
-			}
+		// execute's response ends this invocation (stop, empty) so the
+		// orchestrator's bounded continuation loop re-drives the next attempt.
+		if hasFunctionResponseNamed(req, "execute") {
+			yield(&model.LLMResponse{
+				Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: ""}}},
+				FinishReason: genai.FinishReasonStop,
+				TurnComplete: true,
+			}, nil)
+			return
+		}
+		if id, ok := planIDFromCreatePlanResponse(req); ok {
+			yield(&model.LLMResponse{
+				Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
+					FunctionCall: &genai.FunctionCall{Name: "execute", Args: map[string]any{"plan_id": id}},
+				}}},
+				FinishReason: genai.FinishReasonStop,
+				TurnComplete: true,
+			}, nil)
+			return
 		}
 		yield(&model.LLMResponse{
 			Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
-				FunctionCall: &genai.FunctionCall{Name: "plan", Args: map[string]any{
-					"nodes": []any{map[string]any{
-						"id": "review", "agent": "code-reviewer", "task": "review the PR", "depends_on": []any{},
+				FunctionCall: &genai.FunctionCall{Name: "create_plan", Args: map[string]any{
+					"assignments": []any{map[string]any{
+						"agent": "code-reviewer", "task": "review the PR",
 					}},
 					"delivery": map[string]any{"kind": "review"},
 					"setup":    map[string]any{"repo": "https://github.com/o/r", "base_ref": "main", "work_branch": "quack/pr-1"},
@@ -60,6 +65,41 @@ func (rejectedPlanModel) GenerateContent(_ context.Context, req *model.LLMReques
 			TurnComplete: true,
 		}, nil)
 	}
+}
+
+// hasFunctionResponseNamed reports whether any content part in req is a
+// FunctionResponse named name.
+func hasFunctionResponseNamed(req *model.LLMRequest, name string) bool {
+	for _, c := range req.Contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// planIDFromCreatePlanResponse finds create_plan's response in req - the
+// plan_id the model must hand to execute.
+func planIDFromCreatePlanResponse(req *model.LLMRequest) (string, bool) {
+	for _, c := range req.Contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != "create_plan" {
+				continue
+			}
+			if id, ok := p.FunctionResponse.Response["plan_id"].(string); ok && id != "" {
+				return id, true
+			}
+		}
+	}
+	return "", false
 }
 
 // TestPlanRejection_EndsRunFailedWithRejectionReason is #1180's guard: an all-rejected

@@ -22,7 +22,7 @@ import (
 type slowOrchStub struct{ orchStub }
 
 func (s *slowOrchStub) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
-	if !stubHasTool(req, "plan") {
+	if !stubHasTool(req, "create_plan") {
 		time.Sleep(15 * time.Millisecond)
 	}
 	return s.orchStub.GenerateContent(ctx, req, stream)
@@ -30,13 +30,17 @@ func (s *slowOrchStub) GenerateContent(ctx context.Context, req *model.LLMReques
 
 // planCallQueueing authors 3 web-researcher nodes (no deps) fanning into a
 // synthesizer - the live incident's shape (chat
-// 65974150-3efd-439a-8186-b4a93ad59d7a): 3 ready nodes against an admission cap of 2, so one MUST queue while its siblings are still running.
+// 65974150-3efd-439a-8186-b4a93ad59d7a): 3 ready nodes against an admission
+// cap of 2, so one MUST queue while its siblings are still running.
+// depends_on names its siblings by their 0-based position in this same
+// call's assignments array - node ids are minted, so a brand-new sibling has
+// none yet to reference by name.
 func planCallQueueing() *model.LLMResponse {
-	return stubCall("plan", map[string]any{"nodes": []any{
-		map[string]any{"id": "qualities", "agent": "web-researcher", "task": "research qualities", "depends_on": []any{}},
-		map[string]any{"id": "when", "agent": "web-researcher", "task": "research when", "depends_on": []any{}},
-		map[string]any{"id": "conventions", "agent": "web-researcher", "task": "research conventions", "depends_on": []any{}},
-		map[string]any{"id": "synth", "agent": "synthesizer", "task": "synthesize", "depends_on": []any{"qualities", "when", "conventions"}},
+	return stubCall("create_plan", map[string]any{"assignments": []any{
+		map[string]any{"agent": "web-researcher", "task": "research qualities"},
+		map[string]any{"agent": "web-researcher", "task": "research when"},
+		map[string]any{"agent": "web-researcher", "task": "research conventions"},
+		map[string]any{"agent": "synthesizer", "task": "synthesize", "depends_on": []any{"0", "1", "2"}},
 	}})
 }
 

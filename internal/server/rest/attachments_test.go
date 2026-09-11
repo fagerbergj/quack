@@ -30,9 +30,9 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// attachStub plays the orchestrator (routes on the "plan" tool's presence),
-// the judge (submit_verdict), and the "media" worker - recording the bytes
-// and mime the worker actually received off req.Contents.
+// attachStub plays the orchestrator (routes on the "create_plan" tool's
+// presence), the judge (submit_verdict), and the "media" worker - recording
+// the bytes and mime the worker actually received off req.Contents.
 type attachStub struct {
 	mu          sync.Mutex
 	workerCalls int
@@ -48,7 +48,7 @@ func (s *attachStub) GenerateContent(_ context.Context, req *model.LLMRequest, _
 		case attachStubHasTool(req, "submit_verdict"):
 			yield(attachStubCall("submit_verdict", map[string]any{"score": 0.95, "feedback": ""}), nil)
 			return
-		case !attachStubHasTool(req, "plan"): // no plan tool ⇒ this is the media worker
+		case !attachStubHasTool(req, "create_plan"): // no create_plan tool ⇒ this is the media worker
 			s.mu.Lock()
 			s.workerCalls++
 			for _, c := range req.Contents {
@@ -70,8 +70,8 @@ func (s *attachStub) GenerateContent(_ context.Context, req *model.LLMRequest, _
 			yield(attachStubCall("execute", map[string]any{"plan_id": id}), nil)
 			return
 		}
-		yield(attachStubCall("plan", map[string]any{"nodes": []any{map[string]any{
-			"id": "n1", "agent": "media", "task": "describe the attached image", "depends_on": []any{},
+		yield(attachStubCall("create_plan", map[string]any{"assignments": []any{map[string]any{
+			"agent": "media", "task": "describe the attached image",
 		}}}), nil)
 	}
 }
@@ -99,7 +99,7 @@ func attachStubPlanID(req *model.LLMRequest) (string, bool) {
 			continue
 		}
 		for _, p := range c.Parts {
-			if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != "plan" {
+			if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != "create_plan" {
 				continue
 			}
 			if id, ok := p.FunctionResponse.Response["plan_id"].(string); ok && id != "" {

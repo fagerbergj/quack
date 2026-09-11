@@ -6,7 +6,7 @@ An agent is a **bundle** on disk plus a binding in `config/quack.yaml`. Adding o
 
 Each bundle lives at `agents/<name>/` and contains exactly:
 
-- `agent-card.json` — the [A2A AgentCard](https://a2a-protocol.org/latest/specification/): identity, description, and the skills it advertises. This is what the orchestrator's planner routes on.
+- `agent-card.json` — the [A2A AgentCard](https://a2a-protocol.org/latest/specification/): identity, description, and the skills it advertises. This is what the orchestrator's planner routes on. An optional `artifact` field names this job's default output kind (one of the registered recordstore artifact kinds) - stamped onto every node assigned this agent, so a node's output is saved as that kind on gate pass without the plan having to say so.
 - `prompt.md` — the system prompt. For a native agent this is the whole prompt; for an external ACP agent (below) it's the per-round preamble prepended to the coding agent's own instructions.
 - `rubric.yaml` (optional) — a per-agent judge rubric, overriding `config/rubric.md`.
 - `memory.md` (optional) — "what to remember" guidance for shared memory (native agents only).
@@ -75,7 +75,10 @@ The orchestrator stays light on tools — it needs only:
 
 | Tool | Custom? | Description |
 | --- | --- | --- |
-| `plan_dag` | Yes | A [function tool](https://pkg.go.dev/google.golang.org/adk/tool/functiontool) that turns the request into a DAG. |
+| `list_nodes` | Yes | Lists this chat's nodes (agent + A2A `context_id`) with status, current assignment, and artifacts - called before authoring a plan, to reuse a node instead of hiring a new one. |
+| `create_plan` | Yes | Starts a plan: assignments tying nodes to work (`agent` hires a new node, `node_id` reassigns an existing one), plus `setup`/`delivery`. Returns the plan record for review. |
+| `edit_plan` | Yes | Upserts/removes assignments on the chat's current plan by `node_id`, and/or updates `setup`/`delivery`. |
+| `execute` | Yes | Runs the plan judge against the current plan record and, if accepted, executes it - a rejection is a tool error naming what to fix. |
 | [`agenttool`](https://pkg.go.dev/google.golang.org/adk/tool/agenttool) | No (ADK) | ADK's `AgentTool`, one per discovered agent, to hand a node off to a specialist. |
 | [`loadmemorytool`](https://pkg.go.dev/google.golang.org/adk/tool/loadmemorytool) | No (ADK) | The model calls it on demand; routes through quack's `memory.Store` (it implements ADK's `MemoryService`). |
 | [`preloadmemorytool`](https://pkg.go.dev/google.golang.org/adk/tool/preloadmemorytool) | No (ADK) | Auto-injects relevant memory into the prompt at the start of each turn. |

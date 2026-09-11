@@ -10,11 +10,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -25,24 +27,37 @@ type planToolCtx struct{ *fakeCtx }
 
 func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
 
-// buildPlan runs the plan tool exactly as the model would - through Run, with
-// JSON-shaped args - and returns the resulting cached plan. Shared by the
-// #661 deterministic-setup tests below.
+// buildPlan drives create_plan then execute exactly as the model would -
+// through Run, with JSON-shaped args - and returns the resulting cached
+// plan. Shared by the #661 deterministic-setup tests below.
 func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup *dag.Setup, args map[string]any) dag.Plan {
 	t.Helper()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", githubSetup, nil, "", nil, false, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil)
 	if err != nil {
-		t.Fatalf("NewPlanTool: %v", err)
+		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
-	rt, ok := tl.(runnableTool)
+	crt, ok := createTl.(runnableTool)
 	if !ok {
-		t.Fatalf("plan tool is not runnable")
+		t.Fatalf("create_plan tool is not runnable")
 	}
-	res, err := rt.Run(planToolCtx{newFakeCtx()}, args)
+	cres, err := crt.Run(planToolCtx{newFakeCtx()}, args)
 	if err != nil {
-		t.Fatalf("plan tool Run: %v", err)
+		t.Fatalf("create_plan Run: %v", err)
 	}
-	planID, _ := res["plan_id"].(string)
+	planID, _ := cres["plan_id"].(string)
+
+	execTl, err := NewExecuteTool(planner, c, cache, nil, nil, "", nil, githubSetup, nil, "", nil, false)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	ert, ok := execTl.(runnableTool)
+	if !ok {
+		t.Fatalf("execute tool is not runnable")
+	}
+	if _, err := ert.Run(newExecToolCtx(), map[string]any{"plan_id": planID}); err != nil {
+		t.Fatalf("execute Run: %v", err)
+	}
 	p, ok := cache.Get(planID)
 	if !ok {
 		t.Fatalf("plan %q not found in cache", planID)
@@ -50,37 +65,47 @@ func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup
 	return p
 }
 
-// implementNode is a minimal, valid single-node plan args payload for a
-// code-implementer run - just enough to exercise Setup handling.
-func implementNode() []map[string]any {
-	return []map[string]any{{"id": "impl", "agent": "code-implementer", "task": "implement the feature", "depends_on": []string{}}}
+// implementAssignment is a minimal, valid single-assignment create_plan
+// payload for a code-implementer run - just enough to exercise Setup handling.
+func implementAssignment() []map[string]any {
+	return []map[string]any{{"agent": "code-implementer", "task": "implement the feature"}}
 }
 
-// TestPlanToolStampsPlanOnly pins #739's plumbing half: the plan tool stamps
-// dag.Plan.PlanOnly from the harness-computed flag it's constructed with, never
-// from anything the model submits (same as WorkerBackground/ContextItems) - carrying the quack:plan label's intent down to buildGateNodes, which enforces it.
-func TestPlanToolStampsPlanOnly(t *testing.T) {
+// TestExecuteToolStampsPlanOnly pins #739's plumbing half: execute stamps
+// dag.Plan.PlanOnly from the harness-computed flag it's constructed with,
+// never from anything the model submits (same as WorkerBackground/
+// ContextItems) - carrying the quack:plan label's intent down to
+// buildGateNodes, which enforces it.
+func TestExecuteToolStampsPlanOnly(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	cache := NewPlanCache()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", nil, nil, "", nil, true, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+
+	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil)
 	if err != nil {
-		t.Fatalf("NewPlanTool: %v", err)
+		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
-	rt, ok := tl.(runnableTool)
-	if !ok {
-		t.Fatalf("plan tool is not runnable")
-	}
-	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"nodes": implementNode()})
+	crt := createTl.(runnableTool)
+	cres, err := crt.Run(planToolCtx{newFakeCtx()}, map[string]any{"assignments": implementAssignment()})
 	if err != nil {
-		t.Fatalf("plan tool Run: %v", err)
+		t.Fatalf("create_plan Run: %v", err)
 	}
-	planID, _ := res["plan_id"].(string)
+	planID, _ := cres["plan_id"].(string)
+
+	execTl, err := NewExecuteTool(planner, c, cache, nil, nil, "", nil, nil, nil, "", nil, true)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	ert := execTl.(runnableTool)
+	if _, err := ert.Run(newExecToolCtx(), map[string]any{"plan_id": planID}); err != nil {
+		t.Fatalf("execute Run: %v", err)
+	}
 	p, ok := cache.Get(planID)
 	if !ok {
 		t.Fatalf("plan %q not found in cache", planID)
 	}
 	if !p.PlanOnly {
-		t.Error("p.PlanOnly = false, want true - the plan tool was constructed with planOnly=true")
+		t.Error("p.PlanOnly = false, want true - execute was constructed with planOnly=true")
 	}
 }
 
@@ -94,7 +119,7 @@ func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
 		BaseRef:    "main",
 		WorkBranch: "quack/issue-65",
 	}
-	p := buildPlan(t, planner, NewPlanCache(), githubSetup, map[string]any{"nodes": implementNode()})
+	p := buildPlan(t, planner, NewPlanCache(), githubSetup, map[string]any{"assignments": implementAssignment()})
 	if p.Setup == nil {
 		t.Fatal("plan.Setup is nil, want it filled from the trigger")
 	}
@@ -106,10 +131,14 @@ func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGitHubSetupWholesaleReplacesPlannerSetup is issue #661's second test
-// case, the PR-scoped half: a planner-supplied setup (repo/base_ref/branch all
-// different from the trigger's) must not survive - the trigger's values win entirely, with the existing-PR-head override still landing on top.
-func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
+// TestGitHubSetupWorkBranchOverrideStillWins is issue #661's second test
+// case, the PR-scoped half: a planner-supplied work_branch does not survive -
+// the trigger's real PR head wins, with CheckoutExistingHead landing on top.
+// repo/base_ref match the trigger here (a work_branch difference is
+// legitimate - each dispatch can pick its own working branch); a
+// repo/base_ref mismatch is a different, now-rejected case - see
+// TestCreatePlanRejectsWholesaleMismatchedSetup.
+func TestGitHubSetupWorkBranchOverrideStillWins(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{
 		Repo:                 "https://github.com/fagerbergj/quack.git",
@@ -118,9 +147,9 @@ func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
 		CheckoutExistingHead: true,
 	}
 	args := map[string]any{
-		"nodes": implementNode(),
+		"assignments": implementAssignment(),
 		"setup": map[string]any{
-			"repo": "https://example.com/planner-invented.git", "base_ref": "other",
+			"repo": githubSetup.Repo, "base_ref": githubSetup.BaseRef,
 			"work_branch": "planner-invented-branch",
 		},
 	}
@@ -140,13 +169,40 @@ func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
 	}
 }
 
+// TestCreatePlanRejectsWholesaleMismatchedSetup is the QA rig's owner rule:
+// a planner-invented setup.repo/base_ref that disagrees with the trigger's
+// own is rejected outright, not silently discarded in favor of the
+// trigger's - a hallucinated repo belongs in the rejection the model sees,
+// not a plan that quietly runs against a different repo than its own task
+// text describes.
+func TestCreatePlanRejectsWholesaleMismatchedSetup(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main", WorkBranch: "feat/real-pr-head"}
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	crt := createTl.(runnableTool)
+	args := map[string]any{
+		"assignments": implementAssignment(),
+		"setup": map[string]any{
+			"repo": "https://example.com/planner-invented.git", "base_ref": "other",
+			"work_branch": "planner-invented-branch",
+		},
+	}
+	if _, err := crt.Run(planToolCtx{newFakeCtx()}, args); err == nil || !strings.Contains(err.Error(), "setup.repo") {
+		t.Fatalf("err = %v, want a setup.repo mismatch rejection", err)
+	}
+}
+
 // TestNonGitHubRunKeepsPlannerSetup is issue #661's third test case: a plain
 // (non-GitHub) run has no trigger Setup to draw from, so the planner's own
 // declaration must pass through untouched.
 func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	args := map[string]any{
-		"nodes": implementNode(),
+		"assignments": implementAssignment(),
 		"setup": map[string]any{
 			"repo": "https://example.com/some-other-repo.git", "base_ref": "main",
 			"work_branch": "feat/planner-chosen",
@@ -161,40 +217,38 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 	}
 }
 
-func TestNewPlanToolMetadata(t *testing.T) {
-	planner := dag.NewPlanner(nil, nil, nil)
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", nil, nil, "", nil, false, nil)
+func TestNewCreatePlanToolMetadata(t *testing.T) {
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil)
 	if err != nil {
-		t.Fatalf("NewPlanTool error: %v", err)
+		t.Fatalf("NewCreatePlanTool error: %v", err)
 	}
-	if tl.Name() != "plan" {
-		t.Errorf("Name() = %q, want %q", tl.Name(), "plan")
-	}
-	if !strings.Contains(tl.Description(), "DAG") {
-		t.Errorf("Description() = %q, want mention of DAG", tl.Description())
+	if tl.Name() != "create_plan" {
+		t.Errorf("Name() = %q, want %q", tl.Name(), "create_plan")
 	}
 	// Every plan must declare setup + delivery, and the model must never run
 	// git/push/PR itself - see github-delivery-architecture.
-	for _, want := range []string{"setup", "delivery", "you never run git, push, or open a PR yourself"} {
+	for _, want := range []string{"setup", "delivery", "a node never pushes, opens a PR"} {
 		if !strings.Contains(tl.Description(), want) {
 			t.Errorf("Description() = %q, want it to mention %q", tl.Description(), want)
 		}
 	}
 }
 
-// summarizePlan is the summary the model sees back after calling plan - it
-// must surface the declared setup/delivery so the model can catch its own
-// mistake before calling execute.
-func TestSummarizePlanIncludesSetupAndDelivery(t *testing.T) {
-	plan := &dag.Plan{
-		Nodes:    []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
-		Setup:    &dag.Setup{BaseRef: "main", WorkBranch: "feat/widget"},
-		Delivery: &dag.Delivery{Kind: "pull_request"},
+// summarizePlanRecord is the summary the model sees back after calling
+// create_plan/edit_plan - it must surface the declared setup/delivery so the
+// model can catch its own mistake before calling execute.
+func TestSummarizePlanRecordIncludesSetupAndDelivery(t *testing.T) {
+	rec := dag.DagPlanRecord{
+		PlanID:      "p1",
+		Assignments: []dag.Assignment{{NodeID: "impl", Task: "x"}},
+		Setup:       &dag.Setup{BaseRef: "main", WorkBranch: "feat/widget"},
+		Delivery:    &dag.Delivery{Kind: "pull_request"},
 	}
-	got := summarizePlan(plan)
+	got := summarizePlanRecord(rec, map[string]string{"impl": "code-implementer"})
 	for _, want := range []string{"feat/widget", "pull_request"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("summarizePlan = %q, want it to contain %q", got, want)
+			t.Errorf("summarizePlanRecord = %q, want it to contain %q", got, want)
 		}
 	}
 }
@@ -353,15 +407,16 @@ func TestDagPlanEventCarriesArtifact(t *testing.T) {
 
 // TestReviewDispatchSetupSatisfiesExistingHead pins the v0.29.0 cutover
 // regression: a review-only dispatch declares its existing PR head via Setup
-// (sdk ExistingHeadRef -> CheckoutExistingHead), so the plan tool must take the head from the Setup, not reject every plan with "needs the PR's real head branch".
+// (sdk ExistingHeadRef -> CheckoutExistingHead), so execute must take the
+// head from the Setup, not reject every plan with "needs the PR's real head branch".
 func TestReviewDispatchSetupSatisfiesExistingHead(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	githubSetup := &dag.Setup{
 		Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main",
 		WorkBranch: "quack/issue-836", CheckoutExistingHead: true,
 	}
-	reviewNode := []map[string]any{{"id": "rev", "agent": "code-reviewer", "task": "review the PR", "depends_on": []string{}}}
-	p := buildPlan(t, planner, NewPlanCache(), githubSetup, map[string]any{"nodes": reviewNode})
+	reviewAssignment := []map[string]any{{"agent": "code-reviewer", "task": "review the PR"}}
+	p := buildPlan(t, planner, NewPlanCache(), githubSetup, map[string]any{"assignments": reviewAssignment})
 	if p.Setup == nil || p.Setup.WorkBranch != "quack/issue-836" || !p.Setup.CheckoutExistingHead {
 		t.Errorf("Setup = %+v, want the dispatch-declared existing head checkout", p.Setup)
 	}
@@ -369,7 +424,7 @@ func TestReviewDispatchSetupSatisfiesExistingHead(t *testing.T) {
 
 // TestPlanTool_OriginFallbackSetupSatisfiesExistingHead is #1180's second
 // defect: a nudge/retry dispatch carries no Run.Setup of its own, so serve's
-// mergeExtOrigin resolves the chat's stored origin into a dag.Setup via WithGitHubSetup - indistinguishable at the plan tool; pins that the fallback path is accepted as TestReviewDispatchSetupSatisfiesExistingHead pins the fresh path.
+// mergeExtOrigin resolves the chat's stored origin into a dag.Setup via WithGitHubSetup - indistinguishable at execute; pins that the fallback path is accepted as TestReviewDispatchSetupSatisfiesExistingHead pins the fresh path.
 func TestPlanTool_OriginFallbackSetupSatisfiesExistingHead(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	// Stands in for what mergeExtOrigin(storedOriginJSON, nil, nil) returns
@@ -378,8 +433,8 @@ func TestPlanTool_OriginFallbackSetupSatisfiesExistingHead(t *testing.T) {
 		Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main",
 		WorkBranch: "quack/pr-1170", CheckoutExistingHead: true,
 	}
-	reviewNode := []map[string]any{{"id": "rev", "agent": "code-reviewer", "task": "review the PR", "depends_on": []string{}}}
-	p := buildPlan(t, planner, NewPlanCache(), fallbackSetup, map[string]any{"nodes": reviewNode})
+	reviewAssignment := []map[string]any{{"agent": "code-reviewer", "task": "review the PR"}}
+	p := buildPlan(t, planner, NewPlanCache(), fallbackSetup, map[string]any{"assignments": reviewAssignment})
 	if p.Setup == nil || p.Setup.WorkBranch != "quack/pr-1170" || !p.Setup.CheckoutExistingHead {
 		t.Errorf("Setup = %+v, want the origin-fallback PR head checked out as-is", p.Setup)
 	}
@@ -387,20 +442,32 @@ func TestPlanTool_OriginFallbackSetupSatisfiesExistingHead(t *testing.T) {
 
 // TestReviewWithoutExistingHeadStillRejected keeps #520's guard: a
 // review-only plan whose dispatch Setup does NOT name an existing head must
-// still be rejected rather than reviewing a freshly-cut empty branch.
+// still be rejected by execute rather than reviewing a freshly-cut empty branch.
 func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	githubSetup := &dag.Setup{
 		Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main",
 		WorkBranch: "quack/issue-836", // no CheckoutExistingHead
 	}
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", githubSetup, nil, "", nil, false, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil)
 	if err != nil {
-		t.Fatalf("NewPlanTool: %v", err)
+		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
-	rt := tl.(runnableTool)
-	reviewNode := []map[string]any{{"id": "rev", "agent": "code-reviewer", "task": "review the PR", "depends_on": []string{}}}
-	if _, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"nodes": reviewNode}); err == nil {
-		t.Fatal("plan accepted, want the review-needs-real-head rejection")
+	crt := createTl.(runnableTool)
+	reviewAssignment := []map[string]any{{"agent": "code-reviewer", "task": "review the PR"}}
+	cres, err := crt.Run(planToolCtx{newFakeCtx()}, map[string]any{"assignments": reviewAssignment})
+	if err != nil {
+		t.Fatalf("create_plan Run: %v", err)
+	}
+	planID, _ := cres["plan_id"].(string)
+
+	execTl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, nil, "", nil, githubSetup, nil, "", nil, false)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	ert := execTl.(runnableTool)
+	if _, err := ert.Run(newExecToolCtx(), map[string]any{"plan_id": planID}); err == nil {
+		t.Fatal("execute accepted, want the review-needs-real-head rejection")
 	}
 }

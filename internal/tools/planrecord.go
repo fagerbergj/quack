@@ -1,0 +1,293 @@
+// planrecord.go: shared glue between the dag_node/dag_plan records and the
+// list_nodes/create_plan/edit_plan/execute tools built on top of them.
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+
+	quackagent "github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
+	"github.com/fagerbergj/quack/internal/stream"
+)
+
+const dagPlanRecordID = "dag_plan:main"
+
+// loadDagPlan reads the chat's current dag_plan record. ok is false when
+// this chat has never called create_plan.
+func loadDagPlan(ctx context.Context, c *recordstore.Client) (rec dag.DagPlanRecord, revision int, ok bool, err error) {
+	raw, rev, ok, err := c.Latest(ctx, dagPlanRecordID)
+	if err != nil || !ok {
+		return dag.DagPlanRecord{}, 0, ok, err
+	}
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return dag.DagPlanRecord{}, 0, false, fmt.Errorf("dag_plan: stored content doesn't unmarshal: %w", err)
+	}
+	return rec, rev, true, nil
+}
+
+// listDagNodeRecords reads every dag_node record in this chat, sorted by id.
+func listDagNodeRecords(ctx context.Context, c *recordstore.Client) ([]dag.DagNodeRecord, error) {
+	summaries, err := c.List(ctx, "dag_node")
+	if err != nil {
+		return nil, fmt.Errorf("list dag_node records: %w", err)
+	}
+	out := make([]dag.DagNodeRecord, 0, len(summaries))
+	for _, s := range summaries {
+		raw, _, ok, err := c.Latest(ctx, s.ID)
+		if err != nil || !ok {
+			continue
+		}
+		var rec dag.DagNodeRecord
+		if json.Unmarshal(raw, &rec) != nil {
+			continue
+		}
+		out = append(out, rec)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
+	return out, nil
+}
+
+// nodeArtifactIDs returns every artifact id (already "kind:instance") this
+// node has authored, from the store's own lineage - c.List's NodeID field is
+// exactly "which node wrote this revision", the join list_nodes needs.
+func nodeArtifactIDs(ctx context.Context, c *recordstore.Client, nodeID string) ([]string, error) {
+	all, err := c.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, a := range all {
+		if a.NodeID != nodeID || a.Kind == "dag_node" || a.Kind == "dag_plan" {
+			continue
+		}
+		out = append(out, a.ID)
+	}
+	return out, nil
+}
+
+// firstLine returns s up to its first newline, trimmed - list_nodes' "last
+// task" is a glance, not the full assignment text.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
+// assignmentInput is one entry of create_plan/edit_plan's `assignments`
+// array: either NodeID (reuse an existing node - the caller never invents
+// one) or Agent (hire a new one), plus the work itself.
+type assignmentInput struct {
+	NodeID    string   `json:"node_id,omitempty"`
+	Agent     string   `json:"agent,omitempty"`
+	Task      string   `json:"task"`
+	DependsOn []string `json:"depends_on,omitempty"`
+	Checks    []string `json:"checks,omitempty"`
+	Workdir   string   `json:"workdir,omitempty"`
+	Rubric    string   `json:"rubric,omitempty"`
+}
+
+// validateAllowedDeliveryKind rejects hiring or reassigning agent when its
+// job is coupled to a Delivery.Kind (dag.RequiredDeliveryKind) this dispatch
+// doesn't allow - deterministic, at plan-authoring time, so a node whose
+// output could never be delivered doesn't burn a full run's tokens only to
+// be refused at delivery. allowedKinds empty means unrestricted (a plain
+// chat dispatch, no GitHub trigger narrowing it).
+func validateAllowedDeliveryKind(agent string, allowedKinds []string) error {
+	kind, ok := dag.RequiredDeliveryKind(agent)
+	if !ok || len(allowedKinds) == 0 {
+		return nil
+	}
+	for _, k := range allowedKinds {
+		if k == kind {
+			return nil
+		}
+	}
+	return fmt.Errorf("agent: %q only delivers as %q, which this dispatch does not allow (allowed: %s)",
+		agent, kind, strings.Join(allowedKinds, ", "))
+}
+
+// describeAssignmentInput renders the fields this assignment actually parsed
+// to - a rejection naming node_id/agent as both empty tells the model those
+// exact keys are missing, so it isn't left guessing what it sent versus what
+// the schema silently dropped (an unrecognized key like `agent_name` never
+// reaches this struct at all).
+func describeAssignmentInput(in assignmentInput) string {
+	return fmt.Sprintf("node_id=%q agent=%q task=%q", in.NodeID, in.Agent, firstLine(in.Task))
+}
+
+// assignmentOutput is one assignment in create_plan/edit_plan's response -
+// same shape as assignmentInput but always carries the resolved node_id and
+// agent (minted ids the model must see to depend on or hire the node again).
+type assignmentOutput struct {
+	NodeID    string   `json:"node_id"`
+	Agent     string   `json:"agent"`
+	Task      string   `json:"task"`
+	DependsOn []string `json:"depends_on,omitempty"`
+}
+
+// planUpsertResult is create_plan/edit_plan's shared response shape.
+type planUpsertResult struct {
+	PlanID      string             `json:"plan_id"`
+	Assignments []assignmentOutput `json:"assignments"`
+	Setup       *dag.Setup         `json:"setup,omitempty"`
+	Delivery    *dag.Delivery      `json:"delivery,omitempty"`
+	Summary     string             `json:"summary"`
+}
+
+// resolveNodeIndex reports whether ref is a decimal index into a
+// same-call assignments array (e.g. "0") - the convention that lets one
+// create_plan/edit_plan call build a multi-node DAG in one shot despite ids
+// being system-minted: a `depends_on` entry can't name a sibling's node_id
+// before it exists, so it names the sibling's position instead.
+func resolveNodeIndex(ref string, n int) (int, bool) {
+	i, err := strconv.Atoi(ref)
+	if err != nil || i < 0 || i >= n {
+		return 0, false
+	}
+	return i, true
+}
+
+// upsertNodes applies create_plan/edit_plan's shared assignment-resolution
+// logic: mint a dag_node for every entry with no NodeID, resolve
+// depends_on's same-call positional references, and reject a reference to a
+// node currently live (executing) in this run. existingNodes is every
+// dag_node record already in this chat (for reuse and id-minting
+// uniqueness); nodeIsLive is nil-safe (no executor wired = never live, e.g.
+// a bound/test config). chatID seeds a minted node's A2A ContextID
+// (quackagent.WorkerSessionID) - the same deterministic id the native A2A
+// path (internal/serve buildAgents) independently recomputes when it
+// actually dispatches to this node, so the stored value is never a guess.
+func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, nodeIsLive func(nodeID string) bool, chatID string, allowedKinds []string) ([]dag.Assignment, []dag.DagNodeRecord, error) {
+	known := make(map[string]dag.DagNodeRecord, len(existingNodes))
+	var existingIDs []string
+	for _, n := range existingNodes {
+		known[n.NodeID] = n
+		existingIDs = append(existingIDs, n.NodeID)
+	}
+
+	nodeIDs := make([]string, len(inputs))
+	var minted []dag.DagNodeRecord
+	for i, in := range inputs {
+		if err := dag.ValidateWorkdir(in.Workdir); err != nil {
+			return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
+		}
+		switch {
+		case in.NodeID != "":
+			n, ok := known[in.NodeID]
+			if !ok {
+				return nil, nil, fmt.Errorf("assignments[%d].node_id: unknown node id %q - list_nodes shows every node already hired", i, in.NodeID)
+			}
+			if nodeIsLive != nil && nodeIsLive(in.NodeID) {
+				return nil, nil, fmt.Errorf("assignments[%d].node_id: %q is currently running - wait for it to finish before reassigning it", i, in.NodeID)
+			}
+			if err := validateAllowedDeliveryKind(n.Agent, allowedKinds); err != nil {
+				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
+			}
+			nodeIDs[i] = n.NodeID
+		case in.Agent != "":
+			if err := dag.ValidateAgentName(in.Agent); err != nil {
+				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
+			}
+			if err := validateAllowedDeliveryKind(in.Agent, allowedKinds); err != nil {
+				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
+			}
+			id := dag.MintNodeID(in.Agent, existingIDs)
+			existingIDs = append(existingIDs, id)
+			rec := dag.DagNodeRecord{NodeID: id, Agent: in.Agent, Status: dag.StatusQueued, ContextID: quackagent.WorkerSessionID(chatID, id)}
+			known[id] = rec
+			minted = append(minted, rec)
+			nodeIDs[i] = id
+		default:
+			return nil, nil, fmt.Errorf("assignments[%d]: has neither node_id nor agent set (%s) - give node_id "+
+				"(an existing node from list_nodes) or agent (one of: %s)", i, describeAssignmentInput(in), strings.Join(dag.AgentNames(), ", "))
+		}
+	}
+
+	seenNodeID := make(map[string]int, len(nodeIDs))
+	for i, id := range nodeIDs {
+		if j, dup := seenNodeID[id]; dup {
+			return nil, nil, fmt.Errorf("assignments[%d].node_id: %q is already assignments[%d] in this call - one assignment per node per plan", i, id, j)
+		}
+		seenNodeID[id] = i
+	}
+
+	assignments := make([]dag.Assignment, len(inputs))
+	for i, in := range inputs {
+		dependsOn := make([]string, len(in.DependsOn))
+		for j, dep := range in.DependsOn {
+			if idx, ok := resolveNodeIndex(dep, len(inputs)); ok {
+				dependsOn[j] = nodeIDs[idx]
+				continue
+			}
+			if _, ok := known[dep]; !ok {
+				return nil, nil, fmt.Errorf("assignments[%d].depends_on: unknown node id %q - name an existing node id or this call's own assignment index", i, dep)
+			}
+			dependsOn[j] = dep
+		}
+		assignments[i] = dag.Assignment{
+			NodeID: nodeIDs[i], Task: in.Task, DependsOn: dependsOn,
+			Checks: in.Checks, Workdir: in.Workdir, Rubric: in.Rubric,
+		}
+	}
+	return assignments, minted, nil
+}
+
+// summarizePlanRecord renders rec for the model's own review before it calls
+// execute - never shown to the user.
+func summarizePlanRecord(rec dag.DagPlanRecord, nodeAgent map[string]string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Plan %s (%d assignment(s)) - review before executing:", rec.PlanID, len(rec.Assignments))
+	for _, a := range rec.Assignments {
+		fmt.Fprintf(&sb, "\n- %s (%s)", a.NodeID, nodeAgent[a.NodeID])
+		if len(a.DependsOn) > 0 {
+			fmt.Fprintf(&sb, " depends on %s", strings.Join(a.DependsOn, ", "))
+		}
+		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(a.Task))
+	}
+	if rec.Setup != nil {
+		fmt.Fprintf(&sb, "\nsetup: repo=%q base_ref=%q work_branch=%q", rec.Setup.Repo, rec.Setup.BaseRef, rec.Setup.WorkBranch)
+	}
+	if rec.Delivery != nil {
+		fmt.Fprintf(&sb, "\ndelivery: kind=%q", rec.Delivery.Kind)
+	}
+	return sb.String()
+}
+
+func toAssignmentOutputs(assignments []dag.Assignment, nodeAgent map[string]string) []assignmentOutput {
+	out := make([]assignmentOutput, len(assignments))
+	for i, a := range assignments {
+		out[i] = assignmentOutput{NodeID: a.NodeID, Agent: nodeAgent[a.NodeID], Task: a.Task, DependsOn: a.DependsOn}
+	}
+	return out
+}
+
+// planRecordEvent builds the dag_plan SSE event from a saved record, the
+// same event shape the DAG view has always consumed (stream.DagPlan) -
+// create_plan/edit_plan emit it so the view updates before execute runs.
+func planRecordEvent(ctx context.Context, rec dag.DagPlanRecord, nodeAgent map[string]string) stream.SSEEvent {
+	nodes := make([]stream.DagNodeDef, len(rec.Assignments))
+	for i, a := range rec.Assignments {
+		agentName := nodeAgent[a.NodeID]
+		info, _ := dag.AgentInfoFor(agentName)
+		nodes[i] = stream.DagNodeDef{ID: a.NodeID, Agent: agentName, Task: a.Task, DependsOn: a.DependsOn, ContextWindow: info.ContextWindow, Artifact: info.DefaultArtifact}
+	}
+	return stream.WithTrace(stream.DagPlan(rec.PlanID, nodes, planRecordEdges(rec.Assignments)), otelobs.TraceIDOf(ctx))
+}
+
+func planRecordEdges(assignments []dag.Assignment) []stream.DagEdgeDef {
+	var edges []stream.DagEdgeDef
+	for _, a := range assignments {
+		for _, dep := range a.DependsOn {
+			edges = append(edges, stream.DagEdgeDef{From: dep, To: a.NodeID})
+		}
+	}
+	return edges
+}

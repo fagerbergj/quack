@@ -106,7 +106,7 @@ func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 	if err := st.SaveDagPlan(ctx, c.ID, "p1", "turn-1", `{"plan_id":"p1"}`); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
 	}
-	PersistNodeEvent(st, "p1", stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{
 		NodeID: "n1", Model: "m", PromptTokens: 100, CompletionTokens: 40,
 		ReasoningTokens: 8, TotalTokens: 148, CachedTokens: 60, FinishReason: "stop",
 	}})

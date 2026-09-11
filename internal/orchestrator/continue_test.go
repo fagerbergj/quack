@@ -48,8 +48,14 @@ func (s *orchStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 		case stubHasTool(req, "submit_verdict"): // the trust gate's judge
 			yield(stubCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
 			return
-		case !stubHasTool(req, "plan"): // no plan tool ⇒ a plan worker
+		case !stubHasTool(req, "create_plan"): // no create_plan tool ⇒ a plan worker
 			yield(stubText("RESEARCH-RESULT"), nil)
+			return
+		}
+		// A plan_id stays in history forever once minted, so skip one already
+		// paired with an execute call - else a rejected plan loops here forever.
+		if id, ok := planIDFromRequest(req); ok {
+			yield(executeCall(id), nil)
 			return
 		}
 		s.mu.Lock()
@@ -61,12 +67,6 @@ func (s *orchStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 		}
 		reply := s.replies[i]
 		s.mu.Unlock()
-		// The plan tool mints the plan ID, so "commit the plan" can't be scripted
-		// ahead of time: once a plan response is in the request, execute it.
-		if id, ok := planIDFromRequest(req); ok {
-			yield(executeCall(id), nil)
-			return
-		}
 		yield(reply, nil)
 	}
 }
@@ -142,35 +142,45 @@ func stubCall(name string, args map[string]any) *model.LLMResponse {
 	}
 }
 
-// planCall is the orchestrator authoring a one-node DAG, the way it does live.
+// planCall is the orchestrator authoring a one-assignment plan, the way it does live.
 func planCall() *model.LLMResponse {
-	return stubCall("plan", map[string]any{"nodes": []any{map[string]any{
-		"id": "n1", "agent": "web-researcher", "task": "research the thing", "depends_on": []any{},
+	return stubCall("create_plan", map[string]any{"assignments": []any{map[string]any{
+		"agent": "web-researcher", "task": "research the thing",
 	}}})
 }
 
-// executeCall commits the plan the plan tool cached.
+// executeCall commits the plan create_plan cached.
 func executeCall(planID string) *model.LLMResponse {
 	return stubCall("execute", map[string]any{"plan_id": planID})
 }
 
-// planIDFromRequest finds the plan tool's response in the request - the plan_id
-// the model must hand to execute.
+// planIDFromRequest finds create_plan's response in the request - the
+// plan_id the model must hand to execute.
 func planIDFromRequest(req *model.LLMRequest) (string, bool) {
+	var candidate string
+	executed := map[string]bool{}
 	for _, c := range req.Contents {
 		if c == nil {
 			continue
 		}
 		for _, p := range c.Parts {
-			if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != "plan" {
-				continue
-			}
-			if id, ok := p.FunctionResponse.Response["plan_id"].(string); ok && id != "" {
-				return id, true
+			switch {
+			case p == nil:
+			case p.FunctionCall != nil && p.FunctionCall.Name == "execute":
+				if id, ok := p.FunctionCall.Args["plan_id"].(string); ok {
+					executed[id] = true
+				}
+			case p.FunctionResponse != nil && p.FunctionResponse.Name == "create_plan":
+				if id, ok := p.FunctionResponse.Response["plan_id"].(string); ok && id != "" {
+					candidate = id
+				}
 			}
 		}
 	}
-	return "", false
+	if candidate == "" || executed[candidate] {
+		return "", false
+	}
+	return candidate, true
 }
 
 // newTestOrch builds an Orchestrator over an in-memory session service, a real

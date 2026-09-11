@@ -1023,10 +1023,10 @@ func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, 
 	case status == store.RunStatusFailed:
 		out.Status = extsdk.RunFailed
 		// nodeError is either sanitized (dag.emptyNodeError via
-		// inference.SanitizeGatewayError) or, for a rejected `plan` call
-		// (#1180), quack's own unsanitized rejection text - never a raw
-		// gateway URL/body/key either way. Answer stays for a real partial
-		// answer only; the cause goes in Error (sdk v0.10.0+).
+		// inference.SanitizeGatewayError) or, for a rejected `execute` call,
+		// quack's own unsanitized rejection text - never a raw gateway
+		// URL/body/key either way. Answer stays for a real partial answer
+		// only; the cause goes in Error (sdk v0.10.0+).
 		out.Error = nodeError
 	case status == store.RunStatusNeedsInput:
 		out.Status = extsdk.RunNeedsInput

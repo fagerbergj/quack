@@ -37,6 +37,26 @@ const (
 )
 const explorerAgent = "code-explorer"
 
+// agentDeliveryKind maps a job whose work IS a specific delivery mechanism -
+// same hardcoded-name ceiling as checkReviewDeliverable below (no other
+// machine-readable declaration of this exists) - to the Delivery.Kind that
+// work can only reach GitHub through.
+var agentDeliveryKind = map[string]string{
+	reviewerAgent:    "review",
+	implementerAgent: "pull_request",
+}
+
+// RequiredDeliveryKind reports the Delivery.Kind agent's job is coupled to,
+// ok=false for an agent with no such coupling (research/synthesis agents can
+// feed any delivery kind). Lets create_plan/edit_plan reject hiring an agent
+// whose only possible delivery isn't in this dispatch's allowed set BEFORE
+// the node runs, rather than discovering it after a full node execution
+// burns real tokens only to have delivery itself refuse the result.
+func RequiredDeliveryKind(agent string) (kind string, ok bool) {
+	kind, ok = agentDeliveryKind[agent]
+	return kind, ok
+}
+
 // reviewChurnThreshold: max lines before reviewer must fan out.
 const reviewChurnThreshold = 800
 
@@ -61,6 +81,11 @@ type AgentInfo struct {
 	// ContextWindow: the agent's configured context_window (0 if unset) - carried onto
 	// each node it's assigned to, for the frontend's context meter.
 	ContextWindow int
+	// DefaultArtifact: this agent's bundle-declared default output artifact
+	// kind (agent-card.json's "artifact" field, "" if unset) - a property of
+	// the job, not a per-node override, so assemble() stamps it onto every
+	// node assigned this agent.
+	DefaultArtifact string
 }
 
 // Planner validates an orchestrator-authored DAG and stamps turn context for the executor.
@@ -72,13 +97,16 @@ type Planner struct {
 
 // NewPlanner: returns a Planner over the agent roster, check prefixes, and plan judge.
 func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJudge) *Planner {
+	SetAgentRoster(agents)
+	SetCheckCommands(checkCommands)
 	return &Planner{agents: agents, checkCommands: checkCommands, judge: judge}
 }
 
 // CheckCommands: configured check-command prefixes.
 func (p *Planner) CheckCommands() []string { return p.checkCommands }
 
-// RawNode is one DAG node the orchestrator submits to the plan tool.
+// RawNode is one DAG node Build/BuildBound assembles into a Plan - from a
+// dag_plan record's assignments (execute) or a bound workflow shape's config.
 type RawNode struct {
 	ID        string   `json:"id"`
 	Agent     string   `json:"agent"`
@@ -88,24 +116,37 @@ type RawNode struct {
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
 	// Artifact: registered recordstore kind this node's output is saved as on
-	// gate pass (#1006). Set either by workflowcatalog.Bind from
-	// config.WorkflowNode.Artifact or directly by the LLM planner - assemble
-	// validates it against ArtifactKindNames() either way (#1128: a planner
-	// once put free text here, which reached SaveBlob and errored unregistered).
+	// gate pass. Set by workflowcatalog.Bind from config.WorkflowNode.Artifact;
+	// assemble validates it, or falls back to the assigned agent's own
+	// bundle-declared default when unset.
 	Artifact string `json:"artifact,omitempty"`
 }
 
-// ArtifactKindNames returns the sorted names of every registered blob-class
-// recordstore kind - the closed set a node's `artifact` field may select,
-// since saveDocumentRound writes it via SaveBlob (#1128).
-func ArtifactKindNames() []string { return recordstore.ArtifactKindNames() }
-
-// ValidateArtifactKind rejects an artifact selector that isn't one of
-// ArtifactKindNames() - the planner-facing guard for #1128. Thin wrapper
-// around recordstore.ValidateArtifactKind, kept here for plan-build callers;
-// config's own workflow-node validation calls recordstore directly to avoid
-// an import cycle (dag -> inference -> config).
+// ValidateArtifactKind rejects an artifact selector outside the registered
+// recordstore kinds. Thin wrapper around recordstore.ValidateArtifactKind,
+// kept here for plan-build callers; config's own workflow-node validation
+// calls recordstore directly to avoid an import cycle (dag -> inference -> config).
 func ValidateArtifactKind(kind string) error { return recordstore.ValidateArtifactKind(kind) }
+
+// AssignmentsToRawNodes converts a dag_plan record's assignments into Build's
+// RawNode input, resolving each assignment's agent from nodeAgent (the join
+// a dag_plan record can't make on its own - it only ever stores node ids;
+// execute resolves this from the matching dag_node records before calling
+// Build). Errors when an assignment references a node id with no such entry.
+func AssignmentsToRawNodes(assignments []Assignment, nodeAgent map[string]string) ([]RawNode, error) {
+	out := make([]RawNode, 0, len(assignments))
+	for _, a := range assignments {
+		agent, ok := nodeAgent[a.NodeID]
+		if !ok {
+			return nil, fmt.Errorf("assignments.%s: no dag_node record for this node id", a.NodeID)
+		}
+		out = append(out, RawNode{
+			ID: a.NodeID, Agent: agent, Task: a.Task, Rubric: a.Rubric,
+			DependsOn: a.DependsOn, Checks: a.Checks, Workdir: a.Workdir,
+		})
+	}
+	return out, nil
+}
 
 // Build: validates submitted nodes into a Plan and stamps turn context.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
@@ -323,6 +364,9 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	}
 	ids := make(map[string]bool, len(nodes))
 	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, AllowedDeliveryKinds: allowedKinds}
+	if plan.Delivery == nil {
+		plan.Delivery = DefaultDeliveryFromAllowedKinds(allowedKinds)
+	}
 	for _, n := range nodes {
 		if n.ID == "" {
 			return nil, fmt.Errorf("node missing id")
@@ -345,6 +389,12 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 				return nil, fmt.Errorf("node %q: %w", n.ID, err)
 			}
 		}
+		// n.Artifact (a config-bound workflow node) overrides; otherwise the
+		// agent's own bundle-declared default applies.
+		artifactKind := n.Artifact
+		if artifactKind == "" {
+			artifactKind = agentInfo.DefaultArtifact
+		}
 		ids[n.ID] = true
 		plan.Nodes = append(plan.Nodes, Node{
 			ID:            n.ID,
@@ -355,7 +405,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			Checks:        n.Checks,
 			Workdir:       n.Workdir,
 			ContextWindow: agentInfo.ContextWindow,
-			Artifact:      n.Artifact,
+			Artifact:      artifactKind,
 		})
 	}
 
@@ -429,6 +479,19 @@ func validateChecks(checks, checkCommands []string) error {
 }
 
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
+
+// DefaultDeliveryFromAllowedKinds fills in Delivery when the triggering
+// dispatch (a GitHub review/implement/plan-only extension run, or any other
+// caller of tools.WithAllowedDeliveryKinds) grants exactly one kind: the
+// extension already knows how the result reaches GitHub, so the model isn't
+// required to declare it too. nil when the dispatch is unrestricted or grants
+// a genuine choice among several kinds - the model still decides those.
+func DefaultDeliveryFromAllowedKinds(allowed []string) *Delivery {
+	if len(allowed) != 1 || !deliveryKinds[allowed[0]] {
+		return nil
+	}
+	return &Delivery{Kind: allowed[0]}
+}
 
 func validateDelivery(d *Delivery) error {
 	if d == nil {
