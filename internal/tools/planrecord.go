@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/v2/agent"
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
@@ -128,6 +129,36 @@ type assignmentInput struct {
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
 	Rubric    string   `json:"rubric,omitempty"`
+}
+
+// assignmentInputSchema derives T's (createPlanArgs/editPlanArgs) default
+// input schema - the same derivation functiontool.New would otherwise do
+// implicitly (jsonschema.For) - and constrains assignments[].agent to the
+// CURRENT agent roster. A contract the tool itself enforces, not a
+// model-specific prompt hint (#slice3 review: a small model omitted `agent`
+// in most of its create_plan calls even after the roster was named in the
+// rejection text). agent stays optional - node_id is the other valid way to
+// fill it in - only its value, when given, is constrained; node_id stays
+// free-form (minted ids aren't known ahead of a call).
+func assignmentInputSchema[T any]() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[T](nil)
+	if err != nil {
+		return nil, fmt.Errorf("derive input schema: %w", err)
+	}
+	assignments, ok := schema.Properties["assignments"]
+	if !ok || assignments.Items == nil {
+		return nil, fmt.Errorf("derive input schema: assignments[].items missing")
+	}
+	agentProp, ok := assignments.Items.Properties["agent"]
+	if !ok {
+		return nil, fmt.Errorf("derive input schema: assignments[].agent missing")
+	}
+	names := dag.AgentNames()
+	agentProp.Enum = make([]any, len(names))
+	for i, n := range names {
+		agentProp.Enum[i] = n
+	}
+	return schema, nil
 }
 
 // validateAllowedDeliveryKind rejects hiring or reassigning agent when its

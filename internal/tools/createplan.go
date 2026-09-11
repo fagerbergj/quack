@@ -32,9 +32,14 @@ type createPlanArgs struct {
 func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
 	artifactDesc := "`assignments[].checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its " +
 		"commands: the trust gate derives a code node's checks from the repo itself after the node clones it."
+	schema, err := assignmentInputSchema[createPlanArgs]()
+	if err != nil {
+		return nil, fmt.Errorf("create_plan: %w", err)
+	}
 	return functiontool.New[createPlanArgs, planUpsertResult](
 		functiontool.Config{
-			Name: "create_plan",
+			Name:        "create_plan",
+			InputSchema: schema,
 			Description: "Tool to start a plan: a list of assignments tying nodes (people doing an agent's job) " +
 				"to work. Each assignment is EITHER `agent` (a name from the Agents list - hires a new node for " +
 				"that job) OR `node_id` (from list_nodes - reassigns a node already hired), plus `task` (self-" +

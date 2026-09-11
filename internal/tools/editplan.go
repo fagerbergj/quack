@@ -29,9 +29,14 @@ type editPlanArgs struct {
 // when non-nil, stamps assignment.meta.<extension> - whichever active
 // extension supplies it, keyed by its own name (e.g. "github").
 func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
+	schema, err := assignmentInputSchema[editPlanArgs]()
+	if err != nil {
+		return nil, fmt.Errorf("edit_plan: %w", err)
+	}
 	return functiontool.New[editPlanArgs, planUpsertResult](
 		functiontool.Config{
-			Name: "edit_plan",
+			Name:        "edit_plan",
+			InputSchema: schema,
 			Description: "Tool to change the chat's current plan: upsert assignments (same shape as create_plan - " +
 				"`agent` hires a new node, `node_id` from list_nodes reassigns one) keyed by node_id, drop " +
 				"assignments by node_id with `remove`, and/or update `setup`/`delivery`. Assignments not named " +
