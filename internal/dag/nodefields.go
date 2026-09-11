@@ -2,6 +2,7 @@ package dag
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -106,4 +107,43 @@ func checkCommandsSnapshot() []string {
 // with.
 func ValidateChecks(checks []string) error {
 	return validateChecks(checks, checkCommandsSnapshot())
+}
+
+// ValidateSetupOverride rejects a model-submitted setup that disagrees with
+// the trigger's own setup on repo or base_ref. trigger's copy came from the
+// real PR/issue data and always overrides whatever the model submits at
+// execute time regardless (githubSetup) - so a mismatched override is either
+// the model hallucinating which repo it thinks it's working in, or a stale
+// assumption, and catching it here costs one cheap validation, not a
+// plan-judge round. trigger nil (no trigger-supplied setup this dispatch) or
+// submitted nil (nothing to check) are both no-ops.
+func ValidateSetupOverride(submitted, trigger *Setup) error {
+	if submitted == nil || trigger == nil {
+		return nil
+	}
+	if submitted.Repo != "" && submitted.Repo != trigger.Repo {
+		return fmt.Errorf("setup.repo must be %q; the run can only clone the trigger's own repo", trigger.Repo)
+	}
+	if submitted.BaseRef != "" && submitted.BaseRef != trigger.BaseRef {
+		return fmt.Errorf("setup.base_ref must be %q; the trigger's base branch is not negotiable", trigger.BaseRef)
+	}
+	return nil
+}
+
+// ValidateWorkdir rejects an assignment's workdir that isn't a plain relative
+// path inside the workspace - an early, cheap syntactic check at
+// plan-authoring time; internal/workspace.Jail.Resolve is the actual runtime
+// enforcement once a node's clone exists, this just catches the obviously
+// wrong case before a node ever runs on it. Empty is fine (workdir is optional).
+func ValidateWorkdir(workdir string) error {
+	if workdir == "" {
+		return nil
+	}
+	if filepath.IsAbs(workdir) {
+		return fmt.Errorf("workdir must be relative, not an absolute path: %q", workdir)
+	}
+	if cleaned := filepath.Clean(workdir); cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("workdir must stay inside the workspace, not escape it: %q", workdir)
+	}
+	return nil
 }

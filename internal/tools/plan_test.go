@@ -131,10 +131,14 @@ func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGitHubSetupWholesaleReplacesPlannerSetup is issue #661's second test
-// case, the PR-scoped half: a planner-supplied setup (repo/base_ref/branch all
-// different from the trigger's) must not survive - the trigger's values win entirely, with the existing-PR-head override still landing on top.
-func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
+// TestGitHubSetupWorkBranchOverrideStillWins is issue #661's second test
+// case, the PR-scoped half: a planner-supplied work_branch does not survive -
+// the trigger's real PR head wins, with CheckoutExistingHead landing on top.
+// repo/base_ref match the trigger here (a work_branch difference is
+// legitimate - each dispatch can pick its own working branch); a
+// repo/base_ref mismatch is a different, now-rejected case - see
+// TestCreatePlanRejectsWholesaleMismatchedSetup.
+func TestGitHubSetupWorkBranchOverrideStillWins(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{
 		Repo:                 "https://github.com/fagerbergj/quack.git",
@@ -145,7 +149,7 @@ func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
 	args := map[string]any{
 		"assignments": implementAssignment(),
 		"setup": map[string]any{
-			"repo": "https://example.com/planner-invented.git", "base_ref": "other",
+			"repo": githubSetup.Repo, "base_ref": githubSetup.BaseRef,
 			"work_branch": "planner-invented-branch",
 		},
 	}
@@ -162,6 +166,33 @@ func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
 	}
 	if p.Setup.Repo != githubSetup.Repo || p.Setup.BaseRef != githubSetup.BaseRef {
 		t.Errorf("Setup = %+v, want repo/base_ref from the trigger, not the planner's", p.Setup)
+	}
+}
+
+// TestCreatePlanRejectsWholesaleMismatchedSetup is the QA rig's owner rule:
+// a planner-invented setup.repo/base_ref that disagrees with the trigger's
+// own is rejected outright, not silently discarded in favor of the
+// trigger's - a hallucinated repo belongs in the rejection the model sees,
+// not a plan that quietly runs against a different repo than its own task
+// text describes.
+func TestCreatePlanRejectsWholesaleMismatchedSetup(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main", WorkBranch: "feat/real-pr-head"}
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	crt := createTl.(runnableTool)
+	args := map[string]any{
+		"assignments": implementAssignment(),
+		"setup": map[string]any{
+			"repo": "https://example.com/planner-invented.git", "base_ref": "other",
+			"work_branch": "planner-invented-branch",
+		},
+	}
+	if _, err := crt.Run(planToolCtx{newFakeCtx()}, args); err == nil || !strings.Contains(err.Error(), "setup.repo") {
+		t.Fatalf("err = %v, want a setup.repo mismatch rejection", err)
 	}
 }
 

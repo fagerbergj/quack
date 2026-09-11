@@ -128,3 +128,37 @@ func TestEditPlanRejectionMintsNoOrphanNodes(t *testing.T) {
 		t.Errorf("dag_node records = %+v, want only the original web-researcher-1 - a rejected edit_plan must not orphan a freshly hired node", nodes)
 	}
 }
+
+// TestEditPlanSetupRepoMismatchRejected mirrors create_plan's regression
+// test: edit_plan must reject a setup override that disagrees with the
+// trigger's own repo, before touching the plan record.
+func TestEditPlanSetupRepoMismatchRejected(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	crt := createTl.(runnableTool)
+	res, err := crt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"assignments": []map[string]any{{"agent": "web-researcher", "task": "x"}},
+	})
+	if err != nil {
+		t.Fatalf("create_plan Run: %v", err)
+	}
+	planID, _ := res["plan_id"].(string)
+
+	editTl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil)
+	if err != nil {
+		t.Fatalf("NewEditPlanTool: %v", err)
+	}
+	ert := editTl.(runnableTool)
+	_, err = ert.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"plan_id": planID,
+		"setup":   map[string]any{"repo": "https://github.com/quack-org/quack.git", "base_ref": "main", "work_branch": "main"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "setup.repo") {
+		t.Errorf("err = %v, want a setup.repo mismatch rejection", err)
+	}
+}

@@ -32,10 +32,13 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			Description: "Tool to change the chat's current plan: upsert assignments (same shape as create_plan - " +
 				"`agent` hires a new node, `node_id` from list_nodes reassigns one) keyed by node_id, drop " +
 				"assignments by node_id with `remove`, and/or update `setup`/`delivery`. Assignments not named " +
-				"here are left exactly as they are. Errors name the field and the fix: unknown agent, unknown " +
-				"depends_on id, a dependency cycle, an empty task, a node currently running, the same node_id " +
-				"twice in one call, or a `remove` id not in the current plan. Call after create_plan to correct " +
-				"or extend a plan before execute; call list_nodes first to reuse a node instead of hiring a new one.",
+				"here are left exactly as they are. When this dispatch already came with a repo/base_ref (a GitHub " +
+				"trigger), a `setup.repo`/`setup.base_ref` override must match it exactly - omit them to keep the " +
+				"trigger's own values. Errors name the field and the fix: unknown agent, unknown depends_on id, a " +
+				"dependency cycle, an empty task, a node currently running, the same node_id twice in one call, a " +
+				"`remove` id not in the current plan, or a setup override that disagrees with the trigger. Call " +
+				"after create_plan to correct or extend a plan before execute; call list_nodes first to reuse a " +
+				"node instead of hiring a new one.",
 		},
 		func(tc agent.Context, a editPlanArgs) (planUpsertResult, error) {
 			current, _, ok, err := loadDagPlan(tc, c)
@@ -47,6 +50,9 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			}
 			if a.PlanID != "" && a.PlanID != current.PlanID {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: plan_id %q is stale - the current plan is %q", a.PlanID, current.PlanID)
+			}
+			if err := dag.ValidateSetupOverride(a.Setup, githubSetup); err != nil {
+				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
 			}
 
 			remaining, err := removeAssignments(current.Assignments, a.Remove)

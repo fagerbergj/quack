@@ -147,6 +147,9 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 	nodeIDs := make([]string, len(inputs))
 	var minted []dag.DagNodeRecord
 	for i, in := range inputs {
+		if err := dag.ValidateWorkdir(in.Workdir); err != nil {
+			return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
+		}
 		switch {
 		case in.NodeID != "":
 			n, ok := known[in.NodeID]

@@ -42,13 +42,18 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 				artifactDesc + " Every plan whose deliverable touches GitHub declares `setup` " +
 				"({repo, base_ref, work_branch} - the branch the work happens on) and `delivery` ({kind: " +
 				"\"pull_request\"|\"review\"|\"comment\"}); the harness runs both AFTER the trust gate, deterministically " +
-				"- a node never pushes, opens a PR, or posts a review itself. Returns the plan (assignments with " +
-				"minted node_ids) - call edit_plan to change it, or execute to run it. Do NOT call for tasks you " +
-				"can answer directly.",
+				"- a node never pushes, opens a PR, or posts a review itself. When this dispatch already came with a " +
+				"repo/base_ref (a GitHub trigger), `setup.repo`/`setup.base_ref` must match it exactly if set at all - " +
+				"omit them and the trigger's own values apply. Put the real repo/PR in a node's `task` text, never a " +
+				"guessed one. Returns the plan (assignments with minted node_ids) - call edit_plan to change it, or " +
+				"execute to run it. Do NOT call for tasks you can answer directly.",
 		},
 		func(tc agent.Context, a createPlanArgs) (planUpsertResult, error) {
 			if len(a.Assignments) == 0 {
 				return planUpsertResult{}, fmt.Errorf("create_plan: assignments must be non-empty")
+			}
+			if err := dag.ValidateSetupOverride(a.Setup, githubSetup); err != nil {
+				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
 			existing, err := listDagNodeRecords(tc, c)
 			if err != nil {

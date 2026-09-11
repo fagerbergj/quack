@@ -105,3 +105,64 @@ func TestCreatePlanNodeCurrentlyRunningRejected(t *testing.T) {
 		t.Errorf("err = %v, want a currently-running rejection", err)
 	}
 }
+
+// TestCreatePlanSetupRepoMismatchRejected is the QA rig regression test: a
+// model-submitted setup.repo that disagrees with the trigger's own repo must
+// be rejected immediately, without ever reaching the plan judge - the
+// trigger's setup always overrides at execute time regardless, so a
+// mismatched override is either hallucination or a stale assumption.
+func TestCreatePlanSetupRepoMismatchRejected(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"assignments": []map[string]any{{"agent": "code-reviewer", "task": "review it"}},
+		"setup":       map[string]any{"repo": "https://github.com/quack-org/quack.git", "base_ref": "main", "work_branch": "main"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "setup.repo") {
+		t.Fatalf("err = %v, want a setup.repo mismatch rejection", err)
+	}
+	nodes, err := listDagNodeRecords(newFakeCtx(), c)
+	if err != nil {
+		t.Fatalf("listDagNodeRecords: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Errorf("dag_node records = %+v, want none - the rejection must happen before any node is minted", nodes)
+	}
+}
+
+// TestCreatePlanSetupBaseRefMatchingTriggerAccepted covers the non-mismatch
+// path: an explicit setup that matches the trigger exactly is not rejected.
+func TestCreatePlanSetupBaseRefMatchingTriggerAccepted(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil)
+	if err != nil {
+		t.Fatalf("NewCreatePlanTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"assignments": []map[string]any{{"agent": "code-reviewer", "task": "review it"}},
+		"setup":       map[string]any{"repo": githubSetup.Repo, "base_ref": githubSetup.BaseRef, "work_branch": "quack/pr-1"},
+	})
+	if err != nil {
+		t.Fatalf("create_plan Run: %v, want the matching setup accepted", err)
+	}
+}
+
+// TestCreatePlanWorkdirEscapeRejected covers an assignment's workdir walking
+// outside the workspace.
+func TestCreatePlanWorkdirEscapeRejected(t *testing.T) {
+	rt, _ := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "code-implementer"}}, nil)
+	assignments := []map[string]any{{"agent": "code-implementer", "task": "x", "workdir": "../../etc"}}
+	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"assignments": assignments})
+	if err == nil || !strings.Contains(err.Error(), "workdir") {
+		t.Errorf("err = %v, want a workdir rejection", err)
+	}
+}
