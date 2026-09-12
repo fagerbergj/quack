@@ -1,8 +1,10 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"iter"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -38,14 +40,20 @@ func (s *repeatLoopStub) GenerateContent(_ context.Context, _ *model.LLMRequest,
 // TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop is the QA rig
 // regression test: a model spamming the identical malformed create_plan
 // call, ignoring every REFUSED error, must still terminate - via the
-// guard's own hard-stop tier once it keeps treading on regardless, and the
-// orchestrator's own bounded give-up (maxOrchestratorContinues) beyond
-// that - not left to repeat until the context window itself runs out. The
-// owner's settled direction (#slice3 review) is a SOFT refusal alone must
-// never end the turn (that denies the model any chance to self-correct
-// within it); this pins the other half - a model that ignores the soft
-// refusal anyway is still bounded.
+// guard's own hard-stop tier once it keeps treading on regardless, in
+// exactly ONE orchestrator invocation. A hard-stopped turn used to be
+// retried unchanged (up to maxOrchestratorContinues times), reproducing the
+// identical loop every time; it must give up on the first hard stop
+// instead. The owner's settled direction (#slice3 review) is a SOFT refusal
+// alone must never end the turn (that denies the model any chance to
+// self-correct within it); this pins the other half - a model that ignores
+// the soft refusal anyway is still bounded, to one invocation.
 func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	stub := &repeatLoopStub{}
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "ROLE:researcher",
@@ -69,14 +77,9 @@ func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 	// AFTER exceeding that sum, so one orchestrator invocation makes exactly
 	// this many stub calls before ending itself.
 	const guardAttemptsPerInvocation = 6
-	if stub.calls < 3 {
-		t.Fatalf("stub called only %d times; want it to at least reach the refusal tier", stub.calls)
-	}
-	// Bounded by the guard's own hard-stop tier times the orchestrator's own
-	// give-up budget (maxOrchestratorContinues+1 invocations) - generous
-	// headroom, not a tight step cap.
-	if maxCalls := guardAttemptsPerInvocation * (maxOrchestratorContinues + 1); stub.calls > maxCalls {
-		t.Fatalf("stub called %d times; want it bounded (<=%d) by the guard's hard-stop tier, not unbounded", stub.calls, maxCalls)
+	if stub.calls != guardAttemptsPerInvocation {
+		t.Fatalf("stub called %d times, want exactly %d - a hard-stopped turn must not be retried unchanged",
+			stub.calls, guardAttemptsPerInvocation)
 	}
 	if !hasEvent(evs, stream.EventError) {
 		t.Fatalf("want an error event once the orchestrator gives up on the malformed call, events=%v", evs)
@@ -84,6 +87,12 @@ func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 	answer := o.LatestAnswer(context.Background(), "u", "chat")
 	if strings.Contains(answer, "assignments") {
 		t.Fatalf("answer = %q, should not reflect a successful plan - the call never stopped being malformed", answer)
+	}
+	if strings.Contains(logs.String(), "continuing it") {
+		t.Errorf("a hard-stopped turn must not be retried; logs=%q", logs.String())
+	}
+	if !strings.Contains(logs.String(), `attempts=1`) {
+		t.Errorf("give-up log must report the honest attempt count (1, no retries); logs=%q", logs.String())
 	}
 }
 
