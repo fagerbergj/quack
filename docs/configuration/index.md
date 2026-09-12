@@ -34,6 +34,7 @@ artifacts:      # the artifact store binding
 Each section gets its own page below:
 
 - **[Models](models.md)** — providers, per-agent inference, the llama-swap backend detail.
+- **[Tools](tools.md)** — the builtin tool registry and the `tools:` config section.
 - **[Agents](agents.md)** — bundles, tool bindings, native vs. external ACP agents.
 - **[Trust gate](trust-gate.md)** — deterministic checks, the independent judge, rubrics.
 - **[Stores](stores.md)** — postgres, qdrant, and the named-store registry.
@@ -43,7 +44,7 @@ Each section gets its own page below:
 - **[Deployment shapes](deployment.md)** — three full worked examples ([`examples/`](examples/)): fully local, Docker stack, remote full-featured.
 - **[Observability](observability.md)** — the OTel traces and metrics quack emits, and what each one is for.
 
-The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md).
+The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md); the [reMarkable](../extensions/remarkable.md) and [usage dashboard](../extensions/usage.md) extensions get short pages of their own.
 
 ## Context compaction (`session.compaction`)
 

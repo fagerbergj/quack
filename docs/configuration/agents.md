@@ -87,7 +87,7 @@ The orchestrator stays light on tools — it needs only:
 
 `commit_memory` relies on the orchestrator model choosing to call it, which doesn't hold up reliably in practice. `orchestrator.user_memory_hook` (#262) is the fix: an end-of-turn hook that, after a cheap keyword pre-filter, hands the message to a dedicated `agents/memory-agent` bundle and commits whatever it extracts - fire-and-forget, so it never affects the response. Off by default (costs a model call per qualifying turn); enable with `orchestrator.user_memory_hook.enabled: true` plus a `provider`/`model`. Its guidance comes from `agents/orchestrator/memory.md` (what's worth remembering) and `agents/memory-agent/rubric.yaml` (the candidate-quality bar) - not duplicated into its own prompt.
 
-This is the orchestrator's own fixed list, not the full builtin tool registry (`internal/tools/` has ~25 tools — web search/fetch, memory, git, filesystem, etc.) that individual agents pull from by name in their own `tools:` list above. That broader registry has no reference doc yet; see the `write-tool` skill for how a builtin tool is defined and registered.
+This is the orchestrator's own fixed list, not the full builtin tool registry (`internal/tools/` has 13 tools — web search/fetch, memory, filesystem reads, ask/advisor — no git or write tools, since code agents are ACP subprocesses) that individual agents pull from by name in their own `tools:` list above. See [tools.md](tools.md) for the full registry and the `tools:` backends.
 
 ### `recall_memory`
 

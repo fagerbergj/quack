@@ -27,6 +27,8 @@ This is the middle ground: full feature set, memory included, still a single `do
 
 `server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run --config config/managed.yaml` brings up just the Postgres + qdrant containers itself (an embedded compose file, project `quack-stores`, written to `~/.quack/stores.compose.yml`) and re-runs `up` idempotently on every start. There is no automatic tear-down: the stack keeps running after the server stops, so take it down with `docker compose -p quack-stores -f ~/.quack/stores.compose.yml down`. Reach for it if you want the containerized stores without hand-rolling compose.
 
+On SIGTERM the server waits up to `server.shutdown_grace_seconds` (default 20) for in-flight runs to finish before shutting down - raise it for long agent rounds if your orchestrator (systemd, Docker) allows it.
+
 ## 3. Remote server, full-featured
 
 [`examples/remote-full.yaml`](examples/remote-full.yaml) — the same shape as the repo's own `config/quack.yaml`, with the pieces that ship commented out there turned on: the [GitHub App extension](../extensions/github.md) and OTel actually exporting somewhere. This is the shape for a shared, always-on deployment: `server.topology: external`, pointing at Postgres/qdrant instances that outlive any one `quack` process, the judge always on. See [`docs/configuration/`](index.md) for what every section does.

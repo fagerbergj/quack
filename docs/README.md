@@ -8,6 +8,8 @@ Setup and configuration guides for humans to use quack. For how the code itself 
 - [`configuration/`](configuration/) - models, agents, the trust gate, stores, auth, workspace sandboxing, deployment shapes, observability.
 - [`agent-plugins.md`](agent-plugins.md) - the Agent Plugins standard: how a plugin ships skills, MCP servers, and quack extension declarations.
 - [`extensions/github.md`](extensions/github.md) - the GitHub App.
+- [`extensions/remarkable.md`](extensions/remarkable.md) - the reMarkable document-ingest trigger.
+- [`extensions/usage.md`](extensions/usage.md) - the in-app Prometheus usage dashboard.
 - [`extensions/ui-kit.md`](extensions/ui-kit.md) - the CSS kit an extension's own HTML pages link to look native to the SPA.
 - [`sandbox-cli.md`](sandbox-cli.md) - `quack sandbox`: entering or probing the real agent jail.
 - [`memory-lifecycle.md`](memory-lifecycle.md) - the memory lifecycle design: how a memory is committed, recalled, and forgotten.
