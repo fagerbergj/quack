@@ -50,14 +50,16 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 			Description: "Tool to change the chat's current plan: upsert assignments (same shape as create_plan - " +
 				"`agent` hires a new node, `node_id` from list_nodes reassigns one) keyed by node_id, drop " +
 				"assignments by node_id with `remove`" + setupDesc + ". Assignments not named " +
-				"here are left exactly as they are. Call with at least one of " + changeList + " set - " +
-				"a call that changes nothing is rejected, it is not a valid way to re-read the plan (use list_nodes). " +
-				"Errors name the field and the fix: unknown agent, unknown depends_on id, a dependency cycle, an " +
-				"empty task, a node currently running, the same node_id twice in one call, a `remove` id not in " +
-				"the current plan, " + setupOverride + "hiring an agent whose only deliverable this dispatch does " +
-				"not allow, a plan that already delivered, or a call with nothing to change. Call after create_plan " +
-				"to correct or extend a plan before execute; call list_nodes first to reuse a node instead of " +
-				"hiring a new one.",
+				"here are left exactly as they are. If the current plan already delivered, this instead starts " +
+				"a brand-new plan from `assignments` (a fresh plan_id; `remove` no longer applies) - the same " +
+				"way create_plan would, and still reusing any node_id from list_nodes. Call with at least one of " +
+				changeList + " set - a call that changes nothing is rejected, it is not a valid way to re-read the " +
+				"plan (use list_nodes). Errors name the field and the fix: unknown agent, unknown depends_on id, a " +
+				"dependency cycle, an empty task, a node currently running, the same node_id twice in one call, a " +
+				"`remove` id not in the current plan, " + setupOverride + "hiring an agent whose only deliverable " +
+				"this dispatch does not allow, a done plan's edit with no assignments to start a new one, or a " +
+				"call with nothing to change. Call after create_plan to correct or extend a plan before execute; " +
+				"call list_nodes first to reuse a node instead of hiring a new one.",
 		},
 		func(tc agent.Context, a editPlanArgs) (planUpsertResult, error) {
 			current, _, ok, err := loadDagPlan(tc, c)
@@ -71,7 +73,22 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				return planUpsertResult{}, fmt.Errorf("edit_plan: plan_id %q is stale - the current plan is %q", a.PlanID, current.PlanID)
 			}
 			if current.Status == "done" {
-				return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - it's finished, not editable; start a new plan for further work", current.PlanID)
+				// The delivered-plan wording only fits when there are no assignments to
+				// even attempt: once assignments are given, any rejection of them
+				// (bad or not) must come from newPlanRecord verbatim - never masked by
+				// this message, or the model never learns what it actually got wrong.
+				if len(a.Assignments) == 0 {
+					if len(a.Remove) > 0 {
+						return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - there's nothing left to remove from; drop `remove` and give `assignments` to start a new plan", current.PlanID)
+					}
+					return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - it's finished; give `assignments` to start a new plan for further work", current.PlanID)
+				}
+				res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a.Assignments, a.Setup, a.Delivery)
+				if err != nil {
+					return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
+				}
+				res.Summary = fmt.Sprintf("plan %q had already delivered; started a new plan, %s, from these assignments.\n", current.PlanID, res.PlanID) + res.Summary
+				return res, nil
 			}
 			if len(a.Assignments) == 0 && len(a.Remove) == 0 && a.Setup == nil && a.Delivery == nil {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: nothing to change - got plan_id %q with no assignments, remove, setup, "+
