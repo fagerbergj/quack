@@ -21,11 +21,13 @@ cp .env.example .env   # set QUACK_LLM_ENDPOINT to something reachable from the 
 docker compose up --build
 ```
 
-Open http://localhost:8081 - the app is remapped, since host port 8080 is taken by SearXNG in this stack.
+Open `http://localhost:8081` - the app is remapped, since host port 8080 is taken by SearXNG in this stack.
 
 This is the middle ground: full feature set, memory included, still a single `docker compose up`.
 
-`server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run --config config/managed.yaml` brings up just the Postgres + qdrant containers itself (an embedded compose file) and leaves them running; tear them down with `docker compose -p quack-stores down`. Reach for it if you want the containerized stores without hand-rolling compose.
+`server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run --config config/managed.yaml` brings up just the Postgres + qdrant containers itself (an embedded compose file, project `quack-stores`, written to `~/.quack/stores.compose.yml`) and re-runs `up` idempotently on every start. There is no automatic tear-down: the stack keeps running after the server stops, so take it down with `docker compose -p quack-stores -f ~/.quack/stores.compose.yml down`. Reach for it if you want the containerized stores without hand-rolling compose.
+
+On SIGTERM the server waits up to `server.shutdown_grace_seconds` (default 20) for in-flight runs to finish before shutting down - raise it for long agent rounds if your orchestrator (systemd, Docker) allows it.
 
 ## 3. Remote server, full-featured
 

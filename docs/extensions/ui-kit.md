@@ -4,7 +4,7 @@ An SDK extension that implements `sdk.UI` gets a nav entry in the SPA's navigati
 
 Quack serves a small, hand-authored CSS file for exactly this: same-origin, no build step, no shared toolchain with the extension's own module.
 
-```
+```text
 /assets/ext/v1/kit.css
 ```
 
@@ -26,9 +26,4 @@ The `v1` in the path is the contract version, not a build hash: it is frozen-add
 
 ## What the kit is not
 
-The status colors (`--qk-ok-*`, `--qk-warn-*`, `--qk-err-*`) follow Tailwind's
-stock green/amber/red — the same palette the SPA's own badges use. quack's
-custom theme only overrides the grays and the blue accent, and the kit mirrors
-that split exactly: customize-worthy tokens track the theme, status colors
-track Tailwind. If the SPA's badge palette ever diverges, the kit follows the
-SPA, additively (see the v1 contract at the top of kit.css).
+The status colors (`--qk-ok-*`, `--qk-warn-*`, `--qk-err-*`) follow Tailwind's stock green/amber/red — the same palette the SPA's own badges use. quack's custom theme only overrides the grays and the blue accent, and the kit mirrors that split exactly: customize-worthy tokens track the theme, status colors track Tailwind. If the SPA's badge palette ever diverges, the kit follows the SPA, additively (see the v1 contract at the top of kit.css).

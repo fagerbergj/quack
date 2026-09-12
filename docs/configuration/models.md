@@ -4,6 +4,8 @@
 
 A provider is a named inference backend. `kind` picks the API protocol; the endpoint picks the actual server. Only `openai` is implemented today (any OpenAI-compatible endpoint) - `internal/inference.NewModel` is the single factory, so adding a new `kind` is localized to `internal/inference/factory.go`.
 
+`kind: replay` is the other `kind`, but it is never something you write in `quack.yaml` by hand: `quack replay` rewrites every provider in the loaded config to it, pointing at the recorded bundle. A forked replay (live from a changed node, see [cli.md](../cli.md#recording-replay-and-eval)) additionally sets `fork_mode: fork` + `fork_from` and carries the original provider under `live:` as its delegate - that's the `fork_mode`/`fork_from`/`live:` fields on `ProviderConfig`, an internal shape of the replay path, not a deployment knob.
+
 ```yaml
 providers:
   default:
@@ -85,4 +87,3 @@ dag:
 ## The judge is a separate model
 
 `gates.judge` (see [trust-gate.md](trust-gate.md)) names its own `provider` + `model`, independent of any worker's. That's deliberate - the trust gate's whole premise is that a genuinely different model catches blind spots a worker can't see in its own output. Reusing the worker's model for the judge would collapse that independence.
-
