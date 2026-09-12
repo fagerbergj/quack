@@ -1,0 +1,55 @@
+# Two gates, both changed-code (CI: --new-from-rev):
+#
+# SLOP: dupl - the half of slop that grows fastest (~6 source-line runs).
+# CC > 15 is gated by tools/sloplint diff instead: golangci's
+# --new-from-rev anchors findings at the func decl line, so an EXISTING
+# function extended past 15 would hide its finding, while sloplint has
+# the hunk ranges and gates the whole touched function. (gocyclo/cyclop
+# were tried here and dropped for that reason.)
+#
+# DEFECTS: the well-respected bug tier - govet (CI also runs `go vet`;
+# this is the changed-code superset), errcheck (ignored error returns),
+# staticcheck narrowed to SA*/S* (the QF refactor and ST style tiers are
+# noise, not bugs), ineffassign, errorlint (== on wrapped errors),
+# bodyclose/sqlclosecheck/rowserrcheck (leaked HTTP/DB resources),
+# nolintlint (keeps future //nolints specific + explained). Pre-existing
+# findings are a fixable backlog, not a gate.
+version: "2"
+linters:
+  default: none
+  enable:
+    - dupl
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - errorlint
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    - nolintlint
+  settings:
+    # ~6 lines of AST; the skill's dup run is >=6 source lines
+    dupl:
+      threshold: 60
+    staticcheck:
+      checks:
+        - SA*
+        - S*
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    generated: disable
+    paths:
+      - (^|/)schema/ # openapi codegen; anchored so foo_schema.go stays gated
+      - third_party
+    rules:
+      # test fixtures ignore errors by design - loosen the two noisiest
+      # defect linters there only, not for real code
+      - path: '_test\.go'
+        linters:
+          - errcheck
+          - bodyclose
+formatters:
+  default: none

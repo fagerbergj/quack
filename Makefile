@@ -1,4 +1,4 @@
-.PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean docs-check
+.PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean docs-check slop
 
 BINARY := quack
 SANDBOX_BINARY := quack-sandbox
@@ -49,6 +49,10 @@ docs-check:
 ## fmt: gofmt the source
 fmt:
 	gofmt -w internal cmd
+
+## slop: repo ledger - CC/dup/concentration/test-ratio (report-only; gate is CI go-slop)
+slop:
+	go run ./tools/sloplint repo
 
 ## generate: regenerate Go + TS code from openapi.yaml
 generate:

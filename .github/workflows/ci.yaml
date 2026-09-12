@@ -98,6 +98,45 @@ jobs:
             exit 1
           fi
 
+  # Slop gate: CC + duplication on changed code (golangci-lint,
+  # new-from-rev) + the comment-run gate (tools/sloplint). Pre-existing
+  # slop is tracked by the report-only `make slop` ledger, not CI.
+  go-slop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: cache skill plugins
+        uses: actions/cache@v6
+        with:
+          path: .agents/vendor
+          key: plugins-${{ hashFiles('.agents/vendor/plugins.yaml') }}
+      - name: fetch skill plugins (not in git; go:embed needs them)
+        run: ./scripts/plugins.sh
+      # Pinned: an unpinned @latest gate can shift findings (or break the
+      # config schema) outside the PR author's control; key carries the version.
+      - name: cache golangci-lint
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin/golangci-lint
+          key: golangci-lint-2.13.2-${{ runner.os }}-${{ hashFiles('.golangci.yml') }}
+      - name: install golangci-lint
+        run: |
+          [ -x "$HOME/go/bin/golangci-lint" ] || \
+            GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+      - name: slop gate (changed code only)
+        env:
+          SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" ./cmd/... ./internal/...
+          go run ./tools/sloplint diff "$SLOP_BASE"
+
   frontend-build:
     runs-on: ubuntu-latest
     steps:
@@ -153,6 +192,10 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+        working-directory: frontend
+      # Lint (eslint incl. the CC-15 slop rule + the three content checks)
+      # was never gated in CI - it only ran locally.
+      - run: npm run lint
         working-directory: frontend
       - run: npm test
         working-directory: frontend
