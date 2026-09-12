@@ -18,8 +18,8 @@ The `tools:` config section configures quack's builtin tool registry; each agent
 | `ask_user` | Pause the node and ask the user a question (answered via `quack chat send` or the UI). |
 | `ask_advisor` | Call the advisor agent (reuses the judge's model) mid-run - only wired when the judge is enabled, see [trust-gate.md](trust-gate.md#the-advisor-is-not-a-gate-stage). |
 
-There are deliberately no git or filesystem-write tools in the registry: code agents run as ACP subprocesses with their own edit/shell tools, and delivery (commit/push/PR) is gate-owned (see [trust-gate.md](trust-gate.md#delivery) and [workspace/index.md](workspace/index.md#git_credentials-and-git_push)).
+There are deliberately no git or filesystem-write tools in the registry: code agents run as ACP subprocesses with their own edit/shell tools, and delivery (commit/push/PR) is gate-owned (see [trust-gate.md](trust-gate.md#delivery) and [workspace/index.md](workspace/index.md#git_credentials)).
 
 `web_search` and `web_fetch` are the two tools with pluggable backends - `kind` picks the adapter, the rest of the block is that adapter's connection details, the same `kind` shape as [providers and stores](index.md#the-kind-shape).
 
-Two other entries live in `tools:` in `config/quack.yaml` without their own registry constructors: `commit_memory` (the orchestrator's user-memory commit - store binding only, see [agents.md](agents.md#the-orchestrators-tools)) and the memory bindings in general (see [stores.md](stores.md#referencing-a-store-from-a-tool)).
+One other entry lives in `tools:` in `config/quack.yaml` without its own registry constructor: `commit_memory` (the orchestrator's user-memory commit - store binding only, see [agents.md](agents.md#the-orchestrators-tools)).

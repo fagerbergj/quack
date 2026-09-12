@@ -9,7 +9,7 @@ observability:
     otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ nothing exported (harmless — just inert)
     sample: 1.0                                # trace sample ratio in (0,1]
     environment: ${QUACK_OTEL_ENVIRONMENT}     # unset ⇒ production
-    # adk_debug: true                        # DANGER: mounts ADK's REST debug console at /debug/adk
+  # adk_debug: true                            # DANGER: mounts ADK's REST debug console at /debug/adk
 ```
 
 Every signal carries a resource naming the build and the deployment: `service.name`, `service.version` plus `langfuse.release` (both the version `cmd/quack` stamps into `serve.Version`, omitted entirely on a dev build that has none), and `deployment.environment.name` from `otel.environment`. That last one is how a laptop run stays out of the deployed server's traces — set `QUACK_OTEL_ENVIRONMENT=development` locally.

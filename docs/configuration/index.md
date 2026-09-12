@@ -72,7 +72,6 @@ adk's summariser hard-errors past its transcript cap (sized from `context_window
 | `QUACK_LLM_API_KEY` | API key |
 | `QUACK_ORCH_MODEL` / `QUACK_RESEARCHER_MODEL` / `QUACK_CODER_MODEL` / `QUACK_JUDGE_MODEL` | Per-role model names (only `QUACK_CODER_MODEL` falls back, to `QUACK_RESEARCHER_MODEL`, if unset) |
 | `QUACK_MEDIA_MODEL` / `QUACK_IMAGE_MODEL` | Media-reader / image-reader model names (no fallback; unset in the init wizard simply omits the agent) |
-
 | `QUACK_EMBED_MODEL` | Embedding model for the vector store |
 | `QUACK_COMPACTION_ENABLED` / `QUACK_COMPACTION_MODEL` | Toggle + model for history compaction |
 | `QUACK_DATABASE_URL` | Postgres DSN |

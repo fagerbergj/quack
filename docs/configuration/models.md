@@ -4,7 +4,7 @@
 
 A provider is a named inference backend. `kind` picks the API protocol; the endpoint picks the actual server. Only `openai` is implemented today (any OpenAI-compatible endpoint) - `internal/inference.NewModel` is the single factory, so adding a new `kind` is localized to `internal/inference/factory.go`.
 
-`kind: replay` is the fourth `kind`, but it is never something you write in `quack.yaml` by hand: `quack replay` rewrites every provider in the loaded config to it, pointing at the recorded bundle. A forked replay (live from a changed node, see [cli.md](../cli.md#recording-replay-and-eval)) additionally sets `fork_mode: fork` + `fork_from` and carries the original provider under `live:` as its delegate - that's the `fork_mode`/`fork_from`/`live:` fields on `ProviderConfig`, an internal shape of the replay path, not a deployment knob.
+`kind: replay` is the other `kind`, but it is never something you write in `quack.yaml` by hand: `quack replay` rewrites every provider in the loaded config to it, pointing at the recorded bundle. A forked replay (live from a changed node, see [cli.md](../cli.md#recording-replay-and-eval)) additionally sets `fork_mode: fork` + `fork_from` and carries the original provider under `live:` as its delegate - that's the `fork_mode`/`fork_from`/`live:` fields on `ProviderConfig`, an internal shape of the replay path, not a deployment knob.
 
 ```yaml
 providers:

@@ -63,7 +63,7 @@ A JVM has the same failure mode as V8, but worse: it sizes its heap, metaspace, 
 
 `check_commands` is the allowlist of command **prefixes** the planner may complete into a code-implementer node's `checks`, and that the trust gate's deterministic stage derives a repo's own build/vet/test commands from when the planner sets none (see [trust-gate.md](../trust-gate.md)). Each derived check is further gated on its binary existing on the host, so a runtime without `go`/`npm` just derives nothing rather than failing every node. An explicit `check_commands: []` disables checks entirely; the default is the list shown above.
 
-`check_setup` is the sibling list for repo bootstrap: commands run once per clone directory, in order, the first time a gate check (or the baseline build) uses that dir - e.g. `npm ci` before `npm test` - never re-run for later nodes on the same clone (`internal/workspace/setup.go`'s per-dir cache). A failing or invalid setup command is logged and the rest of the list is skipped for that dir; it does not abort the node, the subsequent checks just run against an un-bootstrapped tree.
+`check_setup` is the sibling list for repo bootstrap: commands run once per clone directory, in order, the first time that dir is used - at clone provisioning (`tools.SetupClone`), then a gate check (or the baseline build) - e.g. `npm ci` before `npm test` - never re-run for later nodes on the same clone (`internal/workspace/setup.go`'s per-dir cache). A failing or invalid setup command is logged and the rest of the list is skipped for that dir; it does not abort the node, the subsequent checks just run against an un-bootstrapped tree.
 
 ## Custom toolchains (`exec_path` and `env`)
 
@@ -81,9 +81,13 @@ workspace:
   #     token: ${QUACK_GITHUB_TOKEN}
 ```
 
+`git_credentials` is deployment-level, one HTTPS identity per host. `token` must be an `${VAR}` reference in the raw YAML - a literal here is a startup error, checked on the raw file text before `${VAR}` expansion, so it can't slip through as a "just for now" secret. Never put a credential in a clone URL; `git_clone` rejects that outright.
+
+`git_push` (the one outward-facing, non-undoable git operation) is gated through `guards.git_push` below, not a top-level toggle - there is no `workspace.git_push` field. Even when the guard passes, a push can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
+
 ## `gc`: the workspace reaper
 
-Every chat keeps its clone under `<root>/<user_id>/`, sandboxed scratch dirs and the ACP agent's shared `$HOME` accumulate the same way - `workspace.gc` is the periodic reaper that keeps the disk from filling: 
+Every chat keeps its clone under `<root>/<user_id>/`, sandboxed scratch dirs and the ACP agent's shared `$HOME` accumulate the same way - `workspace.gc` is the periodic reaper that keeps the disk from filling:
 
 ```yaml
 workspace:
@@ -95,11 +99,7 @@ workspace:
     home_max_mb: 500         # default 500 - quota on the shared agent $HOME (opencode.db, caches, logs)
 ```
 
-Chat and scratch TTLs are idle-time based and never touch a chat with a run in flight; linked git worktrees are detached before their dir is removed. `home_max_mb` is quota-based instead - the home is one shared directory with no per-entry idle time - and is reset whole only when the user has no round in flight. `0` (or `enabled: false`) skips a sweep class / the whole reaper.
-
-`git_credentials` is deployment-level, one HTTPS identity per host. `token` must be an `${VAR}` reference in the raw YAML - a literal here is a startup error, checked on the raw file text before `${VAR}` expansion, so it can't slip through as a "just for now" secret. Never put a credential in a clone URL; `git_clone` rejects that outright.
-
-`git_push` (the one outward-facing, non-undoable git operation) is gated through `guards.git_push` below, not a top-level toggle - there is no `workspace.git_push` field. Even when the guard passes, a push can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
+Chat and scratch TTLs are idle-time based and never touch a chat with a run in flight; linked git worktrees are detached before their dir is removed. `home_max_mb` is quota-based instead - the home is one shared directory with no per-entry idle time - and is reset whole only when the user has no round in flight. `enabled: false` is the only way to stop the reaper - a zeroed field falls back to its default on load, so per-class TTLs can't be disabled individually.
 
 ## The guard ladder
 
