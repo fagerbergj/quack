@@ -207,9 +207,9 @@ func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchIsIdempotent pins the persistent-workspace bug: a
-// re-labeled issue (or retried run) leaves a stale clone at the target, and a
-// naive `git clone` fails exit 128 ("destination already exists") - Setup must clear the target and re-provision cleanly.
+// TestSetupCloneAndBranchIsIdempotent pins that a second call at the same
+// target/repo/base_ref succeeds without re-cloning (see the reuse tests
+// below) - it must never fail just because the directory already exists.
 func TestSetupCloneAndBranchIsIdempotent(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -218,14 +218,310 @@ func TestSetupCloneAndBranchIsIdempotent(t *testing.T) {
 	if _, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false); err != nil {
 		t.Fatalf("first setup: %v", err)
 	}
-	// Second provisioning at the SAME dir must succeed (clears the stale clone),
-	// not fail because the directory already exists.
 	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
 	if err != nil {
 		t.Fatalf("second setup at an existing target must succeed, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(target, "README.md")); err != nil {
 		t.Errorf("re-provisioned clone missing at %q: %v", target, err)
+	}
+}
+
+// TestSetupCloneAndBranchReuseKeepsLocalCommit pins that a follow-up turn on
+// the same repo/base_ref never wipes the tree - the second call must land
+// back on the same work branch with its local (possibly unpushed) commit intact.
+func TestSetupCloneAndBranchReuseKeepsLocalCommit(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "local.txt"), []byte("local work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "local-only commit")
+	head := strings.TrimSpace(runGitT(t, target, "rev-parse", "HEAD"))
+
+	target2, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("second setup: %v", err)
+	}
+	if target2 != target {
+		t.Fatalf("target dir changed: %q vs %q", target2, target)
+	}
+	if _, err := os.Stat(filepath.Join(target, "local.txt")); err != nil {
+		t.Errorf("local-only file lost on reuse: %v", err)
+	}
+	if got := strings.TrimSpace(runGitT(t, target, "rev-parse", "HEAD")); got != head {
+		t.Errorf("HEAD moved on reuse: got %q, want %q (local commit preserved)", got, head)
+	}
+}
+
+// TestSetupCloneAndBranchDifferentBaseRefReClones pins that reuse only
+// applies when base_ref matches too - a different base_ref at the same
+// target must still wipe and re-clone.
+func TestSetupCloneAndBranchDifferentBaseRefReClones(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	runGitT(t, bare, "branch", "other")
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "local.txt"), []byte("local work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "local-only commit")
+
+	if _, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "other", "quack/work", false); err != nil {
+		t.Fatalf("second setup (different base_ref): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "local.txt")); err == nil {
+		t.Error("local-only file survived a base_ref change - want a fresh clone")
+	}
+}
+
+// TestSetupCloneAndBranchCorruptTreeReClones pins that a half-written clone
+// (e.g. left behind by a killed process) is never trusted - any git failure
+// reading it means "not reusable", not "crash".
+func TestSetupCloneAndBranchCorruptTreeReClones(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := b.jail.Resolve(b.userID, "", "n1/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "not-a-repo"), []byte("junk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup on a corrupt tree must re-clone, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(got, "README.md")); err != nil {
+		t.Errorf("re-cloned tree missing README.md: %v", err)
+	}
+}
+
+// TestSetupCloneAndBranchReuseFetchesFreshBaseRef pins that cutting a NEW
+// work branch on a reused clone never freezes base_ref at the first turn's
+// shallow clone tip - a commit landed on the remote base between turns must
+// show up in the branch the second turn cuts.
+func TestSetupCloneAndBranchReuseFetchesFreshBaseRef(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	if _, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work-1", false); err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+
+	seed := t.TempDir()
+	runGitT(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	if err := os.WriteFile(filepath.Join(seed, "upstream.txt"), []byte("new upstream work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, seed, "add", "-A")
+	runGitT(t, seed, "-c", "user.name=up", "-c", "user.email=up@x.local", "commit", "--quiet", "-m", "upstream advance")
+	runGitT(t, seed, "push", "--quiet", "origin", "main")
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work-2", false)
+	if err != nil {
+		t.Fatalf("second setup (new branch): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "upstream.txt")); err != nil {
+		t.Errorf("new work branch missing the upstream commit landed between turns: %v", err)
+	}
+}
+
+// TestSetupCloneAndBranchUntrackedConflictReClones pins that a checkout
+// blocked only by untracked content (a killed process's leftover build
+// output, say) never wedges the chat - `git status --porcelain
+// --untracked-files=no` reports this tree as clean, and its branch already
+// matches origin, so reuse must fall back to a clean reclone rather than
+// move anything aside.
+func TestSetupCloneAndBranchUntrackedConflictReClones(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "feature.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "add feature")
+	runGitT(t, target, "push", "--quiet", "origin", "quack/work")
+
+	runGitT(t, target, "checkout", "--quiet", "main")
+	if err := os.WriteFile(filepath.Join(target, "feature.txt"), []byte("untracked build output\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup blocked only by untracked content, already-pushed branch, must re-clone, not fail: %v", err)
+	}
+	branchOut, _, err := runGit(context.Background(), got, []string{"rev-parse", "--abbrev-ref", "HEAD"}, b.caps, nil)
+	if err != nil {
+		t.Fatalf("rev-parse: %v", err)
+	}
+	if got := strings.TrimSpace(branchOut); got != "quack/work" {
+		t.Errorf("checked-out branch = %q, want quack/work", got)
+	}
+}
+
+// TestSetupCloneAndBranchUncommittedChangeProtectsTree pins that an
+// uncommitted change alone - no commit ahead of origin at all - still stops
+// a wipe. A blocked checkout with nothing but a dirty tracked file must move
+// the tree aside, not silently re-clone over the edit.
+func TestSetupCloneAndBranchUncommittedChangeProtectsTree(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("pushed change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "already pushed")
+	runGitT(t, target, "push", "--quiet", "origin", "quack/work")
+
+	runGitT(t, target, "checkout", "--quiet", "main")
+	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("work in progress, not committed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err == nil {
+		t.Fatal("expected an error: reuse was blocked and the tree has an uncommitted change, no unpushed commit needed")
+	}
+	if !strings.Contains(err.Error(), "uncommitted") {
+		t.Errorf("error = %q, want it to name the uncommitted change rather than silently re-cloning", err)
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Error("tree with the uncommitted change was wiped in place rather than moved aside")
+	}
+}
+
+// TestSetupCloneAndBranchMidRebaseProtectsTree pins that an interrupted
+// rebase - a killed process's most likely leftover, and invisible to a plain
+// `git status` once the working tree itself is clean - still stops a wipe.
+func TestSetupCloneAndBranchMidRebaseProtectsTree(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("work branch change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "work branch commit")
+
+	runGitT(t, target, "checkout", "--quiet", "main")
+	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("main advance\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "main advance")
+
+	// Rebasing quack/work onto main conflicts on README.md and stops
+	// mid-rebase, leaving an unmerged index but no dirty working-tree edit.
+	if _, _, err := runGit(context.Background(), target, []string{"rebase", "main", "quack/work"}, b.caps, nil); err == nil {
+		t.Fatal("expected the rebase to stop on a README.md conflict")
+	}
+
+	_, err = setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err == nil {
+		t.Fatal("expected an error: reuse was blocked mid-rebase")
+	}
+	if !strings.Contains(err.Error(), "rebase") {
+		t.Errorf("error = %q, want it to name the rebase in progress rather than silently re-cloning", err)
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Error("tree mid-rebase was wiped in place rather than moved aside")
+	}
+}
+
+// TestSetupCloneAndBranchPartiallyPushedCommitCountsAgainstFetchedRef pins
+// that the commit count comes from a fetched copy of origin's own workBranch
+// (a shallow single-branch clone never tracks it by default) - one pushed
+// commit plus one local-only commit on top must count as exactly one unpushed.
+func TestSetupCloneAndBranchPartiallyPushedCommitCountsAgainstFetchedRef(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "feature.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "pushed commit")
+	runGitT(t, target, "push", "--quiet", "origin", "quack/work")
+
+	if err := os.WriteFile(filepath.Join(target, "feature2.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "unpushed commit")
+	head := strings.TrimSpace(runGitT(t, target, "rev-parse", "quack/work"))
+
+	runGitT(t, target, "checkout", "--quiet", "main")
+	if err := os.WriteFile(filepath.Join(target, "feature.txt"), []byte("untracked, blocks checkout\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err == nil {
+		t.Fatal("expected an error: reuse was blocked and quack/work has one commit origin doesn't have")
+	}
+	if !strings.Contains(err.Error(), "1 unpushed commit") {
+		t.Errorf("error = %q, want it to count exactly 1 unpushed commit (against the fetched origin/quack/work, not the never-fetched local view)", err)
+	}
+
+	entries, rerr := os.ReadDir(filepath.Dir(target))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	var movedTo string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), filepath.Base(target)+".unwiped-") {
+			movedTo = filepath.Join(filepath.Dir(target), e.Name())
+		}
+	}
+	if movedTo == "" {
+		t.Fatal("tree carrying the unpushed commit was not moved aside")
+	}
+	if got := strings.TrimSpace(runGitT(t, movedTo, "rev-parse", "quack/work")); got != head {
+		t.Errorf("moved-aside tree's quack/work = %q, want the unpushed commit %q preserved", got, head)
 	}
 }
 

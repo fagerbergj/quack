@@ -3,7 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -45,6 +49,196 @@ func (e *cleanupError) Unwrap() error { return e.cause }
 
 func (e *cleanupError) LocalCleanupFailure() {}
 
+// unwipeableTreeError: a blocked reuse checkout on a work branch that still
+// holds something a wipe would destroy - the tree is moved aside instead, so
+// this must never be reworded as the repository being unreachable.
+type unwipeableTreeError struct {
+	target, movedTo, workBranch, reason string
+	checkoutErr, moveErr                error
+}
+
+func (e *unwipeableTreeError) Error() string {
+	if e.moveErr != nil {
+		return fmt.Sprintf("setup: %s on %q could not be checked out cleanly (%v): %s - moving it aside also failed (%v) - resolve manually",
+			e.target, e.workBranch, e.checkoutErr, e.reason, e.moveErr)
+	}
+	return fmt.Sprintf("setup: %s on %q could not be checked out cleanly (%v): %s - moved the tree to %s instead of discarding it",
+		e.target, e.workBranch, e.checkoutErr, e.reason, e.movedTo)
+}
+
+func (e *unwipeableTreeError) Unwrap() error { return e.checkoutErr }
+
+func (e *unwipeableTreeError) LocalCleanupFailure() {}
+
+// localRefExists reports whether dir has a local branch named ref - used
+// both to recognize a reusable clone (its baseRef branch survives the first
+// checkout -b) and to tell a fresh workBranch from one a prior turn cut already.
+func localRefExists(ctx context.Context, dir, ref string, caps workspace.Caps) bool {
+	_, _, err := runGit(ctx, dir, []string{"show-ref", "--verify", "--quiet", "refs/heads/" + ref}, caps, nil)
+	return err == nil
+}
+
+// hasRebaseOrMergeState reports whether dir's .git shows an interrupted
+// rebase or merge - a killed process can leave this with an otherwise clean
+// `git status` (untouched working tree, conflict only in the index).
+func hasRebaseOrMergeState(dir string) bool {
+	for _, p := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD"} {
+		if _, err := os.Stat(filepath.Join(dir, ".git", p)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// unpushedCommitCount reports how many commits on target's local workBranch
+// aren't reachable from origin's copy of it - or, if origin has no such
+// branch (it was never pushed), aren't reachable from baseRef. A shallow,
+// single-branch clone's configured fetch refspec never covers workBranch, so
+// this fetches it explicitly (an explicit refspec bypasses that restriction)
+// rather than trusting a local remote-tracking ref that may not exist even
+// after a real push. ok=false means the count itself couldn't be determined
+// (a failed rev-list) - the caller must treat that as "assume unpushed work",
+// the same direction a failed fetch already degrades in, never the reverse.
+func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string) (count int, ok bool) {
+	if !localRefExists(ctx, target, workBranch, b.caps) {
+		return 0, true
+	}
+	upstream := baseRef
+	auth, err := b.authFor(repoURL)
+	if err == nil {
+		refspec := "refs/heads/" + workBranch + ":refs/remotes/origin/" + workBranch
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", refspec}, b.caps, auth); err == nil {
+			upstream = "origin/" + workBranch
+		}
+	}
+	out, _, err := runGit(ctx, target, []string{"rev-list", "--count", upstream + ".." + workBranch}, b.caps, nil)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// unwipeableReason says why target must not be wiped, or "" when it's safe
+// to discard. Checked in order: an interrupted rebase/merge (invisible to
+// `git status` when the working tree itself is untouched), an uncommitted
+// change to a tracked file (untracked content - e.g. build output - is
+// exempt via --untracked-files=no, so that alone still re-clones), then
+// commits workBranch has that origin doesn't. A git failure at any step
+// (porcelain status, commit count) is treated the same as finding something
+// to protect - never let an inability to check excuse a wipe.
+func unwipeableReason(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string) string {
+	if hasRebaseOrMergeState(target) {
+		return "a rebase or merge is in progress"
+	}
+	out, _, err := runGit(ctx, target, []string{"status", "--porcelain", "--untracked-files=no"}, b.caps, nil)
+	if err != nil {
+		return "its working tree state could not be checked"
+	}
+	if strings.TrimSpace(out) != "" {
+		return "it has uncommitted changes"
+	}
+	n, ok := unpushedCommitCount(ctx, b, target, repoURL, baseRef, workBranch)
+	if !ok {
+		return "its commit history against origin could not be checked"
+	}
+	if n > 0 {
+		return fmt.Sprintf("it has %d unpushed commit(s)", n)
+	}
+	return ""
+}
+
+// canReuseClone reports whether target is already a healthy clone of repoURL
+// cut from baseRef, so setupCloneAndBranch can skip the wipe+reclone. Any git
+// failure here (missing dir, non-repo, wrong remote, corrupt tree left by a
+// killed process) means "not reusable" - the caller falls back to a clean clone.
+// It says nothing about whether baseRef is still current - runSetupCheckout
+// fetches it fresh before ever cutting a new branch from it.
+func canReuseClone(ctx context.Context, target, repoURL, baseRef string, caps workspace.Caps) bool {
+	out, _, err := runGit(ctx, target, []string{"remote", "get-url", "origin"}, caps, nil)
+	if err != nil || strings.TrimSpace(out) != repoURL {
+		return false
+	}
+	return localRefExists(ctx, target, baseRef, caps)
+}
+
+// isShallowRepo reports whether dir is a shallow clone - `fetch --unshallow`
+// errors on a repo that already isn't, which a reused review clone can be
+// on its second setup call.
+func isShallowRepo(ctx context.Context, dir string, caps workspace.Caps) bool {
+	out, _, err := runGit(ctx, dir, []string{"rev-parse", "--is-shallow-repository"}, caps, nil)
+	return err == nil && strings.TrimSpace(out) == "true"
+}
+
+// runSetupCheckout lands target on workBranch, given a clone that either was
+// just cut fresh (reused=false, HEAD already sits on baseRef's tip) or is
+// being reused from a prior turn (reused=true, so baseRef's local ref may be
+// stale and the tree may carry an unmerged/dirty index - mid-rebase, a stale
+// index.lock - that makes a plain checkout refuse). It never forces past
+// such a refusal; the caller treats any error here as "reuse failed."
+func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string, checkoutExistingHead, reused bool) error {
+	if checkoutExistingHead {
+		auth, err := b.authFor(repoURL)
+		if err != nil {
+			return fmt.Errorf("setup: resolve credentials for %s: %w", repoURL, err)
+		}
+		if isShallowRepo(ctx, target, b.caps) {
+			// Unshallow so three-dot diff has a merge-base.
+			if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "--unshallow", "origin"}, b.caps, auth); err != nil {
+				return fmt.Errorf("setup: unshallow base history for review: %w", err)
+			}
+		}
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", workBranch + ":refs/remotes/origin/" + workBranch}, b.caps, auth); err != nil {
+			return fmt.Errorf("setup: fetch review head %q: %w", workBranch, err)
+		}
+		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + workBranch}, b.caps, nil); err != nil {
+			return fmt.Errorf("setup: checkout review head %q: %w", workBranch, err)
+		}
+		return nil
+	}
+	if reused && localRefExists(ctx, target, workBranch, b.caps) {
+		// A prior turn already cut workBranch here - switch onto it as-is,
+		// never -B, so its local (possibly unpushed) commits survive.
+		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", workBranch}, b.caps, nil); err != nil {
+			return fmt.Errorf("setup: checkout %q: %w", workBranch, err)
+		}
+		return nil
+	}
+	if reused {
+		// The clone is shallow and depth-1 from the first turn - baseRef's
+		// local ref is frozen at that turn's tip. Fetch before cutting a new
+		// branch from it, or every later turn silently misses upstream commits.
+		auth, err := b.authFor(repoURL)
+		if err != nil {
+			return fmt.Errorf("setup: resolve credentials for %s: %w", repoURL, err)
+		}
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", baseRef}, b.caps, auth); err != nil {
+			return fmt.Errorf("setup: fetch base ref %q: %w", baseRef, err)
+		}
+		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + baseRef}, b.caps, nil); err != nil {
+			return fmt.Errorf("setup: checkout -b %q off %q: %w", workBranch, baseRef, err)
+		}
+		return nil
+	}
+	if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-b", workBranch}, b.caps, nil); err != nil {
+		return fmt.Errorf("setup: checkout -b %q: %w", workBranch, err)
+	}
+	return nil
+}
+
+// finishSetup configures committer identity so a raw `git commit` works in target.
+func finishSetup(ctx context.Context, b gitBinding, target string) (string, error) {
+	for _, kv := range [][2]string{{"user.name", GitCommitAuthorName}, {"user.email", GitCommitAuthorEmail}} {
+		if _, _, err := runGit(ctx, target, []string{"config", kv[0], kv[1]}, b.caps, nil); err != nil {
+			return "", fmt.Errorf("setup: git config %s: %w", kv[0], err)
+		}
+	}
+	return target, nil
+}
+
 // setupCloneAndBranch: false=create new branch off baseRef, true=checkout existing remote branch.
 func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool) (string, error) {
 	if strings.TrimSpace(baseRef) == "" {
@@ -57,6 +251,24 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve clone dir: %w", err)
 	}
+	// A follow-up turn on the same repo/base_ref finds its own prior clone
+	// here - try to reuse it so a resumed node's local commits survive.
+	if canReuseClone(ctx, target, repoURL, baseRef, b.caps) {
+		checkoutErr := runSetupCheckout(ctx, b, target, repoURL, baseRef, workBranch, checkoutExistingHead, true)
+		if checkoutErr == nil {
+			return finishSetup(ctx, b, target)
+		}
+		// Reuse couldn't land cleanly (an unmerged/dirty index, e.g.
+		// mid-rebase). A tree with nothing at risk just falls through to the
+		// reclone below; one holding uncommitted work, a rebase in progress,
+		// or commits origin doesn't have is moved aside instead of wiped -
+		// never destroy the exact data this exists to keep.
+		if reason := unwipeableReason(ctx, b, target, repoURL, baseRef, workBranch); reason != "" {
+			movedTo := target + ".unwiped-" + strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+			moveErr := os.Rename(target, movedTo)
+			return "", &unwipeableTreeError{target: target, movedTo: movedTo, workBranch: workBranch, reason: reason, checkoutErr: checkoutErr, moveErr: moveErr}
+		}
+	}
 	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
 	// error must never read as the repository being unreachable (#1213).
 	if err := workspace.RemoveAllForce(target); err != nil {
@@ -65,25 +277,8 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if _, err := b.cloneRepo(repoURL, dir, nil, baseRef); err != nil {
 		return "", fmt.Errorf("setup: clone: %w", err)
 	}
-	if checkoutExistingHead {
-		// Unshallow so three-dot diff has a merge-base.
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "--unshallow", "origin"}, b.caps, nil); err != nil {
-			return "", fmt.Errorf("setup: unshallow base history for review: %w", err)
-		}
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", workBranch + ":refs/remotes/origin/" + workBranch}, b.caps, nil); err != nil {
-			return "", fmt.Errorf("setup: fetch review head %q: %w", workBranch, err)
-		}
-		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + workBranch}, b.caps, nil); err != nil {
-			return "", fmt.Errorf("setup: checkout review head %q: %w", workBranch, err)
-		}
-	} else if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-b", workBranch}, b.caps, nil); err != nil {
-		return "", fmt.Errorf("setup: checkout -b %q: %w", workBranch, err)
+	if err := runSetupCheckout(ctx, b, target, repoURL, baseRef, workBranch, checkoutExistingHead, false); err != nil {
+		return "", err
 	}
-	// Set committer identity so raw `git commit` works in the clone.
-	for _, kv := range [][2]string{{"user.name", GitCommitAuthorName}, {"user.email", GitCommitAuthorEmail}} {
-		if _, _, err := runGit(ctx, target, []string{"config", kv[0], kv[1]}, b.caps, nil); err != nil {
-			return "", fmt.Errorf("setup: git config %s: %w", kv[0], err)
-		}
-	}
-	return target, nil
+	return finishSetup(ctx, b, target)
 }
