@@ -1,4 +1,4 @@
-.PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean
+.PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean docs-check
 
 BINARY := quack
 SANDBOX_BINARY := quack-sandbox
