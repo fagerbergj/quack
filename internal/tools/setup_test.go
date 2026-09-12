@@ -348,9 +348,10 @@ func TestSetupCloneAndBranchReuseFetchesFreshBaseRef(t *testing.T) {
 }
 
 // TestSetupCloneAndBranchDirtyConflictReClones pins that a checkout blocked
-// by a dirty, conflicting tree (same failure mode as a mid-rebase or
-// detached HEAD left by a killed process) never wedges the chat - reuse must
-// fall back to a clean reclone rather than hard-fail forever.
+// by a dirty, conflicting tree (same failure mode as a mid-rebase or a stale
+// index.lock left by a killed process) never wedges the chat - reuse must
+// fall back to a clean reclone when the blocked branch has nothing unpushed
+// to lose (its commit already made it to origin).
 func TestSetupCloneAndBranchDirtyConflictReClones(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -365,6 +366,7 @@ func TestSetupCloneAndBranchDirtyConflictReClones(t *testing.T) {
 	}
 	runGitT(t, target, "add", "-A")
 	runGitT(t, target, "commit", "--quiet", "-m", "diverge on work branch")
+	runGitT(t, target, "push", "--quiet", "origin", "quack/work")
 
 	runGitT(t, target, "checkout", "--quiet", "main")
 	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("uncommitted conflict\n"), 0o644); err != nil {
@@ -373,7 +375,7 @@ func TestSetupCloneAndBranchDirtyConflictReClones(t *testing.T) {
 
 	got, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
 	if err != nil {
-		t.Fatalf("setup on a dirty conflicting tree must re-clone, not fail: %v", err)
+		t.Fatalf("setup on a dirty conflicting tree with nothing unpushed must re-clone, not fail: %v", err)
 	}
 	branchOut, _, err := runGit(context.Background(), got, []string{"rev-parse", "--abbrev-ref", "HEAD"}, b.caps, nil)
 	if err != nil {
@@ -388,6 +390,56 @@ func TestSetupCloneAndBranchDirtyConflictReClones(t *testing.T) {
 	}
 	if string(content) != "hello\n" {
 		t.Errorf("README.md = %q, want the fresh base content after the recovery reclone", string(content))
+	}
+}
+
+// TestSetupCloneAndBranchUnpushedCommitSurvivesBlockedReuse pins that a
+// blocked reuse checkout never wipes a work branch carrying a commit origin
+// doesn't have - the exact data this whole reuse mechanism exists to protect.
+func TestSetupCloneAndBranchUnpushedCommitSurvivesBlockedReuse(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("unpushed work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "unpushed local commit")
+	head := strings.TrimSpace(runGitT(t, target, "rev-parse", "quack/work"))
+
+	runGitT(t, target, "checkout", "--quiet", "main")
+	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("uncommitted conflict\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err == nil {
+		t.Fatal("expected an error: reuse was blocked and quack/work has an unpushed commit")
+	}
+	if !strings.Contains(err.Error(), "unpushed") {
+		t.Errorf("error = %q, want it to name the unpushed commit rather than silently re-cloning", err)
+	}
+
+	entries, rerr := os.ReadDir(filepath.Dir(target))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	var movedTo string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), filepath.Base(target)+".unpushed-") {
+			movedTo = filepath.Join(filepath.Dir(target), e.Name())
+		}
+	}
+	if movedTo == "" {
+		t.Fatal("tree carrying the unpushed commit was not moved aside")
+	}
+	if got := strings.TrimSpace(runGitT(t, movedTo, "rev-parse", "quack/work")); got != head {
+		t.Errorf("moved-aside tree's quack/work = %q, want the unpushed commit %q preserved", got, head)
 	}
 }
 

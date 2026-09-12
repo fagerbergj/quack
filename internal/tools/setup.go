@@ -3,7 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -45,12 +48,65 @@ func (e *cleanupError) Unwrap() error { return e.cause }
 
 func (e *cleanupError) LocalCleanupFailure() {}
 
+// unpushedCommitsError: a blocked reuse checkout on a work branch that
+// carries commits origin doesn't have - the tree is moved aside rather than
+// wiped, so this must never be reworded as the repository being unreachable.
+type unpushedCommitsError struct {
+	target, movedTo, workBranch string
+	count                       int
+	checkoutErr, moveErr        error
+}
+
+func (e *unpushedCommitsError) Error() string {
+	if e.moveErr != nil {
+		return fmt.Sprintf("setup: %s has %d unpushed commit(s) on %q that could not be checked out cleanly (%v), and moving it aside also failed (%v) - resolve manually",
+			e.target, e.count, e.workBranch, e.checkoutErr, e.moveErr)
+	}
+	return fmt.Sprintf("setup: %s had %d unpushed commit(s) on %q that a clean checkout could not proceed past (%v) - moved the tree to %s instead of discarding them",
+		e.target, e.count, e.workBranch, e.checkoutErr, e.movedTo)
+}
+
+func (e *unpushedCommitsError) Unwrap() error { return e.checkoutErr }
+
+func (e *unpushedCommitsError) LocalCleanupFailure() {}
+
 // localRefExists reports whether dir has a local branch named ref - used
 // both to recognize a reusable clone (its baseRef branch survives the first
 // checkout -b) and to tell a fresh workBranch from one a prior turn cut already.
 func localRefExists(ctx context.Context, dir, ref string, caps workspace.Caps) bool {
 	_, _, err := runGit(ctx, dir, []string{"show-ref", "--verify", "--quiet", "refs/heads/" + ref}, caps, nil)
 	return err == nil
+}
+
+// unpushedCommitCount reports how many commits on target's local workBranch
+// aren't reachable from origin's copy of it - or, if origin has no such
+// branch (it was never pushed), aren't reachable from baseRef. A shallow,
+// single-branch clone's configured fetch refspec never covers workBranch, so
+// this fetches it explicitly (an explicit refspec bypasses that restriction)
+// rather than trusting a local remote-tracking ref that may not exist even
+// after a real push. The reuse fallback checks this before ever wiping the
+// tree, so a failed push is never erased along with it.
+func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string) int {
+	if !localRefExists(ctx, target, workBranch, b.caps) {
+		return 0
+	}
+	upstream := baseRef
+	auth, err := b.authFor(repoURL)
+	if err == nil {
+		refspec := "refs/heads/" + workBranch + ":refs/remotes/origin/" + workBranch
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", refspec}, b.caps, auth); err == nil {
+			upstream = "origin/" + workBranch
+		}
+	}
+	out, _, err := runGit(ctx, target, []string{"rev-list", "--count", upstream + ".." + workBranch}, b.caps, nil)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // canReuseClone reports whether target is already a healthy clone of repoURL
@@ -78,18 +134,22 @@ func isShallowRepo(ctx context.Context, dir string, caps workspace.Caps) bool {
 // runSetupCheckout lands target on workBranch, given a clone that either was
 // just cut fresh (reused=false, HEAD already sits on baseRef's tip) or is
 // being reused from a prior turn (reused=true, so baseRef's local ref may be
-// stale and the tree may carry state - dirty files, a mid-rebase, a detached
-// HEAD - a plain checkout can refuse). It never forces past such a refusal;
-// the caller treats any error here as "reuse failed" and re-clones instead.
-func runSetupCheckout(ctx context.Context, b gitBinding, target, baseRef, workBranch string, checkoutExistingHead, reused bool) error {
+// stale and the tree may carry an unmerged/dirty index - mid-rebase, a stale
+// index.lock - that makes a plain checkout refuse). It never forces past
+// such a refusal; the caller treats any error here as "reuse failed."
+func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string, checkoutExistingHead, reused bool) error {
 	if checkoutExistingHead {
+		auth, err := b.authFor(repoURL)
+		if err != nil {
+			return fmt.Errorf("setup: resolve credentials for %s: %w", repoURL, err)
+		}
 		if isShallowRepo(ctx, target, b.caps) {
 			// Unshallow so three-dot diff has a merge-base.
-			if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "--unshallow", "origin"}, b.caps, nil); err != nil {
+			if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "--unshallow", "origin"}, b.caps, auth); err != nil {
 				return fmt.Errorf("setup: unshallow base history for review: %w", err)
 			}
 		}
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", workBranch + ":refs/remotes/origin/" + workBranch}, b.caps, nil); err != nil {
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", workBranch + ":refs/remotes/origin/" + workBranch}, b.caps, auth); err != nil {
 			return fmt.Errorf("setup: fetch review head %q: %w", workBranch, err)
 		}
 		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + workBranch}, b.caps, nil); err != nil {
@@ -109,7 +169,11 @@ func runSetupCheckout(ctx context.Context, b gitBinding, target, baseRef, workBr
 		// The clone is shallow and depth-1 from the first turn - baseRef's
 		// local ref is frozen at that turn's tip. Fetch before cutting a new
 		// branch from it, or every later turn silently misses upstream commits.
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", baseRef}, b.caps, nil); err != nil {
+		auth, err := b.authFor(repoURL)
+		if err != nil {
+			return fmt.Errorf("setup: resolve credentials for %s: %w", repoURL, err)
+		}
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", baseRef}, b.caps, auth); err != nil {
 			return fmt.Errorf("setup: fetch base ref %q: %w", baseRef, err)
 		}
 		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + baseRef}, b.caps, nil); err != nil {
@@ -148,12 +212,19 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	// A follow-up turn on the same repo/base_ref finds its own prior clone
 	// here - try to reuse it so a resumed node's local commits survive.
 	if canReuseClone(ctx, target, repoURL, baseRef, b.caps) {
-		if err := runSetupCheckout(ctx, b, target, baseRef, workBranch, checkoutExistingHead, true); err == nil {
+		checkoutErr := runSetupCheckout(ctx, b, target, repoURL, baseRef, workBranch, checkoutExistingHead, true)
+		if checkoutErr == nil {
 			return finishSetup(ctx, b, target)
 		}
-		// Reuse couldn't land cleanly (dirty conflict, mid-rebase, detached
-		// HEAD from a killed process) - fall through to the clean reclone
-		// below rather than wedge every later turn on the same checkout error.
+		// Reuse couldn't land cleanly (an unmerged/dirty index, e.g.
+		// mid-rebase). A clean workBranch just falls through to the reclone
+		// below; one carrying commits origin doesn't have is moved aside
+		// instead of wiped - never destroy the exact data this exists to keep.
+		if n := unpushedCommitCount(ctx, b, target, repoURL, baseRef, workBranch); n > 0 {
+			movedTo := target + ".unpushed-" + strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+			moveErr := os.Rename(target, movedTo)
+			return "", &unpushedCommitsError{target: target, movedTo: movedTo, workBranch: workBranch, count: n, checkoutErr: checkoutErr, moveErr: moveErr}
+		}
 	}
 	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
 	// error must never read as the repository being unreachable (#1213).
@@ -163,7 +234,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if _, err := b.cloneRepo(repoURL, dir, nil, baseRef); err != nil {
 		return "", fmt.Errorf("setup: clone: %w", err)
 	}
-	if err := runSetupCheckout(ctx, b, target, baseRef, workBranch, checkoutExistingHead, false); err != nil {
+	if err := runSetupCheckout(ctx, b, target, repoURL, baseRef, workBranch, checkoutExistingHead, false); err != nil {
 		return "", err
 	}
 	return finishSetup(ctx, b, target)
