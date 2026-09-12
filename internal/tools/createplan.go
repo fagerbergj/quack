@@ -69,57 +69,71 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			if len(a.Assignments) == 0 {
 				return planUpsertResult{}, fmt.Errorf("create_plan: assignments must be non-empty")
 			}
-			existing, err := listDagNodeRecords(tc, c)
+			res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a.Assignments, a.Setup, a.Delivery)
 			if err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
-			assignments, minted, err := upsertNodes(a.Assignments, existing, nodeIsRunning, tc.SessionID(), allowedKinds)
-			if err != nil {
-				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
-			}
-			nodeAgent := map[string]string{}
-			for _, n := range existing {
-				nodeAgent[n.NodeID] = n.Agent
-			}
-			for _, n := range minted {
-				nodeAgent[n.NodeID] = n.Agent
-			}
-
-			planID := uuid.NewString()
-			stampAssignmentMeta(tc, planID, nodeAgent, assignments, onAssignment)
-			setup := a.Setup
-			if githubSetup != nil {
-				s := *githubSetup
-				setup = &s
-			}
-			rec := dag.DagPlanRecord{PlanID: planID, Assignments: assignments, Setup: setup, Delivery: a.Delivery, Status: "planned"}
-
-			// dag_plan (which validates) saves before any minted dag_node, so a
-			// rejected call leaves no orphan "hired" node behind for list_nodes.
-			now := time.Now().UTC()
-			lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
-			if _, _, err := c.SaveStructured(tc, "dag_plan", rec, "", lineage); err != nil {
-				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
-			}
-			for _, n := range minted {
-				nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
-				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
-					// The dag_plan revision above already saved - a bare error here
-					// leaves a live plan referencing a node list_nodes won't show yet.
-					return planUpsertResult{}, fmt.Errorf("create_plan: save dag_node %s: %w; "+
-						"the plan was already saved - call create_plan again to replace it", n.NodeID, err)
-				}
-			}
-
-			// No dag_plan event here: the plan is still a draft (execute hasn't
-			// run it), and node cards must not appear in the UI before then -
-			// list_nodes shows the draft's assignments as text meanwhile.
-			// execute's own DagPlanEvent is the only dag_plan emission.
-			return planUpsertResult{
-				PlanID: rec.PlanID, Assignments: toAssignmentOutputs(rec.Assignments, nodeAgent),
-				Setup: rec.Setup, Delivery: rec.Delivery,
-				Summary: summarizePlanRecord(rec, nodeAgent) + setupIgnoredNote(a.Setup, githubSetup),
-			}, nil
+			return res, nil
 		},
 	)
+}
+
+// newPlanRecord builds and saves a brand-new dag_plan (fresh planID, status
+// "planned") from inputs - the logic create_plan runs directly and edit_plan
+// re-enters when the current plan already delivered (dag.DagPlanRecord.Status
+// "done" starts a new plan rather than rejecting the call outright). submittedSetup
+// is the caller's raw Setup arg (pre-override), kept separate from the
+// possibly-overridden value so setupIgnoredNote still reports on what the
+// model actually sent.
+func newPlanRecord(tc agent.Context, c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, inputs []assignmentInput, submittedSetup *dag.Setup, delivery *dag.Delivery) (planUpsertResult, error) {
+	existing, err := listDagNodeRecords(tc, c)
+	if err != nil {
+		return planUpsertResult{}, err
+	}
+	assignments, minted, err := upsertNodes(inputs, existing, nodeIsRunning, tc.SessionID(), allowedKinds)
+	if err != nil {
+		return planUpsertResult{}, err
+	}
+	nodeAgent := map[string]string{}
+	for _, n := range existing {
+		nodeAgent[n.NodeID] = n.Agent
+	}
+	for _, n := range minted {
+		nodeAgent[n.NodeID] = n.Agent
+	}
+
+	planID := uuid.NewString()
+	stampAssignmentMeta(tc, planID, nodeAgent, assignments, onAssignment)
+	setup := submittedSetup
+	if githubSetup != nil {
+		s := *githubSetup
+		setup = &s
+	}
+	rec := dag.DagPlanRecord{PlanID: planID, Assignments: assignments, Setup: setup, Delivery: delivery, Status: "planned"}
+
+	// dag_plan (which validates) saves before any minted dag_node, so a
+	// rejected call leaves no orphan "hired" node behind for list_nodes.
+	now := time.Now().UTC()
+	lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
+	if _, _, err := c.SaveStructured(tc, "dag_plan", rec, "", lineage); err != nil {
+		return planUpsertResult{}, err
+	}
+	for _, n := range minted {
+		nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
+		if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
+			// The dag_plan revision above already saved - a bare error here
+			// leaves a live plan referencing a node list_nodes won't show yet.
+			return planUpsertResult{}, fmt.Errorf("save dag_node %s: %w; the plan was already saved - call again to replace it", n.NodeID, err)
+		}
+	}
+
+	// No dag_plan event here: the plan is still a draft (execute hasn't
+	// run it), and node cards must not appear in the UI before then -
+	// list_nodes shows the draft's assignments as text meanwhile.
+	// execute's own DagPlanEvent is the only dag_plan emission.
+	return planUpsertResult{
+		PlanID: rec.PlanID, Assignments: toAssignmentOutputs(rec.Assignments, nodeAgent),
+		Setup: rec.Setup, Delivery: rec.Delivery,
+		Summary: summarizePlanRecord(rec, nodeAgent) + setupIgnoredNote(submittedSetup, githubSetup),
+	}, nil
 }

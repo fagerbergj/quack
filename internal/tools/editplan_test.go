@@ -88,11 +88,9 @@ func TestEditPlanRemoveAlreadyRanAssignmentRejected(t *testing.T) {
 	}
 }
 
-// TestEditPlanRejectsAlreadyDeliveredPlan pins #slice3 review: a plan whose
-// status is already "done" (delivered) must return a clear error rather
-// than mutate a finished record - there is no more work a done plan can take.
-func TestEditPlanRejectsAlreadyDeliveredPlan(t *testing.T) {
-	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+// seedDonePlan marks the chat's current plan "done" (delivered) in place.
+func seedDonePlan(t *testing.T, c *recordstore.Client) dag.DagPlanRecord {
+	t.Helper()
 	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
@@ -101,24 +99,101 @@ func TestEditPlanRejectsAlreadyDeliveredPlan(t *testing.T) {
 	if _, _, err := c.SaveStructured(newFakeCtx(), "dag_plan", rec, "", recordstore.Lineage{}); err != nil {
 		t.Fatalf("seed done plan: %v", err)
 	}
+	return rec
+}
 
-	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+// TestEditPlanOnDeliveredPlanStartsNewPlan is the rig regression (audit
+// finding 4): a done plan rejected edit_plan outright, and the quantized 9B
+// looped create_plan against the repeat guard instead of recovering. edit_plan
+// on a delivered plan must instead start a fresh plan from the given
+// assignments and say so plainly, plan_id included.
+func TestEditPlanOnDeliveredPlanStartsNewPlan(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	seedDonePlan(t, c)
+
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
 		"plan_id":     planID,
 		"assignments": []map[string]any{{"agent": "web-researcher", "task": "more work"}},
 	})
-	if err == nil {
-		t.Fatal("want an error editing an already-delivered plan")
+	if err != nil {
+		t.Fatalf("edit_plan Run on a delivered plan: %v, want it to start a new plan instead of erroring", err)
 	}
-	if !strings.Contains(err.Error(), "already delivered") {
-		t.Errorf("err = %v, want it to say the plan already delivered", err)
+	newPlanID, _ := res["plan_id"].(string)
+	if newPlanID == "" || newPlanID == planID {
+		t.Errorf("plan_id = %q, want a fresh plan_id distinct from the delivered %q", newPlanID, planID)
+	}
+	summary, _ := res["summary"].(string)
+	if !strings.Contains(summary, "already delivered") || !strings.Contains(summary, newPlanID) {
+		t.Errorf("summary = %q, want it to say plainly that a new plan started, naming its plan_id", summary)
 	}
 
-	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
-	if len(rec2.Assignments) != 1 {
-		t.Errorf("assignments = %+v, want the record untouched (still 1)", rec2.Assignments)
+	if rec.PlanID != newPlanID || rec.Status != "planned" {
+		t.Errorf("current plan = %+v, want the new plan (status planned) now current", rec)
+	}
+	if len(rec.Assignments) != 1 || rec.Assignments[0].Task != "more work" {
+		t.Errorf("assignments = %+v, want just the new plan's one assignment", rec.Assignments)
+	}
+}
+
+// TestEditPlanOnDeliveredPlanReusesExistingNode covers a follow-up that
+// names a node_id from the delivered plan: dag_node records outlive a plan
+// (list_nodes lists every one in the chat), so the new plan must still
+// reuse it rather than mint a redundant node.
+func TestEditPlanOnDeliveredPlanReusesExistingNode(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	seedDonePlan(t, c)
+
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"plan_id":     planID,
+		"assignments": []map[string]any{{"node_id": "web-researcher-1", "task": "follow-up work"}},
+	})
+	if err != nil {
+		t.Fatalf("edit_plan Run: %v", err)
+	}
+	nodes, err := listDagNodeRecords(newFakeCtx(), c)
+	if err != nil {
+		t.Fatalf("listDagNodeRecords: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Errorf("dag_node records = %+v, want the same one node reused, not a second minted", nodes)
+	}
+	out, _ := res["assignments"].([]any)
+	if len(out) != 1 || out[0].(map[string]any)["node_id"] != "web-researcher-1" {
+		t.Errorf("assignments = %#v, want web-researcher-1 reused", res["assignments"])
+	}
+}
+
+// TestEditPlanOnDeliveredPlanWithNoAssignmentsRejected: a done plan can't
+// start a new one without assignments to carry - the generic "nothing to
+// change" message names the wrong remedy (no plan is being changed).
+func TestEditPlanOnDeliveredPlanWithNoAssignmentsRejected(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	seedDonePlan(t, c)
+
+	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"plan_id": planID})
+	if err == nil || !strings.Contains(err.Error(), "already delivered") {
+		t.Errorf("err = %v, want it to say the plan already delivered and assignments are needed", err)
+	}
+}
+
+// TestEditPlanOnDeliveredPlanRemoveRejected: remove targets the delivered
+// plan's own assignments, which no longer exist once a new plan starts -
+// reject it by name instead of silently ignoring it.
+func TestEditPlanOnDeliveredPlanRemoveRejected(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	seedDonePlan(t, c)
+
+	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"plan_id":     planID,
+		"remove":      []string{"web-researcher-1"},
+		"assignments": []map[string]any{{"agent": "web-researcher", "task": "more work"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "already delivered") {
+		t.Errorf("err = %v, want it to reject remove on an already-delivered plan", err)
 	}
 }
 
