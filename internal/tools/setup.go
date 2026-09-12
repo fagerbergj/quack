@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -48,27 +49,26 @@ func (e *cleanupError) Unwrap() error { return e.cause }
 
 func (e *cleanupError) LocalCleanupFailure() {}
 
-// unpushedCommitsError: a blocked reuse checkout on a work branch that
-// carries commits origin doesn't have - the tree is moved aside rather than
-// wiped, so this must never be reworded as the repository being unreachable.
-type unpushedCommitsError struct {
-	target, movedTo, workBranch string
-	count                       int
-	checkoutErr, moveErr        error
+// unwipeableTreeError: a blocked reuse checkout on a work branch that still
+// holds something a wipe would destroy - the tree is moved aside instead, so
+// this must never be reworded as the repository being unreachable.
+type unwipeableTreeError struct {
+	target, movedTo, workBranch, reason string
+	checkoutErr, moveErr                error
 }
 
-func (e *unpushedCommitsError) Error() string {
+func (e *unwipeableTreeError) Error() string {
 	if e.moveErr != nil {
-		return fmt.Sprintf("setup: %s has %d unpushed commit(s) on %q that could not be checked out cleanly (%v), and moving it aside also failed (%v) - resolve manually",
-			e.target, e.count, e.workBranch, e.checkoutErr, e.moveErr)
+		return fmt.Sprintf("setup: %s on %q could not be checked out cleanly (%v) and %s, and moving it aside also failed (%v) - resolve manually",
+			e.target, e.workBranch, e.checkoutErr, e.reason, e.moveErr)
 	}
-	return fmt.Sprintf("setup: %s had %d unpushed commit(s) on %q that a clean checkout could not proceed past (%v) - moved the tree to %s instead of discarding them",
-		e.target, e.count, e.workBranch, e.checkoutErr, e.movedTo)
+	return fmt.Sprintf("setup: %s on %q could not be checked out cleanly (%v) and %s - moved the tree to %s instead of discarding it",
+		e.target, e.workBranch, e.checkoutErr, e.reason, e.movedTo)
 }
 
-func (e *unpushedCommitsError) Unwrap() error { return e.checkoutErr }
+func (e *unwipeableTreeError) Unwrap() error { return e.checkoutErr }
 
-func (e *unpushedCommitsError) LocalCleanupFailure() {}
+func (e *unwipeableTreeError) LocalCleanupFailure() {}
 
 // localRefExists reports whether dir has a local branch named ref - used
 // both to recognize a reusable clone (its baseRef branch survives the first
@@ -78,17 +78,30 @@ func localRefExists(ctx context.Context, dir, ref string, caps workspace.Caps) b
 	return err == nil
 }
 
+// hasRebaseOrMergeState reports whether dir's .git shows an interrupted
+// rebase or merge - a killed process can leave this with an otherwise clean
+// `git status` (untouched working tree, conflict only in the index).
+func hasRebaseOrMergeState(dir string) bool {
+	for _, p := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD"} {
+		if _, err := os.Stat(filepath.Join(dir, ".git", p)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // unpushedCommitCount reports how many commits on target's local workBranch
 // aren't reachable from origin's copy of it - or, if origin has no such
 // branch (it was never pushed), aren't reachable from baseRef. A shallow,
 // single-branch clone's configured fetch refspec never covers workBranch, so
 // this fetches it explicitly (an explicit refspec bypasses that restriction)
 // rather than trusting a local remote-tracking ref that may not exist even
-// after a real push. The reuse fallback checks this before ever wiping the
-// tree, so a failed push is never erased along with it.
-func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string) int {
+// after a real push. ok=false means the count itself couldn't be determined
+// (a failed rev-list) - the caller must treat that as "assume unpushed work",
+// the same direction a failed fetch already degrades in, never the reverse.
+func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string) (count int, ok bool) {
 	if !localRefExists(ctx, target, workBranch, b.caps) {
-		return 0
+		return 0, true
 	}
 	upstream := baseRef
 	auth, err := b.authFor(repoURL)
@@ -100,13 +113,42 @@ func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, bas
 	}
 	out, _, err := runGit(ctx, target, []string{"rev-list", "--count", upstream + ".." + workBranch}, b.caps, nil)
 	if err != nil {
-		return 0
+		return 0, false
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(out))
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return n
+	return n, true
+}
+
+// unwipeableReason says why target must not be wiped, or "" when it's safe
+// to discard. Checked in order: an interrupted rebase/merge (invisible to
+// `git status` when the working tree itself is untouched), an uncommitted
+// change to a tracked file (untracked content - e.g. build output - is
+// exempt via --untracked-files=no, so that alone still re-clones), then
+// commits workBranch has that origin doesn't. A git failure at any step
+// (porcelain status, commit count) is treated the same as finding something
+// to protect - never let an inability to check excuse a wipe.
+func unwipeableReason(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string) string {
+	if hasRebaseOrMergeState(target) {
+		return "a rebase or merge is in progress"
+	}
+	out, _, err := runGit(ctx, target, []string{"status", "--porcelain", "--untracked-files=no"}, b.caps, nil)
+	if err != nil {
+		return "its working tree state could not be checked"
+	}
+	if strings.TrimSpace(out) != "" {
+		return "it has uncommitted changes"
+	}
+	n, ok := unpushedCommitCount(ctx, b, target, repoURL, baseRef, workBranch)
+	if !ok {
+		return "its commit history against origin could not be checked"
+	}
+	if n > 0 {
+		return fmt.Sprintf("it has %d unpushed commit(s)", n)
+	}
+	return ""
 }
 
 // canReuseClone reports whether target is already a healthy clone of repoURL
@@ -217,13 +259,14 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 			return finishSetup(ctx, b, target)
 		}
 		// Reuse couldn't land cleanly (an unmerged/dirty index, e.g.
-		// mid-rebase). A clean workBranch just falls through to the reclone
-		// below; one carrying commits origin doesn't have is moved aside
-		// instead of wiped - never destroy the exact data this exists to keep.
-		if n := unpushedCommitCount(ctx, b, target, repoURL, baseRef, workBranch); n > 0 {
-			movedTo := target + ".unpushed-" + strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+		// mid-rebase). A tree with nothing at risk just falls through to the
+		// reclone below; one holding uncommitted work, a rebase in progress,
+		// or commits origin doesn't have is moved aside instead of wiped -
+		// never destroy the exact data this exists to keep.
+		if reason := unwipeableReason(ctx, b, target, repoURL, baseRef, workBranch); reason != "" {
+			movedTo := target + ".unwiped-" + strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
 			moveErr := os.Rename(target, movedTo)
-			return "", &unpushedCommitsError{target: target, movedTo: movedTo, workBranch: workBranch, count: n, checkoutErr: checkoutErr, moveErr: moveErr}
+			return "", &unwipeableTreeError{target: target, movedTo: movedTo, workBranch: workBranch, reason: reason, checkoutErr: checkoutErr, moveErr: moveErr}
 		}
 	}
 	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
