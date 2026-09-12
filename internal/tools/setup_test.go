@@ -316,6 +316,81 @@ func TestSetupCloneAndBranchCorruptTreeReClones(t *testing.T) {
 	}
 }
 
+// TestSetupCloneAndBranchReuseFetchesFreshBaseRef pins that cutting a NEW
+// work branch on a reused clone never freezes base_ref at the first turn's
+// shallow clone tip - a commit landed on the remote base between turns must
+// show up in the branch the second turn cuts.
+func TestSetupCloneAndBranchReuseFetchesFreshBaseRef(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	if _, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work-1", false); err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+
+	seed := t.TempDir()
+	runGitT(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	if err := os.WriteFile(filepath.Join(seed, "upstream.txt"), []byte("new upstream work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, seed, "add", "-A")
+	runGitT(t, seed, "-c", "user.name=up", "-c", "user.email=up@x.local", "commit", "--quiet", "-m", "upstream advance")
+	runGitT(t, seed, "push", "--quiet", "origin", "main")
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work-2", false)
+	if err != nil {
+		t.Fatalf("second setup (new branch): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "upstream.txt")); err != nil {
+		t.Errorf("new work branch missing the upstream commit landed between turns: %v", err)
+	}
+}
+
+// TestSetupCloneAndBranchDirtyConflictReClones pins that a checkout blocked
+// by a dirty, conflicting tree (same failure mode as a mid-rebase or
+// detached HEAD left by a killed process) never wedges the chat - reuse must
+// fall back to a clean reclone rather than hard-fail forever.
+func TestSetupCloneAndBranchDirtyConflictReClones(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("work version\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, target, "add", "-A")
+	runGitT(t, target, "commit", "--quiet", "-m", "diverge on work branch")
+
+	runGitT(t, target, "checkout", "--quiet", "main")
+	if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("uncommitted conflict\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup on a dirty conflicting tree must re-clone, not fail: %v", err)
+	}
+	branchOut, _, err := runGit(context.Background(), got, []string{"rev-parse", "--abbrev-ref", "HEAD"}, b.caps, nil)
+	if err != nil {
+		t.Fatalf("rev-parse: %v", err)
+	}
+	if got := strings.TrimSpace(branchOut); got != "quack/work" {
+		t.Errorf("checked-out branch = %q, want quack/work", got)
+	}
+	content, err := os.ReadFile(filepath.Join(got, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "hello\n" {
+		t.Errorf("README.md = %q, want the fresh base content after the recovery reclone", string(content))
+	}
+}
+
 // TestSetupCloneAndBranchConfiguresCommitterIdentity pins the git-identity
 // gap: a worker that shells out to `git commit` (rather than the git_commit
 // tool) needs a committer identity in the clone, or the commit fails exit 128 ("Author identity unknown") - Setup must configure it.
