@@ -25,7 +25,7 @@ Open http://localhost:8081 - the app is remapped, since host port 8080 is taken 
 
 This is the middle ground: full feature set, memory included, still a single `docker compose up`.
 
-`server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run --config config/managed.yaml` brings up just the Postgres + qdrant containers itself (an embedded compose file) and leaves them running; tear them down with `docker compose -p quack-stores down`. Reach for it if you want the containerized stores without hand-rolling compose.
+`server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run --config config/managed.yaml` brings up just the Postgres + qdrant containers itself (an embedded compose file, project `quack-stores`, written to `~/.quack/stores.compose.yml`) and re-runs `up` idempotently on every start. There is no automatic tear-down: the stack keeps running after the server stops, so take it down with `docker compose -p quack-stores -f ~/.quack/stores.compose.yml down`. Reach for it if you want the containerized stores without hand-rolling compose.
 
 ## 3. Remote server, full-featured
 

@@ -15,6 +15,8 @@ gates:
     threshold: 0.7
     max_iterations: 6
     context_window: 65536
+    # max_output_tokens: 8192   # caps the judge round's own reply tokens; 0 = uncapped
+    # thinking_level: low      # low|medium|high - capped reasoning effort, opt-in
 ```
 
 If both `deterministic_checks.max_rounds` and the judge are off, the gate is disabled entirely and agents are served unwrapped (`GatesConfig.Enabled`).

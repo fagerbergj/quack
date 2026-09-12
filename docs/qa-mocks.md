@@ -3,7 +3,8 @@
 Exercises the `quack:review`/`plan`/`implement`/`fix` and reMarkable document
 flows against a QA server with no real GitHub App, no public webhook, and no
 reMarkable/rmfakecloud account. Both mocks are standalone Go tools in
-`quack-extensions` (`github/cmd/qa-mock` on `main`), not part of the
+`quack-extensions` (`github/cmd/qa-mock` and `remarkable/cmd/qa-mock`, both on
+`main`), not part of the
 `quack` binary - anything that talks to the running server itself goes
 through `quack api`, per [`docs/cli.md`](cli.md).
 
@@ -108,8 +109,9 @@ and the mock's `deliveries.jsonl`. Requires both mocks and a QA quack server
 already up per the config above - it does not start them.
 
 **Live-verified 2026-09-03** against a QA server built from this branch +
-main (github v0.9.0 not yet cut, so the build used a local `replace` to this
-branch's checkout - a real deploy needs that tag first): webhook accepted
+main (github v0.9.0 not yet cut then, so the build used a local `replace` to this
+branch's checkout - moot now: `github` is tagged through v0.14.0, so a real
+deploy pins a tag): webhook accepted
 (202), `github run dispatched`, a real chat created
 (`ext:github:github-fagerbergj-quack-qa-1`), a real `git clone`+checkout of
 the fixture's `clone_url`/head SHA, a code-implementer ACP round, two judge

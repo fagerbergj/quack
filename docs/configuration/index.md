@@ -12,6 +12,7 @@ Providers, stores, and several tools are pluggable through a `kind` discriminato
 
 ```yaml
 providers:      # named inference backends (openai-compatible endpoints)
+models:         # the canonical model registry (windows, admission limits, cost)
 stores:         # named data backends (postgres, qdrant, sqlite)
 session:        # ADK session/chat persistence + context compaction
 orchestrator:   # the planner's model + tools + skills
@@ -21,8 +22,13 @@ gates:          # the trust gate: deterministic checks + judge
 dag:            # concurrency caps for the DAG executor
 server:         # listen address, store topology, public_url
 workspace:      # the agents' filesystem/git/run_command sandbox
+skills:         # (deprecated alias for plugins) skill-library plugin roots
+plugins:        # Agent Plugins roots (skills + mcp.json + quack extension declarations)
+workflows:      # deployment-specific rows appended to the planner's workflow table
 extensions:     # optional bundled integrations (e.g. GitHub App)
 observability:  # otel tracing/metrics/logs emission + the ledger (WAL) store and observation toggle
+auth:           # inbound OIDC bearer / trusted gateway headers (optional)
+artifacts:      # the artifact store binding
 ```
 
 Each section gets its own page below:
@@ -63,7 +69,9 @@ adk's summariser hard-errors past its transcript cap (sized from `context_window
 |-----|---------|
 | `QUACK_LLM_ENDPOINT` | OpenAI-compatible LLM endpoint (e.g. `http://jason-server:11436/v1`); interpolated into `providers.default.endpoint` |
 | `QUACK_LLM_API_KEY` | API key |
-| `QUACK_ORCH_MODEL` / `QUACK_RESEARCHER_MODEL` / `QUACK_CODER_MODEL` / `QUACK_JUDGE_MODEL` | Per-role model names (`QUACK_CODER_MODEL` falls back to `QUACK_RESEARCHER_MODEL` if unset; media/image have no fallback) |
+| `QUACK_ORCH_MODEL` / `QUACK_RESEARCHER_MODEL` / `QUACK_CODER_MODEL` / `QUACK_JUDGE_MODEL` | Per-role model names (only `QUACK_CODER_MODEL` falls back, to `QUACK_RESEARCHER_MODEL`, if unset) |
+| `QUACK_MEDIA_MODEL` / `QUACK_IMAGE_MODEL` | Media-reader / image-reader model names (no fallback; unset in the init wizard simply omits the agent) |
+
 | `QUACK_EMBED_MODEL` | Embedding model for the vector store |
 | `QUACK_COMPACTION_ENABLED` / `QUACK_COMPACTION_MODEL` | Toggle + model for history compaction |
 | `QUACK_DATABASE_URL` | Postgres DSN |

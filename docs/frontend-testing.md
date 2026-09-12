@@ -1,6 +1,6 @@
 # Frontend testing
 
-CI runs three separate jobs for `frontend/`: `frontend-build` (`tsc --noEmit` → `eslint` → `knip` → `build`), `frontend-test` (`vitest run`), and `render-check` (#1192, part 2 - this doc). `check-stories` (#1192, part 1, [#1207](https://github.com/fagerbergj/quack/pull/1207)) is not merged yet - once it lands it adds a `check-stories` step to `frontend-build`, right after `eslint`.
+CI runs three separate jobs for `frontend/`: `frontend-build` (`tsc --noEmit` → `eslint` → `check-stories` → `knip` → `build`), `frontend-test` (`vitest run`), and `render-check` (#1192, part 2 - this doc). `check-stories` (#1192, part 1, [#1207](https://github.com/fagerbergj/quack/pull/1207)) runs in `frontend-build`, right after `eslint`.
 
 ## render-check
 
