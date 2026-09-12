@@ -1,12 +1,8 @@
 # `quack sandbox`
 
-Constructs the EXACT jail an ACP agent gets - same `workspace.Caps`, same
-`WrapArgv` wrapping, same `spawnEnv` - and either drops you into it or runs
-one command in it. Before this existed, "does `go test ./...` pass in the
-reviewer's sandbox" was only answerable by labeling a PR and waiting for a
-live review to hit the wall.
+Constructs the EXACT jail an ACP agent gets - same `workspace.Caps`, same `WrapArgv` wrapping, same `spawnEnv` - and either drops you into it or runs one command in it. Before this existed, "does `go test ./...` pass in the reviewer's sandbox" was only answerable by labeling a PR and waiting for a live review to hit the wall.
 
-```
+```text
 quack sandbox [--agent NAME] [--cwd DIR] [--mode landlock|bwrap|none] [--keep]
 quack sandbox run [same flags] "CMD ARGS"
 quack sandbox check [same flags]
@@ -26,19 +22,13 @@ quack sandbox info [same flags]
   and the full child env - no exec, for reading what an agent gets without
   running anything.
 
-`--agent` defaults to `code-reviewer`. `--cwd` defaults to a fresh dir
-minted under the workspace root; `--cwd .` jails the current directory
-instead. `--mode` overrides the agent's configured sandbox (`none` on a dev
-box that has no bwrap/landlock).
+`--agent` defaults to `code-reviewer`. `--cwd` defaults to a fresh dir minted under the workspace root; `--cwd .` jails the current directory instead. `--mode` overrides the agent's configured sandbox (`none` on a dev box that has no bwrap/landlock).
 
-Under `--mode landlock`, the child's env carries `QUACK_SANDBOX` (visible in
-`info`'s env dump) - a marker the Landlock shim stamps in for observability
-only, never read back to change the sandbox decision.
+Under `--mode landlock`, the child's env carries `QUACK_SANDBOX` (visible in `info`'s env dump) - a marker the Landlock shim stamps in for observability only, never read back to change the sandbox decision.
 
 ## Probe table
 
-Each row is one probe from `internal/cli/sandbox_check.go`, run as `sandbox
-run` under the hood:
+Each row is one probe from `internal/cli/sandbox_check.go`, run as `sandbox run` under the hood:
 
 | Probe | PASS means |
 |---|---|
@@ -52,18 +42,15 @@ run` under the hood:
 | `unshare --user true`, `bwrap --version` | INFO only: whether nested namespaces are available |
 | each `workspace.check_commands` entry | INFO only: whether the binary is on `ChildPath` |
 
-Under `--mode none` there's no OS-enforced boundary, so the boundary-only
-probes (cwd write, clone-allowed) degrade to `INFO` instead of `FAIL` - there
-is nothing for them to have failed.
+Under `--mode none` there's no OS-enforced boundary, so the boundary-only probes (cwd write, clone-allowed) degrade to `INFO` instead of `FAIL` - there is nothing for them to have failed.
 
 ## Container reality
 
 The real jail only exists inside the quack container, as uid 65532:
 
-```
+```bash
 docker exec -it quack quack sandbox --agent code-reviewer   # interactive needs -it
 docker exec quack quack sandbox check --agent code-reviewer
 ```
 
-On a dev box, `--mode none` still makes `info` and `run` useful; `check`
-reports the boundary probes as `INFO` rather than `FAIL`.
+On a dev box, `--mode none` still makes `info` and `run` useful; `check` reports the boundary probes as `INFO` rather than `FAIL`.

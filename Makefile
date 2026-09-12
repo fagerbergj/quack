@@ -40,6 +40,12 @@ test-race: plugins
 vet:
 	go vet ./...
 
+## docs-check: markdown lint + doc drift (links, paths, config keys, hard wraps)
+docs-check:
+	npm --prefix scripts exec -- markdownlint-cli2 'docs/**/*.md' 'README.md'
+	node scripts/check-docs.mjs
+	node scripts/unwrap-md.mjs --check $$(find docs -name '*.md') *.md
+
 ## fmt: gofmt the source
 fmt:
 	gofmt -w internal cmd
