@@ -21,11 +21,13 @@ Correcting insight from the issue's follow-up comment: **the poisoning run passe
 Both backends already carry parallel per-point structs — `qdrantIndex`'s payload map (`payloadContent` etc., qdrant.go) and `memoryRow`'s GORM columns (sqlite.go) — so new fields are additive on both, no migration tooling needed (qdrant payloads are schemaless; sqlite's `AutoMigrate` in `ensure()` already runs on every open).
 
 **Provenance** (stamped once, at write time):
+
 - `chat_id`, `node_id` — which run minted this memory. Already available at every commit call site (`cfg.ChatID`/`nodeID` in vetting/node.go, the tool call context in commit_memory.go).
 - `source` — extension name (`"github"`) or empty for a native quack run.
 - `minted_at` — redundant with the existing `timestamp` field only in the sense that `timestamp` is "last touched"; `minted_at` never changes after ADD, `timestamp` still updates on UPDATE.
 
 **Lifecycle**:
+
 - `status`: `unverified | reinforced | invalidated`.
 - `valid_from`, `invalidated_at`, `invalidation_reason`.
 - `reinforcement_count`: increments on each positive outcome event.
@@ -37,6 +39,7 @@ Both backends already carry parallel per-point structs — `qdrantIndex`'s paylo
 **(a) Commit path — shape unchanged.** `Store.Commit` → `commitTo` → `decide` → `apply` (commit.go) keeps its ADD/UPDATE/DELETE/NOOP contract and its neighbour-reconcile call to the consolidation model verbatim. The only change: `apply()` stamps provenance on every write and sets `status=unverified, reinforcement_count=0, valid_from=now` on ADD. An UPDATE keeps the existing memory's status/count — a corrected memory doesn't lose earned trust because its wording changed. The consolidator's `op` struct gains a `Reason` field so a DELETE (→ invalidate, see below) carries *why*, not just an id.
 
 **(b) Outcome feedback — the deterministic oracle.** Events map to minted memories through `provenance.chat_id`:
+
 - **PR merged** → `reinforced`, `reinforcement_count += 1`, for every memory whose `chat_id` matches. Handled today in the GitHub extension's `handlePullRequest` `closed`+`Merged` branch (webhook.go, next to the existing `refreshChatOrigin` call).
 - **PR closed unmerged** → `invalidated`, reason `"pr closed unmerged"`. Same branch, `!Merged` case.
 - **Head force-pushed away** → `invalidated`, reason `"head rewritten after this run's commits"`. **New work**: the GitHub extension today subscribes to `issue_comment`, `pull_request` (opened/labeled/closed/reopened), `pull_request_review`, `issues`, `workflow_run` — no `synchronize`. This needs a new case in `handlePullRequest` for `action == "synchronize"`, comparing the new head SHA against the SHA quack last pushed for that chat (the `PushedSHA` already threaded through `DeliveryContext`) via a compare/ancestry check.
@@ -115,69 +118,34 @@ Core maps: transition→merged ⇒ `ApplyOutcome(chat, reinforced)`; transition�
 
 ## 8b. Epic #1255 P1: usage tracking and judge votes
 
-Supersedes this doc's §5 `ApplyOutcome`/reinforcement description with the
-following (full epic in issue #1255; only P1 is implemented here).
+Supersedes this doc's §5 `ApplyOutcome`/reinforcement description with the following (full epic in issue #1255; only P1 is implemented here).
 
 **New point fields** (both backends): `upvotes`, `downvotes`, `vote_score`
 (upvotes - downvotes), `tier` (`unverified` | `verified`, verified once
-`upvotes >= 1`), `last_upvoted_at`, `recalls`, `last_recalled_at`.
-`reinforcement_count`/`status=reinforced` are unchanged and kept as a mirror
+`upvotes >= 1`), `last_upvoted_at`, `recalls`, `last_recalled_at`. `reinforcement_count`/`status=reinforced` are unchanged and kept as a mirror
+
 - reinforcement still bumps both.
 
 **Usage tracking.** Every recall delivery (today: the prefill injection in
-`vetting/node.go`) appends a `memory.recall` ledger entry (chat, node,
-round, source, delivered ids+scores) and directly bumps `recalls`/
-`last_recalled_at` on the point (one batched write). The ledger is the
-source of truth for what a chat retrieved - unlike a vote, a recall never
-writes a `memory_ops` row; the audit trail for retrieval lives entirely in
-the ledger (`internal/ledger`'s `KindMemoryRecall`), and
-`internal/ledger/fold` folds it into per-id recall counts so `quack ledger
-rebuild` can re-derive the same projection from scratch.
+`vetting/node.go`) appends a `memory.recall` ledger entry (chat, node, round, source, delivered ids+scores) and directly bumps `recalls`/ `last_recalled_at` on the point (one batched write). The ledger is the source of truth for what a chat retrieved - unlike a vote, a recall never writes a `memory_ops` row; the audit trail for retrieval lives entirely in the ledger (`internal/ledger`'s `KindMemoryRecall`), and `internal/ledger/fold` folds it into per-id recall counts so `quack ledger rebuild` can re-derive the same projection from scratch.
 
 **Judge votes.** The judge's prompt lists the worker's received memory set
-(id + content); `submit_verdict` gains an optional `memories:
-[{id, vote, reason}]` (`supported` | `contradicted` | `not_relevant`),
-applied ONLY when the round passes (`vetting.applyMemoryVotesOnPass`) - a
-failed round records nothing. A vote appends a `memory.vote` ledger entry
-(also folded for rebuild) AND is projected onto the point immediately
-(`memory.Store.ApplyVotes`): supported is +1 upvote (tier→verified,
-`last_upvoted_at` stamped); contradicted is +1 downvote, and a net score at
-or below the configured threshold (default -2, `OutcomeReasonNetScore`)
-soft-invalidates the memory, same sticky invalidation as everything else. A
-memory named twice by one round's votes collapses to the LAST vote (no
-double count). Every applied vote (including `not_relevant`) writes one
-`memory_ops` row, actor `judge`.
+(id + content); `submit_verdict` gains an optional `memories: [{id, vote, reason}]` (`supported` | `contradicted` | `not_relevant`),
+applied ONLY when the round passes (`vetting.applyMemoryVotesOnPass`) - a failed round records nothing. A vote appends a `memory.vote` ledger entry (also folded for rebuild) AND is projected onto the point immediately (`memory.Store.ApplyVotes`): supported is +1 upvote (tier→verified, `last_upvoted_at` stamped); contradicted is +1 downvote, and a net score at or below the configured threshold (default -2, `OutcomeReasonNetScore`) soft-invalidates the memory, same sticky invalidation as everything else. A memory named twice by one round's votes collapses to the LAST vote (no double count). Every applied vote (including `not_relevant`) writes one `memory_ops` row, actor `judge`.
 
 **Reinforcement is recall-based, not birth-based.** `ApplyOutcome`'s
-signature changed from `(ctx, chatID, outcome)` to `(ctx, ids, outcome)`:
-the caller (`serve.applyMemoryOutcome`) folds the chat's ledger for its
-`memory.recall` entries and passes that id set - memories RECALLED into the
-chat, not memories MINTED there (minting still stamps provenance via
-`Commit`, it just no longer drives what gets reinforced). Reinforce is +1
-upvote (mirrored into `reinforcement_count`/`status=reinforced`) with actor
-`outcome-feedback`. Closed-unmerged invalidation now additionally skips any
-id already at tier `verified` - a verified memory recalled into a
-closed-unmerged chat gets no vote at all, not a demotion.
+signature changed from `(ctx, chatID, outcome)` to `(ctx, ids, outcome)`: the caller (`serve.applyMemoryOutcome`) folds the chat's ledger for its `memory.recall` entries and passes that id set - memories RECALLED into the chat, not memories MINTED there (minting still stamps provenance via `Commit`, it just no longer drives what gets reinforced). Reinforce is +1 upvote (mirrored into `reinforcement_count`/`status=reinforced`) with actor `outcome-feedback`. Closed-unmerged invalidation now additionally skips any id already at tier `verified` - a verified memory recalled into a closed-unmerged chat gets no vote at all, not a demotion.
 
 **Migration.** New fields default zero-value; a one-time, idempotent boot
-backfill (`index.backfillTiers`, logged once per boot with a nonzero count)
-sets `tier=verified, upvotes=reinforcement_count` where
-`reinforcement_count >= 1`, else `tier=unverified` - skipping any point that
-already carries a tier, so a second boot (or a vote landing between boots)
-touches nothing.
+backfill (`index.backfillTiers`, logged once per boot with a nonzero count) sets `tier=verified, upvotes=reinforcement_count` where `reinforcement_count >= 1`, else `tier=unverified` - skipping any point that already carries a tier, so a second boot (or a vote landing between boots) touches nothing.
 
 **Observability.** `quack memory show <id>` prints votes/tier/last
-recalled/last upvoted. `Memory`/`MemoryList` (openapi.yaml) expose the new
-fields; no frontend rendering change (P4).
+recalled/last upvoted. `Memory`/`MemoryList` (openapi.yaml) expose the new fields; no frontend rendering change (P4).
 
 ## 8c. Epic #1255 P3: criteria builder, age-out, retention
 
-`stores.<name>.consolidation.forgetting.rules` is an ordered list of
-`{when: <expr>, then: invalidate | keep}`, evaluated by `Store.forgetOnce`
-in the existing nightly sweep, right before `retentionOnce`. First match
-wins; no match keeps the memory. `when` is a tiny hand-written expression
-language (`internal/memory/forgetting.go`, `Evaluate`) - no external
-dependency, no reflection:
+`stores.<name>.consolidation.forgetting.rules` is an ordered list of `{when: <expr>, then: invalidate | keep}`, evaluated by `Store.forgetOnce`
+in the existing nightly sweep, right before `retentionOnce`. First match wins; no match keeps the memory. `when` is a tiny hand-written expression language (`internal/memory/forgetting.go`, `Evaluate`) - no external dependency, no reflection:
 
 - fields: `upvotes`, `downvotes`, `score` (`vote_score`), `recalls` (all
   int), `age_days`, `days_since_upvote`, `days_since_recall` (int, days
@@ -193,130 +161,49 @@ dependency, no reflection:
 
 Default (unset `forgetting` key), in order:
 
-```
+```text
 tier == "unverified" && days_since_upvote > 90 -> invalidate
 score <= -2                                    -> invalidate
 tier == "verified"                             -> keep
 ```
 
 **Validation.** `config.Validate()` fully parses and validates each rule's
-expression via `internal/memoryrules` (a leaf package with no quack
-imports, so `internal/config` can use it directly) - a bad rule fails
-`quack server validate`/config load with the rule index and the bad
-token's position, before the server ever starts.
+expression via `internal/memoryrules` (a leaf package with no quack imports, so `internal/config` can use it directly) - a bad rule fails `quack server validate`/config load with the rule index and the bad token's position, before the server ever starts.
 
 **Sweep.** `Store.ForgetSweep(ctx, dryRun)` is the one code path both the
-nightly job and `quack memory sweep [--dry-run]` (`POST
-/api/v1/memories/sweep`) call. It pages every currently-valid memory
-(`forEachSweepPage`, same pagination the consolidator already uses),
-evaluates the rules in order, and for a `then: invalidate` match calls the
-same sticky `idx.invalidateByID` every other invalidation path uses, with
-reason `"rule <index>: <expr>"` and `memory_ops` actor `sweep` (a new actor,
-distinct from `consolidator` and `outcome-feedback`). `dryRun` skips the
-write and returns a report per rule (matched count + up to 5 example
-id/content pairs) plus a `kept` count for no-match - never lists more than
-that per rule.
+nightly job and `quack memory sweep [--dry-run]` (`POST /api/v1/memories/sweep`) call. It pages every currently-valid memory (`forEachSweepPage`, same pagination the consolidator already uses), evaluates the rules in order, and for a `then: invalidate` match calls the same sticky `idx.invalidateByID` every other invalidation path uses, with reason `"rule <index>: <expr>"` and `memory_ops` actor `sweep` (a new actor, distinct from `consolidator` and `outcome-feedback`). `dryRun` skips the write and returns a report per rule (matched count + up to 5 example id/content pairs) plus a `kept` count for no-match - never lists more than that per rule.
 
 **Concurrency.** A memory's votes can change between `ForgetSweep`'s read
-and its invalidate write; accepted as eventual consistency (last write
-wins), same as every other `invalidateByID` caller - no new locking.
+and its invalidate write; accepted as eventual consistency (last write wins), same as every other `invalidateByID` caller - no new locking.
 
 **Idempotent, safe to retry.** A sweep only ever invalidates memories that
-still match a rule, so re-running it (all stores or just a failed one)
-never double-applies anything. If one store's sweep fails after an earlier
-store's already succeeded, `POST /api/v1/memories/sweep` still returns 200
-with the earlier store's report in `stores` and the failure in `errors` -
-retry is just calling sweep again.
+still match a rule, so re-running it (all stores or just a failed one) never double-applies anything. If one store's sweep fails after an earlier store's already succeeded, `POST /api/v1/memories/sweep` still returns 200 with the earlier store's report in `stores` and the failure in `errors` - retry is just calling sweep again.
 
 **Retention unchanged.** `retentionOnce`'s hard-delete logic is untouched;
-`sweepOnce` now runs consolidate -> forget -> retention in that order, so a
-memory this tick's forgetting step invalidates becomes retention-eligible
-on a later tick once its `invalidated_at` ages past `retention_days`.
+`sweepOnce` now runs consolidate -> forget -> retention in that order, so a memory this tick's forgetting step invalidates becomes retention-eligible on a later tick once its `invalidated_at` ages past `retention_days`.
 
 ## 8d. Buckets and rescoping (#1262)
 
-A memory lives in exactly one bucket - `repo:<identity>` (the chat's
-workspace repo origin, keyed by `RepoIdentity`/`NormalizeRepoURL`), or
-`role:coding`/`role:research` when no single repo identity is resolvable for
-the chat's workspace, plus `user:<id>` for user-scoped memory. `RepoKey`
-derives the identity from every found repo (a shared clone plus its linked
-worktrees, since worktree-per-node) agreeing, not from repo count - a lone
-repo or several worktrees of the same origin both key the same bucket; a
-genuine mismatch falls back to `""` (role bucket) rather than guess.
-`Legacy` is a separate, narrower thing: a pre-scope bucket keyed by agent
-NAME (e.g. `web-researcher`), kept only so memories committed before buckets
-existed still recall - never a per-node id.
+A memory lives in exactly one bucket - `repo:<identity>` (the chat's workspace repo origin, keyed by `RepoIdentity`/`NormalizeRepoURL`), or `role:coding`/`role:research` when no single repo identity is resolvable for the chat's workspace, plus `user:<id>` for user-scoped memory. `RepoKey` derives the identity from every found repo (a shared clone plus its linked worktrees, since worktree-per-node) agreeing, not from repo count - a lone repo or several worktrees of the same origin both key the same bucket; a genuine mismatch falls back to `""` (role bucket) rather than guess. `Legacy` is a separate, narrower thing: a pre-scope bucket keyed by agent NAME (e.g. `web-researcher`), kept only so memories committed before buckets existed still recall - never a per-node id.
 
-`quack memory rescope [--apply]` (`POST /api/v1/memories/rescope`) is the
-one-off fix for the memories `RepoKey`'s old count-based bug misfiled into
-`role:*` before this fix landed: it finds every live `role:*` memory whose
-provenance chat has a GitHub origin and moves it into that repo's bucket.
-Dry run (the default) only tallies per-repo counts and examples; `--apply`
-writes the bucket change and logs a `memory_ops` `update` row per point,
-actor `rescope`.
+`quack memory rescope [--apply]` (`POST /api/v1/memories/rescope`) is the one-off fix for the memories `RepoKey`'s old count-based bug misfiled into `role:*` before this fix landed: it finds every live `role:*` memory whose provenance chat has a GitHub origin and moves it into that repo's bucket. Dry run (the default) only tallies per-repo counts and examples; `--apply` writes the bucket change and logs a `memory_ops` `update` row per point, actor `rescope`.
 
 ## 8e. Epic #1255 P5: lineage on merge and weekly stats
 
 **Absorption.** When the consolidation sweep (or a commit's own reconcile
-pass) DELETEs a memory whose reason names its survivor (`"duplicate of
-<id>"` - the shape both consolidation prompts already produce), `apply()`
-treats it as a merge rather than a bare invalidation: the survivor's
-`upvotes`/`downvotes`/`vote_score` are summed with the absorbed memory's,
-its `tier` is recomputed (`verified` once the combined `upvotes >= 1`,
-same rule as a supported vote), `last_upvoted_at`/`last_recalled_at` take
-the later of the two, and `absorbed_ids` gains the absorbed id. The
-absorbed memory is invalidated with the normalized reason `"absorbed by
-<survivor-id>"` (not the raw "duplicate of" text) and one `memory_ops`
-`invalidate` row, actor `consolidator`. A DELETE reason that doesn't name a
-resolvable survivor (or names one the store doesn't have) falls back to a
-plain invalidation, unchanged from before this phase.
+pass) DELETEs a memory whose reason names its survivor (`"duplicate of <id>"` - the shape both consolidation prompts already produce), `apply()` treats it as a merge rather than a bare invalidation: the survivor's `upvotes`/`downvotes`/`vote_score` are summed with the absorbed memory's, its `tier` is recomputed (`verified` once the combined `upvotes >= 1`, same rule as a supported vote), `last_upvoted_at`/`last_recalled_at` take the later of the two, and `absorbed_ids` gains the absorbed id. The absorbed memory is invalidated with the normalized reason `"absorbed by <survivor-id>"` (not the raw "duplicate of" text) and one `memory_ops` `invalidate` row, actor `consolidator`. A DELETE reason that doesn't name a resolvable survivor (or names one the store doesn't have) falls back to a plain invalidation, unchanged from before this phase.
 
 **Chains.** If A is absorbed by B, and B is later itself absorbed by C, C's
-`absorbed_ids` ends up with BOTH `A` and `B` (an absorbed memory's own
-`absorbed_ids` flattens into whatever absorbs it), and C's vote totals
-already include A's (folded into B first, then B's - A's included -
-folded into C). A's own `invalidation_reason` stays `"absorbed by B"`
-forever; it is never rewritten to name C. Finding the CURRENT survivor of
-an absorbed id means checking whose `absorbed_ids` contains it, not
-following the invalidation-reason chain forward.
+`absorbed_ids` ends up with BOTH `A` and `B` (an absorbed memory's own `absorbed_ids` flattens into whatever absorbs it), and C's vote totals already include A's (folded into B first, then B's - A's included - folded into C). A's own `invalidation_reason` stays `"absorbed by B"` forever; it is never rewritten to name C. Finding the CURRENT survivor of an absorbed id means checking whose `absorbed_ids` contains it, not following the invalidation-reason chain forward.
 
 **A vote for an already-absorbed id is dropped, not redirected.**
-`ApplyVotes`/`applyVotes` already skip any already-invalidated memory
-(sticky); an absorbed memory is invalidated, so a vote naming it never
-reaches a write. This phase doesn't add a redirect-to-survivor path for
-votes - the survivor's own recall (not the absorbed id's) is what a live
-run would deliver going forward, so a stale vote target should be rare in
-practice.
+`ApplyVotes`/`applyVotes` already skip any already-invalidated memory (sticky); an absorbed memory is invalidated, so a vote naming it never reaches a write. This phase doesn't add a redirect-to-survivor path for votes - the survivor's own recall (not the absorbed id's) is what a live run would deliver going forward, so a stale vote target should be rare in practice.
 
 **Rebuild.** `internal/ledger/fold`'s `Result.FoldAbsorption(absorbedBy)`
-redirects a folded chat's `MemoryVotes`/`MemoryRecalls` for an absorbed id
-onto its survivor (summing counts, taking the later timestamp), resolving
-a chain (`A -> B -> C`) to its final survivor. `absorbedBy` comes from
-`Store.Snapshot`, which pages every point once and returns both the
-current live/invalidated count per scope and the absorbed-id -> survivor
-map built from every point's `AbsorbedIDs`. `quack ledger rebuild` itself
-still only reconstructs artifact/node/SSE state (P1's documented
-limitation stands - the runtime vote/recall path is the live mirror, not
-a rebuild-and-diff); `FoldAbsorption` is the fold-side mechanics a future
-memory-projection reconciliation pass would call before comparing a
-rebuilt chat's projections against the live store.
+redirects a folded chat's `MemoryVotes`/`MemoryRecalls` for an absorbed id onto its survivor (summing counts, taking the later timestamp), resolving a chain (`A -> B -> C`) to its final survivor. `absorbedBy` comes from `Store.Snapshot`, which pages every point once and returns both the current live/invalidated count per scope and the absorbed-id -> survivor map built from every point's `AbsorbedIDs`. `quack ledger rebuild` itself still only reconstructs artifact/node/SSE state (P1's documented limitation stands - the runtime vote/recall path is the live mirror, not a rebuild-and-diff); `FoldAbsorption` is the fold-side mechanics a future memory-projection reconciliation pass would call before comparing a rebuilt chat's projections against the live store.
 
 **Weekly stats.** `GET /api/v1/memories/stats?weeks=N` and `quack memory
-stats [--weeks N]` report, per ISO week (UTC, Monday-Sunday, computed via
-Go's `time.Time.ISOWeek` on a UTC time): recall precision (`supported /
-(supported+contradicted)`: of the recalls the judge ruled on, how often the
-memory was right; not-relevant is noise, not a wrong memory), support share
-(`supported / recalls`: how much of what was delivered helped, with unvoted
-and not-relevant recalls counting as no help), vote counts by kind, recalls,
-and memories minted/invalidated (from `memory_ops`, lineage absorptions
-counted as an invalidation like any other). A week with no activity still
-appears, zeroed, so the memory page's header (a P4 follow-up) can chart a
-continuous series. Alongside the weekly series, the same endpoint returns
-a live/invalidated snapshot per scope bucket, from the store directly (not
-week-bucketed). Everything is computed from the ledger's
-`memory.recall`/`memory.vote` entries (scanned across every chat -
-`memory_ops` and the ledger are the only sources of truth here) and
-`memory_ops`; no new tables.
+stats [--weeks N]` report, per ISO week (UTC, Monday-Sunday, computed via Go's `time.Time.ISOWeek` on a UTC time): recall precision (`supported / (supported+contradicted)`: of the recalls the judge ruled on, how often the memory was right; not-relevant is noise, not a wrong memory), support share (`supported / recalls`: how much of what was delivered helped, with unvoted and not-relevant recalls counting as no help), vote counts by kind, recalls, and memories minted/invalidated (from `memory_ops`, lineage absorptions counted as an invalidation like any other). A week with no activity still appears, zeroed, so the memory page's header (a P4 follow-up) can chart a continuous series. Alongside the weekly series, the same endpoint returns a live/invalidated snapshot per scope bucket, from the store directly (not week-bucketed). Everything is computed from the ledger's `memory.recall`/`memory.vote` entries (scanned across every chat - `memory_ops` and the ledger are the only sources of truth here) and `memory_ops`; no new tables.
 
 ## 9. Future work
 

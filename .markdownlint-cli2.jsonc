@@ -1,0 +1,28 @@
+{
+  "config": {
+    "default": true,
+    // format-markdown skill: "do not hard-wrap prose at a fixed column" -
+    // long lines are the style; the no-hard-wrap gate is
+    // `scripts/unwrap-md.mjs --check`, not a max-line rule.
+    "MD013": false,
+    // format-markdown: fence language required
+    "MD040": true,
+    // format-markdown: never skip heading levels; at most three levels is
+    // checked by MD001 (increment) plus review - no rule caps depth.
+    "MD001": true,
+    // format-markdown: blank line before/after headings, lists, code blocks
+    "MD022": true,
+    "MD031": true,
+    "MD032": true,
+    // 42 existing table rows use inconsistent pipe styles - cosmetic,
+    // not worth a reflow diff; re-enable once reflowed
+    "MD060": false,
+    // docs/history keeps deliberately continued phase numbering (a step
+    // list split by an "Expected:" note resumes at its original number)
+    "MD029": false,
+    // format-markdown: H1 is the document title only
+    "MD025": true,
+    // URLs must not be bare (format-markdown: preserve links as links)
+    "MD034": true
+  }
+}

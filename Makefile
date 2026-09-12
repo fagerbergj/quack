@@ -1,4 +1,4 @@
-.PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean
+.PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean docs-check
 
 BINARY := quack
 SANDBOX_BINARY := quack-sandbox
@@ -39,6 +39,12 @@ test-race: plugins
 ## vet: go vet
 vet:
 	go vet ./...
+
+## docs-check: markdown lint + doc drift (links, paths, config keys, hard wraps)
+docs-check:
+	npm --prefix scripts exec -- markdownlint-cli2 'docs/**/*.md' 'README.md'
+	node scripts/check-docs.mjs
+	node scripts/unwrap-md.mjs --check $$(find docs -name '*.md') *.md
 
 ## fmt: gofmt the source
 fmt:

@@ -53,6 +53,19 @@ jobs:
           go-version-file: go.mod
       - run: test -z "$(gofmt -l internal cmd)"
 
+  docs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: scripts/package-lock.json
+      - run: npm ci
+        working-directory: scripts
+      - run: make docs-check
+
   deadcode:
     runs-on: ubuntu-latest
     steps:

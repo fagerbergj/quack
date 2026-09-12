@@ -21,7 +21,7 @@ cp .env.example .env   # set QUACK_LLM_ENDPOINT to something reachable from the 
 docker compose up --build
 ```
 
-Open http://localhost:8081 - the app is remapped, since host port 8080 is taken by SearXNG in this stack.
+Open `http://localhost:8081` - the app is remapped, since host port 8080 is taken by SearXNG in this stack.
 
 This is the middle ground: full feature set, memory included, still a single `docker compose up`.
 
