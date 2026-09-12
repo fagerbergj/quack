@@ -59,10 +59,10 @@ type unwipeableTreeError struct {
 
 func (e *unwipeableTreeError) Error() string {
 	if e.moveErr != nil {
-		return fmt.Sprintf("setup: %s on %q could not be checked out cleanly (%v) and %s, and moving it aside also failed (%v) - resolve manually",
+		return fmt.Sprintf("setup: %s on %q could not be checked out cleanly (%v): %s - moving it aside also failed (%v) - resolve manually",
 			e.target, e.workBranch, e.checkoutErr, e.reason, e.moveErr)
 	}
-	return fmt.Sprintf("setup: %s on %q could not be checked out cleanly (%v) and %s - moved the tree to %s instead of discarding it",
+	return fmt.Sprintf("setup: %s on %q could not be checked out cleanly (%v): %s - moved the tree to %s instead of discarding it",
 		e.target, e.workBranch, e.checkoutErr, e.reason, e.movedTo)
 }
 
