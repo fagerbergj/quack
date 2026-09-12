@@ -180,20 +180,164 @@ func TestEditPlanOnDeliveredPlanWithNoAssignmentsRejected(t *testing.T) {
 	}
 }
 
-// TestEditPlanOnDeliveredPlanRemoveRejected: remove targets the delivered
-// plan's own assignments, which no longer exist once a new plan starts -
-// reject it by name instead of silently ignoring it.
-func TestEditPlanOnDeliveredPlanRemoveRejected(t *testing.T) {
+// TestEditPlanOnDeliveredPlanRemoveWithoutAssignmentsRejected: remove alone
+// targets the delivered plan's own assignments, which no longer exist once
+// a new plan starts - reject it by name instead of silently ignoring it.
+func TestEditPlanOnDeliveredPlanRemoveWithoutAssignmentsRejected(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	seedDonePlan(t, c)
+
+	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"plan_id": planID,
+		"remove":  []string{"web-researcher-1"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "already delivered") {
+		t.Errorf("err = %v, want it to reject remove-with-no-assignments on an already-delivered plan", err)
+	}
+}
+
+// TestEditPlanOnDeliveredPlanWithAssignmentsIgnoresRemove: once assignments
+// are given, a done plan starts a new one from them regardless of a stray
+// `remove` - the delivered-plan wording must never mask a call that DID
+// give assignments (audit finding 4 rig follow-up: it was masking the real
+// missing-agent/node_id error the model needed to see).
+func TestEditPlanOnDeliveredPlanWithAssignmentsIgnoresRemove(t *testing.T) {
+	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	seedDonePlan(t, c)
+
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"plan_id":     planID,
+		"remove":      []string{"web-researcher-1"},
+		"assignments": []map[string]any{{"agent": "web-researcher", "task": "more work"}},
+	})
+	if err != nil {
+		t.Fatalf("edit_plan Run: %v, want a new plan started despite the stray remove", err)
+	}
+	if newPlanID, _ := res["plan_id"].(string); newPlanID == "" || newPlanID == planID {
+		t.Errorf("plan_id = %q, want a fresh plan_id", newPlanID)
+	}
+}
+
+// TestEditPlanOnDeliveredPlanSurfacesMissingAgentError is the rig blocker
+// (audit finding 4 follow-up): a real edit_plan call on a delivered plan
+// whose assignment omits both agent and node_id must return newPlanRecord's
+// own error (naming the assignment index and the accepted agent names),
+// never the generic delivered-plan wording - the model can't recover from
+// advice that contradicts what it actually sent.
+func TestEditPlanOnDeliveredPlanSurfacesMissingAgentError(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	seedDonePlan(t, c)
 
 	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
 		"plan_id":     planID,
-		"remove":      []string{"web-researcher-1"},
-		"assignments": []map[string]any{{"agent": "web-researcher", "task": "more work"}},
+		"assignments": []map[string]any{{"task": "some follow-up work"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "already delivered") {
-		t.Errorf("err = %v, want it to reject remove on an already-delivered plan", err)
+	if err == nil {
+		t.Fatal("want an error for an assignment with neither agent nor node_id")
+	}
+	if strings.Contains(err.Error(), "already delivered") {
+		t.Errorf("err = %v, want newPlanRecord's own error, not the delivered-plan wording", err)
+	}
+	if !strings.Contains(err.Error(), "assignments[0]") || !strings.Contains(err.Error(), "web-researcher") {
+		t.Errorf("err = %v, want it to name the offending index and the accepted agent names, exactly as create_plan's does", err)
+	}
+}
+
+// TestEditPlanOnDeliveredPlanSurfacesEachNewPlanRecordError checks every
+// other newPlanRecord failure mode reaches the model unmasked too: unknown
+// agent, unknown depends_on id, a dependency cycle, an empty task, and a
+// disallowed deliverable each keep their own message on the done-plan path.
+func TestEditPlanOnDeliveredPlanSurfacesEachNewPlanRecordError(t *testing.T) {
+	roster := []dag.AgentInfo{{Name: "web-researcher"}, {Name: "code-reviewer"}}
+	cases := []struct {
+		name        string
+		assignments []map[string]any
+		allowedKind string
+		want        string
+	}{
+		{
+			name:        "unknown agent",
+			assignments: []map[string]any{{"agent": "ghost-agent", "task": "x"}},
+			want:        "ghost-agent",
+		},
+		{
+			name:        "unknown depends_on",
+			assignments: []map[string]any{{"agent": "web-researcher", "task": "x", "depends_on": []string{"no-such-node"}}},
+			want:        "no-such-node",
+		},
+		{
+			name: "dependency cycle",
+			assignments: []map[string]any{
+				{"agent": "web-researcher", "task": "x", "depends_on": []string{"1"}},
+				{"agent": "web-researcher", "task": "y", "depends_on": []string{"0"}},
+			},
+			want: "cycle",
+		},
+		{
+			name:        "empty task",
+			assignments: []map[string]any{{"agent": "web-researcher", "task": ""}},
+			want:        "task",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, c, planID := newEditPlanForTest(t, roster, nil)
+			seedDonePlan(t, c)
+			_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+				"plan_id":     planID,
+				"assignments": tc.assignments,
+			})
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if strings.Contains(err.Error(), "already delivered") {
+				t.Errorf("err = %v, want newPlanRecord's own error, not the delivered-plan wording", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestEditPlanOnDeliveredPlanSurfacesDisallowedDeliverableError covers the
+// last newPlanRecord failure mode: hiring an agent whose only deliverable
+// this dispatch doesn't allow must keep its own message on the done-plan
+// path too, not the delivered-plan wording.
+func TestEditPlanOnDeliveredPlanSurfacesDisallowedDeliverableError(t *testing.T) {
+	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}, {Name: "code-reviewer"}}, nil, nil)
+	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	// Seed a delivered plan directly - create_plan would already reject
+	// hiring code-implementer under an allowedKinds=["review"] dispatch too.
+	rec := dag.DagPlanRecord{
+		PlanID:      "p1",
+		Status:      "done",
+		Assignments: []dag.Assignment{{NodeID: "code-reviewer-1", Task: "reviewed already", TaskID: "done-1"}},
+	}
+	if _, _, err := c.SaveStructured(newFakeCtx(), "dag_plan", rec, "", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed done plan: %v", err)
+	}
+	if _, _, err := c.SaveStructured(newFakeCtx(), "dag_node", dag.DagNodeRecord{NodeID: "code-reviewer-1", Agent: "code-reviewer"}, "code-reviewer-1", recordstore.Lineage{}); err != nil {
+		t.Fatalf("seed dag_node: %v", err)
+	}
+
+	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nil, []string{"review"}, nil)
+	if err != nil {
+		t.Fatalf("NewEditPlanTool: %v", err)
+	}
+	rt := editTl.(runnableTool)
+	_, err = rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"plan_id":     "p1",
+		"assignments": []map[string]any{{"agent": "code-implementer", "task": "x"}},
+	})
+	if err == nil {
+		t.Fatal("want an error hiring an agent whose only deliverable isn't allowed")
+	}
+	if strings.Contains(err.Error(), "already delivered") {
+		t.Errorf("err = %v, want newPlanRecord's own error, not the delivered-plan wording", err)
+	}
+	if !strings.Contains(err.Error(), "does not allow") {
+		t.Errorf("err = %v, want the disallowed-deliverable message", err)
 	}
 }
 

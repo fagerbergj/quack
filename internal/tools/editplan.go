@@ -73,10 +73,14 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				return planUpsertResult{}, fmt.Errorf("edit_plan: plan_id %q is stale - the current plan is %q", a.PlanID, current.PlanID)
 			}
 			if current.Status == "done" {
-				if len(a.Remove) > 0 {
-					return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - there's nothing left to remove from; drop `remove` and give `assignments` to start a new plan", current.PlanID)
-				}
+				// The delivered-plan wording only fits when there are no assignments to
+				// even attempt: once assignments are given, any rejection of them
+				// (bad or not) must come from newPlanRecord verbatim - never masked by
+				// this message, or the model never learns what it actually got wrong.
 				if len(a.Assignments) == 0 {
+					if len(a.Remove) > 0 {
+						return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - there's nothing left to remove from; drop `remove` and give `assignments` to start a new plan", current.PlanID)
+					}
 					return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - it's finished; give `assignments` to start a new plan for further work", current.PlanID)
 				}
 				res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a.Assignments, a.Setup, a.Delivery)
