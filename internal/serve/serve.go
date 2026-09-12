@@ -541,13 +541,18 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	builtinSkillSrc := newSkillSource(pluginSkillDirs)
 	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
-	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
+	rawSkillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("skills toolset init failed: %w", err)
 	}
-	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
+	skillTS := skillsource.Persistent(rawSkillTS, skillSrc)
+	newScopedSkillTS := func(names []string) (tool.Toolset, error) {
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
-		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
+		ts, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
+		if err != nil {
+			return nil, err
+		}
+		return skillsource.Persistent(ts, src), nil
 	}
 
 	openMemory := func(rm config.ResolvedMemory, domain string) (*memory.Store, error) {
@@ -1014,7 +1019,7 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS tool.Toolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (tool.Toolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := func(ctx context.Context) memory.Scope {

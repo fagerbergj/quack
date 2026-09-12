@@ -8,6 +8,7 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/skilltoolset"
 
 	"github.com/fagerbergj/quack/internal/config"
@@ -53,7 +54,7 @@ func TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("skill toolset: %v", err)
 	}
-	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
+	newScopedSkillTS := func(names []string) (tool.Toolset, error) {
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}

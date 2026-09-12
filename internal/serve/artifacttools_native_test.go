@@ -35,7 +35,7 @@ func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("skill toolset: %v", err)
 	}
-	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
+	newScopedSkillTS := func(names []string) (tool.Toolset, error) {
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}

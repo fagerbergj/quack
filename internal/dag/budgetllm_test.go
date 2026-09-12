@@ -242,3 +242,31 @@ func TestNewBudgetedLLMUnwrapsWhenUnenforced(t *testing.T) {
 		t.Error("contextWindow=0 should return the inner LLM unwrapped")
 	}
 }
+
+// TestBudgetedLLMNeverTrimsSystemInstruction: a loaded skill's body rides the
+// system instruction, which trimContentsToBudget must never touch.
+func TestBudgetedLLMNeverTrimsSystemInstruction(t *testing.T) {
+	rec := &recordingBudgetLLM{}
+	const contextWindow = 2000 // reserve = 500, budget = 1500
+	llm := NewBudgetedLLM(rec, contextWindow)
+
+	skillBody := "<skill name=\"plan-work\">\n" + strings.Repeat("instruction ", 50) + "\n</skill>"
+	opening := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "ask"}}}
+	contents := []*genai.Content{opening}
+	for round := 0; round < 20; round++ {
+		contents = append(contents, bigCallResponsePair(500)...)
+	}
+	req := &model.LLMRequest{
+		Contents: contents,
+		Config:   &genai.GenerateContentConfig{SystemInstruction: genai.NewContentFromText(skillBody, genai.RoleUser)},
+	}
+	drainLLM(llm.GenerateContent(context.Background(), req, false))
+
+	if len(rec.got.Contents) >= len(contents) {
+		t.Fatalf("trim dropped nothing (got %d of %d contents), test proves nothing", len(rec.got.Contents), len(contents))
+	}
+	got := rec.got.Config.SystemInstruction.Parts[0].Text
+	if !strings.Contains(got, skillBody) {
+		t.Fatalf("system instruction after trim = %q, want it to still contain the skill body", got)
+	}
+}
