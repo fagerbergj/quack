@@ -154,6 +154,31 @@ func TestDeriveTerminalStatus_OrchestratorPlanningFailureNoDagNode(t *testing.T)
 	}
 }
 
+// TestDeriveTerminalStatus_GuardHardStopReusesPlanRejectionPath is #1391: the
+// repeat guard's hard stop records through inference.RecordPlanRejection (the
+// same tracker a rejected plan uses) rather than a new one, so an empty turn
+// after a hard stop fails with the loop's own reason, and a repeat read (e.g.
+// GetChat) sees the same failed status without consuming the record.
+func TestDeriveTerminalStatus_GuardHardStopReusesPlanRejectionPath(t *testing.T) {
+	const chatID = "c-guard-stop-1391"
+	t.Cleanup(func() { inference.ClearPlanRejection(chatID) })
+	inference.RecordPlanRejection(chatID, "tool-call loop: create_plan called with identical arguments and the same result 6 times despite being refused; turn terminated")
+
+	turns := []TurnContent{{AsstText: "", Nodes: nil}}
+	status, _, nodeError := DeriveTerminalStatus(chatID, turns, "", false)
+	if status != RunStatusFailed {
+		t.Fatalf("status = %q, want %q", status, RunStatusFailed)
+	}
+	if !strings.Contains(nodeError, "create_plan") {
+		t.Fatalf("nodeError = %q, want it to name the tool that kept repeating", nodeError)
+	}
+
+	status2, _, nodeError2 := DeriveTerminalStatus(chatID, turns, "", false)
+	if status2 != RunStatusFailed || nodeError2 != nodeError {
+		t.Fatalf("second read = %q/%q, want the same failed status/error as the first read", status2, nodeError2)
+	}
+}
+
 // TestDeriveTerminalStatus_StoreFailureNamesDatabaseNoCredentials is #1193: a
 // dial error surviving the pgdial retry (recorded via
 // inference.RecordStoreFailure, as failSoftListArtifacts.List does) must fail the run with a message naming "database", and any DSN credentials in the raw error must never reach the stored/derived text.

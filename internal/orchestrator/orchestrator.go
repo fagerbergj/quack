@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -543,6 +544,16 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		// after) is assembled - the identical-call loop class RepeatWrap guards
 		// against applies to any of them, not just the five DAG tools.
 		repeats := tools.NewRepeatStates()
+		// Set by the repeat guard's hard stop - marks this as an unbreakable
+		// loop, not a retryable blank turn.
+		var guardStopped atomic.Bool
+		guardTripped := func(_, _, msg string) bool {
+			guardStopped.Store(true)
+			// Reuses the plan-rejection give-up path (store.DeriveTerminalStatus) - a
+			// hard stop is the same "known reason, no DagNode" shape as a rejected plan.
+			inference.RecordPlanRejection(sessionID, msg)
+			return true
+		}
 
 		var toolsets []tool.Toolset
 		if o.skillTS != nil {
@@ -613,7 +624,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			if !tools.SupportsRepeatGuard(t) {
 				continue
 			}
-			if toolList[i], err = tools.RepeatWrap(t, repeats); err != nil {
+			if toolList[i], err = tools.RepeatWrap(t, repeats, guardTripped); err != nil {
 				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
 				return
 			}
@@ -720,12 +731,23 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		}
 
 		produced, stop := invoke(content)
-		for attempt := 1; !produced && !stop && attempt <= maxOrchestratorContinues; attempt++ {
+		attempts := 1
+		// A hard-stopped turn reproduces the identical loop on an unchanged
+		// retry (the QA rig measured this) - give up immediately instead.
+		for attempt := 1; !produced && !stop && !guardStopped.Load() && attempt <= maxOrchestratorContinues; attempt++ {
 			slog.Warn("orchestrator turn produced no plan and no answer; continuing it",
 				"component", "orchestrator", "chat", sessionID, "attempt", attempt)
 			produced, stop = invoke(continuationContent())
+			attempts++
 		}
 		if stop {
+			return
+		}
+		if !produced && guardStopped.Load() {
+			slog.Error("orchestrator turn ended by the repeat guard's hard stop; not retrying it unchanged",
+				"component", "orchestrator", "chat", sessionID, "attempts", attempts)
+			safeYield(stream.Errorf("The orchestrator got stuck repeating the same malformed tool call and stopped. "+
+				"Please try again or rephrase your request."), nil)
 			return
 		}
 		model, promptTokens, completionTokens, reasoningTokens, totalTokens, cachedTokens, finishReason := translator.Usage()
@@ -738,7 +760,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 
 		if !produced {
 			slog.Error("orchestrator produced no plan and no answer; giving up",
-				"component", "orchestrator", "chat", sessionID, "attempts", maxOrchestratorContinues+1)
+				"component", "orchestrator", "chat", sessionID, "attempts", attempts)
 			safeYield(stream.Errorf("The orchestrator ended its turn without a plan or an answer, "+
 				"even after being asked to continue. Nothing was run. Please try again."), nil)
 			return

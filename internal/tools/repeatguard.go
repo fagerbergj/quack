@@ -20,13 +20,8 @@ import (
 type repeatGuard struct {
 	inner  runnableTool
 	states *repeatStates
-	// tripped reaches dag.Executor.RepeatGuardTripped to end a WORKER NODE's
-	// round on a hard stop - a returned tool error alone can't: ADK folds it
-	// into a function response and keeps the model's turn going. nil for a
-	// tool that's never node-scoped (nodeScope(ctx) then always resolves
-	// nodeID=="") - see Run()'s orchestrator branch, which ends the
-	// ORCHESTRATOR's own turn directly instead, without needing a
-	// caller-supplied callback for it.
+	// tripped fires on every hard stop - the signal a caller outside this
+	// package uses to tell a hard stop apart from a turn that simply produced nothing.
 	tripped func(chatID, nodeID, msg string) bool
 }
 
@@ -333,22 +328,16 @@ func (g *repeatGuard) refuse(sessionID string, n int, sameResult bool) error {
 		n-repeatThreshold+1, ordinal(n), g.Name(), result)
 }
 
-// hardStop is the one tier that actually ends the turn: the model kept
-// re-issuing the refused call regardless of the REFUSED error
-// (repeatHardStopAfter times past the soft-refusal threshold). A worker
-// node's round ends via tripped (dag.Executor.RepeatGuardTripped - a
-// returned error alone can't, ADK just folds it into a function response
-// and keeps the model's turn going); the orchestrator's own turn, which has
-// no such round to end, ends directly via SkipSummarization. Either way the
-// session's streaks reset, so a subsequent retry (e.g. a revise round)
-// starts with a fresh budget instead of an already-blown one.
+// hardStop ends the turn once the model keeps re-issuing a refused call. It
+// fires tripped; the orchestrator (nodeID=="") also gets SkipSummarization.
 func (g *repeatGuard) hardStop(ctx agent.Context, sessionID, chatID, nodeID string, n int) error {
 	msg := fmt.Sprintf("tool-call loop: %s called with identical arguments and the same result %d times despite being refused; turn terminated", g.Name(), n)
 	slog.Warn("tool call loop: ending the turn", "component", "tools",
 		"tool", g.Name(), "consecutive", n, "session", sessionID)
-	if nodeID != "" && g.tripped != nil {
+	if g.tripped != nil {
 		g.tripped(chatID, nodeID, msg)
-	} else if nodeID == "" {
+	}
+	if nodeID == "" {
 		ctx.Actions().SkipSummarization = true
 	}
 	g.states.resetSession(sessionID)
@@ -418,8 +407,9 @@ func repeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, 
 func NewRepeatStates() *repeatStates { return newRepeatStates() }
 
 // RepeatWrap is repeatWrap, exported for the same reason as NewRepeatStates.
-func RepeatWrap(t tool.Tool, states *repeatStates) (tool.Tool, error) {
-	return repeatWrap(t, states, nil)
+// tripped fires on a hard stop (see repeatGuard.tripped); pass nil to ignore it.
+func RepeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
+	return repeatWrap(t, states, tripped)
 }
 
 // SupportsRepeatGuard reports whether t can be passed to RepeatWrap - false
