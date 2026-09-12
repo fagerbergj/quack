@@ -547,8 +547,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		// Set by the repeat guard's hard stop - marks this as an unbreakable
 		// loop, not a retryable blank turn.
 		var guardStopped atomic.Bool
-		guardTripped := func(string, string, string) bool {
+		guardTripped := func(_, _, msg string) bool {
 			guardStopped.Store(true)
+			// Reuses the plan-rejection give-up path (store.DeriveTerminalStatus) - a
+			// hard stop is the same "known reason, no DagNode" shape as a rejected plan.
+			inference.RecordPlanRejection(sessionID, msg)
 			return true
 		}
 

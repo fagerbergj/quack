@@ -328,10 +328,8 @@ func (g *repeatGuard) refuse(sessionID string, n int, sameResult bool) error {
 		n-repeatThreshold+1, ordinal(n), g.Name(), result)
 }
 
-// hardStop is the one tier that actually ends the turn: the model kept
-// re-issuing the refused call regardless of the REFUSED error. It fires
-// tripped and, for the orchestrator (nodeID==""), also sets SkipSummarization
-// to end its own ADK turn directly.
+// hardStop ends the turn once the model keeps re-issuing a refused call. It
+// fires tripped; the orchestrator (nodeID=="") also gets SkipSummarization.
 func (g *repeatGuard) hardStop(ctx agent.Context, sessionID, chatID, nodeID string, n int) error {
 	msg := fmt.Sprintf("tool-call loop: %s called with identical arguments and the same result %d times despite being refused; turn terminated", g.Name(), n)
 	slog.Warn("tool call loop: ending the turn", "component", "tools",
