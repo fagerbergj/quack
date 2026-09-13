@@ -190,104 +190,124 @@ func (f *ReviewFanout) mergeReviews() StagedDelivery {
 	}
 	sort.Strings(ids)
 
-	verdict := "comment"
-	haveVerdict := false
 	// The synthesizer, once it produces output of its own, owns the
 	// consolidated prose - a slice's own notes would just repeat it.
 	synthOwnsProse := f.synthHaveRecord || f.synthBody != ""
-	var highlights, ghComments []ReviewComment // highlights: for the renderer's label matching; ghComments: for GitHub's inline posting, provenance kept off the wire
-	var verified, notes, legacyParts []string
+	acc := reviewMergeAcc{}
 	for _, id := range ids {
-		e := f.terminal[id]
-		if e.failed {
-			notes = append(notes, fmt.Sprintf("%s: did not complete, excluded from this verdict", id))
-			continue
-		}
-		if !e.ok {
-			notes = append(notes, fmt.Sprintf("%s: completed without staging a review", id))
-			continue
-		}
-		if event := e.item.Event; event != "" && (!haveVerdict || verdictRank[event] > verdictRank[verdict]) {
-			verdict = event
-			haveVerdict = true
-		}
-		if !synthOwnsProse {
-			// Body (unlike Takeaway) isn't pre-capped, so it goes through
-			// the wider legacy-summary bucket instead of the notes cap.
-			if t := strings.TrimSpace(e.item.Takeaway); t != "" {
-				notes = append(notes, fmt.Sprintf("%s: %s", id, t))
-			} else if b := strings.TrimSpace(e.item.Body); b != "" {
-				legacyParts = append(legacyParts, fmt.Sprintf("%s: %s", id, b))
-			}
-			for _, v := range e.item.Verified {
-				verified = append(verified, fmt.Sprintf("%s: %s", id, v))
-			}
-			for _, n := range e.item.Notes {
-				notes = append(notes, fmt.Sprintf("%s: %s", id, n))
-			}
-		}
-		for _, c := range e.item.Comments {
-			highlights = append(highlights, c)
-			attributed := c
-			attributed.SourceNode = id
-			ghComments = append(ghComments, attributed)
-		}
+		acc.addSlice(id, f.terminal[id], synthOwnsProse)
+	}
+	acc.addSynth(f)
+
+	// Still worst-of against a slice's verdict, never overwrites it outright:
+	// an early slice request_changes must survive a later synthesizer approve.
+	if f.synthVerdict != "" && (!acc.haveVerdict || verdictRank[f.synthVerdict] > verdictRank[acc.verdict]) {
+		acc.verdict = f.synthVerdict
+		acc.haveVerdict = true
+	}
+	if !acc.haveVerdict {
+		acc.verdict = "comment"
 	}
 
-	var takeaway, legacySummary string
-	if len(legacyParts) > 0 {
-		legacySummary = strings.Join(legacyParts, "\n")
+	takeaway, verified, notes := clampCodeReviewFields(acc.takeaway, acc.verified, acc.notes)
+	body := renderReviewOverview(reviewOverviewInput{
+		Verdict: acc.verdict, Takeaway: takeaway, Verified: verified, Notes: notes,
+		Comments: acc.highlights, LegacySummary: acc.legacySummary,
+		ScopeKnown: f.scopeKnown, HeadSHA: f.scopeHead, FileCount: f.scopeFiles, FirstReview: f.scopeFirstReview,
+	})
+	return StagedDelivery{
+		Kind:     "review",
+		Event:    acc.verdict,
+		Body:     body,
+		Comments: acc.ghComments,
+	}
+}
+
+// reviewMergeAcc accumulates the merged review fields (verdict, prose, comments)
+// across slices and the synthesizer in mergeReviews.
+type reviewMergeAcc struct {
+	verdict       string
+	haveVerdict   bool
+	takeaway      string
+	legacySummary string
+	legacyParts   []string
+	verified      []string
+	notes         []string
+	highlights    []ReviewComment // for the renderer's label matching
+	ghComments    []ReviewComment // for GitHub's inline posting, provenance kept off the wire
+}
+
+// addSlice folds one terminal slice's staged review into the accumulator.
+func (a *reviewMergeAcc) addSlice(id string, e reviewFanoutEntry, synthOwnsProse bool) {
+	if e.failed {
+		a.notes = append(a.notes, fmt.Sprintf("%s: did not complete, excluded from this verdict", id))
+		return
+	}
+	if !e.ok {
+		a.notes = append(a.notes, fmt.Sprintf("%s: completed without staging a review", id))
+		return
+	}
+	if event := e.item.Event; event != "" && (!a.haveVerdict || verdictRank[event] > verdictRank[a.verdict]) {
+		a.verdict = event
+		a.haveVerdict = true
+	}
+	if !synthOwnsProse {
+		// Body (unlike Takeaway) isn't pre-capped, so it goes through the wider
+		// legacy-summary bucket instead of the notes cap.
+		if t := strings.TrimSpace(e.item.Takeaway); t != "" {
+			a.notes = append(a.notes, fmt.Sprintf("%s: %s", id, t))
+		} else if b := strings.TrimSpace(e.item.Body); b != "" {
+			a.legacyParts = append(a.legacyParts, fmt.Sprintf("%s: %s", id, b))
+		}
+		for _, v := range e.item.Verified {
+			a.verified = append(a.verified, fmt.Sprintf("%s: %s", id, v))
+		}
+		for _, n := range e.item.Notes {
+			a.notes = append(a.notes, fmt.Sprintf("%s: %s", id, n))
+		}
+	}
+	for _, c := range e.item.Comments {
+		a.highlights = append(a.highlights, c)
+		attributed := c
+		attributed.SourceNode = id
+		a.ghComments = append(a.ghComments, attributed)
+	}
+}
+
+// addSynth folds the synthesizer's record (or parsed body, or raw fallback)
+// into the accumulator, overriding slice prose where the synth owns it.
+func (a *reviewMergeAcc) addSynth(f *ReviewFanout) {
+	if len(a.legacyParts) > 0 {
+		a.legacySummary = strings.Join(a.legacyParts, "\n")
 	}
 	switch {
 	case f.synthHaveRecord:
-		takeaway = f.synthTakeaway
+		a.takeaway = f.synthTakeaway
 		if len(f.synthVerified) > 0 {
-			verified = f.synthVerified
+			a.verified = f.synthVerified
 		}
 		if len(f.synthNotes) > 0 {
-			notes = f.synthNotes
+			a.notes = f.synthNotes
 		}
 	case f.synthBody != "":
 		r := ParseAnswerReviewSections(f.synthBody)
 		switch {
 		case r.OK:
-			if ev := r.Event; ev != "" && (!haveVerdict || verdictRank[ev] > verdictRank[verdict]) {
-				verdict = ev
-				haveVerdict = true
+			if ev := r.Event; ev != "" && (!a.haveVerdict || verdictRank[ev] > verdictRank[a.verdict]) {
+				a.verdict = ev
+				a.haveVerdict = true
 			}
-			takeaway = r.Takeaway
+			a.takeaway = r.Takeaway
 			if len(r.Verified) > 0 {
-				verified = r.Verified
+				a.verified = r.Verified
 			}
 			if len(r.Notes) > 0 {
-				notes = r.Notes
+				a.notes = r.Notes
 			}
 		default:
-			// No structured tail or record: last-resort fallback, the raw
-			// chat reply folded in like a legacy summary (renderReviewOverview strips any staging narration from it).
-			legacySummary = f.synthBody
+			// No structured tail or record: last-resort fallback, the raw chat reply
+			// folded in like a legacy summary (renderReviewOverview strips any staging narration).
+			a.legacySummary = f.synthBody
 		}
-	}
-	// Still worst-of against a slice's verdict, never overwrites it outright:
-	// an early slice request_changes must survive a later synthesizer approve.
-	if f.synthVerdict != "" && (!haveVerdict || verdictRank[f.synthVerdict] > verdictRank[verdict]) {
-		verdict = f.synthVerdict
-		haveVerdict = true
-	}
-	if !haveVerdict {
-		verdict = "comment"
-	}
-
-	takeaway, verified, notes = clampCodeReviewFields(takeaway, verified, notes)
-	body := renderReviewOverview(reviewOverviewInput{
-		Verdict: verdict, Takeaway: takeaway, Verified: verified, Notes: notes,
-		Comments: highlights, LegacySummary: legacySummary,
-		ScopeKnown: f.scopeKnown, HeadSHA: f.scopeHead, FileCount: f.scopeFiles, FirstReview: f.scopeFirstReview,
-	})
-	return StagedDelivery{
-		Kind:     "review",
-		Event:    verdict,
-		Body:     body,
-		Comments: ghComments,
 	}
 }

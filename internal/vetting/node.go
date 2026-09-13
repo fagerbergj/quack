@@ -1055,60 +1055,19 @@ func resolveCloneCoordinates(cfg Config, act workerActivity) (cloneURL, branch s
 
 // commitDelivery: posts final staged delivery exactly once. Blocking (delivery failure is user-visible).
 func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity, res GateResult) {
-	// Multi-reviewer plan (#867): this node's own review never goes out on
-	// its own - it's handed to the run's ReviewFanout, which delivers the
-	// merged, worst-of-verdict review exactly once, when every reviewer node in the plan has finished.
-	if cfg.ReviewFanout != nil && !cfg.IsReviewer {
-		// Synthesizer node (#965): its answer is the plan's consolidated review - hand it to the fan-in, which delivers exactly once. The
-		// structured code_review record is read here, not act.answer - a
-		// native write_code_review leaves no VERDICT tail to parse from it.
-		rec, haveRec := LatestCodeReviewRecord(ctx, cfg)
-		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer, rec, haveRec)
-		if deliverNow {
-			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
-		}
-		if len(act.stagedDelivery) == 0 {
-			recordDeliveryOutcomeMetric(cfg, res, false, false)
-			return
-		}
-		cfg.ReviewFanout = nil
-	}
+	// Multi-reviewer plan (#867): a synthesizer node hands its consolidated review to
+	// the fan-in, which delivers the merged, worst-of-verdict review exactly once.
 	if cfg.ReviewFanout != nil {
-		item, hasItem := act.stagedDelivery["review"]
-		if hasItem {
-			clone := make(map[string]StagedDelivery, len(act.stagedDelivery)-1)
-			for k, v := range act.stagedDelivery {
-				if k != "review" {
-					clone[k] = v
-				}
-			}
-			act.stagedDelivery = clone
-		}
-		cloneURL, branch := resolveCloneCoordinates(cfg, act)
-		cfg.ReviewFanout.RecordClone(cloneURL, branch)
-		if scope := resolveReviewScope(cfg); scope.ok {
-			cfg.ReviewFanout.RecordScope(scope.head, scope.fileCount, firstCodeReviewDelivery(ctx, cfg))
-		}
-		merged, deliverNow := cfg.ReviewFanout.Finish(nodeID, item, hasItem, false)
-		if deliverNow {
-			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
-		}
-		if len(act.stagedDelivery) == 0 {
-			recordDeliveryOutcomeMetric(cfg, res, false, false)
+		if commitFanoutStage(ctx, sink, &cfg, nodeID, &act, res) {
 			return
 		}
 	}
-	if cfg.Deliver == nil || len(act.stagedDelivery) == 0 {
-		recordDeliveryOutcomeMetric(cfg, res, false, false)
-		// Phantom-success: delivery-capable node with judge-passed work that staged nothing.
-		if !cfg.ReadOnly && res.Passed {
-			emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeNone, "", "", "", otelobs.TraceIDOf(ctx)))
-		}
+	if !deliveryReady(cfg, act) {
+		emitNoDelivery(ctx, sink, nodeID, cfg, res)
 		return
 	}
-	// Render from the durable record instead of the worker's own restatement
-	// (#1093 P6/P10) - every final round writes its code_review/document revision (saveEpisodicRound runs pass or fail), so a draft-on-fail
-	// delivery renders and records the SAME revision it posts, never the staged text (finding 2: a staged-text post must never be recorded as an artifact-backed delivery).
+	// Render from the durable record instead of the worker's own restatement (#1093 P6/P10): a
+	// draft-on-fail delivery renders and records the same revision it posts, never staged text.
 	renderedFromStaged := act.skipArtifactRender
 	if !renderedFromStaged {
 		act.stagedDelivery, renderedFromStaged = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
@@ -1117,7 +1076,127 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
 	defer span.End()
 	traceID := otelobs.TraceIDOf(spanCtx)
+	dc := buildDeliveryContext(cfg, act, res, nodeID)
+	if dropVerdictlessReviews(&dc, sink, nodeID, traceID, cfg, res) {
+		return
+	}
+	// Permission boundary: drop ungranted items before they reach cfg.Deliver.
+	if dropUngrantedKinds(&dc, sink, nodeID, traceID, cfg, res) {
+		return
+	}
+	kinds := make([]string, len(dc.Items))
+	for i, item := range dc.Items {
+		kinds[i] = item.Kind
+	}
+	span.SetAttributes(attribute.StringSlice("staged_kinds", kinds))
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	// #1093: artifact-backed deliveries get a fail-closed WAL delivery.intent entry; a
+	// staged-text render is never treated as artifact-backed, even when a target exists.
+	targetID, targetRev, hasTarget := deliveryTarget(ctx, cfg)
+	hasTarget = hasTarget && !renderedFromStaged
+	if hasTarget {
+		idemKey := deliveryIdempotencyKey(targetID, targetRev)
+		dc.IdempotencyKey = idemKey
+		if walErr := appendDeliveryIntent(cctx, cfg, nodeID, idemKey, targetID, targetRev, dc.CloneURL, dc.IssueNumber); walErr != nil {
+			slog.Error("delivery.intent WAL append failed; not delivering", "component", "vetting", "node", nodeID, "err", walErr)
+			failDeliveryOutcomes(sink, nodeID, dc, traceID, walErr)
+			recordDeliveryOutcomeMetric(cfg, res, true, false)
+			otelobs.End(span, walErr)
+			return
+		}
+	}
+	// Gate-owned push: a push failure still reaches Deliver (carried on dc.PushError) - the
+	// extension is the only thing that can tell the human on GitHub a delivery failed (#1155).
+	if pushErr := ensurePush(cctx, cfg, &dc); pushErr != nil {
+		slog.Error("gate push failed", "component", "vetting", "node", nodeID, "err", pushErr, "branch", dc.Branch)
+		dc.PushError = pushErr.Error()
+	}
+	itemOutcomes, err := cfg.Deliver(cctx, dc)
+	err = pushErrorWins(dc.PushError, err)
+	span.SetAttributes(attribute.Bool("delivered", err == nil))
+	otelobs.End(span, err)
+	if hasTarget {
+		postDeliveryRecord(ctx, cfg, nodeID, dc, itemOutcomes, res, renderedFromStaged, targetID, targetRev, err)
+	}
+	emitDeliveryOutcomes(sink, nodeID, dc, itemOutcomes, traceID, cfg, res, err)
+	if err != nil {
+		slog.Error("delivery failed", "component", "vetting", "node", nodeID, "err", err, "items", len(dc.Items))
+		return
+	}
+	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
+}
 
+// commitFanoutStage hands this node's review to the run's ReviewFanout (#867):
+// a synthesizer's consolidated answer (#965), or one reviewer's staged review.
+func commitFanoutStage(ctx context.Context, sink func(stream.SSEEvent), cfg *Config, nodeID string, act *workerActivity, res GateResult) bool {
+	if !cfg.IsReviewer {
+		// The structured code_review record is read here, not act.answer - a native
+		// write_code_review leaves no VERDICT tail to parse from it.
+		rec, haveRec := LatestCodeReviewRecord(ctx, *cfg)
+		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer, rec, haveRec)
+		if deliverNow {
+			deliverMergedReview(ctx, sink, *cfg, nodeID, merged)
+		}
+		if len(act.stagedDelivery) == 0 {
+			recordDeliveryOutcomeMetric(*cfg, res, false, false)
+			return true
+		}
+		cfg.ReviewFanout = nil
+		return false
+	}
+	item, hasItem := act.stagedDelivery["review"]
+	if hasItem {
+		clone := make(map[string]StagedDelivery, len(act.stagedDelivery)-1)
+		for k, v := range act.stagedDelivery {
+			if k != "review" {
+				clone[k] = v
+			}
+		}
+		act.stagedDelivery = clone
+	}
+	cloneURL, branch := resolveCloneCoordinates(*cfg, *act)
+	cfg.ReviewFanout.RecordClone(cloneURL, branch)
+	if scope := resolveReviewScope(*cfg); scope.ok {
+		cfg.ReviewFanout.RecordScope(scope.head, scope.fileCount, firstCodeReviewDelivery(ctx, *cfg))
+	}
+	merged, deliverNow := cfg.ReviewFanout.Finish(nodeID, item, hasItem, false)
+	if deliverNow {
+		deliverMergedReview(ctx, sink, *cfg, nodeID, merged)
+	}
+	if len(act.stagedDelivery) == 0 {
+		recordDeliveryOutcomeMetric(*cfg, res, false, false)
+		return true
+	}
+	return false
+}
+
+// pushErrorWins: a PushError outweighs a Deliver that reported success -
+// the push itself never landed.
+func pushErrorWins(pushErr string, err error) error {
+	if pushErr != "" && err == nil {
+		return errors.New(pushErr)
+	}
+	return err
+}
+
+// deliveryReady reports whether this node has a delivery target and staged items.
+func deliveryReady(cfg Config, act workerActivity) bool {
+	return cfg.Deliver != nil && len(act.stagedDelivery) > 0
+}
+
+// emitNoDelivery records the no-delivery outcome and flags a phantom success.
+func emitNoDelivery(ctx context.Context, sink func(stream.SSEEvent), nodeID string, cfg Config, res GateResult) {
+	recordDeliveryOutcomeMetric(cfg, res, false, false)
+	// Phantom-success: delivery-capable node with judge-passed work that staged nothing.
+	if !cfg.ReadOnly && res.Passed {
+		emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeNone, "", "", "", otelobs.TraceIDOf(ctx)))
+	}
+}
+
+// buildDeliveryContext assembles the delivery context (items, clone coordinates,
+// clone dir) from the node's activity.
+func buildDeliveryContext(cfg Config, act workerActivity, res GateResult, nodeID string) DeliveryContext {
 	dc := DeliveryContext{
 		NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber,
 		GatePassed: res.Passed, GateFeedback: res.Feedback, ChecksSkipNote: checksSkipNote(res.ChecksSkipReason),
@@ -1142,125 +1221,99 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 			}
 		}
 	}
-	// Mermaid validity is checked by mermaidCriterion before this point.
+	return dc
+}
 
-	// #1198 part C: a review with comments/findings but no verdict is not a
-	// reviewed PR - drop just that item (loud refusal), same per-item shape
-	// as the allowed-kinds check below, so a sibling pr/comment item in the same delivery still ships.
-	if verdictless, rest := partitionEmptyVerdictReview(dc.Items); len(verdictless) > 0 {
-		for _, item := range verdictless {
-			slog.Error("delivery refused: staged review has no verdict", "component", "vetting", "node", nodeID)
-			emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed,
-				item.Kind, "", "you staged comments but no verdict - call stage_review with an event (approve/request_changes/comment) before this round ends", traceID))
-		}
-		dc.Items = rest
-		if len(dc.Items) == 0 {
-			recordDeliveryOutcomeMetric(cfg, res, true, false)
-			return
-		}
+// dropVerdictlessReviews drops staged reviews with no verdict (a loud refusal, per item);
+// all-dropped means nothing left to deliver.
+func dropVerdictlessReviews(dc *DeliveryContext, sink func(stream.SSEEvent), nodeID, traceID string, cfg Config, res GateResult) bool {
+	// A review with comments/findings but no verdict is not a reviewed PR - drop just
+	// that item so a sibling pr/comment item in the same delivery still ships (#1198 C).
+	verdictless, rest := partitionEmptyVerdictReview(dc.Items)
+	if len(verdictless) == 0 {
+		return false
 	}
-
-	// Permission boundary: drop ungranted items before they reach cfg.Deliver. Refusals are loud, never silent.
-	if allowed, refused, reasons := partitionByAllowedKinds(dc.Items, cfg.AllowedDeliveryKinds); len(refused) > 0 {
-		for i, item := range refused {
-			slog.Error("delivery refused: ungranted kind", "component", "vetting",
-				"node", nodeID, "kind", item.Kind, "reason", reasons[i])
-			emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed,
-				item.Kind, "", "delivery refused: "+reasons[i], traceID))
-		}
-		dc.Items = allowed
-		if len(dc.Items) == 0 {
-			recordDeliveryOutcomeMetric(cfg, res, true, false)
-			return
-		}
+	for _, item := range verdictless {
+		slog.Error("delivery refused: staged review has no verdict", "component", "vetting", "node", nodeID)
+		emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed,
+			item.Kind, "", "you staged comments but no verdict - call stage_review with an event (approve/request_changes/comment) before this round ends", traceID))
 	}
+	dc.Items = rest
+	if len(dc.Items) == 0 {
+		recordDeliveryOutcomeMetric(cfg, res, true, false)
+		return true
+	}
+	return false
+}
 
-	kinds := make([]string, len(dc.Items))
+// dropUngrantedKinds drops items of ungranted delivery kinds (loud refusal, per item);
+// all-dropped means nothing left to deliver.
+func dropUngrantedKinds(dc *DeliveryContext, sink func(stream.SSEEvent), nodeID, traceID string, cfg Config, res GateResult) bool {
+	allowed, refused, reasons := partitionByAllowedKinds(dc.Items, cfg.AllowedDeliveryKinds)
+	if len(refused) == 0 {
+		return false
+	}
+	for i, item := range refused {
+		slog.Error("delivery refused: ungranted kind", "component", "vetting",
+			"node", nodeID, "kind", item.Kind, "reason", reasons[i])
+		emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed,
+			item.Kind, "", "delivery refused: "+reasons[i], traceID))
+	}
+	dc.Items = allowed
+	if len(dc.Items) == 0 {
+		recordDeliveryOutcomeMetric(cfg, res, true, false)
+		return true
+	}
+	return false
+}
+
+// failDeliveryOutcomes emits one failed outcome per staged item (the WAL append failed).
+func failDeliveryOutcomes(sink func(stream.SSEEvent), nodeID string, dc DeliveryContext, traceID string, walErr error) {
+	itemOutcomes := make([]DeliveryItemOutcome, len(dc.Items))
 	for i, item := range dc.Items {
-		kinds[i] = item.Kind
+		itemOutcomes[i] = DeliveryItemOutcome{Kind: item.Kind, Error: "delivery.intent WAL append failed: " + walErr.Error()}
+		emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed, item.Kind, "", itemOutcomes[i].Error, traceID))
 	}
-	span.SetAttributes(attribute.StringSlice("staged_kinds", kinds))
+}
 
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
-	// delivery.intent (#1093 §4.9, fail-closed): only when this delivery is
-	// tied to a recordstore artifact revision (reviewer or cfg.Artifact
-	// nodes) - a plain PR-only delivery with no backing artifact has nothing
-	// to key a WAL entry on, and stays exactly as before (no WAL, no
-	// recovery to reconcile). A staged-text fallback render (finding 2) is
-	// never treated as artifact-backed either, even when a target exists -
-	// what got posted is not what the target revision holds.
-	targetID, targetRev, hasTarget := deliveryTarget(ctx, cfg)
-	hasTarget = hasTarget && !renderedFromStaged
-	var idemKey string
-	if hasTarget {
-		idemKey = deliveryIdempotencyKey(targetID, targetRev)
-		dc.IdempotencyKey = idemKey
-		if walErr := appendDeliveryIntent(cctx, cfg, nodeID, idemKey, targetID, targetRev, dc.CloneURL, dc.IssueNumber); walErr != nil {
-			slog.Error("delivery.intent WAL append failed; not delivering", "component", "vetting", "node", nodeID, "err", walErr)
-			itemOutcomes := make([]DeliveryItemOutcome, len(dc.Items))
-			for i, item := range dc.Items {
-				itemOutcomes[i] = DeliveryItemOutcome{Kind: item.Kind, Error: "delivery.intent WAL append failed: " + walErr.Error()}
-				emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed, item.Kind, "", itemOutcomes[i].Error, traceID))
+// postDeliveryRecord writes the delivery_record revision on the context detached from
+// the run's cancellation (#1187: the GitHub side effect already happened).
+func postDeliveryRecord(ctx context.Context, cfg Config, nodeID string, dc DeliveryContext, itemOutcomes []DeliveryItemOutcome, res GateResult, renderedFromStaged bool, targetID string, targetRev int, err error) {
+	if ctx.Err() != nil {
+		slog.Warn("run context cancelled before post-delivery bookkeeping; continuing on a detached context",
+			"component", "vetting", "node", nodeID, "err", ctx.Err(), "cause", context.Cause(ctx))
+	}
+	bctx, bcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer bcancel()
+	if err == nil {
+		var remoteURL string
+		for _, io := range itemOutcomes {
+			if io.URL != "" {
+				remoteURL = io.URL
+				break
 			}
-			recordDeliveryOutcomeMetric(cfg, res, true, false)
-			otelobs.End(span, walErr)
-			return
 		}
+		// This save IS the delivery.intent's completion (#1144 P2 - the delivery_record
+		// artifact is the record, not a delivery.done entry).
+		saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
+			TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
+			GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, HeadSHA: cloneHeadSHA(cfg),
+		})
+	} else {
+		// No successful delivery_record revision: `quack ledger recover` finds this intent
+		// still open and can reconcile the attempt.
+		saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
+			TargetID: targetID, DeliveredRevision: targetRev, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
+			GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, Error: err.Error(), HeadSHA: cloneHeadSHA(cfg),
+		})
 	}
+}
 
-	// Gate-owned push: lands on the remote before any item reaches the extension. A push failure still reaches Deliver (carried on dc.PushError) instead of short-circuiting it - the extension is the
-	// only thing that can tell the human on GitHub a delivery failed (#1155); it's expected to skip the push-dependent items using PushError rather
-	// than attempt them against a branch that was never pushed.
-	if pushErr := ensurePush(cctx, cfg, &dc); pushErr != nil {
-		slog.Error("gate push failed", "component", "vetting", "node", nodeID, "err", pushErr, "branch", dc.Branch)
-		dc.PushError = pushErr.Error()
-	}
-	itemOutcomes, err := cfg.Deliver(cctx, dc)
-	if dc.PushError != "" && err == nil {
-		// A Deliver that doesn't check PushError yet may report success;
-		// the push itself never landed, so that outweighs its own report.
-		err = errors.New(dc.PushError)
-	}
-	span.SetAttributes(attribute.Bool("delivered", err == nil))
-	otelobs.End(span, err)
-
-	if hasTarget {
-		// #1187: the GitHub side effect already happened by this point, so the
-		// bookkeeping below must survive a run-level cancel (shutdown drain, hub.CancelRun) landing between Deliver returning and here - it runs
-		// on a context detached from ctx's cancellation, with its own budget.
-		if ctx.Err() != nil {
-			slog.Warn("run context cancelled before post-delivery bookkeeping; continuing on a detached context",
-				"component", "vetting", "node", nodeID, "err", ctx.Err(), "cause", context.Cause(ctx))
-		}
-		bctx, bcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer bcancel()
-		if err == nil {
-			var remoteURL string
-			for _, io := range itemOutcomes {
-				if io.URL != "" {
-					remoteURL = io.URL
-					break
-				}
-			}
-			// This save IS the delivery.intent's completion (#1144 P2 - the
-			// delivery_record artifact is the record, not a delivery.done entry).
-			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
-				TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
-				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, HeadSHA: cloneHeadSHA(cfg),
-			})
-		} else {
-			// No successful delivery_record revision: `quack ledger recover`
-			// finds this intent still open and can reconcile the attempt.
-			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
-				TargetID: targetID, DeliveredRevision: targetRev, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
-				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, Error: err.Error(), HeadSHA: cloneHeadSHA(cfg),
-			})
-		}
-	}
-
-	// Extension's record is authoritative; fall back to synthetic outcomes only when extension reported nothing.
+// emitDeliveryOutcomes emits one outcome per item (extension outcomes, or synthetic
+// fallbacks when the extension reported nothing) and records the metric.
+func emitDeliveryOutcomes(sink func(stream.SSEEvent), nodeID string, dc DeliveryContext, itemOutcomes []DeliveryItemOutcome, traceID string, cfg Config, res GateResult, err error) {
+	// Extension's record is authoritative; fall back to synthetic outcomes only when
+	// the extension reported nothing.
 	if len(itemOutcomes) == 0 {
 		itemOutcomes = make([]DeliveryItemOutcome, len(dc.Items))
 		for i, item := range dc.Items {
@@ -1284,12 +1337,6 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, outcome, io.Kind, io.URL, io.Error, traceID))
 	}
 	recordDeliveryOutcomeMetric(cfg, res, true, anyDelivered || (err == nil && res.Passed))
-
-	if err != nil {
-		slog.Error("delivery failed", "component", "vetting", "node", nodeID, "err", err, "items", len(dc.Items))
-		return
-	}
-	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
 }
 
 // deliverMergedReview: posts the fan-in's merged review as this node's own single-item delivery. cfg.ReviewFanout is cleared first so the recursive
@@ -1796,88 +1843,113 @@ func writtenRel(nodeDir, cwd, p string) string {
 // activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.
 func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity {
 	s := &activityScanner{
-		act:         workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
-		nodeDir:     nodeDir,
-		writtenSeen: map[string]bool{},
+		act:           workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
+		nodeDir:       nodeDir,
+		writtenSeen:   map[string]bool{},
+		pending:       map[string]string{},
+		pendingWs:     map[string]map[string]any{},
+		pendingWsTool: map[string]string{},
+		pendingCd:     map[string]bool{},
 	}
 	if sess == nil {
 		return s.act
 	}
-	pending := map[string]string{}
-	pendingWs := map[string]map[string]any{}
-	pendingWsTool := map[string]string{}
-	pendingCd := map[string]bool{}
 	for ev := range sess.Events().All() {
-		if ev == nil || ev.Content == nil {
-			continue
-		}
-		for _, p := range ev.Content.Parts {
-			if p == nil {
-				continue
-			}
-			if p.FunctionCall != nil {
-				switch p.FunctionCall.Name {
-				case "web_search":
-					s.recordSearch(p.FunctionCall.Args)
-				case "web_fetch":
-					if u, ok := p.FunctionCall.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
-						pending[p.FunctionCall.ID] = strings.TrimSpace(u)
-					}
-					// Route into workspace ledger (web_fetch signals web-sourced claims).
-					pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args
-					pendingWsTool[p.FunctionCall.ID] = "web_fetch"
-				case "stage_memory":
-					if cand, ok := stagedCandidate(p.FunctionCall); ok {
-						s.act.staged = append(s.act.staged, cand)
-					}
-				case "stage_pr", "stage_review", "stage_comment", "unstage":
-					s.applyDelivery(p.FunctionCall)
-				case "cd":
-					pendingCd[p.FunctionCall.ID] = true
-				default:
-					if isWorkspaceTool(p.FunctionCall.Name) {
-						pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args
-						pendingWsTool[p.FunctionCall.ID] = p.FunctionCall.Name
-					}
-				}
-			}
-			if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_fetch" {
-				if url, known := pending[p.FunctionResponse.ID]; known {
-					delete(pending, p.FunctionResponse.ID)
-					s.recordFetch(url, p.FunctionResponse.Response)
-				}
-			}
-			if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_search" {
-				recordSearchResults(s.act.seen, p.FunctionResponse.Response)
-			}
-			if p.FunctionResponse != nil && p.FunctionResponse.Name == "recall_memory" {
-				s.act.recalled = append(s.act.recalled, recallMemoryHits(p.FunctionResponse.Response)...)
-			}
-			if p.FunctionResponse != nil && p.FunctionResponse.Name == "cd" {
-				if pendingCd[p.FunctionResponse.ID] {
-					delete(pendingCd, p.FunctionResponse.ID)
-					s.recordCd(p.FunctionResponse.Response)
-				}
-			}
-			if p.FunctionResponse != nil && isWorkspaceTool(p.FunctionResponse.Name) {
-				// Only completed call/response pairs enter the ledger.
-				if args, known := pendingWs[p.FunctionResponse.ID]; known && pendingWsTool[p.FunctionResponse.ID] == p.FunctionResponse.Name {
-					delete(pendingWs, p.FunctionResponse.ID)
-					delete(pendingWsTool, p.FunctionResponse.ID)
-					s.recordWorkspace(p.FunctionResponse.Name, args, p.FunctionResponse.Response)
-				}
-			}
-		}
+		s.scanEvent(ev)
 	}
 	return s.act
 }
 
+// scanEvent scans one session event for worker activity; nil content is skipped.
+func (s *activityScanner) scanEvent(ev *session.Event) {
+	if ev == nil || ev.Content == nil {
+		return
+	}
+	for _, p := range ev.Content.Parts {
+		if p == nil {
+			continue
+		}
+		s.scanPart(p)
+	}
+}
+
+// scanPart dispatches one part to the call/response scanners.
+func (s *activityScanner) scanPart(p *genai.Part) {
+	if p.FunctionCall != nil {
+		s.scanCall(p.FunctionCall)
+	}
+	if p.FunctionResponse != nil {
+		s.scanResponse(p.FunctionResponse)
+	}
+}
+
+// scanCall records the tool calls that drive the activity ledger.
+func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
+	switch fc.Name {
+	case "web_search":
+		s.recordSearch(fc.Args)
+	case "web_fetch":
+		if u, ok := fc.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
+			s.pending[fc.ID] = strings.TrimSpace(u)
+		}
+		// Route into workspace ledger (web_fetch signals web-sourced claims).
+		s.pendingWs[fc.ID] = fc.Args
+		s.pendingWsTool[fc.ID] = "web_fetch"
+	case "stage_memory":
+		if cand, ok := stagedCandidate(fc); ok {
+			s.act.staged = append(s.act.staged, cand)
+		}
+	case "stage_pr", "stage_review", "stage_comment", "unstage":
+		s.applyDelivery(fc)
+	case "cd":
+		s.pendingCd[fc.ID] = true
+	default:
+		if isWorkspaceTool(fc.Name) {
+			s.pendingWs[fc.ID] = fc.Args
+			s.pendingWsTool[fc.ID] = fc.Name
+		}
+	}
+}
+
+// scanResponse pairs tool responses with their pending calls; only completed
+// call/response pairs enter the ledger.
+func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
+	switch {
+	case fr.Name == "web_fetch":
+		if url, known := s.pending[fr.ID]; known {
+			delete(s.pending, fr.ID)
+			s.recordFetch(url, fr.Response)
+		}
+	case fr.Name == "web_search":
+		recordSearchResults(s.act.seen, fr.Response)
+	case fr.Name == "recall_memory":
+		s.act.recalled = append(s.act.recalled, recallMemoryHits(fr.Response)...)
+	case fr.Name == "cd":
+		if s.pendingCd[fr.ID] {
+			delete(s.pendingCd, fr.ID)
+			s.recordCd(fr.Response)
+		}
+	}
+	if isWorkspaceTool(fr.Name) {
+		// Only completed call/response pairs enter the ledger.
+		if args, known := s.pendingWs[fr.ID]; known && s.pendingWsTool[fr.ID] == fr.Name {
+			delete(s.pendingWs, fr.ID)
+			delete(s.pendingWsTool, fr.ID)
+			s.recordWorkspace(fr.Name, args, fr.Response)
+		}
+	}
+}
+
 // activityScanner: accumulates one worker's activity. Recorders reached from both session-event and replay paths.
 type activityScanner struct {
-	act         workerActivity
-	nodeDir     string
-	curCwd      string          // node-relative cwd ("" = node root)
-	writtenSeen map[string]bool // dedup for written
+	act           workerActivity
+	nodeDir       string
+	curCwd        string          // node-relative cwd ("" = node root)
+	writtenSeen   map[string]bool // dedup for written
+	pending       map[string]string
+	pendingWs     map[string]map[string]any
+	pendingWsTool map[string]string
+	pendingCd     map[string]bool
 }
 
 // recordPRNumber: captures pull_number for delivery target. First call wins.

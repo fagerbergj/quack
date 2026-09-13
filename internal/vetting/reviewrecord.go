@@ -1071,48 +1071,77 @@ func BuildReviewPreload(ctx context.Context, cfg Config, nodeID string) string {
 	if c == nil {
 		return ""
 	}
-	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
-	if err != nil {
-		return ""
-	}
-	raw, _, lineage, _, ok, err := c.LatestWithMeta(ctx, id)
-	if err != nil {
-		slog.Warn("review preload failed", "component", "vetting", "node", nodeID, "err", err)
-		return ""
-	}
+	rec, fromSHA, head, ok := latestReviewRecord(ctx, c, cfg, nodeID)
 	if !ok {
 		return ""
-	}
-	var rec CodeReviewRecord
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		slog.Warn("review preload: malformed record", "component", "vetting", "node", nodeID, "err", err)
-		return ""
-	}
-
-	head := cloneHeadSHA(cfg)
-	if head == "" || lineage.HeadSHA == "" || cfg.Workspace == nil {
-		return "" // no clone to validate against - drop rather than trust stale state
 	}
 	dir, derr := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
 	if derr != nil {
 		return ""
 	}
 	caps := checksCaps(cfg)
-	if !commitReachable(dir, caps, lineage.HeadSHA) {
+	if !commitReachable(dir, caps, fromSHA) {
 		return "" // force-push rewrote history: whole record is unreachable
 	}
-	// One spawn instead of one per finding/dismissed/clean entry: a file not
-	// in this diff's name list is unchanged between the two SHAs, same rule
-	// per-file sandboxed `git diff --quiet` calls.
-	changedSince := map[string]bool{}
-	for _, f := range gitLines(dir, caps, "diff", "--name-only", lineage.HeadSHA, head) {
-		changedSince[f] = true
+	// One spawn instead of one per finding/dismissed/clean entry: a file not in this
+	// diff's name list is unchanged between the two SHAs.
+	changedSinceMap := changedSince(dir, caps, fromSHA, head)
+	valid := func(file string) bool { return !changedSinceMap[file] }
+	findings, dismissed, clean := validReviewEntries(ctx, c, rec, valid)
+	if len(findings) == 0 && len(dismissed) == 0 && len(clean) == 0 {
+		return ""
 	}
-	valid := func(file string) bool { return !changedSince[file] }
+	body, err := json.MarshalIndent(reviewPreload{
+		Verdict: rec.Verdict, Takeaway: rec.Takeaway, Verified: rec.Verified, Notes: rec.Notes, Summary: rec.Summary,
+		Findings: findings, Dismissed: dismissed, Clean: clean,
+	}, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return untrustedPriorBlock("review", string(body))
+}
 
-	// Memoized: rec.FindingIDs can repeat the same finding id, and each id is
-	// otherwise one record-store read. nil = fetched but unusable (missing or
-	// unparseable), cached so a repeat of the same bad id doesn't re-fetch.
+// latestReviewRecord loads the code_review record and validates the clone it can be
+// checked against; ok=false (rather than a preload) when any of that is missing.
+func latestReviewRecord(ctx context.Context, c *recordstore.Client, cfg Config, nodeID string) (CodeReviewRecord, string, string, bool) {
+	var rec CodeReviewRecord
+	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	if err != nil {
+		return rec, "", "", false
+	}
+	raw, _, lineage, _, ok, err := c.LatestWithMeta(ctx, id)
+	if err != nil {
+		slog.Warn("review preload failed", "component", "vetting", "node", nodeID, "err", err)
+		return rec, "", "", false
+	}
+	if !ok {
+		return rec, "", "", false
+	}
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		slog.Warn("review preload: malformed record", "component", "vetting", "node", nodeID, "err", err)
+		return rec, "", "", false
+	}
+	head := cloneHeadSHA(cfg)
+	if head == "" || lineage.HeadSHA == "" || cfg.Workspace == nil {
+		return rec, "", "", false // no clone to validate against - drop rather than trust stale state
+	}
+	return rec, lineage.HeadSHA, head, true
+}
+
+// changedSince maps every file touched between fromSHA and toSHA (one spawn).
+func changedSince(dir string, caps workspace.Caps, fromSHA, toSHA string) map[string]bool {
+	changed := map[string]bool{}
+	for _, f := range gitLines(dir, caps, "diff", "--name-only", fromSHA, toSHA) {
+		changed[f] = true
+	}
+	return changed
+}
+
+// validReviewEntries filters the record's findings/dismissed/clean lists to files that
+// are still valid against the current head.
+func validReviewEntries(ctx context.Context, c *recordstore.Client, rec CodeReviewRecord, valid func(file string) bool) ([]FindingRecord, []DismissedEntry, []string) {
+	// Memoized: rec.FindingIDs can repeat the same finding id, and each id is otherwise one
+	// record-store read. nil = fetched but unusable, cached so a bad id doesn't re-fetch.
 	fetched := make(map[string]*FindingRecord, len(rec.FindingIDs))
 	var findings []FindingRecord
 	for _, fid := range rec.FindingIDs {
@@ -1142,18 +1171,7 @@ func BuildReviewPreload(ctx context.Context, cfg Config, nodeID string) string {
 			clean = append(clean, f)
 		}
 	}
-	if len(findings) == 0 && len(dismissed) == 0 && len(clean) == 0 {
-		return ""
-	}
-
-	body, err := json.MarshalIndent(reviewPreload{
-		Verdict: rec.Verdict, Takeaway: rec.Takeaway, Verified: rec.Verified, Notes: rec.Notes, Summary: rec.Summary,
-		Findings: findings, Dismissed: dismissed, Clean: clean,
-	}, "", "  ")
-	if err != nil {
-		return ""
-	}
-	return untrustedPriorBlock("review", string(body))
+	return findings, dismissed, clean
 }
 
 // BuildBodyPreload loads the latest document record with no git ancestry
