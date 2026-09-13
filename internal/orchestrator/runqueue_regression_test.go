@@ -37,7 +37,7 @@ func TestSafeYieldIsolatesPanicAndSurvives(t *testing.T) {
 		defer func() { got = recover() }()
 		sy(stream.SSEEvent{}, nil)
 	}()
-	if got != boom {
+	if got != boom { //nolint:errorlint // got is a recovered panic value (interface{}): errors.Is needs a typed error, identity is the point of the test
 		t.Fatalf("panicking caller must observe the original panic, got %v", got)
 	}
 	// A second caller (the racing goroutine in the real bug) must be stopped

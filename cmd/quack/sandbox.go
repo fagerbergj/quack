@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -138,7 +139,7 @@ func runSandboxInteractive(cmd *cobra.Command, f sandboxFlags) error {
 	if err != nil {
 		return fmt.Errorf("quack sandbox: start pty: %w", err)
 	}
-	defer ptmx.Close()
+	defer func() { _ = ptmx.Close() }()
 
 	resize := func() {
 		if ws, err := pty.GetsizeFull(os.Stdin); err == nil {
@@ -165,7 +166,8 @@ func runSandboxInteractive(cmd *cobra.Command, f sandboxFlags) error {
 	_, _ = io.Copy(os.Stdout, ptmx)
 
 	err = c.Wait()
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		// os.Exit skips defers - restore the terminal and tear down the seat
 		// before it, or a non-zero shell exit leaves the caller's tty raw.
 		_ = term.Restore(stdinFd, oldState)
@@ -235,7 +237,8 @@ func runSandboxRun(cmd *cobra.Command, f sandboxFlags, script string) error {
 	c.Stderr = cmd.ErrOrStderr()
 
 	err = c.Run()
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		teardown() // os.Exit below skips defer; run it before exiting
 		exitIfNonZero(exitErr.ExitCode())
 		return nil
@@ -258,7 +261,8 @@ func (r cmdSandboxRunner) Run(ctx context.Context, script string) (string, int, 
 	c.Env = env
 	out, err := c.CombinedOutput()
 	code := 0
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		code = exitErr.ExitCode()
 	} else if err != nil {
 		return string(out), -1, err

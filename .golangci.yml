@@ -51,5 +51,14 @@ linters:
         linters:
           - errcheck
           - bodyclose
+      # CLI print to stdout/stderr (tabwriter buffered; the final Flush is
+      # checked where it matters): a failed write is EPIPE, not a bug.
+      # File-scoped, not destination-scoped: errcheck's message can't encode
+      # the target, so a Fprint into a file INSIDE these trees is excluded
+      # too - keep file output in these packages on os.WriteFile/checked writes.
+      - path: '^(cmd/quack/|internal/cli/|internal/eval/)'
+        linters:
+          - errcheck
+        text: 'Error return value of .?fmt\.(F)?print(f|ln)?.? is not checked'
 formatters:
   default: none

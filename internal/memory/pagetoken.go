@@ -38,11 +38,11 @@ func EncodePageToken(bucket, sort string, offset int) string {
 func DecodePageToken(s, bucket, sort string) (int, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
+		return 0, fmt.Errorf("%w: %w", ErrInvalidPageToken, err)
 	}
 	var t pageToken
 	if err := json.Unmarshal(raw, &t); err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
+		return 0, fmt.Errorf("%w: %w", ErrInvalidPageToken, err)
 	}
 	if t.Sort != sort {
 		return 0, fmt.Errorf("%w: issued for sort %q, not %q", ErrInvalidPageToken, t.Sort, sort)

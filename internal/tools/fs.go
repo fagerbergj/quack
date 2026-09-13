@@ -147,7 +147,7 @@ func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
 	if err != nil {
 		return readFileResult{}, fmt.Errorf("read_file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sniff := make([]byte, binarySniffBytes)
 	n, _ := io.ReadFull(f, sniff)

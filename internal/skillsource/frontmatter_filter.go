@@ -45,7 +45,7 @@ func (f filterFrontmatterFS) Open(name string) (fs.File, error) {
 	if err != nil || path.Base(name) != "SKILL.md" {
 		return file, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	orig, err := io.ReadAll(file)
 	if err != nil {

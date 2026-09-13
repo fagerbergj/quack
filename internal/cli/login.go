@@ -77,18 +77,18 @@ func Login(ctx context.Context, out io.Writer, name, issuer, clientID string, sc
 
 	relyingParty, err := rp.NewRelyingPartyOIDC(ctx, issuer, clientID, "", redirectURI, scopes)
 	if err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return fmt.Errorf("oidc discovery for issuer %q: %w", issuer, err)
 	}
 
 	state, err := randomURLSafe(32)
 	if err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return fmt.Errorf("generate state: %w", err)
 	}
 	verifier, err := randomURLSafe(32)
 	if err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return fmt.Errorf("generate PKCE verifier: %w", err)
 	}
 	challenge := oidc.NewSHACodeChallenge(verifier)
@@ -164,7 +164,7 @@ func awaitCallback(ctx context.Context, listener net.Listener, state string, ann
 			http.Error(w, "Login failed (no code) - you can close this tab and check the CLI.", http.StatusBadRequest)
 		default:
 			send(result{code: q.Get("code")})
-			fmt.Fprint(w, "<p><strong>Logged in.</strong> You can close this tab and return to the CLI.</p>")
+			_, _ = fmt.Fprint(w, "<p><strong>Logged in.</strong> You can close this tab and return to the CLI.</p>")
 		}
 	})
 	server := &http.Server{Handler: mux}

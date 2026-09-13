@@ -120,15 +120,15 @@ func resolveBundle(ctx context.Context, sourceServer, target string) (path strin
 		return "", noop, err
 	}
 	if _, err := f.Write(body); err != nil {
-		f.Close()
-		os.Remove(f.Name())
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return "", noop, err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name())
 		return "", noop, err
 	}
-	return f.Name(), func() { os.Remove(f.Name()) }, nil
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
 }
 
 // replayifyProviders mutates cfg IN PLACE into a replay config: every named

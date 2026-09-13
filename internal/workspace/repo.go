@@ -96,7 +96,7 @@ func RepoIdentity(dir string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	inOrigin := false
 	sc := bufio.NewScanner(f)

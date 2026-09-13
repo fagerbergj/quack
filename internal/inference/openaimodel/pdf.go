@@ -39,7 +39,7 @@ func pdfToImageParts(data []byte) ([]openai.ChatCompletionContentPartUnionParam,
 	if err != nil {
 		return nil, fmt.Errorf("openaimodel: creating temp dir for PDF conversion: %w", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	pdfPath := filepath.Join(dir, "in.pdf")
 	if err := os.WriteFile(pdfPath, data, 0o600); err != nil {

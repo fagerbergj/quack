@@ -139,7 +139,7 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 		reviseSpans++
 		attrs := map[string]string{}
 		for _, kv := range s.Attributes {
-			attrs[string(kv.Key)] = kv.Value.Emit()
+			attrs[string(kv.Key)] = kv.Value.String()
 		}
 		if attrs["run_id"] != "worker-r1" {
 			t.Errorf("gate.revise span run_id = %q, want worker-r1", attrs["run_id"])
@@ -1263,7 +1263,7 @@ func TestWrapperSpans_ReportNoModel(t *testing.T) {
 	for _, s := range exp.GetSpans() {
 		attrs := map[string]string{}
 		for _, kv := range s.Attributes {
-			attrs[string(kv.Key)] = kv.Value.Emit()
+			attrs[string(kv.Key)] = kv.Value.String()
 		}
 		byName[s.Name] = attrs
 	}

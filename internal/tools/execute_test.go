@@ -23,6 +23,14 @@ type execToolCtx struct {
 
 func newExecToolCtx() *execToolCtx { return &execToolCtx{planToolCtx: planToolCtx{newFakeCtx()}} }
 
+// newFakeSetErrCtx: a ctx whose session State fails every Set - the execute
+// tool must surface that as a tool error instead of silently dropping the plan.
+func newFakeSetErrCtx() *fakeCtx {
+	c := newFakeCtx()
+	c.state.setErr = errors.New("state backend down")
+	return c
+}
+
 func (c *execToolCtx) Actions() *session.EventActions { return &c.actions }
 
 // seedPlanRecord writes nodes then rec into a fresh in-memory recordstore.Client,
@@ -184,5 +192,39 @@ func TestTerminalOutput(t *testing.T) {
 	// Empty outputs - returns empty string (callers check for this).
 	if got := TerminalOutput(single, map[string]string{}); got != "" {
 		t.Errorf("empty outputs: got %q, want empty", got)
+	}
+}
+
+// TestExecuteTool_PlanPersistFailureSurfaces: the exec plan is the cross-restart
+// resume record (the orchestrator reads ExecPlanKey back) - a failed persist
+// must fail the tool call, not run on with the resume state silently missing.
+func TestExecuteTool_PlanPersistFailureSurfaces(t *testing.T) {
+	rec := dag.DagPlanRecord{
+		PlanID:      "p1",
+		Assignments: []dag.Assignment{{NodeID: "r-1", Task: "find the file"}},
+	}
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "r-1", Agent: "web-researcher"}})
+	cache := NewPlanCache()
+	step := &fakeRunStep{outputs: map[string]string{"r-1": "FOUND: file.go"}}
+
+	tl, err := NewExecuteTool(planner, c, cache, nil, step.run, nil, nil, "find the file", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatalf("NewExecuteTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	ctx := &execToolCtx{planToolCtx: planToolCtx{newFakeSetErrCtx()}}
+	out, err := rt.Run(ctx, map[string]any{"plan_id": "p1"})
+	if err == nil {
+		t.Fatalf("execute Run = %v, want a persist error", out)
+	}
+	if !strings.Contains(err.Error(), "persist plan for resume") {
+		t.Errorf("err = %q, want it to name the plan persist", err)
+	}
+	if step.calls != 0 {
+		t.Errorf("runStep called %d times after a persist failure, want 0", step.calls)
+	}
+	if _, ok := cache.Get("p1"); ok {
+		t.Error("plan cached after a persist failure, want nothing persisted for a resume")
 	}
 }

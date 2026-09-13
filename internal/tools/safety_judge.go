@@ -99,7 +99,7 @@ func NewSafetyJudge(judgeModel model.LLM) SafetyJudge {
 		if chatID := ledger.CoordsFromContext(ctx).ChatID; chatID != "" {
 			sessionID = chatID
 		}
-		for _, rerr := range r.Run(ctx, "safety-judge", sessionID, content, adkagent.RunConfig{}) { //nolint:staticcheck // ev unused; loop is only for side effects + error
+		for _, rerr := range r.Run(ctx, "safety-judge", sessionID, content, adkagent.RunConfig{}) {
 			if rerr != nil {
 				return false, "", rerr
 			}

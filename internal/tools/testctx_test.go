@@ -14,7 +14,10 @@ import (
 )
 
 // fakeState is an in-memory session.State for exercising the cwd round-trip.
-type fakeState struct{ m map[string]any }
+type fakeState struct {
+	m      map[string]any
+	setErr error // when set, Set fails - for the execute persist-plan error path
+}
 
 func (s *fakeState) Get(k string) (any, error) {
 	if v, ok := s.m[k]; ok {
@@ -22,7 +25,13 @@ func (s *fakeState) Get(k string) (any, error) {
 	}
 	return nil, session.ErrStateKeyNotExist
 }
-func (s *fakeState) Set(k string, v any) error { s.m[k] = v; return nil }
+func (s *fakeState) Set(k string, v any) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
+	s.m[k] = v
+	return nil
+}
 func (s *fakeState) All() iter.Seq2[string, any] {
 	return func(yield func(string, any) bool) {
 		for k, v := range s.m {

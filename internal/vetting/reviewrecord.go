@@ -831,7 +831,7 @@ func codeReviewTakeawayFallback(findings []FindingRecord, verdict string) string
 // common case (a compliant tool call that filled Takeaway in) is a plain read. recover() mirrors latestCodeReviewRevSafe's own guard: LatestWithMeta's error return doesn't cover a service that panics outright (e.g. a
 // nil-embedded artifact.Service in tests), and this must never be the reason a round fails to save.
 func backfillCodeReviewTakeaway(ctx context.Context, c *recordstore.Client, cfg Config, nodeID, turnID string, round int, st *episodicRoundState) {
-	defer func() { recover() }()
+	defer func() { _ = recover() }()
 	id, idErr := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	if idErr != nil {
 		return
@@ -842,7 +842,7 @@ func backfillCodeReviewTakeaway(ctx context.Context, c *recordstore.Client, cfg 
 	}
 	st.reviewRev = rev
 	var rec CodeReviewRecord
-	if json.Unmarshal(raw, &rec) != nil || strings.TrimSpace(rec.Takeaway) != "" {
+	if err := json.Unmarshal(raw, &rec); err != nil || strings.TrimSpace(rec.Takeaway) != "" {
 		return
 	}
 	var findings []FindingRecord

@@ -72,7 +72,7 @@ func TestStageSpan_SingleRaiseProducesBothProjections(t *testing.T) {
 	}
 	attrs := map[string]string{}
 	for _, kv := range s.Attributes {
-		attrs[string(kv.Key)] = kv.Value.Emit()
+		attrs[string(kv.Key)] = kv.Value.String()
 	}
 	if attrs["node_id"] != "node-1" || attrs["run_id"] != "judge-r1" || attrs["gen_ai.agent.name"] != "code-reviewer" || attrs["round"] != "1" {
 		t.Errorf("span attrs = %+v, missing/wrong identity", attrs)

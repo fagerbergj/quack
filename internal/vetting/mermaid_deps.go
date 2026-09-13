@@ -33,7 +33,7 @@ func EnsureMermaidValidatorDeps() error {
 	cmd := exec.Command("npm", "ci")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("npm ci in %s failed: %v\n%s", dir, err, out)
+		return fmt.Errorf("npm ci in %s failed: %w\n%s", dir, err, out)
 	}
 	return nil
 }
@@ -63,14 +63,14 @@ func acquireLock(path string, timeout time.Duration) (release func(), err error)
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 		if err == nil {
-			f.Close()
-			return func() { os.Remove(path) }, nil
+			_ = f.Close()
+			return func() { _ = os.Remove(path) }, nil
 		}
 		if !os.IsExist(err) {
 			return nil, fmt.Errorf("create lock %s: %w", path, err)
 		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > lockStaleAfter {
-			os.Remove(path) // holder crashed mid-install; reclaim rather than wedge forever
+			_ = os.Remove(path) // holder crashed mid-install; reclaim rather than wedge forever
 			continue
 		}
 		if time.Now().After(deadline) {

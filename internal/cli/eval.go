@@ -81,9 +81,9 @@ func fetchEvalScores(ctx context.Context, c *Client, chatID string) ([]replay.Ev
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	if _, err := f.Write(body); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	if err := f.Close(); err != nil {

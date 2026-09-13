@@ -220,6 +220,12 @@ func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, ta
 		}
 	}
 
+	return fetchFallback(target, text, rendered, derr, rerr, renderer != nil)
+}
+
+// fetchFallback decides what a failed thin fetch reports: an anti-bot wall,
+// the thin direct text, a render-unavailable placeholder, or the errors.
+func fetchFallback(target, text, rendered string, derr, rerr error, hadRenderer bool) (string, error) {
 	// Bot wall: report it rather than returning CAPTCHA as page content.
 	if looksLikeBotWall(text) || looksLikeBotWall(rendered) || errors.Is(derr, errCloudflareChallenge) {
 		return "", fmt.Errorf("web_fetch: %s is behind an anti-bot wall (CAPTCHA / JS challenge); its content can't be read - try a different source", target)
@@ -231,7 +237,7 @@ func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, ta
 	}
 
 	// Graceful degradation: render failure on a reachable target logs and returns a "render unavailable" placeholder.
-	if renderer != nil && rerr != nil && derr == nil {
+	if hadRenderer && rerr != nil && derr == nil {
 		slog.Warn("web_fetch: render backend failed; degrading to render-unavailable result",
 			"component", "tools", "url", target, "error", rerr)
 		return fmt.Sprintf("[web_fetch: render backend could not retrieve %s (%v). "+
@@ -242,7 +248,7 @@ func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, ta
 
 	switch {
 	case derr != nil && rerr != nil:
-		return "", fmt.Errorf("web_fetch: %s unreadable: direct GET failed (%v); render failed (%v)", target, derr, rerr)
+		return "", fmt.Errorf("web_fetch: %s unreadable: direct GET failed (%w); render failed (%w)", target, derr, rerr)
 	case derr != nil:
 		return "", fmt.Errorf("web_fetch: %s: %w", target, derr)
 	default:
@@ -311,7 +317,7 @@ func fetchReadable(ctx context.Context, client *http.Client, target string) (str
 	if err != nil {
 		return "", fmt.Errorf("web_fetch: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// Cloudflare bot challenge header on 403.
 	if resp.StatusCode == http.StatusForbidden && strings.EqualFold(resp.Header.Get("Cf-Mitigated"), "challenge") {
 		return "", errCloudflareChallenge

@@ -392,7 +392,7 @@ func (c *Client) putStatus(ctx context.Context, path string, body any) error {
 	if err != nil {
 		return c.reachErr(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return wrapNotFound(errBody(resp.Body))
 	}
@@ -523,7 +523,7 @@ func (c *Client) Request(ctx context.Context, method, path string, body io.Reade
 	if err != nil {
 		return 0, nil, c.reachErr(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	return resp.StatusCode, b, err
 }
@@ -665,7 +665,7 @@ func (c *Client) subscribeSSEOnce(ctx context.Context, chatID, lastID string, on
 	if err != nil {
 		return c.reachErr(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("subscribe: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
 	}
@@ -687,7 +687,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string, onEven
 	if err != nil {
 		return c.reachErr(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("send message: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
 	}
@@ -717,14 +717,14 @@ func (c *Client) SendMessageWithFiles(ctx context.Context, chatID, content strin
 		h.Set("Content-Type", ct)
 		fw, err := mw.CreatePart(h)
 		if err != nil {
-			f.Close()
+			_ = f.Close()
 			return err
 		}
 		if _, err := io.Copy(fw, f); err != nil {
-			f.Close()
+			_ = f.Close()
 			return fmt.Errorf("attach %s: %w", p, err)
 		}
-		f.Close()
+		_ = f.Close()
 	}
 	if err := mw.Close(); err != nil {
 		return err
@@ -739,7 +739,7 @@ func (c *Client) SendMessageWithFiles(ctx context.Context, chatID, content strin
 	if err != nil {
 		return c.reachErr(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("send message: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
 	}
@@ -759,7 +759,7 @@ func (c *Client) postJSON(ctx context.Context, path string, v, out any) error {
 	if err != nil {
 		return c.reachErr(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("POST %s: %s", path, errStatus(resp.StatusCode, readAll(resp.Body)))
 	}

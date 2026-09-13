@@ -118,8 +118,7 @@ func cosineClusters(pts []scored, threshold float32, maxSize int) [][]scored {
 		parent[i] = i
 		size[i] = 1
 	}
-	var find func(int) int
-	find = func(x int) int {
+	find := func(x int) int {
 		for parent[x] != x {
 			parent[x] = parent[parent[x]]
 			x = parent[x]

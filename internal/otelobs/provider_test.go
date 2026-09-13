@@ -108,7 +108,7 @@ func TestNewResource_OmitsEmptyVersion(t *testing.T) {
 	}
 	for _, kv := range res.Attributes() {
 		if kv.Key == "service.version" || string(kv.Key) == langfuseRelease {
-			t.Errorf("resource carries %s = %q, want it omitted", kv.Key, kv.Value.Emit())
+			t.Errorf("resource carries %s = %q, want it omitted", kv.Key, kv.Value.String())
 		}
 	}
 }
@@ -121,7 +121,7 @@ func resourceAttrs(t *testing.T, exp *tracetest.InMemoryExporter) map[string]str
 	}
 	attrs := map[string]string{}
 	for _, kv := range spans[0].Resource.Attributes() {
-		attrs[string(kv.Key)] = kv.Value.Emit()
+		attrs[string(kv.Key)] = kv.Value.String()
 	}
 	return attrs
 }
@@ -149,7 +149,7 @@ func spanAttrs(t *testing.T, exp *tracetest.InMemoryExporter, name string) map[s
 		}
 		attrs := map[string]string{}
 		for _, kv := range s.Attributes {
-			attrs[string(kv.Key)] = kv.Value.Emit()
+			attrs[string(kv.Key)] = kv.Value.String()
 		}
 		return attrs
 	}

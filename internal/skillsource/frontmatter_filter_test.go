@@ -17,7 +17,7 @@ import (
 var testdataFS embed.FS
 
 // embedSkillFS is rooted at testdata/, with embedskill/ as its one skill dir -
-// go:embed keeps the "testdata" prefix, unlike os.DirFS(dir).
+// the embed keeps the "testdata" prefix, unlike os.DirFS(dir).
 var embedSkillFS = mustSub(testdataFS, "testdata")
 
 func mustSub(f embed.FS, dir string) fs.FS {
