@@ -380,43 +380,27 @@ func build(ctx context.Context, configPath string, port int, reconcile bool, hoo
 }
 
 // buildFromConfig is build for an already-loaded Config. reconcile gates startup orphan reconciliation.
-func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	var cleanups []func()
-	runCleanups := func() {
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			cleanups[i]()
-		}
+// boot carries the shared startup state between buildFromConfig's stages.
+type boot struct {
+	cfg      *config.Config
+	hooks    *shutdownHooks
+	cleanups []func()
+}
+
+func (b *boot) runCleanups() {
+	for i := len(b.cleanups) - 1; i >= 0; i-- {
+		b.cleanups[i]()
 	}
-	defer func() {
-		if err != nil {
-			runCleanups()
-			handler = nil
-		}
-	}()
+}
 
-	// A node's pinned ACP process (#1006) is closed on node-finish (vetting
-	// cannot import acp, hence the hook) and again here on shutdown, so it
-	// never outlives its node or the server.
-	vetting.NodeSessionClosed = acp.ClosePinnedSession
-	cleanups = append(cleanups, acp.CloseAllPinnedSessions)
-
-	addr = cfg.Server.Addr
-	if port != 0 {
-		addr = fmt.Sprintf(":%d", port)
-	}
-
-	authMW, err := auth.New(cfg.Auth)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("auth init failed: %w", err)
-	}
-
-	ledgerStore := LedgerStoreFromConfig(cfg)
+// initializes otel, wiring its shutdown (with a bounded context) into the boot cleanups
+func (b *boot) initObservability(ctx context.Context, ledgerStore ledger.LedgerStore) (*otelobs.Providers, error) {
 	inference.Version = Version // llm.call ledger provenance (#1096)
-	otelProviders, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore, Version)
+	otelProviders, otelShutdown, err := otelobs.Init(ctx, b.cfg.Observability, ledgerStore, Version)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
+		return nil, fmt.Errorf("otel init failed: %w", err)
 	}
-	cleanups = append(cleanups, func() {
+	b.cleanups = append(b.cleanups, func() {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := otelShutdown(sctx); err != nil {
@@ -424,97 +408,68 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	})
 	slog.SetDefault(slog.New(otelobs.WrapHandler(slog.Default().Handler())))
-	otelobs.SetCaptureContent(cfg.Observability.Otel.Content)
-	if cfg.Observability.Otel.IsEnabled() && len(cfg.Observability.Otel.Exporters) > 0 && !cfg.Observability.Otel.Content {
+	otelobs.SetCaptureContent(b.cfg.Observability.Otel.Content)
+	if b.cfg.Observability.Otel.IsEnabled() && len(b.cfg.Observability.Otel.Exporters) > 0 && !b.cfg.Observability.Otel.Content {
 		slog.Info("span content capture is off (observability.otel.capture_content) - generation spans export with no prompt/response text", "component", "otelobs")
 	}
+	return otelProviders, nil
+}
 
-	// #1144 P5: the ledger retention sweep is deleted - chat hard-delete is
-	// the only GC (V4 "never delete except chat hard-delete"); checkpoints
-	// bound fold cost instead of trimming the log.
-
-	jail, err := workspace.NewJail(cfg.Workspace.Root)
+// creates the workspace jail; managed servers also bring up their store containers
+func (b *boot) initWorkspace(ctx context.Context) (*workspace.Jail, error) {
+	jail, err := workspace.NewJail(b.cfg.Workspace.Root)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("workspace init failed: %w", err)
+		return nil, fmt.Errorf("workspace init failed: %w", err)
 	}
-
-	if cfg.Server.Managed() {
+	if b.cfg.Server.Managed() {
 		if err = upStores(ctx); err != nil {
-			return nil, nil, "", err
+			return nil, err
 		}
-		cleanups = append(cleanups, func() {
+		b.cleanups = append(b.cleanups, func() {
 			slog.Info("managed stores left running; tear down with `docker compose -p quack-stores down`", "component", "serve")
 		})
 	}
+	return jail, nil
+}
 
-	sessionStore, ok := cfg.Store(cfg.Session.Store)
+// opens the session store and artifact service, reconciling resumable nodes
+func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.Jail) (*store.Store, []store.ResumableNode, *store.TurnAwareService, error) {
+	sessionStore, ok := b.cfg.Store(b.cfg.Session.Store)
 	if !ok {
-		return nil, nil, "", fmt.Errorf("session store %q not found in stores registry", cfg.Session.Store)
+		return nil, nil, nil, fmt.Errorf("session store %q not found in stores registry", b.cfg.Session.Store)
 	}
 	st, err := store.New(sessionStore.Kind, sessionStore.URL)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("store open failed: %w", err)
+		return nil, nil, nil, fmt.Errorf("store open failed: %w", err)
 	}
-	var resumeNodes []store.ResumableNode
-	if reconcile {
-		id, err := store.LoadOrCreateInstanceID(cfg.Workspace.Root)
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("instance id init failed: %w", err)
-		}
-		st.SetInstanceID(id)
-		// Boot's half of #962: runs before anything can register a run with the Hub, so resume gets the
-		// DB to a settled state first - the memory consolidator's boot sweep starts after.
-		resumeNodes = reconcileNodes(context.Background(), st, jail, func(chatID, pauseReason string) (bool, string) {
-			// #1176: an archived chat's paused nodes must not be resumed -
-			// they were still holding run slots the archive should free.
-			c, _ := st.GetChat(context.Background(), chatID)
-			p, _ := st.GetLatestDagPlan(context.Background(), chatID)
-			var planCreatedAt time.Time
-			if p != nil {
-				planCreatedAt = p.CreatedAt
-			}
-			if ok, why := resumeGuardArchivedOrStale(c != nil && c.Archived, p != nil, dag.PauseReason(pauseReason), planCreatedAt); !ok {
-				return false, why
-			}
-			// A resumable node was provisioned a chat scope dir; if the
-			// workspace is gone the run cannot pick up where it left off.
-			if _, rerr := jail.Resolve(st.SessionUserForChat(context.Background(), chatID), chatID, "."); rerr != nil {
-				return false, "workspace dir is gone"
-			}
-			return true, ""
-		})
-	}
-
-	artifactSvc, err := BuildArtifactService(cfg)
+	resumeNodes, err := bootReconcile(reconcile, b.cfg, st, jail)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("artifact service init failed: %w", err)
+		return nil, nil, nil, err
+	}
+	artifactSvc, err := BuildArtifactService(b.cfg)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("artifact service init failed: %w", err)
 	}
 	artifacts := store.NewTurnAwareService(artifactSvc)
 	st.SetArtifactService(artifacts)
-	warnIfEpisodicRecordsWontSurvive(cfg)
+	warnIfEpisodicRecordsWontSurvive(b.cfg)
+	return st, resumeNodes, artifacts, nil
+}
 
-	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
-	llm, err := inference.NewModelWithEffort(prov, cfg.Orchestrator.Model, artifacts, cfg.ModelCost(cfg.Orchestrator.Model), cfg.ModelEffort(cfg.Orchestrator.Model))
+// builds the orchestrator model
+func (b *boot) initOrchestratorModel(artifacts artifact.Service) (model.LLM, error) {
+	prov, _ := b.cfg.Provider(b.cfg.Orchestrator.Provider)
+	llm, err := inference.NewModelWithEffort(prov, b.cfg.Orchestrator.Model, artifacts, b.cfg.ModelCost(b.cfg.Orchestrator.Model), b.cfg.ModelEffort(b.cfg.Orchestrator.Model))
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
+		return nil, fmt.Errorf("inference model init failed: %w", err)
 	}
 	// Never runs inside a DAG node, so no vetting.Config.Agent stamps it.
 	setDefaultAgent(llm, orchestrator.AgentName)
+	return llm, nil
+}
 
-	// runHub is needed by the SDK extensions built below (Dispatch fans a
-	// run's events through it) as well as REST.
-	runHub := stream.NewHub()
-	if hooks != nil {
-		hooks.hub = runHub
-		hooks.grace = time.Duration(cfg.Server.ShutdownGraceSeconds) * time.Second
-	}
-
-	// orchRef/judgeModelRef resolve further down: an SDK extension's Dispatch/Classify may fire long
-	// after construction, but its Tools() are needed now to fold into extTools before buildAgents
-	// (which is what actually builds the judge model judgeModelRef will hold).
-	var orchRef atomic.Pointer[orchestrator.Orchestrator]
-	var judgeModelRef atomic.Pointer[model.LLM]
-
+// resolves the plugin trees and builds the skill sources and toolsets
+func (b *boot) initSkills(jail *workspace.Jail) ([]plugin.Plugin, []string, skill.Source, skill.Source, *skilltoolset.SkillToolset, func(names []string) (*skilltoolset.SkillToolset, error), error) {
 	// Bring the plugin trees to their pinned refs before anything reads them,
 	// and log what we actually got - skills change how every agent plans, so
 	// the revision belongs in the startup record.
@@ -522,152 +477,66 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if len(pluginRevs) > 0 {
 		slog.Info("skill plugins resolved", "component", "startup", "revisions", plugin.Summary(pluginRevs))
 	}
-
 	// One resolution of the plugin roots drives all three component types.
 	// The module and config checks run before anything is constructed, so a
 	// manifest promising code this binary doesn't carry fails here, named.
-	plugins, err := plugin.Resolve(cfg.PluginRoots())
+	plugins, err := plugin.Resolve(b.cfg.PluginRoots())
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	if err := checkPluginModules(plugins); err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, err
 	}
-	if err := checkPluginConfig(plugins, cfg.Extensions.Modules); err != nil {
-		return nil, nil, "", err
+	if err := checkPluginConfig(plugins, b.cfg.Extensions.Modules); err != nil {
+		return nil, nil, nil, nil, nil, nil, err
 	}
-
 	pluginSkillDirs := plugin.SkillDirs(plugins)
 	builtinSkillSrc := newSkillSource(pluginSkillDirs)
-	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision))
+	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("skills toolset init failed: %w", err)
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("skills toolset init failed: %w", err)
 	}
 	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
+	return plugins, pluginSkillDirs, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, nil
+}
 
-	openMemory := func(rm config.ResolvedMemory, domain string) (*memory.Store, error) {
-		eprov, ok := cfg.Provider(rm.Embedder.Provider)
-		if !ok {
-			return nil, fmt.Errorf("embedder provider %q not found", rm.Embedder.Provider)
-		}
-		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model, artifacts, cfg.ModelCost(rm.Embedder.Model))
-		if err != nil {
-			return nil, fmt.Errorf("embedder: %w", err)
-		}
-		// recall runs in the node's own ctx (real per-round coords); commit fires from a background
-		// goroutine or a tool call whose ctx never carries them - "embed" is the fallback, distinct
-		// from the consolidator's "memory" name below.
-		setDefaultAgent(embedder, "embed")
-		cprov, ok := cfg.Provider(rm.Consolidation.Provider)
-		if !ok {
-			return nil, fmt.Errorf("consolidation provider %q not found", rm.Consolidation.Provider)
-		}
-		consolidator, err := inference.NewModelWithEffort(cprov, rm.Consolidation.Model, artifacts, cfg.ModelCost(rm.Consolidation.Model), cfg.ModelEffort(rm.Consolidation.Model))
-		if err != nil {
-			return nil, fmt.Errorf("consolidation model: %w", err)
-		}
-		// Commit runs from a background goroutine (user memory hook) or a tool call
-		// whose ctx lost its node coords - never a DAG node's own model call.
-		setDefaultAgent(consolidator, "memory")
-		s, err := memory.New(context.Background(), rm.Kind, rm.URL, embedder, consolidator, rm.Collection, domain, rm.TopK, rm.MinScore)
-		if err != nil {
-			return nil, err
-		}
-		// internal/memory can't import internal/store; st (already open above) is
-		// the memory_ops audit sink, wired in here.
-		s.SetOpsLog(storeOpsLog{st})
-		return s, nil
+// opens the task/user memory stores and the shared boot event log
+func (b *boot) initMemory(ctx context.Context, st *store.Store, artifacts artifact.Service) (*memory.Store, *memory.Store, []func(), *runlog.EventLog, error) {
+	taskStore, userStore, startSweeps, err := openMemoryStores(ctx, b.cfg, st, artifacts)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
-	// Consolidation sweeps sweep on their first tick, immediately. Deferred
-	// into this slice and started after the resumed nodes are dispatched, so
-	// a boot resume never contends with #961's sweep for the same chat.
-	var startSweeps []func()
-	var taskStore, userStore *memory.Store
-	if rm, ok := cfg.MemoryStore("stage_memory"); ok {
-		s, err := openMemory(rm, "task")
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("task memory init failed: %w", err)
-		}
-		if err := wireForgettingRules(s, rm); err != nil {
-			return nil, nil, "", fmt.Errorf("task memory forgetting rules: %w", err)
-		}
-		taskStore = s
-		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
-			"embedder", rm.Embedder.Model, "consolidation", rm.Consolidation.Model)
-		startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm) })
-	}
-	if slices.Contains(cfg.Orchestrator.Tools, "commit_memory") {
-		if rm, ok := cfg.MemoryStore("commit_memory"); ok {
-			s, err := openMemory(rm, "user")
-			if err != nil {
-				return nil, nil, "", fmt.Errorf("user memory init failed: %w", err)
-			}
-			if err := wireForgettingRules(s, rm); err != nil {
-				return nil, nil, "", fmt.Errorf("user memory forgetting rules: %w", err)
-			}
-			userStore = s
-			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
-			startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm) })
-		}
-	}
-
-	// One EventLog shared by boot resume and every SDK-extension dispatch: per-run logs leaked the run's
-	// drain goroutine forever (EventLog has no Close). REST keeps its own instance - a slow
-	// boot-resume backlog must never delay a live REST run's own event drain.
+	// One EventLog shared by boot resume and SDK dispatch (per-run logs leak drain
+	// goroutines; EventLog has no Close). REST keeps its own so a boot backlog never delays a live run.
 	bootEventLog := runlog.NewEventLog(st)
+	return taskStore, userStore, startSweeps, bootEventLog, nil
+}
 
+// builds the SDK extensions, plugin MCP tools, and the ledger recovery path
+func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, plugins []plugin.Plugin) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, error) {
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
-	sdkExts, err := buildSDKExtensions(cfg, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore)
+	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	extTools := sdkExtensionTools(sdkExts)
 	// Plugin-declared MCP servers are the portable half of the same tool
 	// surface: out of process, jailed, and folded in by name like any other.
-	if mcpCaps, err := pluginSpawnCaps(cfg, jail); err != nil {
+	if mcpCaps, err := pluginSpawnCaps(b.cfg, jail); err != nil {
 		slog.Warn("plugin MCP servers skipped; sandbox caps unavailable", "component", "startup", "err", err)
 	} else {
-		extTools = append(extTools, pluginMCPTools(ctx, plugins, cfg.Workspace.Root, mcpCaps)...)
+		extTools = append(extTools, pluginMCPTools(ctx, plugins, b.cfg.Workspace.Root, mcpCaps)...)
 	}
-
 	// The SDK inverse interfaces' first real consumer: whichever configured module implements them
-	// (github, today) supplies quack's push credential and delivery target - detected the same way
-	// Starter is, not hardcoded to one extension's name.
-	gitCredSrc, gitCredSrcName := findGitCredentialSource(sdkExts)
-	deliverer, delivererName := findDeliverer(sdkExts)
-	var gitTokenSource tools.GitTokenSource
-	if gitCredSrc != nil {
-		gitTokenSource = sdkGitCredentialAdapter{src: gitCredSrc}
-		slog.Info("extension supplies git credentials", "component", "startup", "extension", gitCredSrcName)
-	}
-	var deliver vetting.DeliverFunc
-	if deliverer != nil {
-		deliver = sdkDeliverAdapter{deliverer: deliverer}.Deliver
-		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
-	}
-	freshnessChecker, freshnessCheckerName := findAssignmentFreshnessChecker(sdkExts)
-	var assignmentFreshness tools.AssignmentFreshnessFunc
-	if freshnessChecker != nil {
-		assignmentFreshness = func(ctx adkagent.Context, planID, agentName, contextID string, a dag.Assignment) (bool, string) {
-			return freshnessChecker.BeforeAssignment(ctx, toSDKAssignment(planID, agentName, contextID, a))
-		}
-		slog.Info("extension supplies assignment freshness checks", "component", "startup", "extension", freshnessCheckerName)
-	}
-	metaExtension, metaExtensionName := findAssignmentMetaExtension(sdkExts)
-	var assignmentMeta tools.AssignmentMetaFunc
-	if metaExtension != nil {
-		assignmentMeta = func(ctx adkagent.Context, planID, agentName string, a dag.Assignment) (string, map[string]any) {
-			return metaExtensionName, metaExtension.OnAssignment(ctx, toSDKAssignment(planID, agentName, "", a))
-		}
-		slog.Info("extension supplies assignment meta", "component", "startup", "extension", metaExtensionName)
-	}
+	// (github, today) supplies quack's push credential and delivery target, not hardcoded to one extension.
+	gitTokenSource, deliver, assignmentFreshness, assignmentMeta := discoverSDKToolSources(sdkExts)
 	if ledgerStore != nil {
 		// #1144 P5: chat/turn/plan writes go through AppendIntent too now.
 		st.SetWALLedger(ledgerStore)
@@ -689,25 +558,12 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			slog.Warn("ledger recovery failed; unresolved intents stay unresolved", "component", "startup", "err", err)
 		}
 	}
+	return sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, nil
+}
 
-	var advisorAgent adkagent.Agent
-	if cfg.Gates.JudgeEnabled() {
-		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
-			if am, merr := inference.NewModelWithEffort(aprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model)); merr != nil {
-				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
-			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
-				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
-			} else if built, aerr := agent.BuildChat(ab, am, nil, nil, "", nil, ""); aerr != nil {
-				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
-			} else {
-				// ask_advisor runs the advisor as its own nested runner.Run - never a DAG node's own model call.
-				setDefaultAgent(am, "advisor")
-				advisorAgent = built
-				slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
-			}
-		}
-	}
-
+// builds the configured agents (and their gate config, executor lookups, and classify model)
+func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM]) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
+	advisorAgent := buildAdvisorAgent(b.cfg, artifacts)
 	var executorRef atomic.Pointer[dag.Executor]
 	nodeCancelled := func(chatID, nodeID string) bool {
 		ex := executorRef.Load()
@@ -737,18 +593,17 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			ex.ClearNodeRoundAbort(chatID, nodeID)
 		}
 	}
-
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("agent build failed: %w", err)
 	}
 	if judgeModel != nil {
 		// An SDK extension's Classify is not a node, but judgeModel is the
 		// instance gated nodes stamp - hand it an unstamped one instead (#1049).
 		classifyModel := judgeModel
-		if jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
-			if m, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model)); err == nil {
+		if jprov, ok := b.cfg.Provider(b.cfg.Gates.Judge.Provider); ok {
+			if m, err := inference.NewModelWithEffort(jprov, b.cfg.Gates.Judge.Model, artifacts, b.cfg.ModelCost(b.cfg.Gates.Judge.Model), b.cfg.ModelEffort(b.cfg.Gates.Judge.Model)); err == nil {
 				classifyModel = m
 			} else {
 				slog.Warn("classify: own judge model unavailable; sharing the gate's (attribution may follow another node)",
@@ -757,205 +612,134 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 		judgeModelRef.Store(&classifyModel)
 	}
-	cleanups = append(cleanups, func() {
+	b.cleanups = append(b.cleanups, func() {
 		nodeServers.closeAll()
 	})
+	return clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, &executorRef, setupFn, nil
+}
 
-	agentInfos := make([]dag.AgentInfo, 0, len(clientMap))
-	mediaAgents := make(map[string]bool)
-	for name, c := range clientMap {
-		ac := cfg.Agents[name]
-		// Re-reads a bundle buildAgents already loaded, rather than widen its
-		// already-long return signature for this one optional field.
-		var defaultArtifact string
-		if bundle, err := agent.LoadBundle(ac.Bundle); err != nil {
-			slog.Warn("agent bundle: re-read for default artifact failed", "component", "startup", "agent", name, "err", err)
-		} else {
-			defaultArtifact = bundle.Card.Artifact
-		}
-		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description(), ContextWindow: ac.ContextWindow, DefaultArtifact: defaultArtifact})
-		for _, inp := range ac.Inputs {
-			if inp == "image" || inp == "audio" {
-				mediaAgents[name] = true
-				break
-			}
-		}
-	}
-	sort.Slice(agentInfos, func(i, j int) bool { return agentInfos[i].Name < agentInfos[j].Name })
-	var rosterSB strings.Builder
-	for _, a := range agentInfos {
-		fmt.Fprintf(&rosterSB, "- `%s` - %s\n", a.Name, a.Description)
-	}
-
-	orchBundle, err := agent.LoadBundle("agents/orchestrator")
+// assembles the orchestrator, re-enters resumed nodes, and starts the extensions and sweeps
+func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, clientMap map[string]adkagent.Agent, modelMap map[string]model.LLM, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, gateCfgs map[string]vetting.Config, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resumeNodes []store.ResumableNode, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc) (*orchestrator.Orchestrator, error) {
+	agentInfos, mediaAgents, roster := buildAgentInfos(b.cfg, clientMap)
+	orch, err := assembleOrchestrator(b.cfg, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, roster, agentInfos, mediaAgents, setupFn)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("orchestrator bundle load failed: %w", err)
+		return nil, err
 	}
-	fmFm, err := skillSrc.LoadFrontmatter(context.Background(), "format-markdown")
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("format-markdown skill load failed: %w", err)
-	}
-	planWorkFm, err := skillSrc.LoadFrontmatter(context.Background(), "plan-work")
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("plan-work skill load failed: %w", err)
-	}
-	orchBehaviour := orchBundle.Prompt
-	if userStore != nil {
-		mem, err := agent.LoadBundleMemory("agents/orchestrator")
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("orchestrator memory.md load failed: %w", err)
-		}
-		if mem != "" {
-			orchBehaviour += "\n\n" + mem
-		}
-	}
-	orchSysPrompt := promptbuilder.Orchestrator(rosterSB.String(), []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
-
-	orchSkillTS, err := newScopedSkillTS(cfg.Orchestrator.Skills)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("orchestrator skills toolset init failed: %w", err)
-	}
-
-	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands, planJudge)
-	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
-	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
-	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
-	admission := buildAdmission(cfg)
-	executor.SetAdmission(admission, admissionSpecFor(cfg))
-	executor.SetSetup(setupFn)
-	executor.SetArtifacts(artifacts)
-	if ledgerStore != nil {
-		executor.SetWALLedger(ledgerStore)
-	}
-	executor.SetNodeStateStore(st) // write-through node state machine (#962)
-	executorRef.Store(executor)
-	// Orchestrator turns take a session from the same pool its worker nodes draw on, held only while
-	// generating - holding across the DAG span would deadlock its own nodes. Wraps AFTER
-	// setDefaultAgent: that asserts on the concrete traced model, which the wrapper does not promote.
-	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
-	// Hard backstop under ADK's own compaction - see BudgetedLLM's doc for why.
-	orchLLM = dag.NewBudgetedLLM(orchLLM, cfg.Orchestrator.ContextWindow)
-	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
-	// Unconditional, like executor.SetArtifacts above: dag_plan persistence
-	// (#1095/#1118) must not depend on load_artifacts being in orchestrator.tools -
-	// a prod config without it silently dropped every plan record (#1122).
-	orch.SetArtifacts(artifacts)
-	orch.SetNodeSessionReaper(st.ReapNodeSessions)
-	orch.SetAssignmentFreshnessCheck(assignmentFreshness)
-	orch.SetAssignmentMetaHook(assignmentMeta)
-	// Same source of truth as buildAgents' per-node compactionFor
-	// (cfg.Session.Compaction) - built once here for the orchestrator's own
-	// long-lived chat session, which buildAgents never sees (#A3).
-	if orchCompCfg := cfg.Session.Compaction; orchCompCfg.Enabled {
-		if cfg.Orchestrator.ContextWindow <= 0 {
-			slog.Warn("context compaction enabled but orchestrator.context_window is unset; not compacting the chat session", "component", "startup")
-		} else {
-			orchComp, cerr := agent.NativeCompactionConfig(agent.Compaction{
-				Summarizer:         llm,
-				ContextWindow:      cfg.Orchestrator.ContextWindow,
-				Enabled:            true,
-				TokenThreshold:     orchCompCfg.TokenThreshold,
-				EventRetentionSize: orchCompCfg.EventRetentionSize,
-				CompactionInterval: orchCompCfg.CompactionInterval,
-				OverlapSize:        orchCompCfg.OverlapSize,
-			})
-			if cerr != nil {
-				return nil, nil, "", fmt.Errorf("compaction: orchestrator: %w", cerr)
-			}
-			orch.SetCompaction(orchComp)
-		}
-	}
-	if ledgerStore != nil {
-		orch.SetLedger(ledgerStore)
-	}
-	orchRef.Store(orch)
-	if hooks != nil {
-		hooks.pauser = executor
-	}
-	// After the orchestrator exists: re-enter each resumed node's graph. The
-	// store-side reconcile already ran at boot, so a crash here leaves the
-	// nodes paused and the next boot picks them up again.
+	// Re-enter each resumed node's graph only after the orchestrator exists:
+	// a crash here leaves them paused; the next boot picks them up (reconcile already ran).
 	startResumedNodes(ctx, resumeNodes, orch, st, runHub, bootEventLog, bootResumeConcurrency)
 	for _, start := range startSweeps {
 		start()
 	}
 	if err := startSDKExtensions(ctx, sdkExts); err != nil {
-		return nil, nil, "", fmt.Errorf("sdk extensions start failed: %w", err)
+		return nil, fmt.Errorf("sdk extensions start failed: %w", err)
 	}
-
-	if userStore != nil && cfg.Orchestrator.UserMemoryHook.Enabled {
-		if memAgent, err := buildUserMemoryHookAgent(cfg.Orchestrator.UserMemoryHook, cfg, artifacts); err != nil {
+	if userStore != nil && b.cfg.Orchestrator.UserMemoryHook.Enabled {
+		if memAgent, err := buildUserMemoryHookAgent(b.cfg.Orchestrator.UserMemoryHook, b.cfg, artifacts); err != nil {
 			slog.Warn("user memory hook build failed; hook disabled", "component", "startup", "err", err)
 		} else {
 			orch.SetUserMemoryHook(memAgent)
-			slog.Info("user memory hook enabled", "component", "startup", "model", cfg.Orchestrator.UserMemoryHook.Model)
+			slog.Info("user memory hook enabled", "component", "startup", "model", b.cfg.Orchestrator.UserMemoryHook.Model)
 		}
 	}
+	return orch, nil
+}
 
-	spa, err := fs.Sub(webDist, "web/dist")
+// mounts the HTTP handler and starts the workspace GC
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth) (http.Handler, error) {
+	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("embed SPA fs failed: %w", err)
+		return nil, err
 	}
+	if err := startWorkspaceGC(ctx, b.cfg, jail, runHub); err != nil {
+		return nil, err
+	}
+	return handler, nil
+}
 
-	var adkDebugHandler http.Handler
-	if cfg.Observability.ADKDebug {
-		if mount, derr := adkdebug.New(st.Sessions, clientMap, artifacts); derr != nil {
-			slog.Warn("adk debug mount failed; disabled", "component", "startup", "err", derr)
-		} else {
-			if otelProviders.TracerProvider != nil {
-				otelProviders.TracerProvider.RegisterSpanProcessor(mount.SpanProcessor())
-			} else {
-				slog.Warn("adk debug mount enabled but otel is disabled; /debug/trace will stay empty", "component", "startup")
-			}
-			adkDebugHandler = mount.Handler
-			slog.Warn("ADK debug surface mounted - runs agents WITHOUT quack's trust gate; dev/trusted use only",
-				"component", "startup", "path", adkdebug.MountPath)
+func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
+	b := &boot{cfg: cfg, hooks: hooks}
+	defer func() {
+		if err != nil {
+			b.runCleanups()
+			handler = nil
 		}
+	}()
+
+	// Pinned ACP processes (#1006) close on node-finish and again on shutdown (vetting can
+	// not import acp, hence the hook), so they never outlive their node or the server.
+	vetting.NodeSessionClosed = acp.ClosePinnedSession
+	b.cleanups = append(b.cleanups, acp.CloseAllPinnedSessions)
+
+	addr = cfg.Server.Addr
+	if port != 0 {
+		addr = fmt.Sprintf(":%d", port)
 	}
 
-	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
-	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
-
-	handler = server.New(server.Options{
-		REST:          restHandler,
-		MCP:           mcpserver.Handler(orch),
-		SPA:           spa,
-		SDKExtensions: sdkExtensionMounts(sdkExts),
-		Auth:          authMW,
-		ADKDebug:      adkDebugHandler,
-	})
-
-	gcHomeDir, err := jail.HomeDir(localUserID)
+	authMW, err := auth.New(cfg.Auth)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("workspace gc home dir init failed: %w", err)
+		return nil, nil, "", fmt.Errorf("auth init failed: %w", err)
 	}
-	gcCaps := workspace.Caps{
-		Timeout:   time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
-		ExtraPath: cfg.Workspace.ExecPath,
-		Env:       cfg.Workspace.Env,
-		HomeDir:   gcHomeDir,
-	}
-	gcCfg := workspace.GCConfig{
-		Enabled:      cfg.Workspace.GC.IsEnabled(),
-		ChatTTL:      time.Duration(cfg.Workspace.GC.ChatTTLHours) * time.Hour,
-		ScratchTTL:   time.Duration(cfg.Workspace.GC.ScratchTTLHours) * time.Hour,
-		HomeMaxBytes: int64(cfg.Workspace.GC.HomeMaxMB) * 1024 * 1024,
-		Interval:     time.Duration(cfg.Workspace.GC.IntervalHours) * time.Hour,
-	}
-	// GC sees on-disk dir names; match them against active chat ids raw or via ChatDirName.
-	gcActive := func(chatDir string) bool {
-		for _, id := range runHub.ActiveChatIDs() {
-			if id == chatDir || workspace.ChatDirName(id) == chatDir {
-				return true
-			}
-		}
-		return false
-	}
-	go workspace.RunGC(ctx, jail, gcCfg, gcActive, func(pctx context.Context, dir string) error {
-		return tools.PruneWorktree(pctx, dir, gcCaps)
-	})
 
-	return handler, runCleanups, addr, nil
+	ledgerStore := LedgerStoreFromConfig(cfg)
+	otelProviders, err := b.initObservability(ctx, ledgerStore)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	// #1144 P5: the ledger retention sweep is deleted - chat hard-delete is the only GC;
+	// checkpoints bound fold cost instead of trimming the log.
+	jail, err := b.initWorkspace(ctx)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	st, resumeNodes, artifacts, err := b.initStorage(ctx, reconcile, jail)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	llm, err := b.initOrchestratorModel(artifacts)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	// runHub is needed by the SDK extensions built below (Dispatch fans a
+	// run's events through it) as well as REST.
+	runHub := stream.NewHub()
+	if hooks != nil {
+		hooks.hub = runHub
+		hooks.grace = time.Duration(cfg.Server.ShutdownGraceSeconds) * time.Second
+	}
+
+	// orchRef/judgeModelRef resolve further down: SDK Dispatch/Classify may fire long after
+	// construction, but their Tools() are needed now to fold into extTools before buildAgents.
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	var judgeModelRef atomic.Pointer[model.LLM]
+
+	plugins, pluginSkillDirs, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, err := b.initSkills(jail)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	taskStore, userStore, startSweeps, bootEventLog, err := b.initMemory(ctx, st, artifacts)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, plugins)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, artifacts, ledgerStore, &judgeModelRef)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return handler, b.runCleanups, addr, nil
 }
 
 // setupLoggingTo installs the process-wide slog handler from QUACK_LOG_LEVEL / QUACK_LOG_FORMAT.
@@ -1017,25 +801,7 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
-	nodeScope := func(ctx context.Context) memory.Scope {
-		uc, ok := ctx.(interface{ UserContent() *genai.Content })
-		if !ok {
-			return memory.Scope{}
-		}
-		token, ok := vetting.ParseAdvisorThread(contentText(uc.UserContent()))
-		if !ok {
-			return memory.Scope{}
-		}
-		at, ok := vetting.LookupAdvisorThread(token)
-		if !ok {
-			return memory.Scope{}
-		}
-		sc := memory.Scope{User: at.UserID}
-		if jail != nil {
-			sc.Repo = jail.RepoKey(localUserID, at.ChatID)
-		}
-		return sc
-	}
+	nodeScope := newNodeScope(jail)
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
 		names = append(names, name)
@@ -1070,74 +836,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	}
 	workspaceCaps.HomeDir = homeDir
 
-	var judgeFactory vetting.JudgeFactory
-	var planJudge vetting.PlanJudge
-	var gateCfg vetting.Config
-	var judgeModel model.LLM
-	var safetyJudge tools.SafetyJudge
-	if cfg.Gates.Enabled() {
-		var err error
-		if gateCfg, err = vetting.FromConfig(cfg.Gates); err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, err
-		}
-		gateCfg.Memory = taskStore
-		gateCfg.Workspace = jail
-		gateCfg.WorkspaceUserID = localUserID
-		gateCfg.WorkspaceCaps = workspaceCaps
-		gateCfg.CheckTimeout = time.Duration(cfg.Workspace.CheckTimeoutSeconds) * time.Second
-		gateCfg.Deliver = deliver
-		if gitTokenSource != nil {
-			gateCfg.GitCredentials = gitCredentialAdapter{gitTokenSource}
-		}
-		gateCfg.CheckCommands = cfg.Workspace.CheckCommands
-		gateCfg.CheckSetup = cfg.Workspace.CheckSetup
-		if cfg.Gates.JudgeEnabled() {
-			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
-			if !ok {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
-			}
-			judge, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
-			if err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
-			}
-			judgeModel = judge
-			gateCfg.JudgeModel = judge
-			var judgeReadTools []tool.Tool
-			if jail != nil {
-				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{
-					Workspace:       jail,
-					WorkspaceUserID: localUserID,
-					WorkspaceCaps:   workspaceCaps,
-				})
-				if err != nil {
-					return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
-				}
-			}
-			var judgeSkillsets []tool.Toolset
-			if skillTS != nil {
-				judgeSkillsets = []tool.Toolset{skillTS}
-			}
-			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
-			// Own instances: gated nodes stamp per-round coords on `judge`
-			// (vetting/node.go), and these callers are not nodes - sharing it
-			// makes their calls inherit whichever node stamped last (#1049).
-			unstamped := func() (model.LLM, error) {
-				return inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
-			}
-			safetyModel, err := unstamped()
-			if err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: safety judge model: %w", err)
-			}
-			planModel, err := unstamped()
-			if err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: plan judge model: %w", err)
-			}
-			safetyJudge = tools.NewSafetyJudge(safetyModel)
-			planJudge = vetting.NewPlanJudge(planModel, cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel, taskStore, ledgerStore)
-		}
-		slog.Info("trust gate enabled", "component", "startup",
-			"deterministic_rounds", gateCfg.DeterministicRounds,
-			"judge", cfg.Gates.Judge.Model, "judge_rounds", gateCfg.JudgeRounds, "threshold", gateCfg.Threshold)
+	gateCfg, judgeFactory, planJudge, judgeModel, safetyJudge, err := buildGateJudge(cfg, jail, workspaceCaps, taskStore, ledgerStore, skillTS, artifacts, deliver, gitTokenSource)
+	if err != nil {
+		return nil, nil, nodeServers, nil, nil, nil, nil, err
 	}
 
 	gitCredentials := make([]tools.GitCredential, len(cfg.Workspace.GitCredentials))
@@ -1145,56 +846,19 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		gitCredentials[i] = tools.GitCredential{Host: gc.Host, Username: gc.Username, Token: gc.Token}
 	}
 	if setupOut != nil {
-		*setupOut = func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
-			_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource, cfg.Workspace.CheckSetup)
-			return err
-		}
+		*setupOut = setupCloneFunc(cfg, jail, workspaceCaps, gitCredentials, gitTokenSource)
 	}
 
-	var fallbackSummarizer model.LLM
-	compCfg := cfg.Session.Compaction
-	if compCfg.Enabled && compCfg.Model != "" {
-		cprov, ok := cfg.Provider(compCfg.Provider)
-		if !ok {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
-		}
-		var err error
-		if fallbackSummarizer, err = inference.NewModelWithEffort(cprov, compCfg.Model, artifacts, cfg.ModelCost(compCfg.Model), cfg.ModelEffort(compCfg.Model)); err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
-		}
-		// Only ever used when ResolveSummarizer has no active worker model - rare, but
-		// that call site is outside any node's own coords stamp when it happens.
-		setDefaultAgent(fallbackSummarizer, "compaction")
-		slog.Info("context compaction enabled", "component", "startup", "fallback_summariser", compCfg.Model)
-	} else if compCfg.Enabled {
-		slog.Info("context compaction enabled", "component", "startup", "summariser", "active worker model (no fallback configured)")
+	compactionFor, err := buildCompaction(cfg, artifacts)
+	if err != nil {
+		return nil, nil, nodeServers, nil, nil, nil, nil, err
 	}
-	compactionFor := func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction {
-		if !compCfg.Enabled {
-			return agent.Compaction{}
-		}
-		if ac.ContextWindow == 0 {
-			slog.Warn("context compaction: agent has no context_window configured; not compacting it", "component", "startup", "model", ac.Model)
-			return agent.Compaction{}
-		}
-		return agent.Compaction{
-			Summarizer:         agent.ResolveSummarizer(workerModel, fallbackSummarizer),
-			ContextWindow:      ac.ContextWindow,
-			Enabled:            true,
-			TokenThreshold:     compCfg.TokenThreshold,
-			EventRetentionSize: compCfg.EventRetentionSize,
-			CompactionInterval: compCfg.CompactionInterval,
-			OverlapSize:        compCfg.OverlapSize,
-		}
-	}
-
 	clientMap := make(map[string]adkagent.Agent, len(cfg.Agents))
 	modelMap := make(map[string]model.LLM, len(cfg.Agents))
 	gateCfgs := make(map[string]vetting.Config, len(cfg.Agents))
 
-	// Plugin MCP tool names come from third-party mcp.json authors, so a
-	// collision with an SDK extension's tool is plausible and silent -
-	// indexExtTools prefixes colliding names and makes bare use an error.
+	// Plugin MCP tool names come from third-party authors, so a collision with an
+	// SDK extension tool is plausible; indexExtTools prefixes colliding names.
 	extToolsByName := indexExtTools(extTools)
 
 	for _, name := range names {
@@ -1211,256 +875,831 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 
 		if ac.Acp != nil {
-			bundle, err := agent.LoadBundle(ac.Bundle)
+			ag, gc, err := buildACPNode(name, ac, prov, cfg, workspaceCaps, jail, taskStore, builtinSkillSrc, pluginSkillDirs, gateCfg, safetyJudge, acpPricing, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort)
 			if err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "bundle: %v", err)
-			}
-			var memGuidance string
-			if taskStore != nil {
-				if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
-					return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "memory.md: %v", err)
-				}
-			}
-			var grading string
-			if cfg.Gates.Enabled() && ac.IsGated() {
-				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil, memGuidance)
-				if err != nil {
-					return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
-				}
-				agentGateCfg.BundleHash = bundle.Hash
-				gateCfgs[name] = agentGateCfg
-				grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
-			}
-			skillFms, err := acpSkillFrontmatters(context.Background(), builtinSkillSrc, ac.Skills)
-			if err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
-			}
-			behaviour := bundle.Prompt
-			if g := strings.TrimSpace(memGuidance); g != "" {
-				behaviour += "\n\n" + g
-			}
-			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
-			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, true, behaviour, grading, wsBlock)
-			env := piACPEnv(prov, ac, acpSkillPaths(pluginSkillDirs))
-			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
-			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
-			if safetyJudge != nil {
-				sj := safetyJudge
-				agentName := name
-				permJudge = func(ctx context.Context, toolName, title string, input map[string]any) (bool, string) {
-					otelobs.RecordPermissionAsk(agentName)
-					allow, reason, err := sj(ctx,
-						fmt.Sprintf("the external %s agent asks permission for: %s", agentName, title),
-						"", toolName, input, "")
-					if err != nil {
-						slog.Warn("acp permission judge unavailable; allowing", "component", "acp", "agent", agentName, "err", err)
-						return true, "judge unavailable"
-					}
-					return allow, reason
-				}
-			}
-			var acpReplay *replay.Session
-			if prov.Kind == "replay" {
-				acpReplay, err = replay.Load(prov.Bundle)
-				if err != nil {
-					return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "acp replay: %v", err)
-				}
-				if prov.ForkMode == "fork" {
-					acpReplay.EnableFork(prov.ForkFrom)
-				}
-			}
-			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
-				Command:              ac.Acp.Command,
-				Env:                  env,
-				Replay:               acpReplay,
-				Caps:                 workspaceCaps,
-				ExtraRO:              acpSkillPaths(pluginSkillDirs),
-				Home:                 workspaceCaps.HomeDir,
-				Preamble:             preamble,
-				Jail:                 jail,
-				UserID:               localUserID,
-				PermissionJudge:      permJudge,
-				ModelName:            ac.Model,
-				Pricing:              acpPricing,
-				RegisterLiveSteer:    registerLiveSteer,
-				UnregisterLiveSteer:  unregisterLiveSteer,
-				RegisterRoundAbort:   registerRoundAbort,
-				UnregisterRoundAbort: unregisterRoundAbort,
-				Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
-					parentDir, err := jail.Resolve(userID, chatID, workspace.NodeDir(parentNodeID))
-					if err != nil {
-						return "", fmt.Errorf("acp worktree: resolve parent clone: %w", err)
-					}
-					return tools.SetupWorktree(ctx, jail, userID, chatID, parentDir, workspace.NodeDir(nodeID),
-						workspace.WorktreeBranch(nodeID), workspaceCaps, cfg.Workspace.CheckSetup)
-				},
-			})
-			if err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "acp: %v", err)
+				return nil, nil, nodeServers, nil, nil, nil, nil, err
 			}
 			clientMap[name] = ag
 			modelMap[name] = m
+			if gc != nil {
+				gateCfgs[name] = *gc
+			}
 			slog.Info("agent running via ACP subprocess", "component", "startup",
 				"agent", name, "command", strings.Join(ac.Acp.Command, " "), "model", ac.Model)
 			continue
 		}
 
-		toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
-
-		bundle, err := agent.LoadBundle(ac.Bundle)
+		na, err := buildNativeNode(name, ac, prov, taskStore, advisorAgent, newScopedSkillTS, builtinSkillSrc, cfg, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers)
 		if err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "bundle: %v", err)
+			return nil, nil, nodeServers, nil, nil, nil, nil, err
 		}
-		var memGuidance string
-		if taskStore != nil {
-			if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "memory.md: %v", err)
-			}
-		}
-		var memSvc adkmemory.Service
-		if taskStore != nil && memGuidance != "" {
-			memSvc = taskStore.View(memory.Scope{Role: ac.Memory.Bucket, Legacy: name}, nodeScope)
-		}
-		agentSkillTS, err := newScopedSkillTS(ac.Skills)
-		if err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "skills toolset: %v", err)
-		}
-		skillFms, err := skillsource.Scoped(builtinSkillSrc, ac.Skills).ListFrontmatters(context.Background())
-		if err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
-		}
-
-		if cfg.Gates.Enabled() && !ac.IsGated() {
-			slog.Info("trust gate skipped for agent (gated: false)", "component", "startup", "agent", name)
-		}
-		var grading string
-		if cfg.Gates.Enabled() && ac.IsGated() {
-			agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil, memGuidance)
-			if err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
-			}
-			agentGateCfg.BundleHash = bundle.Hash
-			gateCfgs[name] = agentGateCfg
-			grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
-		}
-
-		var nativeReplay *replay.Session
-		if prov.Kind == "replay" {
-			if nativeReplay, err = replay.Load(prov.Bundle); err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "replay: tools: %v", err)
-			}
-			if prov.ForkMode == "fork" {
-				nativeReplay.EnableFork(prov.ForkFrom)
-			}
-		}
-
-		buildWorker := func(drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
-			wm, err := inference.NewModelWithEffort(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model), cfg.ModelEffort(ac.Model))
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("model: %w", err)
-			}
-			var builtins []tool.Tool
-			if len(toolNames) > 0 {
-				if builtins, err = tools.Build(toolNames, tools.Deps{
-					WebSearch:          tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
-					Fetch:              tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
-					Summarizer:         wm,
-					Cache:              urlCache,
-					Advisor:            advisorAgent,
-					Sessions:           sessions,
-					Workspace:          jail,
-					WorkspaceUserID:    localUserID,
-					WorkspaceCaps:      workspaceCaps,
-					GitCredentials:     gitCredentials,
-					GitTokenSource:     gitTokenSource,
-					Guards:             cfg.Workspace.Guards,
-					SafetyJudge:        safetyJudge,
-					NodeCancelled:      nodeCancelled,
-					RepeatGuardTripped: repeatGuardTripped,
-					ExtTools:           extToolsByName,
-					Replayer:           nativeReplay,
-					Memory:             taskStore,
-					MemoryRole:         ac.Memory.Bucket,
-					Ledger:             ledgerStore,
-				}); err != nil {
-					return nil, nil, nil, fmt.Errorf("tools: %w", err)
-				}
-			}
-			if memSvc != nil {
-				builtins = append(builtins, memory.NewPreload())
-				if wantLoadMemory {
-					builtins = append(builtins, loadmemorytool.New())
-				}
-			}
-			// extraTools: this node's artifact tools (list/read/edit/write_<kind>),
-			// built per-dispatch by dag.buildGateNodes once chatID/artifacts are
-			// known - buildWorker(nil) at startup gets none (#1123).
-			builtins = append(builtins, extraTools...)
-			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, memGuidance, skillFms, grading, drain)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("build: %w", err)
-			}
-			return wag, wm, builtins, nil
-		}
-
-		protoAgent, _, _, err := buildWorker(nil)
-		if err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "%v", err)
-		}
-		clientMap[name] = nativeAgent{
-			Agent: protoAgent,
-			build: func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
-				var extraTools []tool.Tool
-				var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
-				if artifacts != nil {
-					rc := recordstore.New(artifacts, appName, userID, chatID)
-					// Same PGStore-only restriction as executor.SetWALLedger (#1153):
-					// a worker's write_<kind> must record parent_revision like a
-					// gate's own writes, but only over a transactional ledger.
-					if pg, ok := ledgerStore.(*ledger.PGStore); ok {
-						rc = rc.WithLedger(pg)
-					}
-					coords := &tools.RoundCoords{}
-					var terr error
-					if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.SubjectHint(chatID)); terr != nil {
-						return nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
-					}
-					setRoundCoords = func(round int, turnID, headSHA, triggerAnnotation string) {
-						*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
-					}
-				}
-				wag, wm, builtins, err := buildWorker(drain, extraTools...)
-				if err != nil {
-					return nil, nil, nil, nil, nil, err
-				}
-				srv, err := agent.Serve(wag, sessions, memSvc, artifacts, compactionFor(ac, wm), nodeID, sink)
-				if err != nil {
-					return nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
-				}
-				workerContextID := agent.WorkerSessionID(chatID, nodeID)
-				client, err := srv.ClientForNode(nodeKey, workerContextID)
-				if err != nil {
-					_ = srv.Close()
-					return nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
-				}
-				// The deterministic worker session (agent.scopeMessage) this node's
-				// first dispatch creates now outlives this dispatch - reaped only
-				// at chat archive/delete (store.Store.ReapNodeSessions), so a
-				// later reuse always finds it.
-				release := nodeServers.track(srv)
-				return client, wm, builtins, setRoundCoords, release, nil
-			},
-		}
-		agentTools := ac.Tools
-		if artifacts != nil {
-			// Per-node artifact tools are built later, per dispatch (dag.buildGateNodes,
-			// #1123) - named here too so "why didn't it revise" debugging sees them
-			// were offered at all, same as ac.Tools' static config list.
-			agentTools = append(append([]string{}, ac.Tools...), "list_artifacts", "read_artifact", "edit_artifact", "write_artifact", "write_<kind>")
-		}
-		slog.Info("agent serving over A2A per DAG node", "component", "startup", "agent", name, "tools", agentTools)
+		clientMap[name] = na
 	}
 	return clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, nil
+}
+
+// buildGateJudge assembles the trust-gate config and judge models when the gate is enabled;
+// zero values and nil stand in for the disabled case.
+func buildGateJudge(cfg *config.Config, jail *workspace.Jail, workspaceCaps workspace.Caps, taskStore *memory.Store, ledgerStore ledger.LedgerStore, skillTS *skilltoolset.SkillToolset, artifacts artifact.Service, deliver vetting.DeliverFunc, gitTokenSource tools.GitTokenSource) (vetting.Config, vetting.JudgeFactory, vetting.PlanJudge, model.LLM, tools.SafetyJudge, error) {
+	var gateCfg vetting.Config
+	var judgeFactory vetting.JudgeFactory
+	var planJudge vetting.PlanJudge
+	var judgeModel model.LLM
+	var safetyJudge tools.SafetyJudge
+	if cfg.Gates.Enabled() {
+		var err error
+		if gateCfg, err = vetting.FromConfig(cfg.Gates); err != nil {
+			return vetting.Config{}, nil, nil, nil, nil, err
+		}
+		gateCfg.Memory = taskStore
+		gateCfg.Workspace = jail
+		gateCfg.WorkspaceUserID = localUserID
+		gateCfg.WorkspaceCaps = workspaceCaps
+		gateCfg.CheckTimeout = time.Duration(cfg.Workspace.CheckTimeoutSeconds) * time.Second
+		gateCfg.Deliver = deliver
+		if gitTokenSource != nil {
+			gateCfg.GitCredentials = gitCredentialAdapter{gitTokenSource}
+		}
+		gateCfg.CheckCommands = cfg.Workspace.CheckCommands
+		gateCfg.CheckSetup = cfg.Workspace.CheckSetup
+		if cfg.Gates.JudgeEnabled() {
+			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
+			if !ok {
+				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
+			}
+			judge, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
+			if err != nil {
+				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
+			}
+			judgeModel = judge
+			gateCfg.JudgeModel = judge
+			var judgeReadTools []tool.Tool
+			if jail != nil {
+				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{
+					Workspace:       jail,
+					WorkspaceUserID: localUserID,
+					WorkspaceCaps:   workspaceCaps,
+				})
+				if err != nil {
+					return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
+				}
+			}
+			var judgeSkillsets []tool.Toolset
+			if skillTS != nil {
+				judgeSkillsets = []tool.Toolset{skillTS}
+			}
+			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
+			// Own instances: gated nodes stamp per-round coords on `judge` (vetting/node.go);
+			// these callers are not nodes, so sharing would inherit the last node's stamp (#1049).
+			unstamped := func() (model.LLM, error) {
+				return inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
+			}
+			safetyModel, err := unstamped()
+			if err != nil {
+				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: safety judge model: %w", err)
+			}
+			planModel, err := unstamped()
+			if err != nil {
+				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: plan judge model: %w", err)
+			}
+			safetyJudge = tools.NewSafetyJudge(safetyModel)
+			planJudge = vetting.NewPlanJudge(planModel, cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel, taskStore, ledgerStore)
+		}
+		slog.Info("trust gate enabled", "component", "startup",
+			"deterministic_rounds", gateCfg.DeterministicRounds,
+			"judge", cfg.Gates.Judge.Model, "judge_rounds", gateCfg.JudgeRounds, "threshold", gateCfg.Threshold)
+	}
+	return gateCfg, judgeFactory, planJudge, judgeModel, safetyJudge, nil
+}
+
+// buildACPNode builds one ACP-harness agent (external CLI child); gc is the per-agent
+// gate config when the agent is gated, else nil.
+func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig, cfg *config.Config, workspaceCaps workspace.Caps, jail *workspace.Jail, taskStore *memory.Store, builtinSkillSrc skill.Source, pluginSkillDirs []string, gateCfg vetting.Config, safetyJudge tools.SafetyJudge, acpPricing *config.ModelPricing, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string)) (adkagent.Agent, *vetting.Config, error) {
+	bundle, err := agent.LoadBundle(ac.Bundle)
+	if err != nil {
+		return nil, nil, fmtErr(name, "bundle: %v", err)
+	}
+	var memGuidance string
+	if taskStore != nil {
+		if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
+			return nil, nil, fmtErr(name, "memory.md: %v", err)
+		}
+	}
+	var gc *vetting.Config
+	var grading string
+	if cfg.Gates.Enabled() && ac.IsGated() {
+		agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil, memGuidance)
+		if err != nil {
+			return nil, nil, fmtErr(name, "rubric: %v", err)
+		}
+		agentGateCfg.BundleHash = bundle.Hash
+		gc = &agentGateCfg
+		grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
+	}
+	skillFms, err := acpSkillFrontmatters(context.Background(), builtinSkillSrc, ac.Skills)
+	if err != nil {
+		return nil, nil, fmtErr(name, "skills: %v", err)
+	}
+	behaviour := bundle.Prompt
+	if g := strings.TrimSpace(memGuidance); g != "" {
+		behaviour += "\n\n" + g
+	}
+	wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
+	preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, true, behaviour, grading, wsBlock)
+	env := piACPEnv(prov, ac, acpSkillPaths(pluginSkillDirs))
+	env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
+	var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
+	if safetyJudge != nil {
+		permJudge = acpPermJudge(safetyJudge, name)
+	}
+	var acpReplay *replay.Session
+	if prov.Kind == "replay" {
+		acpReplay, err = replay.Load(prov.Bundle)
+		if err != nil {
+			return nil, nil, fmtErr(name, "acp replay: %v", err)
+		}
+		if prov.ForkMode == "fork" {
+			acpReplay.EnableFork(prov.ForkFrom)
+		}
+	}
+	ag, err := acp.New(name, bundle.Card.Description, acp.Options{
+		Command:              ac.Acp.Command,
+		Env:                  env,
+		Replay:               acpReplay,
+		Caps:                 workspaceCaps,
+		ExtraRO:              acpSkillPaths(pluginSkillDirs),
+		Home:                 workspaceCaps.HomeDir,
+		Preamble:             preamble,
+		Jail:                 jail,
+		UserID:               localUserID,
+		PermissionJudge:      permJudge,
+		ModelName:            ac.Model,
+		Pricing:              acpPricing,
+		RegisterLiveSteer:    registerLiveSteer,
+		UnregisterLiveSteer:  unregisterLiveSteer,
+		RegisterRoundAbort:   registerRoundAbort,
+		UnregisterRoundAbort: unregisterRoundAbort,
+		Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
+			parentDir, err := jail.Resolve(userID, chatID, workspace.NodeDir(parentNodeID))
+			if err != nil {
+				return "", fmt.Errorf("acp worktree: resolve parent clone: %w", err)
+			}
+			return tools.SetupWorktree(ctx, jail, userID, chatID, parentDir, workspace.NodeDir(nodeID),
+				workspace.WorktreeBranch(nodeID), workspaceCaps, cfg.Workspace.CheckSetup)
+		},
+	})
+	if err != nil {
+		return nil, nil, fmtErr(name, "acp: %v", err)
+	}
+	return ag, gc, nil
+}
+
+type nativeNodeBuilder struct {
+	prov               config.ProviderConfig
+	ac                 config.AgentConfig
+	artifacts          artifact.Service
+	cfg                *config.Config
+	toolNames          []string
+	urlCache           *tools.URLCache
+	advisorAgent       adkagent.Agent
+	sessions           session.Service
+	jail               *workspace.Jail
+	gitCredentials     []tools.GitCredential
+	gitTokenSource     tools.GitTokenSource
+	safetyJudge        tools.SafetyJudge
+	nodeCancelled      func(chatID, nodeID string) bool
+	repeatGuardTripped func(chatID, nodeID, msg string) bool
+	extToolsByName     map[string]tool.Tool
+	nativeReplay       *replay.Session
+	taskStore          *memory.Store
+	memSvc             adkmemory.Service
+	wantLoadMemory     bool
+	workspaceCaps      workspace.Caps
+	memGuidance        string
+	bundle             *agent.Bundle
+	agentSkillTS       *skilltoolset.SkillToolset
+	skillFms           []*skill.Frontmatter
+	grading            string
+	ledgerStore        ledger.LedgerStore
+	compactionFor      func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction
+	nodeServers        *perNodeServers
+}
+
+func (b *nativeNodeBuilder) buildWorker(drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
+	wm, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("model: %w", err)
+	}
+	var builtins []tool.Tool
+	if len(b.toolNames) > 0 {
+		if builtins, err = tools.Build(b.toolNames, tools.Deps{
+			WebSearch:          tools.Backend{Kind: b.cfg.Tools["web_search"].Kind, URL: b.cfg.Tools["web_search"].URL, Key: b.cfg.Tools["web_search"].APIKey()},
+			Fetch:              tools.Backend{Kind: b.cfg.Tools["web_fetch"].Kind, URL: b.cfg.Tools["web_fetch"].URL},
+			Summarizer:         wm,
+			Cache:              b.urlCache,
+			Advisor:            b.advisorAgent,
+			Sessions:           b.sessions,
+			Workspace:          b.jail,
+			WorkspaceUserID:    localUserID,
+			WorkspaceCaps:      b.workspaceCaps,
+			GitCredentials:     b.gitCredentials,
+			GitTokenSource:     b.gitTokenSource,
+			Guards:             b.cfg.Workspace.Guards,
+			SafetyJudge:        b.safetyJudge,
+			NodeCancelled:      b.nodeCancelled,
+			RepeatGuardTripped: b.repeatGuardTripped,
+			ExtTools:           b.extToolsByName,
+			Replayer:           b.nativeReplay,
+			Memory:             b.taskStore,
+			MemoryRole:         b.ac.Memory.Bucket,
+			Ledger:             b.ledgerStore,
+		}); err != nil {
+			return nil, nil, nil, fmt.Errorf("tools: %w", err)
+		}
+	}
+	if b.memSvc != nil {
+		builtins = append(builtins, memory.NewPreload())
+		if b.wantLoadMemory {
+			builtins = append(builtins, loadmemorytool.New())
+		}
+	}
+	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
+	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
+	builtins = append(builtins, extraTools...)
+	wag, err := agent.Build(b.bundle, wm, builtins, []tool.Toolset{b.agentSkillTS}, b.memGuidance, b.skillFms, b.grading, drain)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("build: %w", err)
+	}
+	return wag, wm, builtins, nil
+}
+
+func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, nodeRelease, error) {
+	var extraTools []tool.Tool
+	var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
+	if artifacts != nil {
+		rc := recordstore.New(artifacts, appName, userID, chatID)
+		// Same PGStore-only restriction as executor.SetWALLedger (#1153): write_<kind>
+		// must record parent_revision, but only over a transactional ledger.
+		if pg, ok := b.ledgerStore.(*ledger.PGStore); ok {
+			rc = rc.WithLedger(pg)
+		}
+		coords := &tools.RoundCoords{}
+		var terr error
+		if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.SubjectHint(chatID)); terr != nil {
+			return nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
+		}
+		setRoundCoords = func(round int, turnID, headSHA, triggerAnnotation string) {
+			*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
+		}
+	}
+	wag, wm, builtins, err := b.buildWorker(drain, extraTools...)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	srv, err := agent.Serve(wag, b.sessions, b.memSvc, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
+	}
+	workerContextID := agent.WorkerSessionID(chatID, nodeID)
+	client, err := srv.ClientForNode(nodeKey, workerContextID)
+	if err != nil {
+		_ = srv.Close()
+		return nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
+	}
+	// The deterministic worker session created by this node's first dispatch outlives it
+	// - reaped only at chat archive/delete (ReapNodeSessions), so a later reuse finds it.
+	release := b.nodeServers.track(srv)
+	return client, wm, builtins, setRoundCoords, release, nil
+}
+
+// loadNativeReplay restores the shared replay session from the configured
+// bundle; non-replay agents get nil.
+func loadNativeReplay(prov config.ProviderConfig) (*replay.Session, error) {
+	if prov.Kind != "replay" {
+		return nil, nil
+	}
+	rs, err := replay.Load(prov.Bundle)
+	if err != nil {
+		return nil, err
+	}
+	if prov.ForkMode == "fork" {
+		rs.EnableFork(prov.ForkFrom)
+	}
+	return rs, nil
+}
+
+// resolveGateCfg resolves the per-agent trust-gate config (and prompt grading facts
+// for gated agents), recording gated configs in gateCfgs.
+func resolveGateCfg(cfg *config.Config, base vetting.Config, name string, ac config.AgentConfig, taskMemAvailable bool, memGuidance, bundleHash string, gateCfgs map[string]vetting.Config) (string, error) {
+	if cfg.Gates.Enabled() && !ac.IsGated() {
+		slog.Info("trust gate skipped for agent (gated: false)", "component", "startup", "agent", name)
+	}
+	if cfg.Gates.Enabled() && ac.IsGated() {
+		c, err := perAgentGateCfg(base, name, ac, taskMemAvailable, memGuidance)
+		if err != nil {
+			return "", err
+		}
+		c.BundleHash = bundleHash
+		gateCfgs[name] = c
+		return promptbuilder.GradingFacts(c.Threshold, c.JudgeRounds, c.ReadOnly, c.RequireRetrieval), nil
+	}
+	return "", nil
+}
+
+// buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
+// skills, gate grading, replay session, and the per-dispatch worker builder.
+func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, advisorAgent adkagent.Agent, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs map[string]vetting.Config, nodeServers *perNodeServers) (adkagent.Agent, error) {
+	toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
+
+	bundle, err := agent.LoadBundle(ac.Bundle)
+	if err != nil {
+		return nil, fmtErr(name, "bundle: %v", err)
+	}
+	var memGuidance string
+	if taskStore != nil {
+		if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
+			return nil, fmtErr(name, "memory.md: %v", err)
+		}
+	}
+	var memSvc adkmemory.Service
+	if taskStore != nil && memGuidance != "" {
+		memSvc = taskStore.View(memory.Scope{Role: ac.Memory.Bucket, Legacy: name}, nodeScope)
+	}
+	agentSkillTS, err := newScopedSkillTS(ac.Skills)
+	if err != nil {
+		return nil, fmtErr(name, "skills toolset: %v", err)
+	}
+	skillFms, err := skillsource.Scoped(builtinSkillSrc, ac.Skills).ListFrontmatters(context.Background())
+	if err != nil {
+		return nil, fmtErr(name, "skills: %v", err)
+	}
+
+	grading, err := resolveGateCfg(cfg, gateCfg, name, ac, taskStore != nil, memGuidance, bundle.Hash, gateCfgs)
+	if err != nil {
+		return nil, fmtErr(name, "rubric: %v", err)
+	}
+
+	nativeReplay, err := loadNativeReplay(prov)
+	if err != nil {
+		return nil, fmtErr(name, "replay: tools: %v", err)
+	}
+
+	b := &nativeNodeBuilder{
+		prov:               prov,
+		ac:                 ac,
+		artifacts:          artifacts,
+		cfg:                cfg,
+		toolNames:          toolNames,
+		urlCache:           urlCache,
+		advisorAgent:       advisorAgent,
+		sessions:           sessions,
+		jail:               jail,
+		gitCredentials:     gitCredentials,
+		gitTokenSource:     gitTokenSource,
+		safetyJudge:        safetyJudge,
+		nodeCancelled:      nodeCancelled,
+		repeatGuardTripped: repeatGuardTripped,
+		extToolsByName:     extToolsByName,
+		nativeReplay:       nativeReplay,
+		taskStore:          taskStore,
+		memSvc:             memSvc,
+		wantLoadMemory:     wantLoadMemory,
+		workspaceCaps:      workspaceCaps,
+		memGuidance:        memGuidance,
+		bundle:             bundle,
+		agentSkillTS:       agentSkillTS,
+		skillFms:           skillFms,
+		grading:            grading,
+		ledgerStore:        ledgerStore,
+		compactionFor:      compactionFor,
+		nodeServers:        nodeServers,
+	}
+	protoAgent, _, _, err := b.buildWorker(nil)
+	if err != nil {
+		return nil, fmtErr(name, "%v", err)
+	}
+	na := nativeAgent{
+		Agent: protoAgent,
+		build: b.build,
+	}
+	agentTools := ac.Tools
+	if artifacts != nil {
+		// Per-node artifact tools are built per dispatch (dag.buildGateNodes, #1123); named
+		// here too so "why didn't it revise" debugging sees they were offered.
+		agentTools = append(append([]string{}, ac.Tools...), "list_artifacts", "read_artifact", "edit_artifact", "write_artifact", "write_<kind>")
+	}
+	slog.Info("agent serving over A2A per DAG node", "component", "startup", "agent", name, "tools", agentTools)
+	return na, nil
+}
+
+func bootReconcile(reconcile bool, cfg *config.Config, st *store.Store, jail *workspace.Jail) ([]store.ResumableNode, error) {
+	var resumeNodes []store.ResumableNode
+	if reconcile {
+		id, err := store.LoadOrCreateInstanceID(cfg.Workspace.Root)
+		if err != nil {
+			return nil, fmt.Errorf("instance id init failed: %w", err)
+		}
+		st.SetInstanceID(id)
+		// Boot's half of #962: runs before anything can register a run with the Hub, so resume gets the
+		// DB to a settled state first - the memory consolidator's boot sweep starts after.
+		resumeNodes = reconcileNodes(context.Background(), st, jail, func(chatID, pauseReason string) (bool, string) {
+			// #1176: an archived chat's paused nodes must not be resumed -
+			// they were still holding run slots the archive should free.
+			c, _ := st.GetChat(context.Background(), chatID)
+			p, _ := st.GetLatestDagPlan(context.Background(), chatID)
+			var planCreatedAt time.Time
+			if p != nil {
+				planCreatedAt = p.CreatedAt
+			}
+			if ok, why := resumeGuardArchivedOrStale(c != nil && c.Archived, p != nil, dag.PauseReason(pauseReason), planCreatedAt); !ok {
+				return false, why
+			}
+			// A resumable node was provisioned a chat scope dir; if the
+			// workspace is gone the run cannot pick up where it left off.
+			if _, rerr := jail.Resolve(st.SessionUserForChat(context.Background(), chatID), chatID, "."); rerr != nil {
+				return false, "workspace dir is gone"
+			}
+			return true, ""
+		})
+	}
+	return resumeNodes, nil
+}
+
+func openMemoryStores(ctx context.Context, cfg *config.Config, st *store.Store, artifacts artifact.Service) (*memory.Store, *memory.Store, []func(), error) {
+	var taskStore, userStore *memory.Store
+	var startSweeps []func()
+	openMemory := func(rm config.ResolvedMemory, domain string) (*memory.Store, error) {
+		eprov, ok := cfg.Provider(rm.Embedder.Provider)
+		if !ok {
+			return nil, fmt.Errorf("embedder provider %q not found", rm.Embedder.Provider)
+		}
+		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model, artifacts, cfg.ModelCost(rm.Embedder.Model))
+		if err != nil {
+			return nil, fmt.Errorf("embedder: %w", err)
+		}
+		// recall runs in the node's own ctx (real per-round coords); commit fires from
+		// ctx-less background/tool calls, so "embed" is its fallback name (not the consolidator's "memory").
+		setDefaultAgent(embedder, "embed")
+		cprov, ok := cfg.Provider(rm.Consolidation.Provider)
+		if !ok {
+			return nil, fmt.Errorf("consolidation provider %q not found", rm.Consolidation.Provider)
+		}
+		consolidator, err := inference.NewModelWithEffort(cprov, rm.Consolidation.Model, artifacts, cfg.ModelCost(rm.Consolidation.Model), cfg.ModelEffort(rm.Consolidation.Model))
+		if err != nil {
+			return nil, fmt.Errorf("consolidation model: %w", err)
+		}
+		// Commit runs from a background goroutine (user memory hook) or a tool call
+		// whose ctx lost its node coords - never a DAG node's own model call.
+		setDefaultAgent(consolidator, "memory")
+		s, err := memory.New(context.Background(), rm.Kind, rm.URL, embedder, consolidator, rm.Collection, domain, rm.TopK, rm.MinScore)
+		if err != nil {
+			return nil, err
+		}
+		// internal/memory can't import internal/store; st (already open above) is
+		// the memory_ops audit sink, wired in here.
+		s.SetOpsLog(storeOpsLog{st})
+		return s, nil
+	}
+	// Consolidation sweeps sweep on their first tick; started after the resumed nodes are
+	// dispatched so a boot resume never contends with #961's sweep for the same chat.
+	if rm, ok := cfg.MemoryStore("stage_memory"); ok {
+		s, err := openMemory(rm, "task")
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("task memory init failed: %w", err)
+		}
+		if err := wireForgettingRules(s, rm); err != nil {
+			return nil, nil, nil, fmt.Errorf("task memory forgetting rules: %w", err)
+		}
+		taskStore = s
+		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
+			"embedder", rm.Embedder.Model, "consolidation", rm.Consolidation.Model)
+		startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm) })
+	}
+	if slices.Contains(cfg.Orchestrator.Tools, "commit_memory") {
+		if rm, ok := cfg.MemoryStore("commit_memory"); ok {
+			s, err := openMemory(rm, "user")
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("user memory init failed: %w", err)
+			}
+			if err := wireForgettingRules(s, rm); err != nil {
+				return nil, nil, nil, fmt.Errorf("user memory forgetting rules: %w", err)
+			}
+			userStore = s
+			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
+			startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm) })
+		}
+	}
+
+	return taskStore, userStore, startSweeps, nil
+}
+
+func discoverSDKToolSources(sdkExts []builtSDKExtension) (tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc) {
+	gitCredSrc, gitCredSrcName := findGitCredentialSource(sdkExts)
+	deliverer, delivererName := findDeliverer(sdkExts)
+	var gitTokenSource tools.GitTokenSource
+	if gitCredSrc != nil {
+		gitTokenSource = sdkGitCredentialAdapter{src: gitCredSrc}
+		slog.Info("extension supplies git credentials", "component", "startup", "extension", gitCredSrcName)
+	}
+	var deliver vetting.DeliverFunc
+	if deliverer != nil {
+		deliver = sdkDeliverAdapter{deliverer: deliverer}.Deliver
+		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
+	}
+	freshnessChecker, freshnessCheckerName := findAssignmentFreshnessChecker(sdkExts)
+	var assignmentFreshness tools.AssignmentFreshnessFunc
+	if freshnessChecker != nil {
+		assignmentFreshness = func(ctx adkagent.Context, planID, agentName, contextID string, a dag.Assignment) (bool, string) {
+			return freshnessChecker.BeforeAssignment(ctx, toSDKAssignment(planID, agentName, contextID, a))
+		}
+		slog.Info("extension supplies assignment freshness checks", "component", "startup", "extension", freshnessCheckerName)
+	}
+	metaExtension, metaExtensionName := findAssignmentMetaExtension(sdkExts)
+	var assignmentMeta tools.AssignmentMetaFunc
+	if metaExtension != nil {
+		assignmentMeta = func(ctx adkagent.Context, planID, agentName string, a dag.Assignment) (string, map[string]any) {
+			return metaExtensionName, metaExtension.OnAssignment(ctx, toSDKAssignment(planID, agentName, "", a))
+		}
+		slog.Info("extension supplies assignment meta", "component", "startup", "extension", metaExtensionName)
+	}
+	return gitTokenSource, deliver, assignmentFreshness, assignmentMeta
+}
+
+func buildAdvisorAgent(cfg *config.Config, artifacts artifact.Service) adkagent.Agent {
+	var advisorAgent adkagent.Agent
+	if cfg.Gates.JudgeEnabled() {
+		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
+			if am, merr := inference.NewModelWithEffort(aprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model)); merr != nil {
+				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
+			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
+				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
+			} else if built, aerr := agent.BuildChat(ab, am, nil, nil, "", nil, ""); aerr != nil {
+				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
+			} else {
+				// ask_advisor runs the advisor as its own nested runner.Run - never a DAG node's own model call.
+				setDefaultAgent(am, "advisor")
+				advisorAgent = built
+				slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
+			}
+		}
+	}
+	return advisorAgent
+}
+
+func buildAgentInfos(cfg *config.Config, clientMap map[string]adkagent.Agent) ([]dag.AgentInfo, map[string]bool, string) {
+	agentInfos := make([]dag.AgentInfo, 0, len(clientMap))
+	mediaAgents := make(map[string]bool)
+	for name, c := range clientMap {
+		ac := cfg.Agents[name]
+		// Re-reads a bundle buildAgents already loaded, rather than widen its
+		// already-long return signature for this one optional field.
+		var defaultArtifact string
+		if bundle, err := agent.LoadBundle(ac.Bundle); err != nil {
+			slog.Warn("agent bundle: re-read for default artifact failed", "component", "startup", "agent", name, "err", err)
+		} else {
+			defaultArtifact = bundle.Card.Artifact
+		}
+		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description(), ContextWindow: ac.ContextWindow, DefaultArtifact: defaultArtifact})
+		for _, inp := range ac.Inputs {
+			if inp == "image" || inp == "audio" {
+				mediaAgents[name] = true
+				break
+			}
+		}
+	}
+	sort.Slice(agentInfos, func(i, j int) bool { return agentInfos[i].Name < agentInfos[j].Name })
+	var rosterSB strings.Builder
+	for _, a := range agentInfos {
+		fmt.Fprintf(&rosterSB, "- `%s` - %s\n", a.Name, a.Description)
+	}
+	return agentInfos, mediaAgents, rosterSB.String()
+}
+
+func assembleOrchestrator(cfg *config.Config, st *store.Store, llm model.LLM, clientMap map[string]adkagent.Agent, modelMap map[string]model.LLM, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, gateCfgs map[string]vetting.Config, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], executorRef *atomic.Pointer[dag.Executor], hooks *shutdownHooks, roster string, agentInfos []dag.AgentInfo, mediaAgents map[string]bool, setupFn dag.SetupFunc) (*orchestrator.Orchestrator, error) {
+	orchBundle, err := agent.LoadBundle("agents/orchestrator")
+	if err != nil {
+		return nil, fmt.Errorf("orchestrator bundle load failed: %w", err)
+	}
+	fmFm, err := skillSrc.LoadFrontmatter(context.Background(), "format-markdown")
+	if err != nil {
+		return nil, fmt.Errorf("format-markdown skill load failed: %w", err)
+	}
+	planWorkFm, err := skillSrc.LoadFrontmatter(context.Background(), "plan-work")
+	if err != nil {
+		return nil, fmt.Errorf("plan-work skill load failed: %w", err)
+	}
+	orchBehaviour := orchBundle.Prompt
+	if userStore != nil {
+		mem, err := agent.LoadBundleMemory("agents/orchestrator")
+		if err != nil {
+			return nil, fmt.Errorf("orchestrator memory.md load failed: %w", err)
+		}
+		if mem != "" {
+			orchBehaviour += "\n\n" + mem
+		}
+	}
+	orchSysPrompt := promptbuilder.Orchestrator(roster, []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
+
+	orchSkillTS, err := newScopedSkillTS(cfg.Orchestrator.Skills)
+	if err != nil {
+		return nil, fmt.Errorf("orchestrator skills toolset init failed: %w", err)
+	}
+
+	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands, planJudge)
+	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
+	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
+	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
+	admission := buildAdmission(cfg)
+	executor.SetAdmission(admission, admissionSpecFor(cfg))
+	executor.SetSetup(setupFn)
+	executor.SetArtifacts(artifacts)
+	if ledgerStore != nil {
+		executor.SetWALLedger(ledgerStore)
+	}
+	executor.SetNodeStateStore(st) // write-through node state machine (#962)
+	executorRef.Store(executor)
+	// Orchestrator turns take a session from the worker nodes' pool, held only while
+	// generating (holding across the DAG would deadlock them); wraps AFTER setDefaultAgent.
+	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
+	// Hard backstop under ADK's own compaction - see BudgetedLLM's doc for why.
+	orchLLM = dag.NewBudgetedLLM(orchLLM, cfg.Orchestrator.ContextWindow)
+	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
+	// Unconditional, like executor.SetArtifacts: dag_plan persistence (#1095/#1118) must not
+	// depend on load_artifacts in orchestrator.tools (a prod config dropped plans, #1122).
+	orch.SetArtifacts(artifacts)
+	orch.SetNodeSessionReaper(st.ReapNodeSessions)
+	orch.SetAssignmentFreshnessCheck(assignmentFreshness)
+	orch.SetAssignmentMetaHook(assignmentMeta)
+	// Same source of truth as buildAgents' per-node compactionFor (cfg.Session.Compaction),
+	// built once for the orchestrator's own long-lived chat session, which it never sees (#A3).
+	if orchCompCfg := cfg.Session.Compaction; orchCompCfg.Enabled {
+		if cfg.Orchestrator.ContextWindow <= 0 {
+			slog.Warn("context compaction enabled but orchestrator.context_window is unset; not compacting the chat session", "component", "startup")
+		} else {
+			orchComp, cerr := agent.NativeCompactionConfig(agent.Compaction{
+				Summarizer:         llm,
+				ContextWindow:      cfg.Orchestrator.ContextWindow,
+				Enabled:            true,
+				TokenThreshold:     orchCompCfg.TokenThreshold,
+				EventRetentionSize: orchCompCfg.EventRetentionSize,
+				CompactionInterval: orchCompCfg.CompactionInterval,
+				OverlapSize:        orchCompCfg.OverlapSize,
+			})
+			if cerr != nil {
+				return nil, fmt.Errorf("compaction: orchestrator: %w", cerr)
+			}
+			orch.SetCompaction(orchComp)
+		}
+	}
+	if ledgerStore != nil {
+		orch.SetLedger(ledgerStore)
+	}
+	orchRef.Store(orch)
+	if hooks != nil {
+		hooks.pauser = executor
+	}
+	return orch, nil
+}
+
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth) (http.Handler, error) {
+	spa, err := fs.Sub(webDist, "web/dist")
+	if err != nil {
+		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
+	}
+
+	var adkDebugHandler http.Handler
+	if cfg.Observability.ADKDebug {
+		if mount, derr := adkdebug.New(st.Sessions, clientMap, artifacts); derr != nil {
+			slog.Warn("adk debug mount failed; disabled", "component", "startup", "err", derr)
+		} else {
+			if otelProviders.TracerProvider != nil {
+				otelProviders.TracerProvider.RegisterSpanProcessor(mount.SpanProcessor())
+			} else {
+				slog.Warn("adk debug mount enabled but otel is disabled; /debug/trace will stay empty", "component", "startup")
+			}
+			adkDebugHandler = mount.Handler
+			slog.Warn("ADK debug surface mounted - runs agents WITHOUT quack's trust gate; dev/trusted use only",
+				"component", "startup", "path", adkdebug.MountPath)
+		}
+	}
+
+	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
+	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
+
+	return server.New(server.Options{
+		REST:          restHandler,
+		MCP:           mcpserver.Handler(orch),
+		SPA:           spa,
+		SDKExtensions: sdkExtensionMounts(sdkExts),
+		Auth:          authMW,
+		ADKDebug:      adkDebugHandler,
+	}), nil
+}
+
+func startWorkspaceGC(ctx context.Context, cfg *config.Config, jail *workspace.Jail, runHub *stream.Hub) error {
+	gcHomeDir, err := jail.HomeDir(localUserID)
+	if err != nil {
+		return fmt.Errorf("workspace gc home dir init failed: %w", err)
+	}
+	gcCaps := workspace.Caps{
+		Timeout:   time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
+		ExtraPath: cfg.Workspace.ExecPath,
+		Env:       cfg.Workspace.Env,
+		HomeDir:   gcHomeDir,
+	}
+	gcCfg := workspace.GCConfig{
+		Enabled:      cfg.Workspace.GC.IsEnabled(),
+		ChatTTL:      time.Duration(cfg.Workspace.GC.ChatTTLHours) * time.Hour,
+		ScratchTTL:   time.Duration(cfg.Workspace.GC.ScratchTTLHours) * time.Hour,
+		HomeMaxBytes: int64(cfg.Workspace.GC.HomeMaxMB) * 1024 * 1024,
+		Interval:     time.Duration(cfg.Workspace.GC.IntervalHours) * time.Hour,
+	}
+	// GC sees on-disk dir names; match them against active chat ids raw or via ChatDirName.
+	gcActive := func(chatDir string) bool {
+		for _, id := range runHub.ActiveChatIDs() {
+			if id == chatDir || workspace.ChatDirName(id) == chatDir {
+				return true
+			}
+		}
+		return false
+	}
+	go workspace.RunGC(ctx, jail, gcCfg, gcActive, func(pctx context.Context, dir string) error {
+		return tools.PruneWorktree(pctx, dir, gcCaps)
+	})
+	return nil
+}
+
+// newNodeScope resolves the memory scope a request belongs to via the advisor-thread
+// marker; unmarked requests get the zero scope.
+func newNodeScope(jail *workspace.Jail) func(ctx context.Context) memory.Scope {
+	return func(ctx context.Context) memory.Scope {
+		uc, ok := ctx.(interface{ UserContent() *genai.Content })
+		if !ok {
+			return memory.Scope{}
+		}
+		token, ok := vetting.ParseAdvisorThread(contentText(uc.UserContent()))
+		if !ok {
+			return memory.Scope{}
+		}
+		at, ok := vetting.LookupAdvisorThread(token)
+		if !ok {
+			return memory.Scope{}
+		}
+		sc := memory.Scope{User: at.UserID}
+		if jail != nil {
+			sc.Repo = jail.RepoKey(localUserID, at.ChatID)
+		}
+		return sc
+	}
+}
+
+// setupCloneFunc returns the dag.SetupFn that clones a chat repo for a new node.
+func setupCloneFunc(cfg *config.Config, jail *workspace.Jail, workspaceCaps workspace.Caps, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource) dag.SetupFunc {
+	return func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
+		_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource, cfg.Workspace.CheckSetup)
+		return err
+	}
+}
+
+// buildCompaction builds the per-node compaction resolver (and its optional fallback
+// summarizer) from the session.compaction config.
+func buildCompaction(cfg *config.Config, artifacts artifact.Service) (func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, error) {
+	var fallbackSummarizer model.LLM
+	compCfg := cfg.Session.Compaction
+	if compCfg.Enabled && compCfg.Model != "" {
+		cprov, ok := cfg.Provider(compCfg.Provider)
+		if !ok {
+			return nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
+		}
+		var err error
+		if fallbackSummarizer, err = inference.NewModelWithEffort(cprov, compCfg.Model, artifacts, cfg.ModelCost(compCfg.Model), cfg.ModelEffort(compCfg.Model)); err != nil {
+			return nil, fmt.Errorf("compaction: model: %w", err)
+		}
+		// Fallback only: ResolveSummarizer prefers the active worker model, whose call
+		// site carries the node's own coords stamp.
+		setDefaultAgent(fallbackSummarizer, "compaction")
+		slog.Info("context compaction enabled", "component", "startup", "fallback_summariser", compCfg.Model)
+	} else if compCfg.Enabled {
+		slog.Info("context compaction enabled", "component", "startup", "summariser", "active worker model (no fallback configured)")
+	}
+	return func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction {
+		if !compCfg.Enabled {
+			return agent.Compaction{}
+		}
+		if ac.ContextWindow == 0 {
+			slog.Warn("context compaction: agent has no context_window configured; not compacting it", "component", "startup", "model", ac.Model)
+			return agent.Compaction{}
+		}
+		return agent.Compaction{
+			Summarizer:         agent.ResolveSummarizer(workerModel, fallbackSummarizer),
+			ContextWindow:      ac.ContextWindow,
+			Enabled:            true,
+			TokenThreshold:     compCfg.TokenThreshold,
+			EventRetentionSize: compCfg.EventRetentionSize,
+			CompactionInterval: compCfg.CompactionInterval,
+			OverlapSize:        compCfg.OverlapSize,
+		}
+	}, nil
 }
 
 // perAgentGateCfg specializes the base trust-gate config for one agent.
@@ -1497,6 +1736,27 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 		c.RubricFixes = fixes
 		slog.Info("using per-agent rubric from bundle", "component", "startup", "agent", name)
 	}
+	return applyAgentJudgeOverrides(c, ac, name), nil
+}
+
+// acpPermJudge wraps the safety judge as an ACP permission gate; an
+// unavailable judge fails open (allowing) and logs it.
+func acpPermJudge(sj tools.SafetyJudge, agentName string) func(ctx context.Context, toolName, title string, input map[string]any) (bool, string) {
+	return func(ctx context.Context, toolName, title string, input map[string]any) (bool, string) {
+		otelobs.RecordPermissionAsk(agentName)
+		allow, reason, err := sj(ctx,
+			fmt.Sprintf("the external %s agent asks permission for: %s", agentName, title),
+			"", toolName, input, "")
+		if err != nil {
+			slog.Warn("acp permission judge unavailable; allowing", "component", "acp", "agent", agentName, "err", err)
+			return true, "judge unavailable"
+		}
+		return allow, reason
+	}
+}
+
+// applyAgentJudgeOverrides applies the per-agent judge-rounds overrides and logs the result.
+func applyAgentJudgeOverrides(c vetting.Config, ac config.AgentConfig, name string) vetting.Config {
 	if ac.JudgeRounds > 0 {
 		c.JudgeRounds = ac.JudgeRounds
 	}
@@ -1504,7 +1764,7 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 		c.JudgeRounds = 0
 	}
 	slog.Info("per-agent trust gate config", "component", "startup", "agent", name, "judge_rounds", c.JudgeRounds)
-	return c, nil
+	return c
 }
 
 // acpChildEnv merges workspace.env (deployment-wide) with acp.env (agent-specific, wins on shared key).

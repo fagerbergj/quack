@@ -946,6 +946,53 @@ func detectOldPricingShape(expanded string) error {
 }
 
 func (c *Config) validate() error {
+	for _, step := range []func() error{
+		c.validateProviders,
+		c.validateModels,
+		c.validateOrchestrator,
+		c.validateAgentMemory,
+		c.validateStoreKinds,
+		c.validateStoreEmbedders,
+		c.validateStoreConsolidation,
+		c.validateSessionStore,
+		c.validateArtifactsStore,
+		c.validateAgentModel,
+		c.validateGates,
+		c.validateSessionCompaction,
+		c.validateTools,
+		c.validateDag,
+		c.validateServer,
+	} {
+		if err := step(); err != nil {
+			return err
+		}
+	}
+	if err := c.Workspace.applyDefaults(); err != nil {
+		return err
+	}
+	if c.Plugins != nil && c.Skills.Plugins != nil {
+		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
+	}
+	c.Plugins = c.PluginRoots()
+	if c.Skills.Plugins != nil {
+		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
+	}
+	if err := c.validateWorkflows(); err != nil {
+		return err
+	}
+	if err := c.Observability.Otel.applyDefaults(); err != nil {
+		return err
+	}
+	if err := c.Observability.Recording.validate(c); err != nil {
+		return err
+	}
+	if err := c.Auth.validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) validateProviders() error {
 	if len(c.Providers) == 0 {
 		return fmt.Errorf("config: no providers defined")
 	}
@@ -979,6 +1026,11 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: provider %q has unsupported kind %q (only %q and %q are implemented)", name, p.Kind, "openai", "replay")
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateModels() error {
 	for name, m := range c.Models {
 		p, ok := c.Providers[m.Provider]
 		if !ok {
@@ -995,6 +1047,11 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: model %q effort must be one of low, medium, high (or unset)", name)
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateOrchestrator() error {
 	if _, ok := c.Providers[c.Orchestrator.Provider]; !ok {
 		return fmt.Errorf("config: orchestrator.provider %q is not defined under providers", c.Orchestrator.Provider)
 	}
@@ -1015,17 +1072,29 @@ func (c *Config) validate() error {
 		}
 	}
 	if c.Orchestrator.UserMemoryHook.Enabled {
-		h := c.Orchestrator.UserMemoryHook
-		if _, ok := c.Providers[h.Provider]; !ok {
-			return fmt.Errorf("config: orchestrator.user_memory_hook.provider %q is not defined under providers", h.Provider)
-		}
-		if h.Model == "" {
-			return fmt.Errorf("config: orchestrator.user_memory_hook.model is empty")
-		}
-		if err := c.checkModelRegistered("orchestrator.user_memory_hook.model", h.Model); err != nil {
+		if err := c.validateOrchestratorMemoryHook(); err != nil {
 			return err
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateOrchestratorMemoryHook() error {
+	h := c.Orchestrator.UserMemoryHook
+	if _, ok := c.Providers[h.Provider]; !ok {
+		return fmt.Errorf("config: orchestrator.user_memory_hook.provider %q is not defined under providers", h.Provider)
+	}
+	if h.Model == "" {
+		return fmt.Errorf("config: orchestrator.user_memory_hook.model is empty")
+	}
+	if err := c.checkModelRegistered("orchestrator.user_memory_hook.model", h.Model); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) validateAgentMemory() error {
 	for name, a := range c.Agents {
 		switch a.Memory.Bucket {
 		case "", "coding", "research":
@@ -1040,6 +1109,11 @@ func (c *Config) validate() error {
 			slog.Info("agent skills: scopes this ACP-harness agent's roster; an empty list gets the full skill library", "component", "config", "agent", name)
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateStoreKinds() error {
 	for name := range c.Stores {
 		s, ok := c.Store(name)
 		if !ok {
@@ -1051,6 +1125,11 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite)", name, s.Kind)
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateStoreEmbedders() error {
 	for name, s := range c.Stores {
 		if s.Embedder == nil || s.URL == "" {
 			continue
@@ -1073,6 +1152,11 @@ func (c *Config) validate() error {
 		}
 		c.Stores[name] = s
 	}
+
+	return nil
+}
+
+func (c *Config) validateStoreConsolidation() error {
 	for name, s := range c.Stores {
 		if s.Consolidation == nil {
 			continue
@@ -1101,6 +1185,11 @@ func (c *Config) validate() error {
 			}
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateSessionStore() error {
 	if ss, ok := c.Store(c.Session.Store); !ok {
 		return fmt.Errorf("config: session.store %q is not defined under stores", c.Session.Store)
 	} else if ss.Kind != "postgres" && ss.Kind != "sqlite" {
@@ -1108,6 +1197,11 @@ func (c *Config) validate() error {
 	} else if ss.URL == "" && !c.skipRuntimeValidation {
 		return fmt.Errorf("config: session.store %q has empty url", c.Session.Store)
 	}
+
+	return nil
+}
+
+func (c *Config) validateArtifactsStore() error {
 	if c.Artifacts.Store != "" {
 		as, ok := c.Store(c.Artifacts.Store)
 		if !ok {
@@ -1118,29 +1212,17 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: artifacts.store %q has empty url", c.Artifacts.Store)
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateAgentModel() error {
 	for name, a := range c.Agents {
 		if a.Model != "" {
-			mc, ok := c.Models[a.Model]
-			if !ok {
-				return fmt.Errorf("config: agent %q model %q is not defined under models", name, a.Model)
+			var err error
+			if a, err = c.validateAgentModelRef(name, a); err != nil {
+				return err
 			}
-			if a.Provider == "" {
-				a.Provider = mc.Provider
-			} else if a.Provider != mc.Provider {
-				return fmt.Errorf("config: agent %q provider %q disagrees with model %q's provider %q", name, a.Provider, a.Model, mc.Provider)
-			}
-			// Effective window: the agent's own, or the model's default when unset.
-			eff := a.ContextWindow
-			if eff == 0 {
-				eff = mc.ContextWindow
-			}
-			if mc.ContextWindow > 0 && eff > mc.ContextWindow {
-				return fmt.Errorf("config: agent %q context_window %d exceeds model %q context_window %d", name, eff, a.Model, mc.ContextWindow)
-			}
-			if mc.Limits != nil && mc.Limits.KVTokens > 0 && eff > mc.Limits.KVTokens {
-				return fmt.Errorf("config: agent %q context_window %d exceeds model %q limits.kv_tokens %d - it could never be admitted", name, eff, a.Model, mc.Limits.KVTokens)
-			}
-			c.Agents[name] = a
 		}
 		if _, ok := c.Providers[a.Provider]; !ok {
 			return fmt.Errorf("config: agent %q provider %q is not defined under providers", name, a.Provider)
@@ -1155,6 +1237,36 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: agent %q has an acp block with an empty command", name)
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateAgentModelRef(name string, a AgentConfig) (AgentConfig, error) {
+	mc, ok := c.Models[a.Model]
+	if !ok {
+		return a, fmt.Errorf("config: agent %q model %q is not defined under models", name, a.Model)
+	}
+	if a.Provider == "" {
+		a.Provider = mc.Provider
+	} else if a.Provider != mc.Provider {
+		return a, fmt.Errorf("config: agent %q provider %q disagrees with model %q's provider %q", name, a.Provider, a.Model, mc.Provider)
+	}
+	// Effective window: the agent's own, or the model's default when unset.
+	eff := a.ContextWindow
+	if eff == 0 {
+		eff = mc.ContextWindow
+	}
+	if mc.ContextWindow > 0 && eff > mc.ContextWindow {
+		return a, fmt.Errorf("config: agent %q context_window %d exceeds model %q context_window %d", name, eff, a.Model, mc.ContextWindow)
+	}
+	if mc.Limits != nil && mc.Limits.KVTokens > 0 && eff > mc.Limits.KVTokens {
+		return a, fmt.Errorf("config: agent %q context_window %d exceeds model %q limits.kv_tokens %d - it could never be admitted", name, eff, a.Model, mc.Limits.KVTokens)
+	}
+	c.Agents[name] = a
+	return a, nil
+}
+
+func (c *Config) validateGates() error {
 	if c.Gates.Enabled() {
 		g := &c.Gates
 		if g.DeterministicChecks.MaxRounds < 0 || g.Judge.MaxRounds < 0 {
@@ -1170,40 +1282,51 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: gates needs one of rubric_path or rubric when judge is enabled")
 		}
 		if g.JudgeEnabled() {
-			if _, ok := c.Providers[g.Judge.Provider]; !ok {
-				return fmt.Errorf("config: gates.judge.provider %q is not defined under providers", g.Judge.Provider)
-			}
-			if err := c.checkModelRegistered("gates.judge.model", g.Judge.Model); err != nil {
+			if err := c.validateGateJudge(g); err != nil {
 				return err
-			}
-			if g.Judge.Threshold == 0 {
-				g.Judge.Threshold = 0.7
-			}
-			if g.Judge.Threshold <= 0 || g.Judge.Threshold > 1 {
-				return fmt.Errorf("config: gates.judge.threshold must be in (0,1]")
-			}
-			if g.Judge.MaxIterations == 0 {
-				g.Judge.MaxIterations = 6
-			}
-			if g.Judge.MaxIterations < 1 {
-				return fmt.Errorf("config: gates.judge.max_iterations must be >= 1")
-			}
-			if g.Judge.MaxOutputTokens < 0 {
-				return fmt.Errorf("config: gates.judge.max_output_tokens must be >= 0")
-			}
-			// A reply reserve at or past the window leaves no room for the
-			// prompt, degrading judgeCharBudget to a full-window budget with
-			// no log and recreating the #1215 overflow (#1221).
-			if g.Judge.ContextWindow > 0 && g.Judge.MaxOutputTokens >= g.Judge.ContextWindow {
-				return fmt.Errorf("config: gates.judge.max_output_tokens %d must be less than gates.judge.context_window %d", g.Judge.MaxOutputTokens, g.Judge.ContextWindow)
-			}
-			switch g.Judge.ThinkingLevel {
-			case "", "low", "medium", "high":
-			default:
-				return fmt.Errorf("config: gates.judge.thinking_level must be one of low, medium, high (or unset)")
 			}
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateGateJudge(g *GatesConfig) error {
+	if _, ok := c.Providers[g.Judge.Provider]; !ok {
+		return fmt.Errorf("config: gates.judge.provider %q is not defined under providers", g.Judge.Provider)
+	}
+	if err := c.checkModelRegistered("gates.judge.model", g.Judge.Model); err != nil {
+		return err
+	}
+	if g.Judge.Threshold == 0 {
+		g.Judge.Threshold = 0.7
+	}
+	if g.Judge.Threshold <= 0 || g.Judge.Threshold > 1 {
+		return fmt.Errorf("config: gates.judge.threshold must be in (0,1]")
+	}
+	if g.Judge.MaxIterations == 0 {
+		g.Judge.MaxIterations = 6
+	}
+	if g.Judge.MaxIterations < 1 {
+		return fmt.Errorf("config: gates.judge.max_iterations must be >= 1")
+	}
+	if g.Judge.MaxOutputTokens < 0 {
+		return fmt.Errorf("config: gates.judge.max_output_tokens must be >= 0")
+	}
+	// A reply reserve at or past the window leaves no room for the prompt, degrading to a
+	// full-window budget with no log and recreating the #1215 overflow (#1221).
+	if g.Judge.ContextWindow > 0 && g.Judge.MaxOutputTokens >= g.Judge.ContextWindow {
+		return fmt.Errorf("config: gates.judge.max_output_tokens %d must be less than gates.judge.context_window %d", g.Judge.MaxOutputTokens, g.Judge.ContextWindow)
+	}
+	switch g.Judge.ThinkingLevel {
+	case "", "low", "medium", "high":
+	default:
+		return fmt.Errorf("config: gates.judge.thinking_level must be one of low, medium, high (or unset)")
+	}
+	return nil
+}
+
+func (c *Config) validateSessionCompaction() error {
 	if c.Session.Compaction.Enabled {
 		cc := c.Session.Compaction
 		if cc.Model != "" {
@@ -1221,6 +1344,11 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: session.compaction.overlap_size requires compaction_interval > 0")
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateTools() error {
 	for name, t := range c.Tools {
 		if t.Store != "" {
 			if _, ok := c.Store(t.Store); !ok {
@@ -1231,6 +1359,11 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: tool %q has unsupported auth kind %q (only %q is implemented)", name, t.Auth.Kind, authKindAPIKey)
 		}
 	}
+
+	return nil
+}
+
+func (c *Config) validateDag() error {
 	if c.Dag.MaxActiveNodes == 0 {
 		c.Dag.MaxActiveNodes = defaultMaxActiveNodes
 	}
@@ -1244,6 +1377,11 @@ func (c *Config) validate() error {
 		slog.Warn("dag.max_active_runs is deprecated and ignored; chat state derives from node rows now",
 			"component", "config", "value", c.Dag.MaxActiveRuns)
 	}
+
+	return nil
+}
+
+func (c *Config) validateServer() error {
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"
 	}
@@ -1267,28 +1405,7 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: server.public_url must be an absolute http(s) URL")
 		}
 	}
-	if err := c.Workspace.applyDefaults(); err != nil {
-		return err
-	}
-	if c.Plugins != nil && c.Skills.Plugins != nil {
-		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
-	}
-	c.Plugins = c.PluginRoots()
-	if c.Skills.Plugins != nil {
-		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
-	}
-	if err := c.validateWorkflows(); err != nil {
-		return err
-	}
-	if err := c.Observability.Otel.applyDefaults(); err != nil {
-		return err
-	}
-	if err := c.Observability.Recording.validate(c); err != nil {
-		return err
-	}
-	if err := c.Auth.validate(); err != nil {
-		return err
-	}
+
 	return nil
 }
 
@@ -1330,6 +1447,23 @@ func (a *InboundAuthConfig) validate() error {
 }
 
 func (w *WorkspaceConfig) applyDefaults() error {
+	for _, step := range []func() error{
+		w.applyCapsDefaults,
+		w.applySandboxDefaults,
+		w.applyLimitsDefaults,
+		w.applyGCDefaults,
+		w.applyGitCredentialDefaults,
+		w.applyGuardDefaults,
+		w.applyEnvDefaults,
+	} {
+		if err := step(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *WorkspaceConfig) applyCapsDefaults() error {
 	if w.Root == "" {
 		w.Root = defaultWorkspaceRoot
 	}
@@ -1354,6 +1488,10 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.MaxReadKB < 0 || w.MaxWriteKB < 0 || w.MaxResults < 0 || w.MaxListEntries < 0 || w.TimeoutSeconds < 0 || w.CheckTimeoutSeconds < 0 {
 		return fmt.Errorf("config: workspace caps must be >= 0")
 	}
+	return nil
+}
+
+func (w *WorkspaceConfig) applySandboxDefaults() error {
 	if w.Sandbox == "" {
 		w.Sandbox = defaultWorkspaceSandbox
 	}
@@ -1366,6 +1504,10 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.Sandbox != "bwrap" && w.Sandbox != "landlock" && w.Sandbox != "none" {
 		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap, landlock, or none)", w.Sandbox)
 	}
+	return nil
+}
+
+func (w *WorkspaceConfig) applyLimitsDefaults() error {
 	if w.Limits.AddressSpaceMB == 0 {
 		w.Limits.AddressSpaceMB = defaultWorkspaceAddressSpaceMB
 	}
@@ -1378,6 +1520,10 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.Limits.AddressSpaceMB < 0 || w.Limits.MaxProcs < 0 || w.Limits.MaxFileSizeMB < 0 {
 		return fmt.Errorf("config: workspace.limits must be >= 0")
 	}
+	return nil
+}
+
+func (w *WorkspaceConfig) applyGCDefaults() error {
 	if w.GC.ChatTTLHours == 0 {
 		w.GC.ChatTTLHours = defaultGCChatTTLHours
 	}
@@ -1396,6 +1542,10 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.GC.HomeMaxMB < 0 {
 		return fmt.Errorf("config: workspace.gc.home_max_mb must be >= 0")
 	}
+	return nil
+}
+
+func (w *WorkspaceConfig) applyGitCredentialDefaults() error {
 	for i, gc := range w.GitCredentials {
 		if strings.TrimSpace(gc.Host) == "" {
 			return fmt.Errorf("config: workspace.git_credentials[%d] has an empty host", i)
@@ -1404,14 +1554,21 @@ func (w *WorkspaceConfig) applyDefaults() error {
 			w.GitCredentials[i].Username = defaultGitCredentialUsername
 		}
 	}
+	return nil
+}
+
+func (w *WorkspaceConfig) applyGuardDefaults() error {
 	for tool, tier := range w.Guards {
 		if !validGuardTiers[tier] {
 			return fmt.Errorf("config: workspace.guards[%q] has unknown tier %q (want none, judge, confirm, or judge+confirm)", tool, tier)
 		}
 	}
-	// No network in the sandbox: "auto" defers a doomed download, "local" fails
-	// fast. GOMODCACHE points at the Dockerfile's pre-seeded copy under GOROOT
-	// (#936) since the child's HOME is a fresh per-job dir, never that cache.
+	return nil
+}
+
+func (w *WorkspaceConfig) applyEnvDefaults() error {
+	// No network in the sandbox: "local" fails fast instead of "auto" deferring a doomed download.
+	// GOMODCACHE is the Dockerfile's pre-seeded copy (the child's HOME is a fresh per-job dir, #936).
 	if w.Env == nil {
 		w.Env = map[string]string{}
 	}

@@ -22,8 +22,17 @@ import (
 // mutable coordinate field.
 type nativeAgent struct {
 	adkagent.Agent
-	build func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error)
+	build nodeBuilder
 }
+
+// roundCoordsSetter stamps a node's per-round ledger coordinates.
+type roundCoordsSetter func(round int, turnID, headSHA, triggerAnnotation string)
+
+// nodeRelease releases the node's pinned session, recording whether it stays paused.
+type nodeRelease func(paused bool)
+
+// nodeBuilder builds one native node's dispatch worker.
+type nodeBuilder func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, nodeRelease, error)
 
 // ForNode builds this node's list/read/edit/write_<kind> artifact tools
 // (internal/tools.BuildNativeArtifactTools) into the worker's builtins
