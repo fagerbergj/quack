@@ -800,13 +800,10 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		maxIters = defaultJudgeMaxIterations
 	}
 	receivedIDs := memoryIDs(received)
-
-	var sink verdict
-	// forcedClose is flipped by forcedVerdictCallback the instant it strips
-	// tools for a forced close (turn budget spent, or a repeated tool call) -
-	// the round's own signal, not a re-derivation from our turn counter, which only reflects TurnComplete events already observed and can't see a forced close whose own (final, tool-less) turn is what's in flight (#1235).
-	var forcedClose bool
-	judgeAgent, reads, err := factory(&sink, &forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs)
+	st := &judgeRoundState{cfg: cfg, maxIters: maxIters, emit: emit, ctx: ctx}
+	// forcedClose is flipped by forcedVerdictCallback the instant it strips tools for
+	// a forced close (#1235) - the round's own signal, not the turn counter.
+	judgeAgent, reads, err := factory(&st.sink, &st.forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs)
 	if err != nil {
 		return verdict{}, nil, fmt.Errorf("vetting: build judge agent: %w", err)
 	}
@@ -819,10 +816,70 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	if err != nil {
 		return verdict{}, nil, fmt.Errorf("vetting: judge runner: %w", err)
 	}
+	st.jr = jr
+	st.runCtx, st.cancel = context.WithCancel(ctx)
+	defer st.cancel()
+	st.sessionID = judgeSessionID(cfg.ChatID, "verdict")
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	content := judgePromptContent(cfg, prebuilt, answer, changedFiles, knownFailures, act, question)
+	if err := st.runTurn(content); err != nil {
+		return verdict{}, reads, err
+	}
+	v, ok := st.verdictFrom()
+	// #1259: a verdict that reached submit_verdict or the text-JSON fallback but
+	// skipped the required memory votes gets the same one-shot nudge, naming the owed ids.
+	owedIDs := owedMemoryVoteIDs(receivedIDs, v)
+	if ok && len(owedIDs) > 0 {
+		if v2, ok2, nerr := st.nudgeMemories(owedIDs); nerr != nil {
+			return verdict{}, reads, nerr
+		} else if ok2 {
+			v, ok = v2, ok2
+		}
+	}
+	if ok {
+		return v, reads, nil
+	}
 
+	// One in-session nudge before giving up: a text turn that didn't parse as a
+	// verdict is often analysis-complete/submission-wrong (#1235) - one direct ask.
+	if st.nudgeAllowed() && strings.TrimSpace(st.accum.String()) != "" {
+		if v, ok, nerr := st.submitNudge(); nerr != nil {
+			return verdict{}, reads, nerr
+		} else if ok {
+			return v, reads, nil
+		}
+	}
+
+	slog.Warn("judge round ended without a verdict",
+		"component", "vetting", "agent", cfg.Agent, "finish_reason", string(st.lastFinish), "output_tokens", st.lastOutTokens)
+	return verdict{}, reads, ErrJudgeNoVerdict
+}
+
+// judgeRoundState carries the turn state shared by the initial judge turn and the
+// in-session nudges, so a nudge counts against the same maxIters budget.
+type judgeRoundState struct {
+	cfg           Config
+	maxIters      int
+	emit          func(*genai.Part) bool
+	ctx           context.Context
+	runCtx        context.Context
+	cancel        context.CancelFunc
+	jr            *runner.Runner
+	sessionID     string
+	sink          verdict
+	forcedClose   bool
+	submitted     bool
+	turns         int
+	accum         strings.Builder
+	repeats       repeatLoopDetector
+	lastFinish    genai.FinishReason
+	lastOutTokens int32
+	aborted       bool
+}
+
+// judgePromptContent builds the judge's user content: the (prebuilt or built) prompt
+// plus the advisor-thread marker and the question's inline attachments.
+func judgePromptContent(cfg Config, prebuilt, answer, changedFiles, knownFailures string, act workerActivity, question *genai.Content) *genai.Content {
 	promptText := prebuilt
 	if promptText == "" {
 		promptText = buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, cfg.UpstreamAnswers, question, answer, changedFiles, act, knownFailures)
@@ -837,148 +894,134 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 			parts = append(parts, p)
 		}
 	}
-	content := &genai.Content{Role: "user", Parts: parts}
-	sessionID := judgeSessionID(cfg.ChatID, "verdict")
+	return &genai.Content{Role: "user", Parts: parts}
+}
 
-	var (
-		submitted     bool
-		turns         int
-		accum         strings.Builder
-		repeats       repeatLoopDetector
-		lastFinish    genai.FinishReason
-		lastOutTokens int32
-		// aborted is set whenever runTurn's own safety-cap break fires (turn cap
-		// or a runaway repeat, #889) - separate from forcedClose because a
-		// repeat trip can fire mid-generation, with no forced-close turn ever requested, and cancel()s runCtx either way (#1236 review: the nudge must not run on an already-cancelled context after either break).
-		aborted bool
-	)
-	// runTurn drives one jr.Run call to completion, shared across the initial
-	// turn and the submit_verdict nudge below - turns/submitted/accum/repeats
-	// carry state across both, so the nudge counts against the same maxIters budget rather than getting one for free.
-	runTurn := func(turnContent *genai.Content) error {
-		for ev, err := range jr.Run(runCtx, "judge", sessionID, turnContent, adkagent.RunConfig{}) {
-			if err != nil {
-				return err
-			}
-			if ev == nil {
-				continue
-			}
-			lastFinish = ev.FinishReason
-			if ev.UsageMetadata != nil {
-				lastOutTokens = ev.UsageMetadata.CandidatesTokenCount
-			}
-			if ev.Content == nil {
-				continue
-			}
-			for _, p := range ev.Content.Parts {
-				if p == nil {
-					continue
-				}
-				switch {
-				case p.FunctionCall != nil && p.FunctionCall.Name == submitVerdictTool:
-					// suppress from generic tool-call activity; success is confirmed
-					// on the matching FunctionResponse below - a schema-rejected or
-					// garbled call (e.g. truncated by the output cap) must not be mistaken for a submitted verdict (#889).
-				case p.FunctionResponse != nil && p.FunctionResponse.Name == submitVerdictTool:
-					if _, failed := p.FunctionResponse.Response["error"]; !failed {
-						submitted = true // handler ran; sink is populated
-					}
-				case p.Thought && p.Text != "":
-					repeats.observe(p.Text)
-					if !emit(stream.ThinkingPart(p.Text)) {
-						return context.Canceled
-					}
-				case p.FunctionCall != nil:
-					if !emit(&genai.Part{FunctionCall: p.FunctionCall}) {
-						return context.Canceled
-					}
-				case p.FunctionResponse != nil:
-					if !emit(&genai.Part{FunctionResponse: p.FunctionResponse}) {
-						return context.Canceled
-					}
-				case p.Text != "":
-					// Local model emits reasoning as plain text, not Thought parts.
-					accum.WriteString(p.Text)
-					repeats.observe(p.Text)
-					if !emit(stream.ThinkingPart(p.Text)) {
-						return context.Canceled
-					}
-				}
-			}
-			if ev.TurnComplete {
-				turns++
-			}
-			// Safety cap: prevent infinite loop if judge never calls submit_verdict,
-			// or a runaway repeat loop is decoding the same text forever (#889).
-			if turns > maxIters || repeats.tripped {
-				if repeats.tripped {
-					slog.Warn("judge round aborted: runaway repeat detected mid-generation",
-						"component", "vetting", "agent", cfg.Agent)
-				}
-				aborted = true
-				cancel()
-				break
-			}
+// runTurn drives one jr.Run call to completion, shared across the initial turn and the
+// nudges - turns/submitted/accum/repeats carry state across all of them.
+func (s *judgeRoundState) runTurn(turnContent *genai.Content) error {
+	for ev, err := range s.jr.Run(s.runCtx, "judge", s.sessionID, turnContent, adkagent.RunConfig{}) {
+		if err != nil {
+			return err
 		}
+		if err := s.observeEvent(ev); err != nil {
+			return err
+		}
+		// Safety cap: prevent infinite loop if judge never calls submit_verdict, or a
+		// runaway repeat loop is decoding the same text forever (#889).
+		if s.turns > s.maxIters || s.repeats.tripped {
+			if s.repeats.tripped {
+				slog.Warn("judge round aborted: runaway repeat detected mid-generation",
+					"component", "vetting", "agent", s.cfg.Agent)
+			}
+			s.aborted = true
+			s.cancel()
+			break
+		}
+	}
+	return nil
+}
+
+// observeEvent folds one run event into the round state; the error is a cancelled
+// emit (the consumer stopped wanting parts).
+func (s *judgeRoundState) observeEvent(ev *session.Event) error {
+	if ev == nil {
 		return nil
 	}
-
-	// verdictFrom: whichever way the round closed - submit_verdict tool call
-	// takes priority over accum's text, since a later tool call (e.g. after a
-	// nudge) always supersedes earlier unparsed text.
-	verdictFrom := func() (verdict, bool) {
-		if submitted {
-			return aggregateVerdict(sink), true
-		}
-		if v, perr := parseVerdict(accum.String()); perr == nil {
-			return v, true
-		}
-		return verdict{}, false
+	s.lastFinish = ev.FinishReason
+	if ev.UsageMetadata != nil {
+		s.lastOutTokens = ev.UsageMetadata.CandidatesTokenCount
 	}
-	// nudgeAllowed mirrors the #1235/#1236 guard shared by both nudges below:
-	// a forced-close turn already stripped tools and told the model none are
-	// available, and an aborted turn already cancel()ed runCtx - nudging either would contradict the last instruction or hit a dead context.
-	nudgeAllowed := func() bool { return !forcedClose && !aborted && ctx.Err() == nil }
-
-	if err := runTurn(content); err != nil {
-		return verdict{}, reads, err
+	if ev.Content == nil {
+		return nil
 	}
-
-	v, ok := verdictFrom()
-	// #1259: a verdict that reached submit_verdict or the text-JSON fallback
-	// but skipped the required memory votes gets the same one-shot nudge
-	// pattern as a missing verdict, naming the exact ids still owed (not
-	// every id received - a partial vote already recorded some of them).
-	owedIDs := owedMemoryVoteIDs(receivedIDs, v)
-	if ok && len(owedIDs) > 0 && nudgeAllowed() {
-		nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeMemoriesNudgeText(owedIDs)}}}
-		if err := runTurn(nudge); err != nil {
-			return verdict{}, reads, err
+	for _, p := range ev.Content.Parts {
+		if p == nil {
+			continue
 		}
-		if v2, ok2 := verdictFrom(); ok2 {
-			v, ok = v2, ok2
+		if err := s.scanPart(p); err != nil {
+			return err
 		}
 	}
-	if ok {
-		return v, reads, nil
+	if ev.TurnComplete {
+		s.turns++
 	}
+	return nil
+}
 
-	// One in-session nudge before giving up: a turn that ended with text but
-	// no submit_verdict call, and that text didn't parse as a verdict, is
-	// often the analysis-complete/submission-wrong shape (#1235) rather than a stuck model - worth one direct ask before paying for a fresh session.
-	if nudgeAllowed() && strings.TrimSpace(accum.String()) != "" {
-		nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeSubmitNudge}}}
-		if err := runTurn(nudge); err != nil {
-			return verdict{}, reads, err
+// scanPart folds one part into the round state; the error is a cancelled emit.
+func (s *judgeRoundState) scanPart(p *genai.Part) error {
+	switch {
+	case p.FunctionCall != nil && p.FunctionCall.Name == submitVerdictTool:
+		// Suppress from generic tool-call activity; success is confirmed on the matching
+		// FunctionResponse below (#889).
+	case p.FunctionResponse != nil && p.FunctionResponse.Name == submitVerdictTool:
+		if _, failed := p.FunctionResponse.Response["error"]; !failed {
+			s.submitted = true // handler ran; sink is populated
 		}
-		if v, ok := verdictFrom(); ok {
-			return v, reads, nil
+	case p.Thought && p.Text != "":
+		s.repeats.observe(p.Text)
+		if !s.emit(stream.ThinkingPart(p.Text)) {
+			return context.Canceled
+		}
+	case p.FunctionCall != nil:
+		if !s.emit(&genai.Part{FunctionCall: p.FunctionCall}) {
+			return context.Canceled
+		}
+	case p.FunctionResponse != nil:
+		if !s.emit(&genai.Part{FunctionResponse: p.FunctionResponse}) {
+			return context.Canceled
+		}
+	case p.Text != "":
+		// Local model emits reasoning as plain text, not Thought parts.
+		s.accum.WriteString(p.Text)
+		s.repeats.observe(p.Text)
+		if !s.emit(stream.ThinkingPart(p.Text)) {
+			return context.Canceled
 		}
 	}
+	return nil
+}
 
-	slog.Warn("judge round ended without a verdict",
-		"component", "vetting", "agent", cfg.Agent, "finish_reason", string(lastFinish), "output_tokens", lastOutTokens)
-	return verdict{}, reads, ErrJudgeNoVerdict
+// verdictFrom: a submit_verdict tool call takes priority over accum's text, since a
+// later tool call always supersedes earlier unparsed text.
+func (s *judgeRoundState) verdictFrom() (verdict, bool) {
+	if s.submitted {
+		return aggregateVerdict(s.sink), true
+	}
+	if v, perr := parseVerdict(s.accum.String()); perr == nil {
+		return v, true
+	}
+	return verdict{}, false
+}
+
+// nudgeAllowed mirrors the #1235/#1236 guard shared by both nudges: a forced-close
+// turn already stripped tools, and an aborted turn already cancel()ed runCtx.
+func (s *judgeRoundState) nudgeAllowed() bool {
+	return !s.forcedClose && !s.aborted && s.ctx.Err() == nil
+}
+
+// nudgeMemories sends the one-shot memory-vote nudge naming the owed ids (#1259).
+func (s *judgeRoundState) nudgeMemories(owedIDs []string) (verdict, bool, error) {
+	if !s.nudgeAllowed() {
+		return verdict{}, false, nil
+	}
+	nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeMemoriesNudgeText(owedIDs)}}}
+	if err := s.runTurn(nudge); err != nil {
+		return verdict{}, false, err
+	}
+	nv, nok := s.verdictFrom()
+	return nv, nok, nil
+}
+
+// submitNudge asks once, directly, for the missing submit_verdict call (#1235).
+func (s *judgeRoundState) submitNudge() (verdict, bool, error) {
+	nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeSubmitNudge}}}
+	if err := s.runTurn(nudge); err != nil {
+		return verdict{}, false, err
+	}
+	nv, nok := s.verdictFrom()
+	return nv, nok, nil
 }
 
 // judgeSubmitNudge: one-shot in-session continuation when a turn ends with

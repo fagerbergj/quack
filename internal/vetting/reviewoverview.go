@@ -238,10 +238,25 @@ const legacySummaryDisplayCap = 320
 // this file's doc comment). Never returns an empty string for a non-empty verdict: the verdict line (section 2) always renders. Built as a slice of
 // self-contained blocks joined with a single blank line, rather than ad-hoc "\n\n" concatenation, so an empty section can never leave a stray blank line behind (the bug a prior version had between Verified and Notes).
 func renderReviewOverview(in reviewOverviewInput) string {
-	var sections []string
 	comments := dedupeComments(in.Comments)
+	sections := []string{overviewVerdictLine(in, comments)}
+	for _, section := range []string{
+		reviewScopeLine(in),
+		reviewTakeawayLine(in),
+		reviewSinceLine(in),
+		reviewHighlightsSection(comments),
+		reviewVerifiedSection(in.Verified),
+		reviewNotesSection(in),
+	} {
+		if section != "" {
+			sections = append(sections, section)
+		}
+	}
+	return strings.Join(sections, "\n\n")
+}
 
-	// Section 2: verdict line.
+// overviewVerdictLine renders the verdict + label-count line (overview section 2).
+func overviewVerdictLine(in reviewOverviewInput, comments []ReviewComment) string {
 	verdictWord := in.Verdict
 	switch in.Verdict {
 	case "request_changes":
@@ -257,50 +272,60 @@ func renderReviewOverview(in reviewOverviewInput) string {
 	if in.HeadSHA != "" {
 		parts = append(parts, "head "+sha7(in.HeadSHA))
 	}
-	sections = append(sections, strings.Join(parts, " · "))
+	return strings.Join(parts, " \u00b7 ")
+}
 
-	// Section 3: scope line.
-	if in.ScopeKnown {
-		var scope string
-		switch {
-		case in.FirstReview:
-			scope = "Scope: first review, whole PR"
-		case in.PriorHeadSHA != "" && in.CommitsSinceKnown:
-			scope = fmt.Sprintf("Scope: re-review, %d %s since %s",
-				in.CommitsSince, pluralize(in.CommitsSince, "commit", "commits"), sha7(in.PriorHeadSHA))
-		default:
-			// Prior head unknown, or rev-list couldn't resolve a commit
-			// count (force-pushed away) - never claim "0 commits since" when
-			// the count is actually unknown.
-			scope = "Scope: re-review"
-		}
-		if in.FileCount > 0 {
-			scope += fmt.Sprintf(" (%d %s)", in.FileCount, pluralize(in.FileCount, "file", "files"))
-		}
-		sections = append(sections, scope)
+// reviewScopeLine renders the re-review scope line (overview section 3); empty when the scope is unknown.
+func reviewScopeLine(in reviewOverviewInput) string {
+	if !in.ScopeKnown {
+		return ""
 	}
+	var scope string
+	switch {
+	case in.FirstReview:
+		scope = "Scope: first review, whole PR"
+	case in.PriorHeadSHA != "" && in.CommitsSinceKnown:
+		scope = fmt.Sprintf("Scope: re-review, %d %s since %s",
+			in.CommitsSince, pluralize(in.CommitsSince, "commit", "commits"), sha7(in.PriorHeadSHA))
+	default:
+		// Prior head unknown or rev-list unresolvable (force-pushed away) - never
+		// claim "0 commits since" when the count is actually unknown.
+		scope = "Scope: re-review"
+	}
+	if in.FileCount > 0 {
+		scope += fmt.Sprintf(" (%d %s)", in.FileCount, pluralize(in.FileCount, "file", "files"))
+	}
+	return scope
+}
 
-	// Section 4: takeaway.
+// reviewTakeawayLine renders the takeaway line (overview section 4), dropping meta narration.
+func reviewTakeawayLine(in reviewOverviewInput) string {
 	if t := strings.TrimSpace(in.Takeaway); t != "" && !metaNarrationRe.MatchString(t) {
-		sections = append(sections, t)
+		return t
 	}
+	return ""
+}
 
-	// Section 5: since last review (re-review only).
-	if in.SinceKnown {
-		since := fmt.Sprintf("Since last review: %d resolved · %d open · %d dismissed",
-			in.Resolved, in.Open, len(in.Dismissed))
-		if len(in.Dismissed) > 0 {
-			reasons := make([]string, len(in.Dismissed))
-			for i, d := range in.Dismissed {
-				reasons[i] = fmt.Sprintf("%s:%d: %s", d.Path, d.Line, d.Note)
-			}
-			since += " (" + strings.Join(reasons, "; ") + ")"
+// reviewSinceLine renders the resolved/open/dismissed line (overview section 5, re-review only).
+func reviewSinceLine(in reviewOverviewInput) string {
+	if !in.SinceKnown {
+		return ""
+	}
+	since := fmt.Sprintf("Since last review: %d resolved \u00b7 %d open \u00b7 %d dismissed",
+		in.Resolved, in.Open, len(in.Dismissed))
+	if len(in.Dismissed) > 0 {
+		reasons := make([]string, len(in.Dismissed))
+		for i, d := range in.Dismissed {
+			reasons[i] = fmt.Sprintf("%s:%d: %s", d.Path, d.Line, d.Note)
 		}
-		sections = append(sections, since)
+		since += " (" + strings.Join(reasons, "; ") + ")"
 	}
+	return since
+}
 
-	// Section 6: highlights table - every blocking finding, else the top 2
-	// suggestions, in staged order. Omitted when there's neither.
+// reviewHighlightsSection renders the highlights table (overview section 6): every blocking
+// finding, else the top 2 suggestions, in staged order.
+func reviewHighlightsSection(comments []ReviewComment) string {
 	var rows []ReviewComment
 	for _, c := range comments {
 		if label, _ := commentLabel(c.Body); label == "blocking" {
@@ -317,32 +342,38 @@ func renderReviewOverview(in reviewOverviewInput) string {
 			}
 		}
 	}
-	if len(rows) > 0 {
-		var b strings.Builder
-		b.WriteString("### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |")
-		for _, c := range rows {
-			label, why := commentLabel(c.Body)
-			// A label-only body (no explanation at all) falls back to the
-			// finding's own path rather than an empty cell.
-			if why == "" {
-				why = c.Path
-			}
-			fmt.Fprintf(&b, "\n| %s | %s | %s |", escapeTableCell(label), escapeTableCell(fmt.Sprintf("%s:%d", c.Path, c.Line)), escapeTableCell(why))
-		}
-		sections = append(sections, b.String())
+	if len(rows) == 0 {
+		return ""
 	}
-
-	// Section 7: verified.
-	if len(in.Verified) > 0 {
-		items := make([]string, len(in.Verified))
-		for i, v := range in.Verified {
-			items[i] = "- " + v
+	var b strings.Builder
+	b.WriteString("### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |")
+	for _, c := range rows {
+		label, why := commentLabel(c.Body)
+		// A label-only body (no explanation at all) falls back to the finding
+		// path rather than an empty cell.
+		if why == "" {
+			why = c.Path
 		}
-		sections = append(sections, "### Verified\n\n"+strings.Join(items, "\n"))
+		fmt.Fprintf(&b, "\n| %s | %s | %s |", escapeTableCell(label), escapeTableCell(fmt.Sprintf("%s:%d", c.Path, c.Line)), escapeTableCell(why))
 	}
+	return b.String()
+}
 
-	// Section 8: notes - the only free prose, plus a truncated legacy
-	// summary (pre-migration records that never had takeaway/verified/notes).
+// reviewVerifiedSection renders the verified bullet list (overview section 7).
+func reviewVerifiedSection(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	lines := make([]string, len(items))
+	for i, v := range items {
+		lines[i] = "- " + v
+	}
+	return "### Verified\n\n" + strings.Join(lines, "\n")
+}
+
+// reviewNotesSection renders the notes bullets plus a truncated legacy summary
+// (overview section 8, the only free prose; pre-migration records).
+func reviewNotesSection(in reviewOverviewInput) string {
 	var notes []string
 	for _, n := range in.Notes {
 		if !metaNarrationRe.MatchString(n) {
@@ -352,15 +383,14 @@ func renderReviewOverview(in reviewOverviewInput) string {
 	if ls := stripMetaNarration(strings.TrimSpace(in.LegacySummary)); ls != "" {
 		notes = append([]string{truncateRunes(ls, legacySummaryDisplayCap)}, notes...)
 	}
-	if len(notes) > 0 {
-		items := make([]string, len(notes))
-		for i, n := range notes {
-			items[i] = "- " + n
-		}
-		sections = append(sections, "### Notes\n\n"+strings.Join(items, "\n"))
+	if len(notes) == 0 {
+		return ""
 	}
-
-	return strings.Join(sections, "\n\n")
+	items := make([]string, len(notes))
+	for i, n := range notes {
+		items[i] = "- " + n
+	}
+	return "### Notes\n\n" + strings.Join(items, "\n")
 }
 
 // reviewScope resolves one review's diff scope against the same base/head diffSince uses (the diff this review is actually reviewing): the current
