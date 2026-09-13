@@ -250,112 +250,14 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		stream := o.client.Chat.Completions.NewStreaming(httpx.WithIdempotent(ctx), openaiReq)
 		defer func() { _ = stream.Close() }()
 
-		aggregatedContent := &genai.Content{
-			Role:  "model",
-			Parts: []*genai.Part{},
+		s := &streamAgg{
+			content:   &genai.Content{Role: "model", Parts: []*genai.Part{}},
+			toolCalls: make(map[int64]*toolCallBuilder),
 		}
-		var finishReason genai.FinishReason
-		var usageMetadata *genai.GenerateContentResponseUsageMetadata
-
-		// Track tool calls by index to properly aggregate them across chunks.
-		toolCallsMap := make(map[int64]*toolCallBuilder)
-
-		var modelVersion string
-		lastPartIsText := false
 
 		for stream.Next() {
-			chunk := stream.Current()
-
-			if chunk.Model != "" {
-				modelVersion = chunk.Model
-			}
-
-			// Capture usage - present on the final usage-only chunk when IncludeUsage is set.
-			if chunk.Usage.TotalTokens > 0 {
-				usageMetadata = &genai.GenerateContentResponseUsageMetadata{
-					PromptTokenCount:        int32(chunk.Usage.PromptTokens),
-					CandidatesTokenCount:    int32(chunk.Usage.CompletionTokens),
-					TotalTokenCount:         int32(chunk.Usage.TotalTokens),
-					CachedContentTokenCount: int32(chunk.Usage.PromptTokensDetails.CachedTokens),
-					ThoughtsTokenCount:      int32(chunk.Usage.CompletionTokensDetails.ReasoningTokens),
-				}
-				// Temporary raw usage trace - remove once prod confirms whether
-				// the endpoint sends prompt_tokens_details.cached_tokens at all
-				// (a 0 here with prefix caching enabled is a server-side matter).
-				slog.Debug("provider token usage", "component", "inference", "model", o.ModelName,
-					"prompt_tokens", chunk.Usage.PromptTokens, "cached_tokens", chunk.Usage.PromptTokensDetails.CachedTokens,
-					"completion_tokens", chunk.Usage.CompletionTokens, "reasoning_tokens", chunk.Usage.CompletionTokensDetails.ReasoningTokens,
-					"total_tokens", chunk.Usage.TotalTokens)
-			}
-
-			if len(chunk.Choices) == 0 {
-				continue
-			}
-
-			choice := chunk.Choices[0]
-
-			// Handle delta content.
-			if choice.Delta.Content != "" {
-				part := &genai.Part{Text: choice.Delta.Content}
-				if lastPartIsText {
-					aggregatedContent.Parts[len(aggregatedContent.Parts)-1].Text += part.Text
-				} else {
-					aggregatedContent.Parts = append(aggregatedContent.Parts, part)
-				}
-				lastPartIsText = true
-				llmResp := &model.LLMResponse{
-					Content:      &genai.Content{Role: "model", Parts: []*genai.Part{part}},
-					Partial:      true,
-					TurnComplete: false,
-				}
-				if !yield(llmResp, nil) {
-					return
-				}
-			} else {
-				lastPartIsText = false
-			}
-
-			// Surface reasoning_content as a Thought part so the UI can render
-			// thinking. openai-go marks untyped ExtraFields as status "invalid" (no
-			// typed extras decoder is registered for this struct), so Valid() is always false here - gate on the raw bytes instead, the way an omitted/null field already does.
-			if rc := choice.Delta.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
-				if raw := rc.Raw(); raw != "" && raw != "null" {
-					var text string
-					if jsonErr := json.Unmarshal([]byte(raw), &text); jsonErr == nil && text != "" {
-						part := &genai.Part{Text: text, Thought: true}
-						aggregatedContent.Parts = append(aggregatedContent.Parts, part)
-						lastPartIsText = false
-						llmResp := &model.LLMResponse{
-							Content:      &genai.Content{Role: "model", Parts: []*genai.Part{part}},
-							Partial:      true,
-							TurnComplete: false,
-						}
-						if !yield(llmResp, nil) {
-							return
-						}
-					}
-				}
-			}
-
-			// Handle tool calls in delta - aggregate across chunks keyed by index.
-			for _, toolCall := range choice.Delta.ToolCalls {
-				idx := toolCall.Index
-				builder, exists := toolCallsMap[idx]
-				if !exists {
-					builder = &toolCallBuilder{}
-					toolCallsMap[idx] = builder
-				}
-				if toolCall.ID != "" {
-					builder.id = toolCall.ID
-				}
-				if toolCall.Function.Name != "" {
-					builder.name = toolCall.Function.Name
-				}
-				builder.args += toolCall.Function.Arguments
-			}
-
-			if choice.FinishReason != "" {
-				finishReason = convertFinishReason(choice.FinishReason)
+			if !o.processChunk(ctx, stream.Current(), s, yield) {
+				return
 			}
 		}
 
@@ -366,69 +268,187 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			return
 		}
 
-		// Emit aggregated tool calls as FunctionCall parts, ordered by index.
-		if len(toolCallsMap) > 0 {
-			indices := make([]int64, 0, len(toolCallsMap))
-			for idx := range toolCallsMap {
-				indices = append(indices, idx)
-			}
-			sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
-			for _, idx := range indices {
-				b := toolCallsMap[idx]
-				aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{
-					FunctionCall: &genai.FunctionCall{
-						ID:   b.id,
-						Name: b.name,
-						Args: parseJSONArgs(b.args),
-					},
-				})
-			}
-		}
-
-		var hasAnswer, hadThinking bool
-		var promotedChars int
-		aggregatedContent.Parts, hasAnswer, hadThinking, promotedChars = applyFallbackLadder(
-			ctx, o.ModelName, aggregatedContent.Parts, len(toolCallsMap) > 0)
-		if promotedChars > 0 {
-			slog.WarnContext(ctx, "promoted reasoning to answer (empty content, unclosed </think>)",
-				"component", "inference", "model", o.ModelName, "chars", promotedChars)
-		}
-
-		if modelVersion == "" {
-			modelVersion = string(openaiReq.Model)
-		}
-		if !hasAnswer {
-			// Reasoning-model failure mode: no answer text and no tool call, often
-			// the model spending its whole budget thinking. The non-streaming path
-			// does not log this (pre-existing asymmetry, see golden_ladder_test.go).
-			var compl int32
-			if usageMetadata != nil {
-				compl = usageMetadata.CandidatesTokenCount
-			}
-			slog.WarnContext(ctx, "model returned no answer content (empty turn)",
-				"component", "inference", "model", o.ModelName, "finish_reason", string(finishReason),
-				"had_thinking", hadThinking, "completion_tokens", compl)
-		}
-		if usageMetadata != nil {
-			var reasoningText strings.Builder
-			for _, p := range aggregatedContent.Parts {
-				if p.Thought && p.Text != "" {
-					reasoningText.WriteString(p.Text)
-				}
-			}
-			usageMetadata.CandidatesTokenCount, usageMetadata.ThoughtsTokenCount = reasoningUsage(ctx, modelVersion,
-				usageMetadata.CandidatesTokenCount, usageMetadata.ThoughtsTokenCount, reasoningText.String())
-		}
-
-		yield(&model.LLMResponse{
-			Content:       aggregatedContent,
-			UsageMetadata: usageMetadata,
-			FinishReason:  finishReason,
-			ModelVersion:  modelVersion,
-			Partial:       false,
-			TurnComplete:  true,
-		}, nil)
+		o.emitFinal(ctx, openaiReq, s, yield)
 	}
+}
+
+// streamAgg accumulates one streaming generation across chunks so the
+// per-chunk and finalization steps each stay small.
+type streamAgg struct {
+	content        *genai.Content
+	finishReason   genai.FinishReason
+	usage          *genai.GenerateContentResponseUsageMetadata
+	modelVersion   string
+	toolCalls      map[int64]*toolCallBuilder
+	lastPartIsText bool
+}
+
+// processChunk folds one chunk into s and yields incremental parts; it
+// returns false once the consumer has stopped (yield answered no).
+func (o *OpenAIModel) processChunk(ctx context.Context, chunk openai.ChatCompletionChunk, s *streamAgg, yield func(*model.LLMResponse, error) bool) bool {
+	if chunk.Model != "" {
+		s.modelVersion = chunk.Model
+	}
+
+	// Capture usage - present on the final usage-only chunk when IncludeUsage is set.
+	if chunk.Usage.TotalTokens > 0 {
+		s.usage = &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount:        int32(chunk.Usage.PromptTokens),
+			CandidatesTokenCount:    int32(chunk.Usage.CompletionTokens),
+			TotalTokenCount:         int32(chunk.Usage.TotalTokens),
+			CachedContentTokenCount: int32(chunk.Usage.PromptTokensDetails.CachedTokens),
+			ThoughtsTokenCount:      int32(chunk.Usage.CompletionTokensDetails.ReasoningTokens),
+		}
+		// Temporary raw usage trace - remove once prod confirms whether the endpoint sends
+		// prompt_tokens_details.cached_tokens at all (a 0 here with caching is server-side).
+		slog.Debug("provider token usage", "component", "inference", "model", o.ModelName,
+			"prompt_tokens", chunk.Usage.PromptTokens, "cached_tokens", chunk.Usage.PromptTokensDetails.CachedTokens,
+			"completion_tokens", chunk.Usage.CompletionTokens, "reasoning_tokens", chunk.Usage.CompletionTokensDetails.ReasoningTokens,
+			"total_tokens", chunk.Usage.TotalTokens)
+	}
+
+	if len(chunk.Choices) == 0 {
+		return true
+	}
+
+	choice := chunk.Choices[0]
+
+	// Handle delta content.
+	if choice.Delta.Content != "" {
+		part := &genai.Part{Text: choice.Delta.Content}
+		if s.lastPartIsText {
+			s.content.Parts[len(s.content.Parts)-1].Text += part.Text
+		} else {
+			s.content.Parts = append(s.content.Parts, part)
+		}
+		s.lastPartIsText = true
+		if !yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: "model", Parts: []*genai.Part{part}},
+			Partial:      true,
+			TurnComplete: false,
+		}, nil) {
+			return false
+		}
+	} else {
+		s.lastPartIsText = false
+	}
+
+	if !emitReasoningPart(choice, s, yield) {
+		return false
+	}
+
+	// Handle tool calls in delta - aggregate across chunks keyed by index.
+	for _, toolCall := range choice.Delta.ToolCalls {
+		idx := toolCall.Index
+		builder, exists := s.toolCalls[idx]
+		if !exists {
+			builder = &toolCallBuilder{}
+			s.toolCalls[idx] = builder
+		}
+		if toolCall.ID != "" {
+			builder.id = toolCall.ID
+		}
+		if toolCall.Function.Name != "" {
+			builder.name = toolCall.Function.Name
+		}
+		builder.args += toolCall.Function.Arguments
+	}
+
+	if choice.FinishReason != "" {
+		s.finishReason = convertFinishReason(choice.FinishReason)
+	}
+	return true
+}
+
+// emitReasoningPart surfaces reasoning_content as a Thought part so the UI can
+// render thinking; it gates on the raw bytes - openai-go marks untyped ExtraFields as status "invalid" (no typed extras decoder), so Valid() is always false.
+func emitReasoningPart(choice openai.ChatCompletionChunkChoice, s *streamAgg, yield func(*model.LLMResponse, error) bool) bool {
+	rc := choice.Delta.JSON.ExtraFields["reasoning_content"]
+	if rc.Raw() == "" {
+		return true
+	}
+	raw := rc.Raw()
+	if raw == "" || raw == "null" {
+		return true
+	}
+	var text string
+	if jsonErr := json.Unmarshal([]byte(raw), &text); jsonErr != nil || text == "" {
+		return true
+	}
+	part := &genai.Part{Text: text, Thought: true}
+	s.content.Parts = append(s.content.Parts, part)
+	s.lastPartIsText = false
+	return yield(&model.LLMResponse{
+		Content:      &genai.Content{Role: "model", Parts: []*genai.Part{part}},
+		Partial:      true,
+		TurnComplete: false,
+	}, nil)
+}
+
+// emitFinal appends the aggregated tool calls, runs the fallback ladder, and
+// yields the single terminal (TurnComplete) response for the generation.
+func (o *OpenAIModel) emitFinal(ctx context.Context, openaiReq openai.ChatCompletionNewParams, s *streamAgg, yield func(*model.LLMResponse, error) bool) {
+	// Emit aggregated tool calls as FunctionCall parts, ordered by index.
+	if len(s.toolCalls) > 0 {
+		indices := make([]int64, 0, len(s.toolCalls))
+		for idx := range s.toolCalls {
+			indices = append(indices, idx)
+		}
+		sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
+		for _, idx := range indices {
+			b := s.toolCalls[idx]
+			s.content.Parts = append(s.content.Parts, &genai.Part{
+				FunctionCall: &genai.FunctionCall{
+					ID:   b.id,
+					Name: b.name,
+					Args: parseJSONArgs(b.args),
+				},
+			})
+		}
+	}
+
+	var hasAnswer, hadThinking bool
+	var promotedChars int
+	s.content.Parts, hasAnswer, hadThinking, promotedChars = applyFallbackLadder(
+		ctx, o.ModelName, s.content.Parts, len(s.toolCalls) > 0)
+	if promotedChars > 0 {
+		slog.WarnContext(ctx, "promoted reasoning to answer (empty content, unclosed </think>)",
+			"component", "inference", "model", o.ModelName, "chars", promotedChars)
+	}
+
+	if s.modelVersion == "" {
+		s.modelVersion = string(openaiReq.Model)
+	}
+	if !hasAnswer {
+		// Reasoning-model failure mode: no answer text and no tool call, often the model spending its
+		// whole budget thinking. The non-streaming path does not log this (see golden_ladder_test.go).
+		var compl int32
+		if s.usage != nil {
+			compl = s.usage.CandidatesTokenCount
+		}
+		slog.WarnContext(ctx, "model returned no answer content (empty turn)",
+			"component", "inference", "model", o.ModelName, "finish_reason", string(s.finishReason),
+			"had_thinking", hadThinking, "completion_tokens", compl)
+	}
+	if s.usage != nil {
+		var reasoningText strings.Builder
+		for _, p := range s.content.Parts {
+			if p.Thought && p.Text != "" {
+				reasoningText.WriteString(p.Text)
+			}
+		}
+		s.usage.CandidatesTokenCount, s.usage.ThoughtsTokenCount = reasoningUsage(ctx, s.modelVersion,
+			s.usage.CandidatesTokenCount, s.usage.ThoughtsTokenCount, reasoningText.String())
+	}
+
+	yield(&model.LLMResponse{
+		Content:       s.content,
+		UsageMetadata: s.usage,
+		FinishReason:  s.finishReason,
+		ModelVersion:  s.modelVersion,
+		Partial:       false,
+		TurnComplete:  true,
+	}, nil)
 }
 
 // logRequestTail logs, at Debug, the shape of the request the model

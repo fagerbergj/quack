@@ -534,8 +534,7 @@ var (
 // unexported state) is left untouched - a reflection-based deep copy would
 // zero unexported fields a real json.Marshal never touches.
 func denullSlices(v reflect.Value) reflect.Value {
-	if v.Type().Implements(jsonMarshalerType) || reflect.PointerTo(v.Type()).Implements(jsonMarshalerType) ||
-		v.Type().Implements(textMarshalerType) || reflect.PointerTo(v.Type()).Implements(textMarshalerType) {
+	if hasOwnMarshaler(v.Type()) {
 		return v
 	}
 	switch v.Kind() {
@@ -573,17 +572,30 @@ func denullSlices(v reflect.Value) reflect.Value {
 		}
 		return out
 	case reflect.Struct:
-		out := reflect.New(v.Type()).Elem()
-		for i := range v.NumField() {
-			if v.Type().Field(i).PkgPath != "" {
-				continue // unexported: encoding/json never sees it either
-			}
-			out.Field(i).Set(denullSlices(v.Field(i)))
-		}
-		return out
+		return denullStruct(v)
 	default:
 		return v
 	}
+}
+
+// hasOwnMarshaler: the deep copy must skip these - json encodes them via
+// their own method, and copying by reflection would zero unexported state.
+func hasOwnMarshaler(t reflect.Type) bool {
+	return t.Implements(jsonMarshalerType) || reflect.PointerTo(t).Implements(jsonMarshalerType) ||
+		t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType)
+}
+
+// denullStruct copies an exported-fields-only deep copy - encoding/json
+// never sees the unexported ones either.
+func denullStruct(v reflect.Value) reflect.Value {
+	out := reflect.New(v.Type()).Elem()
+	for i := range v.NumField() {
+		if v.Type().Field(i).PkgPath != "" {
+			continue // unexported: encoding/json never sees it either
+		}
+		out.Field(i).Set(denullSlices(v.Field(i)))
+	}
+	return out
 }
 
 // errNonInteractive: stdin had no bytes at all, distinct from a blank line

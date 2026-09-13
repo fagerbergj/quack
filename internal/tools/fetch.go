@@ -220,6 +220,12 @@ func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, ta
 		}
 	}
 
+	return fetchFallback(target, text, rendered, derr, rerr, renderer != nil)
+}
+
+// fetchFallback decides what a failed thin fetch reports: an anti-bot wall,
+// the thin direct text, a render-unavailable placeholder, or the errors.
+func fetchFallback(target, text, rendered string, derr, rerr error, hadRenderer bool) (string, error) {
 	// Bot wall: report it rather than returning CAPTCHA as page content.
 	if looksLikeBotWall(text) || looksLikeBotWall(rendered) || errors.Is(derr, errCloudflareChallenge) {
 		return "", fmt.Errorf("web_fetch: %s is behind an anti-bot wall (CAPTCHA / JS challenge); its content can't be read - try a different source", target)
@@ -231,7 +237,7 @@ func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, ta
 	}
 
 	// Graceful degradation: render failure on a reachable target logs and returns a "render unavailable" placeholder.
-	if renderer != nil && rerr != nil && derr == nil {
+	if hadRenderer && rerr != nil && derr == nil {
 		slog.Warn("web_fetch: render backend failed; degrading to render-unavailable result",
 			"component", "tools", "url", target, "error", rerr)
 		return fmt.Sprintf("[web_fetch: render backend could not retrieve %s (%v). "+

@@ -558,36 +558,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 			return
 		}
 		body.Content = r.FormValue("content")
-		userID := h.sessionUser(r.Context(), chatID)
-		i := 0
-		for _, fhs := range r.MultipartForm.File {
-			for _, fh := range fhs {
-				f, err := fh.Open()
-				if err != nil {
-					continue
-				}
-				data, err := io.ReadAll(f)
-				_ = f.Close()
-				if err != nil {
-					continue
-				}
-				mimeType := fh.Header.Get("Content-Type")
-				if mimeType == "" {
-					mimeType = "application/octet-stream"
-				}
-				name := fh.Filename
-				if name == "" {
-					name = fmt.Sprintf("attachment-%d", i)
-				}
-				i++
-				ref, err := h.saveAttachment(r.Context(), userID, chatID, turnID, name, data, mimeType)
-				if err != nil {
-					slog.Warn("attachment save failed; dropping this file", "component", "rest", "chat", chatID, "name", name, "err", err)
-					continue
-				}
-				attachments = append(attachments, ref)
-			}
-		}
+		attachments = h.multipartAttachments(r, h.sessionUser(r.Context(), chatID), chatID, turnID)
 	} else {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
 			errMsg(w, http.StatusBadRequest, "invalid request body")
@@ -619,6 +590,42 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 	// From here this handler is only a viewer - it cannot stall or kill the run.
 	streamHub(r.Context(), sse, replay, live, 0)
+}
+
+// multipartAttachments saves every uploaded file as a blob artifact and returns
+// the reference parts - a file that can't be read or saved is dropped (logged), never aborting the message.
+func (h *Handler) multipartAttachments(r *http.Request, userID, chatID, turnID string) []*genai.Part {
+	var attachments []*genai.Part
+	i := 0
+	for _, fhs := range r.MultipartForm.File {
+		for _, fh := range fhs {
+			f, err := fh.Open()
+			if err != nil {
+				continue
+			}
+			data, err := io.ReadAll(f)
+			_ = f.Close()
+			if err != nil {
+				continue
+			}
+			mimeType := fh.Header.Get("Content-Type")
+			if mimeType == "" {
+				mimeType = "application/octet-stream"
+			}
+			name := fh.Filename
+			if name == "" {
+				name = fmt.Sprintf("attachment-%d", i)
+			}
+			i++
+			ref, err := h.saveAttachment(r.Context(), userID, chatID, turnID, name, data, mimeType)
+			if err != nil {
+				slog.Warn("attachment save failed; dropping this file", "component", "rest", "chat", chatID, "name", name, "err", err)
+				continue
+			}
+			attachments = append(attachments, ref)
+		}
+	}
+	return attachments
 }
 
 // attachmentArtifactKind is the generic blob kind (#1090 §4.3, already

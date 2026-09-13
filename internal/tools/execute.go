@@ -33,6 +33,10 @@ import (
 // populate the sdk struct fully.
 type AssignmentFreshnessFunc func(ctx agent.Context, planID, agentName, contextID string, a dag.Assignment) (fresh bool, reason string)
 
+// ProvisionFunc provisions a plan's setup (e.g. the executor's clone);
+// nil skips provisioning (tests, plan-only runs).
+type ProvisionFunc func(ctx context.Context, userID, chatID string, plan *dag.Plan) error
+
 // RunStepFunc runs exactly the nodes named in run - fresh dispatches, never
 // retries - seeding every other node's output from seeded, and returns what
 // each ran node produced, which run-set node(s), if any, parked on a HITL
@@ -102,7 +106,7 @@ const summaryPreviewLen = 400
 // resumes that node's own session, unless freshnessCheck says it's stale.
 // The tool ends the orchestrator's turn (SkipSummarization) only once a step
 // declares delivery - otherwise it returns this step's results and the turn continues.
-func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCache, provision func(ctx context.Context, userID, chatID string, plan *dag.Plan) error, runStep RunStepFunc, finalize FinalizeAnswerFunc, history []dag.HistoryTurn, message string, attachments []*genai.Part, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool, nodeID string, freshnessCheck AssignmentFreshnessFunc) (tool.Tool, error) {
+func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCache, provision ProvisionFunc, runStep RunStepFunc, finalize FinalizeAnswerFunc, history []dag.HistoryTurn, message string, attachments []*genai.Part, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool, nodeID string, freshnessCheck AssignmentFreshnessFunc) (tool.Tool, error) {
 	return functiontool.New[executeArgs, executeResult](
 		functiontool.Config{
 			Name: "execute",
@@ -120,61 +124,18 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				"will respond (the work is already done).",
 		},
 		func(tc agent.Context, a executeArgs) (executeResult, error) {
-			rec, _, ok, err := loadDagPlan(tc, c)
+			rec, shortCircuit, err := planForExecute(tc, c, a)
 			if err != nil {
 				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
-			if !ok {
-				return executeResult{}, fmt.Errorf("execute: no plan exists yet - call create_plan first")
-			}
-			if a.PlanID != "" && a.PlanID != rec.PlanID {
-				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q - the current plan is %q", a.PlanID, rec.PlanID)
-			}
-
-			// Nothing new since the last execute call: skip the judge/run/
-			// finalize pipeline entirely rather than silently re-running it on
-			// an unchanged plan - a model that calls execute again expecting a
-			// different answer needs a clear "nothing to do" instead (#slice3
-			// review: this was the CI hang - execute doesn't end the turn on
-			// its own, so a model re-issuing this with nothing new spun
-			// forever). Only "plan is genuinely done" ends the turn here; the
-			// repeat guard (orchestrator.go) is the backstop for a model that
-			// keeps calling this anyway on a still-partial plan.
-			if run, _ := partitionAssignments(rec.Assignments); len(run) == 0 {
-				if rec.Status == "done" {
-					tc.Actions().SkipSummarization = true
-				}
+			if shortCircuit {
 				return executeResult{
 					Status:  runningStatus(rec.Status),
 					Message: fmt.Sprintf("nothing new to run - plan %s status %q; every assignment has already run", rec.PlanID, rec.Status),
 				}, nil
 			}
 
-			nodes, err := listDagNodeRecords(tc, c)
-			if err != nil {
-				return executeResult{}, fmt.Errorf("execute: %w", err)
-			}
-			nodeAgent := make(map[string]string, len(nodes))
-			resumedFrom := make(map[string]string, len(nodes))
-			for _, n := range nodes {
-				nodeAgent[n.NodeID] = n.Agent
-				if resumable, _ := n.Resumable(); resumable && n.ContextID != "" {
-					resumedFrom[n.NodeID] = n.ContextID
-				}
-			}
-			if freshnessCheck != nil {
-				for _, a := range rec.Assignments {
-					if resumedFrom[a.NodeID] == "" {
-						continue
-					}
-					if fresh, reason := freshnessCheck(tc, rec.PlanID, nodeAgent[a.NodeID], resumedFrom[a.NodeID], a); !fresh {
-						slog.Info("reused node's context is stale; running a fresh session",
-							"component", "execute", "node", a.NodeID, "reason", reason)
-						delete(resumedFrom, a.NodeID)
-					}
-				}
-			}
-			rawNodes, err := dag.AssignmentsToRawNodes(rec.Assignments, nodeAgent, resumedFrom)
+			rawNodes, err := resolveRawNodes(tc, rec, c, freshnessCheck)
 			if err != nil {
 				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
@@ -190,26 +151,14 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
 			plan, err := planner.Build(planCtx, rawNodes, setup, rec.Delivery, history, message, attachments, allowedKinds)
 			if err != nil {
-				reason := err.Error()
-				var rejected *dag.PlanRejectedError
-				if errors.As(err, &rejected) {
-					reason = rejected.Reason
-					cache.RecordRejection(reason)
-					if _, _, jerr := vetting.SavePlanRejectionJudgeRound(tc, c, nodeID, tc.InvocationID(), reason); jerr != nil {
-						slog.Warn("plan rejection judge_round save failed", "component", "execute", "err", jerr)
-					}
-				}
-				inference.RecordPlanRejection(tc.SessionID(), reason)
+				recordPlanRejection(tc, c, nodeID, cache, err)
 				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
 			// assemble() mints its own fresh plan.ID - overwrite it with the
 			// record's, the id the model actually knows and referenced.
 			plan.ID = rec.PlanID
-			// The judge and checkReviewDeliverable read plan.Delivery, which
-			// assemble() may have resolved from an explicit-but-kindless
-			// declaration (see assemble's own doc) - sync it back onto rec so
-			// execute's own delivering decision below reads the SAME resolved
-			// value the judge just judged, never a stale, less-resolved one.
+			// assemble() may resolve plan.Delivery from an explicit-but-kindless declaration
+			// - sync it back so the delivering decision reads the SAME resolved value.
 			rec.Delivery = plan.Delivery
 			// Nodes get the ask-only background and per-node context detail.
 			plan.WorkerBackground = workerAsk
@@ -223,120 +172,204 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 				inference.RecordPlanRejection(tc.SessionID(), err.Error())
 				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
-			// A plan was accepted - any earlier rejection this chat recorded no
-			// longer describes why the run ended (#1180), same as
-			// RecordCallResult's own success clear.
+			// A plan was accepted - any earlier rejection this chat recorded no longer
+			// describes why the run ended (#1180), same as RecordCallResult's clear.
 			inference.ClearPlanRejection(tc.SessionID())
 
-			if provision != nil {
-				if err := provision(tc, tc.UserID(), tc.SessionID(), plan); err != nil {
-					return executeResult{}, fmt.Errorf("execute: %w", err)
-				}
-			}
-
-			planJSON, err := json.Marshal(*plan)
-			if err != nil {
-				return executeResult{}, fmt.Errorf("execute: marshal plan: %w", err)
-			}
-			if err := tc.State().Set(ExecPlanKey, string(planJSON)); err != nil {
-				return executeResult{}, fmt.Errorf("execute: persist plan for resume: %w", err)
-			}
-			cache.Put(*plan)
-			cache.SetSelected(plan.ID)
-
-			// Emits the judged, fully-assembled plan - the resume path
-			// (startIncrementalNodeRun) re-emits dag_plan again after each
-			// of its own rounds, so this is not the plan's only one.
-			if yieldFn, ok := stream.YieldFromContext(tc); ok {
-				yieldFn(DagPlanEvent(tc, *plan))
+			if err := provisionAndPersist(tc, plan, provision, cache); err != nil {
+				return executeResult{}, err
 			}
 
 			// Only assignments create_plan/edit_plan added since the last execute
 			// call get dispatched - a done one keeps its recorded task_id/result forever.
-			run, seeded := partitionAssignments(rec.Assignments)
-			var outputs map[string]string
-			var needsInput map[string]bool
-			var started map[string]bool
-			if runStep != nil {
-				outputs, needsInput, started, err = runStep(tc, *plan, seeded, run)
-				if err != nil {
-					return executeResult{}, fmt.Errorf("execute: run: %w", err)
-				}
-			} else {
-				// No run function wired (a test double) - treat the whole run set as started.
-				started = run
-			}
-			stepPaused := len(needsInput) > 0
-
-			results := make([]assignmentResult, 0, len(run))
-			var stepFailed bool
-			for i := range rec.Assignments {
-				nid := rec.Assignments[i].NodeID
-				if !run[nid] {
-					continue
-				}
-				// A dependency pausing earlier aborted runDAGSubset before this
-				// node dispatched - leave it untouched so it stays reassignable.
-				if !started[nid] {
-					results = append(results, assignmentResult{NodeID: nid, Status: "queued", TaskID: rec.Assignments[i].TaskID})
-					continue
-				}
-				out := outputs[nid]
-				status := ApplyAssignmentOutcome(&rec.Assignments[i], out, needsInput[nid])
-				if status == "failed" {
-					stepFailed = true
-				}
-				arts, _ := nodeArtifactIDs(tc, c, nid)
-				results = append(results, assignmentResult{
-					NodeID: nid, Status: status, Summary: previewText(out), Artifacts: arts, TaskID: rec.Assignments[i].TaskID,
-				})
+			results, stepPaused, stepFailed, err := executeStep(tc, c, &rec, plan, runStep)
+			if err != nil {
+				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
 
-			// Only deliver when this step's own run actually succeeded - a
-			// failed or paused delivering node must not mark the plan done and
-			// finalize on garbage; the orchestrator needs the turn to stay
-			// open so it can see the failure and react (retry the node,
-			// edit_plan, or answer around it).
-			delivering := rec.Delivery != nil && !stepPaused && !stepFailed
-			rec.Status = "running"
-			if delivering {
-				rec.Status = "done"
-			}
-			runLineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
-			_, step, serr := c.SaveStructured(tc, "dag_plan", rec, "", runLineage)
-			if serr != nil {
-				slog.Warn("execute: dag_plan step update failed", "component", "execute", "err", serr)
-			}
-			emitPlanEvent(tc, plan, step)
-
-			if delivering && finalize != nil {
-				final := map[string]string{}
-				for _, a := range rec.Assignments {
-					final[a.NodeID] = a.Result
-				}
-				cache.SetDelivered(finalize(tc, *plan, final))
-			}
-			if delivering || stepPaused {
-				// End the llmagent turn: either delivery has fired (nothing
-				// more to plan) or a node is waiting on the user (calling
-				// execute/edit_plan again now would just repeat this step).
-				// A failed step deliberately does NOT end the turn - the
-				// model needs to see the failure and act on it.
-				// ponytail: synthesizer node IS the loop-back. Add a caller-side knob when orchestrator needs to reshape.
-				tc.Actions().SkipSummarization = true
-			}
-
-			slog.Info("execute: plan step ran", "component", "execute", "plan", plan.ID, "ran", len(results), "delivering", delivering, "paused", stepPaused, "failed", stepFailed)
-			status := "running"
-			switch {
-			case delivering:
-				status = "delivered"
-			case stepPaused:
-				status = "paused"
-			}
-			return executeResult{Status: status, Results: results}, nil
+			return finishExecStep(tc, c, cache, finalize, nodeID, &rec, plan, results, stepPaused, stepFailed)
 		},
 	)
+}
+
+// planForExecute loads the chat's dag_plan, validates the plan_id, and reports
+// whether this call has nothing new to run - setting SkipSummarization if the plan is done.
+func planForExecute(tc agent.Context, c *recordstore.Client, a executeArgs) (dag.DagPlanRecord, bool, error) {
+	rec, _, ok, err := loadDagPlan(tc, c)
+	if err != nil {
+		return dag.DagPlanRecord{}, false, err
+	}
+	if !ok {
+		return dag.DagPlanRecord{}, false, fmt.Errorf("no plan exists yet - call create_plan first")
+	}
+	if a.PlanID != "" && a.PlanID != rec.PlanID {
+		return dag.DagPlanRecord{}, false, fmt.Errorf("unknown plan_id %q - the current plan is %q", a.PlanID, rec.PlanID)
+	}
+	if run, _ := partitionAssignments(rec.Assignments); len(run) == 0 {
+		// Nothing new: don't re-run the pipeline on the unchanged plan (#slice3
+		// hang); only "genuinely done" ends the turn - the repeat guard is the backstop.
+		if rec.Status == "done" {
+			tc.Actions().SkipSummarization = true
+		}
+		return rec, true, nil
+	}
+	return rec, false, nil
+}
+
+// resolveRawNodes maps the plan's assignments to raw DAG nodes, seeding a
+// resumable node's own session unless freshnessCheck judges its context stale.
+func resolveRawNodes(tc agent.Context, rec dag.DagPlanRecord, c *recordstore.Client, freshnessCheck AssignmentFreshnessFunc) ([]dag.RawNode, error) {
+	nodes, err := listDagNodeRecords(tc, c)
+	if err != nil {
+		return nil, err
+	}
+	nodeAgent := make(map[string]string, len(nodes))
+	resumedFrom := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		nodeAgent[n.NodeID] = n.Agent
+		if resumable, _ := n.Resumable(); resumable && n.ContextID != "" {
+			resumedFrom[n.NodeID] = n.ContextID
+		}
+	}
+	if freshnessCheck != nil {
+		for _, a := range rec.Assignments {
+			if resumedFrom[a.NodeID] == "" {
+				continue
+			}
+			if fresh, reason := freshnessCheck(tc, rec.PlanID, nodeAgent[a.NodeID], resumedFrom[a.NodeID], a); !fresh {
+				slog.Info("reused node's context is stale; running a fresh session",
+					"component", "execute", "node", a.NodeID, "reason", reason)
+				delete(resumedFrom, a.NodeID)
+			}
+		}
+	}
+	return dag.AssignmentsToRawNodes(rec.Assignments, nodeAgent, resumedFrom)
+}
+
+// recordPlanRejection records a rejected plan's reason (cache, metric, judge
+// round) - the judge_round save is best-effort and only logged.
+func recordPlanRejection(tc agent.Context, c *recordstore.Client, nodeID string, cache *PlanCache, err error) {
+	reason := err.Error()
+	var rejected *dag.PlanRejectedError
+	if errors.As(err, &rejected) {
+		reason = rejected.Reason
+		cache.RecordRejection(reason)
+		if _, _, jerr := vetting.SavePlanRejectionJudgeRound(tc, c, nodeID, tc.InvocationID(), reason); jerr != nil {
+			slog.Warn("plan rejection judge_round save failed", "component", "execute", "err", jerr)
+		}
+	}
+	inference.RecordPlanRejection(tc.SessionID(), reason)
+}
+
+// provisionAndPersist provisions setup, persists the assembled plan to session
+// state (a failed persist surfaces, never drops), caches it selected, emits the plan.
+func provisionAndPersist(tc agent.Context, plan *dag.Plan, provision ProvisionFunc, cache *PlanCache) error {
+	if provision != nil {
+		if err := provision(tc, tc.UserID(), tc.SessionID(), plan); err != nil {
+			return fmt.Errorf("execute: %w", err)
+		}
+	}
+	planJSON, err := json.Marshal(*plan)
+	if err != nil {
+		return fmt.Errorf("execute: marshal plan: %w", err)
+	}
+	if err := tc.State().Set(ExecPlanKey, string(planJSON)); err != nil {
+		return fmt.Errorf("execute: persist plan for resume: %w", err)
+	}
+	cache.Put(*plan)
+	cache.SetSelected(plan.ID)
+	// Emits the judged, fully-assembled plan - the resume path
+	// (startIncrementalNodeRun) re-emits dag_plan after its own rounds too.
+	if yieldFn, ok := stream.YieldFromContext(tc); ok {
+		yieldFn(DagPlanEvent(tc, *plan))
+	}
+	return nil
+}
+
+// executeStep dispatches this step's never-run assignments via runStep and turns
+// each outcome into the model-facing results - "queued" means requested, never dispatched.
+func executeStep(tc agent.Context, c *recordstore.Client, rec *dag.DagPlanRecord, plan *dag.Plan, runStep RunStepFunc) (results []assignmentResult, stepPaused, stepFailed bool, err error) {
+	run, seeded := partitionAssignments(rec.Assignments)
+	var outputs map[string]string
+	var needsInput map[string]bool
+	var started map[string]bool
+	if runStep != nil {
+		outputs, needsInput, started, err = runStep(tc, *plan, seeded, run)
+		if err != nil {
+			return nil, false, false, fmt.Errorf("run: %w", err)
+		}
+	} else {
+		// No run function wired (a test double) - treat the whole run set as started.
+		started = run
+	}
+	stepPaused = len(needsInput) > 0
+
+	results = make([]assignmentResult, 0, len(run))
+	for i := range rec.Assignments {
+		nid := rec.Assignments[i].NodeID
+		if !run[nid] {
+			continue
+		}
+		// A dependency pausing earlier aborted runDAGSubset before this
+		// node dispatched - leave it untouched so it stays reassignable.
+		if !started[nid] {
+			results = append(results, assignmentResult{NodeID: nid, Status: "queued", TaskID: rec.Assignments[i].TaskID})
+			continue
+		}
+		out := outputs[nid]
+		status := ApplyAssignmentOutcome(&rec.Assignments[i], out, needsInput[nid])
+		if status == "failed" {
+			stepFailed = true
+		}
+		arts, _ := nodeArtifactIDs(tc, c, nid)
+		results = append(results, assignmentResult{
+			NodeID: nid, Status: status, Summary: previewText(out), Artifacts: arts, TaskID: rec.Assignments[i].TaskID,
+		})
+	}
+	return results, stepPaused, stepFailed, nil
+}
+
+// finishExecStep saves the record update, finalizes the answer on a step whose run
+// succeeded, and ends the llmagent turn on delivery or pause - a failed step leaves it open.
+func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, finalize FinalizeAnswerFunc, nodeID string, rec *dag.DagPlanRecord, plan *dag.Plan, results []assignmentResult, stepPaused, stepFailed bool) (executeResult, error) {
+	// Only deliver on a step whose own run succeeded - a failed or paused
+	// delivering node must not mark the plan done and finalize on garbage.
+	delivering := rec.Delivery != nil && !stepPaused && !stepFailed
+	rec.Status = "running"
+	if delivering {
+		rec.Status = "done"
+	}
+	runLineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
+	_, step, serr := c.SaveStructured(tc, "dag_plan", rec, "", runLineage)
+	if serr != nil {
+		slog.Warn("execute: dag_plan step update failed", "component", "execute", "err", serr)
+	}
+	emitPlanEvent(tc, plan, step)
+
+	if delivering && finalize != nil {
+		final := map[string]string{}
+		for _, a := range rec.Assignments {
+			final[a.NodeID] = a.Result
+		}
+		cache.SetDelivered(finalize(tc, *plan, final))
+	}
+	if delivering || stepPaused {
+		// End the llmagent turn: delivery fired (nothing more to plan) or a node
+		// waits on the user; a failed step does NOT end it - the model must react.
+
+		// ponytail: synthesizer node IS the loop-back. Add a caller-side knob when orchestrator needs to reshape.
+		tc.Actions().SkipSummarization = true
+	}
+
+	slog.Info("execute: plan step ran", "component", "execute", "plan", plan.ID, "ran", len(results), "delivering", delivering, "paused", stepPaused, "failed", stepFailed)
+	status := "running"
+	switch {
+	case delivering:
+		status = "delivered"
+	case stepPaused:
+		status = "paused"
+	}
+	return executeResult{Status: status, Results: results}, nil
 }
 
 // partitionAssignments splits a plan's assignments into this step's fresh
