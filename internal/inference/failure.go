@@ -169,7 +169,8 @@ func dialErrorClass(err error) string {
 	if errors.As(err, &dnsErr) {
 		return "no such host"
 	}
-	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
 		return "timeout"
 	}
 	return "connection error"

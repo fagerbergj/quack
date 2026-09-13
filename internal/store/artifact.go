@@ -665,7 +665,7 @@ func (b *loBlobBackend) withTx(ctx context.Context, fn func(pgx.Tx) error) error
 	if err != nil {
 		return fmt.Errorf("store: acquire conn for large object op: %w", err)
 	}
-	defer sc.Close()
+	defer func() { _ = sc.Close() }()
 
 	var pgxConn *pgx.Conn
 	if err := sc.Raw(func(driverConn any) error {

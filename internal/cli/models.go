@@ -29,7 +29,7 @@ func ListModels(ctx context.Context, endpoint, apiKey string) ([]string, error) 
 	if err != nil {
 		return nil, fmt.Errorf("contact %s: %w", ep, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s returned %s", ep, resp.Status)
 	}

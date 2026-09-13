@@ -57,7 +57,7 @@ func withContentCapture(t *testing.T, enabled bool) {
 func attrsOf(s tracetest.SpanStub) map[string]string {
 	out := map[string]string{}
 	for _, kv := range s.Attributes {
-		out[string(kv.Key)] = kv.Value.Emit()
+		out[string(kv.Key)] = kv.Value.String()
 	}
 	return out
 }

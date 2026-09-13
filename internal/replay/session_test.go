@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,8 +237,8 @@ func TestNextChat_ExtraCall(t *testing.T) {
 	if err == nil {
 		t.Fatalf("second NextChat: want an extra-call error, got nil")
 	}
-	me, ok := err.(*MissError)
-	if !ok {
+	var me *MissError
+	if !errors.As(err, &me) {
 		t.Fatalf("err type = %T, want *MissError", err)
 	}
 	if me.Class != ClassExtra {
@@ -269,8 +270,8 @@ func TestNextChat_ExtraCall_NeverRecorded(t *testing.T) {
 	}
 	coords := ledger.Coords{Node: "node-a", Agent: "judge", Round: "judge-r7"}
 	_, err = sess.NextChat(coords, "judge-model", nil)
-	me, ok := err.(*MissError)
-	if !ok {
+	var me *MissError
+	if !errors.As(err, &me) {
 		t.Fatalf("err type = %T, want *MissError", err)
 	}
 	if me.Class != ClassExtra || me.Position != 0 || len(me.Diff) != 0 {
@@ -288,8 +289,8 @@ func TestNextChat_Mismatched(t *testing.T) {
 	}
 	coords := ledger.Coords{Node: "node-a", Agent: "worker", Round: "worker-r0"}
 	_, err = sess.NextChat(coords, "worker-model-B", nil)
-	me, ok := err.(*MissError)
-	if !ok {
+	var me *MissError
+	if !errors.As(err, &me) {
 		t.Fatalf("err type = %T, want *MissError", err)
 	}
 	if me.Class != ClassMismatched {
@@ -374,8 +375,8 @@ func TestNextToolResult_HappyPathAndExtra(t *testing.T) {
 	}
 
 	_, err = sess.NextToolResult(coords, "web_search", nil)
-	me, ok := err.(*MissError)
-	if !ok || me.Class != ClassExtra {
+	var me *MissError
+	if !errors.As(err, &me) || me.Class != ClassExtra {
 		t.Fatalf("second call: err = %v, want an extra MissError", err)
 	}
 }
@@ -422,8 +423,8 @@ func TestNextInvokeAgent_HappyPathAndExtra(t *testing.T) {
 	}
 
 	_, _, err = sess.NextInvokeAgent(coords, "code-implementer")
-	me, ok := err.(*MissError)
-	if !ok || me.Class != ClassExtra {
+	var me *MissError
+	if !errors.As(err, &me) || me.Class != ClassExtra {
 		t.Fatalf("second call: err = %v, want an extra MissError", err)
 	}
 }
@@ -438,8 +439,8 @@ func TestNextInvokeAgent_Mismatched(t *testing.T) {
 	}
 	coords := ledger.Coords{Node: "node-a", Agent: "code-implementer", Round: "worker-r0"}
 	_, _, err = sess.NextInvokeAgent(coords, "code-reviewer")
-	me, ok := err.(*MissError)
-	if !ok {
+	var me *MissError
+	if !errors.As(err, &me) {
 		t.Fatalf("err type = %T, want *MissError", err)
 	}
 	if me.Class != ClassMismatched {

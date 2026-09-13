@@ -227,7 +227,7 @@ func vectorData(v *qdrant.VectorsOutput) []float32 {
 	}
 	// Qdrant 1.19 servers populate the newer Dense oneof arm instead of the
 	// deprecated top-level Data field; check both or every vector reads nil.
-	if d := vo.GetData(); d != nil {
+	if d := vo.GetData(); d != nil { //nolint:staticcheck // pre-1.19 servers populate Data; GetDense below covers 1.19+
 		return d
 	}
 	return vo.GetDense().GetData()

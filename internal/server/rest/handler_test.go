@@ -657,7 +657,7 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 
 	// Unarchive and verify UpdatedAt still unchanged.
 	falseVal := false
-	rec = patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Archived: &falseVal})
+	patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Archived: &falseVal})
 
 	saved, err = h.store.GetChat(ctx, c.ID)
 	if err != nil {

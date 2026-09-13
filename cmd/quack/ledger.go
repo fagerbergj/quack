@@ -49,7 +49,9 @@ func newLedgerRecoverCmd() *cobra.Command {
 			if asJSON {
 				return cli.WriteJSON(cmd.OutOrStdout(), sum)
 			}
-			fmt.Fprint(cmd.OutOrStdout(), cli.FormatRecoverSummary(sum))
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), cli.FormatRecoverSummary(sum)); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
@@ -168,7 +170,9 @@ func newLedgerRebuildCmd() *cobra.Command {
 					return err
 				}
 			} else {
-				fmt.Fprint(cmd.OutOrStdout(), cli.FormatLedgerRebuildReport(report))
+				if _, err := fmt.Fprint(cmd.OutOrStdout(), cli.FormatLedgerRebuildReport(report)); err != nil {
+					return err
+				}
 			}
 			if len(report.ArtifactUpdateErrors) > 0 {
 				return fmt.Errorf("ledger rebuild: %d artifact revision(s) failed to update", len(report.ArtifactUpdateErrors))

@@ -238,7 +238,9 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			if err != nil {
 				return executeResult{}, fmt.Errorf("execute: marshal plan: %w", err)
 			}
-			tc.State().Set(ExecPlanKey, string(planJSON))
+			if err := tc.State().Set(ExecPlanKey, string(planJSON)); err != nil {
+				return executeResult{}, fmt.Errorf("execute: persist plan for resume: %w", err)
+			}
 			cache.Put(*plan)
 			cache.SetSelected(plan.ID)
 

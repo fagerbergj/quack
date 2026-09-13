@@ -229,7 +229,7 @@ func revertKey(id string, parentRev int, data []byte) string {
 	h := sha256.New()
 	h.Write([]byte(id))
 	h.Write([]byte{0})
-	fmt.Fprintf(h, "%d", parentRev)
+	_, _ = fmt.Fprintf(h, "%d", parentRev)
 	h.Write([]byte{0})
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))

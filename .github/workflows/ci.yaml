@@ -134,7 +134,9 @@ jobs:
         env:
           SLOP_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" ./cmd/... ./internal/...
+          # --max-same-issues=0: the default cap of 3 per identical message
+          # would let a PR ship a 4th unchecked Close of the same kind.
+          $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./cmd/... ./internal/...
           go run ./tools/sloplint diff "$SLOP_BASE"
 
   frontend-build:

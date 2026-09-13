@@ -94,7 +94,7 @@ func probeBwrap() error {
 	args := append(bwrapSystemArgs(), "--tmpfs", "/tmp", "--", bin, "--version")
 	out, err := exec.Command(bin, args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("bwrap is installed but cannot create a sandbox on this host (%v): %s",
+		return fmt.Errorf("bwrap is installed but cannot create a sandbox on this host (%w): %s",
 			err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -155,7 +155,7 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 			args = append(args, "--bind-try", filepath.Join(work, rel), filepath.Join(SandboxWorkRoot, rel))
 		}
 	}
-	chdir := SandboxWorkRoot
+	var chdir string
 	if rel, ok := relUnder(work, dir); ok {
 		chdir = filepath.Join(SandboxWorkRoot, rel)
 	} else {

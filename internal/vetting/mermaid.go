@@ -4,6 +4,7 @@ package vetting
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -159,7 +160,8 @@ func mermaidError(body string) string {
 		return ""
 	}
 	if err != nil {
-		if _, isExitErr := err.(*exec.ExitError); !isExitErr {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
 			warnMermaidValidatorUnavailable() // launch failure, not invalid diagram
 			return ""
 		}

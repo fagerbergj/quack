@@ -567,7 +567,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 					continue
 				}
 				data, err := io.ReadAll(f)
-				f.Close()
+				_ = f.Close()
 				if err != nil {
 					continue
 				}

@@ -26,18 +26,20 @@ func RunArtifactList(ctx context.Context, out io.Writer, server, chatID string, 
 		return WriteJSON(out, artifacts)
 	}
 	if len(artifacts) == 0 {
-		fmt.Fprintln(out, "No artifacts for this chat.")
+		if _, err := fmt.Fprintln(out, "No artifacts for this chat."); err != nil {
+			return err
+		}
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tREVISIONS\tLATEST SIZE\tMIME TYPE")
+	_, _ = fmt.Fprintln(tw, "NAME\tREVISIONS\tLATEST SIZE\tMIME TYPE")
 	for _, a := range artifacts {
 		if len(a.Revisions) == 0 {
-			fmt.Fprintf(tw, "%s\t0\t-\t-\n", a.Name)
+			_, _ = fmt.Fprintf(tw, "%s\t0\t-\t-\n", a.Name)
 			continue
 		}
 		latest := a.Revisions[len(a.Revisions)-1]
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", a.Name, len(a.Revisions), humanSize(latest.Size), latest.MimeType)
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", a.Name, len(a.Revisions), humanSize(latest.Size), latest.MimeType)
 	}
 	return tw.Flush()
 }
@@ -69,7 +71,9 @@ func RunArtifactDownload(ctx context.Context, out io.Writer, server, chatID, nam
 	if err := os.WriteFile(outFile, body, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", outFile, err)
 	}
-	fmt.Fprintln(out, outFile)
+	if _, err := fmt.Fprintln(out, outFile); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -191,7 +191,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		// homeTmpDir at the next spawn; removing it here keeps a run from
 		// leaving build tmp files around until the gc TTL sweep.
 		if scratchDir != "" {
-			defer os.RemoveAll(scratchDir)
+			defer func() { _ = os.RemoveAll(scratchDir) }()
 		}
 		// caps.ReadOnly comes from THIS node's advisor task, not the agent's
 		// static config - a planOnly run forces it true per-node (#754/#739)

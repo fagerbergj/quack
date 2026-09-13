@@ -192,7 +192,7 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 // This is the "no planner LLM call per dispatch" path - callers never
 // reach the orchestrator's own llmagent turn for a bound dispatch either.
 func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
-	ctx, span := otelobs.Start(ctx, "plan.bound")
+	_, span := otelobs.Start(ctx, "plan.bound")
 	defer func() { otelobs.End(span, err) }()
 
 	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, allowedKinds)

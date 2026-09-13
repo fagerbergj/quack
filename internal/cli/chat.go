@@ -507,7 +507,7 @@ func notFoundAs(err error, id string) error {
 // nodeErrAs surfaces the server's real 404 message (via wrapNotFound); a
 // node's 404 rarely means the chat itself is missing, unlike notFoundAs.
 func nodeErrAs(err error, chatID string) error {
-	if err == ErrNotFound {
+	if err == ErrNotFound { //nolint:errorlint // identity is deliberate: a notFoundErr carrying the server message must pass through uncollapsed
 		return fmt.Errorf("chat %s or node not found", chatID)
 	}
 	return err
@@ -539,7 +539,7 @@ func denullSlices(v reflect.Value) reflect.Value {
 		return v
 	}
 	switch v.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if v.IsNil() {
 			return v
 		}

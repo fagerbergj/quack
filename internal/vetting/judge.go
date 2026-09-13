@@ -1486,9 +1486,9 @@ func parseVerdict(raw string) (verdict, error) {
 		if err := json.Unmarshal(entry, &cs); err != nil {
 			switch name {
 			case "feedback":
-				json.Unmarshal(entry, &v.Feedback) //nolint:errcheck
+				json.Unmarshal(entry, &v.Feedback) //nolint:errcheck // best-effort: the primary unmarshal already failed, this is a shape-specific retry
 			case "passed":
-				json.Unmarshal(entry, &v.Passed) //nolint:errcheck
+				json.Unmarshal(entry, &v.Passed) //nolint:errcheck // best-effort: the primary unmarshal already failed, this is a shape-specific retry
 			}
 			continue
 		}

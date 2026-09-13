@@ -242,7 +242,7 @@ func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, ta
 
 	switch {
 	case derr != nil && rerr != nil:
-		return "", fmt.Errorf("web_fetch: %s unreadable: direct GET failed (%v); render failed (%v)", target, derr, rerr)
+		return "", fmt.Errorf("web_fetch: %s unreadable: direct GET failed (%w); render failed (%w)", target, derr, rerr)
 	case derr != nil:
 		return "", fmt.Errorf("web_fetch: %s: %w", target, derr)
 	default:
@@ -311,7 +311,7 @@ func fetchReadable(ctx context.Context, client *http.Client, target string) (str
 	if err != nil {
 		return "", fmt.Errorf("web_fetch: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// Cloudflare bot challenge header on 403.
 	if resp.StatusCode == http.StatusForbidden && strings.EqualFold(resp.Header.Get("Cf-Mitigated"), "challenge") {
 		return "", errCloudflareChallenge

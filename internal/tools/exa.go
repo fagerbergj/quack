@@ -67,7 +67,7 @@ func (e *exaSearcher) searchREST(ctx context.Context, query string) ([]SearchRes
 	if err != nil {
 		return nil, "", fmt.Errorf("web_search: exa REST: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
 		return nil, "", fmt.Errorf("web_search: exa REST got %s: %s", resp.Status, strings.TrimSpace(string(msg)))
@@ -113,7 +113,7 @@ func (e *exaSearcher) searchMCP(ctx context.Context, query string) ([]SearchResu
 	if err != nil {
 		return nil, "", fmt.Errorf("web_search: exa connect: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	res, err := sess.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "web_search_exa",

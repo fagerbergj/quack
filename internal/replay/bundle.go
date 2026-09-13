@@ -31,7 +31,7 @@ func loadZip(path string) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("replay: open bundle %q: %w", path, err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	var manifest ledger.Manifest
 	var entries io.ReadCloser
@@ -43,7 +43,7 @@ func loadZip(path string) (*Session, error) {
 				return nil, fmt.Errorf("replay: open manifest.json: %w", err)
 			}
 			err = json.NewDecoder(rc).Decode(&manifest)
-			rc.Close()
+			_ = rc.Close()
 			if err != nil {
 				return nil, fmt.Errorf("replay: decode manifest.json: %w", err)
 			}
@@ -58,7 +58,7 @@ func loadZip(path string) (*Session, error) {
 	if entries == nil {
 		return nil, fmt.Errorf("replay: bundle %q has no entries.jsonl", path)
 	}
-	defer entries.Close()
+	defer func() { _ = entries.Close() }()
 	if manifest.LedgerVersion != ledger.LedgerVersion {
 		return nil, fmt.Errorf("replay: bundle %q is ledger_version %d, this build reads %d only", path, manifest.LedgerVersion, ledger.LedgerVersion)
 	}
@@ -70,7 +70,7 @@ func loadJSONL(path string) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("replay: open %q: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return buildSession(f, ledger.Manifest{})
 }
 

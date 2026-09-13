@@ -681,10 +681,10 @@ func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 	var t chatsPageToken
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
-		return t, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
+		return t, fmt.Errorf("%w: %w", ErrInvalidPageToken, err)
 	}
 	if err := json.Unmarshal(b, &t); err != nil {
-		return t, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
+		return t, fmt.Errorf("%w: %w", ErrInvalidPageToken, err)
 	}
 	if t.Sort != chatsSortUpdatedAtDesc {
 		return t, fmt.Errorf("%w: issued for sort %q, not %q", ErrInvalidPageToken, t.Sort, chatsSortUpdatedAtDesc)

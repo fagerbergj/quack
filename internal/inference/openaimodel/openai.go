@@ -248,7 +248,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		}
 
 		stream := o.client.Chat.Completions.NewStreaming(httpx.WithIdempotent(ctx), openaiReq)
-		defer stream.Close()
+		defer func() { _ = stream.Close() }()
 
 		aggregatedContent := &genai.Content{
 			Role:  "model",

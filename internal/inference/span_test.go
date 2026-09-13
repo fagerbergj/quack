@@ -40,7 +40,7 @@ func withContentCapture(t *testing.T, enabled bool) {
 func spanAttrsOf(s tracetest.SpanStub) map[string]string {
 	out := map[string]string{}
 	for _, kv := range s.Attributes {
-		out[string(kv.Key)] = kv.Value.Emit()
+		out[string(kv.Key)] = kv.Value.String()
 	}
 	return out
 }
@@ -178,7 +178,7 @@ func TestSetRequestSpanAttrs_NodeAndAgentSurviveContentGate(t *testing.T) {
 
 	got := map[string]string{}
 	for _, kv := range exp.GetSpans()[0].Attributes {
-		got[string(kv.Key)] = kv.Value.Emit()
+		got[string(kv.Key)] = kv.Value.String()
 	}
 	if got[otelobs.QuackNode] != "node-2" {
 		t.Errorf("quack.node = %q, want node-2 (trace can't be filtered to one node without it)", got[otelobs.QuackNode])
