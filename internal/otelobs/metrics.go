@@ -73,7 +73,11 @@ func assignInstrument(meter metric.Meter, into any, d metricDef) error {
 		}
 		*t = v
 	case *metric.Int64Counter:
-		v, err := meter.Int64Counter(d.name, metric.WithDescription(d.desc))
+		opts := []metric.Int64CounterOption{metric.WithDescription(d.desc)}
+		if d.unit != "" {
+			opts = append(opts, metric.WithUnit(d.unit))
+		}
+		v, err := meter.Int64Counter(d.name, opts...)
 		if err != nil {
 			return err
 		}
