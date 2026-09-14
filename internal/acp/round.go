@@ -104,9 +104,8 @@ func (a *Agent) relayDrain(h *procHandle, relay func(sdk.SessionUpdate) bool) bo
 	return true
 }
 
-// handlePromptDone: the round's terminal Prompt response - usage, refusal, final
-// answer event. ctx wins per field, the shared stamp only fills blanks (#1048).
-// Returns whether the round pinned cleanly.
+// handlePromptDone: the round's terminal Prompt response - usage, refusal, final answer event.
+// ctx wins per field, the shared stamp only fills blanks (#1048); returns whether the round pinned cleanly.
 func (a *Agent) handlePromptDone(d promptDone, h *procHandle, tr *translator, endPrompt func(error), promptSpan oteltrace.Span, ctx context.Context, coords ledger.Coords, emit func(eventSpec) bool) (bool, error) {
 	if d.err != nil {
 		endPrompt(d.err)

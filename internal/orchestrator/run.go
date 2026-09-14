@@ -30,8 +30,7 @@ import (
 const orchRunID = "orchestrator"
 
 // orchRun: the per-turn state Run assembles - one turn's identity, the
-// built tools/runner, and the event sink. The build/invoke/finish methods
-// below each handle one phase of the turn.
+// built tools/runner, and the event sink; each build/invoke/finish method handles one phase.
 type orchRun struct {
 	o           *Orchestrator
 	ctx         context.Context
@@ -202,8 +201,7 @@ func (s *orchRun) buildRunner() string {
 }
 
 // buildContent: the turn's user content - the message plus any attachment
-// description, or the get_user_choice FunctionResponse when this turn is a
-// pending choice's reply.
+// description, or the get_user_choice FunctionResponse when this turn replies a pending choice.
 func (s *orchRun) buildContent(pending PendingQuestion, hasPending bool) *genai.Content {
 	text := s.message
 	if desc := dag.AttachmentDesc(s.attachments); desc != "" {
@@ -222,9 +220,8 @@ func (s *orchRun) buildContent(pending PendingQuestion, hasPending bool) *genai.
 	return content
 }
 
-// invoke: one pass over the runner, translating and scoping every event to
-// this run. produced reflects the model's output OR a plan selection; a
-// pending (unselected) plan is not production.
+// invoke: one pass over the runner, translating and scoping every event to this run.
+// produced reflects the model's output OR a plan selection; a pending (unselected) plan is not production.
 func (s *orchRun) invoke(content *genai.Content) (produced, stop bool) {
 	for ev, err := range s.runner.Run(s.ctx, s.userID, s.sessionID, content, adkagent.RunConfig{}) {
 		if err != nil {
@@ -263,14 +260,8 @@ func (s *orchRun) emitAgentComplete() {
 	}}, nil)
 }
 
-// handlePlanExhaustion: planning that EXHAUSTS its rejection budget without
-// an acceptable plan is a FAILED run, not an answer (#693): the model's own
-// text at this point may just be narrating the plan judge's internal
-// rejection reason back at the user. A single rejection is normal iteration
-// (a reply-only deliverable the orchestrator over-eagerly tried to plan for,
-// #760/home-server#3) - only repeated rejections count as exhaustion; a
-// pending clarifying question is a legitimate stop without a plan. True
-// means the turn terminated here.
+// handlePlanExhaustion: planning that EXHAUSTS its rejection budget without an acceptable plan is a
+// FAILED run, not an answer (#693); a single rejection is normal iteration (#760/home-server#3), a pending clarifying question a legitimate stop. True = the turn terminated here.
 func (s *orchRun) handlePlanExhaustion() bool {
 	if _, selected := s.planCache.Selected(); !selected {
 		if count, reason := s.planCache.Rejections(); count >= minRejectionsForExhaustion {
