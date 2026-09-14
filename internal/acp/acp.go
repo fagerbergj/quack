@@ -303,12 +303,8 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	// graceful-cancel path below without one masking the other's cause.
 	abortCtx, abortCancel := context.WithCancel(context.Background())
 	defer abortCancel()
-	if a.opts.RegisterRoundAbort != nil && steerChatID != "" && steerNodeID != "" {
-		a.opts.RegisterRoundAbort(steerChatID, steerNodeID, abortCancel)
-		if a.opts.UnregisterRoundAbort != nil {
-			defer a.opts.UnregisterRoundAbort(steerChatID, steerNodeID)
-		}
-	}
+	unregRoundAbort := a.registerRoundAbort(steerChatID, steerNodeID, abortCancel)
+	defer unregRoundAbort()
 
 	// Reuse this node's pinned process/session when one is already live -
 	// the common case from round 2 on. Skips spawn, Initialize AND
@@ -358,89 +354,45 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err) }()
 
 	if !fromPinned {
-		ictx, cancelInit := context.WithTimeout(ctx, a.opts.StartTimeout)
-		defer cancelInit()
-		handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String(otelobs.GenAIAgentName, a.name))
-		_ = handshakeCtx
-		var initResp sdk.InitializeResponse
-		initResp, err = h.conn.Initialize(ictx, sdk.InitializeRequest{
-			ProtocolVersion:    sdk.ProtocolVersionNumber,
-			ClientCapabilities: sdk.ClientCapabilities{},
-		})
+		sessID, toolNames, resumed, err = a.handshake(ctx, cwd, memSecret, advisorToken, priorSessionID, caps, h)
 		if err != nil {
-			otelobs.End(handshakeSpan, err)
-			return fmt.Errorf("acp: initialize: %w%s", err, h.stderrTail())
+			return err
 		}
-		mcpServers := memoryMCPServers(memSecret, initResp.AgentCapabilities)
-		memSession, _ := vetting.LookupMemSession(memSecret)
-		toolNames = mcpToolNames(memSession, len(mcpServers) > 0)
-		a.log.Info("acp negotiated capabilities", "mcp_http", initResp.AgentCapabilities.McpCapabilities.Http,
-			"mcp_sse", initResp.AgentCapabilities.McpCapabilities.Sse, "mcp_acp", initResp.AgentCapabilities.McpCapabilities.Acp,
-			"mcp_surface_offered", len(mcpServers) > 0, "has_mem_secret", memSecret != "", "mcp_tools", toolNames)
-		// Resume via session/load only ever matters here, on a node's FIRST
-		// round (a live pinned process, above, is now the common path for
-		// every round after it - #1006, perf audit finding 8).
-		sessID = sdk.SessionId(priorSessionID)
-		if priorSessionID != "" && initResp.AgentCapabilities.LoadSession {
-			_, err = h.conn.LoadSession(ictx, sdk.LoadSessionRequest{Cwd: cwd, McpServers: mcpServers, SessionId: sessID})
-			resumed = err == nil
-			if err != nil {
-				a.log.Warn("acp session/load failed, starting a new session", "session", priorSessionID, "err", err)
-			}
+		if advisorToken != "" && resumed {
+			// A resumed session that then errors out is probably dead server-side -
+			// don't hand the next round a session id that will just fail LoadSession again.
+			defer func() {
+				if err != nil {
+					vetting.SetAdvisorThreadSessionID(advisorToken, "")
+				}
+			}()
 		}
-		if priorSessionID == "" || !initResp.AgentCapabilities.LoadSession || err != nil {
-			var sess sdk.NewSessionResponse
-			sess, err = h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
-			if err != nil {
-				otelobs.End(handshakeSpan, err)
-				return fmt.Errorf("acp: session/new: %w%s", err, h.stderrTail())
-			}
-			sessID = sess.SessionId
-		}
-		if advisorToken != "" {
-			vetting.SetAdvisorThreadSessionID(advisorToken, string(sessID))
-			if resumed {
-				// A resumed session that then errors out is probably dead server-side -
-				// don't hand the next round a session id that will just fail LoadSession again.
-				defer func() {
-					if err != nil {
-						vetting.SetAdvisorThreadSessionID(advisorToken, "")
-					}
-				}()
-			}
-		}
-		handshakeSpan.SetAttributes(attribute.String("session_id", string(sessID)))
-		otelobs.End(handshakeSpan, nil)
-		a.log.Info("acp round started", "cwd", cwd, "session", sessID, "resumed", priorSessionID != "" && sessID == sdk.SessionId(priorSessionID))
 	} else {
 		a.log.Info("acp round reusing pinned session", "cwd", cwd, "session", sessID)
 	}
 
-	// Live only for this round's duration - nothing to forward into before/after.
-	// CallExtension (an acked request), not NotifyExtension: between the
-	// shim settling and the deferred Unregister below the connection is still open, so a fire-and-forget notify would report delivered while the shim silently drops it (promptReq already nil). A failed/errored call reports false, and enqueue's caller parks it instead (#998 review).
-	if a.opts.RegisterLiveSteer != nil && steerChatID != "" && steerNodeID != "" {
-		a.opts.RegisterLiveSteer(steerChatID, steerNodeID, steerForward(h.conn))
-		if a.opts.UnregisterLiveSteer != nil {
-			defer a.opts.UnregisterLiveSteer(steerChatID, steerNodeID)
-		}
-	}
-
-	// Skip only for a live pinned process - a resumed session is a new
-	// process that may have missed a preamble change since round 1.
-	if a.opts.Preamble != "" && !fromPinned {
-		outbound = a.opts.Preamble + "\n\n" + outbound
-	}
+	outbound, unregSteer := a.steerHooks(h, outbound, steerChatID, steerNodeID, fromPinned)
+	defer unregSteer()
 
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 
+	al, promptCleanup, perr := a.prepPrompt(ctx, abortCtx, h, cwd, sessID, finalPrompt, coords, emit)
+	if perr != nil {
+		return perr
+	}
+	defer promptCleanup()
+	pinOK, err = a.roundLoop(al)
+	return err
+}
+
+// prepPrompt: the pre-prompt cancel bail, the Prompt RPC goroutine, and the
+// span/timer plumbing. Returns the loop args plus the round-exit cleanup (original LIFO order), or the bail error when a cancel lands first.
+func (a *Agent) prepPrompt(ctx, abortCtx context.Context, h *procHandle, cwd string, sessID sdk.SessionId, finalPrompt string, coords ledger.Coords, emit func(eventSpec) bool) (*roundLoopArgs, func(), error) {
 	done := make(chan promptDone, 1)
 	promptCtx, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("session_id", string(sessID)))
-	defer promptSpan.End() // safety net for the relay-stopped/cancel exits below; the done-branch sets the real status first
 	// Per-tool-call child spans, ended as their updates arrive - the only
 	// telemetry that reaches a collector before the round finishes (#924).
 	turns := newTurnSpans(promptCtx, a.name)
-	defer turns.closeAll() // LIFO: runs before promptSpan.End() above
 	endPrompt := func(err error) {
 		turns.closeAll()
 		otelobs.End(promptSpan, err)
@@ -451,10 +403,10 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	select {
 	case <-ctx.Done():
 		endPrompt(ctx.Err())
-		return ctx.Err()
+		return nil, nil, ctx.Err()
 	case <-abortCtx.Done():
 		endPrompt(abortCtx.Err())
-		return abortCtx.Err()
+		return nil, nil, abortCtx.Err()
 	default:
 	}
 	go func() {
@@ -464,76 +416,14 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		})
 		done <- promptDone{resp, perr}
 	}()
-
-	tr := newTranslator(cwd)
-	relay := func(u sdk.SessionUpdate) bool {
-		turns.observe(u)
-		for _, spec := range tr.translate(u) {
-			if !emit(spec) {
-				return false
-			}
-		}
-		return true
-	}
-
 	idleTimer := a.newIdleTimer(a.opts.IdleTimeout)
-	defer idleTimer.Stop()
-	resetIdle := func() {
-		if !idleTimer.Stop() {
-			select {
-			case <-idleTimer.C():
-			default:
-			}
-		}
-		idleTimer.Reset(a.opts.IdleTimeout)
+	cleanup := func() {
+		idleTimer.Stop()
+		turns.closeAll()
+		promptSpan.End() // safety net for the relay-stopped/cancel exits; the done-branch sets the real status first
 	}
-
-	for {
-		select {
-		case <-h.notify:
-			resetIdle()
-			for _, u := range h.drainUpdates() {
-				if !relay(u) {
-					return nil
-				}
-			}
-		case d := <-done:
-			for _, u := range h.drainUpdates() {
-				if !relay(u) {
-					return nil
-				}
-			}
-			if d.err != nil {
-				endPrompt(d.err)
-				return fmt.Errorf("acp: prompt: %w%s", d.err, h.stderrTail())
-			}
-			// The Prompt RPC returns exactly once per round with its own
-			// (not cumulative) usage - the round's usage is known here, once.
-			// ctx wins per field, the shared stamp only fills blanks (#1048) - same rule as traced.go's tracedModel and tools/emit.go's emitTool.
-			recordUsage(a.opts.ModelName, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords), a.opts.Pricing, d.resp.Usage)
-			if d.resp.StopReason == sdk.StopReasonRefusal {
-				refusalErr := errors.New("acp: agent refused the prompt")
-				endPrompt(refusalErr)
-				return refusalErr
-			}
-			final := finalSpec(tr)
-			a.log.Info("acp round done", "stop", string(d.resp.StopReason), "answer_len", len(final.parts[0].Text))
-			promptSpan.SetAttributes(attribute.StringSlice(otelobs.GenAIResponseFinishReasons, []string{string(d.resp.StopReason)}))
-			endPrompt(nil)
-			pinOK = true
-			emit(final)
-			return nil
-		case <-ctx.Done():
-			a.gracefulCancel(h, sessID, done)
-			return ctx.Err()
-		case <-abortCtx.Done():
-			a.gracefulCancel(h, sessID, done)
-			return abortCtx.Err()
-		case <-idleTimer.C():
-			a.gracefulCancel(h, sessID, done)
-			return fmt.Errorf("acp: no activity for %s - treating the ACP agent as wedged%s", a.opts.IdleTimeout, h.stderrTail())
-		}
-	}
+	al := &roundLoopArgs{h: h, sessID: sessID, done: done, tr: newTranslator(cwd), turns: turns, endPrompt: endPrompt, promptSpan: promptSpan, idleTimer: idleTimer, ctx: ctx, abortCtx: abortCtx, coords: coords, emit: emit}
+	return al, cleanup, nil
 }
 
 // mcpToolNames lists the exact MCP tool names this round offers, derived from

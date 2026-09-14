@@ -19,16 +19,13 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
 	adkagent "google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
 	"google.golang.org/adk/v2/artifact"
-	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/session/compaction"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/loadartifactstool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
@@ -38,11 +35,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
-	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
-	"github.com/fagerbergj/quack/internal/vetting"
-	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 const AppName = "quack"
@@ -474,7 +468,20 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		}
 
 		o.executor.ResetNodeCancels(sessionID)
-		planCache := tools.NewPlanCache()
+		s := &orchRun{o: o, ctx: ctx, userID: userID, sessionID: sessionID, source: source, message: message, attachments: attachments}
+		s.planCache = tools.NewPlanCache()
+		repeats := tools.NewRepeatStates()
+		// Set by the repeat guard's hard stop - marks this as an unbreakable
+		// loop, not a retryable blank turn.
+		var guardStopped atomic.Bool
+		s.guardStopped = &guardStopped
+		guardTripped := func(_, _, msg string) bool {
+			guardStopped.Store(true)
+			// Reuses the plan-rejection give-up path (store.DeriveTerminalStatus) - a
+			// hard stop is the same "known reason, no DagNode" shape as a rejected plan.
+			inference.RecordPlanRejection(sessionID, msg)
+			return true
+		}
 		o.maybeMineUserMemory(ctx, userID, sessionID, source, message)
 		prior := o.PriorEvents(ctx, userID, sessionID)
 		pending, hasPending := LatestPendingQuestion(prior)
@@ -487,305 +494,65 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			o.startIncrementalNodeRun(ctx, userID, sessionID, message, pend, yield)
 			return
 		}
-		history := buildHistory(prior)
+		s.history = buildHistory(prior)
 		var githubSetup *dag.Setup
-		if s, ok := tools.GitHubSetupFromContext(ctx); ok {
-			githubSetup = &s
+		if ghs, ok := tools.GitHubSetupFromContext(ctx); ok {
+			githubSetup = &ghs
 		}
-		// The dag_node/dag_plan records ARE the plan's only state, so planning
-		// must still work with no artifact service configured (a test, a degraded deploy).
-		recordSvc := o.artifacts
-		if recordSvc == nil {
-			recordSvc = artifact.InMemoryService()
-		}
-		planRC := recordstore.New(recordSvc, artifactref.AppName, userID, sessionID)
-		if o.ledgerStore != nil {
-			planRC = planRC.WithLedger(o.ledgerStore)
-		}
-		nodeIsRunning := func(nodeID string) bool { return o.executor.NodeIsLive(sessionID, nodeID) }
-		allowedKinds := tools.AllowedDeliveryKindsFromContext(ctx)
-		listNodesTool, err := tools.NewListNodesTool(planRC, nodeIsRunning)
-		if err != nil {
-			yield(stream.Errorf("orchestrator: list_nodes tool: "+err.Error()), nil)
+		if e := s.buildDagTools(githubSetup); e != "" {
+			yield(stream.Errorf(e), nil)
 			return
 		}
-		createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds, o.assignmentMeta)
-		if err != nil {
-			yield(stream.Errorf("orchestrator: create_plan tool: "+err.Error()), nil)
+		if e := s.buildMemoryArtifactTools(githubSetup); e != "" {
+			yield(stream.Errorf(e), nil)
 			return
 		}
-		editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds, o.assignmentMeta)
-		if err != nil {
-			yield(stream.Errorf("orchestrator: edit_plan tool: "+err.Error()), nil)
-			return
-		}
-		runStep := func(stepCtx context.Context, plan dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, map[string]bool, error) {
-			return o.executor.RunPlanStep(stepCtx, plan, AppName, userID, sessionID, seeded, run)
-		}
-		finalizeStep := func(stepCtx context.Context, plan dag.Plan, outputs map[string]string) string {
-			return o.finalizeAnswer(stepCtx, plan, outputs, sessionID)
-		}
-		execTool, err := tools.NewExecuteTool(o.planner, planRC, planCache, o.executor.Provision, runStep, finalizeStep, history, message, attachments,
-			githubSetup, allowedKinds,
-			tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx),
-			orchestratorName, o.assignmentFreshness)
-		if err != nil {
-			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
-			return
-		}
-		choiceTool, err := tools.NewGetUserChoiceTool()
-		if err != nil {
-			yield(stream.Errorf("orchestrator: choice tool: "+err.Error()), nil)
-			return
-		}
-		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's
-		// doc. Wrapped as one pass over the whole toolList below, once every
-		// tool this turn offers (DAG tools plus memory/artifact tools appended
-		// after) is assembled - the identical-call loop class RepeatWrap guards
-		// against applies to any of them, not just the five DAG tools.
-		repeats := tools.NewRepeatStates()
-		// Set by the repeat guard's hard stop - marks this as an unbreakable
-		// loop, not a retryable blank turn.
-		var guardStopped atomic.Bool
-		guardTripped := func(_, _, msg string) bool {
-			guardStopped.Store(true)
-			// Reuses the plan-rejection give-up path (store.DeriveTerminalStatus) - a
-			// hard stop is the same "known reason, no DagNode" shape as a rejected plan.
-			inference.RecordPlanRejection(sessionID, msg)
-			return true
-		}
-
 		var toolsets []tool.Toolset
 		if o.skillTS != nil {
 			toolsets = []tool.Toolset{o.skillTS}
 		}
-
-		toolList := []tool.Tool{listNodesTool, createPlanTool, editPlanTool, execTool, choiceTool}
-		var memSvc adkmemory.Service
-		if o.userMem != nil {
-			commitTool, err := tools.NewCommitMemoryTool(o.userMem, userID, sessionID, source)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: commit_memory tool: "+err.Error()), nil)
-				return
-			}
-			toolList = append(toolList, memory.NewPreload(), commitTool)
-			memSvc = o.userMem.View(memory.Scope{User: userID, Legacy: userID}, nil)
-		}
-		if o.taskMem != nil {
-			// ponytail: repo scope from the dispatch's known origin when
-			// present; user-only ceiling remains for chats with no origin.
-			recallSc := memory.Scope{User: userID, Legacy: userID}
-			if githubSetup != nil {
-				recallSc.Repo = workspace.NormalizeRepoURL(githubSetup.Repo)
-			}
-			recallTool, err := tools.NewRecallMemoryTool(o.taskMem, recallSc, o.ledgerStore, sessionID)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: recall_memory tool: "+err.Error()), nil)
-				return
-			}
-			toolList = append(toolList, recallTool)
-		}
-		var artifacts artifact.Service
-		if o.artifacts != nil {
-			toolList = append(toolList, loadartifactstool.New())
-			artifacts = failSoftListArtifacts{o.artifacts}
-			rc := recordstore.New(o.artifacts, artifactref.AppName, userID, sessionID)
-			if o.ledgerStore != nil {
-				rc = rc.WithLedger(o.ledgerStore)
-			}
-			listTool, err := tools.NewListArtifactsTool(rc)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: list_artifacts tool: "+err.Error()), nil)
-				return
-			}
-			editTool, err := tools.NewEditArtifactTool(rc, orchestratorName, &tools.RoundCoords{})
-			if err != nil {
-				yield(stream.Errorf("orchestrator: edit_artifact tool: "+err.Error()), nil)
-				return
-			}
-			hint := vetting.SubjectHint(sessionID)
-			writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, &tools.RoundCoords{}, hint)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: write_artifact tool: "+err.Error()), nil)
-				return
-			}
-			toolList = append(toolList, listTool, editTool, writeTool)
-			writeKindTools, err := tools.NewWriteKindTools(rc, orchestratorName, &tools.RoundCoords{}, hint)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: write_<kind> tools: "+err.Error()), nil)
-				return
-			}
-			toolList = append(toolList, writeKindTools...)
-		}
-
-		for i, t := range toolList {
+		s.toolsets = toolsets
+		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's doc. One pass over the whole toolList, once every tool this turn offers is assembled.
+		// The identical-call loop class RepeatWrap guards against applies to any of them, not just the five DAG tools.
+		for i, t := range s.toolList {
 			// memory.NewPreload() and similar request-mutating-only tools have
 			// no Run for a model to repeat - nothing to guard, leave as-is.
 			if !tools.SupportsRepeatGuard(t) {
 				continue
 			}
-			if toolList[i], err = tools.RepeatWrap(t, repeats, guardTripped); err != nil {
+			wrapped, err := tools.RepeatWrap(t, repeats, guardTripped)
+			if err != nil {
 				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
 				return
 			}
+			s.toolList[i] = wrapped
 		}
-
-		ag, err := llmagent.New(llmagent.Config{
-			Name:        orchestratorName,
-			Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
-			Model:       o.model,
-			Instruction: o.sysPrompt,
-			Tools:       toolList,
-			Toolsets:    toolsets,
-			Mode:        llmagent.ModeChat,
-		})
-		if err != nil {
-			yield(stream.Errorf("orchestrator: build agent: "+err.Error()), nil)
+		if e := s.buildRunner(); e != "" {
+			yield(stream.Errorf(e), nil)
 			return
 		}
-
-		agentNode, err := workflow.NewAgentNode(ag, workflow.NodeConfig{})
-		if err != nil {
-			yield(stream.Errorf("orchestrator: agent node: "+err.Error()), nil)
-			return
-		}
-		wf, err := workflowagent.New(workflowagent.Config{
-			Name:  "orchestrator-workflow",
-			Edges: workflow.Chain(workflow.Start, agentNode),
-		})
-		if err != nil {
-			yield(stream.Errorf("orchestrator: workflow: "+err.Error()), nil)
-			return
-		}
-
-		r, err := runner.New(runner.Config{
-			AppName:           AppName,
-			Agent:             wf,
-			SessionService:    conversationSessions{o.sessions},
-			MemoryService:     memSvc,
-			ArtifactService:   artifacts,
-			AutoCreateSession: true,
-			// The long-lived chat session, unlike a node's - it otherwise
-			// grows unbounded across every turn (#A3).
-			Compaction: o.compaction,
-		})
-		if err != nil {
-			yield(stream.Errorf("orchestrator: runner: "+err.Error()), nil)
-			return
-		}
-
 		// Concurrent DAG nodes funnel through this one yield (#1016); ctx
 		// consumers like onQueued call it from a node goroutine, so it must be
 		// the wrapped one - #1021 fixed the other three entrypoints but missed Run().
-		safeYield := newSafeYield(yield)
-		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
+		s.safeYield = newSafeYield(yield)
+		s.ctx = stream.WithYield(s.ctx, func(ev stream.SSEEvent) { s.safeYield(ev, nil) })
 
-		text := message
-		if desc := dag.AttachmentDesc(attachments); desc != "" {
-			text += "\n\n" + desc
-		}
-		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
-
-		if hasPending && pending.choiceCallID != "" {
-			content = &genai.Content{Role: "user", Parts: []*genai.Part{{
-				FunctionResponse: &genai.FunctionResponse{
-					ID:       pending.choiceCallID,
-					Name:     tools.ChoiceToolName,
-					Response: map[string]any{tools.ChoiceAnswerKey: message},
-				},
-			}}}
-		}
-		translator := stream.NewTranslator()
-
-		const orchRunID = "orchestrator"
-		safeYield(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
+		content := s.buildContent(pending, hasPending)
+		s.translator = stream.NewTranslator()
+		s.safeYield(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker, StartedAtMs: time.Now().UnixMilli(),
-			TraceID: otelobs.TraceIDOf(ctx),
+			TraceID: otelobs.TraceIDOf(s.ctx),
 		}}, nil)
 
-		invoke := func(content *genai.Content) (produced, stop bool) {
-			for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
-				if err != nil {
-					safeYield(stream.Errorf(err.Error()), nil)
-					return false, true
-				}
-				if ev == nil {
-					continue
-				}
-				if turnProduced(ev) {
-					produced = true
-				}
-				for _, se := range translator.Event(ev) {
-					if !safeYield(stream.ScopeToRun(se, orchRunID), nil) {
-						return produced, true
-					}
-				}
-			}
-			if _, selected := planCache.Selected(); selected {
-				produced = true
-			}
-			if _, pending := planCache.Pending(); pending {
-				produced = false
-			}
-			return produced, false
-		}
-
-		produced, stop := invoke(content)
-		attempts := 1
-		// A hard-stopped turn reproduces the identical loop on an unchanged
-		// retry (the QA rig measured this) - give up immediately instead.
-		for attempt := 1; !produced && !stop && !guardStopped.Load() && attempt <= maxOrchestratorContinues; attempt++ {
-			slog.Warn("orchestrator turn produced no plan and no answer; continuing it",
-				"component", "orchestrator", "chat", sessionID, "attempt", attempt)
-			produced, stop = invoke(continuationContent())
-			attempts++
-		}
-		if stop {
+		produced, stop := s.invoke(content)
+		if _, terminated := s.finishLoop(produced, stop); terminated {
 			return
-		}
-		if !produced && guardStopped.Load() {
-			slog.Error("orchestrator turn ended by the repeat guard's hard stop; not retrying it unchanged",
-				"component", "orchestrator", "chat", sessionID, "attempts", attempts)
-			safeYield(stream.Errorf("The orchestrator got stuck repeating the same malformed tool call and stopped. "+
-				"Please try again or rephrase your request."), nil)
-			return
-		}
-		model, promptTokens, completionTokens, reasoningTokens, totalTokens, cachedTokens, finishReason := translator.Usage()
-		safeYield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
-			RunID: orchRunID, Stage: stream.StageWorker,
-			Model: model, PromptTokens: promptTokens, CompletionTokens: completionTokens,
-			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, CachedTokens: cachedTokens, FinishReason: finishReason,
-			FinishedAtMs: time.Now().UnixMilli(),
-		}}, nil)
-
-		if !produced {
-			slog.Error("orchestrator produced no plan and no answer; giving up",
-				"component", "orchestrator", "chat", sessionID, "attempts", attempts)
-			safeYield(stream.Errorf("The orchestrator ended its turn without a plan or an answer, "+
-				"even after being asked to continue. Nothing was run. Please try again."), nil)
-			return
-		}
-
-		// Planning that EXHAUSTS its rejection budget without an acceptable
-		// plan is a FAILED run, not an answer (#693): the model's own text at
-		// this point may just be narrating the plan judge's internal rejection reason back at the user. A single rejection is normal iteration - the model may correctly pivot to a direct answer instead of retrying (a reply-only deliverable the orchestrator over-eagerly tried to plan for, #760/home-server#3) - so only repeated rejections count as exhaustion; this must never be decided by inspecting the answer text itself. A pending clarifying question is also a legitimate reason to stop without a plan.
-		if _, selected := planCache.Selected(); !selected {
-			if count, reason := planCache.Rejections(); count >= minRejectionsForExhaustion {
-				if _, hasPending := o.PendingQuestion(ctx, userID, sessionID); !hasPending {
-					slog.Error("planning exhausted its rejection budget without an acceptable plan; suppressing the judge's internal rejection text from the reply",
-						"component", "orchestrator", "chat", sessionID, "rejections", count, "reason", reason)
-					safeYield(stream.Errorf(planExhaustedNotice), nil)
-					o.persistAnswer(ctx, userID, sessionID, planExhaustedNotice)
-					safeYield(stream.Done(), nil)
-					return
-				}
-			}
 		}
 
 		// The execute tool itself ran every step's assignments (dag.Executor.RunPlanStep)
 		// and set planCache.Delivered once a step declared delivery - nothing left to run here.
-		o.persistAnswer(ctx, userID, sessionID, planCache.Delivered())
-		safeYield(stream.Done(), nil)
+		s.o.persistAnswer(s.ctx, s.userID, s.sessionID, s.planCache.Delivered())
+		s.safeYield(stream.Done(), nil)
 	}
 }
 
@@ -951,27 +718,13 @@ func (o *Orchestrator) pendingStepInterrupt(ctx context.Context, userID, session
 // means THIS assignment is done - the plan may still be partial, so the
 // answer is only finalized when the plan's own declared delivery covers it.
 func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sessionID, message string, pend pendingInterrupt, yield func(stream.SSEEvent, error) bool) {
-	plan, ok := o.stashedPlan(ctx, userID, sessionID)
-	if !ok {
-		yield(stream.Errorf("resume: no plan in session to resume"), nil)
-		return
-	}
-	recordSvc := o.artifacts
-	if recordSvc == nil {
-		recordSvc = artifact.InMemoryService()
-	}
-	rec, _, ok, err := dag.LoadDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID)
-	if err != nil || !ok {
-		yield(stream.Errorf("resume: no plan record to resume"), nil)
+	plan, rec, recordSvc, errMsg := o.loadResumePlan(ctx, userID, sessionID)
+	if errMsg != "" {
+		yield(stream.Errorf(errMsg), nil)
 		return
 	}
 	run := map[string]bool{pend.nodeID: true}
-	seeded := map[string]string{}
-	for _, a := range rec.Assignments {
-		if a.TaskID != "" {
-			seeded[a.NodeID] = a.Result
-		}
-	}
+	seeded := seededFrom(rec)
 
 	safeYield := newSafeYield(yield)
 	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
@@ -1008,23 +761,62 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	// the paused-node-only resume dispatch above never ran - without this,
 	// finalizing on rec.Assignments right here would deliver a terminal
 	// node's still-empty result (#slice3 review: no delivery ever fires).
-	// Keep driving newly-unblocked assignments the same way execute.go
-	// drives a fresh step, round by round, until nothing more is unblocked
-	// or a round itself pauses/errors - ending the turn either way, exactly
-	// like a fresh execute() step would.
-	turnEnded := false
+	turnEnded, moreFailed := o.driveUnblocked(ctx, plan, rec, recordSvc, userID, sessionID, safeYield)
+	anyFailed = anyFailed || moreFailed
+	if turnEnded {
+		yield(stream.Done(), nil)
+		return
+	}
+
+	if !anyFailed && rec.Delivery != nil {
+		final := map[string]string{}
+		for _, a := range rec.Assignments {
+			final[a.NodeID] = a.Result
+		}
+		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID))
+	}
+	yield(stream.Done(), nil)
+}
+
+// loadResumePlan: the plan and its record for an incremental resume.
+// Returns the message to yield on failure, "" on success.
+func (o *Orchestrator) loadResumePlan(ctx context.Context, userID, sessionID string) (plan dag.Plan, rec dag.DagPlanRecord, recordSvc artifact.Service, errMsg string) {
+	plan, ok := o.stashedPlan(ctx, userID, sessionID)
+	if !ok {
+		return plan, rec, recordSvc, "resume: no plan in session to resume"
+	}
+	recordSvc = o.artifacts
+	if recordSvc == nil {
+		recordSvc = artifact.InMemoryService()
+	}
+	rec, _, ok, err := dag.LoadDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID)
+	if err != nil || !ok {
+		return plan, rec, recordSvc, "resume: no plan record to resume"
+	}
+	return plan, rec, recordSvc, ""
+}
+
+// seededFrom: the seeded outputs map for a plan record - every assignment
+// that ran (TaskID set) feeds its result to its dependents.
+func seededFrom(rec dag.DagPlanRecord) map[string]string {
+	seeded := map[string]string{}
+	for _, a := range rec.Assignments {
+		if a.TaskID != "" {
+			seeded[a.NodeID] = a.Result
+		}
+	}
+	return seeded
+}
+
+// driveUnblocked: drive newly-unblocked assignments the way execute.go drives a
+// fresh step, round by round, until nothing more unblocks or a round pauses/errors.
+func (o *Orchestrator) driveUnblocked(ctx context.Context, plan dag.Plan, rec dag.DagPlanRecord, recordSvc artifact.Service, userID, sessionID string, safeYield func(stream.SSEEvent, error) bool) (turnEnded, anyFailed bool) {
 	for {
 		next := unblockedByDeps(rec.Assignments)
 		if len(next) == 0 {
 			break
 		}
-		roundSeeded := map[string]string{}
-		for _, a := range rec.Assignments {
-			if a.TaskID != "" {
-				roundSeeded[a.NodeID] = a.Result
-			}
-		}
-		roundOutputs, roundNeedsInput, roundStarted, rerr := o.executor.RunPlanStep(ctx, plan, AppName, userID, sessionID, roundSeeded, next)
+		roundOutputs, roundNeedsInput, roundStarted, rerr := o.executor.RunPlanStep(ctx, plan, AppName, userID, sessionID, seededFrom(rec), next)
 		if rerr != nil {
 			safeYield(stream.Errorf("resume: "+rerr.Error()), nil)
 			turnEnded = true
@@ -1047,26 +839,14 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 			slog.Warn("resume: dag_plan update failed", "component", "orchestrator", "err", serr)
 		}
 		if rerr != nil {
-			return
+			return turnEnded, anyFailed
 		}
 		if len(roundNeedsInput) > 0 {
 			turnEnded = true
 			break
 		}
 	}
-	if turnEnded {
-		yield(stream.Done(), nil)
-		return
-	}
-
-	if !anyFailed && rec.Delivery != nil {
-		final := map[string]string{}
-		for _, a := range rec.Assignments {
-			final[a.NodeID] = a.Result
-		}
-		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID))
-	}
-	yield(stream.Done(), nil)
+	return turnEnded, anyFailed
 }
 
 // unblockedByDeps returns every not-yet-run assignment (TaskID == "") whose
