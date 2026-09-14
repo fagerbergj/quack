@@ -59,24 +59,9 @@ type LedgerRebuildReport struct {
 	NodeStateSkippedMultiPlan bool `json:"node_state_skipped_multi_plan,omitempty"`
 }
 
-// RunLedgerRebuild resets chatID's watermarks to 0 and folds: every artifact
-// revision's kind/class/lineage is rewritten from the fold (unconditionally
-// - no drift diff, the watermark reset already says "start over"), and the SSE table is repopulated the same way LoadEvents' resume path would (runlog.foldSSEFromWatermark), inserting only what the fold has that the table doesn't yet. dryRun computes the report without writing or resetting anything.
-func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, chatID string, dryRun bool) (*LedgerRebuildReport, error) {
-	if !dryRun {
-		for _, projection := range []string{"artifact", "sse", "node_state"} {
-			if err := st.ResetProjectionWatermark(ctx, chatID, projection); err != nil {
-				return nil, fmt.Errorf("ledger rebuild: reset %s watermark for chat %q: %w", projection, chatID, err)
-			}
-		}
-	}
-	res, err := fold.Apply(ctx, ls, chatID, 0)
-	if err != nil {
-		return nil, fmt.Errorf("ledger rebuild: fold chat %q: %w", chatID, err)
-	}
-	report := &LedgerRebuildReport{ChatID: chatID, DryRun: dryRun}
-	userID := st.SessionUserForChat(ctx, chatID)
-
+// rebuildArtifacts: every artifact revision's kind/class/lineage rewritten from the fold
+// (unconditionally - no drift diff, the watermark reset already says "start over").
+func rebuildArtifacts(ctx context.Context, st *store.Store, artifacts *store.TurnAwareService, chatID, userID string, report *LedgerRebuildReport, res *fold.Result, dryRun bool) error {
 	ids := make([]string, 0, len(res.Artifacts))
 	for id := range res.Artifacts {
 		ids = append(ids, id)
@@ -94,67 +79,111 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 		}
 	}
 	if !dryRun {
-		// Artifact rows live behind the ADK artifact.Service, which may be a
-		// wholly separate Postgres connection from this Store's own db (a
-		// dedicated NewArtifactService URL) - unlike SSE/node_state below, there is no single transaction that can span both, so the watermark advance is sequential-after, not atomic-with, the row writes. A crash in the gap just means the next rebuild reprocesses revisions it already wrote - UpdateArtifactMeta is an unconditional overwrite, so that's a harmless no-op re-write, not a correctness bug.
+		// Artifact rows may sit on a separate Postgres connection (dedicated artifact
+		// service URL), so the watermark advance is sequential-after, not atomic-with.
 		if err := st.SetProjectionWatermark(ctx, chatID, "artifact", res.LastSeq); err != nil {
-			return report, fmt.Errorf("ledger rebuild: advance artifact watermark for chat %q: %w", chatID, err)
+			return fmt.Errorf("ledger rebuild: advance artifact watermark for chat %q: %w", chatID, err)
 		}
 	}
+	return nil
+}
 
+// rebuildNodeState: terminal statuses for the latest plan's declared nodes, then the
+// node_state watermark; skipped when the chat has more than one plan.
+func rebuildNodeState(ctx context.Context, st *store.Store, chatID string, report *LedgerRebuildReport, res *fold.Result, dryRun bool) error {
 	planCount, cerr := st.CountDagPlans(ctx, chatID)
 	if cerr != nil {
-		return report, fmt.Errorf("ledger rebuild: count plans for chat %q: %w", chatID, cerr)
+		return fmt.Errorf("ledger rebuild: count plans for chat %q: %w", chatID, cerr)
 	}
 	if planCount > 1 {
-		// See NodeStateSkippedMultiPlan's doc: with >1 plan there is no way
-		// to tell which plan a folded node.* entry belongs to, so node_state
-		// is left as-is rather than guessing.
+		// With >1 plan a folded node.* entry can't be attributed to one (see NodeStateSkippedMultiPlan's doc).
 		report.NodeStateSkippedMultiPlan = true
 	}
 	planID, perr := st.GetLatestDagPlan(ctx, chatID)
 	if perr != nil {
-		return report, fmt.Errorf("ledger rebuild: latest plan for chat %q: %w", chatID, perr)
+		return fmt.Errorf("ledger rebuild: latest plan for chat %q: %w", chatID, perr)
 	}
-	if planID != nil && planCount <= 1 {
-		// Only write ids the plan actually declares (kills the phantom
-		// case), same check loadPlanNode uses to 404 an unknown node.
-		var planData stream.DagPlanData
-		if uerr := json.Unmarshal([]byte(planID.PlanJSON), &planData); uerr != nil {
-			return report, fmt.Errorf("ledger rebuild: parse latest plan JSON for chat %q: %w", chatID, uerr)
-		}
-		declared := make(map[string]bool, len(planData.Nodes))
-		for _, n := range planData.Nodes {
-			declared[n.ID] = true
-		}
-		nodeIDs := make([]string, 0, len(res.Nodes))
-		for id := range res.Nodes {
-			if declared[id] && res.Nodes[id].TerminalStatus != "" {
-				nodeIDs = append(nodeIDs, id)
-			}
-		}
-		sort.Strings(nodeIDs) // deterministic report order
-		report.NodeStatesChanged = len(nodeIDs)
-		if !dryRun {
-			err = st.InTx(ctx, func(tx *gorm.DB) error {
-				for _, id := range nodeIDs {
-					n := res.Nodes[id]
-					if werr := store.UpsertNodeTerminalStatusTx(tx, planID.ID, n.NodeID, n.TerminalStatus); werr != nil {
-						return fmt.Errorf("node %s: %w", n.NodeID, werr)
-					}
-				}
-				return store.SetProjectionWatermarkTx(tx, chatID, "node_state", res.LastSeq)
-			})
-			if err != nil {
-				return report, fmt.Errorf("ledger rebuild: write node_state for chat %q: %w", chatID, err)
-			}
+	if planID == nil || planCount > 1 {
+		return nil
+	}
+	// Only write ids the plan actually declares (kills the phantom case).
+	var planData stream.DagPlanData
+	if uerr := json.Unmarshal([]byte(planID.PlanJSON), &planData); uerr != nil {
+		return fmt.Errorf("ledger rebuild: parse latest plan JSON for chat %q: %w", chatID, uerr)
+	}
+	declared := make(map[string]bool, len(planData.Nodes))
+	for _, n := range planData.Nodes {
+		declared[n.ID] = true
+	}
+	nodeIDs := make([]string, 0, len(res.Nodes))
+	for id := range res.Nodes {
+		if declared[id] && res.Nodes[id].TerminalStatus != "" {
+			nodeIDs = append(nodeIDs, id)
 		}
 	}
+	sort.Strings(nodeIDs) // deterministic report order
+	report.NodeStatesChanged = len(nodeIDs)
+	if dryRun {
+		return nil
+	}
+	err := st.InTx(ctx, func(tx *gorm.DB) error {
+		for _, id := range nodeIDs {
+			n := res.Nodes[id]
+			if werr := store.UpsertNodeTerminalStatusTx(tx, planID.ID, n.NodeID, n.TerminalStatus); werr != nil {
+				return fmt.Errorf("node %s: %w", n.NodeID, werr)
+			}
+		}
+		return store.SetProjectionWatermarkTx(tx, chatID, "node_state", res.LastSeq)
+	})
+	if err != nil {
+		return fmt.Errorf("ledger rebuild: write node_state for chat %q: %w", chatID, err)
+	}
+	return nil
+}
 
+// rebuildSSE: repopulate the SSE table the way LoadEvents' resume path would,
+// inserting only what the fold has that the table doesn't.
+func rebuildSSE(ctx context.Context, st *store.Store, chatID string, report *LedgerRebuildReport, res *fold.Result, dryRun bool) error {
 	existing, err := st.LoadChatEvents(ctx, chatID, 0)
 	if err != nil {
-		return report, fmt.Errorf("ledger rebuild: load chat_events for chat %q: %w", chatID, err)
+		return fmt.Errorf("ledger rebuild: load chat_events for chat %q: %w", chatID, err)
 	}
+	have, maxSeq := sseHave(existing)
+	var missing []store.ChatEvent
+	for _, ce := range runlog.SynthesizeChatEvents(chatID, res) {
+		ev, uerr := runlog.UnmarshalEvent(ce.Event)
+		if uerr != nil {
+			continue
+		}
+		nodeID, ok := runlog.EventNodeID(ev)
+		if !ok || have[nodeID+"\x00"+ev.Name] {
+			continue
+		}
+		missing = append(missing, ce)
+	}
+	report.SSERowsInserted = len(missing)
+	if dryRun {
+		return nil
+	}
+	now := time.Now().UTC()
+	err = st.InTx(ctx, func(tx *gorm.DB) error {
+		for _, ce := range missing {
+			maxSeq++
+			ce.Seq, ce.CreatedAt = maxSeq, now
+			if werr := store.InsertChatEventTx(tx, ce); werr != nil {
+				return werr
+			}
+		}
+		return store.SetProjectionWatermarkTx(tx, chatID, "sse", res.LastSeq)
+	})
+	if err != nil {
+		return fmt.Errorf("ledger rebuild: write sse rows for chat %q: %w", chatID, err)
+	}
+	return nil
+}
+
+// sseHave: the (nodeID, event) pairs already in the table, plus the max seq so far.
+func sseHave(existing []store.ChatEvent) (map[string]bool, int64) {
 	have := map[string]bool{}
 	var maxSeq int64
 	for _, row := range existing {
@@ -169,34 +198,33 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 			have[nodeID+"\x00"+ev.Name] = true
 		}
 	}
-	var missing []store.ChatEvent
-	for _, ce := range runlog.SynthesizeChatEvents(chatID, res) {
-		ev, uerr := runlog.UnmarshalEvent(ce.Event)
-		if uerr != nil {
-			continue
-		}
-		nodeID, ok := runlog.EventNodeID(ev)
-		if !ok || have[nodeID+"\x00"+ev.Name] {
-			continue
-		}
-		missing = append(missing, ce)
-	}
-	report.SSERowsInserted = len(missing)
+	return have, maxSeq
+}
+
+// RunLedgerRebuild resets chatID's watermarks to 0, folds, and rewrites artifact
+// revision kind/class/lineage (unconditionally), then repopulates node_state and the
+// SSE table the way LoadEvents' resume path would; dryRun reports without writing.
+func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, chatID string, dryRun bool) (*LedgerRebuildReport, error) {
 	if !dryRun {
-		now := time.Now().UTC()
-		err = st.InTx(ctx, func(tx *gorm.DB) error {
-			for _, ce := range missing {
-				maxSeq++
-				ce.Seq, ce.CreatedAt = maxSeq, now
-				if werr := store.InsertChatEventTx(tx, ce); werr != nil {
-					return werr
-				}
+		for _, projection := range []string{"artifact", "sse", "node_state"} {
+			if err := st.ResetProjectionWatermark(ctx, chatID, projection); err != nil {
+				return nil, fmt.Errorf("ledger rebuild: reset %s watermark for chat %q: %w", projection, chatID, err)
 			}
-			return store.SetProjectionWatermarkTx(tx, chatID, "sse", res.LastSeq)
-		})
-		if err != nil {
-			return report, fmt.Errorf("ledger rebuild: write sse rows for chat %q: %w", chatID, err)
 		}
+	}
+	res, err := fold.Apply(ctx, ls, chatID, 0)
+	if err != nil {
+		return nil, fmt.Errorf("ledger rebuild: fold chat %q: %w", chatID, err)
+	}
+	report := &LedgerRebuildReport{ChatID: chatID, DryRun: dryRun}
+	if err := rebuildArtifacts(ctx, st, artifacts, chatID, st.SessionUserForChat(ctx, chatID), report, res, dryRun); err != nil {
+		return report, err
+	}
+	if err := rebuildNodeState(ctx, st, chatID, report, res, dryRun); err != nil {
+		return report, err
+	}
+	if err := rebuildSSE(ctx, st, chatID, report, res, dryRun); err != nil {
+		return report, err
 	}
 	return report, nil
 }

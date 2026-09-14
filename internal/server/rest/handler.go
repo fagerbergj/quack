@@ -1286,6 +1286,81 @@ func lastEventID(r *http.Request) int64 {
 	return n
 }
 
+// buildDagItem: the DAG output item for a planned turn - the plan shape plus
+// per-node states, and the aggregate status (in_progress while any node is not terminal).
+func buildDagItem(tc store.TurnContent, planData stream.DagPlanData) *schema.OutputItem {
+	nodes := make([]schema.DagNodeDef, len(planData.Nodes))
+	for i, n := range planData.Nodes {
+		nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow), Artifact: strPtr(n.Artifact)}
+	}
+	edges := make([]schema.DagEdge, len(planData.Edges))
+	for i, e := range planData.Edges {
+		edges[i] = schema.DagEdge{From: e.From, To: e.To}
+	}
+	nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
+	for _, n := range tc.Nodes {
+		nodeStates[n.NodeID] = dagNodeState(n)
+	}
+	// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
+	dagStatus := schema.Completed
+	for _, ns := range nodeStates {
+		if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput || ns.Status == schema.NodeStatusPaused {
+			dagStatus = schema.InProgress
+			break
+		}
+	}
+	item := new(schema.OutputItem)
+	_ = item.FromDagOutputItem(schema.DagOutputItem{
+		Id:         tc.Plan.ID,
+		Status:     dagStatus,
+		PlanId:     tc.Plan.ID,
+		Nodes:      nodes,
+		Edges:      edges,
+		NodeStates: nodeStates,
+	})
+	return item
+}
+
+// buildActivityItem: the agent-activity item for a turn with tool calls.
+func buildActivityItem(tc store.TurnContent) *schema.OutputItem {
+	if len(tc.ToolCalls) == 0 {
+		return nil
+	}
+	calls := make([]schema.ToolCallItem, len(tc.ToolCalls))
+	for i, c := range tc.ToolCalls {
+		calls[i] = schema.ToolCallItem{CallId: c.CallID, Name: c.Name}
+		if c.Args != nil {
+			calls[i].Args = &c.Args
+		}
+		if c.Result != nil {
+			calls[i].Result = &c.Result
+		}
+	}
+	oi := new(schema.OutputItem)
+	_ = oi.FromAgentActivityOutputItem(schema.AgentActivityOutputItem{
+		Id:        tc.ID + ":activity",
+		Status:    schema.Completed,
+		ToolCalls: calls,
+	})
+	return oi
+}
+
+// buildUsage: the turn's token usage (UsageMetadata survives ADK's round-trip;
+// ModelVersion doesn't - hence the separate Model field on the turn).
+func buildUsage(tc store.TurnContent) *schema.Usage {
+	if tc.PromptTokens == 0 && tc.CompletionTokens == 0 && tc.ReasoningTokens == 0 {
+		return nil
+	}
+	usage := &schema.Usage{
+		InputTokens:  intPtr(int(tc.PromptTokens)),
+		OutputTokens: intPtr(int(tc.CompletionTokens + tc.ReasoningTokens)),
+	}
+	if tc.CachedTokens > 0 {
+		usage.CachedTokens = intPtr(int(tc.CachedTokens))
+	}
+	return usage
+}
+
 func buildTurn(tc store.TurnContent) schema.Turn {
 	// planData is the turn's DAG shape; unmarshaled once for both the DAG
 	// output item and the answer bubble's text below.
@@ -1293,8 +1368,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 	planOK := tc.Plan != nil && json.Unmarshal([]byte(tc.Plan.PlanJSON), &planData) == nil
 
 	// DAG turns: the answer bubble carries the terminal node's OUTPUT - what
-	// the live stream rendered (chatStore's liveDagFinalText) - not the
-	// orchestrator's planning narration; persisting that narration made a reload swap the bubble for the chatter the live view already discards, so a review read differently after refresh than it did live.
+	// the live stream rendered - not the orchestrator's planning narration.
 	bubbleText := tc.AsstText
 	if planOK {
 		if out := terminalNodeOutput(planData, tc.Nodes); out != "" {
@@ -1322,60 +1396,13 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		})
 	}
 
-	var dagItem *schema.OutputItem
-	if planOK {
-		nodes := make([]schema.DagNodeDef, len(planData.Nodes))
-		for i, n := range planData.Nodes {
-			nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow), Artifact: strPtr(n.Artifact)}
+	dagItem := func() *schema.OutputItem {
+		if planOK {
+			return buildDagItem(tc, planData)
 		}
-		edges := make([]schema.DagEdge, len(planData.Edges))
-		for i, e := range planData.Edges {
-			edges[i] = schema.DagEdge{From: e.From, To: e.To}
-		}
-		nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
-		for _, n := range tc.Nodes {
-			nodeStates[n.NodeID] = dagNodeState(n)
-		}
-		// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
-		dagStatus := schema.Completed
-		for _, ns := range nodeStates {
-			if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput || ns.Status == schema.NodeStatusPaused {
-				dagStatus = schema.InProgress
-				break
-			}
-		}
-		item := new(schema.OutputItem)
-		_ = item.FromDagOutputItem(schema.DagOutputItem{
-			Id:         tc.Plan.ID,
-			Status:     dagStatus,
-			PlanId:     tc.Plan.ID,
-			Nodes:      nodes,
-			Edges:      edges,
-			NodeStates: nodeStates,
-		})
-		dagItem = item
-	}
-
-	var activityItem *schema.OutputItem
-	if len(tc.ToolCalls) > 0 {
-		calls := make([]schema.ToolCallItem, len(tc.ToolCalls))
-		for i, c := range tc.ToolCalls {
-			calls[i] = schema.ToolCallItem{CallId: c.CallID, Name: c.Name}
-			if c.Args != nil {
-				calls[i].Args = &c.Args
-			}
-			if c.Result != nil {
-				calls[i].Result = &c.Result
-			}
-		}
-		oi := new(schema.OutputItem)
-		_ = oi.FromAgentActivityOutputItem(schema.AgentActivityOutputItem{
-			Id:        tc.ID + ":activity",
-			Status:    schema.Completed,
-			ToolCalls: calls,
-		})
-		activityItem = oi
-	}
+		return nil
+	}()
+	activityItem := buildActivityItem(tc)
 
 	output := make([]schema.OutputItem, 0, 3)
 	if activityItem != nil {
@@ -1388,24 +1415,12 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		output = append(output, msgItem)
 	}
 
-	// Orchestrator's token usage (UsageMetadata survives ADK's round-trip; ModelVersion doesn't, hence the separate model field).
-	var usage *schema.Usage
-	if tc.PromptTokens > 0 || tc.CompletionTokens > 0 || tc.ReasoningTokens > 0 {
-		usage = &schema.Usage{
-			InputTokens:  intPtr(int(tc.PromptTokens)),
-			OutputTokens: intPtr(int(tc.CompletionTokens + tc.ReasoningTokens)),
-		}
-		if tc.CachedTokens > 0 {
-			usage.CachedTokens = intPtr(int(tc.CachedTokens))
-		}
-	}
-
 	return schema.Turn{
 		Id:        tc.ID,
 		CreatedAt: tc.CreatedAt,
 		Input:     schema.TurnInput{Role: schema.TurnInputRoleUser, Content: tc.UserText},
 		Output:    output,
-		Usage:     usage,
+		Usage:     buildUsage(tc),
 		// Persisted on the turn row at run end (ADK drops ModelVersion). Nil for DAG turns.
 		Model: strPtr(tc.Model),
 	}

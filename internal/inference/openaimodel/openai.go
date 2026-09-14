@@ -490,75 +490,60 @@ type toolCallBuilder struct {
 // applyFallbackLadder is the recovery ladder shared by both paths: recover
 // tool calls leaked as XML into thinking (llama.cpp#22684) or the answer
 // (#427), then report whether reasoning should be promoted to the answer. Callers log the promotion/empty-turn cases themselves - their log text and whether they log an empty turn at all differ (see golden_ladder_test.go).
+// thoughtText / answerText: the part predicates the leak-recovery scan keys on.
+func thoughtText(p *genai.Part) bool { return p.Thought && p.Text != "" }
+func answerText(p *genai.Part) bool  { return !p.Thought && p.Text != "" }
+
+// concatTarget: the concatenated text of the parts matching isTarget.
+func concatTarget(parts []*genai.Part, isTarget func(*genai.Part) bool) string {
+	var rb strings.Builder
+	for _, p := range parts {
+		if isTarget(p) {
+			rb.WriteString(p.Text)
+		}
+	}
+	return rb.String()
+}
+
+// recoverLeakedCalls: re-emit the isTarget parts with the first replaced by the
+// cleaned reasoning (one part - a leaked block can span several parts, so
+// per-part regex stripping leaves residue), then append the recovered calls.
+func recoverLeakedCalls(ctx context.Context, modelName string, parts []*genai.Part, isTarget func(*genai.Part) bool, thought bool, logMsg string) ([]*genai.Part, bool) {
+	calls, cleaned := reasoningToolCalls(concatTarget(parts, isTarget))
+	if len(calls) == 0 {
+		return parts, false
+	}
+	rebuilt := make([]*genai.Part, 0, len(parts)+len(calls))
+	replaced := false
+	for _, p := range parts {
+		if isTarget(p) {
+			if !replaced {
+				replaced = true
+				if strings.TrimSpace(cleaned) != "" {
+					rebuilt = append(rebuilt, &genai.Part{Text: cleaned, Thought: thought})
+				}
+			}
+			continue
+		}
+		rebuilt = append(rebuilt, p)
+	}
+	for _, c := range calls {
+		rebuilt = append(rebuilt, &genai.Part{FunctionCall: c})
+	}
+	slog.WarnContext(ctx, logMsg, "component", "inference", "model", modelName, "count", len(calls))
+	return rebuilt, true
+}
+
 func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.Part, haveToolCalls bool) (result []*genai.Part, hasAnswer, hadThinking bool, promotedChars int) {
 	result = parts
 
 	if !haveToolCalls {
-		var rb strings.Builder
-		for _, p := range result {
-			if p.Thought && p.Text != "" {
-				rb.WriteString(p.Text)
-			}
-		}
-		recoveredFromThought := false
-		if calls, cleaned := reasoningToolCalls(rb.String()); len(calls) > 0 {
-			// A leaked block can span several parts, so per-part regex stripping
-			// leaves residue - re-emit the cleaned reasoning as one thought part
-			// in place of the originals.
-			rebuilt := make([]*genai.Part, 0, len(result)+len(calls))
-			thoughtReplaced := false
-			for _, p := range result {
-				if p.Thought && p.Text != "" {
-					if !thoughtReplaced {
-						thoughtReplaced = true
-						if strings.TrimSpace(cleaned) != "" {
-							rebuilt = append(rebuilt, &genai.Part{Text: cleaned, Thought: true})
-						}
-					}
-					continue
-				}
-				rebuilt = append(rebuilt, p)
-			}
-			for _, c := range calls {
-				rebuilt = append(rebuilt, &genai.Part{FunctionCall: c})
-			}
-			result = rebuilt
-			recoveredFromThought = true
-			slog.WarnContext(ctx, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)",
-				"component", "inference", "model", modelName, "count", len(calls))
-		}
-
-		// #427: the same leak can land in the plain answer text instead of
-		// reasoning_content - scan that too when nothing proper or recovered above.
-		if !recoveredFromThought {
-			var cb strings.Builder
-			for _, p := range result {
-				if !p.Thought && p.Text != "" {
-					cb.WriteString(p.Text)
-				}
-			}
-			if calls, cleaned := reasoningToolCalls(cb.String()); len(calls) > 0 {
-				rebuilt := make([]*genai.Part, 0, len(result)+len(calls))
-				contentReplaced := false
-				for _, p := range result {
-					if !p.Thought && p.Text != "" {
-						if !contentReplaced {
-							contentReplaced = true
-							if strings.TrimSpace(cleaned) != "" {
-								rebuilt = append(rebuilt, &genai.Part{Text: cleaned})
-							}
-						}
-						continue
-					}
-					rebuilt = append(rebuilt, p)
-				}
-				for _, c := range calls {
-					rebuilt = append(rebuilt, &genai.Part{FunctionCall: c})
-				}
-				result = rebuilt
-				slog.WarnContext(ctx, "recovered tool calls leaked into answer content (bare <function=> form, #427)",
-					"component", "inference", "model", modelName, "count", len(calls))
-			}
+		// A leaked tool call can land in reasoning_content (Qwen/llama.cpp#22684),
+		// or - when nothing recovers there - in the plain answer text (#427).
+		if recovered, ok := recoverLeakedCalls(ctx, modelName, result, thoughtText, true, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)"); ok {
+			result = recovered
+		} else if recovered, ok := recoverLeakedCalls(ctx, modelName, result, answerText, false, "recovered tool calls leaked into answer content (bare <function=> form, #427)"); ok {
+			result = recovered
 		}
 	}
 
@@ -571,17 +556,11 @@ func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.P
 		}
 	}
 
-	// Content-side of #22684: the answer can land entirely in reasoning_content,
-	// leaving content empty. Promote it rather than emit an empty turn - a
-	// reasoning-only turn is terminal anyway, and judge/revise still scores it.
+	// #22684 content side: the answer can land entirely in reasoning_content,
+	// leaving content empty - promote it rather than emit an empty turn.
 	if !hasAnswer && hadThinking {
-		var rb strings.Builder
-		for _, p := range result {
-			if p.Thought && p.Text != "" {
-				rb.WriteString(p.Text)
-			}
-		}
-		if txt := strings.TrimSpace(rb.String()); txt != "" {
+		txt := strings.TrimSpace(concatTarget(result, thoughtText))
+		if txt != "" {
 			result = append(result, &genai.Part{Text: txt})
 			hasAnswer = true
 			promotedChars = len(txt)
@@ -590,7 +569,6 @@ func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.P
 
 	return result, hasAnswer, hadThinking, promotedChars
 }
-
 func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionNewParams, error) {
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Contents))
 	for _, content := range req.Contents {

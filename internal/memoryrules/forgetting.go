@@ -114,87 +114,131 @@ type token struct {
 	pos  int
 }
 
+var twoCharOps = []struct {
+	sym  string
+	kind tokKind
+}{
+	{"&&", tokAnd},
+	{"||", tokOr},
+	{"==", tokEq},
+	{"!=", tokNe},
+	{"<=", tokLe},
+	{">=", tokGe},
+}
+
+// scanTwoChar: the two-character operator at i, if one starts there.
+func scanTwoChar(expr string, i int) (tokKind, string, bool) {
+	if i+1 >= len(expr) {
+		return 0, "", false
+	}
+	for _, op := range twoCharOps {
+		if expr[i:i+2] == op.sym {
+			return op.kind, op.sym, true
+		}
+	}
+	return 0, "", false
+}
+
+// singleCharKind: the kind of a one-character operator (! < >).
+func singleCharKind(c byte) tokKind {
+	switch c {
+	case '!':
+		return tokNot
+	case '<':
+		return tokLt
+	case '>':
+		return tokGt
+	}
+	return 0
+}
+
+// scanString: the "..." literal starting at i; returns the token and the index just past it.
+func scanString(expr string, i int) (token, int, error) {
+	start := i
+	i++
+	var sb strings.Builder
+	for i < len(expr) && expr[i] != '"' {
+		sb.WriteByte(expr[i])
+		i++
+	}
+	if i >= len(expr) {
+		return token{}, 0, fmt.Errorf("unterminated string literal at position %d", start)
+	}
+	return token{tokString, sb.String(), start}, i + 1, nil
+}
+
+// literalStarts: whether a string, integer (optional leading -), or identifier literal starts at i.
+func literalStarts(expr string, i int) bool {
+	c := expr[i]
+	return c == '"' || isIdentStart(c) || (c >= '0' && c <= '9') || (c == '-' && i+1 < len(expr) && expr[i+1] >= '0' && expr[i+1] <= '9')
+}
+
+// scanLiteral: the literal starting at i (string, integer, or identifier); returns the token and the index just past it.
+func scanLiteral(expr string, i int) (token, int, error) {
+	if expr[i] == '"' {
+		return scanString(expr, i)
+	}
+	start := i
+	if c := expr[i]; c >= '0' && c <= '9' || c == '-' {
+		i++
+		for i < len(expr) && expr[i] >= '0' && expr[i] <= '9' {
+			i++
+		}
+		return token{tokInt, expr[start:i], start}, i, nil
+	}
+	for i < len(expr) && isIdentPart(expr[i]) {
+		i++
+	}
+	return token{tokIdent, expr[start:i], start}, i, nil
+}
+
 func tokenize(expr string) ([]token, error) {
 	var toks []token
 	i := 0
-	n := len(expr)
-	for i < n {
+	for i < len(expr) {
 		c := expr[i]
-		switch {
-		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+		switch c {
+		case ' ', '\t', '\n', '\r':
 			i++
-		case c == '(':
+		case '(':
 			toks = append(toks, token{tokLParen, "(", i})
 			i++
-		case c == ')':
+		case ')':
 			toks = append(toks, token{tokRParen, ")", i})
 			i++
-		case c == '&' && i+1 < n && expr[i+1] == '&':
-			toks = append(toks, token{tokAnd, "&&", i})
-			i += 2
-		case c == '|' && i+1 < n && expr[i+1] == '|':
-			toks = append(toks, token{tokOr, "||", i})
-			i += 2
-		case c == '=' && i+1 < n && expr[i+1] == '=':
-			toks = append(toks, token{tokEq, "==", i})
-			i += 2
-		case c == '!' && i+1 < n && expr[i+1] == '=':
-			toks = append(toks, token{tokNe, "!=", i})
-			i += 2
-		case c == '!':
-			toks = append(toks, token{tokNot, "!", i})
-			i++
-		case c == '<' && i+1 < n && expr[i+1] == '=':
-			toks = append(toks, token{tokLe, "<=", i})
-			i += 2
-		case c == '<':
-			toks = append(toks, token{tokLt, "<", i})
-			i++
-		case c == '>' && i+1 < n && expr[i+1] == '=':
-			toks = append(toks, token{tokGe, ">=", i})
-			i += 2
-		case c == '>':
-			toks = append(toks, token{tokGt, ">", i})
-			i++
-		case c == '"':
-			start := i
-			i++
-			var sb strings.Builder
-			closed := false
-			for i < n {
-				if expr[i] == '"' {
-					closed = true
-					i++
-					break
-				}
-				sb.WriteByte(expr[i])
-				i++
+		case '"':
+			t, next, err := scanString(expr, i)
+			if err != nil {
+				return nil, err
 			}
-			if !closed {
-				return nil, fmt.Errorf("unterminated string literal at position %d", start)
-			}
-			toks = append(toks, token{tokString, sb.String(), start})
-		case c >= '0' && c <= '9' || (c == '-' && i+1 < n && expr[i+1] >= '0' && expr[i+1] <= '9'):
-			start := i
-			i++
-			for i < n && expr[i] >= '0' && expr[i] <= '9' {
-				i++
-			}
-			toks = append(toks, token{tokInt, expr[start:i], start})
-		case isIdentStart(c):
-			start := i
-			for i < n && isIdentPart(expr[i]) {
-				i++
-			}
-			toks = append(toks, token{tokIdent, expr[start:i], start})
+			toks = append(toks, t)
+			i = next
 		default:
+			if kind, sym, ok := scanTwoChar(expr, i); ok {
+				toks = append(toks, token{kind, sym, i})
+				i += 2
+				break
+			}
+			if c == '!' || c == '<' || c == '>' {
+				toks = append(toks, token{singleCharKind(c), string(c), i})
+				i++
+				break
+			}
+			if literalStarts(expr, i) {
+				t, next, err := scanLiteral(expr, i)
+				if err != nil {
+					return nil, err
+				}
+				toks = append(toks, t)
+				i = next
+				break
+			}
 			return nil, fmt.Errorf("unexpected character %q at position %d", c, i)
 		}
 	}
-	toks = append(toks, token{tokEOF, "", n})
+	toks = append(toks, token{tokEOF, "", len(expr)})
 	return toks, nil
 }
-
 func isIdentStart(c byte) bool {
 	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
