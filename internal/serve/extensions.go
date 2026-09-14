@@ -59,9 +59,6 @@ type builtSDKExtension struct {
 	icon  string
 }
 
-// buildSDKExtensions validates and mounts every configured extension module
-// in stable name order; enabled:false modules stay dormant (nil is not an error).
-
 // sdkBuildDeps: the server-side dependencies one extension's build needs.
 type sdkBuildDeps struct {
 	cfg           *config.Config
@@ -78,6 +75,9 @@ type sdkBuildDeps struct {
 	ledgerStore   ledger.LedgerStore
 }
 
+// buildSDKExtensions validates and mounts every configured extension module in stable
+// name order (enabled:false modules stay dormant; nil is not an error). The
+// orchRef/judgeModelRef pointers are read lazily inside the Dispatch/Classify closures.
 func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore) ([]builtSDKExtension, error) {
 	d := sdkBuildDeps{cfg: cfg, factories: extsdk.Registered(), shapes: workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision),
 		orchRef: orchRef, st: st, hub: hub, eventLog: eventLog, artifacts: artifacts, judgeModelRef: judgeModelRef,
@@ -529,7 +529,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			return nil
 		}
 
-		runCtx = extRunContext(runCtx, req, effectiveSetup)
+		runCtx = extRunContext(runCtx, allowedKinds, req, effectiveSetup)
 		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a caller bug
 		// must surface as a real dispatch error, not a run that produces nothing.
 		composed := composeDispatchMessage(req)
@@ -597,10 +597,10 @@ func extAttachmentParts(runCtx context.Context, name string, artifacts *store.Tu
 
 // extRunContext: the run-ctx facts the unshaped/hint planner turn reads back -
 // delivery kinds, GitHub setup, node context, context items, plan-only.
-func extRunContext(runCtx context.Context, req extsdk.DispatchRequest, effectiveSetup *dag.Setup) context.Context {
+func extRunContext(runCtx context.Context, allowedKinds []string, req extsdk.DispatchRequest, effectiveSetup *dag.Setup) context.Context {
 	// The unshaped/hint path reaches the planner's own LLM turn (plan tool),
 	// which reads these facts back off ctx (tools.AllowedDeliveryKindsFromContext etc.).
-	runCtx = tools.WithAllowedDeliveryKinds(runCtx, deliveryKindStrings(req.Delivery.AllowedKinds))
+	runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
 	if effectiveSetup != nil {
 		// mergeExtOrigin's own merged Setup, NOT req.Run.Setup (#1180): github
 		// always sends a non-nil Setup; applying it unconditionally would clobber the fallback.

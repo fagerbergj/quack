@@ -67,10 +67,7 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				return planUpsertResult{}, err
 			}
 			if current.Status == "done" {
-				res, handled, err := editDeliveredPlan(tc, c, current, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a)
-				if handled || err != nil {
-					return res, err
-				}
+				return editDeliveredPlan(tc, c, current, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a)
 			}
 			if len(a.Assignments) == 0 && len(a.Remove) == 0 && a.Setup == nil && a.Delivery == nil {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: nothing to change - got plan_id %q with no assignments, remove, setup, "+
@@ -97,22 +94,22 @@ func editPlanPrecheck(tc agent.Context, c *recordstore.Client, planID string) (d
 }
 
 // editDeliveredPlan: editing an already-delivered plan starts a NEW plan from
-// assignments. Returns handled=true when the call was fully decided here.
-func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, a editPlanArgs) (planUpsertResult, bool, error) {
+// assignments.
+func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, a editPlanArgs) (planUpsertResult, error) {
 	// The delivered-plan wording only fits when there are no assignments to even attempt:
 	// a rejection of given assignments must come from newPlanRecord verbatim.
 	if len(a.Assignments) == 0 {
 		if len(a.Remove) > 0 {
-			return planUpsertResult{}, true, fmt.Errorf("edit_plan: plan %q already delivered - there's nothing left to remove from; drop `remove` and give `assignments` to start a new plan", current.PlanID)
+			return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - there's nothing left to remove from; drop `remove` and give `assignments` to start a new plan", current.PlanID)
 		}
-		return planUpsertResult{}, true, fmt.Errorf("edit_plan: plan %q already delivered - it's finished; give `assignments` to start a new plan for further work", current.PlanID)
+		return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - it's finished; give `assignments` to start a new plan for further work", current.PlanID)
 	}
 	res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a.Assignments, a.Setup, a.Delivery)
 	if err != nil {
-		return planUpsertResult{}, true, fmt.Errorf("edit_plan: %w", err)
+		return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
 	}
 	res.Summary = fmt.Sprintf("plan %q had already delivered; started a new plan, %s, from these assignments.\n", current.PlanID, res.PlanID) + res.Summary
-	return res, true, nil
+	return res, nil
 }
 
 // applyEdit: apply remove + upserts + setup/delivery to the current plan and save it

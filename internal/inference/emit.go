@@ -113,8 +113,9 @@ func chatResponseAttrs(resp *model.LLMResponse, pricing *config.ModelPricing) []
 	return attrs
 }
 
-// emitChatEvent records one gen_ai.* "chat" log event for a completed model
-// call (request + FINAL assembled response); marshal failures degrade a field.
+// emitChatEvent records one gen_ai.* "chat" log event for a completed model call -
+// the full request and the FINAL assembled response; marshal failures degrade a
+// field to omitted and never abort the event (recording must not affect the run).
 func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp *model.LLMResponse, callErr error, pricing *config.ModelPricing) {
 	if !otelobs.LoggingEnabled(inferenceScope) {
 		return // nothing listening - skip building a (potentially large) event nobody reads

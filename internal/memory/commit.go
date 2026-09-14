@@ -322,10 +322,8 @@ func (s *Store) runConsolidation(ctx context.Context, sysPrompt, userPrompt stri
 	return parsed.Ops, nil
 }
 
-// apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE
-// keeps the existing id), DELETE invalidates in place, NOOP is skipped.
-
-// apply: classify the ops, then apply writes and invalidations (their counts compose).
+// apply classifies the ops, then writes and invalidates them into one bucket:
+// ADD/UPDATE upsert a point (UPDATE keeps the existing id), DELETE invalidates in place, NOOP is skipped.
 func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenance, ops []op, valid map[string]neighbour) (int, error) {
 	var invalidations, writes []op
 	for _, o := range ops {
