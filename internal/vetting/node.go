@@ -833,6 +833,9 @@ func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) jud
 		}
 		runID, judgeCtx, jspan, ledgerCtx, act := j.prepareJudge(round)
 		v, det, jerr := j.runJudge(round, runID, judgeCtx, ledgerCtx, act)
+		if j.outcome != nil { // admission swap aborted the round; the ctx error rides the outcome
+			break
+		}
 		if jerr != nil {
 			j.applyJudgeFailure(round, runID, jspan, jerr)
 			break
@@ -851,7 +854,7 @@ func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) jud
 	}
 	if o := j.outcome; o != nil {
 		if o.err != nil {
-			return judgeRoundOutcome{err: o.err}
+			return judgeRoundOutcome{answer: j.answer, res: j.res, err: o.err}
 		}
 		if o.queuedText != "" {
 			return judgeRoundOutcome{answer: j.answer, queuedText: o.queuedText}
@@ -960,7 +963,22 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 	// Render-check screenshot evidence (#1211): attached only when this node's
 	// own rubric scores them; judge-only, never touches the worker's content.
 	shots := renderScreenshotEvidence(judgeCtx, j.cfg, j.nodeID, skip == "", act)
+	// Judge generates too: hold its own spec for this call so the freed
+	// worker slot can't admit a second worker while it runs.
+	if j.cfg.ReleaseWorker != nil && j.cfg.AdmitJudge != nil {
+		j.cfg.ReleaseWorker()
+		if !j.cfg.AdmitJudge(j.ctx) {
+			j.outcome = &judgeRoundOutcome{err: j.ctx.Err()}
+			return verdict{}, det, nil
+		}
+	}
 	v, jerr := runJudgeAgent(ledgerCtx, j.judge, j.cfg, attachScreenshots(j.question, shots), j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
+	if j.cfg.ReleaseJudge != nil && j.cfg.AdmitWorker != nil {
+		j.cfg.ReleaseJudge()
+		if !j.cfg.AdmitWorker(j.ctx) {
+			j.outcome = &judgeRoundOutcome{err: j.ctx.Err()}
+		}
+	}
 	return v, det, jerr
 }
 

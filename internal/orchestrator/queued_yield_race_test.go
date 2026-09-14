@@ -84,7 +84,7 @@ func TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield(t *testing.T) {
 			return dag.AdmissionSpec{Model: "wr"}
 		}
 		return dag.AdmissionSpec{}
-	})
+	}, dag.AdmissionSpec{})
 
 	planner := dag.NewPlanner([]dag.AgentInfo{
 		{Name: "web-researcher", Description: "researches the web"},

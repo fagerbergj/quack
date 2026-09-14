@@ -116,6 +116,12 @@ type Config struct {
 	// node. Seeds an ACP node's first-round session/load id and marks the
 	// node.started ledger entry/stream event as a continuation.
 	ResumedFrom string
+	// AdmitJudge/ReleaseJudge/AdmitWorker/ReleaseWorker: swap the caller's admission
+	// reservation to the judge spec for each judge call, and back. All nil without an admission ledger.
+	AdmitJudge    func(ctx context.Context) bool
+	ReleaseJudge  func()
+	AdmitWorker   func(ctx context.Context) bool
+	ReleaseWorker func()
 }
 
 // SetupBranch mirrors dag.Plan.Setup delivery fields.
