@@ -79,8 +79,8 @@ func rebuildArtifacts(ctx context.Context, st *store.Store, artifacts *store.Tur
 		}
 	}
 	if !dryRun {
-		// Artifact rows may sit on a separate Postgres connection (dedicated artifact
-		// service URL), so the watermark advance is sequential-after, not atomic-with.
+		// Artifact rows may sit on a separate Postgres connection, so the watermark advance is
+		// sequential-after, not atomic-with - a crash in the gap is harmless (UpdateArtifactMeta unconditionally overwrites).
 		if err := st.SetProjectionWatermark(ctx, chatID, "artifact", res.LastSeq); err != nil {
 			return fmt.Errorf("ledger rebuild: advance artifact watermark for chat %q: %w", chatID, err)
 		}

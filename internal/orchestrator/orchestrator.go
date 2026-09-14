@@ -1018,7 +1018,7 @@ func buildHistory(events []*session.Event) []dag.HistoryTurn {
 	return b.turns
 }
 
-// pendingChoice returns// pendingChoice returns the call ID and question of the most recent unanswered get_user_choice.
+// pendingChoice returns the call ID and question of the most recent unanswered get_user_choice.
 func pendingChoice(events []*session.Event) (callID, question string) {
 	var pendingID, pendingQuestion string
 	for _, ev := range events {

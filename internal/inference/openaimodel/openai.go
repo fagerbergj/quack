@@ -487,9 +487,6 @@ type toolCallBuilder struct {
 	args string
 }
 
-// applyFallbackLadder is the recovery ladder shared by both paths: recover tool
-// calls leaked as XML into thinking (llama.cpp#22684) or the answer (#427).
-
 // thoughtText / answerText: the part predicates the leak-recovery scan keys on.
 func thoughtText(p *genai.Part) bool { return p.Thought && p.Text != "" }
 func answerText(p *genai.Part) bool  { return !p.Thought && p.Text != "" }
@@ -533,6 +530,9 @@ func recoverLeakedCalls(ctx context.Context, modelName string, parts []*genai.Pa
 	return rebuilt, true
 }
 
+// applyFallbackLadder: the shared recovery ladder - recover tool calls leaked as
+// XML into thinking (llama.cpp#22684) or the answer (#427). Callers log the
+// promotion/empty-turn cases themselves; their log text differs (golden_ladder_test.go).
 func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.Part, haveToolCalls bool) (result []*genai.Part, hasAnswer, hadThinking bool, promotedChars int) {
 	result = parts
 
@@ -568,6 +568,7 @@ func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.P
 
 	return result, hasAnswer, hadThinking, promotedChars
 }
+
 func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionNewParams, error) {
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Contents))
 	for _, content := range req.Contents {
@@ -602,8 +603,8 @@ func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (ope
 // applyConfigKnobs: the config fields mapped onto the OpenAI request - thinking
 // effort, response format, tools, and the sampling knobs.
 func applyConfigKnobs(openaiReq *openai.ChatCompletionNewParams, cfg *genai.GenerateContentConfig) error {
-	// req.Config.ThinkingConfig is either set explicitly by the caller (e.g.
-	// gates.judge.thinking_level) or filled from models.<name>.effort above.
+	// cfg.ThinkingConfig: set explicitly by the caller (e.g. gates.judge.thinking_level)
+	// or filled from models.<name>.effort by applyDefaultEffort upstream - the resolved effort.
 	if cfg.ThinkingConfig != nil {
 		switch cfg.ThinkingConfig.ThinkingLevel {
 		case genai.ThinkingLevelLow:
