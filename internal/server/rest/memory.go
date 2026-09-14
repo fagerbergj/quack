@@ -246,9 +246,6 @@ func invalidateMemory(ctx context.Context, stores []*memory.Store, id, reason st
 	return memory.ErrMemoryNotFound
 }
 
-// SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand
-// against every configured store - the same Store.ForgetSweep the nightly
-// consolidation job calls, so there is exactly one sweep code path.
 // sweepStoreErr aliases the report's per-store error shape so out.Errors stays assignable.
 type sweepStoreErr = struct {
 	Message string `json:"message"`
@@ -305,6 +302,9 @@ func runDedupeSweep(ctx context.Context, stores []namedSweepStore, apply bool) (
 	return results, errs
 }
 
+// SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand
+// against every configured store - the same Store.ForgetSweep the nightly
+// consolidation job calls, so there is exactly one sweep code path.
 func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
 	var body schema.SweepMemoriesBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
