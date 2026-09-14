@@ -74,9 +74,8 @@ func assignInstrument(meter metric.Meter, into any, d metricDef) error {
 		*t = v
 	case *metric.Int64Counter:
 		opts := []metric.Int64CounterOption{metric.WithDescription(d.desc)}
-		if d.unit != "" {
-			opts = append(opts, metric.WithUnit(d.unit))
-		}
+		// WithUnit("") leaves the unit empty - the unitless case, not a hole.
+		opts = append(opts, metric.WithUnit(d.unit))
 		v, err := meter.Int64Counter(d.name, opts...)
 		if err != nil {
 			return err
@@ -107,7 +106,8 @@ func assignInstrument(meter metric.Meter, into any, d metricDef) error {
 // OTel SDK bug, not an operator error) - callers should log and continue with metrics disabled rather than fail startup over an observability seam.
 func initMetrics(meter metric.Meter) error {
 	m2 := &metrics{}
-	// Registration order matches the struct's field order; the first error
+	// Registration order matches the original registration block (note: not the struct's
+	// field order - cost comes before ledgerUnresolved there); the first error
 	// short-circuits, exactly like the old sequential block.
 	defs := []struct {
 		def  metricDef

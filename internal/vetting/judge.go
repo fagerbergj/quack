@@ -636,7 +636,9 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 	retryAnswer, retryPrompt := fitJudgeAnswer(cfg, q, fitted, changedFiles, known, act, 0.5)
 	if retryAnswer == fitted {
-		v = verdict{} // nothing left to shrink; the retry would repeat the same call
+		// Nothing left to shrink: return the zero verdict directly - it must never
+		// reach finishJudgeRound (which assumes a real verdict to re-check).
+		v = verdict{}
 		return
 	}
 	v, _, err = runJudgeRound(ctx, factory, cfg, q, retryAnswer, changedFiles, known, retryPrompt, act, received, emit)
