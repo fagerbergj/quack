@@ -40,7 +40,6 @@ type orchRun struct {
 	message     string
 	attachments []*genai.Part
 
-	yield        func(stream.SSEEvent, error) bool
 	safeYield    func(stream.SSEEvent, error) bool
 	planCache    *tools.PlanCache
 	guardStopped *atomic.Bool

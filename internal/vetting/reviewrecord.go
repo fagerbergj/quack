@@ -606,45 +606,66 @@ func loadEpisodicRoundState(ctx context.Context, cfg Config, nodeID string) *epi
 		return st
 	}
 	if cfg.IsReviewer {
-		if id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID)); err == nil {
-			if raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.reviewRev = rev
-				var rec CodeReviewRecord
-				if json.Unmarshal(raw, &rec) == nil {
-					for _, fid := range rec.FindingIDs {
-						fraw, _, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
-						if ferr != nil || !fok {
-							continue
-						}
-						var f FindingRecord
-						if json.Unmarshal(fraw, &f) != nil {
-							continue
-						}
-						st.findingRev[fid] = frev
-						st.findingState[fid] = f.State
-						if f.State != "resolved" {
-							st.findings[fid] = f
-						}
-					}
-				}
-			}
-		}
+		loadReviewState(ctx, c, cfg, st)
 	}
 	if cfg.Artifact != "" {
-		if id, err := recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID)); err == nil {
-			if _, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.documentRev = rev
-			}
+		if rev, ok := latestRevision(ctx, c, cfg.Artifact, documentHint(cfg.ChatID)); ok {
+			st.documentRev = rev
 		}
 	}
 	if !cfg.IsReviewer && cfg.Artifact == "" {
-		if id, err := recordstore.IdentityFor(kindText, nil, nodeID); err == nil {
-			if _, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.textRev = rev
-			}
+		if rev, ok := latestRevision(ctx, c, kindText, nodeID); ok {
+			st.textRev = rev
 		}
 	}
 	return st
+}
+
+// loadReviewState: the latest code_review revision and its findings (unresolved
+// ones become this round's baseline).
+func loadReviewState(ctx context.Context, c *recordstore.Client, cfg Config, st *episodicRoundState) {
+	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	if err != nil {
+		return
+	}
+	raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil || !ok {
+		return
+	}
+	st.reviewRev = rev
+	var rec CodeReviewRecord
+	if json.Unmarshal(raw, &rec) != nil {
+		return
+	}
+	for _, fid := range rec.FindingIDs {
+		fraw, _, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
+		if ferr != nil || !fok {
+			continue
+		}
+		var f FindingRecord
+		if json.Unmarshal(fraw, &f) != nil {
+			continue
+		}
+		st.findingRev[fid] = frev
+		st.findingState[fid] = f.State
+		if f.State != "resolved" {
+			st.findings[fid] = f
+		}
+	}
+}
+
+// latestRevision: the latest revision of a kind under a subject hint (0, false
+// when there is no id or no revision yet).
+func latestRevision(ctx context.Context, c *recordstore.Client, kind, hint string) (int, bool) {
+	id, err := recordstore.IdentityFor(kind, nil, hint)
+	if err != nil {
+		return 0, false
+	}
+	_, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil || !ok {
+		return 0, false
+	}
+	return rev, true
 }
 
 func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) *episodicRoundState {
@@ -879,13 +900,11 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	}
 
 	// Drained unconditionally, before any other round bookkeeping, so the
-	// stage's "this round" scope (#1108 finding 2) holds regardless of which
-	// branch below returns early.
+	// stage's "this round" scope (#1108 finding 2) holds regardless of branch.
 	toolWritten := resetToolWrittenIDs(cfg)
 
-	// #1091 gate fallback: write_code_review/write_finding (the loopback MCP tools) let the worker write this round's code_review record directly, bypassing stage_review_comment/stage_review entirely. Detected via
-	// toolWritten membership, not a revision comparison against st.reviewRev - that baseline is only ever loaded lazily on this invocation's FIRST
-	// saveEpisodicRound call, which for a reviewer node happens after the draft round's write_code_review, so the baseline already includes it and a revision compare never fires in round 1 (#1108 B2). toolWritten is this round's own drain, so it's correct on round 1 too.
+	// #1091 gate fallback: write_code_review/write_finding let the worker write
+	// this round's record directly; detected via toolWritten, not a revision compare.
 	codeReviewID, crIDErr := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	toolWroteCodeReview := crIDErr == nil && toolWritten[codeReviewID]
 
@@ -903,13 +922,20 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	}
 
 	savedAt := time.Now().UTC()
-	current := make(map[string]FindingRecord, len(findings))
-	findingIDs := make([]string, 0, len(findings))
-	seen := make(map[string]bool, len(findings))
+	// Tool-written findings seed BEFORE the tail parse and the toolWroteCodeReview
+	// short-circuit - a return before seeding leaves st.findingRev stale (#1108 B3).
+	current, findingIDs, seen := seedToolFindings(ctx, c, st, nodeID, toolWritten, codeReviewID)
+
+	// That write is authoritative; answer-tail parsing runs only when nothing
+	// was written via write_code_review this round.
+	if toolWroteCodeReview {
+		backfillCodeReviewTakeaway(ctx, c, cfg, nodeID, turnID, round, st)
+		return
+	}
+
 	writeFinding := func(id string, rec FindingRecord) {
-		// Skip a rewrite when the last WRITTEN state already matches - avoids every intermediate revise round re-persisting "unchanged"
-		// for a finding nothing happened to, while still writing the one
-		// transition (new->unchanged, *->resolved) each state change earns.
+		// Skip a rewrite when the last WRITTEN state already matches - the one
+		// transition each state change earns is still written.
 		if st.findingState[id] == rec.State {
 			return
 		}
@@ -924,18 +950,58 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev})
 	}
 
-	// Findings the worker already wrote directly via write_finding this round: seed them into current/findingIDs from the store (no write here - they're already persisted) so the tail-parse loop below can skip them
-	// instead of minting a duplicate revision with a fabricated ParentRevision 0 (#1091 adversarial review finding #1). This seed loop always runs, unconditionally, before the tail-parse skip-decision loop below reads toolWritten, and before the toolWroteCodeReview short-circuit
-	// further down - a return before this loop would discard the drained ids and leave st.findingRev stale for a later round's ParentRevision (#1108 B3).
+	for _, f := range findings {
+		line := fileLineAtForCfg(cfg, f.Path, f.Line)
+		title, rationale := splitFirstSentence(f.Body)
+		rec := FindingRecord{Path: f.Path, LineHint: f.Line, Snippet: line, Title: title, Rationale: rationale, State: "new"}
+		id, err := recordstore.IdentityFor(kindFinding, rec, "")
+		if err != nil {
+			slog.Warn("finding identity failed; dropping this finding from the round", "component", "vetting", "node", nodeID, "err", err)
+			continue
+		}
+		if toolWritten[id] {
+			// Already written via tool this round and already staged above -
+			// the tail parse rediscovering it is not a second write.
+			continue
+		}
+		if _, existed := st.findings[id]; existed {
+			rec.State = "unchanged"
+		}
+		if !seen[id] {
+			current[id] = rec
+			findingIDs = append(findingIDs, id)
+			seen[id] = true
+		}
+		writeFinding(id, rec)
+	}
+	// Resolved: an id previously live that this round dropped - one revision
+	// recording the resolution (replaces V3's critique list).
+	for id, rec := range st.findings {
+		if _, stillLive := current[id]; stillLive {
+			continue
+		}
+		rec.State = "resolved"
+		writeFinding(id, rec)
+	}
+	st.findings = current
+
+	recordCodeReviewSave(ctx, c, cfg, nodeID, turnID, round, st, savedAt, event, findings, answer, staged, findingIDs, dismissedComments, clean)
+}
+
+// seedToolFindings: findings the worker wrote directly via write_finding this
+// round, seeded so the tail parse skips them (#1091 finding #1).
+func seedToolFindings(ctx context.Context, c *recordstore.Client, st *episodicRoundState, nodeID string, toolWritten map[string]bool, codeReviewID string) (map[string]FindingRecord, []string, map[string]bool) {
+	current := make(map[string]FindingRecord)
+	findingIDs := make([]string, 0)
+	seen := make(map[string]bool)
 	for id := range toolWritten {
 		if id == codeReviewID {
 			continue // not a FindingRecord; handled by toolWroteCodeReview below
 		}
 		raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
 		if lerr != nil || !ok {
-			// #1108 finding 3a: log instead of silently dropping the finding
-			// from the round. Leave id in toolWritten so the tail-parse loop below still skips it rather than writing over it with a
-			// ParentRevision from st.findingRev[id] - that value has nothing to do with this unread revision and would be fabricated.
+			// #1108 finding 3a: log instead of silently dropping the finding from
+			// the round; the tail-parse loop below still skips the id.
 			slog.Warn("tool-written finding could not be re-read while seeding the round; it will be missing from this round's code_review", "component", "vetting", "node", nodeID, "id", id, "err", lerr)
 			continue
 		}
@@ -951,58 +1017,19 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 			seen[id] = true
 		}
 	}
+	return current, findingIDs, seen
+}
 
-	// That write is authoritative; answer-tail parsing runs only when nothing
-	// was written via write_code_review this round. Runs after the seed loop
-	// above so the drained finding ids are never discarded (#1108 B3).
-	if toolWroteCodeReview {
-		backfillCodeReviewTakeaway(ctx, c, cfg, nodeID, turnID, round, st)
-		return
-	}
-
-	for _, f := range findings {
-		line := fileLineAtForCfg(cfg, f.Path, f.Line)
-		title, rationale := splitFirstSentence(f.Body)
-		rec := FindingRecord{Path: f.Path, LineHint: f.Line, Snippet: line, Title: title, Rationale: rationale, State: "new"}
-		id, err := recordstore.IdentityFor(kindFinding, rec, "")
-		if err != nil {
-			slog.Warn("finding identity failed; dropping this finding from the round", "component", "vetting", "node", nodeID, "err", err)
-			continue
-		}
-		if toolWritten[id] {
-			// Already written via tool this round and already staged above -
-			// the tail parse rediscovering the same finding is not a second write.
-			continue
-		}
-		if _, existed := st.findings[id]; existed {
-			rec.State = "unchanged"
-		}
-		if !seen[id] {
-			current[id] = rec
-			findingIDs = append(findingIDs, id)
-			seen[id] = true
-		}
-		writeFinding(id, rec)
-	}
-	// Resolved: an id previously live (this run or a prior turn) that this
-	// round dropped - one revision recording the resolution (replaces V3's
-	// critique list).
-	for id, rec := range st.findings {
-		if _, stillLive := current[id]; stillLive {
-			continue
-		}
-		rec.State = "resolved"
-		writeFinding(id, rec)
-	}
-	st.findings = current
-
+// recordCodeReviewSave: the gate-authored code_review record for this round -
+// dismissed entries, clamped fields, rendered overview, and the round write.
+func recordCodeReviewSave(ctx context.Context, c *recordstore.Client, cfg Config, nodeID, turnID string, round int, st *episodicRoundState, savedAt time.Time, event string, findings []ReviewComment, answer string, staged StagedDelivery, findingIDs []string, dismissedComments []ReviewComment, clean []string) {
 	dismissed := make([]DismissedEntry, 0, len(dismissedComments))
 	for _, d := range dismissedComments {
 		dismissed = append(dismissed, DismissedEntry{Path: d.Path, Line: d.Line, Note: d.Body})
 	}
-	// Clamped rather than validated: the Recovered/answer-tail path never went through stage_review's tool-boundary CheckCodeReviewCaps, so an
-	// over-cap value here must not make SaveStructured's own validateCodeReview
-	// reject the save and silently leave the record on last round's revision.
+	// Clamped rather than validated: the Recovered/answer-tail path never went
+	// through stage_review's CheckCodeReviewCaps, so an over-cap value must not
+	// fail SaveStructured's own validateCodeReview.
 	takeaway, verified, notes := clampCodeReviewFields(reviewFields(answer, staged))
 	rendered := renderReviewOverview(reviewOverviewInput{Verdict: event, Takeaway: takeaway, Verified: verified, Notes: notes, Comments: findings})
 	reviewRec := CodeReviewRecord{Verdict: event, Takeaway: takeaway, Verified: verified, Notes: notes, Rendered: rendered, FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}

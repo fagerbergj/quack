@@ -12,7 +12,6 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/vetting"
-	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // registerRoundAbort: the round's direct cancel line (#1030). Returns the
@@ -47,7 +46,7 @@ func (a *Agent) steerHooks(h *procHandle, outbound, steerChatID, steerNodeID str
 
 // handshake: Initialize + session/load|new on a fresh process; the resume only
 // ever matters on a node's FIRST round (pinned processes are the path after it).
-func (a *Agent) handshake(ctx context.Context, cwd, memSecret, advisorToken, priorSessionID string, caps workspace.Caps, h *procHandle) (sessID sdk.SessionId, toolNames []string, resumed bool, err error) {
+func (a *Agent) handshake(ctx context.Context, cwd, memSecret, advisorToken, priorSessionID string, h *procHandle) (sessID sdk.SessionId, toolNames []string, resumed bool, err error) {
 	ictx, cancelInit := context.WithTimeout(ctx, a.opts.StartTimeout)
 	defer cancelInit()
 	handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String(otelobs.GenAIAgentName, a.name))

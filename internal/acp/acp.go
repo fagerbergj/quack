@@ -354,7 +354,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err) }()
 
 	if !fromPinned {
-		sessID, toolNames, resumed, err = a.handshake(ctx, cwd, memSecret, advisorToken, priorSessionID, caps, h)
+		sessID, toolNames, resumed, err = a.handshake(ctx, cwd, memSecret, advisorToken, priorSessionID, h)
 		if err != nil {
 			return err
 		}

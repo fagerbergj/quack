@@ -322,12 +322,12 @@ func (s *Store) runConsolidation(ctx context.Context, sysPrompt, userPrompt stri
 	return parsed.Ops, nil
 }
 
-// apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE keeps the existing
-// id), DELETE invalidates in place (soft-delete only - design doc §4(a)/§8 phase 2), NOOP is skipped.
-// valid is the neighbours the consolidator was shown, keyed by id; an UPDATE/DELETE naming any other id is a hallucination (UPDATE -> fresh ADD, DELETE -> dropped). prov stamps a fresh ADD; an UPDATE carries forward the id's original minted_at/provenance/lifecycle from valid - a wording correction doesn't re-mint it or reset earned trust. Every write and invalidation logs one memory_ops row (actor=consolidator). Returns writes applied.
+// apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE
+// keeps the existing id), DELETE invalidates in place, NOOP is skipped.
+
+// apply: classify the ops, then apply writes and invalidations (their counts compose).
 func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenance, ops []op, valid map[string]neighbour) (int, error) {
-	var invalidations []op
-	var writes []op
+	var invalidations, writes []op
 	for _, o := range ops {
 		switch strings.ToUpper(strings.TrimSpace(o.Action)) {
 		case "ADD", "UPDATE":
@@ -345,122 +345,133 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 			}
 		}
 	}
+	count, err := s.applyWrites(ctx, bucket, author, prov, writes, valid)
+	if err != nil {
+		return 0, err
+	}
+	n, err := s.applyInvalidations(ctx, invalidations)
+	if err != nil {
+		return count + n, err
+	}
+	count += n
+	s.log.Debug("commit", "bucket", bucket, "author", author, "ops", len(ops), "writes", count)
+	return count, nil
+}
 
-	count := 0
-	if len(writes) > 0 {
-		texts := make([]string, len(writes))
-		for i, o := range writes {
-			texts[i] = o.Content
+// applyWrites: embeds and upserts the ADD/UPDATE ops, carrying an UPDATE's neighbour
+// votes/lineage forward (an UPDATE re-words a memory, it doesn't reset earned trust).
+func (s *Store) applyWrites(ctx context.Context, bucket, author string, prov Provenance, writes []op, valid map[string]neighbour) (int, error) {
+	if len(writes) == 0 {
+		return 0, nil
+	}
+	texts := make([]string, len(writes))
+	for i, o := range writes {
+		texts[i] = o.Content
+	}
+	vecs, err := s.embed(ctx, texts, "commit-write")
+	if err != nil {
+		return 0, fmt.Errorf("memory: embed writes: %w", err)
+	}
+	ts := nowRFC3339()
+	points := make([]point, 0, len(writes))
+	writeIDs := make([]struct {
+		ID    string
+		Fresh bool
+	}, 0, len(writes))
+	for i, o := range writes {
+		id := o.ID
+		fresh := strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == ""
+		mintedAt, chatID, nodeID, source := ts, prov.ChatID, prov.NodeID, prov.Source
+		status, reinforcementCount, validFrom := string(StatusUnverified), 0, ts
+		var upvotes, downvotes, voteScore, recalls int
+		var tier, lastUpvotedAt, lastRecalledAt string
+		var absorbedIDs []string
+		if !fresh {
+			if n, ok := valid[id]; ok {
+				mintedAt, chatID, nodeID, source = n.MintedAt, n.ChatID, n.NodeID, n.Source
+				reinforcementCount = n.ReinforcementCount
+				if n.Status != "" {
+					status = n.Status
+				}
+				if n.ValidFrom != "" {
+					validFrom = n.ValidFrom
+				}
+				upvotes, downvotes, voteScore = n.Upvotes, n.Downvotes, n.VoteScore
+				tier, lastUpvotedAt = n.Tier, n.LastUpvotedAt
+				recalls, lastRecalledAt = n.Recalls, n.LastRecalledAt
+				absorbedIDs = n.AbsorbedIDs
+			}
+		} else {
+			id = uuid.NewString()
 		}
-		vecs, err := s.embed(ctx, texts, "commit-write")
-		if err != nil {
-			return 0, fmt.Errorf("memory: embed writes: %w", err)
-		}
-		ts := nowRFC3339()
-		points := make([]point, 0, len(writes))
-		writeIDs := make([]struct {
+		points = append(points, point{
+			ID:                 id,
+			Vector:             vecs[i],
+			Content:            o.Content,
+			Scope:              bucket,
+			Author:             author,
+			Timestamp:          ts,
+			Kind:               o.Kind,
+			ChatID:             chatID,
+			NodeID:             nodeID,
+			Source:             source,
+			MintedAt:           mintedAt,
+			Status:             status,
+			ValidFrom:          validFrom,
+			ReinforcementCount: reinforcementCount,
+			Upvotes:            upvotes,
+			Downvotes:          downvotes,
+			VoteScore:          voteScore,
+			Tier:               tier,
+			LastUpvotedAt:      lastUpvotedAt,
+			Recalls:            recalls,
+			LastRecalledAt:     lastRecalledAt,
+			AbsorbedIDs:        absorbedIDs,
+		})
+		writeIDs = append(writeIDs, struct {
 			ID    string
 			Fresh bool
-		}, 0, len(writes))
-		for i, o := range writes {
-			id := o.ID
-			fresh := strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == ""
-			mintedAt, chatID, nodeID, source := ts, prov.ChatID, prov.NodeID, prov.Source
-			status, reinforcementCount, validFrom := string(StatusUnverified), 0, ts
-			var upvotes, downvotes, voteScore, recalls int
-			var tier, lastUpvotedAt, lastRecalledAt string
-			var absorbedIDs []string
-			if !fresh {
-				if n, ok := valid[id]; ok {
-					mintedAt, chatID, nodeID, source = n.MintedAt, n.ChatID, n.NodeID, n.Source
-					reinforcementCount = n.ReinforcementCount
-					if n.Status != "" {
-						status = n.Status
-					}
-					if n.ValidFrom != "" {
-						validFrom = n.ValidFrom
-					}
-					// Carry votes/lineage forward - an UPDATE re-words a memory, it
-					// doesn't reset earned trust (see neighbour's doc).
-					upvotes, downvotes, voteScore = n.Upvotes, n.Downvotes, n.VoteScore
-					tier, lastUpvotedAt = n.Tier, n.LastUpvotedAt
-					recalls, lastRecalledAt = n.Recalls, n.LastRecalledAt
-					absorbedIDs = n.AbsorbedIDs
-				}
-			} else {
-				id = uuid.NewString()
-			}
-			points = append(points, point{
-				ID:                 id,
-				Vector:             vecs[i],
-				Content:            o.Content,
-				Scope:              bucket,
-				Author:             author,
-				Timestamp:          ts,
-				Kind:               o.Kind,
-				ChatID:             chatID,
-				NodeID:             nodeID,
-				Source:             source,
-				MintedAt:           mintedAt,
-				Status:             status,
-				ValidFrom:          validFrom,
-				ReinforcementCount: reinforcementCount,
-				Upvotes:            upvotes,
-				Downvotes:          downvotes,
-				VoteScore:          voteScore,
-				Tier:               tier,
-				LastUpvotedAt:      lastUpvotedAt,
-				Recalls:            recalls,
-				LastRecalledAt:     lastRecalledAt,
-				AbsorbedIDs:        absorbedIDs,
-			})
-			writeIDs = append(writeIDs, struct {
-				ID    string
-				Fresh bool
-			}{id, fresh})
-		}
-		if err := s.idx.upsert(ctx, points); err != nil {
-			return 0, err
-		}
-		count += len(points)
-		for _, w := range writeIDs {
-			opName := OpUpdate
-			if w.Fresh {
-				opName = OpAdd
-			}
-			s.logOp(ctx, w.ID, opName, ActorConsolidator, "")
-		}
+		}{id, fresh})
 	}
+	if err := s.idx.upsert(ctx, points); err != nil {
+		return 0, err
+	}
+	for _, w := range writeIDs {
+		opName := OpUpdate
+		if w.Fresh {
+			opName = OpAdd
+		}
+		s.logOp(ctx, w.ID, opName, ActorConsolidator, "")
+	}
+	return len(points), nil
+}
 
-	if len(invalidations) > 0 {
-		for _, o := range invalidations {
-			reason := strings.TrimSpace(o.Reason)
-			if reason == "" {
-				reason = "invalidated by consolidator"
-			}
-			// Epic #1255 P5: a DELETE naming its survivor ("duplicate of <id>") is a merge, not a bare
-			// invalidation - the survivor inherits absorbed's votes/lineage. Falls through to a plain
-			// invalidate if the named survivor doesn't exist (hallucinated id).
-			if survivorID := parseSurvivorID(reason); survivorID != "" && survivorID != o.ID {
-				ok, err := s.idx.absorb(ctx, survivorID, o.ID, absorbedByReason(survivorID))
-				if err != nil {
-					return count, err
-				}
-				if ok {
-					s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, absorbedByReason(survivorID))
-					count++
-					continue
-				}
-			}
-			if _, err := s.idx.invalidateByID(ctx, []string{o.ID}, reason); err != nil {
+// applyInvalidations: the DELETE ops; a delete naming its survivor ("duplicate of <id>") is a
+// merge - the survivor inherits the absorbed memory's votes/lineage (Epic #1255 P5).
+func (s *Store) applyInvalidations(ctx context.Context, invalidations []op) (int, error) {
+	count := 0
+	for _, o := range invalidations {
+		reason := strings.TrimSpace(o.Reason)
+		if reason == "" {
+			reason = "invalidated by consolidator"
+		}
+		if survivorID := parseSurvivorID(reason); survivorID != "" && survivorID != o.ID {
+			ok, err := s.idx.absorb(ctx, survivorID, o.ID, absorbedByReason(survivorID))
+			if err != nil {
 				return count, err
 			}
-			s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, reason)
-			count++
+			if ok {
+				s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, absorbedByReason(survivorID))
+				count++
+				continue
+			}
 		}
+		if _, err := s.idx.invalidateByID(ctx, []string{o.ID}, reason); err != nil {
+			return count, err
+		}
+		s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, reason)
+		count++
 	}
-
-	s.log.Debug("commit", "bucket", bucket, "author", author, "ops", len(ops), "writes", count)
 	return count, nil
 }
 

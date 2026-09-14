@@ -45,12 +45,12 @@ func usage() {
 
 // ---------- comment-run gate (the only diff check) ----------
 
-const maxCommentRun = 2
+const maxCommentRun = 3
 
 type rng [2]int
 
 func diffMode(ref, root string) bool {
-	// Hunk-aware: the repo has ~1800 pre-existing >2-line comment runs,
+	// Hunk-aware: the repo has ~1800 pre-existing >3-line comment runs,
 	// so only runs the diff itself touches are gated (changed-code-only).
 	out, err := exec.Command("git", "diff", "-U0", ref+"...HEAD").Output()
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 	"google.golang.org/adk/v2/workflow"
+	"google.golang.org/genai"
 )
 
 // GuardStatusKey / GuardResolvedKey: wire markers for guard-ladder confirm tier (internal/tools/guard.go).
@@ -53,45 +54,57 @@ func scanNodeConfirms(sess session.Session, invocationID, nodeID string) confirm
 			continue
 		}
 		if ev.Author == "user" {
-			for _, p := range ev.Content.Parts {
-				if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != workflow.WorkflowInputFunctionCallName {
-					continue
-				}
-				if !strings.HasPrefix(p.FunctionResponse.ID, prefix) {
-					continue
-				}
-				if payload, ok := p.FunctionResponse.Response["payload"].(string); ok {
-					answers[p.FunctionResponse.ID] = payload
-				}
-			}
+			collectConfirmAnswers(&answers, prefix, ev.Content.Parts)
 			continue
 		}
 		if !pathHasNode(ev, nodeID) {
 			continue
 		}
-		for _, p := range ev.Content.Parts {
-			if p == nil || p.FunctionCall == nil {
-				continue
-			}
-			switch p.FunctionCall.Name {
-			case workflow.WorkflowInputFunctionCallName:
-				if strings.HasPrefix(p.FunctionCall.ID, prefix) {
-					s.pauses++
-				}
-			case toolconfirmation.FunctionCallName:
-				turn := confirmTurn{tool: "(unknown)"}
-				if oc, err := toolconfirmation.OriginalCallFrom(p.FunctionCall); err == nil {
-					turn.tool, turn.args = oc.Name, oc.Args
-				}
-				turn.hint = confirmationHint(p.FunctionCall.Args)
-				s.turns = append(s.turns, turn)
-			}
-		}
+		recordConfirmPauses(&s, prefix, ev.Content.Parts)
 	}
 	for i := range s.turns {
 		s.turns[i].answer = answers[confirmInterruptID(nodeID, i+1)]
 	}
 	return s
+}
+
+// collectConfirmAnswers: the human's decision text keyed by interrupt ID
+// (workflow_input FunctionResponses whose id carries this node's prefix).
+func collectConfirmAnswers(answers *map[string]string, prefix string, parts []*genai.Part) {
+	for _, p := range parts {
+		if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != workflow.WorkflowInputFunctionCallName {
+			continue
+		}
+		if !strings.HasPrefix(p.FunctionResponse.ID, prefix) {
+			continue
+		}
+		if payload, ok := p.FunctionResponse.Response["payload"].(string); ok {
+			(*answers)[p.FunctionResponse.ID] = payload
+		}
+	}
+}
+
+// recordConfirmPauses: gate-authored confirmations - the workflow_input pauses
+// and the tool-confirmation turns this node requested.
+func recordConfirmPauses(s *confirmScanResult, prefix string, parts []*genai.Part) {
+	for _, p := range parts {
+		if p == nil || p.FunctionCall == nil {
+			continue
+		}
+		switch p.FunctionCall.Name {
+		case workflow.WorkflowInputFunctionCallName:
+			if strings.HasPrefix(p.FunctionCall.ID, prefix) {
+				s.pauses++
+			}
+		case toolconfirmation.FunctionCallName:
+			turn := confirmTurn{tool: "(unknown)"}
+			if oc, err := toolconfirmation.OriginalCallFrom(p.FunctionCall); err == nil {
+				turn.tool, turn.args = oc.Name, oc.Args
+			}
+			turn.hint = confirmationHint(p.FunctionCall.Args)
+			s.turns = append(s.turns, turn)
+		}
+	}
 }
 
 // confirmationHint extracts the guard's hint from adk_request_confirmation args (handles live and persisted events).

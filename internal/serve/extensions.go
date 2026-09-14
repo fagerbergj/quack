@@ -59,103 +59,47 @@ type builtSDKExtension struct {
 	icon  string
 }
 
-// buildSDKExtensions constructs every configured module named under
-// extensions: that is also compiled in (sdk.Registered(), populated by
-// extensions_registry.go's blank imports). A configured name absent from the
-// registry, or one that fails ValidateExtensionName, fails startup loudly; a
-// registered module absent from config, or configured with enabled: false,
-// stays dormant - never constructed (design doc "Model"). orchRef and
-// judgeModelRef are read lazily by the returned extensions' Dispatch/Classify
-// closures: neither is resolved until the caller Stores it, both built later
-// in buildFromConfig (judgeModelRef may never be Stored at all when no judge
-// model is configured - Classify degrades to an error, matching Host's own
-// nil-is-valid contract). taskMem/userMem are already-built by the time this
-// runs (buildFromConfig constructs them first) and may each be nil - the same
-// task/user split rest/memory.go's memStores() iterates.
+// buildSDKExtensions validates and mounts every configured extension module
+// in stable name order; enabled:false modules stay dormant (nil is not an error).
+
+// sdkBuildDeps: the server-side dependencies one extension's build needs.
+type sdkBuildDeps struct {
+	cfg           *config.Config
+	factories     map[string]extsdk.Factory
+	shapes        []workflowcatalog.Shape
+	orchRef       *atomic.Pointer[orchestrator.Orchestrator]
+	st            *store.Store
+	hub           *stream.Hub
+	eventLog      *runlog.EventLog
+	artifacts     *store.TurnAwareService
+	judgeModelRef *atomic.Pointer[model.LLM]
+	taskMem       *memory.Store
+	userMem       *memory.Store
+	ledgerStore   ledger.LedgerStore
+}
+
 func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore) ([]builtSDKExtension, error) {
-	factories := extsdk.Registered()
+	d := sdkBuildDeps{cfg: cfg, factories: extsdk.Registered(), shapes: workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision),
+		orchRef: orchRef, st: st, hub: hub, eventLog: eventLog, artifacts: artifacts, judgeModelRef: judgeModelRef,
+		taskMem: taskMem, userMem: userMem, ledgerStore: ledgerStore}
 	names := make([]string, 0, len(cfg.Extensions.Modules))
 	for name := range cfg.Extensions.Modules {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	shapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
-
 	built := make([]builtSDKExtension, 0, len(names))
 	for _, name := range names {
-		factory, ok := factories[name]
+		factory, ok := d.factories[name]
 		if !ok {
-			known := make([]string, 0, len(factories))
-			for k := range factories {
-				known = append(known, k)
-			}
-			sort.Strings(known)
-			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(known, ", "))
+			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(knownExtensionNames(d.factories), ", "))
 		}
-		// Only a name that will actually be mounted needs to be route-safe -
-		// a compiled-but-unconfigured module never reaches this check.
-		if err := server.ValidateExtensionName(name); err != nil {
-			return nil, fmt.Errorf("config: extensions.%s: %w", name, err)
-		}
-		node := cfg.Extensions.Modules[name]
-		raw, err := yaml.Marshal(&node)
+		b, disabled, err := buildOneSDKExtension(name, factory, d)
 		if err != nil {
-			return nil, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+			return nil, err
 		}
-
-		var base extsdk.BaseConfig
-		if err := yaml.Unmarshal(raw, &base); err != nil {
-			return nil, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
-		}
-		if base.Enabled != nil && !*base.Enabled {
-			slog.Info("sdk extension disabled by config; staying dormant", "component", "startup", "extension", name)
+		if disabled {
 			continue
-		}
-
-		dataDir := base.DataDir
-		if dataDir == "" {
-			dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
-		}
-		if err := os.MkdirAll(dataDir, 0o755); err != nil {
-			return nil, fmt.Errorf("extensions.%s: data dir: %w", name, err)
-		}
-
-		var extHolder atomic.Pointer[extsdk.Extension]
-		host := extsdk.Host{
-			Dispatch:      newExtDispatch(name, orchRef, st, hub, eventLog, &extHolder, shapes, artifacts),
-			Log:           slog.Default().With("component", "ext."+name),
-			DataDir:       dataDir,
-			Version:       Version,
-			PublicURL:     cfg.Server.PublicURL,
-			ReadArtifact:  readExtInputArtifact(st, artifacts),
-			WriteArtifact: writeExtInputArtifact(st, artifacts),
-			ChatUser:      extChatUser(st),
-			ArchiveChat: func(chatID string) error {
-				return st.ArchiveChat(context.Background(), chatID, true)
-			},
-			UpdateChatOrigin: newExtUpdateChatOrigin(name, st, taskMem, userMem, ledgerStore),
-			InvalidateSetup: func(chatID string) error {
-				dag.MarkSetupStale(chatID)
-				return nil
-			},
-			Classify: func(ctx context.Context, prompt string) (string, error) {
-				m := judgeModelRef.Load()
-				if m == nil || *m == nil {
-					return "", fmt.Errorf("extensions.%s: classify: no judge model configured", name)
-				}
-				return classifyWithModel(ctx, *m, prompt)
-			},
-		}
-		ext, err := factory(host, raw)
-		if err != nil {
-			return nil, fmt.Errorf("extensions.%s: factory: %w", name, err)
-		}
-		extHolder.Store(&ext)
-		b := builtSDKExtension{name: name, ext: ext}
-		if ui, ok := ext.(extsdk.UI); ok {
-			d := ui.UI()
-			b.title, b.href, b.icon = d.Title, d.Href, d.Icon
 		}
 		built = append(built, b)
 		slog.Info("sdk extension enabled", "component", "startup", "extension", name)
@@ -163,9 +107,88 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, ev
 	return built, nil
 }
 
-// startSDKExtensions calls Start on every extension implementing
-// sdk.Starter, failing loudly on the first error (design doc: "fail startup
-// on error").
+// knownExtensionNames: the sorted names of the compiled extension factories.
+func knownExtensionNames(factories map[string]extsdk.Factory) []string {
+	known := make([]string, 0, len(factories))
+	for k := range factories {
+		known = append(known, k)
+	}
+	sort.Strings(known)
+	return known
+}
+
+// buildOneSDKExtension: validate, marshal, and mount one configured extension;
+// disabled=true when its config says enabled:false (stays dormant).
+func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (builtSDKExtension, bool, error) {
+	// Only a name that will actually be mounted needs to be route-safe -
+	// a compiled-but-unconfigured module never reaches this check.
+	if err := server.ValidateExtensionName(name); err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("config: extensions.%s: %w", name, err)
+	}
+	node := d.cfg.Extensions.Modules[name]
+	raw, err := yaml.Marshal(&node)
+	if err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+	}
+
+	var base extsdk.BaseConfig
+	if err := yaml.Unmarshal(raw, &base); err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
+	}
+	if base.Enabled != nil && !*base.Enabled {
+		slog.Info("sdk extension disabled by config; staying dormant", "component", "startup", "extension", name)
+		return builtSDKExtension{}, true, nil
+	}
+
+	dataDir := base.DataDir
+	if dataDir == "" {
+		dataDir = filepath.Join(d.cfg.Workspace.Root, "extensions", name)
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: data dir: %w", name, err)
+	}
+
+	var extHolder atomic.Pointer[extsdk.Extension]
+	host := extsdk.Host{
+		Dispatch:      newExtDispatch(name, d.orchRef, d.st, d.hub, d.eventLog, &extHolder, d.shapes, d.artifacts),
+		Log:           slog.Default().With("component", "ext."+name),
+		DataDir:       dataDir,
+		Version:       Version,
+		PublicURL:     d.cfg.Server.PublicURL,
+		ReadArtifact:  readExtInputArtifact(d.st, d.artifacts),
+		WriteArtifact: writeExtInputArtifact(d.st, d.artifacts),
+		ChatUser:      extChatUser(d.st),
+		ArchiveChat: func(chatID string) error {
+			return d.st.ArchiveChat(context.Background(), chatID, true)
+		},
+		UpdateChatOrigin: newExtUpdateChatOrigin(name, d.st, d.taskMem, d.userMem, d.ledgerStore),
+		InvalidateSetup: func(chatID string) error {
+			dag.MarkSetupStale(chatID)
+			return nil
+		},
+		Classify: func(ctx context.Context, prompt string) (string, error) {
+			m := d.judgeModelRef.Load()
+			if m == nil || *m == nil {
+				return "", fmt.Errorf("extensions.%s: classify: no judge model configured", name)
+			}
+			return classifyWithModel(ctx, *m, prompt)
+		},
+	}
+	ext, err := factory(host, raw)
+	if err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: factory: %w", name, err)
+	}
+	extHolder.Store(&ext)
+	b := builtSDKExtension{name: name, ext: ext}
+	if ui, ok := ext.(extsdk.UI); ok {
+		dd := ui.UI()
+		b.title, b.href, b.icon = dd.Title, dd.Href, dd.Icon
+	}
+	return b, false, nil
+}
+
+// startSDKExtensions calls Start on every extension implementing sdk.Starter,
+// failing loudly on the first error (design doc: "fail startup on error").
 func startSDKExtensions(ctx context.Context, exts []builtSDKExtension) error {
 	for _, e := range exts {
 		starter, ok := e.ext.(extsdk.Starter)
@@ -446,9 +469,8 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 	return found, foundName, nil
 }
 
-// newExtDispatch builds the sdk.DispatchFunc an extension's Host carries. Prep (chat row, turn) is
-// synchronous; the run happens in a goroutine, so Dispatch returns before the run completes -
-// RunObserver is how a caller learns it finished.
+// newExtDispatch builds the sdk.DispatchFunc an extension's Host carries. Prep (chat
+// row, turn) is synchronous; the run is a goroutine, so Dispatch returns early.
 func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if hub.Draining() {
@@ -477,71 +499,27 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			userID = extRunUserID
 		}
 
-		// Detach from the HTTP request's lifecycle (the run outlives the handler) while keeping the
-		// caller's trace, so the extension's inbound span still parents the run's spans. Run.Timeout
-		// is applied in driveExtensionRunEvents, which owns runCtx's cancel end to end.
+		// Detach from the HTTP request's lifecycle (the run outlives the handler) while
+		// keeping the caller's trace, so the extension's inbound span parents the run's spans.
 		runCtx := context.WithoutCancel(ctx)
 		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
-
-		// Merge onto whatever this chat already has stored, rather than replacing it: a nudge/retry
-		// re-dispatch (quack-extensions#47) carries neither Chat.Origin nor Run.Setup, and previously
-		// blanked both - why turn 2 of #1180 had no PR head ref to plan a review with.
-		existing, getErr := st.GetChat(runCtx, chatID)
-		if getErr != nil {
-			slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
-				"component", "ext."+name, "chat", chatID, "err", getErr)
-			existing = nil
+		effectiveSetup, err := prepareExtChat(runCtx, name, st, orch, chatID, &userID, req)
+		if err != nil {
+			return err
 		}
-		existingOriginJSON := ""
-		if existing != nil {
-			existingOriginJSON = existing.Origin
-		}
-		userID = resolveArtifactUser(existing, userID)
-
-		if req.Chat.ResetHistory {
-			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
-				return fmt.Errorf("extensions.%s: reset history: %w", name, err)
-			}
-		}
-		originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
-		if err := st.SetChatOrigin(runCtx, chatID, userID, originJSON); err != nil {
-			return fmt.Errorf("extensions.%s: chat setup: %w", name, err)
-		}
-		ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
-
 		turnID := uuid.NewString()
 		if err := st.SaveTurn(runCtx, chatID, turnID, req.Ask.Message); err != nil {
 			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
+		attachments := extAttachmentParts(runCtx, name, artifacts, userID, chatID, turnID, req.Ask.Attachments)
 
-		attachments := make([]*genai.Part, 0, len(req.Ask.Attachments))
-		for i, a := range req.Ask.Attachments {
-			mime := a.MIME
-			if mime == "" {
-				mime = "application/octet-stream"
-			}
-			attName := a.Name
-			if attName == "" {
-				attName = fmt.Sprintf("attachment-%d", i)
-			}
-			ref, err := saveExtAttachment(runCtx, artifacts, userID, chatID, turnID, attName, a.Data, mime)
-			if err != nil {
-				slog.Warn("extension dispatch: attachment save failed; dropping this file",
-					"component", "ext."+name, "chat", chatID, "name", attName, "err", err)
-				continue
-			}
-			attachments = append(attachments, ref)
-		}
-
-		// Reset synchronously, before Dispatch returns (the caller's ack), so a subscriber landing in
-		// the run's start window never reads the previous dispatch's (possibly terminal) events off
-		// the hub or the durable log (#audit-5).
+		// Reset synchronously, before the caller's ack, so a subscriber landing in the
+		// run's start window never reads the previous dispatch's events (#audit-5).
 		hub.Reset(chatID)
 		eventLog.Reset(runCtx, chatID)
 
-		// A bound shape (Nodes non-empty) skips the planner LLM call entirely:
-		// build the Plan now, synchronously, so a malformed binding is a hard
-		// dispatch error - never a silent fallback to the unshaped hint path.
+		// A bound shape (Nodes non-empty) skips the planner LLM call entirely: build the
+		// Plan now, synchronously, so a malformed binding is a hard dispatch error.
 		if nodes, bound := workflowcatalog.Bind(shape, req.Ask.Message); bound {
 			plan, err := orch.BuildBoundPlan(runCtx, nodes, req.Ask.Message, attachments, allowedKinds)
 			if err != nil {
@@ -551,32 +529,9 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			return nil
 		}
 
-		// The unshaped/hint path reaches the planner's own LLM turn (plan
-		// tool), which reads these facts back off ctx - see
-		// tools.AllowedDeliveryKindsFromContext, GitHubSetupFromContext,
-		// WorkerAskFromContext, ContextItemsFromContext, PlanOnlyFromContext.
-		// The real consumer of Setup/NodeContext/ContextItems/ReadOnly - the
-		// GitHub migration's pre-provisioned clone and node-scoped context.
-		runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
-		if effectiveSetup != nil {
-			// mergeExtOrigin's own merged Setup, NOT req.Run.Setup directly
-			// (#1180 recurrence): github always sends a non-nil Setup, even
-			// with an empty ExistingHeadRef when its snapshot fetch came back
-			// short - applying req.Run.Setup here unconditionally clobbered
-			// mergeExtOrigin's fallback/merge with that weaker value on
-			// every single dispatch, nudge included.
-			runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
-		}
-		if req.Ask.NodeContext != "" {
-			runCtx = tools.WithWorkerAsk(runCtx, req.Ask.NodeContext)
-		}
-		if req.Ask.ContextItems != nil {
-			runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
-		}
-		runCtx = tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
-		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a
-		// caller bug upstream of here must surface as a real dispatch error
-		// the extension can post, not a run that silently produces nothing.
+		runCtx = extRunContext(runCtx, req, effectiveSetup)
+		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a caller bug
+		// must surface as a real dispatch error, not a run that produces nothing.
 		composed := composeDispatchMessage(req)
 		if strings.TrimSpace(composed) == "" {
 			return fmt.Errorf("extensions.%s: dispatch composed an empty message (Ask.Message was %q)", name, req.Ask.Message)
@@ -586,9 +541,82 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 	}
 }
 
+// prepareExtChat: merge the dispatch's chat origin/setup onto the stored state
+// (a nudge re-dispatch carries neither, #1180), reset the session, stamp origin/title.
+func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, error) {
+	// Merge onto the chat's stored state rather than replacing it: a nudge/retry
+	// re-dispatch (quack-extensions#47) carries neither Origin nor Run.Setup (#1180).
+	existing, getErr := st.GetChat(runCtx, chatID)
+	if getErr != nil {
+		slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
+			"component", "ext."+name, "chat", chatID, "err", getErr)
+		existing = nil
+	}
+	existingOriginJSON := ""
+	if existing != nil {
+		existingOriginJSON = existing.Origin
+	}
+	*userID = resolveArtifactUser(existing, *userID)
+
+	if req.Chat.ResetHistory {
+		if err := orch.ResetSession(runCtx, *userID, chatID); err != nil {
+			return nil, fmt.Errorf("extensions.%s: reset history: %w", name, err)
+		}
+	}
+	originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
+	if err := st.SetChatOrigin(runCtx, chatID, *userID, originJSON); err != nil {
+		return nil, fmt.Errorf("extensions.%s: chat setup: %w", name, err)
+	}
+	ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
+	return effectiveSetup, nil
+}
+
+// extAttachmentParts: save each dispatch attachment and collect the stored-file
+// refs (a save failure drops just that file, logged).
+func extAttachmentParts(runCtx context.Context, name string, artifacts *store.TurnAwareService, userID, chatID, turnID string, files []extsdk.Attachment) []*genai.Part {
+	out := make([]*genai.Part, 0, len(files))
+	for i, a := range files {
+		mime := a.MIME
+		if mime == "" {
+			mime = "application/octet-stream"
+		}
+		attName := a.Name
+		if attName == "" {
+			attName = fmt.Sprintf("attachment-%d", i)
+		}
+		ref, err := saveExtAttachment(runCtx, artifacts, userID, chatID, turnID, attName, a.Data, mime)
+		if err != nil {
+			slog.Warn("extension dispatch: attachment save failed; dropping this file",
+				"component", "ext."+name, "chat", chatID, "name", attName, "err", err)
+			continue
+		}
+		out = append(out, ref)
+	}
+	return out
+}
+
+// extRunContext: the run-ctx facts the unshaped/hint planner turn reads back -
+// delivery kinds, GitHub setup, node context, context items, plan-only.
+func extRunContext(runCtx context.Context, req extsdk.DispatchRequest, effectiveSetup *dag.Setup) context.Context {
+	// The unshaped/hint path reaches the planner's own LLM turn (plan tool),
+	// which reads these facts back off ctx (tools.AllowedDeliveryKindsFromContext etc.).
+	runCtx = tools.WithAllowedDeliveryKinds(runCtx, deliveryKindStrings(req.Delivery.AllowedKinds))
+	if effectiveSetup != nil {
+		// mergeExtOrigin's own merged Setup, NOT req.Run.Setup (#1180): github
+		// always sends a non-nil Setup; applying it unconditionally would clobber the fallback.
+		runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
+	}
+	if req.Ask.NodeContext != "" {
+		runCtx = tools.WithWorkerAsk(runCtx, req.Ask.NodeContext)
+	}
+	if req.Ask.ContextItems != nil {
+		runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
+	}
+	return tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
+}
+
 // deliveryKindStrings converts the SDK's typed delivery-kind list to the
-// bare-string vocabulary vetting.Config.AllowedDeliveryKinds and dag.Plan
-// share; nil stays nil (unrestricted - see AllowedDeliveryKinds' own doc).
+// bare-string vocabulary vetting and dag.Plan share; nil stays nil (unrestricted).
 func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 	if kinds == nil {
 		return nil

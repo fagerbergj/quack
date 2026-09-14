@@ -487,78 +487,62 @@ type toolCallBuilder struct {
 	args string
 }
 
-// applyFallbackLadder is the recovery ladder shared by both paths: recover
-// tool calls leaked as XML into thinking (llama.cpp#22684) or the answer
-// (#427), then report whether reasoning should be promoted to the answer. Callers log the promotion/empty-turn cases themselves - their log text and whether they log an empty turn at all differ (see golden_ladder_test.go).
+// applyFallbackLadder is the recovery ladder shared by both paths: recover tool
+// calls leaked as XML into thinking (llama.cpp#22684) or the answer (#427).
+
+// thoughtText / answerText: the part predicates the leak-recovery scan keys on.
+func thoughtText(p *genai.Part) bool { return p.Thought && p.Text != "" }
+func answerText(p *genai.Part) bool  { return !p.Thought && p.Text != "" }
+
+// concatTarget: the concatenated text of the parts matching isTarget.
+func concatTarget(parts []*genai.Part, isTarget func(*genai.Part) bool) string {
+	var rb strings.Builder
+	for _, p := range parts {
+		if isTarget(p) {
+			rb.WriteString(p.Text)
+		}
+	}
+	return rb.String()
+}
+
+// recoverLeakedCalls: re-emit the isTarget parts with the first replaced by the
+// cleaned reasoning (one part - a block can span several), then append the calls.
+func recoverLeakedCalls(ctx context.Context, modelName string, parts []*genai.Part, isTarget func(*genai.Part) bool, thought bool, logMsg string) ([]*genai.Part, bool) {
+	calls, cleaned := reasoningToolCalls(concatTarget(parts, isTarget))
+	if len(calls) == 0 {
+		return parts, false
+	}
+	rebuilt := make([]*genai.Part, 0, len(parts)+len(calls))
+	replaced := false
+	for _, p := range parts {
+		if isTarget(p) {
+			if !replaced {
+				replaced = true
+				if strings.TrimSpace(cleaned) != "" {
+					rebuilt = append(rebuilt, &genai.Part{Text: cleaned, Thought: thought})
+				}
+			}
+			continue
+		}
+		rebuilt = append(rebuilt, p)
+	}
+	for _, c := range calls {
+		rebuilt = append(rebuilt, &genai.Part{FunctionCall: c})
+	}
+	slog.WarnContext(ctx, logMsg, "component", "inference", "model", modelName, "count", len(calls))
+	return rebuilt, true
+}
+
 func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.Part, haveToolCalls bool) (result []*genai.Part, hasAnswer, hadThinking bool, promotedChars int) {
 	result = parts
 
 	if !haveToolCalls {
-		var rb strings.Builder
-		for _, p := range result {
-			if p.Thought && p.Text != "" {
-				rb.WriteString(p.Text)
-			}
-		}
-		recoveredFromThought := false
-		if calls, cleaned := reasoningToolCalls(rb.String()); len(calls) > 0 {
-			// A leaked block can span several parts, so per-part regex stripping
-			// leaves residue - re-emit the cleaned reasoning as one thought part
-			// in place of the originals.
-			rebuilt := make([]*genai.Part, 0, len(result)+len(calls))
-			thoughtReplaced := false
-			for _, p := range result {
-				if p.Thought && p.Text != "" {
-					if !thoughtReplaced {
-						thoughtReplaced = true
-						if strings.TrimSpace(cleaned) != "" {
-							rebuilt = append(rebuilt, &genai.Part{Text: cleaned, Thought: true})
-						}
-					}
-					continue
-				}
-				rebuilt = append(rebuilt, p)
-			}
-			for _, c := range calls {
-				rebuilt = append(rebuilt, &genai.Part{FunctionCall: c})
-			}
-			result = rebuilt
-			recoveredFromThought = true
-			slog.WarnContext(ctx, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)",
-				"component", "inference", "model", modelName, "count", len(calls))
-		}
-
-		// #427: the same leak can land in the plain answer text instead of
-		// reasoning_content - scan that too when nothing proper or recovered above.
-		if !recoveredFromThought {
-			var cb strings.Builder
-			for _, p := range result {
-				if !p.Thought && p.Text != "" {
-					cb.WriteString(p.Text)
-				}
-			}
-			if calls, cleaned := reasoningToolCalls(cb.String()); len(calls) > 0 {
-				rebuilt := make([]*genai.Part, 0, len(result)+len(calls))
-				contentReplaced := false
-				for _, p := range result {
-					if !p.Thought && p.Text != "" {
-						if !contentReplaced {
-							contentReplaced = true
-							if strings.TrimSpace(cleaned) != "" {
-								rebuilt = append(rebuilt, &genai.Part{Text: cleaned})
-							}
-						}
-						continue
-					}
-					rebuilt = append(rebuilt, p)
-				}
-				for _, c := range calls {
-					rebuilt = append(rebuilt, &genai.Part{FunctionCall: c})
-				}
-				result = rebuilt
-				slog.WarnContext(ctx, "recovered tool calls leaked into answer content (bare <function=> form, #427)",
-					"component", "inference", "model", modelName, "count", len(calls))
-			}
+		// A leaked tool call can land in reasoning_content (Qwen/llama.cpp#22684),
+		// or - when nothing recovers there - in the plain answer text (#427).
+		if recovered, ok := recoverLeakedCalls(ctx, modelName, result, thoughtText, true, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)"); ok {
+			result = recovered
+		} else if recovered, ok := recoverLeakedCalls(ctx, modelName, result, answerText, false, "recovered tool calls leaked into answer content (bare <function=> form, #427)"); ok {
+			result = recovered
 		}
 	}
 
@@ -571,17 +555,11 @@ func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.P
 		}
 	}
 
-	// Content-side of #22684: the answer can land entirely in reasoning_content,
-	// leaving content empty. Promote it rather than emit an empty turn - a
-	// reasoning-only turn is terminal anyway, and judge/revise still scores it.
+	// #22684 content side: the answer can land entirely in reasoning_content,
+	// leaving content empty - promote it rather than emit an empty turn.
 	if !hasAnswer && hadThinking {
-		var rb strings.Builder
-		for _, p := range result {
-			if p.Thought && p.Text != "" {
-				rb.WriteString(p.Text)
-			}
-		}
-		if txt := strings.TrimSpace(rb.String()); txt != "" {
+		txt := strings.TrimSpace(concatTarget(result, thoughtText))
+		if txt != "" {
 			result = append(result, &genai.Part{Text: txt})
 			hasAnswer = true
 			promotedChars = len(txt)
@@ -590,7 +568,6 @@ func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.P
 
 	return result, hasAnswer, hadThinking, promotedChars
 }
-
 func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionNewParams, error) {
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Contents))
 	for _, content := range req.Contents {
@@ -610,58 +587,8 @@ func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (ope
 	if req.Config == nil {
 		return openaiReq, nil
 	}
-
-	// req.Config.ThinkingConfig is either set explicitly by the caller (e.g.
-	// gates.judge.thinking_level) or filled in from models.<name>.effort by
-	// applyDefaultEffort above - either way this is the resolved effort.
-	if req.Config.ThinkingConfig != nil {
-		switch req.Config.ThinkingConfig.ThinkingLevel {
-		case genai.ThinkingLevelLow:
-			openaiReq.ReasoningEffort = "low"
-		case genai.ThinkingLevelHigh:
-			openaiReq.ReasoningEffort = "high"
-		default:
-			openaiReq.ReasoningEffort = "medium"
-		}
-	}
-
-	if req.Config.ResponseSchema != nil {
-		openaiReq.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
-			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
-				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
-					Name:   "response",
-					Strict: openai.Bool(true),
-					Schema: req.Config.ResponseSchema,
-				},
-			},
-		}
-	} else if req.Config.ResponseMIMEType == "application/json" {
-		openaiReq.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
-			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
-		}
-	}
-
-	if len(req.Config.Tools) > 0 {
-		tools, err := convertTools(req.Config.Tools)
-		if err != nil {
-			return openai.ChatCompletionNewParams{}, err
-		}
-		openaiReq.Tools = tools
-	}
-
-	if req.Config.Temperature != nil {
-		openaiReq.Temperature = openai.Float(float64(*req.Config.Temperature))
-	}
-	if req.Config.MaxOutputTokens > 0 {
-		openaiReq.MaxTokens = openai.Int(int64(req.Config.MaxOutputTokens))
-	}
-	if req.Config.TopP != nil {
-		openaiReq.TopP = openai.Float(float64(*req.Config.TopP))
-	}
-	if len(req.Config.StopSequences) > 0 {
-		openaiReq.Stop = openai.ChatCompletionNewParamsStopUnion{
-			OfStringArray: req.Config.StopSequences,
-		}
+	if err := applyConfigKnobs(&openaiReq, req.Config); err != nil {
+		return openai.ChatCompletionNewParams{}, err
 	}
 
 	if req.Config.SystemInstruction != nil {
@@ -672,15 +599,74 @@ func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (ope
 	return openaiReq, nil
 }
 
-func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatCompletionMessageParamUnion, error) {
-	// Collect leading FunctionResponse parts as individual tool messages.
+// applyConfigKnobs: the config fields mapped onto the OpenAI request - thinking
+// effort, response format, tools, and the sampling knobs.
+func applyConfigKnobs(openaiReq *openai.ChatCompletionNewParams, cfg *genai.GenerateContentConfig) error {
+	// req.Config.ThinkingConfig is either set explicitly by the caller (e.g.
+	// gates.judge.thinking_level) or filled from models.<name>.effort above.
+	if cfg.ThinkingConfig != nil {
+		switch cfg.ThinkingConfig.ThinkingLevel {
+		case genai.ThinkingLevelLow:
+			openaiReq.ReasoningEffort = "low"
+		case genai.ThinkingLevelHigh:
+			openaiReq.ReasoningEffort = "high"
+		default:
+			openaiReq.ReasoningEffort = "medium"
+		}
+	}
+
+	if cfg.ResponseSchema != nil {
+		openaiReq.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
+				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   "response",
+					Strict: openai.Bool(true),
+					Schema: cfg.ResponseSchema,
+				},
+			},
+		}
+	} else if cfg.ResponseMIMEType == "application/json" {
+		openaiReq.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
+		}
+	}
+
+	if len(cfg.Tools) > 0 {
+		tools, err := convertTools(cfg.Tools)
+		if err != nil {
+			return err
+		}
+		openaiReq.Tools = tools
+	}
+
+	if cfg.Temperature != nil {
+		openaiReq.Temperature = openai.Float(float64(*cfg.Temperature))
+	}
+	if cfg.MaxOutputTokens > 0 {
+		openaiReq.MaxTokens = openai.Int(int64(cfg.MaxOutputTokens))
+	}
+	if cfg.TopP != nil {
+		openaiReq.TopP = openai.Float(float64(*cfg.TopP))
+	}
+	if len(cfg.StopSequences) > 0 {
+		openaiReq.Stop = openai.ChatCompletionNewParamsStopUnion{
+			OfStringArray: cfg.StopSequences,
+		}
+	}
+
+	return nil
+}
+
+// leadingToolResponses: collect the leading FunctionResponse parts as individual tool
+// messages; returns the messages and the index of the first non-FR part.
+func leadingToolResponses(content *genai.Content) ([]openai.ChatCompletionMessageParamUnion, int, error) {
 	toolRespMessages := make([]openai.ChatCompletionMessageParamUnion, 0)
 	skipIdx := 0
 	for idx, part := range content.Parts {
 		if part.FunctionResponse != nil {
 			responseJSON, err := json.Marshal(part.FunctionResponse.Response)
 			if err != nil {
-				return nil, fmt.Errorf("failed to marshal function response: %w", err)
+				return nil, 0, fmt.Errorf("failed to marshal function response: %w", err)
 			}
 			toolRespMessages = append(toolRespMessages,
 				openai.ToolMessage(string(responseJSON), part.FunctionResponse.ID))
@@ -688,32 +674,26 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 			continue
 		}
 	}
+	return toolRespMessages, skipIdx, nil
+}
 
-	parts := content.Parts[skipIdx:]
-	if len(parts) == 0 {
-		return toolRespMessages, nil
+// roleMessage: a plain text message for the given (already-converted) role.
+func roleMessage(role, text string) openai.ChatCompletionMessageParamUnion {
+	switch role {
+	case "assistant":
+		return openai.AssistantMessage(text)
+	case "system":
+		return openai.SystemMessage(text)
 	}
+	return openai.UserMessage(text)
+}
 
-	// Simple case: single text part - use string variant of the message constructor.
-	if len(parts) == 1 && parts[0].Text != "" {
-		role := convertRoleToOpenAI(content.Role)
-		var msg openai.ChatCompletionMessageParamUnion
-		switch role {
-		case "assistant":
-			msg = openai.AssistantMessage(parts[0].Text)
-		case "system":
-			msg = openai.SystemMessage(parts[0].Text)
-		default:
-			msg = openai.UserMessage(parts[0].Text)
-		}
-		return append(toolRespMessages, msg), nil
-	}
-
-	// Complex case: multiple parts or special part types (tool calls, images, etc.).
+// convertParts: content parts into (text, user content parts, tool calls); errors on
+// unsupported audio/video and on PDF page rendering.
+func convertParts(parts []*genai.Part) (string, []openai.ChatCompletionContentPartUnionParam, []openai.ChatCompletionMessageToolCallUnionParam, error) {
 	var textContent string
 	var userParts []openai.ChatCompletionContentPartUnionParam
 	var toolCalls []openai.ChatCompletionMessageToolCallUnionParam
-
 	for _, part := range parts {
 		if part.Text != "" {
 			if len(parts) == 1 {
@@ -722,11 +702,10 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 				userParts = append(userParts, openai.TextContentPart(part.Text))
 			}
 		}
-
 		if part.FunctionCall != nil {
 			argsJSON, err := json.Marshal(part.FunctionCall.Args)
 			if err != nil {
-				return nil, fmt.Errorf("failed to marshal function args: %w", err)
+				return "", nil, nil, fmt.Errorf("failed to marshal function args: %w", err)
 			}
 			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
 				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
@@ -738,7 +717,6 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 				},
 			})
 		}
-
 		if part.InlineData != nil {
 			switch part.InlineData.MIMEType {
 			case "image/jpg", "image/jpeg", "image/png", "image/gif", "image/webp":
@@ -750,27 +728,45 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 					},
 				))
 			case "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/webm":
-				return nil, fmt.Errorf("unsupported audio MIME type: %s", part.InlineData.MIMEType)
+				return "", nil, nil, fmt.Errorf("unsupported audio MIME type: %s", part.InlineData.MIMEType)
 			case "video/mp4", "video/webm", "video/ogg":
-				return nil, fmt.Errorf("unsupported video MIME type: %s", part.InlineData.MIMEType)
+				return "", nil, nil, fmt.Errorf("unsupported video MIME type: %s", part.InlineData.MIMEType)
 			case "application/pdf":
 				// Vision models take images, not documents - expand the PDF into one
 				// image part per rendered page (#829) rather than rejecting it.
 				imgParts, err := pdfToImageParts(part.InlineData.Data)
 				if err != nil {
-					return nil, err
+					return "", nil, nil, err
 				}
 				userParts = append(userParts, imgParts...)
 			default:
 				userParts = append(userParts, openai.TextContentPart(string(part.InlineData.Data)))
 			}
 		}
-
 		// FileData: OpenAI doesn't support file references directly; skip for now.
 	}
+	return textContent, userParts, toolCalls, nil
+}
 
+func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatCompletionMessageParamUnion, error) {
+	toolRespMessages, skipIdx, err := leadingToolResponses(content)
+	if err != nil {
+		return nil, err
+	}
+	parts := content.Parts[skipIdx:]
+	if len(parts) == 0 {
+		return toolRespMessages, nil
+	}
+	// Simple case: single text part - use the string variant of the message constructor.
+	if len(parts) == 1 && parts[0].Text != "" {
+		return append(toolRespMessages, roleMessage(convertRoleToOpenAI(content.Role), parts[0].Text)), nil
+	}
+	// Complex case: multiple parts or special part types (tool calls, images, etc.).
+	textContent, userParts, toolCalls, err := convertParts(parts)
+	if err != nil {
+		return nil, err
+	}
 	role := convertRoleToOpenAI(content.Role)
-
 	if len(toolCalls) > 0 {
 		// Assistant message carrying tool calls (and optional text).
 		var assistant openai.ChatCompletionAssistantMessageParam
@@ -780,23 +776,12 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 		assistant.ToolCalls = toolCalls
 		return append(toolRespMessages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant}), nil
 	}
-
 	if len(userParts) > 0 {
 		// Multi-part user message (e.g. text + image).
 		return append(toolRespMessages, openai.UserMessage(userParts)), nil
 	}
-
 	// Fallback: plain text message.
-	var msg openai.ChatCompletionMessageParamUnion
-	switch role {
-	case "assistant":
-		msg = openai.AssistantMessage(textContent)
-	case "system":
-		msg = openai.SystemMessage(textContent)
-	default:
-		msg = openai.UserMessage(textContent)
-	}
-	return append(toolRespMessages, msg), nil
+	return append(toolRespMessages, roleMessage(role, textContent)), nil
 }
 
 func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatCompletion) (*model.LLMResponse, error) {
@@ -810,19 +795,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 		Parts: []*genai.Part{},
 	}
 
-	// Surface reasoning_content as a Thought part (reasoning precedes the
-	// answer). openai-go marks untyped ExtraFields as status "invalid" (no
-	// typed extras decoder is registered for this struct), so Valid() is always false here - gate on the raw bytes instead, the way an omitted/null field already does.
-	var reasoningText string
-	if rc := choice.Message.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
-		if raw := rc.Raw(); raw != "" && raw != "null" {
-			var text string
-			if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
-				reasoningText = text
-			}
-		}
-	}
-
+	reasoningText := reasoningContentText(choice.Message)
 	if reasoningText != "" {
 		content.Parts = append(content.Parts, &genai.Part{Text: reasoningText, Thought: true})
 	}
@@ -832,9 +805,8 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}
 
 	haveToolCalls := len(choice.Message.ToolCalls) > 0
-	// Real tool-call parts must be in content.Parts BEFORE the ladder runs, same
-	// as the streaming path - otherwise promotion sees no answer yet and fires
-	// on a turn that already has a tool call (regression: PR #1243 review).
+	// Real tool-call parts must be in content.Parts BEFORE the ladder runs (as in
+	// the streaming path) - otherwise promotion fires on a tool-call turn (PR #1243).
 	for _, toolCall := range choice.Message.ToolCalls {
 		if toolCall.Type == "function" {
 			content.Parts = append(content.Parts, &genai.Part{
@@ -855,8 +827,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}
 
 	// reasoningUsage estimates from the FINAL (post-recovery) thinking text, same
-	// as the streaming path - a leaked tool-call block stripped from thinking
-	// shouldn't inflate the reasoning-token estimate.
+	// as the streaming path - a stripped leaked block shouldn't inflate the estimate.
 	var finalThought strings.Builder
 	for _, p := range content.Parts {
 		if p.Thought && p.Text != "" {
@@ -864,25 +835,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 		}
 	}
 
-	var usageMetadata *genai.GenerateContentResponseUsageMetadata
-	if resp.Usage.TotalTokens > 0 {
-		candidates, thoughts := reasoningUsage(ctx, resp.Model, int32(resp.Usage.CompletionTokens),
-			int32(resp.Usage.CompletionTokensDetails.ReasoningTokens), finalThought.String())
-		usageMetadata = &genai.GenerateContentResponseUsageMetadata{
-			PromptTokenCount:        int32(resp.Usage.PromptTokens),
-			CandidatesTokenCount:    candidates,
-			TotalTokenCount:         int32(resp.Usage.TotalTokens),
-			CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
-			ThoughtsTokenCount:      thoughts,
-		}
-		// Temporary raw usage trace - remove once prod confirms whether the
-		// endpoint sends prompt_tokens_details.cached_tokens at all (a 0 here
-		// with prefix caching enabled is a server-side matter).
-		slog.Debug("provider token usage", "component", "inference", "model", resp.Model,
-			"prompt_tokens", resp.Usage.PromptTokens, "cached_tokens", resp.Usage.PromptTokensDetails.CachedTokens,
-			"completion_tokens", resp.Usage.CompletionTokens, "reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,
-			"total_tokens", resp.Usage.TotalTokens)
-	}
+	usageMetadata := usageMetadataFromResp(ctx, resp, finalThought.String())
 
 	return &model.LLMResponse{
 		Content:       content,
@@ -893,6 +846,48 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}, nil
 }
 
+// reasoningContentText: the choice's reasoning_content extra field as text -
+// openai-go marks untyped ExtraFields "invalid", so gate on the raw bytes.
+func reasoningContentText(msg openai.ChatCompletionMessage) string {
+	rc := msg.JSON.ExtraFields["reasoning_content"]
+	if rc.Raw() == "" {
+		return ""
+	}
+	raw := rc.Raw()
+	if raw == "" || raw == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
+		return text
+	}
+	return ""
+}
+
+// usageMetadataFromResp: the genai usage metadata for the response (nil when the
+// endpoint sent no totals), with the raw provider-usage Debug trace.
+func usageMetadataFromResp(ctx context.Context, resp *openai.ChatCompletion, finalThoughtText string) *genai.GenerateContentResponseUsageMetadata {
+	if resp.Usage.TotalTokens <= 0 {
+		return nil
+	}
+	candidates, thoughts := reasoningUsage(ctx, resp.Model, int32(resp.Usage.CompletionTokens),
+		int32(resp.Usage.CompletionTokensDetails.ReasoningTokens), finalThoughtText)
+	usageMetadata := &genai.GenerateContentResponseUsageMetadata{
+		PromptTokenCount:        int32(resp.Usage.PromptTokens),
+		CandidatesTokenCount:    candidates,
+		TotalTokenCount:         int32(resp.Usage.TotalTokens),
+		CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
+		ThoughtsTokenCount:      thoughts,
+	}
+	// Temporary raw usage trace - remove once prod confirms whether the endpoint
+	// sends prompt_tokens_details.cached_tokens (a 0 with caching is server-side).
+	slog.Debug("provider token usage", "component", "inference", "model", resp.Model,
+		"prompt_tokens", resp.Usage.PromptTokens, "cached_tokens", resp.Usage.PromptTokensDetails.CachedTokens,
+		"completion_tokens", resp.Usage.CompletionTokens, "reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,
+		"total_tokens", resp.Usage.TotalTokens)
+	return usageMetadata
+}
+
 func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
 	var tools []openai.ChatCompletionToolUnionParam
 
@@ -901,51 +896,64 @@ func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionPar
 			continue
 		}
 
-		if genaiTool.GoogleSearch != nil ||
-			genaiTool.CodeExecution != nil ||
-			genaiTool.FileSearch != nil ||
-			genaiTool.Retrieval != nil ||
-			genaiTool.ComputerUse != nil {
-			return nil, fmt.Errorf("GoogleSearch is not supported")
+		converted, err := convertOneTool(genaiTool)
+		if err != nil {
+			return nil, err
 		}
-
-		for _, funcDecl := range genaiTool.FunctionDeclarations {
-			var params shared.FunctionParameters
-			if funcDecl.ParametersJsonSchema != nil {
-				b, err := json.Marshal(funcDecl.ParametersJsonSchema)
-				if err != nil {
-					return nil, fmt.Errorf("marshal tool %s schema: %w", funcDecl.Name, err)
-				}
-				if err := json.Unmarshal(b, &params); err != nil {
-					return nil, fmt.Errorf("unmarshal tool %s schema: %w", funcDecl.Name, err)
-				}
-			}
-			if params == nil && funcDecl.Parameters != nil {
-				m, err := convertSchema(funcDecl.Parameters)
-				if err != nil {
-					return nil, err
-				}
-				params = shared.FunctionParameters(m)
-			}
-			if params == nil {
-				// Tool has no declared parameters - use an empty object schema.
-				params = shared.FunctionParameters{
-					"type":       "object",
-					"properties": map[string]any{},
-				}
-			}
-
-			tools = append(tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-				Name:        funcDecl.Name,
-				Description: openai.String(funcDecl.Description),
-				Parameters:  params,
-			}))
-		}
+		tools = append(tools, converted...)
 	}
 
 	return tools, nil
 }
 
+// convertOneTool: one genai.Tool to OpenAI tool params (the unsupported
+// built-in tools are hard errors, function declarations carry the schema).
+func convertOneTool(genaiTool *genai.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
+	var tools []openai.ChatCompletionToolUnionParam
+
+	if genaiTool.GoogleSearch != nil ||
+		genaiTool.CodeExecution != nil ||
+		genaiTool.FileSearch != nil ||
+		genaiTool.Retrieval != nil ||
+		genaiTool.ComputerUse != nil {
+		return nil, fmt.Errorf("GoogleSearch is not supported")
+	}
+
+	for _, funcDecl := range genaiTool.FunctionDeclarations {
+		var params shared.FunctionParameters
+		if funcDecl.ParametersJsonSchema != nil {
+			b, err := json.Marshal(funcDecl.ParametersJsonSchema)
+			if err != nil {
+				return nil, fmt.Errorf("marshal tool %s schema: %w", funcDecl.Name, err)
+			}
+			if err := json.Unmarshal(b, &params); err != nil {
+				return nil, fmt.Errorf("unmarshal tool %s schema: %w", funcDecl.Name, err)
+			}
+		}
+		if params == nil && funcDecl.Parameters != nil {
+			m, err := convertSchema(funcDecl.Parameters)
+			if err != nil {
+				return nil, err
+			}
+			params = shared.FunctionParameters(m)
+		}
+		if params == nil {
+			// Tool has no declared parameters - use an empty object schema.
+			params = shared.FunctionParameters{
+				"type":       "object",
+				"properties": map[string]any{},
+			}
+		}
+
+		tools = append(tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        funcDecl.Name,
+			Description: openai.String(funcDecl.Description),
+			Parameters:  params,
+		}))
+	}
+
+	return tools, nil
+}
 func convertSchema(schema *genai.Schema) (map[string]any, error) {
 	if schema == nil {
 		return map[string]any{

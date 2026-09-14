@@ -21,6 +21,7 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/session/database"
+	"google.golang.org/genai"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
@@ -263,26 +264,7 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 			groups = append(groups, turnGroup{})
 			cur = &groups[len(groups)-1]
 			for _, p := range ev.Content.Parts {
-				if p == nil {
-					continue
-				}
-				// Clarification or HITL answer arrives as FunctionResponse (Role:user).
-				if p.FunctionResponse != nil {
-					switch p.FunctionResponse.Name {
-					case choiceToolName:
-						if c, ok := p.FunctionResponse.Response[choiceAnswerKey].(string); ok {
-							cur.userText.WriteString(c)
-						}
-					case nodeInputCallName:
-						if c, ok := p.FunctionResponse.Response[nodeInputPayloadKey].(string); ok {
-							cur.userText.WriteString(c)
-						}
-					}
-					continue
-				}
-				if !p.Thought && p.FunctionCall == nil {
-					cur.userText.WriteString(p.Text)
-				}
+				appendUserPart(cur, p)
 			}
 			continue
 		}
@@ -294,43 +276,79 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 			continue
 		}
 		if ev.UsageMetadata != nil {
-			cur.promptTokens += ev.UsageMetadata.PromptTokenCount
-			cur.completionTokens += ev.UsageMetadata.CandidatesTokenCount
-			cur.reasoningTokens += ev.UsageMetadata.ThoughtsTokenCount
-			cur.cachedTokens += ev.UsageMetadata.CachedContentTokenCount
-			cur.totalTokens += ev.UsageMetadata.TotalTokenCount
+			addUsage(cur, ev.UsageMetadata)
 		}
 		for _, p := range ev.Content.Parts {
-			if p == nil {
-				continue
-			}
-			switch {
-			case p.FunctionCall != nil:
-				if p.FunctionCall.Name == transferTool {
-					continue
-				}
-				cur.toolCalls = append(cur.toolCalls, ToolCallRecord{
-					CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args,
-				})
-			case p.FunctionResponse != nil:
-				if p.FunctionResponse.Name == transferTool {
-					continue
-				}
-				// Pair to the earlier call by ID (a call always precedes its response).
-				for i := range cur.toolCalls {
-					if cur.toolCalls[i].CallID == p.FunctionResponse.ID {
-						cur.toolCalls[i].Result = p.FunctionResponse.Response
-						break
-					}
-				}
-			case p.Thought:
-				cur.asstThink.WriteString(p.Text)
-			default:
-				cur.asstText.WriteString(p.Text)
-			}
+			recordAssistantPart(cur, p)
 		}
 	}
 	return groups
+}
+
+// appendUserPart: one user-message part into cur.userText - plain text, or the
+// FunctionResponse payload of a clarification/HITL answer (Role:user).
+func appendUserPart(cur *turnGroup, p *genai.Part) {
+	if p == nil {
+		return
+	}
+	// Clarification or HITL answer arrives as FunctionResponse (Role:user).
+	if p.FunctionResponse != nil {
+		switch p.FunctionResponse.Name {
+		case choiceToolName:
+			if c, ok := p.FunctionResponse.Response[choiceAnswerKey].(string); ok {
+				cur.userText.WriteString(c)
+			}
+		case nodeInputCallName:
+			if c, ok := p.FunctionResponse.Response[nodeInputPayloadKey].(string); ok {
+				cur.userText.WriteString(c)
+			}
+		}
+		return
+	}
+	if !p.Thought && p.FunctionCall == nil {
+		cur.userText.WriteString(p.Text)
+	}
+}
+
+// addUsage: fold one event's usage metadata into cur's token counters.
+func addUsage(cur *turnGroup, u *genai.GenerateContentResponseUsageMetadata) {
+	cur.promptTokens += u.PromptTokenCount
+	cur.completionTokens += u.CandidatesTokenCount
+	cur.reasoningTokens += u.ThoughtsTokenCount
+	cur.cachedTokens += u.CachedContentTokenCount
+	cur.totalTokens += u.TotalTokenCount
+}
+
+// recordAssistantPart: one gate-author part into cur - tool call, paired tool
+// result, thought, or plain assistant text.
+func recordAssistantPart(cur *turnGroup, p *genai.Part) {
+	if p == nil {
+		return
+	}
+	switch {
+	case p.FunctionCall != nil:
+		if p.FunctionCall.Name == transferTool {
+			return
+		}
+		cur.toolCalls = append(cur.toolCalls, ToolCallRecord{
+			CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args,
+		})
+	case p.FunctionResponse != nil:
+		if p.FunctionResponse.Name == transferTool {
+			return
+		}
+		// Pair to the earlier call by ID (a call always precedes its response).
+		for i := range cur.toolCalls {
+			if cur.toolCalls[i].CallID == p.FunctionResponse.ID {
+				cur.toolCalls[i].Result = p.FunctionResponse.Response
+				break
+			}
+		}
+	case p.Thought:
+		cur.asstThink.WriteString(p.Text)
+	default:
+		cur.asstText.WriteString(p.Text)
+	}
 }
 
 // Store wraps the relational DB and ADK session service.

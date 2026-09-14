@@ -74,6 +74,20 @@ func excerpt(s string, n int) string {
 
 // registerReviewTools adds review staging tools to a per-node server.
 func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
+	addStageReviewComment(srv, review)
+	addListReviewComments(srv, review)
+	addUnstageReviewComment(srv, review)
+	// A slice feeding a synthesizer never owns the delivered verdict (#1148): the
+	// tool is withheld rather than registered-and-refused ("the tool list is a fact").
+	if review.IsNonDeliveringSlice() {
+		return
+	}
+	addStageReview(srv, review)
+}
+
+// addStageReviewComment: the stage_review_comment tool (path/line/body validation,
+// label check, duplicate rejection).
+func addStageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStageReviewComment,
 		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment. Duplicates (same path, line, and body) are rejected with the existing id, not double-staged.",
@@ -93,6 +107,10 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("staged as id %s", id)}}}, nil, nil
 	})
+}
+
+// addListReviewComments: the list_review_comments tool (paginated listing).
+func addListReviewComments(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolListReviewComments,
 		Description: "List comments staged so far, in stage order, paginated (default 50 per page). Each entry has an id, path, line, and a short excerpt of the body.",
@@ -125,6 +143,10 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: b.String()}}}, nil, nil
 	})
+}
+
+// addUnstageReviewComment: the unstage_review_comment tool (retract by id).
+func addUnstageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolUnstageReviewComment,
 		Description: "Retract a previously staged inline comment by id (from stage_review_comment or list_review_comments) - e.g. after re-reading the file and deciding the finding doesn't hold, or because it duplicates one already staged. An unknown id is an error, not a silent no-op.",
@@ -135,12 +157,11 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("unstaged %s", id)}}}, nil, nil
 	})
-	// A slice feeding a synthesizer never owns the delivered verdict (#1148):
-	// the tool is withheld rather than registered-and-refused, so the
-	// reviewer prompt's "the tool list is a fact" holds.
-	if review.IsNonDeliveringSlice() {
-		return
-	}
+}
+
+// addStageReview: the stage_review tool (verdict/takeaway/verified/notes
+// validation, then the gate's SetVerdict).
+func addStageReview(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStageReview,
 		Description: "Stage the overall review verdict (approve | request_changes | comment), takeaway, verified checks, and notes. Call once, after your inline comments; the gate renders the fixed review format (verdict/scope/highlights are generated, not written) and submits it after your answer passes.",

@@ -860,29 +860,10 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 	case dag.StatusPaused:
-		reason := dag.PauseUser
-		if body.Reason != nil && *body.Reason != "" {
-			reason = dag.PauseReason(*body.Reason)
-		}
-		// awaiting_input is system-owned (the worker's interrupt sets it, and
-		// markPaused treats it specially); clients may only pause as user/shutdown.
-		if reason != dag.PauseUser && reason != dag.PauseShutdown {
-			errMsg(w, http.StatusBadRequest, "reason must be \"user\" or \"shutdown\"")
-			return
-		}
-		if !h.orch.PauseNode(chatID, nodeID, reason) {
-			writeJSON(w, http.StatusConflict, schema.TransitionError{
-				Error:   "node is not pausable right now (no live run); nothing was paused",
-				Current: wireStatus(current),
-				Allowed: allowedStatuses(current),
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusPaused))
+		h.pauseTransition(w, dn, chatID, nodeID, current, body)
 	case dag.StatusRunning:
-		// paused → running: a fresh re-run reusing the plan's stored outputs.
-		// A node parked awaiting_input must go through StartNode instead: its
-		// worker's ADK session (internal/agent.WorkerSessionID) survives the pause on purpose (#A2) with an unanswered function call at its tail, and retryNodeAsync's fresh dispatch would land in that SAME session without ever answering it, corrupting the history it appends to.
+		// paused → running: a fresh re-run reusing the plan's stored outputs. A node
+		// parked awaiting_input must go through StartNode instead (#A2).
 		if current == dag.StatusNeedsInput || (dn != nil && dag.PauseReason(dn.PauseReason) == dag.PauseAwaitingInput) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is awaiting an answer; use the start endpoint with the answer instead of retry",
@@ -891,34 +872,51 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 			})
 			return
 		}
-		if h.hub.Draining() {
-			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
-			return
-		}
-		if h.chatArchived(r.Context(), chatID) {
-			errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
-			return
-		}
-		if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
-			errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
-			return
-		}
-		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
+		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance)
 	case dag.StatusQueued:
-		if h.hub.Draining() {
-			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
-			return
-		}
-		if h.chatArchived(r.Context(), chatID) {
-			errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
-			return
-		}
-		if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
-			errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
-			return
-		}
-		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
+		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance)
 	}
+}
+
+// pauseTransition: the paused transition - user/shutdown pause via the live control.
+func (h *Handler) pauseTransition(w http.ResponseWriter, dn *store.DagNode, chatID schema.ChatID, nodeID schema.NodeID, current dag.NodeStatus, body schema.NodeStatusUpdateBody) {
+	reason := dag.PauseUser
+	if body.Reason != nil && *body.Reason != "" {
+		reason = dag.PauseReason(*body.Reason)
+	}
+	// awaiting_input is system-owned (the worker's interrupt sets it, and markPaused treats
+	// it specially); clients may only pause as user/shutdown.
+	if reason != dag.PauseUser && reason != dag.PauseShutdown {
+		errMsg(w, http.StatusBadRequest, "reason must be \"user\" or \"shutdown\"")
+		return
+	}
+	if !h.orch.PauseNode(chatID, nodeID, reason) {
+		writeJSON(w, http.StatusConflict, schema.TransitionError{
+			Error:   "node is not pausable right now (no live run); nothing was paused",
+			Current: wireStatus(current),
+			Allowed: allowedStatuses(current),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusPaused))
+}
+
+// dispatchRetry: the shared running/queued dispatch - drain check, archive check,
+// then a guarded retryNodeAsync.
+func (h *Handler) dispatchRetry(w http.ResponseWriter, r *http.Request, dp *store.DagPlan, chatID schema.ChatID, nodeID schema.NodeID, guidance string) {
+	if h.hub.Draining() {
+		errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
+		return
+	}
+	if h.chatArchived(r.Context(), chatID) {
+		errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
+		return
+	}
+	if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
+		errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
+		return
+	}
+	writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 }
 
 // StartNode is the explicit per-node "start" transition (#962): queued or
@@ -1286,6 +1284,81 @@ func lastEventID(r *http.Request) int64 {
 	return n
 }
 
+// buildDagItem: the DAG output item for a planned turn - the plan shape plus
+// per-node states, and the aggregate status (in_progress while any node is not terminal).
+func buildDagItem(tc store.TurnContent, planData stream.DagPlanData) *schema.OutputItem {
+	nodes := make([]schema.DagNodeDef, len(planData.Nodes))
+	for i, n := range planData.Nodes {
+		nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow), Artifact: strPtr(n.Artifact)}
+	}
+	edges := make([]schema.DagEdge, len(planData.Edges))
+	for i, e := range planData.Edges {
+		edges[i] = schema.DagEdge{From: e.From, To: e.To}
+	}
+	nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
+	for _, n := range tc.Nodes {
+		nodeStates[n.NodeID] = dagNodeState(n)
+	}
+	// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
+	dagStatus := schema.Completed
+	for _, ns := range nodeStates {
+		if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput || ns.Status == schema.NodeStatusPaused {
+			dagStatus = schema.InProgress
+			break
+		}
+	}
+	item := new(schema.OutputItem)
+	_ = item.FromDagOutputItem(schema.DagOutputItem{
+		Id:         tc.Plan.ID,
+		Status:     dagStatus,
+		PlanId:     tc.Plan.ID,
+		Nodes:      nodes,
+		Edges:      edges,
+		NodeStates: nodeStates,
+	})
+	return item
+}
+
+// buildActivityItem: the agent-activity item for a turn with tool calls.
+func buildActivityItem(tc store.TurnContent) *schema.OutputItem {
+	if len(tc.ToolCalls) == 0 {
+		return nil
+	}
+	calls := make([]schema.ToolCallItem, len(tc.ToolCalls))
+	for i, c := range tc.ToolCalls {
+		calls[i] = schema.ToolCallItem{CallId: c.CallID, Name: c.Name}
+		if c.Args != nil {
+			calls[i].Args = &c.Args
+		}
+		if c.Result != nil {
+			calls[i].Result = &c.Result
+		}
+	}
+	oi := new(schema.OutputItem)
+	_ = oi.FromAgentActivityOutputItem(schema.AgentActivityOutputItem{
+		Id:        tc.ID + ":activity",
+		Status:    schema.Completed,
+		ToolCalls: calls,
+	})
+	return oi
+}
+
+// buildUsage: the turn's token usage (UsageMetadata survives ADK's round-trip;
+// ModelVersion doesn't - hence the separate Model field on the turn).
+func buildUsage(tc store.TurnContent) *schema.Usage {
+	if tc.PromptTokens == 0 && tc.CompletionTokens == 0 && tc.ReasoningTokens == 0 {
+		return nil
+	}
+	usage := &schema.Usage{
+		InputTokens:  intPtr(int(tc.PromptTokens)),
+		OutputTokens: intPtr(int(tc.CompletionTokens + tc.ReasoningTokens)),
+	}
+	if tc.CachedTokens > 0 {
+		usage.CachedTokens = intPtr(int(tc.CachedTokens))
+	}
+	return usage
+}
+
 func buildTurn(tc store.TurnContent) schema.Turn {
 	// planData is the turn's DAG shape; unmarshaled once for both the DAG
 	// output item and the answer bubble's text below.
@@ -1293,8 +1366,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 	planOK := tc.Plan != nil && json.Unmarshal([]byte(tc.Plan.PlanJSON), &planData) == nil
 
 	// DAG turns: the answer bubble carries the terminal node's OUTPUT - what
-	// the live stream rendered (chatStore's liveDagFinalText) - not the
-	// orchestrator's planning narration; persisting that narration made a reload swap the bubble for the chatter the live view already discards, so a review read differently after refresh than it did live.
+	// the live stream rendered - not the orchestrator's planning narration.
 	bubbleText := tc.AsstText
 	if planOK {
 		if out := terminalNodeOutput(planData, tc.Nodes); out != "" {
@@ -1322,60 +1394,13 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		})
 	}
 
-	var dagItem *schema.OutputItem
-	if planOK {
-		nodes := make([]schema.DagNodeDef, len(planData.Nodes))
-		for i, n := range planData.Nodes {
-			nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow), Artifact: strPtr(n.Artifact)}
+	dagItem := func() *schema.OutputItem {
+		if planOK {
+			return buildDagItem(tc, planData)
 		}
-		edges := make([]schema.DagEdge, len(planData.Edges))
-		for i, e := range planData.Edges {
-			edges[i] = schema.DagEdge{From: e.From, To: e.To}
-		}
-		nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
-		for _, n := range tc.Nodes {
-			nodeStates[n.NodeID] = dagNodeState(n)
-		}
-		// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
-		dagStatus := schema.Completed
-		for _, ns := range nodeStates {
-			if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput || ns.Status == schema.NodeStatusPaused {
-				dagStatus = schema.InProgress
-				break
-			}
-		}
-		item := new(schema.OutputItem)
-		_ = item.FromDagOutputItem(schema.DagOutputItem{
-			Id:         tc.Plan.ID,
-			Status:     dagStatus,
-			PlanId:     tc.Plan.ID,
-			Nodes:      nodes,
-			Edges:      edges,
-			NodeStates: nodeStates,
-		})
-		dagItem = item
-	}
-
-	var activityItem *schema.OutputItem
-	if len(tc.ToolCalls) > 0 {
-		calls := make([]schema.ToolCallItem, len(tc.ToolCalls))
-		for i, c := range tc.ToolCalls {
-			calls[i] = schema.ToolCallItem{CallId: c.CallID, Name: c.Name}
-			if c.Args != nil {
-				calls[i].Args = &c.Args
-			}
-			if c.Result != nil {
-				calls[i].Result = &c.Result
-			}
-		}
-		oi := new(schema.OutputItem)
-		_ = oi.FromAgentActivityOutputItem(schema.AgentActivityOutputItem{
-			Id:        tc.ID + ":activity",
-			Status:    schema.Completed,
-			ToolCalls: calls,
-		})
-		activityItem = oi
-	}
+		return nil
+	}()
+	activityItem := buildActivityItem(tc)
 
 	output := make([]schema.OutputItem, 0, 3)
 	if activityItem != nil {
@@ -1388,24 +1413,12 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		output = append(output, msgItem)
 	}
 
-	// Orchestrator's token usage (UsageMetadata survives ADK's round-trip; ModelVersion doesn't, hence the separate model field).
-	var usage *schema.Usage
-	if tc.PromptTokens > 0 || tc.CompletionTokens > 0 || tc.ReasoningTokens > 0 {
-		usage = &schema.Usage{
-			InputTokens:  intPtr(int(tc.PromptTokens)),
-			OutputTokens: intPtr(int(tc.CompletionTokens + tc.ReasoningTokens)),
-		}
-		if tc.CachedTokens > 0 {
-			usage.CachedTokens = intPtr(int(tc.CachedTokens))
-		}
-	}
-
 	return schema.Turn{
 		Id:        tc.ID,
 		CreatedAt: tc.CreatedAt,
 		Input:     schema.TurnInput{Role: schema.TurnInputRoleUser, Content: tc.UserText},
 		Output:    output,
-		Usage:     usage,
+		Usage:     buildUsage(tc),
 		// Persisted on the turn row at run end (ADK drops ModelVersion). Nil for DAG turns.
 		Model: strPtr(tc.Model),
 	}

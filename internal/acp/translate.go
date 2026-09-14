@@ -224,15 +224,8 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 		}
 		return "run_command", map[string]any{"command": cmd}
 	case sdk.ToolKindEdit:
-		if d := firstDiff(p.content); d != nil {
-			old := ""
-			if d.OldText != nil {
-				old = *d.OldText
-			}
-			return "edit_file", map[string]any{"path": t.rel(d.Path), "old": old, "new": d.NewText}
-		}
-		if path := t.editPath(p); path != "" {
-			return "write_file", map[string]any{"path": path}
+		if name, args := t.mapEdit(p); name != "" {
+			return name, args
 		}
 	case sdk.ToolKindRead:
 		if path := t.firstPath(p); path != "" {
@@ -249,28 +242,49 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 			return "delete_path", map[string]any{"path": path}
 		}
 	case sdk.ToolKindSearch:
-		// ACP's "search" kind covers both content search and filename glob -
-		// the protocol carries no tool-identity field to split them, so both
-		// land on grep's arg/result shape; a glob-shaped output (no "matches") still renders via GenericView instead of the richer GrepView.
-		args := map[string]any{}
-		if pattern, _ := in["pattern"].(string); pattern != "" {
-			args["pattern"] = pattern
-		} else if p.title != "" {
-			args["pattern"] = p.title
-		}
-		if path := t.firstPath(p); path != "" {
-			args["path"] = path
-		}
-		if g, _ := in["glob"].(string); g != "" {
-			args["glob"] = g
-		} else if inc, _ := in["include"].(string); inc != "" {
-			args["glob"] = inc
-		}
-		return "grep", args
+		return t.mapSearch(p, in)
 	}
-	// A genuinely unknown kind (a third-party tool ACP has no enum slot for,
-	// including the literal "other") is named after its title, never the
-	// meaningless literal "other" - the frontend used to paper over this (#959) but a name the UI never has to special-case is the real fix.
+	return t.mapGeneric(p)
+}
+
+// mapEdit: a diff maps to edit_file (old/new); a path-only call maps to write_file.
+func (t *translator) mapEdit(p pendingTool) (string, map[string]any) {
+	if d := firstDiff(p.content); d != nil {
+		old := ""
+		if d.OldText != nil {
+			old = *d.OldText
+		}
+		return "edit_file", map[string]any{"path": t.rel(d.Path), "old": old, "new": d.NewText}
+	}
+	if path := t.editPath(p); path != "" {
+		return "write_file", map[string]any{"path": path}
+	}
+	return "", nil
+}
+
+// mapSearch: ACP's "search" covers content search and filename glob; both land on
+// grep's arg shape (a glob-shaped output still renders via GenericView).
+func (t *translator) mapSearch(p pendingTool, in map[string]any) (string, map[string]any) {
+	args := map[string]any{}
+	if pattern, _ := in["pattern"].(string); pattern != "" {
+		args["pattern"] = pattern
+	} else if p.title != "" {
+		args["pattern"] = p.title
+	}
+	if path := t.firstPath(p); path != "" {
+		args["path"] = path
+	}
+	if g, _ := in["glob"].(string); g != "" {
+		args["glob"] = g
+	} else if inc, _ := in["include"].(string); inc != "" {
+		args["glob"] = inc
+	}
+	return "grep", args
+}
+
+// mapGeneric: a genuinely unknown kind (a third-party tool ACP has no enum slot for,
+// including the literal "other") is named after its title, never "other" (#959).
+func (t *translator) mapGeneric(p pendingTool) (string, map[string]any) {
 	name := string(p.kind)
 	useTitle := name == "" || p.kind == sdk.ToolKindOther
 	if useTitle {
