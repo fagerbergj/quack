@@ -489,6 +489,7 @@ type toolCallBuilder struct {
 
 // applyFallbackLadder is the recovery ladder shared by both paths: recover tool
 // calls leaked as XML into thinking (llama.cpp#22684) or the answer (#427).
+
 // thoughtText / answerText: the part predicates the leak-recovery scan keys on.
 func thoughtText(p *genai.Part) bool { return p.Thought && p.Text != "" }
 func answerText(p *genai.Part) bool  { return !p.Thought && p.Text != "" }

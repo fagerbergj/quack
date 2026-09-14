@@ -446,9 +446,8 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 	return found, foundName, nil
 }
 
-// newExtDispatch builds the sdk.DispatchFunc an extension's Host carries. Prep (chat row, turn) is
-// synchronous; the run happens in a goroutine, so Dispatch returns before the run completes -
-// RunObserver is how a caller learns it finished.
+// newExtDispatch builds the sdk.DispatchFunc an extension's Host carries. Prep (chat
+// row, turn) is synchronous; the run is a goroutine, so Dispatch returns early.
 func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if hub.Draining() {
@@ -491,9 +490,8 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		}
 		attachments := extAttachmentParts(runCtx, name, artifacts, userID, chatID, turnID, req.Ask.Attachments)
 
-		// Reset synchronously, before Dispatch returns (the caller's ack), so a subscriber
-		// landing in the run's start window never reads the previous dispatch's events
-		// off the hub or the durable log (#audit-5).
+		// Reset synchronously, before the caller's ack, so a subscriber landing in the
+		// run's start window never reads the previous dispatch's events (#audit-5).
 		hub.Reset(chatID)
 		eventLog.Reset(runCtx, chatID)
 
@@ -520,13 +518,11 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 	}
 }
 
-// prepareExtChat: merge the dispatch's chat origin/setup onto the chat's stored
-// state (a nudge re-dispatch carries neither - merging preserves turn-2 planning
-// data, #1180), optionally reset the session, and stamp origin/title.
+// prepareExtChat: merge the dispatch's chat origin/setup onto the stored state
+// (a nudge re-dispatch carries neither, #1180), reset the session, stamp origin/title.
 func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, error) {
-	// Merge onto whatever this chat already has stored, rather than replacing it:
-	// a nudge/retry re-dispatch (quack-extensions#47) carries neither Chat.Origin
-	// nor Run.Setup, and previously blanked both - #1180's missing PR head ref.
+	// Merge onto the chat's stored state rather than replacing it: a nudge/retry
+	// re-dispatch (quack-extensions#47) carries neither Origin nor Run.Setup (#1180).
 	existing, getErr := st.GetChat(runCtx, chatID)
 	if getErr != nil {
 		slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
@@ -583,9 +579,8 @@ func extRunContext(runCtx context.Context, req extsdk.DispatchRequest, effective
 	// which reads these facts back off ctx (tools.AllowedDeliveryKindsFromContext etc.).
 	runCtx = tools.WithAllowedDeliveryKinds(runCtx, deliveryKindStrings(req.Delivery.AllowedKinds))
 	if effectiveSetup != nil {
-		// mergeExtOrigin's own merged Setup, NOT req.Run.Setup (#1180 recurrence):
-		// github always sends a non-nil Setup, and applying it unconditionally would
-		// clobber mergeExtOrigin's fallback with a weaker value.
+		// mergeExtOrigin's own merged Setup, NOT req.Run.Setup (#1180): github
+		// always sends a non-nil Setup; applying it unconditionally would clobber the fallback.
 		runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
 	}
 	if req.Ask.NodeContext != "" {
@@ -598,8 +593,7 @@ func extRunContext(runCtx context.Context, req extsdk.DispatchRequest, effective
 }
 
 // deliveryKindStrings converts the SDK's typed delivery-kind list to the
-// bare-string vocabulary vetting.Config.AllowedDeliveryKinds and dag.Plan
-// share; nil stays nil (unrestricted - see AllowedDeliveryKinds' own doc).
+// bare-string vocabulary vetting and dag.Plan share; nil stays nil (unrestricted).
 func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 	if kinds == nil {
 		return nil

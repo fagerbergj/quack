@@ -19,9 +19,6 @@ import (
 // internal/otelobs.Logger(scope) picks the instrumentation scope.
 const inferenceScope = "quack.inference"
 
-// emitChatEvent records one gen_ai.* "chat" log event for a completed model
-// call - the full request and the FINAL assembled response (see the
-// GenerateContent doc comment on why "final", not raw stream chunks). Marshal failures degrade a field to omitted, never abort the whole event - recording must never affect the run.
 // chatRequestAttrs: the gen_ai request attributes (contents, tools, config knobs);
 // returns them plus the system-instruction hash (prompt provenance).
 func chatRequestAttrs(req *model.LLMRequest) ([]attribute.KeyValue, string) {
@@ -116,6 +113,8 @@ func chatResponseAttrs(resp *model.LLMResponse, pricing *config.ModelPricing) []
 	return attrs
 }
 
+// emitChatEvent records one gen_ai.* "chat" log event for a completed model
+// call (request + FINAL assembled response); marshal failures degrade a field.
 func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp *model.LLMResponse, callErr error, pricing *config.ModelPricing) {
 	if !otelobs.LoggingEnabled(inferenceScope) {
 		return // nothing listening - skip building a (potentially large) event nobody reads
