@@ -386,9 +386,9 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 }
 
 // prepPrompt: the pre-prompt cancel bail, the Prompt RPC goroutine, and the
-// span/timer plumbing the round loop consumes. Returns the loop args and
-// the round-exit cleanup (idle timer, turn spans, prompt span - original
-// LIFO order), or the bail error when a cancel lands before the prompt is sent.
+// span/timer plumbing. Returns the loop args plus the round-exit cleanup
+// span/timer plumbing. Returns the loop args plus the round-exit cleanup
+// (original LIFO order), or the bail error when a cancel lands first.
 func (a *Agent) prepPrompt(ctx, abortCtx context.Context, h *procHandle, cwd string, sessID sdk.SessionId, finalPrompt string, coords ledger.Coords, emit func(eventSpec) bool) (*roundLoopArgs, func(), error) {
 	done := make(chan promptDone, 1)
 	promptCtx, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("session_id", string(sessID)))

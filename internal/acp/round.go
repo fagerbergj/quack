@@ -27,15 +27,12 @@ func (a *Agent) registerRoundAbort(steerChatID, steerNodeID string, abortCancel 
 	return func() {}
 }
 
-// steerHooks: the live-steer registration and the preamble prepend (skipped
-// for a live pinned process - a resumed session is a new process that may
-// have missed a preamble change since round 1). Returns the effective
-// outbound text and the matching unregister (a no-op when nothing is wired).
+// steerHooks: live-steer registration and the preamble prepend (skipped for a
+// live pinned process - a resumed session may have missed a preamble change).
 func (a *Agent) steerHooks(h *procHandle, outbound, steerChatID, steerNodeID string, fromPinned bool) (string, func()) {
 	unreg := func() {}
-	// Live only for this round's duration - nothing to forward into before/after.
-	// CallExtension (an acked request), not NotifyExtension: between the
-	// shim settling and the deferred Unregister below the connection is still open, so a fire-and-forget notify would report delivered while the shim silently drops it (promptReq already nil). A failed/errored call reports false, and enqueue's caller parks it instead (#998 review).
+	// Live only for this round's duration; CallExtension (an acked request), not NotifyExtension: between the shim settling and the deferred Unregister the connection is still open, so a fire-and-forget notify would report delivered while the shim silently drops it (promptReq already nil).
+	// A failed/errored call reports false, and enqueue's caller parks it instead (#998 review).
 	if a.opts.RegisterLiveSteer != nil && steerChatID != "" && steerNodeID != "" {
 		a.opts.RegisterLiveSteer(steerChatID, steerNodeID, steerForward(h.conn))
 		if a.opts.UnregisterLiveSteer != nil {
@@ -48,10 +45,8 @@ func (a *Agent) steerHooks(h *procHandle, outbound, steerChatID, steerNodeID str
 	return outbound, unreg
 }
 
-// handshake: Initialize + session/load|new on a fresh process. Resume via
-// session/load only ever matters here, on a node's FIRST round (a live
-// pinned process is the common path for every round after it - #1006, perf
-// audit finding 8).
+// handshake: Initialize + session/load|new on a fresh process; the resume only
+// ever matters on a node's FIRST round (pinned processes are the path after it).
 func (a *Agent) handshake(ctx context.Context, cwd, memSecret, advisorToken, priorSessionID string, caps workspace.Caps, h *procHandle) (sessID sdk.SessionId, toolNames []string, resumed bool, err error) {
 	ictx, cancelInit := context.WithTimeout(ctx, a.opts.StartTimeout)
 	defer cancelInit()
@@ -109,11 +104,8 @@ func (a *Agent) relayDrain(h *procHandle, relay func(sdk.SessionUpdate) bool) bo
 	return true
 }
 
-// handlePromptDone: the round's terminal Prompt response - usage, refusal,
-// and the final answer event. The Prompt RPC returns exactly once per round
-// with its own (not cumulative) usage - the round's usage is known here,
-// once. ctx wins per field, the shared stamp only fills blanks (#1048) -
-// same rule as traced.go's tracedModel and tools/emit.go's emitTool.
+// handlePromptDone: the round's terminal Prompt response - usage, refusal, final
+// answer event. ctx wins per field, the shared stamp only fills blanks (#1048).
 // Returns whether the round pinned cleanly.
 func (a *Agent) handlePromptDone(d promptDone, h *procHandle, tr *translator, endPrompt func(error), promptSpan oteltrace.Span, ctx context.Context, coords ledger.Coords, emit func(eventSpec) bool) (bool, error) {
 	if d.err != nil {
@@ -151,9 +143,8 @@ type roundLoopArgs struct {
 	emit       func(eventSpec) bool
 }
 
-// roundLoop: relay wire updates and steer traffic until the Prompt RPC
-// lands, a cancel/interrupt stops the round, or the agent wedges (idle).
-// Returns whether the round pinned cleanly plus the round's error.
+// roundLoop: relay wire updates and steer traffic until the Prompt RPC lands,
+// a cancel/interrupt stops the round, or the agent wedges (idle). Returns whether the round pinned cleanly.
 func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 	resetIdle := func() {
 		if !al.idleTimer.Stop() {

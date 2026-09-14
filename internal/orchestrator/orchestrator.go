@@ -512,11 +512,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			toolsets = []tool.Toolset{o.skillTS}
 		}
 		s.toolsets = toolsets
-		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's
-		// doc. Wrapped as one pass over the whole toolList, once every tool this
-		// turn offers (DAG tools plus memory/artifact tools appended after) is
-		// assembled - the identical-call loop class RepeatWrap guards against
-		// applies to any of them, not just the five DAG tools.
+		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's doc. One pass over the whole toolList, once every tool this turn offers is assembled.
+		// The identical-call loop class RepeatWrap guards against applies to any of them, not just the five DAG tools.
 		for i, t := range s.toolList {
 			// memory.NewPreload() and similar request-mutating-only tools have
 			// no Run for a model to repeat - nothing to guard, leave as-is.
@@ -811,10 +808,8 @@ func seededFrom(rec dag.DagPlanRecord) map[string]string {
 	return seeded
 }
 
-// driveUnblocked: keep driving newly-unblocked assignments the same way
-// execute.go drives a fresh step, round by round, until nothing more is
-// unblocked or a round itself pauses/errors - ending the turn either way,
-// exactly like a fresh execute() step would.
+// driveUnblocked: drive newly-unblocked assignments the way execute.go drives a
+// fresh step, round by round, until nothing more unblocks or a round pauses/errors.
 func (o *Orchestrator) driveUnblocked(ctx context.Context, plan dag.Plan, rec dag.DagPlanRecord, recordSvc artifact.Service, userID, sessionID string, safeYield func(stream.SSEEvent, error) bool) (turnEnded, anyFailed bool) {
 	for {
 		next := unblockedByDeps(rec.Assignments)

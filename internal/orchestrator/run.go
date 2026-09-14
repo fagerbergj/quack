@@ -287,9 +287,8 @@ func (s *orchRun) handlePlanExhaustion() bool {
 	return false
 }
 
-// finishLoop: the continue-retry loop and every terminal outcome after the
-// first invoke - repeat-guard hard stop, the usage event, the give-up, and
-// plan exhaustion. Returns the attempt count and whether the turn ended.
+// finishLoop: every terminal outcome after the first invoke - continue-retry,
+// repeat-guard hard stop, usage, give-up, plan exhaustion. Returns the attempt count and whether the turn ended.
 func (s *orchRun) finishLoop(produced, stop bool) (int, bool) {
 	attempts := 1
 	// A hard-stopped turn reproduces the identical loop on an unchanged
