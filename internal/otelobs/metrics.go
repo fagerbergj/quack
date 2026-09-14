@@ -41,80 +41,98 @@ type metrics struct {
 	ledgerUnresolved metric.Int64Gauge
 }
 
+// metricDef is one instrument's registration facts (name, description, and
+// the optional unit/buckets the OTel builder takes positionally).
+type metricDef struct {
+	name    string
+	desc    string
+	unit    string
+	buckets []float64
+}
+
+// assignInstrument builds def's instrument from meter into the *metric.*
+// target - one case per OTel instrument kind, options in the old positional
+// order (description, unit, buckets).
+func assignInstrument(meter metric.Meter, into any, d metricDef) error {
+	switch t := into.(type) {
+	case *metric.Int64UpDownCounter:
+		v, err := meter.Int64UpDownCounter(d.name, metric.WithDescription(d.desc))
+		if err != nil {
+			return err
+		}
+		*t = v
+	case *metric.Float64Histogram:
+		opts := []metric.Float64HistogramOption{metric.WithDescription(d.desc)}
+		if d.unit != "" {
+			opts = append(opts, metric.WithUnit(d.unit))
+		}
+		opts = append(opts, metric.WithExplicitBucketBoundaries(d.buckets...))
+		v, err := meter.Float64Histogram(d.name, opts...)
+		if err != nil {
+			return err
+		}
+		*t = v
+	case *metric.Int64Counter:
+		v, err := meter.Int64Counter(d.name, metric.WithDescription(d.desc))
+		if err != nil {
+			return err
+		}
+		*t = v
+	case *metric.Float64Counter:
+		opts := []metric.Float64CounterOption{metric.WithDescription(d.desc)}
+		if d.unit != "" {
+			opts = append(opts, metric.WithUnit(d.unit))
+		}
+		v, err := meter.Float64Counter(d.name, opts...)
+		if err != nil {
+			return err
+		}
+		*t = v
+	case *metric.Int64Gauge:
+		v, err := meter.Int64Gauge(d.name, metric.WithDescription(d.desc))
+		if err != nil {
+			return err
+		}
+		*t = v
+	}
+	return nil
+}
+
 // initMetrics builds every instrument from meter and installs it as the
 // package singleton. Returns an error if any instrument fails to build (an
 // OTel SDK bug, not an operator error) - callers should log and continue with metrics disabled rather than fail startup over an observability seam.
 func initMetrics(meter metric.Meter) error {
 	m2 := &metrics{}
-	var err error
-	if m2.runsActive, err = meter.Int64UpDownCounter("quack.runs.active",
-		metric.WithDescription("orchestrator runs currently in flight")); err != nil {
-		return err
+	// Registration order matches the struct's field order; the first error
+	// short-circuits, exactly like the old sequential block.
+	defs := []struct {
+		def  metricDef
+		into any
+	}{
+		{metricDef{"quack.runs.active", "orchestrator runs currently in flight", "", nil}, &m2.runsActive},
+		{metricDef{"quack.nodes.active", "DAG nodes currently in flight", "", nil}, &m2.nodesActive},
+		{metricDef{"quack.worker.round.duration", "worker round wall time (draft/continuation/revise/hitl/confirm) - derived from the round's own span window, see StartTimedSpan", "s",
+			[]float64{1, 2, 5, 10, 30, 60, 120, 300, 600}}, &m2.roundDur},
+		{metricDef{"quack.judge.score", "independent judge weakest-link score (0-1); recorded on every agent's shared judge-round path (RunGatedRefine), not just one agent", "",
+			[]float64{0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0}}, &m2.judgeScore},
+		{metricDef{"quack.judge.verdict", "judge verdicts by pass/fail", "", nil}, &m2.judgeVerdict},
+		{metricDef{"quack.judge.unavailable", "judge rounds that errored before producing a verdict (no score/verdict recorded for that round) - a gap here on one agent's series explains missing/sparse quack.judge.score|verdict for it", "", nil}, &m2.judgeUnavailable},
+		{metricDef{"quack.delivery.outcome", "delivery outcomes; 'none' on a judge-passed work-request that recorded no delivery is the alertable phantom-success regression", "", nil}, &m2.delivery},
+		{metricDef{"quack.model.call.duration", "model call duration, swap-sensitive", "s",
+			[]float64{1, 2, 5, 10, 30, 60, 120, 300, 600}}, &m2.modelCallDur},
+		{metricDef{"quack.acp.permission_ask", "ACP subprocess permission asks reaching the safety judge (should be ~0)", "", nil}, &m2.permAsk},
+		{metricDef{"quack.memory.recall", "memory recall attempts, by hit/miss", "", nil}, &m2.memRecall},
+		{metricDef{"quack.gate.checks.skipped", "nodes where the deterministic checks criterion did NOT run at all (no backstop), by reason - query this to find nodes that gated on judge score alone", "", nil}, &m2.checksSkipped},
+		{metricDef{"quack.memory.commit.failures", "fire-and-forget memory commits that errored (consolidation/embed timeout etc - see RecordMemoryCommitFailure), by reason and agent - the only queryable signal for the M6 commit goroutine, which never fails a node", "", nil}, &m2.memCommitFail},
+		{metricDef{"quack.run.no_answer", "runs that finished without hitting the run deadline or being cancelled, yet persisted no final answer - the silent-gap class also covered by gate.checks.skipped/judge.unavailable/delivery.outcome=none, but at the whole-run level (see the GitHub extension's tail-comment fallback)", "", nil}, &m2.runNoAnswer},
+		{metricDef{"gen_ai.client.token.usage", "tokens consumed per completed model call, by gen_ai.token.type (input/output/reasoning/cached)", "{token}", nil}, &m2.tokenUsage},
+		{metricDef{"quack.ledger.unresolved_intents", "Ledger intents whose projection is missing and boot recovery could not settle", "", nil}, &m2.ledgerUnresolved},
+		{metricDef{"gen_ai.client.cost", "USD cost per completed model call, computed from config/quack.yaml's optional per-model price table; a model absent from that table emits no cost here", "USD", nil}, &m2.cost},
 	}
-	if m2.nodesActive, err = meter.Int64UpDownCounter("quack.nodes.active",
-		metric.WithDescription("DAG nodes currently in flight")); err != nil {
-		return err
-	}
-	if m2.roundDur, err = meter.Float64Histogram("quack.worker.round.duration",
-		metric.WithDescription("worker round wall time (draft/continuation/revise/hitl/confirm) - derived from the round's own span window, see StartTimedSpan"), metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(1, 2, 5, 10, 30, 60, 120, 300, 600)); err != nil {
-		return err
-	}
-	if m2.judgeScore, err = meter.Float64Histogram("quack.judge.score",
-		metric.WithDescription("independent judge weakest-link score (0-1); recorded on every agent's shared judge-round path (RunGatedRefine), not just one agent"),
-		metric.WithExplicitBucketBoundaries(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)); err != nil {
-		return err
-	}
-	if m2.judgeVerdict, err = meter.Int64Counter("quack.judge.verdict",
-		metric.WithDescription("judge verdicts by pass/fail")); err != nil {
-		return err
-	}
-	if m2.judgeUnavailable, err = meter.Int64Counter("quack.judge.unavailable",
-		metric.WithDescription("judge rounds that errored before producing a verdict (no score/verdict recorded for that round) - a gap here on one agent's series explains missing/sparse quack.judge.score|verdict for it")); err != nil {
-		return err
-	}
-	if m2.delivery, err = meter.Int64Counter("quack.delivery.outcome",
-		metric.WithDescription("delivery outcomes; 'none' on a judge-passed work-request that recorded no delivery is the alertable phantom-success regression")); err != nil {
-		return err
-	}
-	if m2.modelCallDur, err = meter.Float64Histogram("quack.model.call.duration",
-		metric.WithDescription("model call duration, swap-sensitive"), metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(1, 2, 5, 10, 30, 60, 120, 300, 600)); err != nil {
-		return err
-	}
-	if m2.permAsk, err = meter.Int64Counter("quack.acp.permission_ask",
-		metric.WithDescription("ACP subprocess permission asks reaching the safety judge (should be ~0)")); err != nil {
-		return err
-	}
-	if m2.memRecall, err = meter.Int64Counter("quack.memory.recall",
-		metric.WithDescription("memory recall attempts, by hit/miss")); err != nil {
-		return err
-	}
-	if m2.checksSkipped, err = meter.Int64Counter("quack.gate.checks.skipped",
-		metric.WithDescription("nodes where the deterministic checks criterion did NOT run at all (no backstop), by reason - query this to find nodes that gated on judge score alone")); err != nil {
-		return err
-	}
-	if m2.memCommitFail, err = meter.Int64Counter("quack.memory.commit.failures",
-		metric.WithDescription("fire-and-forget memory commits that errored (consolidation/embed timeout etc - see RecordMemoryCommitFailure), by reason and agent - the only queryable signal for the M6 commit goroutine, which never fails a node")); err != nil {
-		return err
-	}
-	if m2.runNoAnswer, err = meter.Int64Counter("quack.run.no_answer",
-		metric.WithDescription("runs that finished without hitting the run deadline or being cancelled, yet persisted no final answer - the silent-gap class also covered by gate.checks.skipped/judge.unavailable/delivery.outcome=none, but at the whole-run level (see the GitHub extension's tail-comment fallback)")); err != nil {
-		return err
-	}
-	if m2.tokenUsage, err = meter.Int64Counter("gen_ai.client.token.usage",
-		metric.WithDescription("tokens consumed per completed model call, by gen_ai.token.type (input/output/reasoning/cached)"),
-		metric.WithUnit("{token}")); err != nil {
-		return err
-	}
-	if m2.ledgerUnresolved, err = meter.Int64Gauge("quack.ledger.unresolved_intents",
-		metric.WithDescription("Ledger intents whose projection is missing and boot recovery could not settle")); err != nil {
-		return err
-	}
-	if m2.cost, err = meter.Float64Counter("gen_ai.client.cost",
-		metric.WithDescription("USD cost per completed model call, computed from config/quack.yaml's optional per-model price table; a model absent from that table emits no cost here"),
-		metric.WithUnit("USD")); err != nil {
-		return err
+	for _, e := range defs {
+		if err := assignInstrument(meter, e.into, e.def); err != nil {
+			return err
+		}
 	}
 	m = m2
 	return nil

@@ -145,15 +145,7 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, d
 		return nil
 	}
 	for _, s := range res.Stores {
-		fmt.Fprintf(out, "store %s: evaluated %d, kept %d\n", s.Store, s.Evaluated, s.Kept)
-		for _, r := range s.Rules {
-			fmt.Fprintf(out, "  rule %d [%s -> %s]: matched %d\n", r.Index, r.When, r.Then, r.Matched)
-			if r.Examples != nil {
-				for _, e := range *r.Examples {
-					fmt.Fprintf(out, "    - %s: %s\n", e.Id, truncateLine(e.Content, 80))
-				}
-			}
-		}
+		printSweepStore(out, s)
 	}
 	if hasErrors {
 		for _, e := range *res.Errors {
@@ -167,6 +159,20 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, d
 		return fmt.Errorf("%d memory store(s) failed to sweep", len(*res.Errors))
 	}
 	return nil
+}
+
+// printSweepStore prints one store's sweep tally and each rule's match count
+// plus capped examples.
+func printSweepStore(out io.Writer, s schema.SweepStoreResult) {
+	fmt.Fprintf(out, "store %s: evaluated %d, kept %d\n", s.Store, s.Evaluated, s.Kept)
+	for _, r := range s.Rules {
+		fmt.Fprintf(out, "  rule %d [%s -> %s]: matched %d\n", r.Index, r.When, r.Then, r.Matched)
+		if r.Examples != nil {
+			for _, e := range *r.Examples {
+				fmt.Fprintf(out, "    - %s: %s\n", e.Id, truncateLine(e.Content, 80))
+			}
+		}
+	}
 }
 
 // printDedupeReport prints one --dedupe sweep's per-store cluster report.

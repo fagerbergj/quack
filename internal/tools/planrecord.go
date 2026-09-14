@@ -272,41 +272,13 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 	}
 
 	nodeIDs := make([]string, len(inputs))
-	var minted []dag.DagNodeRecord
+	st := upsertState{known: known, existingIDs: existingIDs, nodeIsLive: nodeIsLive, chatID: chatID, allowedKinds: allowedKinds}
 	for i, in := range inputs {
-		if err := dag.ValidateWorkdir(in.Workdir); err != nil {
-			return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
+		id, err := st.resolveOne(i, in)
+		if err != nil {
+			return nil, nil, err
 		}
-		switch {
-		case in.NodeID != "":
-			n, ok := known[in.NodeID]
-			if !ok {
-				return nil, nil, fmt.Errorf("assignments[%d].node_id: unknown node id %q - list_nodes shows every node already hired", i, in.NodeID)
-			}
-			if nodeIsLive != nil && nodeIsLive(in.NodeID) {
-				return nil, nil, fmt.Errorf("assignments[%d].node_id: %q is currently running - wait for it to finish before reassigning it", i, in.NodeID)
-			}
-			if err := validateAllowedDeliveryKind(n.Agent, allowedKinds); err != nil {
-				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
-			}
-			nodeIDs[i] = n.NodeID
-		case in.Agent != "":
-			if err := dag.ValidateAgentName(in.Agent); err != nil {
-				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
-			}
-			if err := validateAllowedDeliveryKind(in.Agent, allowedKinds); err != nil {
-				return nil, nil, fmt.Errorf("assignments[%d].%w", i, err)
-			}
-			id := dag.MintNodeID(in.Agent, existingIDs)
-			existingIDs = append(existingIDs, id)
-			rec := dag.DagNodeRecord{NodeID: id, Agent: in.Agent, Status: dag.StatusQueued, ContextID: quackagent.WorkerSessionID(chatID, id)}
-			known[id] = rec
-			minted = append(minted, rec)
-			nodeIDs[i] = id
-		default:
-			return nil, nil, fmt.Errorf("assignments[%d]: has neither node_id nor agent set (%s) - give node_id "+
-				"(an existing node from list_nodes) or agent (one of: %s)", i, describeAssignmentInput(in), strings.Join(dag.AgentNames(), ", "))
-		}
+		nodeIDs[i] = id
 	}
 
 	seenNodeID := make(map[string]int, len(nodeIDs))
@@ -319,23 +291,83 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 
 	assignments := make([]dag.Assignment, len(inputs))
 	for i, in := range inputs {
-		dependsOn := make([]string, len(in.DependsOn))
-		for j, dep := range in.DependsOn {
-			if idx, ok := resolveNodeIndex(dep, len(inputs)); ok {
-				dependsOn[j] = nodeIDs[idx]
-				continue
-			}
-			if _, ok := known[dep]; !ok {
-				return nil, nil, fmt.Errorf("assignments[%d].depends_on: unknown node id %q - name an existing node id or this call's own assignment index", i, dep)
-			}
-			dependsOn[j] = dep
+		dependsOn, err := st.resolveDependsOn(i, in.DependsOn, nodeIDs)
+		if err != nil {
+			return nil, nil, err
 		}
 		assignments[i] = dag.Assignment{
 			NodeID: nodeIDs[i], Task: in.Task, DependsOn: dependsOn,
 			Checks: in.Checks, Workdir: in.Workdir, Rubric: in.Rubric,
 		}
 	}
-	return assignments, minted, nil
+	return assignments, st.minted, nil
+}
+
+// upsertState: upsertNodes' mutable bookkeeping threaded through the per-item
+// resolvers - known nodes, the minting dedupe list, and the minted records.
+type upsertState struct {
+	known        map[string]dag.DagNodeRecord
+	existingIDs  []string
+	minted       []dag.DagNodeRecord
+	nodeIsLive   func(nodeID string) bool
+	chatID       string
+	allowedKinds []string
+}
+
+// resolveOne: one input's node resolution - reuse node_id or mint an agent; the
+// workdir is validated before either so a bad dir fails regardless of branch.
+func (st *upsertState) resolveOne(i int, in assignmentInput) (string, error) {
+	if err := dag.ValidateWorkdir(in.Workdir); err != nil {
+		return "", fmt.Errorf("assignments[%d].%w", i, err)
+	}
+	switch {
+	case in.NodeID != "":
+		n, ok := st.known[in.NodeID]
+		if !ok {
+			return "", fmt.Errorf("assignments[%d].node_id: unknown node id %q - list_nodes shows every node already hired", i, in.NodeID)
+		}
+		if st.nodeIsLive != nil && st.nodeIsLive(in.NodeID) {
+			return "", fmt.Errorf("assignments[%d].node_id: %q is currently running - wait for it to finish before reassigning it", i, in.NodeID)
+		}
+		if err := validateAllowedDeliveryKind(n.Agent, st.allowedKinds); err != nil {
+			return "", fmt.Errorf("assignments[%d].%w", i, err)
+		}
+		return n.NodeID, nil
+	case in.Agent != "":
+		if err := dag.ValidateAgentName(in.Agent); err != nil {
+			return "", fmt.Errorf("assignments[%d].%w", i, err)
+		}
+		if err := validateAllowedDeliveryKind(in.Agent, st.allowedKinds); err != nil {
+			return "", fmt.Errorf("assignments[%d].%w", i, err)
+		}
+		id := dag.MintNodeID(in.Agent, st.existingIDs)
+		st.existingIDs = append(st.existingIDs, id)
+		rec := dag.DagNodeRecord{NodeID: id, Agent: in.Agent, Status: dag.StatusQueued, ContextID: quackagent.WorkerSessionID(st.chatID, id)}
+		st.known[id] = rec
+		st.minted = append(st.minted, rec)
+		return id, nil
+	default:
+		return "", fmt.Errorf("assignments[%d]: has neither node_id nor agent set (%s) - give node_id "+
+			"(an existing node from list_nodes) or agent (one of: %s)", i, describeAssignmentInput(in), strings.Join(dag.AgentNames(), ", "))
+	}
+}
+
+// resolveDependsOn: one assignment's depends_on entries to node ids - this
+// call's own assignment index resolves against nodeIDs, anything else against
+// the known node set.
+func (st *upsertState) resolveDependsOn(i int, deps []string, nodeIDs []string) ([]string, error) {
+	out := make([]string, len(deps))
+	for j, dep := range deps {
+		if idx, ok := resolveNodeIndex(dep, len(nodeIDs)); ok {
+			out[j] = nodeIDs[idx]
+			continue
+		}
+		if _, ok := st.known[dep]; !ok {
+			return nil, fmt.Errorf("assignments[%d].depends_on: unknown node id %q - name an existing node id or this call's own assignment index", i, dep)
+		}
+		out[j] = dep
+	}
+	return out, nil
 }
 
 // summarizePlanRecord renders rec for the model's own review before it calls

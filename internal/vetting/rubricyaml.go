@@ -77,35 +77,42 @@ func validateRubricDoc(doc rubricDoc) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		c := doc.Criteria[name]
-		scale := doc.Scale
-		if c.Scale != nil {
-			scale = *c.Scale
+		if err := validateCriterion(name, doc.Criteria[name], doc.Scale); err != nil {
+			return err
 		}
-		if scale.Max <= scale.Min {
-			return fmt.Errorf("criterion %q: scale invalid: min=%v max=%v", name, scale.Min, scale.Max)
+	}
+	return nil
+}
+
+// validateCriterion checks one criterion: its scale (criterion's own or the
+// doc default), band coverage and pass containment, deterministic fix, anchors.
+func validateCriterion(name string, c rubricCriterion, scale rubricScale) error {
+	if c.Scale != nil {
+		scale = *c.Scale
+	}
+	if scale.Max <= scale.Min {
+		return fmt.Errorf("criterion %q: scale invalid: min=%v max=%v", name, scale.Min, scale.Max)
+	}
+	if scale.Pass <= scale.Min || scale.Pass > scale.Max {
+		return fmt.Errorf("criterion %q: pass %v outside scale [%v, %v]", name, scale.Pass, scale.Min, scale.Max)
+	}
+	// bands:[] is legal but must be an explicit authoring choice, not a silently-tolerated omission - only for a criterion whose source
+	// prose genuinely didn't fit {min,max,meaning} (documented in the PR; see code-implementer's claims_match_activity and code-reviewer's
+	// claims_grounded, whose original 0-2/4-6/7-10 bands skip 3 with no stated reason - a real gap in the source, not a conversion bug).
+	if len(c.Bands) > 0 {
+		if err := validateBandCoverage(c.Bands, scale); err != nil {
+			return fmt.Errorf("criterion %q: %w", name, err)
 		}
-		if scale.Pass <= scale.Min || scale.Pass > scale.Max {
-			return fmt.Errorf("criterion %q: pass %v outside scale [%v, %v]", name, scale.Pass, scale.Min, scale.Max)
+		if !bandsContain(c.Bands, scale.Pass) {
+			return fmt.Errorf("criterion %q: pass %v does not fall inside any band", name, scale.Pass)
 		}
-		// bands:[] is legal but must be an explicit authoring choice, not a silently-tolerated omission - only for a criterion whose source
-		// prose genuinely didn't fit {min,max,meaning} (documented in the PR; see code-implementer's claims_match_activity and code-reviewer's
-		// claims_grounded, whose original 0-2/4-6/7-10 bands skip 3 with no stated reason - a real gap in the source, not a conversion bug).
-		if len(c.Bands) > 0 {
-			if err := validateBandCoverage(c.Bands, scale); err != nil {
-				return fmt.Errorf("criterion %q: %w", name, err)
-			}
-			if !bandsContain(c.Bands, scale.Pass) {
-				return fmt.Errorf("criterion %q: pass %v does not fall inside any band", name, scale.Pass)
-			}
-		}
-		if c.Deterministic && strings.TrimSpace(c.Fix) == "" {
-			return fmt.Errorf("criterion %q: deterministic criterion must declare fix", name)
-		}
-		for _, a := range c.Anchors {
-			if !validAnchorKinds[a] {
-				return fmt.Errorf("criterion %q: unknown anchor kind %q", name, a)
-			}
+	}
+	if c.Deterministic && strings.TrimSpace(c.Fix) == "" {
+		return fmt.Errorf("criterion %q: deterministic criterion must declare fix", name)
+	}
+	for _, a := range c.Anchors {
+		if !validAnchorKinds[a] {
+			return fmt.Errorf("criterion %q: unknown anchor kind %q", name, a)
 		}
 	}
 	return nil

@@ -308,39 +308,18 @@ func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport,
 		report.Rules[i] = ForgettingRuleResult{Index: i, When: r.When, Then: r.Then}
 	}
 
-	type hit struct {
-		id   string
-		rule int
-	}
-	var toInvalidate []hit
+	var toInvalidate []sweepHit
 	now := time.Now().UTC()
 	err := s.forEachSweepPage(ctx, false, false, func(page []scored) { // currently-valid only
 		for _, p := range page {
 			report.Evaluated++
-			f := fieldsFor(p, now)
-			matched := -1
-			for i, r := range rules {
-				ok, err := Evaluate(r.When, f)
-				if err != nil {
-					s.log.Warn("forgetting sweep: rule evaluation failed, treating as no-match", "rule", i, "err", err)
-					continue
-				}
-				if ok {
-					matched = i
-					break
-				}
-			}
+			matched := s.matchForgetRule(p, now, rules, &report)
 			if matched < 0 {
 				report.Kept++
 				continue
 			}
-			rr := &report.Rules[matched]
-			rr.Matched++
-			if len(rr.Examples) < forgetExampleCap {
-				rr.Examples = append(rr.Examples, ForgettingExample{ID: p.ID, Content: preview(p.Content)})
-			}
 			if rules[matched].Then == ThenInvalidate {
-				toInvalidate = append(toInvalidate, hit{id: p.ID, rule: matched})
+				toInvalidate = append(toInvalidate, sweepHit{id: p.ID, rule: matched})
 			}
 		}
 	})
@@ -350,6 +329,43 @@ func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport,
 	if dryRun || len(toInvalidate) == 0 {
 		return report, nil
 	}
+	s.invalidateByRule(ctx, toInvalidate, rules)
+	return report, nil
+}
+
+// sweepHit is one memory a forgetting rule invalidated: its id plus the
+// matched rule's index (the invalidate reason is built from it).
+type sweepHit struct {
+	id   string
+	rule int
+}
+
+// matchForgetRule evaluates the rules in order for one point (first match
+// wins) and records that match - count plus capped examples; -1 when no rule
+// matched.
+func (s *Store) matchForgetRule(p scored, now time.Time, rules []Rule, report *ForgettingReport) int {
+	f := fieldsFor(p, now)
+	for i, r := range rules {
+		ok, err := Evaluate(r.When, f)
+		if err != nil {
+			s.log.Warn("forgetting sweep: rule evaluation failed, treating as no-match", "rule", i, "err", err)
+			continue
+		}
+		if ok {
+			rr := &report.Rules[i]
+			rr.Matched++
+			if len(rr.Examples) < forgetExampleCap {
+				rr.Examples = append(rr.Examples, ForgettingExample{ID: p.ID, Content: preview(p.Content)})
+			}
+			return i
+		}
+	}
+	return -1
+}
+
+// invalidateByRule soft-invalidates the sweep's hit ids grouped by rule, one
+// memory_ops audit row per id.
+func (s *Store) invalidateByRule(ctx context.Context, toInvalidate []sweepHit, rules []Rule) {
 	byRule := map[int][]string{}
 	for _, h := range toInvalidate {
 		byRule[h.rule] = append(byRule[h.rule], h.id)
@@ -364,7 +380,6 @@ func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport,
 			s.logOp(ctx, id, OpInvalidate, ActorSweep, reason)
 		}
 	}
-	return report, nil
 }
 
 // fieldsFor computes a point's Fields snapshot for forgetting-rule evaluation. Missing timestamps

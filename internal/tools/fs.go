@@ -251,51 +251,64 @@ func (b fsBinding) listDir(a listDirArgs) (listDirResult, error) {
 		depth = 2
 	}
 
-	var entries []dirEntry
-	truncated := false
-	walkErr := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if p == base {
-			return nil
-		}
-		rel, rerr := filepath.Rel(base, p)
-		if rerr != nil {
-			return rerr
-		}
-		level := len(strings.Split(rel, string(filepath.Separator)))
-		if level > depth {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if len(entries) >= b.caps.MaxListEntries {
-			truncated = true
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		relToRoot, rerr := filepath.Rel(relRoot, p)
-		if rerr != nil {
-			return rerr
-		}
-		var size int64
-		if !d.IsDir() {
-			if fi, ferr := d.Info(); ferr == nil {
-				size = fi.Size()
-			}
-		}
-		entries = append(entries, dirEntry{Path: filepath.ToSlash(relToRoot), Dir: d.IsDir(), Size: size})
-		return nil
-	})
+	ls := listDirState{relRoot: relRoot, depth: depth, max: b.caps.MaxListEntries}
+	walkErr := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error { return ls.visit(base, p, d, err) })
 	if walkErr != nil {
 		return listDirResult{}, fmt.Errorf("list_dir: %w", walkErr)
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return listDirResult{Entries: entries, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
+	sort.Slice(ls.entries, func(i, j int) bool { return ls.entries[i].Path < ls.entries[j].Path })
+	return listDirResult{Entries: ls.entries, Truncated: ls.truncated, Cwd: displayCwd(b.cwd)}, nil
+}
+
+// listDirState: one WalkDir pass for list_dir - depth cap, entry cap (truncated
+// on overflow), file sizes. Mutated in place by visit.
+type listDirState struct {
+	entries   []dirEntry
+	truncated bool
+	relRoot   string
+	depth     int
+	max       int
+}
+
+// visit: a single list_dir WalkDir visit (the depth/entry-cap rules live here so
+// the walk callback stays a one-liner).
+func (ls *listDirState) visit(base, p string, d fs.DirEntry, err error) error {
+	if err != nil {
+		return err
+	}
+	if p == base {
+		return nil
+	}
+	rel, rerr := filepath.Rel(base, p)
+	if rerr != nil {
+		return rerr
+	}
+	level := len(strings.Split(rel, string(filepath.Separator)))
+	if level > ls.depth {
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if len(ls.entries) >= ls.max {
+		ls.truncated = true
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	relToRoot, rerr := filepath.Rel(ls.relRoot, p)
+	if rerr != nil {
+		return rerr
+	}
+	var size int64
+	if !d.IsDir() {
+		if fi, ferr := d.Info(); ferr == nil {
+			size = fi.Size()
+		}
+	}
+	ls.entries = append(ls.entries, dirEntry{Path: filepath.ToSlash(relToRoot), Dir: d.IsDir(), Size: size})
+	return nil
 }
 
 type globArgs struct {
@@ -432,56 +445,70 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 		ctxLines = 0
 	}
 
-	var matches []grepMatch
-	truncated := false
-	totalBytes := 0
-	walkErr := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if truncated {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.IsDir() {
-			// Never descend into vendored/generated trees unless path targets one.
-			if p != base && workspace.SkipDir(d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if a.Glob != "" {
-			if ok, _ := filepath.Match(a.Glob, d.Name()); !ok {
-				return nil
-			}
-		}
-		fileMatches, ferr := grepFile(p, re, ctxLines)
-		if ferr != nil {
-			return nil // unreadable, binary, or too large: skip silently
-		}
-		relToRoot, rerr := filepath.Rel(relRoot, p)
-		if rerr != nil {
-			return rerr
-		}
-		for _, fm := range fileMatches {
-			if len(matches) >= b.caps.MaxResults || totalBytes >= grepTotalMaxBytes {
-				truncated = true
-				break
-			}
-			// Cap per-match text too; a "line" can be megabytes.
-			fm.Text = truncateMiddle(fm.Text, grepMatchMaxChars)
-			fm.Path = filepath.ToSlash(relToRoot)
-			totalBytes += len(fm.Text)
-			matches = append(matches, fm)
-		}
-		return nil
-	})
+	gw := grepWalk{relRoot: relRoot, glob: a.Glob, re: re, ctxLines: ctxLines, max: b.caps.MaxResults}
+	walkErr := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error { return gw.visit(base, p, d, err) })
 	if walkErr != nil {
 		return grepResult{}, fmt.Errorf("grep: %w", walkErr)
 	}
-	return grepResult{Matches: matches, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
+	return grepResult{Matches: gw.matches, Truncated: gw.truncated, Cwd: displayCwd(b.cwd)}, nil
+}
+
+// grepWalk: one WalkDir pass for grep - truncation, vendored-dir skipping,
+// glob filtering, and the per-file match caps. Mutated in place by visit.
+type grepWalk struct {
+	relRoot    string
+	glob       string
+	re         *regexp.Regexp
+	ctxLines   int
+	max        int
+	matches    []grepMatch
+	totalBytes int
+	truncated  bool
+}
+
+// visit: a single grep WalkDir visit (the walk callback itself stays a one-liner).
+func (gw *grepWalk) visit(base, p string, d fs.DirEntry, err error) error {
+	if err != nil {
+		return err
+	}
+	if gw.truncated {
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if d.IsDir() {
+		// Never descend into vendored/generated trees unless path targets one.
+		if p != base && workspace.SkipDir(d.Name()) {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if gw.glob != "" {
+		if ok, _ := filepath.Match(gw.glob, d.Name()); !ok {
+			return nil
+		}
+	}
+	fileMatches, ferr := grepFile(p, gw.re, gw.ctxLines)
+	if ferr != nil {
+		return nil // unreadable, binary, or too large: skip silently
+	}
+	relToRoot, rerr := filepath.Rel(gw.relRoot, p)
+	if rerr != nil {
+		return rerr
+	}
+	for _, fm := range fileMatches {
+		if len(gw.matches) >= gw.max || gw.totalBytes >= grepTotalMaxBytes {
+			gw.truncated = true
+			break
+		}
+		// Cap per-match text too; a "line" can be megabytes.
+		fm.Text = truncateMiddle(fm.Text, grepMatchMaxChars)
+		fm.Path = filepath.ToSlash(relToRoot)
+		gw.totalBytes += len(fm.Text)
+		gw.matches = append(gw.matches, fm)
+	}
+	return nil
 }
 
 // grepFile: scans one file for matching lines. Binary or too-large files are skipped.

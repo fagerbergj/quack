@@ -117,21 +117,7 @@ func ComputeStats(now time.Time, weeks int, votes []VoteEvent, recalls []RecallE
 		return i, ok
 	}
 	for _, v := range votes {
-		i, ok := inRange(v.At)
-		if !ok {
-			continue
-		}
-		// absorbedBy doesn't change a WEEKLY total: a vote counts once
-		// regardless of which memory id it names. Per-memory attribution
-		// across a merge is fold.Result.FoldAbsorption's job, not this one.
-		switch v.Vote {
-		case VoteSupported:
-			out[i].Supported++
-		case VoteContradicted:
-			out[i].Contradicted++
-		case VoteNotRelevant:
-			out[i].NotRelevant++
-		}
+		tallyOneVote(out, inRange, v)
 	}
 	for _, r := range recalls {
 		if i, ok := inRange(r.At); ok {
@@ -139,16 +125,7 @@ func ComputeStats(now time.Time, weeks int, votes []VoteEvent, recalls []RecallE
 		}
 	}
 	for _, o := range ops {
-		i, ok := inRange(o.At)
-		if !ok {
-			continue
-		}
-		switch OpsLogOp(o.Op) {
-		case OpAdd:
-			out[i].Minted++
-		case OpInvalidate:
-			out[i].Invalidated++
-		}
+		tallyOneOp(out, inRange, o)
 	}
 	for i := range out {
 		if ruled := out[i].Supported + out[i].Contradicted; ruled > 0 {
@@ -159,4 +136,36 @@ func ComputeStats(now time.Time, weeks int, votes []VoteEvent, recalls []RecallE
 		}
 	}
 	return out
+}
+
+// tallyOneVote credits one vote's weekly bucket - absorbedBy doesn't change a WEEKLY
+// total: a vote counts once regardless of which memory id it names. Per-memory
+// attribution across a merge is fold.Result.FoldAbsorption's job, not this one.
+func tallyOneVote(out []WeekStats, inRange func(time.Time) (int, bool), v VoteEvent) {
+	i, ok := inRange(v.At)
+	if !ok {
+		return
+	}
+	switch v.Vote {
+	case VoteSupported:
+		out[i].Supported++
+	case VoteContradicted:
+		out[i].Contradicted++
+	case VoteNotRelevant:
+		out[i].NotRelevant++
+	}
+}
+
+// tallyOneOp credits one memory_ops add/invalidate row's weekly bucket.
+func tallyOneOp(out []WeekStats, inRange func(time.Time) (int, bool), o OpEvent) {
+	i, ok := inRange(o.At)
+	if !ok {
+		return
+	}
+	switch OpsLogOp(o.Op) {
+	case OpAdd:
+		out[i].Minted++
+	case OpInvalidate:
+		out[i].Invalidated++
+	}
 }

@@ -91,41 +91,53 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	scrub := workspaceScrub(d)
 	out := make([]tool.Tool, 0, len(names))
 	for _, name := range names {
-		var t tool.Tool
-		var err error
-		if ctor, ok := registry[name]; ok {
-			if t, err = ctor(d); err != nil {
-				return nil, fmt.Errorf("tools: build %q: %w", name, err)
-			}
-		} else if et, ok := d.ExtTools[name]; ok {
-			if et == nil {
-				return nil, fmt.Errorf("tools: tool name %q is provided by more than one extension; use its <plugin>_%s prefixed form", name, name)
-			}
-			t = et
-		} else {
-			return nil, fmt.Errorf("tools: unknown builtin tool %q", name)
-		}
-		t = scrub(t)
-		tier, guarded := parseGuardTier(d.Guards[name])
-
-		direct := t
-		if guarded {
-			if direct, err = newGuardedTool(direct, tier, d.SafetyJudge, d.Sessions); err != nil {
-				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
-			}
-		}
-		if direct, err = repeatWrap(direct, repeats, d.RepeatGuardTripped); err != nil {
-			return nil, fmt.Errorf("tools: repeat guard %q: %w", name, err)
-		}
-		if direct, err = cancelWrap(direct, name, d); err != nil {
+		t, err := buildOneTool(name, d, repeats, scrub)
+		if err != nil {
 			return nil, err
 		}
-		if direct, err = emitWrap(direct, d.LedgerCoords); err != nil {
-			return nil, fmt.Errorf("tools: emit wrap %q: %w", name, err)
-		}
-		out = append(out, direct)
+		out = append(out, t)
 	}
 	return out, nil
+}
+
+// buildOneTool: resolve one name (builtin registry, extension-provided, or error),
+// then apply the wrapper chain: scrub, guard, repeat, cancel, emit.
+func buildOneTool(name string, d Deps, repeats *repeatStates, scrub func(tool.Tool) tool.Tool) (tool.Tool, error) {
+	var (
+		t   tool.Tool
+		err error
+	)
+	if ctor, ok := registry[name]; ok {
+		if t, err = ctor(d); err != nil {
+			return nil, fmt.Errorf("tools: build %q: %w", name, err)
+		}
+	} else if et, ok := d.ExtTools[name]; ok {
+		if et == nil {
+			return nil, fmt.Errorf("tools: tool name %q is provided by more than one extension; use its <plugin>_%s prefixed form", name, name)
+		}
+		t = et
+	} else {
+		return nil, fmt.Errorf("tools: unknown builtin tool %q", name)
+	}
+	t = scrub(t)
+	tier, guarded := parseGuardTier(d.Guards[name])
+
+	direct := t
+	if guarded {
+		if direct, err = newGuardedTool(direct, tier, d.SafetyJudge, d.Sessions); err != nil {
+			return nil, fmt.Errorf("tools: guard %q: %w", name, err)
+		}
+	}
+	if direct, err = repeatWrap(direct, repeats, d.RepeatGuardTripped); err != nil {
+		return nil, fmt.Errorf("tools: repeat guard %q: %w", name, err)
+	}
+	if direct, err = cancelWrap(direct, name, d); err != nil {
+		return nil, err
+	}
+	if direct, err = emitWrap(direct, d.LedgerCoords); err != nil {
+		return nil, fmt.Errorf("tools: emit wrap %q: %w", name, err)
+	}
+	return direct, nil
 }
 
 // workspaceScrub: respells workspace paths in errors. Identity when no workspace.

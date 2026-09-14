@@ -66,65 +66,24 @@ const maxCheckOutputChars = 2_000
 
 // checksPassCriterion runs cfg.Checks or derived checks. Workspace.RunPipeline - argv-only. Weakest-link.
 func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
-	if len(cfg.Checks) == 0 && !cfg.DeriveChecks {
-		return skipChecks(ctx, skipReasonNotConfigured)
-	}
-	if cfg.Workspace == nil {
-		if len(cfg.Checks) == 0 {
-			return skipChecks(ctx, skipReasonNoWorkspace) // nothing to derive from - not a failure
-		}
-		// Checks set but no workspace wired: fail closed (config bug).
-		return criterionScore{Score: 0, Reason: "deterministic: this node has checks configured but no workspace is wired up (internal error - contact the operator)"}, true
-	}
-	dir, ok, err := checksDir(cfg)
-	if err != nil {
-		return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: checks workdir %q: %v", cfg.Workdir, err)}, true
-	}
-	if !ok {
-		// Planner omitted workdir and no single repo to derive from - skip rather than fail on a planner omission.
-		slog.Info("no single repo found to derive checks from; skipping checks", "component", "vetting", "node", cfg.NodeID)
-		return skipChecks(ctx, skipReasonNoRepo)
+	dir, checks, exit := resolveChecks(ctx, cfg)
+	if exit != nil {
+		return exit.score, exit.ok
 	}
 	caps := checksCaps(cfg)
 	workspace.RunCheckSetup(dir, cfg.CheckSetup, caps)
-	checks := cfg.Checks
-	if len(checks) == 0 {
-		checks = deriveChecks(dir, cfg.CheckCommands)
-		if len(checks) == 0 {
-			if bs := unsupportedBuildSystem(dir); bs != "" {
-				slog.Warn("repo has a build system but no checks could be derived; this node is gated on NOTHING",
-					"component", "vetting", "node", cfg.NodeID, "dir", dir, "build_system", bs)
-				return skipChecks(ctx, skipReasonUnsupportedBuild)
-			}
-			slog.Info("no checks derived from the repo; skipping checks", "component", "vetting", "node", cfg.NodeID, "dir", dir)
-			return skipChecks(ctx, skipReasonNoChecksDerived)
-		}
-		slog.Info("derived checks from the repo", "component", "vetting", "node", cfg.NodeID, "dir", dir, "checks", checks)
-	}
 	var preexisting []string
 	for _, check := range checks {
-		stages, err := workspace.SplitPipeline(check)
-		if err != nil {
-			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
+		out := runOneCheck(ctx, cfg, dir, check, caps)
+		if out.waived {
+			preexisting = append(preexisting, check)
+			continue
 		}
-		res, err := workspace.RunPipeline(ctx, dir, stages, caps)
-		var probeResult map[string]any
-		if err == nil {
-			probeResult = map[string]any{"exit_code": res.ExitCode, "output": boundCheckOutput(res.Output)}
-		}
-		emitProbeEvent(ctx, probeChecksPass, map[string]any{"check": check}, probeResult, err)
-		if err != nil {
-			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
-		}
-		if res.ExitCode != 0 {
-			// Don't gate on pre-existing failures in the base commit (baseline.go).
-			if failsAtBase(dir, check, caps, cfg.CheckSetup) {
-				slog.Warn("check already fails at base; not gating on it", "component", "vetting", "node", cfg.NodeID, "check", check)
-				preexisting = append(preexisting, check)
-				continue
+		if out.failed {
+			if out.exitFail {
+				out.reason += preexistingNote(preexisting)
 			}
-			return criterionScore{Score: 0, Reason: fmt.Sprintf(
-				"deterministic: check %q failed (exit %d):\n%s%s", check, res.ExitCode, boundCheckOutput(res.Output), preexistingNote(preexisting))}, true
+			return criterionScore{Score: 0, Reason: out.reason}, true
 		}
 	}
 	// All derived checks waived - materially different from "checks passed".
@@ -132,6 +91,92 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 		slog.Warn("all derived checks waived for this node; no deterministic verification ran", "component", "vetting", "node", cfg.NodeID)
 	}
 	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d check(s) passed%s", len(checks), preexistingNote(preexisting))}, true
+}
+
+// checksGateExit: a terminal outcome from resolveChecks (skip or fail-closed).
+type checksGateExit struct {
+	score criterionScore
+	ok    bool
+}
+
+// resolveChecks resolves the checks workdir and the commands to run (explicit,
+// or derived from the repo), or a terminal skip/fail when the node can run none.
+func resolveChecks(ctx context.Context, cfg Config) (string, []string, *checksGateExit) {
+	if len(cfg.Checks) == 0 && !cfg.DeriveChecks {
+		s, ok := skipChecks(ctx, skipReasonNotConfigured)
+		return "", nil, &checksGateExit{s, ok}
+	}
+	if cfg.Workspace == nil {
+		if len(cfg.Checks) == 0 {
+			s, ok := skipChecks(ctx, skipReasonNoWorkspace) // nothing to derive from - not a failure
+			return "", nil, &checksGateExit{s, ok}
+		}
+		// Checks set but no workspace wired: fail closed (config bug).
+		return "", nil, &checksGateExit{criterionScore{Score: 0, Reason: "deterministic: this node has checks configured but no workspace is wired up (internal error - contact the operator)"}, true}
+	}
+	dir, ok, err := checksDir(cfg)
+	if err != nil {
+		return "", nil, &checksGateExit{criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: checks workdir %q: %v", cfg.Workdir, err)}, true}
+	}
+	if !ok {
+		// Planner omitted workdir and no single repo to derive from - skip rather than fail on a planner omission.
+		slog.Info("no single repo found to derive checks from; skipping checks", "component", "vetting", "node", cfg.NodeID)
+		s, ok := skipChecks(ctx, skipReasonNoRepo)
+		return "", nil, &checksGateExit{s, ok}
+	}
+	checks := cfg.Checks
+	if len(checks) == 0 {
+		checks = deriveChecks(dir, cfg.CheckCommands)
+		if len(checks) == 0 {
+			if bs := unsupportedBuildSystem(dir); bs != "" {
+				slog.Warn("repo has a build system but no checks could be derived; this node is gated on NOTHING",
+					"component", "vetting", "node", cfg.NodeID, "dir", dir, "build_system", bs)
+				s, ok := skipChecks(ctx, skipReasonUnsupportedBuild)
+				return "", nil, &checksGateExit{s, ok}
+			}
+			slog.Info("no checks derived from the repo; skipping checks", "component", "vetting", "node", cfg.NodeID, "dir", dir)
+			s, ok := skipChecks(ctx, skipReasonNoChecksDerived)
+			return "", nil, &checksGateExit{s, ok}
+		}
+		slog.Info("derived checks from the repo", "component", "vetting", "node", cfg.NodeID, "dir", dir, "checks", checks)
+	}
+	return dir, checks, nil
+}
+
+// checkOutcome: one check's runOneCheck result - failed carries reason
+// (exitFail adds the pre-existing note), waived means failed at base and ignored.
+type checkOutcome struct {
+	failed   bool
+	exitFail bool
+	waived   bool
+	reason   string
+}
+
+// runOneCheck runs one check command: SplitPipeline + RunPipeline + probe event.
+func runOneCheck(ctx context.Context, cfg Config, dir, check string, caps workspace.Caps) checkOutcome {
+	stages, err := workspace.SplitPipeline(check)
+	if err != nil {
+		return checkOutcome{failed: true, reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}
+	}
+	res, err := workspace.RunPipeline(ctx, dir, stages, caps)
+	var probeResult map[string]any
+	if err == nil {
+		probeResult = map[string]any{"exit_code": res.ExitCode, "output": boundCheckOutput(res.Output)}
+	}
+	emitProbeEvent(ctx, probeChecksPass, map[string]any{"check": check}, probeResult, err)
+	if err != nil {
+		return checkOutcome{failed: true, reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}
+	}
+	if res.ExitCode != 0 {
+		// Don't gate on pre-existing failures in the base commit (baseline.go).
+		if failsAtBase(dir, check, caps, cfg.CheckSetup) {
+			slog.Warn("check already fails at base; not gating on it", "component", "vetting", "node", cfg.NodeID, "check", check)
+			return checkOutcome{waived: true}
+		}
+		return checkOutcome{failed: true, exitFail: true, reason: fmt.Sprintf(
+			"deterministic: check %q failed (exit %d):\n%s", check, res.ExitCode, boundCheckOutput(res.Output))}
+	}
+	return checkOutcome{}
 }
 
 // preexistingNote names checks ignored because they fail at base commit.
@@ -189,35 +234,49 @@ func checksDir(cfg Config) (string, bool, error) {
 	}
 	if len(cfg.Checks) > 0 {
 		// Run explicit checks where the planner said. Fail closed on missing workdir.
-		if nodeStart != chatStart && !isDir(nodeStart) && isDir(chatStart) {
-			return chatStart, true, nil
-		}
-		if !isDir(nodeStart) {
-			nodeBare, berr := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
-			// Only fall back to the bare node dir when it IS the repo the discarded
-			// workdir segment named - otherwise an uncreated subdir silently falls
-			// back onto an unrelated module and reports a false pass (quack#1083).
-			if berr == nil && repoNameMatches(nodeBare, workdir) {
-				return nodeBare, true, nil
-			}
-			// cfg.Setup is set only when this node has one deterministic pre-cloned checkout (dag.setupQualifyingAgent) - unlike the
-			// ambiguous case above, nodeBare is unambiguously the target repo,
-			// so name it for the planner instead of fail-closing on the raw "workdir does not exist" exec error.
-			if berr == nil && cfg.Setup != nil && isDir(nodeBare) {
-				return "", false, fmt.Errorf("planner set workdir %q; the repo root is %q", workdir, nodeBare)
-			}
-		}
-		return nodeStart, true, nil
+		return explicitChecksDir(cfg, workdir, nodeStart, chatStart)
 	}
+	if dir, ok := deriveSingleRepo(nodeStart, chatStart); ok {
+		return dir, true, nil
+	}
+	return "", false, nil
+}
+
+// explicitChecksDir: the planner-named workdir for explicit checks - fail
+// closed on a missing workdir, node-first to avoid sibling clones (#1083).
+func explicitChecksDir(cfg Config, workdir, nodeStart, chatStart string) (string, bool, error) {
+	if nodeStart != chatStart && !isDir(nodeStart) && isDir(chatStart) {
+		return chatStart, true, nil
+	}
+	if !isDir(nodeStart) {
+		nodeBare, berr := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
+		// Only fall back to the bare node dir when it IS the repo the discarded
+		// workdir segment named - otherwise an uncreated subdir silently falls
+		// back onto an unrelated module and reports a false pass (quack#1083).
+		if berr == nil && repoNameMatches(nodeBare, workdir) {
+			return nodeBare, true, nil
+		}
+		// cfg.Setup is set only when this node has one deterministic pre-cloned checkout (dag.setupQualifyingAgent) - unlike the
+		// ambiguous case above, nodeBare is unambiguously the target repo,
+		// so name it for the planner instead of fail-closing on the raw "workdir does not exist" exec error.
+		if berr == nil && cfg.Setup != nil && isDir(nodeBare) {
+			return "", false, fmt.Errorf("planner set workdir %q; the repo root is %q", workdir, nodeBare)
+		}
+	}
+	return nodeStart, true, nil
+}
+
+// deriveSingleRepo: the one repo dir found by walking from the node start, then the chat start.
+func deriveSingleRepo(nodeStart, chatStart string) (string, bool) {
 	for _, start := range []string{nodeStart, chatStart} {
 		if repos := workspace.FindRepos(start); len(repos) == 1 {
-			return repos[0], true, nil
+			return repos[0], true
 		}
 		if nodeStart == chatStart {
 			break
 		}
 	}
-	return "", false, nil
+	return "", false
 }
 
 // repoNameMatches reports whether dir is a git repo whose origin identity

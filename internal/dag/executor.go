@@ -173,22 +173,28 @@ func (s *DagStream) Finish() {
 		if len(s.ds.needsInput) > 0 && !s.ds.started[n.ID] {
 			continue
 		}
-		delivered := s.ds.deliveredOf != nil && s.ds.deliveredOf(n.ID)
-		if !delivered && s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
-			s.yield(stream.NodePaused(n.ID), nil)
-			continue
-		}
-		if !delivered && s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
-			s.yield(stream.WithContextID(stream.NodeCancelled(n.ID), s.ds.contextOf(n.ID)), nil)
-			continue
-		}
-		if !delivered && strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
-			ev := stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID]))
-			s.yield(stream.WithContextID(ev, s.ds.contextOf(n.ID)), nil)
-			continue
-		}
-		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
+		s.emitFinishTerminal(n)
 	}
+}
+
+// emitFinishTerminal: Finish's terminal event for one settled node - the
+// delivered/paused/cancelled checks in that priority order, then done.
+func (s *DagStream) emitFinishTerminal(n Node) {
+	delivered := s.ds.deliveredOf != nil && s.ds.deliveredOf(n.ID)
+	if !delivered && s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
+		s.yield(stream.NodePaused(n.ID), nil)
+		return
+	}
+	if !delivered && s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
+		s.yield(stream.WithContextID(stream.NodeCancelled(n.ID), s.ds.contextOf(n.ID)), nil)
+		return
+	}
+	if !delivered && strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
+		ev := stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID]))
+		s.yield(stream.WithContextID(ev, s.ds.contextOf(n.ID)), nil)
+		return
+	}
+	s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
 }
 
 // RetryPlanInNode: re-runs target node + descendants with seeded outputs.

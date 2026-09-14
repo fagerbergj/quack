@@ -69,38 +69,46 @@ func (l *EventLog) run() {
 			}
 		}
 		if len(batch) > 0 {
-			persisted := batch
-			if err := l.store.InsertChatEvents(context.Background(), batch); err != nil {
-				// One multi-row INSERT: a single bad row (e.g. a duplicate seq
-				// from a Reset/retry race) fails the whole statement. Retry
-				// row-by-row so that one bad row costs one row, not the batch.
-				slog.Warn("event log: batch insert failed; retrying rows individually", "component", "eventlog", "n", len(batch), "err", err)
-				persisted = persisted[:0]
-				for _, ce := range batch {
-					if err := l.store.InsertChatEvent(context.Background(), ce); err != nil {
-						slog.Warn("event log: persist failed; dropping", "component", "eventlog", "chat", ce.ChatID, "seq", ce.Seq, "err", err)
-						continue
-					}
-					persisted = append(persisted, ce)
-				}
-			}
-			// Trim once per chat per batch, to the max persisted seq seen for that chat here.
-			maxSeq := map[string]int64{}
-			for _, e := range persisted {
-				if e.Seq > maxSeq[e.ChatID] {
-					maxSeq[e.ChatID] = e.Seq
-				}
-			}
-			for chatID, seq := range maxSeq {
-				if seq > stream.MaxReplay {
-					if err := l.store.TrimChatEvents(context.Background(), chatID, seq-stream.MaxReplay); err != nil {
-						slog.Warn("event log: trim failed", "component", "eventlog", "chat", chatID, "err", err)
-					}
-				}
-			}
+			l.persistBatch(batch)
 		}
 		for _, done := range flushes {
 			close(done)
+		}
+	}
+}
+
+// persistBatch: one multi-row INSERT, falling back to row-by-row when the batch
+// fails - a single bad row (e.g. a duplicate seq from a Reset/retry race) fails
+// the whole statement, so retry row-by-row so that one bad row costs one row, not the batch.
+func (l *EventLog) persistBatch(batch []store.ChatEvent) {
+	persisted := batch
+	if err := l.store.InsertChatEvents(context.Background(), batch); err != nil {
+		slog.Warn("event log: batch insert failed; retrying rows individually", "component", "eventlog", "n", len(batch), "err", err)
+		persisted = persisted[:0]
+		for _, ce := range batch {
+			if err := l.store.InsertChatEvent(context.Background(), ce); err != nil {
+				slog.Warn("event log: persist failed; dropping", "component", "eventlog", "chat", ce.ChatID, "seq", ce.Seq, "err", err)
+				continue
+			}
+			persisted = append(persisted, ce)
+		}
+	}
+	l.trimPersisted(persisted)
+}
+
+// trimPersisted trims once per chat per batch, to the max persisted seq seen for that chat here.
+func (l *EventLog) trimPersisted(persisted []store.ChatEvent) {
+	maxSeq := map[string]int64{}
+	for _, e := range persisted {
+		if e.Seq > maxSeq[e.ChatID] {
+			maxSeq[e.ChatID] = e.Seq
+		}
+	}
+	for chatID, seq := range maxSeq {
+		if seq > stream.MaxReplay {
+			if err := l.store.TrimChatEvents(context.Background(), chatID, seq-stream.MaxReplay); err != nil {
+				slog.Warn("event log: trim failed", "component", "eventlog", "chat", chatID, "err", err)
+			}
 		}
 	}
 }

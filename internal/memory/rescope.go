@@ -43,25 +43,8 @@ func (s *Store) Rescope(ctx context.Context, resolve ChatRepoResolver, apply boo
 				return RescopeResult{}, fmt.Errorf("memory: rescope list %q: %w", bucket, err)
 			}
 			for _, m := range mems {
-				if m.ChatID == "" {
-					result.SkippedNoProvenance++
-					continue
-				}
-				repoKey, ok := resolve(ctx, m.ChatID)
-				if !ok || repoKey == "" {
-					continue
-				}
-				stat := result.ByRepo[repoKey]
-				if stat == nil {
-					stat = &RescopeRepoStat{}
-					result.ByRepo[repoKey] = stat
-				}
-				stat.Count++
-				if len(stat.Examples) < rescopeExamplesPerRepo {
-					stat.Examples = append(stat.Examples, preview(m.Content))
-				}
-				if apply {
-					moves = append(moves, rescopeMove{id: m.ID, srcBucket: bucket, dstBucket: prefixed(bucketRepo, repoKey)})
+				if mv := rescopeOne(ctx, m, resolve, apply, &result, bucket); mv != nil {
+					moves = append(moves, *mv)
 				}
 			}
 			offset += len(mems)
@@ -80,4 +63,31 @@ func (s *Store) Rescope(ctx context.Context, resolve ChatRepoResolver, apply boo
 		s.logOp(ctx, mv.id, OpUpdate, ActorRescope, "rescope: "+mv.srcBucket+" -> "+mv.dstBucket)
 	}
 	return result, nil
+}
+
+// rescopeOne is Rescope's per-memory step: tally the resolved repo into the
+// report and record the move when apply is set. nil = not a move: no
+// provenance chat_id (counted as skipped) or the chat has no GitHub origin.
+func rescopeOne(ctx context.Context, m Memory, resolve ChatRepoResolver, apply bool, result *RescopeResult, srcBucket string) *rescopeMove {
+	if m.ChatID == "" {
+		result.SkippedNoProvenance++
+		return nil
+	}
+	repoKey, ok := resolve(ctx, m.ChatID)
+	if !ok || repoKey == "" {
+		return nil
+	}
+	stat := result.ByRepo[repoKey]
+	if stat == nil {
+		stat = &RescopeRepoStat{}
+		result.ByRepo[repoKey] = stat
+	}
+	stat.Count++
+	if len(stat.Examples) < rescopeExamplesPerRepo {
+		stat.Examples = append(stat.Examples, preview(m.Content))
+	}
+	if !apply {
+		return nil
+	}
+	return &rescopeMove{id: m.ID, srcBucket: srcBucket, dstBucket: prefixed(bucketRepo, repoKey)}
 }
