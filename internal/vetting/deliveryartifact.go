@@ -82,10 +82,20 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 		}
 	}
 
-	var comments []ReviewComment   // for GitHub's inline posting
-	var highlights []ReviewComment // Body = f.Title (keeps the label prefix), for the verdict-line counts + Highlights table
-	var newIDs, carriedIDs, resolvedIDs []string
-	for _, fid := range rec.FindingIDs {
+	comments, highlights, newIDs, carriedIDs, resolvedIDs := classifyReviewFindings(ctx, c, firstDelivery, rec.FindingIDs)
+	in := reviewOverviewFromArtifact(cfg, firstDelivery, priorHeadSHA, rec, highlights, len(resolvedIDs))
+	body := renderReviewOverview(in)
+
+	slog.Debug("rendering review from code_review artifact", "component", "vetting", "node", nodeID,
+		"id", id, "revision", rev, "new", len(newIDs), "carried", len(carriedIDs), "resolved", len(resolvedIDs))
+
+	return StagedDelivery{Kind: "review", Event: rec.Verdict, Body: body, Comments: comments}, true
+}
+
+// classifyReviewFindings: split this round's findings into new / carried-over /
+// resolved, with the GitHub inline comments and the highlight rows.
+func classifyReviewFindings(ctx context.Context, c *recordstore.Client, firstDelivery bool, findingIDs []string) (comments, highlights []ReviewComment, newIDs, carriedIDs, resolvedIDs []string) {
+	for _, fid := range findingIDs {
 		fRaw, _, fok, ferr := c.Latest(ctx, fid)
 		if ferr != nil || !fok {
 			continue
@@ -110,7 +120,12 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Body: highlightBody(f)})
 		}
 	}
+	return
+}
 
+// reviewOverviewFromArtifact: the overview input for an artifact-rendered review
+// (legacy Summary fallback, re-review deltas, git scope).
+func reviewOverviewFromArtifact(cfg Config, firstDelivery bool, priorHeadSHA string, rec CodeReviewRecord, highlights []ReviewComment, resolvedCount int) reviewOverviewInput {
 	in := reviewOverviewInput{
 		Verdict:  rec.Verdict,
 		Takeaway: rec.Takeaway,
@@ -119,14 +134,13 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 		Comments: highlights,
 	}
 	// Legacy read path: a pre-migration record has Summary but never
-	// Takeaway/Verified/Notes - render it under Notes, truncated, so old
-	// history still displays (renderReviewOverview's LegacySummary).
+	// Takeaway/Verified/Notes - render it under Notes, truncated (LegacySummary).
 	if strings.TrimSpace(rec.Takeaway) == "" && len(rec.Verified) == 0 && len(rec.Notes) == 0 {
 		in.LegacySummary = rec.Summary
 	}
 	if !firstDelivery {
 		in.SinceKnown = true
-		in.Resolved = len(resolvedIDs)
+		in.Resolved = resolvedCount
 		in.Open = len(highlights)
 		in.Dismissed = rec.Dismissed
 	}
@@ -143,12 +157,7 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 			}
 		}
 	}
-	body := renderReviewOverview(in)
-
-	slog.Debug("rendering review from code_review artifact", "component", "vetting", "node", nodeID,
-		"id", id, "revision", rev, "new", len(newIDs), "carried", len(carriedIDs), "resolved", len(resolvedIDs))
-
-	return StagedDelivery{Kind: "review", Event: rec.Verdict, Body: body, Comments: comments}, true
+	return in
 }
 
 // renderPRBodyFromArtifact loads the latest pr_body blob and overlays it

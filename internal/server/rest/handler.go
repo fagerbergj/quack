@@ -860,29 +860,10 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 	case dag.StatusPaused:
-		reason := dag.PauseUser
-		if body.Reason != nil && *body.Reason != "" {
-			reason = dag.PauseReason(*body.Reason)
-		}
-		// awaiting_input is system-owned (the worker's interrupt sets it, and
-		// markPaused treats it specially); clients may only pause as user/shutdown.
-		if reason != dag.PauseUser && reason != dag.PauseShutdown {
-			errMsg(w, http.StatusBadRequest, "reason must be \"user\" or \"shutdown\"")
-			return
-		}
-		if !h.orch.PauseNode(chatID, nodeID, reason) {
-			writeJSON(w, http.StatusConflict, schema.TransitionError{
-				Error:   "node is not pausable right now (no live run); nothing was paused",
-				Current: wireStatus(current),
-				Allowed: allowedStatuses(current),
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusPaused))
+		h.pauseTransition(w, dn, chatID, nodeID, current, body)
 	case dag.StatusRunning:
-		// paused → running: a fresh re-run reusing the plan's stored outputs.
-		// A node parked awaiting_input must go through StartNode instead: its
-		// worker's ADK session (internal/agent.WorkerSessionID) survives the pause on purpose (#A2) with an unanswered function call at its tail, and retryNodeAsync's fresh dispatch would land in that SAME session without ever answering it, corrupting the history it appends to.
+		// paused → running: a fresh re-run reusing the plan's stored outputs. A node
+		// parked awaiting_input must go through StartNode instead (#A2).
 		if current == dag.StatusNeedsInput || (dn != nil && dag.PauseReason(dn.PauseReason) == dag.PauseAwaitingInput) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is awaiting an answer; use the start endpoint with the answer instead of retry",
@@ -891,34 +872,51 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 			})
 			return
 		}
-		if h.hub.Draining() {
-			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
-			return
-		}
-		if h.chatArchived(r.Context(), chatID) {
-			errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
-			return
-		}
-		if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
-			errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
-			return
-		}
-		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
+		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance)
 	case dag.StatusQueued:
-		if h.hub.Draining() {
-			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
-			return
-		}
-		if h.chatArchived(r.Context(), chatID) {
-			errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
-			return
-		}
-		if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
-			errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
-			return
-		}
-		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
+		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance)
 	}
+}
+
+// pauseTransition: the paused transition - user/shutdown pause via the live control.
+func (h *Handler) pauseTransition(w http.ResponseWriter, dn *store.DagNode, chatID schema.ChatID, nodeID schema.NodeID, current dag.NodeStatus, body schema.NodeStatusUpdateBody) {
+	reason := dag.PauseUser
+	if body.Reason != nil && *body.Reason != "" {
+		reason = dag.PauseReason(*body.Reason)
+	}
+	// awaiting_input is system-owned (the worker's interrupt sets it, and markPaused treats
+	// it specially); clients may only pause as user/shutdown.
+	if reason != dag.PauseUser && reason != dag.PauseShutdown {
+		errMsg(w, http.StatusBadRequest, "reason must be \"user\" or \"shutdown\"")
+		return
+	}
+	if !h.orch.PauseNode(chatID, nodeID, reason) {
+		writeJSON(w, http.StatusConflict, schema.TransitionError{
+			Error:   "node is not pausable right now (no live run); nothing was paused",
+			Current: wireStatus(current),
+			Allowed: allowedStatuses(current),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusPaused))
+}
+
+// dispatchRetry: the shared running/queued dispatch - drain check, archive check,
+// then a guarded retryNodeAsync.
+func (h *Handler) dispatchRetry(w http.ResponseWriter, r *http.Request, dp *store.DagPlan, chatID schema.ChatID, nodeID schema.NodeID, guidance string) {
+	if h.hub.Draining() {
+		errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
+		return
+	}
+	if h.chatArchived(r.Context(), chatID) {
+		errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
+		return
+	}
+	if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
+		errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
+		return
+	}
+	writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 }
 
 // StartNode is the explicit per-node "start" transition (#962): queued or

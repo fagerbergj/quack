@@ -62,107 +62,121 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				"call list_nodes first to reuse a node instead of hiring a new one.",
 		},
 		func(tc agent.Context, a editPlanArgs) (planUpsertResult, error) {
-			current, _, ok, err := loadDagPlan(tc, c)
+			current, err := editPlanPrecheck(tc, c, a.PlanID)
 			if err != nil {
-				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
-			}
-			if !ok {
-				return planUpsertResult{}, fmt.Errorf("edit_plan: no plan exists yet in this chat - call create_plan first")
-			}
-			if a.PlanID != "" && a.PlanID != current.PlanID {
-				return planUpsertResult{}, fmt.Errorf("edit_plan: plan_id %q is stale - the current plan is %q", a.PlanID, current.PlanID)
+				return planUpsertResult{}, err
 			}
 			if current.Status == "done" {
-				// The delivered-plan wording only fits when there are no assignments to
-				// even attempt: once assignments are given, any rejection of them
-				// (bad or not) must come from newPlanRecord verbatim - never masked by
-				// this message, or the model never learns what it actually got wrong.
-				if len(a.Assignments) == 0 {
-					if len(a.Remove) > 0 {
-						return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - there's nothing left to remove from; drop `remove` and give `assignments` to start a new plan", current.PlanID)
-					}
-					return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - it's finished; give `assignments` to start a new plan for further work", current.PlanID)
+				res, handled, err := editDeliveredPlan(tc, c, current, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a)
+				if handled || err != nil {
+					return res, err
 				}
-				res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a.Assignments, a.Setup, a.Delivery)
-				if err != nil {
-					return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
-				}
-				res.Summary = fmt.Sprintf("plan %q had already delivered; started a new plan, %s, from these assignments.\n", current.PlanID, res.PlanID) + res.Summary
-				return res, nil
 			}
 			if len(a.Assignments) == 0 && len(a.Remove) == 0 && a.Setup == nil && a.Delivery == nil {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: nothing to change - got plan_id %q with no assignments, remove, setup, "+
 					"or delivery; edit_plan accepts assignments (each with node_id or agent), remove, setup, and/or delivery - set at least one", a.PlanID)
 			}
-
-			remaining, err := removeAssignments(current.Assignments, a.Remove)
-			if err != nil {
-				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
-			}
-
-			existingNodes, err := listDagNodeRecords(tc, c)
-			if err != nil {
-				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
-			}
-			nodeAgent := map[string]string{}
-			for _, n := range existingNodes {
-				nodeAgent[n.NodeID] = n.Agent
-			}
-
-			var upserts []dag.Assignment
-			var minted []dag.DagNodeRecord
-			if len(a.Assignments) > 0 {
-				upserts, minted, err = upsertNodes(a.Assignments, existingNodes, nodeIsRunning, tc.SessionID(), allowedKinds)
-				if err != nil {
-					return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
-				}
-				for _, n := range minted {
-					nodeAgent[n.NodeID] = n.Agent
-				}
-				stampAssignmentMeta(tc, current.PlanID, nodeAgent, upserts, onAssignment)
-			}
-
-			rec := current
-			rec.Assignments = mergeAssignments(remaining, upserts)
-			if a.Setup != nil {
-				rec.Setup = a.Setup
-			}
-			if githubSetup != nil {
-				s := *githubSetup
-				rec.Setup = &s
-			}
-			if a.Delivery != nil {
-				rec.Delivery = a.Delivery
-			}
-
-			// dag_plan (which validates) saves before any minted dag_node, so a
-			// rejected call leaves no orphan "hired" node behind for list_nodes.
-			now := time.Now().UTC()
-			lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
-			if _, _, err := c.SaveStructured(tc, "dag_plan", rec, "", lineage); err != nil {
-				return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
-			}
-			for _, n := range minted {
-				nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
-				if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
-					// The dag_plan revision above already saved - a bare error here
-					// leaves a live plan referencing a node list_nodes won't show yet.
-					return planUpsertResult{}, fmt.Errorf("edit_plan: save dag_node %s: %w; "+
-						"the plan was already saved - call edit_plan again to replace it", n.NodeID, err)
-				}
-			}
-
-			// No dag_plan event here: node cards must not appear (or gain new
-			// ones) until execute actually dispatches them - execute's own
-			// DagPlanEvent is the only dag_plan emission (list_nodes shows the
-			// draft's current assignments as text meanwhile).
-			return planUpsertResult{
-				PlanID: rec.PlanID, Assignments: toAssignmentOutputs(rec.Assignments, nodeAgent),
-				Setup: rec.Setup, Delivery: rec.Delivery,
-				Summary: summarizePlanRecord(rec, nodeAgent) + setupIgnoredNote(a.Setup, githubSetup),
-			}, nil
+			return applyEdit(tc, c, current, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a)
 		},
 	)
+}
+
+// editPlanPrecheck: load the chat's current plan and reject a stale plan_id up front.
+func editPlanPrecheck(tc agent.Context, c *recordstore.Client, planID string) (dag.DagPlanRecord, error) {
+	current, _, ok, err := loadDagPlan(tc, c)
+	if err != nil {
+		return dag.DagPlanRecord{}, fmt.Errorf("edit_plan: %w", err)
+	}
+	if !ok {
+		return dag.DagPlanRecord{}, fmt.Errorf("edit_plan: no plan exists yet in this chat - call create_plan first")
+	}
+	if planID != "" && planID != current.PlanID {
+		return dag.DagPlanRecord{}, fmt.Errorf("edit_plan: plan_id %q is stale - the current plan is %q", planID, current.PlanID)
+	}
+	return current, nil
+}
+
+// editDeliveredPlan: editing an already-delivered plan starts a NEW plan from
+// assignments. Returns handled=true when the call was fully decided here.
+func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, a editPlanArgs) (planUpsertResult, bool, error) {
+	// The delivered-plan wording only fits when there are no assignments to even attempt:
+	// a rejection of given assignments must come from newPlanRecord verbatim.
+	if len(a.Assignments) == 0 {
+		if len(a.Remove) > 0 {
+			return planUpsertResult{}, true, fmt.Errorf("edit_plan: plan %q already delivered - there's nothing left to remove from; drop `remove` and give `assignments` to start a new plan", current.PlanID)
+		}
+		return planUpsertResult{}, true, fmt.Errorf("edit_plan: plan %q already delivered - it's finished; give `assignments` to start a new plan for further work", current.PlanID)
+	}
+	res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a.Assignments, a.Setup, a.Delivery)
+	if err != nil {
+		return planUpsertResult{}, true, fmt.Errorf("edit_plan: %w", err)
+	}
+	res.Summary = fmt.Sprintf("plan %q had already delivered; started a new plan, %s, from these assignments.\n", current.PlanID, res.PlanID) + res.Summary
+	return res, true, nil
+}
+
+// applyEdit: apply remove + upserts + setup/delivery to the current plan and save it
+// (dag_plan first, then any minted dag_node rows).
+func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, a editPlanArgs) (planUpsertResult, error) {
+	remaining, err := removeAssignments(current.Assignments, a.Remove)
+	if err != nil {
+		return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
+	}
+	existingNodes, err := listDagNodeRecords(tc, c)
+	if err != nil {
+		return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
+	}
+	nodeAgent := map[string]string{}
+	for _, n := range existingNodes {
+		nodeAgent[n.NodeID] = n.Agent
+	}
+	var upserts []dag.Assignment
+	var minted []dag.DagNodeRecord
+	if len(a.Assignments) > 0 {
+		upserts, minted, err = upsertNodes(a.Assignments, existingNodes, nodeIsRunning, tc.SessionID(), allowedKinds)
+		if err != nil {
+			return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
+		}
+		for _, n := range minted {
+			nodeAgent[n.NodeID] = n.Agent
+		}
+		stampAssignmentMeta(tc, current.PlanID, nodeAgent, upserts, onAssignment)
+	}
+	rec := current
+	rec.Assignments = mergeAssignments(remaining, upserts)
+	if a.Setup != nil {
+		rec.Setup = a.Setup
+	}
+	if githubSetup != nil {
+		s := *githubSetup
+		rec.Setup = &s
+	}
+	if a.Delivery != nil {
+		rec.Delivery = a.Delivery
+	}
+	// dag_plan (which validates) saves before any minted dag_node, so a rejected
+	// call leaves no orphan "hired" node behind for list_nodes.
+	now := time.Now().UTC()
+	lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
+	if _, _, err := c.SaveStructured(tc, "dag_plan", rec, "", lineage); err != nil {
+		return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
+	}
+	for _, n := range minted {
+		nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
+		if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
+			// The dag_plan revision above already saved - a bare error here leaves a live
+			// plan referencing a node list_nodes won't show yet.
+			return planUpsertResult{}, fmt.Errorf("edit_plan: save dag_node %s: %w; "+
+				"the plan was already saved - call edit_plan again to replace it", n.NodeID, err)
+		}
+	}
+	// No dag_plan event here: node cards must not appear (or gain new ones) until
+	// execute actually dispatches them.
+	return planUpsertResult{
+		PlanID: rec.PlanID, Assignments: toAssignmentOutputs(rec.Assignments, nodeAgent),
+		Setup: rec.Setup, Delivery: rec.Delivery,
+		Summary: summarizePlanRecord(rec, nodeAgent) + setupIgnoredNote(a.Setup, githubSetup),
+	}, nil
 }
 
 // removeAssignments drops every assignment whose node_id is in remove.

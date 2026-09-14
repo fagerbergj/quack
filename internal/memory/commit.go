@@ -322,9 +322,9 @@ func (s *Store) runConsolidation(ctx context.Context, sysPrompt, userPrompt stri
 	return parsed.Ops, nil
 }
 
-// apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE keeps the existing
-// id), DELETE invalidates in place (soft-delete only - design doc §4(a)/§8 phase 2), NOOP is skipped.
-// valid is the neighbours the consolidator was shown, keyed by id; an UPDATE/DELETE naming any other id is a hallucination (UPDATE -> fresh ADD, DELETE -> dropped). prov stamps a fresh ADD; an UPDATE carries forward the id's original minted_at/provenance/lifecycle from valid - a wording correction doesn't re-mint it or reset earned trust. Every write and invalidation logs one memory_ops row (actor=consolidator). Returns writes applied.
+// apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE
+// keeps the existing id), DELETE invalidates in place, NOOP is skipped.
+
 // apply: classify the ops, then apply writes and invalidations (their counts compose).
 func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenance, ops []op, valid map[string]neighbour) (int, error) {
 	var invalidations, writes []op

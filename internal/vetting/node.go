@@ -2263,17 +2263,7 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 	case "run_command":
 		s.act.ranCommand = true
 	case "git_clone":
-		if u, ok := args["url"].(string); ok && strings.TrimSpace(u) != "" {
-			s.act.clonedRepos = append(s.act.clonedRepos, strings.TrimSpace(u))
-		}
-		dir, _ := resp["dir"].(string)
-		if strings.TrimSpace(dir) == "" {
-			dir, _ = args["dir"].(string)
-		}
-		// Resolved against cwd at clone time via writtenRel.
-		if d := normalizePath(writtenRel(s.nodeDir, s.curCwd, dir)); d != "" {
-			s.act.clonedDirs = append(s.act.clonedDirs, d)
-		}
+		s.recordClone(args, resp)
 	case "git_checkout":
 		// commitDelivery needs the branch name the worker checked out.
 		if br, ok := resp["branch"].(string); ok && strings.TrimSpace(br) != "" {
@@ -2284,20 +2274,41 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 			s.act.currentBranch = strings.TrimSpace(cur)
 		}
 	case "read_file", "write_file", "edit_file", "delete_path":
-		// grounded_in_retrieval treats any read/written path as retrieval evidence (node.go RequireRetrieval check).
-		pth, ok := args["path"].(string)
-		if !ok {
-			return
-		}
-		if np := normalizePath(pth); np != "" {
-			s.act.paths[np] = true
-		}
-		// Record jail-relative path for judge re-read (buildChangedFilesSection).
-		if name == "write_file" || name == "edit_file" {
-			if jr := writtenRel(s.nodeDir, s.curCwd, pth); jr != "" && !s.writtenSeen[jr] {
-				s.writtenSeen[jr] = true
-				s.act.written = append(s.act.written, jr)
-			}
+		s.recordFileOp(name, args)
+	}
+}
+
+// recordClone: the clone URL and the resolved clone directory.
+func (s *activityScanner) recordClone(args, resp map[string]any) {
+	if u, ok := args["url"].(string); ok && strings.TrimSpace(u) != "" {
+		s.act.clonedRepos = append(s.act.clonedRepos, strings.TrimSpace(u))
+	}
+	dir, _ := resp["dir"].(string)
+	if strings.TrimSpace(dir) == "" {
+		dir, _ = args["dir"].(string)
+	}
+	// Resolved against cwd at clone time via writtenRel.
+	if d := normalizePath(writtenRel(s.nodeDir, s.curCwd, dir)); d != "" {
+		s.act.clonedDirs = append(s.act.clonedDirs, d)
+	}
+}
+
+// recordFileOp: retrieval evidence (any read/written path) plus the jail-relative
+// paths the judge can re-read (buildChangedFilesSection).
+func (s *activityScanner) recordFileOp(name string, args map[string]any) {
+	// grounded_in_retrieval treats any read/written path as retrieval evidence (RequireRetrieval check).
+	pth, ok := args["path"].(string)
+	if !ok {
+		return
+	}
+	if np := normalizePath(pth); np != "" {
+		s.act.paths[np] = true
+	}
+	// Record jail-relative path for judge re-read (buildChangedFilesSection).
+	if name == "write_file" || name == "edit_file" {
+		if jr := writtenRel(s.nodeDir, s.curCwd, pth); jr != "" && !s.writtenSeen[jr] {
+			s.writtenSeen[jr] = true
+			s.act.written = append(s.act.written, jr)
 		}
 	}
 }

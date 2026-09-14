@@ -281,88 +281,109 @@ func applyLoop(res *Result, live map[revKey]ArtifactRevision, entries []ledger.E
 			res.LastSeq = e.Seq
 		}
 		switch e.Kind {
-		case ledger.KindArtifactRevision:
-			var p revisionPayload
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				continue
-			}
-			live[revKey{id: e.Key, rev: p.Revision}] = ArtifactRevision{
-				Revision: p.Revision, ParentRevision: p.ParentRevision, Kind: p.Kind, Class: p.Class,
-				Lineage: p.Lineage, BytesRef: p.BytesRef, NodeID: e.NodeID, TurnID: e.TurnID, At: e.At, Seq: e.Seq,
-			}
-		case ledger.KindArtifactRevisionAborted:
-			var p abortedPayload
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				continue
-			}
-			delete(live, revKey{id: e.Key, rev: p.Revision})
+		case ledger.KindArtifactRevision, ledger.KindArtifactRevisionAborted:
+			applyArtifactEntry(live, e)
 		case ledger.KindNodeStarted, ledger.KindNodeDone, ledger.KindNodeFailed:
-			var p nodePayload
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				continue
-			}
-			// Keyed by NodeID ALONE (see NodeState's doc: node IDs recur across turns, and
-			// turn-keying would resurrect a stale state as a spurious rebuild row).
-			key := p.NodeID
-			n, ok := res.Nodes[key]
-			if !ok {
-				n = &NodeState{NodeID: p.NodeID, TurnID: p.Turn}
-				res.Nodes[key] = n
-			}
-			n.Round = p.Round
-			n.TurnID = p.Turn
-			switch e.Kind {
-			case ledger.KindNodeStarted:
-				// A later start re-runs the node; entries arrive in seq
-				// order, so any earlier terminal (same-turn retry or a
-				// previous turn) necessarily precedes it and is superseded.
-				n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "", 0, time.Time{}
-				n.StartedSeq, n.StartedAt = e.Seq, e.At
-			case ledger.KindNodeDone:
-				n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "done", e.Seq, e.At
-			case ledger.KindNodeFailed:
-				n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "failed", e.Seq, e.At
-			}
+			applyNodeEntry(res, e)
 		case ledger.KindMemoryRecall:
-			var p ledger.MemoryRecallPayload
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				continue
-			}
-			for _, m := range p.Entries {
-				s, ok := res.MemoryRecalls[m.ID]
-				if !ok {
-					s = &MemoryRecallState{ID: m.ID}
-					res.MemoryRecalls[m.ID] = s
-				}
-				s.Recalls++
-				if e.At.After(s.LastRecalledAt) {
-					s.LastRecalledAt = e.At
-				}
-			}
+			applyMemoryRecall(res, e)
 		case ledger.KindMemoryVote:
-			var p ledger.MemoryVotePayload
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				continue
-			}
-			s, ok := res.MemoryVotes[p.MemoryID]
-			if !ok {
-				s = &MemoryVoteState{ID: p.MemoryID}
-				res.MemoryVotes[p.MemoryID] = s
-			}
-			if p.Actor == "human" {
-				applyHumanVote(s, p.Vote, e.At)
-			} else {
-				switch p.Vote {
-				case ledger.MemoryVoteSupported:
-					s.Upvotes++
-					if e.At.After(s.LastUpvotedAt) {
-						s.LastUpvotedAt = e.At
-					}
-				case ledger.MemoryVoteContradicted:
-					s.Downvotes++
-				}
-			}
+			applyMemoryVote(res, e)
 		}
+	}
+}
+
+// applyArtifactEntry: materialize one artifact-revision entry (or its abort) into live.
+func applyArtifactEntry(live map[revKey]ArtifactRevision, e ledger.Entry) {
+	switch e.Kind {
+	case ledger.KindArtifactRevision:
+		var p revisionPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			return
+		}
+		live[revKey{id: e.Key, rev: p.Revision}] = ArtifactRevision{
+			Revision: p.Revision, ParentRevision: p.ParentRevision, Kind: p.Kind, Class: p.Class,
+			Lineage: p.Lineage, BytesRef: p.BytesRef, NodeID: e.NodeID, TurnID: e.TurnID, At: e.At, Seq: e.Seq,
+		}
+	default: // KindArtifactRevisionAborted
+		var p abortedPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			return
+		}
+		delete(live, revKey{id: e.Key, rev: p.Revision})
+	}
+}
+
+// applyNodeEntry: fold one node lifecycle entry into res.Nodes (keyed by NodeID alone -
+// node IDs recur across turns, so turn-keying would resurrect stale state).
+func applyNodeEntry(res *Result, e ledger.Entry) {
+	var p nodePayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return
+	}
+	key := p.NodeID
+	n, ok := res.Nodes[key]
+	if !ok {
+		n = &NodeState{NodeID: p.NodeID, TurnID: p.Turn}
+		res.Nodes[key] = n
+	}
+	n.Round = p.Round
+	n.TurnID = p.Turn
+	switch e.Kind {
+	case ledger.KindNodeStarted:
+		// A later start re-runs the node; entries arrive in seq order, so any
+		// earlier terminal necessarily precedes it and is superseded.
+		n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "", 0, time.Time{}
+		n.StartedSeq, n.StartedAt = e.Seq, e.At
+	case ledger.KindNodeDone:
+		n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "done", e.Seq, e.At
+	case ledger.KindNodeFailed:
+		n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "failed", e.Seq, e.At
+	}
+}
+
+// applyMemoryRecall: fold one recall entry into res.MemoryRecalls.
+func applyMemoryRecall(res *Result, e ledger.Entry) {
+	var p ledger.MemoryRecallPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return
+	}
+	for _, m := range p.Entries {
+		s, ok := res.MemoryRecalls[m.ID]
+		if !ok {
+			s = &MemoryRecallState{ID: m.ID}
+			res.MemoryRecalls[m.ID] = s
+		}
+		s.Recalls++
+		if e.At.After(s.LastRecalledAt) {
+			s.LastRecalledAt = e.At
+		}
+	}
+}
+
+// applyMemoryVote: fold one vote entry into res.MemoryVotes.
+func applyMemoryVote(res *Result, e ledger.Entry) {
+	var p ledger.MemoryVotePayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return
+	}
+	s, ok := res.MemoryVotes[p.MemoryID]
+	if !ok {
+		s = &MemoryVoteState{ID: p.MemoryID}
+		res.MemoryVotes[p.MemoryID] = s
+	}
+	if p.Actor == "human" {
+		applyHumanVote(s, p.Vote, e.At)
+		return
+	}
+	switch p.Vote {
+	case ledger.MemoryVoteSupported:
+		s.Upvotes++
+		if e.At.After(s.LastUpvotedAt) {
+			s.LastUpvotedAt = e.At
+		}
+	case ledger.MemoryVoteContradicted:
+		s.Downvotes++
 	}
 }
 

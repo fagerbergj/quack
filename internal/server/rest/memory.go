@@ -697,18 +697,36 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	type recallInfo struct {
-		source string
-		score  float32
+	order, recalls, votes := nodeMemorySignals(entries, nodeID)
+	if len(order) == 0 {
+		writeJSON(w, http.StatusOK, out)
+		return
 	}
+	// Direct per-id lookup (#1265 review finding 1), not a bulk List+scan - correct
+	// regardless of corpus size, and include-invalidated by design.
+	content, ok := h.nodeMemoryContent(w, r, order)
+	if !ok {
+		return
+	}
+	out.Memories = nodeMemoryWire(order, recalls, votes, content)
+	writeJSON(w, http.StatusOK, out)
+}
+
+type recallInfo struct {
+	source string
+	score  float32
+}
+
+type voteInfo struct {
+	vote, reason string
+}
+
+// nodeMemorySignals: fold this node's memory recall/vote entries into ordered ids plus
+// the per-id recall/vote signals.
+func nodeMemorySignals(entries []ledger.Entry, nodeID schema.NodeID) ([]string, map[string]recallInfo, map[string]voteInfo) {
 	recalls := map[string]recallInfo{}
 	var order []string
-	type voteInfo struct {
-		vote, reason string
-	}
 	votes := map[string]voteInfo{}
-
 	for _, e := range entries {
 		if e.NodeID != nodeID {
 			continue
@@ -733,14 +751,12 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 			votes[p.MemoryID] = voteInfo{vote: string(p.Vote), reason: p.Reason}
 		}
 	}
-	if len(order) == 0 {
-		writeJSON(w, http.StatusOK, out)
-		return
-	}
+	return order, recalls, votes
+}
 
-	// Direct per-id lookup (#1265 review finding 1), not a bulk List+scan -
-	// correct regardless of corpus size, unlike paging through List looking
-	// for a match. include-invalidated: an old memory that was later invalidated should still render its content/tier here.
+// nodeMemoryContent: direct per-id lookup (#1265 review finding 1); ok=false after an
+// httpError when a lookup fails hard.
+func (h *Handler) nodeMemoryContent(w http.ResponseWriter, r *http.Request, order []string) (map[string]memory.Memory, bool) {
 	stores := h.memStores()
 	content := map[string]memory.Memory{}
 	for _, id := range order {
@@ -748,10 +764,16 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 			content[id] = m
 		} else if err != nil {
 			httpError(w, http.StatusInternalServerError, err)
-			return
+			return content, false
 		}
 	}
+	return content, true
+}
 
+// nodeMemoryWire: shape one NodeMemory per recalled id (content/tier/own vote when the
+// memory still resolves, plus the latest vote/reason).
+func nodeMemoryWire(order []string, recalls map[string]recallInfo, votes map[string]voteInfo, content map[string]memory.Memory) []schema.NodeMemory {
+	var out []schema.NodeMemory
 	for _, id := range order {
 		ri := recalls[id]
 		nm := schema.NodeMemory{Id: id, Source: schema.NodeMemorySource(ri.source)}
@@ -778,7 +800,7 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 				nm.Reason = &r
 			}
 		}
-		out.Memories = append(out.Memories, nm)
+		out = append(out, nm)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
 }

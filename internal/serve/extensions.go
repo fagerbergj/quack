@@ -477,71 +477,28 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			userID = extRunUserID
 		}
 
-		// Detach from the HTTP request's lifecycle (the run outlives the handler) while keeping the
-		// caller's trace, so the extension's inbound span still parents the run's spans. Run.Timeout
-		// is applied in driveExtensionRunEvents, which owns runCtx's cancel end to end.
+		// Detach from the HTTP request's lifecycle (the run outlives the handler) while
+		// keeping the caller's trace, so the extension's inbound span parents the run's spans.
 		runCtx := context.WithoutCancel(ctx)
 		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
-
-		// Merge onto whatever this chat already has stored, rather than replacing it: a nudge/retry
-		// re-dispatch (quack-extensions#47) carries neither Chat.Origin nor Run.Setup, and previously
-		// blanked both - why turn 2 of #1180 had no PR head ref to plan a review with.
-		existing, getErr := st.GetChat(runCtx, chatID)
-		if getErr != nil {
-			slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
-				"component", "ext."+name, "chat", chatID, "err", getErr)
-			existing = nil
+		effectiveSetup, err := prepareExtChat(runCtx, name, st, orch, chatID, &userID, req)
+		if err != nil {
+			return err
 		}
-		existingOriginJSON := ""
-		if existing != nil {
-			existingOriginJSON = existing.Origin
-		}
-		userID = resolveArtifactUser(existing, userID)
-
-		if req.Chat.ResetHistory {
-			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
-				return fmt.Errorf("extensions.%s: reset history: %w", name, err)
-			}
-		}
-		originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
-		if err := st.SetChatOrigin(runCtx, chatID, userID, originJSON); err != nil {
-			return fmt.Errorf("extensions.%s: chat setup: %w", name, err)
-		}
-		ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
-
 		turnID := uuid.NewString()
 		if err := st.SaveTurn(runCtx, chatID, turnID, req.Ask.Message); err != nil {
 			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
+		attachments := extAttachmentParts(runCtx, name, artifacts, userID, chatID, turnID, req.Ask.Attachments)
 
-		attachments := make([]*genai.Part, 0, len(req.Ask.Attachments))
-		for i, a := range req.Ask.Attachments {
-			mime := a.MIME
-			if mime == "" {
-				mime = "application/octet-stream"
-			}
-			attName := a.Name
-			if attName == "" {
-				attName = fmt.Sprintf("attachment-%d", i)
-			}
-			ref, err := saveExtAttachment(runCtx, artifacts, userID, chatID, turnID, attName, a.Data, mime)
-			if err != nil {
-				slog.Warn("extension dispatch: attachment save failed; dropping this file",
-					"component", "ext."+name, "chat", chatID, "name", attName, "err", err)
-				continue
-			}
-			attachments = append(attachments, ref)
-		}
-
-		// Reset synchronously, before Dispatch returns (the caller's ack), so a subscriber landing in
-		// the run's start window never reads the previous dispatch's (possibly terminal) events off
-		// the hub or the durable log (#audit-5).
+		// Reset synchronously, before Dispatch returns (the caller's ack), so a subscriber
+		// landing in the run's start window never reads the previous dispatch's events
+		// off the hub or the durable log (#audit-5).
 		hub.Reset(chatID)
 		eventLog.Reset(runCtx, chatID)
 
-		// A bound shape (Nodes non-empty) skips the planner LLM call entirely:
-		// build the Plan now, synchronously, so a malformed binding is a hard
-		// dispatch error - never a silent fallback to the unshaped hint path.
+		// A bound shape (Nodes non-empty) skips the planner LLM call entirely: build the
+		// Plan now, synchronously, so a malformed binding is a hard dispatch error.
 		if nodes, bound := workflowcatalog.Bind(shape, req.Ask.Message); bound {
 			plan, err := orch.BuildBoundPlan(runCtx, nodes, req.Ask.Message, attachments, allowedKinds)
 			if err != nil {
@@ -551,32 +508,9 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			return nil
 		}
 
-		// The unshaped/hint path reaches the planner's own LLM turn (plan
-		// tool), which reads these facts back off ctx - see
-		// tools.AllowedDeliveryKindsFromContext, GitHubSetupFromContext,
-		// WorkerAskFromContext, ContextItemsFromContext, PlanOnlyFromContext.
-		// The real consumer of Setup/NodeContext/ContextItems/ReadOnly - the
-		// GitHub migration's pre-provisioned clone and node-scoped context.
-		runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
-		if effectiveSetup != nil {
-			// mergeExtOrigin's own merged Setup, NOT req.Run.Setup directly
-			// (#1180 recurrence): github always sends a non-nil Setup, even
-			// with an empty ExistingHeadRef when its snapshot fetch came back
-			// short - applying req.Run.Setup here unconditionally clobbered
-			// mergeExtOrigin's fallback/merge with that weaker value on
-			// every single dispatch, nudge included.
-			runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
-		}
-		if req.Ask.NodeContext != "" {
-			runCtx = tools.WithWorkerAsk(runCtx, req.Ask.NodeContext)
-		}
-		if req.Ask.ContextItems != nil {
-			runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
-		}
-		runCtx = tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
-		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a
-		// caller bug upstream of here must surface as a real dispatch error
-		// the extension can post, not a run that silently produces nothing.
+		runCtx = extRunContext(runCtx, req, effectiveSetup)
+		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a caller bug
+		// must surface as a real dispatch error, not a run that produces nothing.
 		composed := composeDispatchMessage(req)
 		if strings.TrimSpace(composed) == "" {
 			return fmt.Errorf("extensions.%s: dispatch composed an empty message (Ask.Message was %q)", name, req.Ask.Message)
@@ -584,6 +518,83 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		go driveExtensionRun(runCtx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, composed, attachments, req.Run.Timeout)
 		return nil
 	}
+}
+
+// prepareExtChat: merge the dispatch's chat origin/setup onto the chat's stored
+// state (a nudge re-dispatch carries neither - merging preserves turn-2 planning
+// data, #1180), optionally reset the session, and stamp origin/title.
+func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, error) {
+	// Merge onto whatever this chat already has stored, rather than replacing it:
+	// a nudge/retry re-dispatch (quack-extensions#47) carries neither Chat.Origin
+	// nor Run.Setup, and previously blanked both - #1180's missing PR head ref.
+	existing, getErr := st.GetChat(runCtx, chatID)
+	if getErr != nil {
+		slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
+			"component", "ext."+name, "chat", chatID, "err", getErr)
+		existing = nil
+	}
+	existingOriginJSON := ""
+	if existing != nil {
+		existingOriginJSON = existing.Origin
+	}
+	*userID = resolveArtifactUser(existing, *userID)
+
+	if req.Chat.ResetHistory {
+		if err := orch.ResetSession(runCtx, *userID, chatID); err != nil {
+			return nil, fmt.Errorf("extensions.%s: reset history: %w", name, err)
+		}
+	}
+	originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
+	if err := st.SetChatOrigin(runCtx, chatID, *userID, originJSON); err != nil {
+		return nil, fmt.Errorf("extensions.%s: chat setup: %w", name, err)
+	}
+	ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
+	return effectiveSetup, nil
+}
+
+// extAttachmentParts: save each dispatch attachment and collect the stored-file
+// refs (a save failure drops just that file, logged).
+func extAttachmentParts(runCtx context.Context, name string, artifacts *store.TurnAwareService, userID, chatID, turnID string, files []extsdk.Attachment) []*genai.Part {
+	out := make([]*genai.Part, 0, len(files))
+	for i, a := range files {
+		mime := a.MIME
+		if mime == "" {
+			mime = "application/octet-stream"
+		}
+		attName := a.Name
+		if attName == "" {
+			attName = fmt.Sprintf("attachment-%d", i)
+		}
+		ref, err := saveExtAttachment(runCtx, artifacts, userID, chatID, turnID, attName, a.Data, mime)
+		if err != nil {
+			slog.Warn("extension dispatch: attachment save failed; dropping this file",
+				"component", "ext."+name, "chat", chatID, "name", attName, "err", err)
+			continue
+		}
+		out = append(out, ref)
+	}
+	return out
+}
+
+// extRunContext: the run-ctx facts the unshaped/hint planner turn reads back -
+// delivery kinds, GitHub setup, node context, context items, plan-only.
+func extRunContext(runCtx context.Context, req extsdk.DispatchRequest, effectiveSetup *dag.Setup) context.Context {
+	// The unshaped/hint path reaches the planner's own LLM turn (plan tool),
+	// which reads these facts back off ctx (tools.AllowedDeliveryKindsFromContext etc.).
+	runCtx = tools.WithAllowedDeliveryKinds(runCtx, deliveryKindStrings(req.Delivery.AllowedKinds))
+	if effectiveSetup != nil {
+		// mergeExtOrigin's own merged Setup, NOT req.Run.Setup (#1180 recurrence):
+		// github always sends a non-nil Setup, and applying it unconditionally would
+		// clobber mergeExtOrigin's fallback with a weaker value.
+		runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
+	}
+	if req.Ask.NodeContext != "" {
+		runCtx = tools.WithWorkerAsk(runCtx, req.Ask.NodeContext)
+	}
+	if req.Ask.ContextItems != nil {
+		runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
+	}
+	return tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
 }
 
 // deliveryKindStrings converts the SDK's typed delivery-kind list to the

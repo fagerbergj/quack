@@ -249,9 +249,8 @@ func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest, defaultConte
 	}
 	events := ic.Session().Events()
 	start := 0
-	// crossedBranch: the clear below deliberately wants a fresh ADK-minted
-	// context (a HITL resume derives its own IDs a different way), so the
-	// empty-ContextID default below must not refill it in that case.
+	// crossedBranch: the clear below wants a fresh ADK-minted context (HITL
+	// resumes derive IDs differently), so the default must not refill it.
 	crossedBranch := false
 	for i := events.Len() - 1; i >= 0; i-- {
 		if ev := events.At(i); ev != nil && ev.Author == ic.Agent().Name() {
@@ -263,7 +262,16 @@ func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest, defaultConte
 			break
 		}
 	}
-	parts := make([]*a2a.Part, 0, len(req.Message.Parts))
+	req.Message.Parts = collectScopedParts(ic, events, start, len(req.Message.Parts))
+	if req.Message.ContextID == "" && !crossedBranch {
+		req.Message.ContextID = defaultContextID
+	}
+}
+
+// collectScopedParts: the branch's events from start as A2A parts - foreign authors
+// via describeEvent, own/user parts with plumbing sanitized or dropped.
+func collectScopedParts(ic adkagent.InvocationContext, events session.Events, start, cap int) []*a2a.Part {
+	parts := make([]*a2a.Part, 0, cap)
 	for i := start; i < events.Len(); i++ {
 		ev := events.At(i)
 		if ev == nil || ev.Content == nil || ev.InvocationID != ic.InvocationID() || !eventBelongsToBranch(ic.Branch(), ev) {
@@ -284,10 +292,7 @@ func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest, defaultConte
 			}
 		}
 	}
-	req.Message.Parts = parts
-	if req.Message.ContextID == "" && !crossedBranch {
-		req.Message.ContextID = defaultContextID
-	}
+	return parts
 }
 
 // describeEvent renders a foreign-authored event as user-facing text.

@@ -201,9 +201,8 @@ func sseHave(existing []store.ChatEvent) (map[string]bool, int64) {
 	return have, maxSeq
 }
 
-// RunLedgerRebuild resets chatID's watermarks to 0, folds, and rewrites artifact
-// revision kind/class/lineage (unconditionally), then repopulates node_state and the
-// SSE table the way LoadEvents' resume path would; dryRun reports without writing.
+// RunLedgerRebuild resets chatID's watermarks to 0, folds, rewrites artifact
+// kind/class/lineage unconditionally, and repopulates node_state and the SSE table; dryRun reports.
 func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, chatID string, dryRun bool) (*LedgerRebuildReport, error) {
 	if !dryRun {
 		for _, projection := range []string{"artifact", "sse", "node_state"} {
@@ -394,52 +393,64 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 		}
 	}
 	// One projected read serves both passes below (delivery intents, then
-	// fold.ApplyEntries for the artifact pass) instead of reading the whole
-	// chat twice (perf audit #1) - kinds is the union both passes need.
+	// fold.ApplyEntries for the artifact pass) instead of reading the chat twice (perf audit #1).
 	kinds := append([]string{ledger.KindDeliveryIntent}, fold.RequiredKinds...)
 	entries, err := ledger.ReadByKinds(ctx, ls, chatID, 0, kinds)
 	if err != nil {
 		return nil, fmt.Errorf("ledger recover: read chat %q: %w", chatID, err)
 	}
-	intents := deliveryIntentsFromEntries(entries)
 	report := &LedgerRecoverReport{ChatID: chatID, DryRun: dryRun}
-	for _, o := range intents {
-		if p.DeliveryRecorded != nil {
-			done, derr := p.DeliveryRecorded(ctx, chatID, o.TargetID, o.Revision)
-			if derr == nil && done {
-				continue // settled - not orphaned
-			}
+	for _, o := range deliveryIntentsFromEntries(entries) {
+		settled, ierr := recoverIntent(ctx, chatID, p, o, report)
+		if ierr != nil {
+			return nil, ierr
 		}
-		if !dryRun && p.Delivery != nil {
-			dc := DeliveryContext{CloneURL: o.CloneURL, IssueNumber: o.IssueNumber}
-			found, outcome, rerr := p.Delivery.RecoverDelivery(ctx, o.Key, dc)
-			if rerr != nil {
-				report.Unresolved = append(report.Unresolved, o)
-				continue
-			}
-			if found {
-				if p.RecordDelivery != nil {
-					if aerr := p.RecordDelivery(ctx, chatID, o.NodeID, o.TargetID, o.Revision, outcome.URL); aerr != nil {
-						return nil, fmt.Errorf("ledger recover: record delivery for key %q: %w", o.Key, aerr)
-					}
+		if !settled {
+			report.Unresolved = append(report.Unresolved, o)
+		}
+	}
+	if p.ArtifactRowExists != nil {
+		recoverArtifactOrphans(ctx, chatID, p, entries, report)
+	}
+	return report, nil
+}
+
+// recoverIntent: settle one delivery intent - already recorded, recovered via
+// Delivery, or redone; false when none applied (caller marks it unresolved).
+func recoverIntent(ctx context.Context, chatID string, p Projections, o OrphanedDelivery, report *LedgerRecoverReport) (bool, error) {
+	if p.DeliveryRecorded != nil {
+		if done, derr := p.DeliveryRecorded(ctx, chatID, o.TargetID, o.Revision); derr == nil && done {
+			return true, nil // settled - not orphaned
+		}
+	}
+	if !report.DryRun && p.Delivery != nil {
+		dc := DeliveryContext{CloneURL: o.CloneURL, IssueNumber: o.IssueNumber}
+		found, outcome, rerr := p.Delivery.RecoverDelivery(ctx, o.Key, dc)
+		if rerr != nil {
+			return false, nil
+		}
+		if found {
+			if p.RecordDelivery != nil {
+				if aerr := p.RecordDelivery(ctx, chatID, o.NodeID, o.TargetID, o.Revision, outcome.URL); aerr != nil {
+					return false, fmt.Errorf("ledger recover: record delivery for key %q: %w", o.Key, aerr)
 				}
-				report.Confirmed = append(report.Confirmed, o)
-				continue
 			}
+			report.Confirmed = append(report.Confirmed, o)
+			return true, nil
 		}
-		if !dryRun && p.Redo != nil {
-			if rerr := p.Redo(ctx, o); rerr != nil {
-				report.Unresolved = append(report.Unresolved, o)
-				continue
-			}
-			report.Redone = append(report.Redone, o)
-			continue
+	}
+	if !report.DryRun && p.Redo != nil {
+		if rerr := p.Redo(ctx, o); rerr != nil {
+			return false, nil
 		}
-		report.Unresolved = append(report.Unresolved, o)
+		report.Redone = append(report.Redone, o)
+		return true, nil
 	}
-	if p.ArtifactRowExists == nil {
-		return report, nil
-	}
+	return false, nil
+}
+
+// recoverArtifactOrphans: flag artifact revisions that have no store row.
+func recoverArtifactOrphans(ctx context.Context, chatID string, p Projections, entries []ledger.Entry, report *LedgerRecoverReport) {
 	res := fold.ApplyEntries(entries)
 	ids := make([]string, 0, len(res.Artifacts))
 	for id := range res.Artifacts {
@@ -461,7 +472,6 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 			})
 		}
 	}
-	return report, nil
 }
 
 // RecoverSummary is Recover's whole-ledger result.
