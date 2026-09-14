@@ -27,60 +27,74 @@ func MatchesCheckPrefix(check string, prefixes []string) bool {
 // SplitArgv splits s into argv (whitespace, quotes, backslash escapes), no shell.
 func SplitArgv(s string) ([]string, error) {
 	var argv []string
-	var cur strings.Builder
-	hasCur := false
-	var quote rune
-	esc := false
+	var st argvState
 	for _, r := range s {
-		switch {
-		case esc:
-			cur.WriteRune(r)
-			hasCur = true
-			esc = false
-		case quote == '\'':
-			if r == '\'' {
-				quote = 0
-			} else {
-				cur.WriteRune(r)
-			}
-		case quote == '"':
-			switch r {
-			case '"':
-				quote = 0
-			case '\\':
-				esc = true
-			default:
-				cur.WriteRune(r)
-			}
-		case r == '\'' || r == '"':
-			quote = r
-			hasCur = true
-		case r == '\\':
-			esc = true
-		case r == ' ' || r == '\t' || r == '\n':
-			if hasCur {
-				argv = append(argv, cur.String())
-				cur.Reset()
-				hasCur = false
-			}
-		default:
-			cur.WriteRune(r)
-			hasCur = true
+		if tok, ok := st.step(r); ok {
+			argv = append(argv, tok)
 		}
 	}
-	if quote != 0 {
-		return nil, fmt.Errorf("workspace: unterminated %c quote in command", quote)
+	if st.quote != 0 {
+		return nil, fmt.Errorf("workspace: unterminated %c quote in command", st.quote)
 	}
-	if esc {
+	if st.esc {
 		return nil, fmt.Errorf("workspace: trailing backslash in command")
 	}
-	if hasCur {
-		argv = append(argv, cur.String())
+	if st.hasCur {
+		argv = append(argv, st.cur.String())
 	}
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("workspace: empty command")
 	}
 	return argv, nil
+}
+
+// argvState: the accumulator state for one SplitArgv pass.
+type argvState struct {
+	cur    strings.Builder
+	hasCur bool
+	quote  rune
+	esc    bool
+}
+
+// step consumes one rune into the accumulator; it returns the flushed token
+// when whitespace closed one off ("", false otherwise).
+func (st *argvState) step(r rune) (string, bool) {
+	switch {
+	case st.esc:
+		st.cur.WriteRune(r)
+		st.hasCur = true
+		st.esc = false
+	case st.quote == '\'':
+		if r == '\'' {
+			st.quote = 0
+		} else {
+			st.cur.WriteRune(r)
+		}
+	case st.quote == '"':
+		if r == '"' {
+			st.quote = 0
+		} else if r == '\\' {
+			st.esc = true
+		} else {
+			st.cur.WriteRune(r)
+		}
+	case r == '\'' || r == '"':
+		st.quote = r
+		st.hasCur = true
+	case r == '\\':
+		st.esc = true
+	case r == ' ' || r == '\t' || r == '\n':
+		if st.hasCur {
+			tok := st.cur.String()
+			st.cur.Reset()
+			st.hasCur = false
+			return tok, true
+		}
+	default:
+		st.cur.WriteRune(r)
+		st.hasCur = true
+	}
+	return "", false
 }
 
 // SplitPipeline splits s on unquoted `|`, then word-splits each stage via SplitArgv.
@@ -326,13 +340,39 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Build every stage up front so a missing binary fails before anything starts.
+	cmds, stderrs, stdout, err := buildPipelineCmds(cctx, dir, stages, caps)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	if err := startPipelineCmds(cmds, stages); err != nil {
+		return ExecResult{}, err
+	}
+	exitCode, failNotes, err := waitPipelineCmds(cctx, cmds, stages, caps)
+	if err != nil {
+		return ExecResult{}, err
+	}
+
+	maxOut := caps.MaxOutputBytes
+	if maxOut <= 0 {
+		maxOut = DefaultCaps().MaxOutputBytes
+	}
+	res := ExecResult{ExitCode: exitCode, Output: capTail(pipelineOutput(stdout.String(), stderrs, failNotes), maxOut)}
+	if cctx.Err() == context.DeadlineExceeded {
+		res.TimedOut = true
+		return res, fmt.Errorf("workspace: pipeline timed out after %s", timeout)
+	}
+	return res, nil
+}
+
+// buildPipelineCmds: build every stage up front (a missing binary fails
+// before anything starts) and wire each stage's stdout into the next.
+func buildPipelineCmds(cctx context.Context, dir string, stages [][]string, caps Caps) ([]*exec.Cmd, []*bytes.Buffer, *bytes.Buffer, error) {
 	cmds := make([]*exec.Cmd, len(stages))
 	stderrs := make([]*bytes.Buffer, len(stages)) // one buffer per stage: exec copies stderr on its own goroutine, so a shared buffer would race
 	for i, argv := range stages {
 		cmd, err := newChildCmd(cctx, dir, argv, caps)
 		if err != nil {
-			return ExecResult{}, err
+			return nil, nil, nil, err
 		}
 		stderrs[i] = &bytes.Buffer{}
 		cmd.Stderr = stderrs[i]
@@ -343,11 +383,16 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 	for i := 1; i < len(cmds); i++ {
 		pipe, err := cmds[i-1].StdoutPipe()
 		if err != nil {
-			return ExecResult{}, fmt.Errorf("workspace: pipeline pipe: %w", err)
+			return nil, nil, nil, fmt.Errorf("workspace: pipeline pipe: %w", err)
 		}
 		cmds[i].Stdin = pipe
 	}
+	return cmds, stderrs, &stdout, nil
+}
 
+// startPipelineCmds: start each stage; a failed start reaps whatever already
+// started so nothing leaks.
+func startPipelineCmds(cmds []*exec.Cmd, stages [][]string) error {
 	for i, cmd := range cmds {
 		if err := cmd.Start(); err != nil {
 			// Reap anything already started so nothing leaks.
@@ -355,11 +400,15 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 				_ = prev.Process.Kill()
 				_ = prev.Wait()
 			}
-			return ExecResult{}, fmt.Errorf("workspace: start %v: %w", stages[i], err)
+			return fmt.Errorf("workspace: start %v: %w", stages[i], err)
 		}
 	}
+	return nil
+}
 
-	// Wait in pipeline order. Non-zero exit is a result, not an error.
+// waitPipelineCmds: wait in pipeline order; non-zero exit is a result, not
+// an error (pipefail: last non-zero wins).
+func waitPipelineCmds(cctx context.Context, cmds []*exec.Cmd, stages [][]string, caps Caps) (int, []string, error) {
 	exitCode := 0
 	var failNotes []string
 	for i, cmd := range cmds {
@@ -371,7 +420,7 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 		if waitErr != nil {
 			var exitErr *exec.ExitError
 			if !errors.As(waitErr, &exitErr) && cctx.Err() != context.DeadlineExceeded {
-				return ExecResult{}, fmt.Errorf("workspace: run %v: %w", stages[i], waitErr)
+				return 0, nil, fmt.Errorf("workspace: run %v: %w", stages[i], waitErr)
 			}
 		}
 		if code != 0 {
@@ -380,9 +429,13 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 				i+1, len(cmds), strings.Join(stages[i], " "), code, fileSizeLimitNote(cmd.ProcessState, caps.Limits)))
 		}
 	}
+	return exitCode, failNotes, nil
+}
 
+// pipelineOutput: stdout plus each stage's stderr and the pipefail failure notes.
+func pipelineOutput(stdout string, stderrs []*bytes.Buffer, failNotes []string) string {
 	var out strings.Builder
-	out.WriteString(stdout.String())
+	out.WriteString(stdout)
 	for i, eb := range stderrs {
 		if eb.Len() == 0 {
 			continue
@@ -393,16 +446,7 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 		out.WriteString("\n")
 		out.WriteString(note)
 	}
-	maxOut := caps.MaxOutputBytes
-	if maxOut <= 0 {
-		maxOut = DefaultCaps().MaxOutputBytes
-	}
-	res := ExecResult{ExitCode: exitCode, Output: capTail(out.String(), maxOut)}
-	if cctx.Err() == context.DeadlineExceeded {
-		res.TimedOut = true
-		return res, fmt.Errorf("workspace: pipeline timed out after %s", timeout)
-	}
-	return res, nil
+	return out.String()
 }
 
 // capTail truncates s to max bytes keeping the tail (most useful for assertion errors).

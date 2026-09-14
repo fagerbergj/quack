@@ -795,19 +795,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 		Parts: []*genai.Part{},
 	}
 
-	// Surface reasoning_content as a Thought part (reasoning precedes the
-	// answer). openai-go marks untyped ExtraFields as status "invalid" (no
-	// typed extras decoder is registered for this struct), so Valid() is always false here - gate on the raw bytes instead, the way an omitted/null field already does.
-	var reasoningText string
-	if rc := choice.Message.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
-		if raw := rc.Raw(); raw != "" && raw != "null" {
-			var text string
-			if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
-				reasoningText = text
-			}
-		}
-	}
-
+	reasoningText := reasoningContentText(choice.Message)
 	if reasoningText != "" {
 		content.Parts = append(content.Parts, &genai.Part{Text: reasoningText, Thought: true})
 	}
@@ -817,9 +805,8 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}
 
 	haveToolCalls := len(choice.Message.ToolCalls) > 0
-	// Real tool-call parts must be in content.Parts BEFORE the ladder runs, same
-	// as the streaming path - otherwise promotion sees no answer yet and fires
-	// on a turn that already has a tool call (regression: PR #1243 review).
+	// Real tool-call parts must be in content.Parts BEFORE the ladder runs (as in
+	// the streaming path) - otherwise promotion fires on a tool-call turn (PR #1243).
 	for _, toolCall := range choice.Message.ToolCalls {
 		if toolCall.Type == "function" {
 			content.Parts = append(content.Parts, &genai.Part{
@@ -840,8 +827,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}
 
 	// reasoningUsage estimates from the FINAL (post-recovery) thinking text, same
-	// as the streaming path - a leaked tool-call block stripped from thinking
-	// shouldn't inflate the reasoning-token estimate.
+	// as the streaming path - a stripped leaked block shouldn't inflate the estimate.
 	var finalThought strings.Builder
 	for _, p := range content.Parts {
 		if p.Thought && p.Text != "" {
@@ -849,25 +835,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 		}
 	}
 
-	var usageMetadata *genai.GenerateContentResponseUsageMetadata
-	if resp.Usage.TotalTokens > 0 {
-		candidates, thoughts := reasoningUsage(ctx, resp.Model, int32(resp.Usage.CompletionTokens),
-			int32(resp.Usage.CompletionTokensDetails.ReasoningTokens), finalThought.String())
-		usageMetadata = &genai.GenerateContentResponseUsageMetadata{
-			PromptTokenCount:        int32(resp.Usage.PromptTokens),
-			CandidatesTokenCount:    candidates,
-			TotalTokenCount:         int32(resp.Usage.TotalTokens),
-			CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
-			ThoughtsTokenCount:      thoughts,
-		}
-		// Temporary raw usage trace - remove once prod confirms whether the
-		// endpoint sends prompt_tokens_details.cached_tokens at all (a 0 here
-		// with prefix caching enabled is a server-side matter).
-		slog.Debug("provider token usage", "component", "inference", "model", resp.Model,
-			"prompt_tokens", resp.Usage.PromptTokens, "cached_tokens", resp.Usage.PromptTokensDetails.CachedTokens,
-			"completion_tokens", resp.Usage.CompletionTokens, "reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,
-			"total_tokens", resp.Usage.TotalTokens)
-	}
+	usageMetadata := usageMetadataFromResp(ctx, resp, finalThought.String())
 
 	return &model.LLMResponse{
 		Content:       content,
@@ -878,6 +846,48 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}, nil
 }
 
+// reasoningContentText: the choice's reasoning_content extra field as text -
+// openai-go marks untyped ExtraFields "invalid", so gate on the raw bytes.
+func reasoningContentText(msg openai.ChatCompletionMessage) string {
+	rc := msg.JSON.ExtraFields["reasoning_content"]
+	if rc.Raw() == "" {
+		return ""
+	}
+	raw := rc.Raw()
+	if raw == "" || raw == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
+		return text
+	}
+	return ""
+}
+
+// usageMetadataFromResp: the genai usage metadata for the response (nil when the
+// endpoint sent no totals), with the raw provider-usage Debug trace.
+func usageMetadataFromResp(ctx context.Context, resp *openai.ChatCompletion, finalThoughtText string) *genai.GenerateContentResponseUsageMetadata {
+	if resp.Usage.TotalTokens <= 0 {
+		return nil
+	}
+	candidates, thoughts := reasoningUsage(ctx, resp.Model, int32(resp.Usage.CompletionTokens),
+		int32(resp.Usage.CompletionTokensDetails.ReasoningTokens), finalThoughtText)
+	usageMetadata := &genai.GenerateContentResponseUsageMetadata{
+		PromptTokenCount:        int32(resp.Usage.PromptTokens),
+		CandidatesTokenCount:    candidates,
+		TotalTokenCount:         int32(resp.Usage.TotalTokens),
+		CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
+		ThoughtsTokenCount:      thoughts,
+	}
+	// Temporary raw usage trace - remove once prod confirms whether the endpoint
+	// sends prompt_tokens_details.cached_tokens (a 0 with caching is server-side).
+	slog.Debug("provider token usage", "component", "inference", "model", resp.Model,
+		"prompt_tokens", resp.Usage.PromptTokens, "cached_tokens", resp.Usage.PromptTokensDetails.CachedTokens,
+		"completion_tokens", resp.Usage.CompletionTokens, "reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,
+		"total_tokens", resp.Usage.TotalTokens)
+	return usageMetadata
+}
+
 func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
 	var tools []openai.ChatCompletionToolUnionParam
 
@@ -886,51 +896,64 @@ func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionPar
 			continue
 		}
 
-		if genaiTool.GoogleSearch != nil ||
-			genaiTool.CodeExecution != nil ||
-			genaiTool.FileSearch != nil ||
-			genaiTool.Retrieval != nil ||
-			genaiTool.ComputerUse != nil {
-			return nil, fmt.Errorf("GoogleSearch is not supported")
+		converted, err := convertOneTool(genaiTool)
+		if err != nil {
+			return nil, err
 		}
-
-		for _, funcDecl := range genaiTool.FunctionDeclarations {
-			var params shared.FunctionParameters
-			if funcDecl.ParametersJsonSchema != nil {
-				b, err := json.Marshal(funcDecl.ParametersJsonSchema)
-				if err != nil {
-					return nil, fmt.Errorf("marshal tool %s schema: %w", funcDecl.Name, err)
-				}
-				if err := json.Unmarshal(b, &params); err != nil {
-					return nil, fmt.Errorf("unmarshal tool %s schema: %w", funcDecl.Name, err)
-				}
-			}
-			if params == nil && funcDecl.Parameters != nil {
-				m, err := convertSchema(funcDecl.Parameters)
-				if err != nil {
-					return nil, err
-				}
-				params = shared.FunctionParameters(m)
-			}
-			if params == nil {
-				// Tool has no declared parameters - use an empty object schema.
-				params = shared.FunctionParameters{
-					"type":       "object",
-					"properties": map[string]any{},
-				}
-			}
-
-			tools = append(tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-				Name:        funcDecl.Name,
-				Description: openai.String(funcDecl.Description),
-				Parameters:  params,
-			}))
-		}
+		tools = append(tools, converted...)
 	}
 
 	return tools, nil
 }
 
+// convertOneTool: one genai.Tool to OpenAI tool params (the unsupported
+// built-in tools are hard errors, function declarations carry the schema).
+func convertOneTool(genaiTool *genai.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
+	var tools []openai.ChatCompletionToolUnionParam
+
+	if genaiTool.GoogleSearch != nil ||
+		genaiTool.CodeExecution != nil ||
+		genaiTool.FileSearch != nil ||
+		genaiTool.Retrieval != nil ||
+		genaiTool.ComputerUse != nil {
+		return nil, fmt.Errorf("GoogleSearch is not supported")
+	}
+
+	for _, funcDecl := range genaiTool.FunctionDeclarations {
+		var params shared.FunctionParameters
+		if funcDecl.ParametersJsonSchema != nil {
+			b, err := json.Marshal(funcDecl.ParametersJsonSchema)
+			if err != nil {
+				return nil, fmt.Errorf("marshal tool %s schema: %w", funcDecl.Name, err)
+			}
+			if err := json.Unmarshal(b, &params); err != nil {
+				return nil, fmt.Errorf("unmarshal tool %s schema: %w", funcDecl.Name, err)
+			}
+		}
+		if params == nil && funcDecl.Parameters != nil {
+			m, err := convertSchema(funcDecl.Parameters)
+			if err != nil {
+				return nil, err
+			}
+			params = shared.FunctionParameters(m)
+		}
+		if params == nil {
+			// Tool has no declared parameters - use an empty object schema.
+			params = shared.FunctionParameters{
+				"type":       "object",
+				"properties": map[string]any{},
+			}
+		}
+
+		tools = append(tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        funcDecl.Name,
+			Description: openai.String(funcDecl.Description),
+			Parameters:  params,
+		}))
+	}
+
+	return tools, nil
+}
 func convertSchema(schema *genai.Schema) (map[string]any, error) {
 	if schema == nil {
 		return map[string]any{

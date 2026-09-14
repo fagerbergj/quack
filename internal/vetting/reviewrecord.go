@@ -606,45 +606,66 @@ func loadEpisodicRoundState(ctx context.Context, cfg Config, nodeID string) *epi
 		return st
 	}
 	if cfg.IsReviewer {
-		if id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID)); err == nil {
-			if raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.reviewRev = rev
-				var rec CodeReviewRecord
-				if json.Unmarshal(raw, &rec) == nil {
-					for _, fid := range rec.FindingIDs {
-						fraw, _, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
-						if ferr != nil || !fok {
-							continue
-						}
-						var f FindingRecord
-						if json.Unmarshal(fraw, &f) != nil {
-							continue
-						}
-						st.findingRev[fid] = frev
-						st.findingState[fid] = f.State
-						if f.State != "resolved" {
-							st.findings[fid] = f
-						}
-					}
-				}
-			}
-		}
+		loadReviewState(ctx, c, cfg, st)
 	}
 	if cfg.Artifact != "" {
-		if id, err := recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID)); err == nil {
-			if _, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.documentRev = rev
-			}
+		if rev, ok := latestRevision(ctx, c, cfg.Artifact, documentHint(cfg.ChatID)); ok {
+			st.documentRev = rev
 		}
 	}
 	if !cfg.IsReviewer && cfg.Artifact == "" {
-		if id, err := recordstore.IdentityFor(kindText, nil, nodeID); err == nil {
-			if _, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.textRev = rev
-			}
+		if rev, ok := latestRevision(ctx, c, kindText, nodeID); ok {
+			st.textRev = rev
 		}
 	}
 	return st
+}
+
+// loadReviewState: the latest code_review revision and its findings (unresolved
+// ones become this round's baseline).
+func loadReviewState(ctx context.Context, c *recordstore.Client, cfg Config, st *episodicRoundState) {
+	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	if err != nil {
+		return
+	}
+	raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil || !ok {
+		return
+	}
+	st.reviewRev = rev
+	var rec CodeReviewRecord
+	if json.Unmarshal(raw, &rec) != nil {
+		return
+	}
+	for _, fid := range rec.FindingIDs {
+		fraw, _, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
+		if ferr != nil || !fok {
+			continue
+		}
+		var f FindingRecord
+		if json.Unmarshal(fraw, &f) != nil {
+			continue
+		}
+		st.findingRev[fid] = frev
+		st.findingState[fid] = f.State
+		if f.State != "resolved" {
+			st.findings[fid] = f
+		}
+	}
+}
+
+// latestRevision: the latest revision of a kind under a subject hint (0, false
+// when there is no id or no revision yet).
+func latestRevision(ctx context.Context, c *recordstore.Client, kind, hint string) (int, bool) {
+	id, err := recordstore.IdentityFor(kind, nil, hint)
+	if err != nil {
+		return 0, false
+	}
+	_, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil || !ok {
+		return 0, false
+	}
+	return rev, true
 }
 
 func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) *episodicRoundState {

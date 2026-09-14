@@ -129,48 +129,65 @@ func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
 	prefix := "hitl-" + nodeID + "-r"
 	answers := map[string]string{}
 	for ev := range sess.Events().All() {
-		if ev == nil || ev.Content == nil || ev.InvocationID != invocationID {
-			continue
-		}
-		if ev.Author == "user" {
-			for _, p := range ev.Content.Parts {
-				if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != workflow.WorkflowInputFunctionCallName {
-					continue
-				}
-				if !strings.HasPrefix(p.FunctionResponse.ID, prefix) {
-					continue
-				}
-				if payload, ok := p.FunctionResponse.Response["payload"].(string); ok {
-					answers[p.FunctionResponse.ID] = payload
-				}
-			}
-			continue
-		}
-		if !pathHasNode(ev, nodeID) {
-			continue
-		}
-		for _, p := range ev.Content.Parts {
-			if p == nil || p.FunctionCall == nil {
-				continue
-			}
-			switch p.FunctionCall.Name {
-			case AskToolName:
-				q := ""
-				if qq, ok := p.FunctionCall.Args["question"].(string); ok {
-					q = strings.TrimSpace(qq)
-				}
-				s.turns = append(s.turns, hitlTurn{question: q})
-			case workflow.WorkflowInputFunctionCallName:
-				if strings.HasPrefix(p.FunctionCall.ID, prefix) {
-					s.pauses++
-				}
-			}
-		}
+		scanAskEvent(ev, invocationID, nodeID, prefix, &s, answers)
 	}
 	for i := range s.turns {
 		s.turns[i].answer = answers[hitlInterruptID(nodeID, i+1)]
 	}
 	return s
+}
+
+// scanAskEvent: one session event for the node's HITL state - user answers are
+// collected, worker ask/workflow_input calls are recorded on s.
+func scanAskEvent(ev *session.Event, invocationID, nodeID, prefix string, s *hitlScan, answers map[string]string) {
+	if ev == nil || ev.Content == nil || ev.InvocationID != invocationID {
+		return
+	}
+	if ev.Author == "user" {
+		for _, p := range ev.Content.Parts {
+			collectAnswerPart(p, prefix, answers)
+		}
+		return
+	}
+	if !pathHasNode(ev, nodeID) {
+		return
+	}
+	for _, p := range ev.Content.Parts {
+		recordAskPart(p, prefix, s)
+	}
+}
+
+// collectAnswerPart: a user FunctionResponse to the node's workflow_input -
+// stash its payload under the call id.
+func collectAnswerPart(p *genai.Part, prefix string, answers map[string]string) {
+	if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != workflow.WorkflowInputFunctionCallName {
+		return
+	}
+	if !strings.HasPrefix(p.FunctionResponse.ID, prefix) {
+		return
+	}
+	if payload, ok := p.FunctionResponse.Response["payload"].(string); ok {
+		answers[p.FunctionResponse.ID] = payload
+	}
+}
+
+// recordAskPart: a worker ask (question turn) or workflow_input (pause) call.
+func recordAskPart(p *genai.Part, prefix string, s *hitlScan) {
+	if p == nil || p.FunctionCall == nil {
+		return
+	}
+	switch p.FunctionCall.Name {
+	case AskToolName:
+		q := ""
+		if qq, ok := p.FunctionCall.Args["question"].(string); ok {
+			q = strings.TrimSpace(qq)
+		}
+		s.turns = append(s.turns, hitlTurn{question: q})
+	case workflow.WorkflowInputFunctionCallName:
+		if strings.HasPrefix(p.FunctionCall.ID, prefix) {
+			s.pauses++
+		}
+	}
 }
 
 // pathHasNode: is event under graph node? (NodeInfo.Path: "name@run").
@@ -1996,17 +2013,8 @@ func composeFeedback(v verdict, threshold float64, round int) (verdictEnvelope, 
 // deterministic-leads/judge-follows shape composeFeedback used before #941 -
 // a code-owned failure has one correct fix, a low judge score is arguable, and collapsing them together misrepresents the judge's opinion as decided (#791).
 func renderFeedbackSummary(env verdictEnvelope, judgeFeedback string, findings []findingVerdict) string {
-	var detFails, judgeFails []string
-	for _, f := range env.DeterministicFailures {
-		if s := strings.TrimSpace(f.Shortfall); s != "" {
-			detFails = append(detFails, fmt.Sprintf("- %s: %s", f.Criterion.Name, s))
-		}
-	}
-	for _, f := range env.JudgeFailures {
-		if s := strings.TrimSpace(f.Shortfall); s != "" {
-			judgeFails = append(judgeFails, fmt.Sprintf("- %s: %s", f.Criterion.Name, s))
-		}
-	}
+	detFails := failureShortfalls(env.DeterministicFailures)
+	judgeFails := failureShortfalls(env.JudgeFailures)
 	sort.Strings(detFails) // stable order (buildEnvelope already sorts by name, but keep this local to the function's own contract)
 	sort.Strings(judgeFails)
 	findingsFeedback := composeFindingsFeedback(findings)
@@ -2015,24 +2023,11 @@ func renderFeedbackSummary(env verdictEnvelope, judgeFeedback string, findings [
 	}
 	var sb strings.Builder
 	if len(detFails) > 0 {
-		sb.WriteString("Deterministic check failures (code-owned, already decided - fix these):\n")
-		sb.WriteString(strings.Join(detFails, "\n"))
+		appendLabeledSection(&sb, "Deterministic check failures (code-owned, already decided - fix these):\n", strings.Join(detFails, "\n"))
 	}
-	if fb := strings.TrimSpace(judgeFeedback); fb != "" {
-		if sb.Len() > 0 {
-			sb.WriteString("\n\n")
-		}
-		if len(detFails) > 0 {
-			sb.WriteString("Judge's assessment of the remaining criteria (the deterministic failures above were excluded from its scoring):\n")
-		}
-		sb.WriteString(fb)
-	}
+	appendJudgeFeedback(&sb, judgeFeedback, len(detFails) > 0)
 	if len(judgeFails) > 0 {
-		if sb.Len() > 0 {
-			sb.WriteString("\n\n")
-		}
-		sb.WriteString("Other criteria the judge scored below threshold:\n")
-		sb.WriteString(strings.Join(judgeFails, "\n"))
+		appendLabeledSection(&sb, "Other criteria the judge scored below threshold:\n", strings.Join(judgeFails, "\n"))
 	}
 	if findingsFeedback != "" {
 		if sb.Len() > 0 {
@@ -2041,6 +2036,43 @@ func renderFeedbackSummary(env verdictEnvelope, judgeFeedback string, findings [
 		sb.WriteString(findingsFeedback)
 	}
 	return sb.String()
+}
+
+// failureShortfalls: "- criterion: shortfall" display lines for a failure list.
+func failureShortfalls(fails []failureEntry) []string {
+	var out []string
+	for _, f := range fails {
+		if s := strings.TrimSpace(f.Shortfall); s != "" {
+			out = append(out, fmt.Sprintf("- %s: %s", f.Criterion.Name, s))
+		}
+	}
+	return out
+}
+
+// appendJudgeFeedback: the judge's free-form assessment, with its own header
+// when deterministic failures were excluded from its scoring.
+func appendJudgeFeedback(sb *strings.Builder, judgeFeedback string, detFailed bool) {
+	fb := strings.TrimSpace(judgeFeedback)
+	if fb == "" {
+		return
+	}
+	if sb.Len() > 0 {
+		sb.WriteString("\n\n")
+	}
+	if detFailed {
+		sb.WriteString("Judge's assessment of the remaining criteria (the deterministic failures above were excluded from its scoring):\n")
+	}
+	sb.WriteString(fb)
+}
+
+// appendLabeledSection: header (with its trailing newline) plus body, blank-
+// line separated from whatever the builder already holds.
+func appendLabeledSection(sb *strings.Builder, header, body string) {
+	if sb.Len() > 0 {
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString(header)
+	sb.WriteString(body)
 }
 
 // citationOnlyFailure: only cites_sources below threshold - answer is substantively fine, just needs URL formatting.
