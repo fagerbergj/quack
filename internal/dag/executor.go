@@ -443,6 +443,19 @@ func (s *dagStream) emit(ev stream.SSEEvent) bool {
 	return true
 }
 
+// emitNodeStart: the one-shot NodeStart for a plan node, stamped with resumed-from and trace.
+func (s *dagStream) emitNodeStart(node string) bool {
+	if !s.started[node] {
+		s.started[node] = true
+		s.startedAt[node] = time.Now()
+		ev := stream.WithResumedFrom(stream.NodeStart(node, s.agentByID[node]), s.resumedFromByID[node])
+		if !s.emit(stream.WithTrace(ev, s.traceID)) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *dagStream) handle(ev *session.Event) bool {
 	if s.stopped {
 		return false
@@ -454,13 +467,8 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	if node == "" {
 		return true // not a plan-node event (root/join/etc.)
 	}
-	if !s.started[node] {
-		s.started[node] = true
-		s.startedAt[node] = time.Now()
-		ev := stream.WithResumedFrom(stream.NodeStart(node, s.agentByID[node]), s.resumedFromByID[node])
-		if !s.emit(stream.WithTrace(ev, s.traceID)) {
-			return false
-		}
+	if !s.emitNodeStart(node) {
+		return false
 	}
 
 	if ev.RequestedInput != nil {
@@ -483,48 +491,10 @@ func (s *dagStream) handle(ev *session.Event) bool {
 			if s.pauseReasonOf != nil {
 				pauseReason = s.pauseReasonOf(node)
 			}
-			switch {
-			case s.deliveredOf != nil && s.deliveredOf(node):
-				// ctrl.MarkDelivered() fired inside RunGatedRefine's commitDelivery
-				// call - the authoritative signal, unlike out!="" below (a mid-gate
-				// draft can be non-empty too). Outranks every pause/cancel reason,
-				// live or shutdown: the work is genuinely done regardless of a flag
-				// that raced in afterward (#1340 review, out!=""'s case only closed
-				// this for PauseShutdown).
-				if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
-					return false
-				}
-			case pauseReason != "" && pauseReason != PauseShutdown:
-				// A live user/HITL pause: node.go's own cooperative check caught
-				// this before commitDelivery ran, so the draft answer (if any)
-				// was never delivered.
-				if !s.emit(stream.NodePaused(node)) {
-					return false
-				}
-			case s.cancelled != nil && s.cancelled(node):
-				if !s.emit(stream.WithContextID(stream.NodeCancelled(node), s.contextOf(node))) {
-					return false
-				}
-			case out != "":
-				// A delivered answer wins over a shutdown-drain pause flipped
-				// after the gate loop's last check (e.g. inside commitDelivery,
-				// which runs with the control still registered) - the work
-				// already happened, so the node is done regardless of the late
-				// flag. serve.DrainActiveRuns pauses exactly this population on
-				// every SIGTERM.
-				if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
-					return false
-				}
-			case pauseReason == PauseShutdown:
-				if !s.emit(stream.NodePaused(node)) {
-					return false
-				}
-			default:
-				ev := stream.NodeFailed(node, emptyNodeError(s.chatID, s.scope(node), s.agentByID[node]))
-				if !s.emit(stream.WithContextID(ev, s.contextOf(node))) {
-					return false
-				}
+			if !s.emitNodeTerminal(node, out, pauseReason) {
+				return false
 			}
+
 		}
 		return true
 	}
@@ -533,6 +503,12 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	if !strings.HasPrefix(runID, "worker") {
 		return true
 	}
+	return s.handleWorkerRun(node, runID, ev)
+}
+
+// handleWorkerRun: a worker-run segment under the node - close the prior run, stamp
+// usage, relay a newer steer generation, emit agent-start, then accumulate content.
+func (s *dagStream) handleWorkerRun(node, runID string, ev *session.Event) bool {
 	if s.curRun[node] != runID {
 		if !s.closeRun(node) {
 			return false
@@ -569,6 +545,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -901,4 +878,34 @@ func steerGen(runID string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// terminalSpec: the finished node's terminal event, by priority - delivery, live
+// pause, cancel, delivered answer, shutdown pause, then failure.
+func (s *dagStream) terminalSpec(node, out string, pauseReason PauseReason) stream.SSEEvent {
+	switch {
+	case s.deliveredOf != nil && s.deliveredOf(node):
+		// ctrl.MarkDelivered() fired inside commitDelivery - the authoritative signal, outranking
+		// every pause/cancel reason: the work is genuinely done regardless of a flag that raced in (#1340 review).
+		return stream.NodeDone(node, s.nodeDoneData(node))
+	case pauseReason != "" && pauseReason != PauseShutdown:
+		// Live user/HITL pause: node.go's cooperative check caught this before commitDelivery ran, so the draft answer was never delivered.
+		return stream.NodePaused(node)
+	case s.cancelled != nil && s.cancelled(node):
+		return stream.WithContextID(stream.NodeCancelled(node), s.contextOf(node))
+	case out != "":
+		// A delivered answer wins over a shutdown-drain pause flipped after the gate loop
+		// last checked (e.g. inside commitDelivery) - the work already happened; serve.DrainActiveRuns pauses exactly this population on SIGTERM.
+		return stream.NodeDone(node, s.nodeDoneData(node))
+	case pauseReason == PauseShutdown:
+		return stream.NodePaused(node)
+	default:
+		ev := stream.NodeFailed(node, emptyNodeError(s.chatID, s.scope(node), s.agentByID[node]))
+		return stream.WithContextID(ev, s.contextOf(node))
+	}
+}
+
+// emitNodeTerminal: the terminal event, emitted once (the original switch emitted exactly one and returned on failure).
+func (s *dagStream) emitNodeTerminal(node, out string, pauseReason PauseReason) bool {
+	return s.emit(s.terminalSpec(node, out, pauseReason))
 }

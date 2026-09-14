@@ -371,20 +371,8 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
 	}
-	// A delivery object present but with an empty kind asks the harness to
-	// infer it from a single-kind dispatch; omitting delivery entirely means
-	// "not yet" and is NEVER inferred (#slice3 review: the judge and execute
-	// must agree on whether delivery is declared - inferring it from mere
-	// omission made every step of a single-kind-trigger dispatch look
-	// "final" to the judge while execute still treated it as partial).
-	if delivery != nil && delivery.Kind == "" {
-		def := DefaultDeliveryFromAllowedKinds(allowedKinds)
-		if def == nil {
-			return nil, fmt.Errorf("delivery.kind: required - this dispatch allows more than one delivery kind (%s), so it can't be inferred", strings.Join(allowedKinds, ", "))
-		}
-		delivery = def
-	}
-	if err := validateDelivery(delivery); err != nil {
+	delivery, err := resolveDelivery(delivery, allowedKinds)
+	if err != nil {
 		return nil, err
 	}
 	known := make(map[string]AgentInfo, len(agents))
@@ -394,92 +382,18 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	ids := make(map[string]bool, len(nodes))
 	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, AllowedDeliveryKinds: allowedKinds}
 	for _, n := range nodes {
-		if n.ID == "" {
-			return nil, fmt.Errorf("node missing id")
+		node, err := buildNode(n, known, checkCommands, ids)
+		if err != nil {
+			return nil, err
 		}
-		if ids[n.ID] {
-			return nil, fmt.Errorf("duplicate node id %q", n.ID)
-		}
-		agentInfo, ok := known[n.Agent]
-		if !ok {
-			return nil, fmt.Errorf("unknown agent %q for node %q; valid agents: %s%s",
-				n.Agent, n.ID, strings.Join(sortedKeys(known), ", "), didYouMean(n.Agent, sortedKeys(known)))
-		}
-		if len(n.Checks) > 0 {
-			if err := validateChecks(n.Checks, checkCommands); err != nil {
-				return nil, fmt.Errorf("node %q: %w", n.ID, err)
-			}
-		}
-		if n.Artifact != "" {
-			if err := ValidateArtifactKind(n.Artifact); err != nil {
-				return nil, fmt.Errorf("node %q: %w", n.ID, err)
-			}
-		}
-		// n.Artifact (a config-bound workflow node) overrides; otherwise the
-		// agent's own bundle-declared default applies.
-		artifactKind := n.Artifact
-		if artifactKind == "" {
-			artifactKind = agentInfo.DefaultArtifact
-		}
-		ids[n.ID] = true
-		plan.Nodes = append(plan.Nodes, Node{
-			ID:            n.ID,
-			AgentName:     n.Agent,
-			Task:          n.Task,
-			Rubric:        n.Rubric,
-			DependsOn:     n.DependsOn,
-			Checks:        n.Checks,
-			Workdir:       n.Workdir,
-			ContextWindow: agentInfo.ContextWindow,
-			Artifact:      artifactKind,
-			ResumedFrom:   n.ResumedFrom,
-			Result:        n.Result,
-		})
+		plan.Nodes = append(plan.Nodes, node)
 	}
 
-	// Harden: synthesizer depends on every non-synthesizer node NOT downstream of it.
-	if len(plan.Nodes) > 1 {
-		hasSynth := false
-		for _, n := range plan.Nodes {
-			if n.AgentName == synthesizerAgent {
-				hasSynth = true
-				break
-			}
-		}
-		for i, n := range plan.Nodes {
-			if n.AgentName != synthesizerAgent {
-				continue
-			}
-			down := descendants(plan.Nodes, n.ID)
-			var deps []string
-			for _, m := range plan.Nodes {
-				if m.ID == n.ID || m.AgentName == synthesizerAgent || down[m.ID] {
-					continue
-				}
-				deps = append(deps, m.ID)
-			}
-			plan.Nodes[i].DependsOn = deps
-		}
-		// Append a synthesizer fan-in when the orchestrator omits it and multi-terminal would fail.
-		synthInfo, hasSynthAgent := known[synthesizerAgent]
-		if !hasSynth && hasSynthAgent && len(terminalIDs(plan.Nodes)) > 1 {
-			// Appended fan-in is safe: nothing depends on it, no descendants to cycle into.
-			var all []string
-			for _, n := range plan.Nodes {
-				all = append(all, n.ID)
-			}
-			plan.Nodes = append(plan.Nodes, Node{
-				ID:            "synthesize",
-				AgentName:     synthesizerAgent,
-				Task:          "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
-				DependsOn:     all,
-				ContextWindow: synthInfo.ContextWindow,
-			})
-		}
-	}
+	// Harden: synthesizer fan-in.
+	plan.Nodes = hardenSynthesizer(plan.Nodes, known)
 
-	if _, err := topoLayers(*plan); err != nil {
-		return nil, err
+	if _, topoErr := topoLayers(*plan); topoErr != nil {
+		return nil, topoErr
 	}
 	if err := validateRepoChain(*plan); err != nil {
 		return nil, err
@@ -607,4 +521,111 @@ func descendants(nodes []Node, id string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// resolveDelivery: infers a kindless delivery from a single-kind dispatch; an omitted delivery means
+// "not yet" and is NEVER inferred (#slice3 review).
+func resolveDelivery(delivery *Delivery, allowedKinds []string) (*Delivery, error) {
+	if delivery != nil && delivery.Kind == "" {
+		def := DefaultDeliveryFromAllowedKinds(allowedKinds)
+		if def == nil {
+			return nil, fmt.Errorf("delivery.kind: required - this dispatch allows more than one delivery kind (%s), so it can't be inferred", strings.Join(allowedKinds, ", "))
+		}
+		delivery = def
+	}
+	if err := validateDelivery(delivery); err != nil {
+		return nil, err
+	}
+	return delivery, nil
+}
+
+// buildNode: validates one raw node against the dispatch's agents/commands and shapes it.
+func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, ids map[string]bool) (Node, error) {
+	if n.ID == "" {
+		return Node{}, fmt.Errorf("node missing id")
+	}
+	if ids[n.ID] {
+		return Node{}, fmt.Errorf("duplicate node id %q", n.ID)
+	}
+	agentInfo, ok := known[n.Agent]
+	if !ok {
+		return Node{}, fmt.Errorf("unknown agent %q for node %q; valid agents: %s%s",
+			n.Agent, n.ID, strings.Join(sortedKeys(known), ", "), didYouMean(n.Agent, sortedKeys(known)))
+	}
+	if len(n.Checks) > 0 {
+		if err := validateChecks(n.Checks, checkCommands); err != nil {
+			return Node{}, fmt.Errorf("node %q: %w", n.ID, err)
+		}
+	}
+	if n.Artifact != "" {
+		if err := ValidateArtifactKind(n.Artifact); err != nil {
+			return Node{}, fmt.Errorf("node %q: %w", n.ID, err)
+		}
+	}
+	// n.Artifact (a config-bound workflow node) overrides; otherwise the
+	// agent's own bundle-declared default applies.
+	artifactKind := n.Artifact
+	if artifactKind == "" {
+		artifactKind = agentInfo.DefaultArtifact
+	}
+	ids[n.ID] = true
+	return Node{
+		ID:            n.ID,
+		AgentName:     n.Agent,
+		Task:          n.Task,
+		Rubric:        n.Rubric,
+		DependsOn:     n.DependsOn,
+		Checks:        n.Checks,
+		Workdir:       n.Workdir,
+		ContextWindow: agentInfo.ContextWindow,
+		Artifact:      artifactKind,
+		ResumedFrom:   n.ResumedFrom,
+		Result:        n.Result,
+	}, nil
+}
+
+// hardenSynthesizer: the synthesizer depends on every non-synthesizer node NOT downstream of it; an
+// omitted synthesizer is appended as a fan-in when multi-terminal would fail.
+func hardenSynthesizer(nodes []Node, known map[string]AgentInfo) []Node {
+	if len(nodes) < 2 {
+		return nodes
+	}
+	hasSynth := false
+	for _, n := range nodes {
+		if n.AgentName == synthesizerAgent {
+			hasSynth = true
+			break
+		}
+	}
+	for i, n := range nodes {
+		if n.AgentName != synthesizerAgent {
+			continue
+		}
+		down := descendants(nodes, n.ID)
+		var deps []string
+		for _, m := range nodes {
+			if m.ID == n.ID || m.AgentName == synthesizerAgent || down[m.ID] {
+				continue
+			}
+			deps = append(deps, m.ID)
+		}
+		nodes[i].DependsOn = deps
+	}
+	// Append a synthesizer fan-in when the orchestrator omits it and multi-terminal would fail.
+	synthInfo, hasSynthAgent := known[synthesizerAgent]
+	if !hasSynth && hasSynthAgent && len(terminalIDs(nodes)) > 1 {
+		// Appended fan-in is safe: nothing depends on it, no descendants to cycle into.
+		var all []string
+		for _, n := range nodes {
+			all = append(all, n.ID)
+		}
+		nodes = append(nodes, Node{
+			ID:            "synthesize",
+			AgentName:     synthesizerAgent,
+			Task:          "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
+			DependsOn:     all,
+			ContextWindow: synthInfo.ContextWindow,
+		})
+	}
+	return nodes
 }
