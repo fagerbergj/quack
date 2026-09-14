@@ -960,50 +960,65 @@ func (o *Orchestrator) PriorEvents(ctx context.Context, userID, sessionID string
 }
 
 // buildHistory converts prior events into dag.HistoryTurn values for the planner.
-func buildHistory(events []*session.Event) []dag.HistoryTurn {
-	var turns []dag.HistoryTurn
-	var userText, modelText strings.Builder
-	haveTurn := false
-	flush := func() {
-		if !haveTurn {
-			return
-		}
-		if t := strings.TrimSpace(userText.String()); t != "" {
-			turns = append(turns, dag.HistoryTurn{Role: "user", Text: t})
-		}
-		if t := strings.TrimSpace(modelText.String()); t != "" {
-			turns = append(turns, dag.HistoryTurn{Role: "model", Text: t})
+// historyBuilder folds session events into history turns (a user event opens a
+// turn, later gate events fill its model side).
+type historyBuilder struct {
+	turns     []dag.HistoryTurn
+	userText  strings.Builder
+	modelText strings.Builder
+	haveTurn  bool
+}
+
+func (b *historyBuilder) flush() {
+	if !b.haveTurn {
+		return
+	}
+	if t := strings.TrimSpace(b.userText.String()); t != "" {
+		b.turns = append(b.turns, dag.HistoryTurn{Role: "user", Text: t})
+	}
+	if t := strings.TrimSpace(b.modelText.String()); t != "" {
+		b.turns = append(b.turns, dag.HistoryTurn{Role: "model", Text: t})
+	}
+}
+
+func (b *historyBuilder) addUserEvent(ev *session.Event) {
+	b.flush()
+	b.userText.Reset()
+	b.modelText.Reset()
+	b.haveTurn = true
+	for _, p := range ev.Content.Parts {
+		if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
+			b.userText.WriteString(p.Text)
 		}
 	}
+}
 
+func (b *historyBuilder) addModelEvent(ev *session.Event) {
+	for _, p := range ev.Content.Parts {
+		if p == nil || p.Thought || p.FunctionCall != nil || p.FunctionResponse != nil {
+			continue
+		}
+		b.modelText.WriteString(p.Text)
+	}
+}
+
+func buildHistory(events []*session.Event) []dag.HistoryTurn {
+	var b historyBuilder
 	for _, ev := range events {
 		if ev == nil || ev.Content == nil {
 			continue
 		}
 		if ev.Author == "user" {
-			flush()
-			userText.Reset()
-			modelText.Reset()
-			haveTurn = true
-			for _, p := range ev.Content.Parts {
-				if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
-					userText.WriteString(p.Text)
-				}
-			}
-		} else if haveTurn {
-			for _, p := range ev.Content.Parts {
-				if p == nil || p.Thought || p.FunctionCall != nil || p.FunctionResponse != nil {
-					continue
-				}
-				modelText.WriteString(p.Text)
-			}
+			b.addUserEvent(ev)
+		} else if b.haveTurn {
+			b.addModelEvent(ev)
 		}
 	}
-	flush()
-	return turns
+	b.flush()
+	return b.turns
 }
 
-// pendingChoice returns the call ID and question of the most recent unanswered get_user_choice.
+// pendingChoice returns// pendingChoice returns the call ID and question of the most recent unanswered get_user_choice.
 func pendingChoice(events []*session.Event) (callID, question string) {
 	var pendingID, pendingQuestion string
 	for _, ev := range events {

@@ -77,9 +77,8 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 	addStageReviewComment(srv, review)
 	addListReviewComments(srv, review)
 	addUnstageReviewComment(srv, review)
-	// A slice feeding a synthesizer never owns the delivered verdict (#1148):
-	// the tool is withheld rather than registered-and-refused, so the
-	// reviewer prompt's "the tool list is a fact" holds.
+	// A slice feeding a synthesizer never owns the delivered verdict (#1148): the
+	// tool is withheld rather than registered-and-refused ("the tool list is a fact").
 	if review.IsNonDeliveringSlice() {
 		return
 	}

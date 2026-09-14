@@ -72,95 +72,129 @@ type builtSDKExtension struct {
 // nil-is-valid contract). taskMem/userMem are already-built by the time this
 // runs (buildFromConfig constructs them first) and may each be nil - the same
 // task/user split rest/memory.go's memStores() iterates.
+// sdkBuildDeps: the server-side dependencies one extension's build needs.
+type sdkBuildDeps struct {
+	cfg           *config.Config
+	factories     map[string]extsdk.Factory
+	shapes        []workflowcatalog.Shape
+	orchRef       *atomic.Pointer[orchestrator.Orchestrator]
+	st            *store.Store
+	hub           *stream.Hub
+	eventLog      *runlog.EventLog
+	artifacts     *store.TurnAwareService
+	judgeModelRef *atomic.Pointer[model.LLM]
+	taskMem       *memory.Store
+	userMem       *memory.Store
+	ledgerStore   ledger.LedgerStore
+}
+
 func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore) ([]builtSDKExtension, error) {
-	factories := extsdk.Registered()
+	d := sdkBuildDeps{cfg: cfg, factories: extsdk.Registered(), shapes: workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision),
+		orchRef: orchRef, st: st, hub: hub, eventLog: eventLog, artifacts: artifacts, judgeModelRef: judgeModelRef,
+		taskMem: taskMem, userMem: userMem, ledgerStore: ledgerStore}
 	names := make([]string, 0, len(cfg.Extensions.Modules))
 	for name := range cfg.Extensions.Modules {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	shapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
-
 	built := make([]builtSDKExtension, 0, len(names))
 	for _, name := range names {
-		factory, ok := factories[name]
+		factory, ok := d.factories[name]
 		if !ok {
-			known := make([]string, 0, len(factories))
-			for k := range factories {
-				known = append(known, k)
-			}
-			sort.Strings(known)
-			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(known, ", "))
+			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(knownExtensionNames(d.factories), ", "))
 		}
-		// Only a name that will actually be mounted needs to be route-safe -
-		// a compiled-but-unconfigured module never reaches this check.
-		if err := server.ValidateExtensionName(name); err != nil {
-			return nil, fmt.Errorf("config: extensions.%s: %w", name, err)
-		}
-		node := cfg.Extensions.Modules[name]
-		raw, err := yaml.Marshal(&node)
+		b, disabled, err := buildOneSDKExtension(name, factory, d)
 		if err != nil {
-			return nil, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+			return nil, err
 		}
-
-		var base extsdk.BaseConfig
-		if err := yaml.Unmarshal(raw, &base); err != nil {
-			return nil, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
-		}
-		if base.Enabled != nil && !*base.Enabled {
-			slog.Info("sdk extension disabled by config; staying dormant", "component", "startup", "extension", name)
+		if disabled {
 			continue
-		}
-
-		dataDir := base.DataDir
-		if dataDir == "" {
-			dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
-		}
-		if err := os.MkdirAll(dataDir, 0o755); err != nil {
-			return nil, fmt.Errorf("extensions.%s: data dir: %w", name, err)
-		}
-
-		var extHolder atomic.Pointer[extsdk.Extension]
-		host := extsdk.Host{
-			Dispatch:      newExtDispatch(name, orchRef, st, hub, eventLog, &extHolder, shapes, artifacts),
-			Log:           slog.Default().With("component", "ext."+name),
-			DataDir:       dataDir,
-			Version:       Version,
-			PublicURL:     cfg.Server.PublicURL,
-			ReadArtifact:  readExtInputArtifact(st, artifacts),
-			WriteArtifact: writeExtInputArtifact(st, artifacts),
-			ChatUser:      extChatUser(st),
-			ArchiveChat: func(chatID string) error {
-				return st.ArchiveChat(context.Background(), chatID, true)
-			},
-			UpdateChatOrigin: newExtUpdateChatOrigin(name, st, taskMem, userMem, ledgerStore),
-			InvalidateSetup: func(chatID string) error {
-				dag.MarkSetupStale(chatID)
-				return nil
-			},
-			Classify: func(ctx context.Context, prompt string) (string, error) {
-				m := judgeModelRef.Load()
-				if m == nil || *m == nil {
-					return "", fmt.Errorf("extensions.%s: classify: no judge model configured", name)
-				}
-				return classifyWithModel(ctx, *m, prompt)
-			},
-		}
-		ext, err := factory(host, raw)
-		if err != nil {
-			return nil, fmt.Errorf("extensions.%s: factory: %w", name, err)
-		}
-		extHolder.Store(&ext)
-		b := builtSDKExtension{name: name, ext: ext}
-		if ui, ok := ext.(extsdk.UI); ok {
-			d := ui.UI()
-			b.title, b.href, b.icon = d.Title, d.Href, d.Icon
 		}
 		built = append(built, b)
 		slog.Info("sdk extension enabled", "component", "startup", "extension", name)
 	}
 	return built, nil
+}
+
+// knownExtensionNames: the sorted names of the compiled extension factories.
+func knownExtensionNames(factories map[string]extsdk.Factory) []string {
+	known := make([]string, 0, len(factories))
+	for k := range factories {
+		known = append(known, k)
+	}
+	sort.Strings(known)
+	return known
+}
+
+// buildOneSDKExtension: validate, marshal, and mount one configured extension;
+// disabled=true when its config says enabled:false (stays dormant).
+func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (builtSDKExtension, bool, error) {
+	// Only a name that will actually be mounted needs to be route-safe -
+	// a compiled-but-unconfigured module never reaches this check.
+	if err := server.ValidateExtensionName(name); err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("config: extensions.%s: %w", name, err)
+	}
+	node := d.cfg.Extensions.Modules[name]
+	raw, err := yaml.Marshal(&node)
+	if err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+	}
+
+	var base extsdk.BaseConfig
+	if err := yaml.Unmarshal(raw, &base); err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
+	}
+	if base.Enabled != nil && !*base.Enabled {
+		slog.Info("sdk extension disabled by config; staying dormant", "component", "startup", "extension", name)
+		return builtSDKExtension{}, true, nil
+	}
+
+	dataDir := base.DataDir
+	if dataDir == "" {
+		dataDir = filepath.Join(d.cfg.Workspace.Root, "extensions", name)
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: data dir: %w", name, err)
+	}
+
+	var extHolder atomic.Pointer[extsdk.Extension]
+	host := extsdk.Host{
+		Dispatch:      newExtDispatch(name, d.orchRef, d.st, d.hub, d.eventLog, &extHolder, d.shapes, d.artifacts),
+		Log:           slog.Default().With("component", "ext."+name),
+		DataDir:       dataDir,
+		Version:       Version,
+		PublicURL:     d.cfg.Server.PublicURL,
+		ReadArtifact:  readExtInputArtifact(d.st, d.artifacts),
+		WriteArtifact: writeExtInputArtifact(d.st, d.artifacts),
+		ChatUser:      extChatUser(d.st),
+		ArchiveChat: func(chatID string) error {
+			return d.st.ArchiveChat(context.Background(), chatID, true)
+		},
+		UpdateChatOrigin: newExtUpdateChatOrigin(name, d.st, d.taskMem, d.userMem, d.ledgerStore),
+		InvalidateSetup: func(chatID string) error {
+			dag.MarkSetupStale(chatID)
+			return nil
+		},
+		Classify: func(ctx context.Context, prompt string) (string, error) {
+			m := d.judgeModelRef.Load()
+			if m == nil || *m == nil {
+				return "", fmt.Errorf("extensions.%s: classify: no judge model configured", name)
+			}
+			return classifyWithModel(ctx, *m, prompt)
+		},
+	}
+	ext, err := factory(host, raw)
+	if err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: factory: %w", name, err)
+	}
+	extHolder.Store(&ext)
+	b := builtSDKExtension{name: name, ext: ext}
+	if ui, ok := ext.(extsdk.UI); ok {
+		dd := ui.UI()
+		b.title, b.href, b.icon = dd.Title, dd.Href, dd.Icon
+	}
+	return b, false, nil
 }
 
 // startSDKExtensions calls Start on every extension implementing
@@ -446,9 +480,8 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 	return found, foundName, nil
 }
 
-// newExtDispatch builds the sdk.DispatchFunc an extension's Host carries. Prep (chat row, turn) is
-// synchronous; the run happens in a goroutine, so Dispatch returns before the run completes -
-// RunObserver is how a caller learns it finished.
+// newExtDispatch builds the sdk.DispatchFunc an extension's Host carries. Prep (chat
+// row, turn) is synchronous; the run is a goroutine, so Dispatch returns early.
 func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if hub.Draining() {
@@ -491,9 +524,8 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		}
 		attachments := extAttachmentParts(runCtx, name, artifacts, userID, chatID, turnID, req.Ask.Attachments)
 
-		// Reset synchronously, before Dispatch returns (the caller's ack), so a subscriber
-		// landing in the run's start window never reads the previous dispatch's events
-		// off the hub or the durable log (#audit-5).
+		// Reset synchronously, before the caller's ack, so a subscriber landing in the
+		// run's start window never reads the previous dispatch's events (#audit-5).
 		hub.Reset(chatID)
 		eventLog.Reset(runCtx, chatID)
 
@@ -520,13 +552,11 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 	}
 }
 
-// prepareExtChat: merge the dispatch's chat origin/setup onto the chat's stored
-// state (a nudge re-dispatch carries neither - merging preserves turn-2 planning
-// data, #1180), optionally reset the session, and stamp origin/title.
+// prepareExtChat: merge the dispatch's chat origin/setup onto the stored state
+// (a nudge re-dispatch carries neither, #1180), reset the session, stamp origin/title.
 func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, error) {
-	// Merge onto whatever this chat already has stored, rather than replacing it:
-	// a nudge/retry re-dispatch (quack-extensions#47) carries neither Chat.Origin
-	// nor Run.Setup, and previously blanked both - #1180's missing PR head ref.
+	// Merge onto the chat's stored state rather than replacing it: a nudge/retry
+	// re-dispatch (quack-extensions#47) carries neither Origin nor Run.Setup (#1180).
 	existing, getErr := st.GetChat(runCtx, chatID)
 	if getErr != nil {
 		slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",

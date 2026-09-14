@@ -606,45 +606,66 @@ func loadEpisodicRoundState(ctx context.Context, cfg Config, nodeID string) *epi
 		return st
 	}
 	if cfg.IsReviewer {
-		if id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID)); err == nil {
-			if raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.reviewRev = rev
-				var rec CodeReviewRecord
-				if json.Unmarshal(raw, &rec) == nil {
-					for _, fid := range rec.FindingIDs {
-						fraw, _, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
-						if ferr != nil || !fok {
-							continue
-						}
-						var f FindingRecord
-						if json.Unmarshal(fraw, &f) != nil {
-							continue
-						}
-						st.findingRev[fid] = frev
-						st.findingState[fid] = f.State
-						if f.State != "resolved" {
-							st.findings[fid] = f
-						}
-					}
-				}
-			}
-		}
+		loadReviewState(ctx, c, cfg, st)
 	}
 	if cfg.Artifact != "" {
-		if id, err := recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID)); err == nil {
-			if _, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.documentRev = rev
-			}
+		if rev, ok := latestRevision(ctx, c, cfg.Artifact, documentHint(cfg.ChatID)); ok {
+			st.documentRev = rev
 		}
 	}
 	if !cfg.IsReviewer && cfg.Artifact == "" {
-		if id, err := recordstore.IdentityFor(kindText, nil, nodeID); err == nil {
-			if _, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
-				st.textRev = rev
-			}
+		if rev, ok := latestRevision(ctx, c, kindText, nodeID); ok {
+			st.textRev = rev
 		}
 	}
 	return st
+}
+
+// loadReviewState: the latest code_review revision and its findings (unresolved
+// ones become this round's baseline).
+func loadReviewState(ctx context.Context, c *recordstore.Client, cfg Config, st *episodicRoundState) {
+	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	if err != nil {
+		return
+	}
+	raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil || !ok {
+		return
+	}
+	st.reviewRev = rev
+	var rec CodeReviewRecord
+	if json.Unmarshal(raw, &rec) != nil {
+		return
+	}
+	for _, fid := range rec.FindingIDs {
+		fraw, _, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
+		if ferr != nil || !fok {
+			continue
+		}
+		var f FindingRecord
+		if json.Unmarshal(fraw, &f) != nil {
+			continue
+		}
+		st.findingRev[fid] = frev
+		st.findingState[fid] = f.State
+		if f.State != "resolved" {
+			st.findings[fid] = f
+		}
+	}
+}
+
+// latestRevision: the latest revision of a kind under a subject hint (0, false
+// when there is no id or no revision yet).
+func latestRevision(ctx context.Context, c *recordstore.Client, kind, hint string) (int, bool) {
+	id, err := recordstore.IdentityFor(kind, nil, hint)
+	if err != nil {
+		return 0, false
+	}
+	_, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil || !ok {
+		return 0, false
+	}
+	return rev, true
 }
 
 func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) *episodicRoundState {
@@ -883,8 +904,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	toolWritten := resetToolWrittenIDs(cfg)
 
 	// #1091 gate fallback: write_code_review/write_finding let the worker write
-	// this round's record directly; detected via toolWritten membership, not a
-	// revision compare (st.reviewRev loads lazily, after the draft round's tool write).
+	// this round's record directly; detected via toolWritten, not a revision compare.
 	codeReviewID, crIDErr := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	toolWroteCodeReview := crIDErr == nil && toolWritten[codeReviewID]
 
@@ -902,9 +922,8 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	}
 
 	savedAt := time.Now().UTC()
-	// Tool-written findings seed BEFORE the tail-parse loop and before the
-	// toolWroteCodeReview short-circuit - a return before seeding would leave
-	// st.findingRev stale for a later round's ParentRevision (#1108 B3).
+	// Tool-written findings seed BEFORE the tail parse and the toolWroteCodeReview
+	// short-circuit - a return before seeding leaves st.findingRev stale (#1108 B3).
 	current, findingIDs, seen := seedToolFindings(ctx, c, st, nodeID, toolWritten, codeReviewID)
 
 	// That write is authoritative; answer-tail parsing runs only when nothing
@@ -955,9 +974,8 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		}
 		writeFinding(id, rec)
 	}
-	// Resolved: an id previously live (this run or a prior turn) that this
-	// round dropped - one revision recording the resolution (replaces V3's
-	// critique list).
+	// Resolved: an id previously live that this round dropped - one revision
+	// recording the resolution (replaces V3's critique list).
 	for id, rec := range st.findings {
 		if _, stillLive := current[id]; stillLive {
 			continue
@@ -970,9 +988,8 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	recordCodeReviewSave(ctx, c, cfg, nodeID, turnID, round, st, savedAt, event, findings, answer, staged, findingIDs, dismissedComments, clean)
 }
 
-// seedToolFindings: findings the worker already wrote directly via write_finding
-// this round, seeded from the store (no second write) so the tail parse skips
-// them instead of minting a duplicate revision (#1091 finding #1).
+// seedToolFindings: findings the worker wrote directly via write_finding this
+// round, seeded so the tail parse skips them (#1091 finding #1).
 func seedToolFindings(ctx context.Context, c *recordstore.Client, st *episodicRoundState, nodeID string, toolWritten map[string]bool, codeReviewID string) (map[string]FindingRecord, []string, map[string]bool) {
 	current := make(map[string]FindingRecord)
 	findingIDs := make([]string, 0)
