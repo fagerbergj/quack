@@ -76,7 +76,7 @@ RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@0.85.1
 # used to render PDF attachments to images for vision models (#829).
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates bubblewrap util-linux make poppler-utils \
+      git ca-certificates bubblewrap util-linux make poppler-utils tini \
       python3 python3-venv python3-pip \
       gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/* \
@@ -134,4 +134,6 @@ COPY scripts/plugins.sh /scripts/plugins.sh
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot
 EXPOSE 8080
-ENTRYPOINT ["/quack"]
+# tini reaps children orphaned onto PID 1 (pi, sh, git from agent sandboxes);
+# a wait(-1) loop inside quack would race os/exec.Cmd.Wait for exit statuses.
+ENTRYPOINT ["/usr/bin/tini", "--", "/quack"]
