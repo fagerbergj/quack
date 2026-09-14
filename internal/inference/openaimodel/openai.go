@@ -805,9 +805,8 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}
 
 	haveToolCalls := len(choice.Message.ToolCalls) > 0
-	// Real tool-call parts must be in content.Parts BEFORE the ladder runs, same
-	// as the streaming path - otherwise promotion sees no answer yet and fires
-	// on a turn that already has a tool call (regression: PR #1243 review).
+	// Real tool-call parts must be in content.Parts BEFORE the ladder runs (as in
+	// the streaming path) - otherwise promotion fires on a tool-call turn (PR #1243).
 	for _, toolCall := range choice.Message.ToolCalls {
 		if toolCall.Type == "function" {
 			content.Parts = append(content.Parts, &genai.Part{
@@ -847,9 +846,8 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}, nil
 }
 
-// reasoningContentText: the choice's reasoning_content extra field as text.
-// openai-go marks untyped ExtraFields "invalid" (Valid() always false), so gate
-// on the raw bytes, the way an omitted/null field already does.
+// reasoningContentText: the choice's reasoning_content extra field as text -
+// openai-go marks untyped ExtraFields "invalid", so gate on the raw bytes.
 func reasoningContentText(msg openai.ChatCompletionMessage) string {
 	rc := msg.JSON.ExtraFields["reasoning_content"]
 	if rc.Raw() == "" {
@@ -882,8 +880,7 @@ func usageMetadataFromResp(ctx context.Context, resp *openai.ChatCompletion, fin
 		ThoughtsTokenCount:      thoughts,
 	}
 	// Temporary raw usage trace - remove once prod confirms whether the endpoint
-	// sends prompt_tokens_details.cached_tokens at all (a 0 with prefix caching
-	// enabled is a server-side matter).
+	// sends prompt_tokens_details.cached_tokens (a 0 with caching is server-side).
 	slog.Debug("provider token usage", "component", "inference", "model", resp.Model,
 		"prompt_tokens", resp.Usage.PromptTokens, "cached_tokens", resp.Usage.PromptTokensDetails.CachedTokens,
 		"completion_tokens", resp.Usage.CompletionTokens, "reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,

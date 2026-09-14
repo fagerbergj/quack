@@ -59,19 +59,9 @@ type builtSDKExtension struct {
 	icon  string
 }
 
-// buildSDKExtensions constructs every configured module named under
-// extensions: that is also compiled in (sdk.Registered(), populated by
-// extensions_registry.go's blank imports). A configured name absent from the
-// registry, or one that fails ValidateExtensionName, fails startup loudly; a
-// registered module absent from config, or configured with enabled: false,
-// stays dormant - never constructed (design doc "Model"). orchRef and
-// judgeModelRef are read lazily by the returned extensions' Dispatch/Classify
-// closures: neither is resolved until the caller Stores it, both built later
-// in buildFromConfig (judgeModelRef may never be Stored at all when no judge
-// model is configured - Classify degrades to an error, matching Host's own
-// nil-is-valid contract). taskMem/userMem are already-built by the time this
-// runs (buildFromConfig constructs them first) and may each be nil - the same
-// task/user split rest/memory.go's memStores() iterates.
+// buildSDKExtensions validates and mounts every configured extension module
+// in stable name order; enabled:false modules stay dormant (nil is not an error).
+
 // sdkBuildDeps: the server-side dependencies one extension's build needs.
 type sdkBuildDeps struct {
 	cfg           *config.Config
@@ -197,9 +187,8 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 	return b, false, nil
 }
 
-// startSDKExtensions calls Start on every extension implementing
-// sdk.Starter, failing loudly on the first error (design doc: "fail startup
-// on error").
+// startSDKExtensions calls Start on every extension implementing sdk.Starter,
+// failing loudly on the first error (design doc: "fail startup on error").
 func startSDKExtensions(ctx context.Context, exts []builtSDKExtension) error {
 	for _, e := range exts {
 		starter, ok := e.ext.(extsdk.Starter)
@@ -613,9 +602,8 @@ func extRunContext(runCtx context.Context, req extsdk.DispatchRequest, effective
 	// which reads these facts back off ctx (tools.AllowedDeliveryKindsFromContext etc.).
 	runCtx = tools.WithAllowedDeliveryKinds(runCtx, deliveryKindStrings(req.Delivery.AllowedKinds))
 	if effectiveSetup != nil {
-		// mergeExtOrigin's own merged Setup, NOT req.Run.Setup (#1180 recurrence):
-		// github always sends a non-nil Setup, and applying it unconditionally would
-		// clobber mergeExtOrigin's fallback with a weaker value.
+		// mergeExtOrigin's own merged Setup, NOT req.Run.Setup (#1180): github
+		// always sends a non-nil Setup; applying it unconditionally would clobber the fallback.
 		runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
 	}
 	if req.Ask.NodeContext != "" {
@@ -628,8 +616,7 @@ func extRunContext(runCtx context.Context, req extsdk.DispatchRequest, effective
 }
 
 // deliveryKindStrings converts the SDK's typed delivery-kind list to the
-// bare-string vocabulary vetting.Config.AllowedDeliveryKinds and dag.Plan
-// share; nil stays nil (unrestricted - see AllowedDeliveryKinds' own doc).
+// bare-string vocabulary vetting and dag.Plan share; nil stays nil (unrestricted).
 func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 	if kinds == nil {
 		return nil

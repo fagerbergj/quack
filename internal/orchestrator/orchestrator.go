@@ -959,7 +959,6 @@ func (o *Orchestrator) PriorEvents(ctx context.Context, userID, sessionID string
 	return events
 }
 
-// buildHistory converts prior events into dag.HistoryTurn values for the planner.
 // historyBuilder folds session events into history turns (a user event opens a
 // turn, later gate events fill its model side).
 type historyBuilder struct {
@@ -1002,6 +1001,7 @@ func (b *historyBuilder) addModelEvent(ev *session.Event) {
 	}
 }
 
+// buildHistory converts prior events into dag.HistoryTurn values for the planner.
 func buildHistory(events []*session.Event) []dag.HistoryTurn {
 	var b historyBuilder
 	for _, ev := range events {
