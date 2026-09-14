@@ -80,7 +80,7 @@ func TestRun_ConsumerStopsRangingMidRun_ProcessSurvives(t *testing.T) {
 	// Cap 1 so most nodes queue and fire onQueued through the ctx yield long
 	// after the consumer has gone.
 	admission := dag.NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
-	ex.SetAdmission(admission, func(string) dag.AdmissionSpec { return dag.AdmissionSpec{Model: "m"} })
+	ex.SetAdmission(admission, func(string) dag.AdmissionSpec { return dag.AdmissionSpec{Model: "m"} }, dag.AdmissionSpec{})
 
 	o := New(sessions, stub, "You are the orchestrator.", dag.NewPlanner(infos, nil, nil), ex, nil, nil, nil)
 

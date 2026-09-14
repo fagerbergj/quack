@@ -57,7 +57,7 @@ type nodeScopedWorker interface {
 // (#1123) - must match the userID the rest of the chat's artifacts (e.g. the
 // orchestrator's own writes) were saved under, or a node's list/read/edit
 // would silently see nothing.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent), sessions session.Service) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
@@ -100,7 +100,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.Artifacts = artifacts
 		cfg.Ledger = walLedger
 		cfg.RoundCoordsSink = setRoundCoords
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup, sessions)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup, sessions)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -219,7 +219,7 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 	return cfg
 }
 
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), release func(paused bool), admission *Admission, spec AdmissionSpec,
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), release func(paused bool), admission *Admission, spec, judgeSpec AdmissionSpec,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sessions session.Service) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
@@ -231,14 +231,11 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				defer func() { release(paused) }()
 			}
 			if admission != nil {
-				onQueued := func() {}
-				if yield, ok := stream.YieldFromContext(ctx); ok {
-					onQueued = func() { yield(stream.NodeQueued(node.ID)) }
+				free, aerr := setupAdmission(ctx, node.ID, &cfg, admission, spec, judgeSpec)
+				if aerr != nil {
+					return "", aerr
 				}
-				if !admission.Admit(ctx, spec, onQueued) {
-					return "", ctx.Err()
-				}
-				defer admission.Release(spec)
+				defer free()
 			}
 			var ctrl vetting.NodeControl
 			effectiveNode := node
@@ -286,41 +283,8 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
 			}
-			memParticipant := cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil
-			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && cfg.IsReviewer
-			prNode := cfg.ExternalWorker && !cfg.ReadOnly && cfg.Deliver != nil
-			artifactReader := cfg.ExternalWorker && cfg.Artifacts != nil
-			if memParticipant || reviewNode || prNode || artifactReader {
-				if secret, serr := vetting.NewMemSecret(); serr != nil {
-					slog.Warn("acp MCP secret unavailable; node runs without its memory/review tools",
-						"component", "dag", "node", node.ID, "err", serr)
-				} else {
-					task.MemSecret = secret
-					ms := vetting.MemSession{AdvisorToken: token}
-					if memParticipant {
-						ms.Memory = cfg.Memory
-						ms.Scope = vetting.MemoryScope(ctx, cfg)
-						ms.Staged = &vetting.MemStage{}
-						ms.Recalled = &vetting.RecallStage{}
-						ms.ChatID, ms.NodeID, ms.Ledger = chatID, node.ID, cfg.Ledger
-					}
-					if reviewNode {
-						ms.Review = vetting.NewReviewStage(cfg.ReviewFanout)
-					}
-					if prNode {
-						ms.PRStage = &vetting.PRStage{}
-						ms.ExistingPR = cfg.ExistingPR
-					}
-					if artifactReader {
-						ms.Artifacts = cfg.Artifacts
-						ms.AppName, ms.UserID, ms.ChatID = task.AppName, task.UserID, chatID
-						ms.NodeID = node.ID
-						ms.ToolWritten = vetting.NewToolWrittenStage()
-						ms.Ledger = cfg.Ledger
-					}
-					vetting.RegisterMemSession(secret, ms)
-					defer vetting.UnregisterMemSession(secret)
-				}
+			if cleanup := setupMemStages(ctx, chatID, node.ID, token, &cfg, &task); cleanup != nil {
+				defer cleanup()
 			}
 			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)
@@ -350,47 +314,122 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// real work), so their gen_ai metrics attribution rides on worker itself.
 			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
-			// Captured unconditionally, before UnregisterAdvisorThread's defer
-			// fires and regardless of outcome (success, empty, paused, or a
-			// hard failure) - an ACP node can establish a real transport
-			// session before ultimately failing or being cancelled, and that
-			// id must still reach the dag_node record (runlog.PersistNodeEvent
-			// reads gateContextKey the same way on every terminal event). For
-			// a native node this is whatever was seeded above (harmless -
-			// never consulted there).
-			contextID := ""
-			if at, ok := vetting.LookupAdvisorThread(token); ok {
-				contextID = at.ACPSessionID
-			}
-			if recordGate != nil {
-				recordGate(node.ID, res.Score, res.Passed, res.Rounds, contextID)
-			}
-			_ = ctx.State().Set(gateContextKey+node.ID, contextID)
-			if errors.Is(err, vetting.ErrNodeEmpty) {
-				markGateFailed(ctx, node.ID)
-				return "", nil
-			}
-			if errors.Is(err, vetting.ErrNodePaused) {
-				markGateFailed(ctx, node.ID)
-				paused = true
-				// A HITL park wraps ADK's own sentinel: the engine keys the
-				// park (and the persisted RequestInput a resume reads) off it,
-				// so it must propagate. Every other pause stops here.
-				if errors.Is(err, workflow.ErrNodeInterrupted) {
-					return answer, err
-				}
-				return answer, nil
-			}
-			if err == nil {
-				st := ctx.State()
-				_ = st.Set(gateFailedKey+node.ID, !res.Passed)
-				_ = st.Set(gateScoreKey+node.ID, res.Score)
-				_ = st.Set(gatePassedKey+node.ID, res.Passed)
-				_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
-			}
-			return answer, err
+			return finishGatedNode(ctx, node.ID, token, res, recordGate, answer, err, &paused)
 		},
 		workflow.NodeConfig{})
+}
+
+// setupAdmission: reserve the node's worker slot, then wire the four
+// admission hooks RunGatedRefine uses to swap the held spec for the judge's during judge calls.
+func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, admission *Admission, spec, judgeSpec AdmissionSpec) (func(), error) {
+	onQueued := func() {}
+	if yield, ok := stream.YieldFromContext(ctx); ok {
+		onQueued = func() { yield(stream.NodeQueued(nodeID)) }
+	}
+	if !admission.Admit(ctx, spec, onQueued) {
+		return nil, ctx.Err()
+	}
+	// held tracks the currently-reserved spec, swapped by RunGatedRefine
+	// between spec and judgeSpec, so the release below always frees what's actually held.
+	held := spec
+	cfg.ReleaseWorker = func() { admission.Release(spec); held = AdmissionSpec{} }
+	cfg.AdmitJudge = func(actx context.Context) bool {
+		if !admission.Admit(actx, judgeSpec, onQueued) {
+			return false
+		}
+		held = judgeSpec
+		return true
+	}
+	cfg.ReleaseJudge = func() { admission.Release(judgeSpec); held = AdmissionSpec{} }
+	cfg.AdmitWorker = func(actx context.Context) bool {
+		if !admission.Admit(actx, spec, onQueued) {
+			return false
+		}
+		held = spec
+		return true
+	}
+	return func() { admission.Release(held) }, nil
+}
+
+// setupMemStages: wire the ACP memory/review/PR/artifact stages onto the
+// advisor task for the nodes that carry them. Returns the session cleanup.
+func setupMemStages(ctx adkagent.Context, chatID, nodeID, token string, cfg *vetting.Config, task *vetting.AdvisorTask) func() {
+	if !cfg.ExternalWorker {
+		return nil
+	}
+	memParticipant := cfg.CommitMemory && cfg.Memory != nil
+	reviewNode := cfg.ReadOnly && cfg.IsReviewer
+	prNode := !cfg.ReadOnly && cfg.Deliver != nil
+	artifactReader := cfg.Artifacts != nil
+	if !memParticipant && !reviewNode && !prNode && !artifactReader {
+		return nil
+	}
+	secret, serr := vetting.NewMemSecret()
+	if serr != nil {
+		slog.Warn("acp MCP secret unavailable; node runs without its memory/review tools",
+			"component", "dag", "node", nodeID, "err", serr)
+		return nil
+	}
+	task.MemSecret = secret
+	ms := vetting.MemSession{AdvisorToken: token}
+	if memParticipant {
+		ms.Memory = cfg.Memory
+		ms.Scope = vetting.MemoryScope(ctx, *cfg)
+		ms.Staged = &vetting.MemStage{}
+		ms.Recalled = &vetting.RecallStage{}
+		ms.ChatID, ms.NodeID, ms.Ledger = chatID, nodeID, cfg.Ledger
+	}
+	if reviewNode {
+		ms.Review = vetting.NewReviewStage(cfg.ReviewFanout)
+	}
+	if prNode {
+		ms.PRStage = &vetting.PRStage{}
+		ms.ExistingPR = cfg.ExistingPR
+	}
+	if artifactReader {
+		ms.Artifacts = cfg.Artifacts
+		ms.AppName, ms.UserID, ms.ChatID = task.AppName, task.UserID, chatID
+		ms.NodeID = nodeID
+		ms.ToolWritten = vetting.NewToolWrittenStage()
+		ms.Ledger = cfg.Ledger
+	}
+	vetting.RegisterMemSession(secret, ms)
+	return func() { vetting.UnregisterMemSession(secret) }
+}
+
+// finishGatedNode: the gate result tail - the ACP context id captured unconditionally (an
+// ACP node that establishes a transport session before failing still reaches the dag_node record),
+func finishGatedNode(ctx adkagent.Context, nodeID, token string, res vetting.GateResult, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), answer string, err error, paused *bool) (string, error) {
+	contextID := ""
+	if at, ok := vetting.LookupAdvisorThread(token); ok {
+		contextID = at.ACPSessionID
+	}
+	if recordGate != nil {
+		recordGate(nodeID, res.Score, res.Passed, res.Rounds, contextID)
+	}
+	_ = ctx.State().Set(gateContextKey+nodeID, contextID)
+	if errors.Is(err, vetting.ErrNodeEmpty) {
+		markGateFailed(ctx, nodeID)
+		return "", nil
+	}
+	if errors.Is(err, vetting.ErrNodePaused) {
+		markGateFailed(ctx, nodeID)
+		*paused = true
+		// A HITL park wraps ADK's own sentinel: the engine keys the park (and the
+		// persisted RequestInput a resume reads) off it, so it must propagate.
+		if errors.Is(err, workflow.ErrNodeInterrupted) {
+			return answer, err
+		}
+		return answer, nil
+	}
+	if err == nil {
+		st := ctx.State()
+		_ = st.Set(gateFailedKey+nodeID, !res.Passed)
+		_ = st.Set(gateScoreKey+nodeID, res.Score)
+		_ = st.Set(gatePassedKey+nodeID, res.Passed)
+		_ = st.Set(gateRoundsKey+nodeID, res.Rounds)
+	}
+	return answer, err
 }
 
 func synthesizerNodeCount(plan Plan) int {

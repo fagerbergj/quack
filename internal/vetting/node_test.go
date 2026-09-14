@@ -153,6 +153,96 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 }
 
+// TestGatedRefine_AdmissionFollowsPhase drives the same fail-then-pass refine
+// loop as above, with the admission swap hooks wired to a call recorder, to prove the judge call runs under its own spec alone, never both or neither.
+func TestGatedRefine_AdmissionFollowsPhase(t *testing.T) {
+	stub := &stubModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+
+	var calls []string
+	held := "worker" // the outer newGatedNode wrapper admits the worker spec before RunGatedRefine is ever called
+	cfg := Config{
+		JudgeRounds: 2, Threshold: 0.7, Rubric: "score the answer 0-10",
+		ReleaseWorker: func() {
+			if held != "worker" {
+				t.Errorf("ReleaseWorker called while holding %q", held)
+			}
+			held = ""
+			calls = append(calls, "release-worker")
+		},
+		AdmitJudge: func(context.Context) bool {
+			if held != "" {
+				t.Errorf("AdmitJudge called while holding %q", held)
+			}
+			held = "judge"
+			calls = append(calls, "admit-judge")
+			return true
+		},
+		ReleaseJudge: func() {
+			if held != "judge" {
+				t.Errorf("ReleaseJudge called while holding %q", held)
+			}
+			held = ""
+			calls = append(calls, "release-judge")
+		},
+		AdmitWorker: func(context.Context) bool {
+			if held != "" {
+				t.Errorf("AdmitWorker called while holding %q", held)
+			}
+			held = "worker"
+			calls = append(calls, "admit-worker")
+			return true
+		},
+	}
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name:      "root",
+		SubAgents: []adkagent.Agent{worker},
+		Edges:     workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	want := []string{
+		"release-worker", "admit-judge", "release-judge", "admit-worker", // round 1: fails, revise runs under the worker spec
+		"release-worker", "admit-judge", "release-judge", "admit-worker", // round 2: passes
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("admission calls = %v, want %v", calls, want)
+	}
+	for i, c := range calls {
+		if c != want[i] {
+			t.Errorf("admission call %d = %q, want %q (full sequence %v)", i, c, want[i], calls)
+		}
+	}
+	if held != "worker" {
+		t.Errorf("held = %q after the run, want worker", held)
+	}
+}
+
 // stubFixedAnswerModel is a worker stub that always returns the same text with
 // no tool calls - for tests that need deterministic zero-retrieval activity.
 type stubFixedAnswerModel struct{ text string }

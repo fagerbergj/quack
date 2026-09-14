@@ -41,14 +41,16 @@ type Executor struct {
 	walLedger ledger.LedgerStore
 	admission *Admission
 	specFor   func(agentName string) AdmissionSpec
+	// judgeSpec: one judge model serves every agent, so it's a single spec, not per-agent.
+	judgeSpec AdmissionSpec
 
 	gateResults sync.Map
 }
 
-// SetAdmission wires the #1007 capacity ledger and its per-agent spec
-// resolver. Nil admission (the zero Executor) runs unbounded, same as before #1007.
-func (e *Executor) SetAdmission(admission *Admission, specFor func(agentName string) AdmissionSpec) {
-	e.admission, e.specFor = admission, specFor
+// SetAdmission wires the #1007 capacity ledger, its per-agent worker spec
+// resolver, and the judge's own spec (nil admission runs unbounded).
+func (e *Executor) SetAdmission(admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec) {
+	e.admission, e.specFor, e.judgeSpec = admission, specFor, judgeSpec
 }
 
 // SetMaxActive: sets concurrent-node cap (no-op for n < 1).
@@ -228,7 +230,7 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.specFor, artifacts, e.walLedger, nil, sink, e.sessions) // a subset run never re-runs setup, so nothing to refresh
+		}, e.admission, e.specFor, e.judgeSpec, artifacts, e.walLedger, nil, sink, e.sessions) // a subset run never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}

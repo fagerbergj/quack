@@ -162,6 +162,19 @@ func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 	return spec
 }
 
+// judgeSpec: the gate judge's own capacity spec, from gates.judge - shared by
+// every node's judge round, since one judge model serves the whole plan.
+func judgeSpec(cfg *config.Config) dag.AdmissionSpec {
+	if !cfg.Gates.JudgeEnabled() {
+		return dag.AdmissionSpec{}
+	}
+	mc, ok := cfg.Models[cfg.Gates.Judge.Model]
+	if !ok {
+		return dag.AdmissionSpec{}
+	}
+	return modelSpec(mc, cfg.Gates.Judge.Model, cfg.Gates.Judge.ContextWindow)
+}
+
 // resolvedSkillSource wraps every source in Tolerant: a plugin's SKILL.md is third-party
 // content, and one unknown frontmatter field must never fail startup for skills that DID parse (#1080).
 func resolvedSkillSource(skillDirs []string) skill.Source {
@@ -1510,7 +1523,7 @@ func assembleOrchestrator(cfg *config.Config, st *store.Store, llm model.LLM, cl
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	admission := buildAdmission(cfg)
-	executor.SetAdmission(admission, admissionSpecFor(cfg))
+	executor.SetAdmission(admission, admissionSpecFor(cfg), judgeSpec(cfg))
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
 	if ledgerStore != nil {
