@@ -250,3 +250,43 @@ func TestGenerate_LeakedReasoningUsageMatchesPreRefactor(t *testing.T) {
 		t.Errorf("CandidatesTokenCount = %d, want 46 (50 completion - 4 reasoning)", final.UsageMetadata.CandidatesTokenCount)
 	}
 }
+
+// vLLM >= 0.11 names the field `reasoning`, not `reasoning_content`; both paths
+// must surface it as a Thought part or the think budget is invisible.
+func TestReasoningField_vLLMName(t *testing.T) {
+	srv := sseServer(t,
+		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"reasoning":"thinking"}}]}`,
+		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
+	)
+	defer srv.Close()
+	if !hasThought(collect(t, NewOpenAIModel("m", srv.URL, "k", ""))) {
+		t.Error("streaming: `reasoning` delta not surfaced as a Thought part")
+	}
+	srv2 := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ok","reasoning":"thinking"}}]}`)
+	defer srv2.Close()
+	if !hasThought(collectGenerate(t, NewOpenAIModel("m", srv2.URL, "k", ""))) {
+		t.Error("non-streaming: `reasoning` field not surfaced as a Thought part")
+	}
+}
+
+func collectGenerate(t *testing.T, m *OpenAIModel) (*genai.Content, genai.FinishReason, *genai.GenerateContentResponseUsageMetadata) {
+	t.Helper()
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+	var final *model.LLMResponse
+	for resp, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		final = resp
+	}
+	return final.Content, final.FinishReason, final.UsageMetadata
+}
+
+func hasThought(c *genai.Content, _ genai.FinishReason, _ *genai.GenerateContentResponseUsageMetadata) bool {
+	for _, p := range c.Parts {
+		if p.Thought && p.Text == "thinking" {
+			return true
+		}
+	}
+	return false
+}

@@ -21,6 +21,7 @@ import (
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/respjson"
 	"github.com/openai/openai-go/v3/shared"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -363,16 +364,8 @@ func (o *OpenAIModel) processChunk(ctx context.Context, chunk openai.ChatComplet
 // emitReasoningPart surfaces reasoning_content as a Thought part so the UI can
 // render thinking; it gates on the raw bytes - openai-go marks untyped ExtraFields as status "invalid" (no typed extras decoder), so Valid() is always false.
 func emitReasoningPart(choice openai.ChatCompletionChunkChoice, s *streamAgg, yield func(*model.LLMResponse, error) bool) bool {
-	rc := choice.Delta.JSON.ExtraFields["reasoning_content"]
-	if rc.Raw() == "" {
-		return true
-	}
-	raw := rc.Raw()
-	if raw == "" || raw == "null" {
-		return true
-	}
-	var text string
-	if jsonErr := json.Unmarshal([]byte(raw), &text); jsonErr != nil || text == "" {
+	text := reasoningExtra(choice.Delta.JSON.ExtraFields)
+	if text == "" {
 		return true
 	}
 	part := &genai.Part{Text: text, Thought: true}
@@ -850,17 +843,22 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 // reasoningContentText: the choice's reasoning_content extra field as text -
 // openai-go marks untyped ExtraFields "invalid", so gate on the raw bytes.
 func reasoningContentText(msg openai.ChatCompletionMessage) string {
-	rc := msg.JSON.ExtraFields["reasoning_content"]
-	if rc.Raw() == "" {
-		return ""
-	}
-	raw := rc.Raw()
-	if raw == "" || raw == "null" {
-		return ""
-	}
-	var text string
-	if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
-		return text
+	return reasoningExtra(msg.JSON.ExtraFields)
+}
+
+// reasoningExtra: the reasoning text from a message's or delta's untyped extra
+// fields. vLLM >= 0.11 sends `reasoning`; llama.cpp and older vLLM send
+// `reasoning_content` - missing the former hid the judge's whole think budget.
+func reasoningExtra(fields map[string]respjson.Field) string {
+	for _, key := range []string{"reasoning_content", "reasoning"} {
+		raw := fields[key].Raw()
+		if raw == "" || raw == "null" {
+			continue
+		}
+		var text string
+		if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
+			return text
+		}
 	}
 	return ""
 }
