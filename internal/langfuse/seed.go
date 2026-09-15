@@ -6,69 +6,96 @@ import (
 	"strings"
 )
 
-// SeedTag marks a version as machine-created by Seed, distinguishing it from operator edits.
+// SeedTag marks a seeded version for filtering in the Langfuse UI only;
+// detecting a seed vs. an operator edit relies on the commit message prefix, not this tag.
 const SeedTag = "quack-seed"
 
 const seedCommitPrefix = SeedTag + " "
 
-// Seed rules per the epic (#1418 Decisions): GET latest; 404 -> create with empty
-// config, tag quack-seed, no label; latest is itself a seed with a different hash ->
-// create a new seeded version; latest was operator-authored -> never touch it.
-// Actions: "created", "updated", "unchanged", "operator-edited".
-func Seed(ctx context.Context, client *Client, name, staticBody, staticHash string) (string, error) {
-	p, found, err := client.GetPrompt(ctx, name, GetPromptOpts{Label: "latest"})
+// SeedAction reports what Seed did.
+type SeedAction string
+
+const (
+	Created        SeedAction = "created"
+	Updated        SeedAction = "updated"
+	Unchanged      SeedAction = "unchanged"
+	OperatorEdited SeedAction = "operator-edited"
+)
+
+// Seed implements the epic's rules (#1418 Decisions): GET latest; on 404 create with
+// empty config and no production label (Langfuse assigns "latest" itself); if the
+// latest version is itself a seed (commit message "quack-seed <hash>") and the hash
+// differs, create a new seeded version; if the latest was authored by a person, never touch it.
+func (c *Client) Seed(ctx context.Context, name, staticBody, staticHash string) (SeedAction, error) {
+	p, found, err := c.GetPrompt(ctx, name, GetPromptOpts{Label: "latest"})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("langfuse: seed %q: %w", name, err)
 	}
 	if !found {
-		_, err := client.CreatePrompt(ctx, CreatePromptRequest{
+		if _, err := c.CreatePrompt(ctx, CreatePromptRequest{
 			Name:          name,
 			Body:          staticBody,
 			Config:        map[string]any{},
 			Tags:          []string{SeedTag},
 			CommitMessage: seedCommitPrefix + staticHash,
-		})
-		if err != nil {
-			return "", err
+		}); err != nil {
+			return "", fmt.Errorf("langfuse: seed %q: create: %w", name, err)
 		}
-		return "created", nil
+		return Created, nil
 	}
 
 	if !strings.HasPrefix(p.CommitMessage, seedCommitPrefix) {
-		return "operator-edited", nil
+		return OperatorEdited, nil
 	}
 
-	prevHash := strings.TrimPrefix(p.CommitMessage, seedCommitPrefix)
+	prevHash := strings.TrimSpace(strings.TrimPrefix(p.CommitMessage, seedCommitPrefix))
 	if prevHash == staticHash {
-		return "unchanged", nil
+		return Unchanged, nil
 	}
 
-	_, err = client.CreatePrompt(ctx, CreatePromptRequest{
+	if _, err := c.CreatePrompt(ctx, CreatePromptRequest{
 		Name:          name,
 		Body:          staticBody,
 		Config:        map[string]any{},
-		Tags:          []string{SeedTag},
+		Tags:          unionTag(p.Tags, SeedTag),
 		CommitMessage: seedCommitPrefix + staticHash,
-	})
-	if err != nil {
-		return "", err
+	}); err != nil {
+		return "", fmt.Errorf("langfuse: seed %q: create: %w", name, err)
 	}
-	return "updated", nil
+	return Updated, nil
 }
 
-// Resolve fetches the pinned version (label=pinLabel), falling back to latest
-// when the pin label doesn't exist. Returns (_, false, nil) if neither is found.
-func Resolve(ctx context.Context, client *Client, name, pinLabel string) (Prompt, bool, error) {
-	if pinLabel != "" {
-		p, found, err := client.GetPrompt(ctx, name, GetPromptOpts{Label: pinLabel})
+// unionTag adds tag to tags if missing, preserving order and dropping duplicates.
+// Every POST replaces a prompt's whole tag set, so an update must carry forward
+// whatever operator tags already exist rather than overwriting them with just SeedTag.
+func unionTag(tags []string, tag string) []string {
+	out := make([]string, 0, len(tags)+1)
+	seen := false
+	for _, t := range tags {
+		if t == tag {
+			seen = true
+		}
+		out = append(out, t)
+	}
+	if !seen {
+		out = append(out, tag)
+	}
+	return out
+}
+
+// Resolve fetches the client's pinned label (WithPinLabel), falling back to latest
+// only when the pin label itself isn't found. Returns (_, false, nil) if neither is found.
+func (c *Client) Resolve(ctx context.Context, name string) (Prompt, bool, error) {
+	if c.pinLabel != "" {
+		p, found, err := c.GetPrompt(ctx, name, GetPromptOpts{Label: c.pinLabel})
 		if err != nil {
-			return Prompt{}, false, fmt.Errorf("langfuse: resolve %q label %q: %w", name, pinLabel, err)
+			return Prompt{}, false, fmt.Errorf("langfuse: resolve %q label %q: %w", name, c.pinLabel, err)
 		}
 		if found {
 			return p, true, nil
 		}
 	}
-	p, found, err := client.GetPrompt(ctx, name, GetPromptOpts{Label: "latest"})
+	p, found, err := c.GetPrompt(ctx, name, GetPromptOpts{Label: "latest"})
 	if err != nil {
 		return Prompt{}, false, fmt.Errorf("langfuse: resolve %q label latest: %w", name, err)
 	}
