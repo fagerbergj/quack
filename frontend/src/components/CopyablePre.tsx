@@ -8,7 +8,7 @@ export function CopyablePre({ children, ...props }: ComponentPropsWithoutRef<'pr
   const ref = useRef<HTMLPreElement>(null)
   const [copied, setCopied] = useState(false)
   const copy = () => {
-    navigator.clipboard.writeText(ref.current?.textContent ?? '')
+    void navigator.clipboard.writeText(ref.current?.textContent ?? '')
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }

@@ -8,8 +8,8 @@ import { Composer } from '../components/Composer'
 import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, dagFromTurn, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState } from '../state/chatStore'
-import { UsageSummary } from '../components/UsageSummary'
+import { activityFromTurn, dagFromTurn, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
+import { UsageSummary, type UsageSummaryProps } from '../components/UsageSummary'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 import { GitHubLink } from '../components/GitHubLink'
@@ -19,7 +19,7 @@ import { NavToggle } from '../components/NavToggle'
 import { Icon } from '../components/Icon'
 import { StatusDot } from '../components/StatusDot'
 import { LiveTimer } from '../utils/timer'
-import type { ChatStatus } from '../generated'
+import type { ChatStatus, Turn } from '../generated'
 import { imageAttachmentsByTurn } from '../lib/turnAttachments'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
@@ -182,6 +182,388 @@ export interface ChatProps {
   onToggleNav: () => void
 }
 
+// liveTurnDerived computes the live turn's display-level values (which text
+// is the answer, which activity is visible, what question awaits, spinner)
+// so LiveTurnView stays a plain render.
+function liveTurnDerived(live: NonNullable<ChatState['live']>, liveActive: boolean) {
+  const liveDag = live.dag
+  const liveTopText = live.text ?? ''
+  const liveTopRuns = live.runs ?? []
+  const liveDone = !liveActive
+  // Which text is the user-facing answer: if a DAG ran, the terminal
+  // node's answer IS the response (execute always delivers from the
+  // node now - there's no orchestrator "synthesize" mode to prefer); liveTopText is the orchestrator's OWN narration (planning chatter, reasoning about the request) - never the answer when a DAG exists, falling back to it only masks a missing terminal answer. No DAG: the orchestrator answered directly, so its text IS the reply.
+  const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
+  // The orchestrator's own activity (deciding to research, plan/execute calls).
+  // get_user_choice is surfaced as its own QuestionBubble below, not a raw tool block.
+  const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))
+  // Show spinner while streaming until something VISIBLE arrives (DAG,
+  // answer text, or visible activity). Keyed on orchActivity, not run
+  // count - the orchestrator's top-level run is created empty on the first event, so a run-count check blanks the dots before the plan.
+  const showSpinner = showLiveSpinner({
+    streaming: liveActive,
+    hasDag: !!liveDag,
+    answerText: liveTopText,
+    visibleActivityCount: orchActivity.length,
+  })
+  // Answer-bubble attribution: a DAG turn credits its terminal node (agent +
+  // that node's own model/tokens); a plain reply credits the orchestrator,
+  // whose own top-level run carries its model/usage once complete (item 1).
+  const orchRun = liveTopRuns.find(r => r.runId === 'orchestrator')
+  const answerAttribution = liveDag
+    ? dagAnswerAttribution(liveDag)
+    : { agent: 'orchestrator', model: orchRun?.model, tokens: orchRun?.totalTokens }
+  // Skip the answer bubble when there's nothing in it yet.
+  const hasAnswerBubble = showSpinner || (liveDag ? !!liveText : (orchActivity.length > 0 || !!liveTopText))
+  return { liveDag, liveTopText, liveDone, liveText, orchActivity, showSpinner, answerAttribution, hasAnswerBubble }
+}
+
+// LiveDagBubble is the live turn's DAG card: running view (status line +
+// the wired node actions) until done, then the collapsed "Steps" details.
+function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNodeQuestion }: {
+  dag: DagTurnState
+  liveDone: boolean
+  chatId?: string
+  orchActivity: ReturnType<typeof visibleActivity>
+  onCancelNode: (nodeId: string) => void
+  onPauseNode: (nodeId: string) => void
+  onQueueNodeMessage: (nodeId: string, text: string) => void
+  onEditQueuedMessage: (nodeId: string, messageId: string, text: string) => void
+  onRemoveQueuedMessage: (nodeId: string, messageId: string) => void
+  onEditNodeTask: (nodeId: string, task: string) => void
+  onRetryNode: (nodeId: string, guidance?: string) => void
+  onResumeNode: (nodeId: string) => void
+  onAnswerNodeQuestion: (nodeId: string, answer: string) => void
+}) {
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+      <DagBubbleHeader dag={dag} />
+      {/* The orchestrator agent wraps the DAG: show its own
+          activity (deciding to research, the plan/execute calls)
+          alongside the DAG. While running both are visible; once
+          done they collapse into "Steps". */}
+      {liveDone ? (
+        <details className="rounded-lg border border-gray-200 dark:border-gray-700">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+            Steps
+          </summary>
+          <div className="p-2 space-y-3">
+            {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
+            {/* Start/Stop stay wired post-run: a paused node ends the
+                turn, so this is exactly where Start must work. */}
+            <DagView dag={dag} chatId={chatId} onRetryNode={onRetryNode} onResumeNode={onResumeNode} onCancelNode={onCancelNode} onAnswerNodeQuestion={onAnswerNodeQuestion} />
+          </div>
+        </details>
+      ) : (
+        <div className="space-y-3">
+          {orchActivity.length > 0 && <LiveStatusLine activity={orchActivity} />}
+          <DagView
+            dag={dag}
+            chatId={chatId}
+            onCancelNode={onCancelNode}
+            onPauseNode={onPauseNode}
+            onQueueNodeMessage={onQueueNodeMessage}
+            onEditQueuedMessage={onEditQueuedMessage}
+            onRemoveQueuedMessage={onRemoveQueuedMessage}
+            onEditNodeTask={onEditNodeTask}
+            onAnswerNodeQuestion={onAnswerNodeQuestion}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// LiveAnswerBubble is the live turn's answer card: the spinner while
+// nothing is visible yet, then the DAG terminal answer or the
+// orchestrator's direct answer with its running/done header.
+function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveActive, orchActivity, answerAttribution }: {
+  showSpinner: boolean
+  liveDag?: DagTurnState
+  liveText: string
+  liveTopText: string
+  liveActive: boolean
+  orchActivity: ReturnType<typeof visibleActivity>
+  answerAttribution: { agent?: string; model?: string; tokens?: number } | undefined
+}) {
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+      {showSpinner ? (
+        <Dots className="h-5" size="w-2 h-2" />
+      ) : liveDag ? (
+        liveText && (
+          <>
+            <BubbleHeader agent={answerAttribution?.agent ?? 'orchestrator'} model={answerAttribution?.model} tokens={answerAttribution?.tokens} />
+            <AssistantText text={liveText} streaming={liveActive} />
+          </>
+        )
+      ) : (
+        // No DAG: orchestrator answered directly (conversational or
+        // tool-based research where DAG events don't reach the frontend).
+        <div>
+          <BubbleHeader
+            agent="orchestrator"
+            model={answerAttribution?.model}
+            tokens={answerAttribution?.tokens}
+            status={liveActive ? 'running' : 'done'}
+          />
+          {orchActivity.length > 0 && (
+            liveActive ? <LiveStatusLine activity={orchActivity} /> : <ActivityList activity={orchActivity} />
+          )}
+          {/* Running is conveyed by the header's pulsing StatusDot
+              (#416) - no separate spinner dot while text streams in. */}
+          {liveTopText && <AssistantText text={liveTopText} streaming={liveActive} />}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// LiveTurnView renders the in-progress turn (user bubble, DAG bubble,
+// pending node/clarification questions, answer bubble, copy row) -
+// extracted from Chat's render so the page component stays a plain
+// state + layout function. The user message is hidden when it's a
+// clarification answer, or when the turn has no user text/attachments
+// at all (#434): a label/webhook-triggered plan turn has no typed
+// message, just its synthesized task (rendered in the DAG bubble
+// below), so there's nothing for this bubble to show.
+function LiveTurnView({ live, liveActive, isArchived, activeChatId, liveIsChoiceAnswer, livePriorContents, liveAttachmentsEl, liveAttachmentPreviews, submittingChoice, copied, turnsCount, onChoice, onCopy, onDownload, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNode }: {
+  live: NonNullable<ChatState['live']>
+  liveActive: boolean
+  isArchived: boolean
+  activeChatId: string | null
+  liveIsChoiceAnswer: boolean
+  livePriorContents: string[]
+  liveAttachmentsEl: React.ReactNode
+  liveAttachmentPreviews: { url: string; mime: string; name: string }[]
+  submittingChoice: boolean
+  copied: string | null
+  turnsCount: number
+  onChoice: (option: string) => void
+  onCopy: (key: string, text: string) => void
+  onDownload: (text: string, idx: number) => void
+  onCancelNode: (nodeId: string) => void
+  onPauseNode: (nodeId: string) => void
+  onQueueNodeMessage: (nodeId: string, text: string) => void
+  onEditQueuedMessage: (nodeId: string, messageId: string, text: string) => void
+  onRemoveQueuedMessage: (nodeId: string, messageId: string) => void
+  onEditNodeTask: (nodeId: string, task: string) => void
+  onRetryNode: (nodeId: string, guidance?: string) => void
+  onResumeNode: (nodeId: string) => void
+  onAnswerNode: (nodeId: string, answer: string) => void
+}) {
+  const d = liveTurnDerived(live, liveActive)
+  const { choice, nodeQuestion } = livePendingQuestions(live, d.liveDag, d.liveDone, isArchived)
+  const copyKey = `live-${live.userText.slice(0, 20)}`
+  return (
+    // role="log" + aria-live: screen readers announce streamed tokens as they
+    // arrive (aria-atomic=false → only the new text, not the whole region).
+    <div key="live" role="log" aria-live="polite" aria-atomic="false">
+      {!liveIsChoiceAnswer && (live.userText || liveAttachmentPreviews.length > 0) && (
+        <TriggerMessage
+          content={live.userText}
+          attachments={liveAttachmentsEl}
+          priorContents={livePriorContents}
+          chatId={activeChatId ?? undefined}
+        />
+      )}
+      {/* Assistant response: DAG bubble → node question → answer bubble, as siblings */}
+      <div className="flex justify-start">
+        <div className={d.liveDag ? 'w-full space-y-3' : 'w-auto space-y-3'}>
+          {d.liveDag && (
+            <LiveDagBubble
+              dag={d.liveDag}
+              liveDone={d.liveDone}
+              chatId={activeChatId ?? undefined}
+              orchActivity={d.orchActivity}
+              onCancelNode={onCancelNode}
+              onPauseNode={onPauseNode}
+              onQueueNodeMessage={onQueueNodeMessage}
+              onEditQueuedMessage={onEditQueuedMessage}
+              onRemoveQueuedMessage={onRemoveQueuedMessage}
+              onEditNodeTask={onEditNodeTask}
+              onRetryNode={onRetryNode}
+              onResumeNode={onResumeNode}
+              onAnswerNodeQuestion={onAnswerNode}
+            />
+          )}
+          {nodeQuestion && (
+            <QuestionBubble
+              agent={nodeQuestion.agent}
+              question={nodeQuestion.question}
+              disabled={submittingChoice}
+              onSelect={answer => onAnswerNode(nodeQuestion.nodeId, answer)}
+            />
+          )}
+          {d.hasAnswerBubble && (
+            <LiveAnswerBubble
+              showSpinner={d.showSpinner}
+              liveDag={d.liveDag}
+              liveText={d.liveText}
+              liveTopText={d.liveTopText}
+              liveActive={liveActive}
+              orchActivity={d.orchActivity}
+              answerAttribution={d.answerAttribution}
+            />
+          )}
+          {choice && (
+            <QuestionBubble
+              agent="orchestrator"
+              question={choice.question}
+              options={choice.options}
+              disabled={submittingChoice}
+              onSelect={onChoice}
+            />
+          )}
+          {d.liveText && (!liveActive) && (
+            <div className="flex items-center gap-3 mt-1.5 px-1">
+              <button
+                onClick={() => onCopy(copyKey, d.liveText)}
+                className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              >
+                {copied === copyKey ? 'Copied!' : 'Copy'}
+              </button>
+              <button
+                onClick={() => onDownload(d.liveText, turnsCount)}
+                className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              >
+                Download
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// chatHeaderProps folds the header's derived readouts (title, editability,
+// run-status, startedAt) - the sidebar poll can lag the stream, so an
+// 'idle' summary while the turn streams still means running.
+function chatHeaderProps(activeChat: ChatSummary | undefined, activeChatId: string | null, isArchived: boolean, live: NonNullable<ChatState['live']> | undefined) {
+  return {
+    title: activeChat?.title || (activeChatId ? 'New chat' : 'Chat'),
+    editable: !!activeChatId && !isArchived,
+    status: (activeChat?.status && activeChat.status !== 'idle' ? activeChat.status : 'running') as ChatStatus,
+    startedAt: live?.dag?.startedAt ?? live?.runs[0]?.startedAt,
+  }
+}
+
+// ChatHeader is the page's top bar: chat-list + nav toggles, the
+// click-to-edit title with its archived/github/run-status badges, and the
+// per-chat usage summary + overflow menu.
+function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchived, githubLink, liveActive, onRename, usage, navOpen, onToggleNav, onToggleChatList }: {
+  activeChatId: string | null
+  isArchived: boolean
+  githubLink: { url: string; repo?: string } | null
+  liveActive: boolean
+  onRename: (title: string) => void
+  usage: UsageSummaryProps
+  navOpen: boolean
+  onToggleNav: () => void
+  onToggleChatList: () => void
+} & ReturnType<typeof chatHeaderProps>) {
+  return (
+    <div className="flex items-center justify-between px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        {/* A chat glyph, not a hamburger: beside the nav drawer's grid
+            toggle two abstract menu icons were indistinguishable (audit #12). */}
+        <button
+          onClick={onToggleChatList}
+          className="medium:hidden flex-shrink-0 w-11 h-11 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          aria-label="Toggle chat list"
+          title="Chats"
+        >
+          <Icon name="chat" className="w-5 h-5" />
+        </button>
+        {/* #1171: the nav drawer's toggle - visible at ALL widths (the
+            chat-list button above is medium:hidden) and with its own glyph. */}
+        <NavToggle open={navOpen} onToggle={onToggleNav} />
+        {/* Title gets priority over everything else in this row (#1136) -
+            min-w-0 lets it actually shrink to its flex-1 share instead of
+            the row overflowing, so `truncate` inside EditableChatTitle
+            clips to "as much as fits", never to a few characters. */}
+        <div className="min-w-0 flex-1 flex items-center gap-1.5">
+          <EditableChatTitle
+            title={title}
+            editable={editable}
+            onRename={onRename}
+          />
+          {isArchived && (
+            <span
+              title="This chat is archived and read-only. Restore it from the Archived section to continue."
+              className="flex-shrink-0 text-[11px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300"
+            >
+              Archived
+            </span>
+          )}
+          {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
+          {liveActive && (
+            <ChatHeaderStatus
+              status={status}
+              startedAt={startedAt}
+            />
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-3 flex-shrink-0">
+        {/* Hidden below the medium (600px) size class (#1136): the token/model
+            summary is secondary metadata that must yield its space to the
+            chat's own title rather than truncating it to near-nothing. Still
+            reachable there via the ⋯ menu below (usage prop). */}
+        {activeChatId && (
+          <div className="hidden medium:flex">
+            <UsageSummary models={usage.models} usage={usage.usage} />
+          </div>
+        )}
+        {/* Per-chat actions (#746 items 2/3): Download Logs is the escape
+            hatch to the untrimmed event-by-event recording - relabelled and
+            moved from a standing header link into the ⋯ overflow menu. */}
+        {activeChatId && (
+          <ChatMenu chatId={activeChatId} usage={usage} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// showEmptyPrompt is the "Ask a question" placeholder: a selected chat with
+// no turns, no live turn, and no in-flight submit (the empty /chat route's
+// entry point - the first send creates the chat via the same path New Chat
+// uses, audit finding 8). No label needed there, and it solves the mobile
+// case (sidebar off-screen) free.
+function showEmptyPrompt(activeChatId: string | null, state: ChatState, live: NonNullable<ChatState['live']> | undefined): boolean {
+  return !!activeChatId && state.turns.length === 0 && !live && !state.submitting
+}
+
+// showPendingTurn is the instant follow-up indicator between submit and the
+// first stream event (the old `live` still renders above it, so it doesn't
+// blink out).
+function showPendingTurn(state: ChatState): boolean {
+  return !!state.submitting && state.pendingUserText != null
+}
+
+// isChoiceAnswerTurn reports whether a completed turn asked a
+// get_user_choice clarification - the NEXT turn's input (or the live
+// turn's, for the last completed turn) is its answer.
+function isChoiceAnswerTurn(turn: Turn | undefined): boolean {
+  return turn ? pendingChoice(activityFromTurn(turn)) != null : false
+}
+
+// livePendingQuestions is the live turn's awaiting-answer questions: a
+// get_user_choice clarification (only once done - a streaming turn can't
+// pause itself) and a paused node's mid-node HITL question. Archived is
+// read-only - never offer to answer either; unarchive to continue.
+function livePendingQuestions(live: NonNullable<ChatState['live']>, liveDag: DagTurnState | undefined, liveDone: boolean, isArchived: boolean) {
+  const runs = live.runs ?? []
+  return {
+    choice: liveDone && !isArchived ? pendingChoice(runs) : null,
+    // A paused node's question is only possible once the run has ended - the
+    // plan pauses the whole turn, so liveDone is implied.
+    nodeQuestion: liveDag && !isArchived ? pendingNodeQuestion(liveDag) : undefined,
+  }
+}
+
 export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   const urlChatId = useChatId()
 
@@ -211,7 +593,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   const activeChat = resolveActiveChat(chats, activeChatId, activeChatDetail)
   const githubLink = chatGitHubLink(activeChat)
   const state = useChatState(activeChatId)
-  const streaming = state.live?.streaming ?? false
+  // The chat is streaming when its live turn is - the run's own flag, not a
+  // re-parse of the turns.
+  const streaming = !!state.live?.streaming
   // An archived chat's focused view is read-only: it never presents as active,
   // even if a run left running through the archive (backend leaves those alone).
   const isArchived = !!activeChat?.archived
@@ -325,7 +709,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   }, [chats, archivedChats])
 
   useEffect(() => {
-    loadChats().then(data => {
+    void loadChats().then(data => {
       if (urlChatId) {
         setActiveChatId(urlChatId)
       } else if (data.length > 0) {
@@ -392,7 +776,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         if (!cancelled) setChats(prev => mergeChatsPage(prev, pollPageExcludingPending(result.data, archivingIdsRef.current)))
       } catch { /* transient - next poll will retry */ }
     }
-    loadChats().then(data => { if (!cancelled) setChats(data) })
+    void loadChats().then(data => { if (!cancelled) setChats(data) })
     const stop = pollWhileVisible(() => { void doPoll() }, 5000)
     return () => {
       cancelled = true
@@ -452,7 +836,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // useCallback so the handlers passed to memoized TurnViews keep a stable identity
   // (otherwise every completed turn re-renders on each parent render).
   const handleCopy = useCallback((key: string, content: string) => {
-    navigator.clipboard.writeText(content)
+    void navigator.clipboard.writeText(content)
     setCopied(key)
     setTimeout(() => setCopied(null), 2000)
   }, [])
@@ -556,7 +940,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
       return
     }
     setLiveAttachmentPreviews(previews)
-    store.submit(chatId, text, files.length > 0 ? files : undefined, title => {
+    void store.submit(chatId, text, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === chatId ? { ...c, title } : c))
     }).then(() => loadChats().then(data => setChats(data)))
   }, [activeChatId, store, loadChats])
@@ -611,8 +995,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   const hiddenTurnCount = turnViews.length - mountedTurnViews.length
 
   // The live turn is a clarification answer when the last completed turn asked one.
-  const lastTurn = state.turns[state.turns.length - 1]
-  const liveIsChoiceAnswer = lastTurn ? pendingChoice(activityFromTurn(lastTurn)) != null : false
+  const liveIsChoiceAnswer = isChoiceAnswerTurn(state.turns[state.turns.length - 1])
 
   // Every completed turn's raw envelope text, oldest first - the live turn's
   // <comments> section folds onto this the same way a persisted turn does (#730).
@@ -636,86 +1019,36 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         activeChatId={activeChatId}
         open={chatListOpen}
         onSelect={selectChat}
-        onNewChat={handleNewChat}
-        onDelete={handleDeleteChat}
+        onNewChat={() => { void handleNewChat() }}
+        onDelete={(id, e) => { void handleDeleteChat(id, e) }}
         onCloseMobile={() => setChatListOpen(false)}
         hasMoreChats={chatsNextPageToken !== undefined}
-        onLoadMoreChats={loadMoreChats}
+        onLoadMoreChats={() => { void loadMoreChats() }}
         loadingMoreChats={loadingMoreChats}
         // Safe to share: handleArchiveChat toggles off current state, and ChatRow
         // only fires onArchive from an active row / onUnarchive from an archived one.
-        onArchive={handleArchiveChat}
-        onUnarchive={handleArchiveChat}
+        onArchive={(chatId) => { void handleArchiveChat(chatId) }}
+        onUnarchive={(chatId) => { void handleArchiveChat(chatId) }}
         archivedChats={archivedChats}
         hasMoreArchivedChats={archivedNextPageToken !== undefined}
-        onLoadMoreArchivedChats={loadMoreArchivedChats}
+        onLoadMoreArchivedChats={() => { void loadMoreArchivedChats() }}
         loadingMoreArchivedChats={loadingMoreArchivedChats}
         onExpandArchived={handleExpandArchived}
       />
 
       <div className="flex flex-col flex-1 min-w-0">
-        <div className="flex items-center justify-between px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            {/* A chat glyph, not a hamburger: beside the nav drawer's grid
-                toggle two abstract menu icons were indistinguishable (audit #12). */}
-            <button
-              onClick={() => setChatListOpen(o => !o)}
-              className="medium:hidden flex-shrink-0 w-11 h-11 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              aria-label="Toggle chat list"
-              title="Chats"
-            >
-              <Icon name="chat" className="w-5 h-5" />
-            </button>
-            {/* #1171: the nav drawer's toggle - visible at ALL widths (the
-                chat-list button above is medium:hidden) and with its own glyph. */}
-            <NavToggle open={navOpen} onToggle={onToggleNav} />
-            {/* Title gets priority over everything else in this row (#1136) -
-                min-w-0 lets it actually shrink to its flex-1 share instead of
-                the row overflowing, so `truncate` inside EditableChatTitle
-                clips to "as much as fits", never to a few characters. */}
-            <div className="min-w-0 flex-1 flex items-center gap-1.5">
-              <EditableChatTitle
-                title={activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
-                editable={!!activeChatId && !isArchived}
-                onRename={handleRenameChat}
-              />
-              {isArchived && (
-                <span
-                  title="This chat is archived and read-only. Restore it from the Archived section to continue."
-                  className="flex-shrink-0 text-[11px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300"
-                >
-                  Archived
-                </span>
-              )}
-              {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
-              {liveActive && (
-                <ChatHeaderStatus
-                  // The sidebar poll can lag the stream: an 'idle' summary while
-                  // the turn streams still means running.
-                  status={activeChat?.status && activeChat.status !== 'idle' ? activeChat.status : 'running'}
-                  startedAt={live?.dag?.startedAt ?? live?.runs[0]?.startedAt}
-                />
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-3 flex-shrink-0">
-            {/* Hidden below the medium (600px) size class (#1136): the token/model
-                summary is secondary metadata that must yield its space to the
-                chat's own title rather than truncating it to near-nothing. Still
-                reachable there via the ⋯ menu below (usage prop). */}
-            {activeChatId && (
-              <div className="hidden medium:flex">
-                <UsageSummary models={sessionModels(state)} usage={state.usage} />
-              </div>
-            )}
-            {/* Per-chat actions (#746 items 2/3): Download Logs is the escape
-                hatch to the untrimmed event-by-event recording - relabelled and
-                moved from a standing header link into the ⋯ overflow menu. */}
-            {activeChatId && (
-              <ChatMenu chatId={activeChatId} usage={{ models: sessionModels(state), usage: state.usage }} />
-            )}
-          </div>
-        </div>
+        <ChatHeader
+          {...chatHeaderProps(activeChat, activeChatId, isArchived, live)}
+          activeChatId={activeChatId}
+          isArchived={isArchived}
+          githubLink={githubLink}
+          liveActive={liveActive}
+          onRename={(title) => { void handleRenameChat(title) }}
+          usage={{ models: sessionModels(state), usage: state.usage }}
+          navOpen={navOpen}
+          onToggleNav={onToggleNav}
+          onToggleChatList={() => setChatListOpen(o => !o)}
+        />
 
         {/* #1248: relative wrapper so the composer can float over the message
             list (absolute) instead of docking as a full-width bar - the
@@ -730,7 +1063,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               "Ask a question") is the entry point - the first send creates the
               chat via the same path New Chat uses (audit finding 8). No label
               needed here, and it solves the mobile case (sidebar off-screen) free. */}
-          {activeChatId && state.turns.length === 0 && !live && !state.submitting && (
+          {showEmptyPrompt(activeChatId, state, live) && (
             <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">
               Ask a question
             </div>
@@ -757,184 +1090,44 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               isCopied={copied === `turn-${turn.id}`}
               priorContents={priorContents}
               imageAttachments={imageAttachments}
-              onChoice={handleChoice}
+              onChoice={(option) => { void handleChoice(option) }}
               onCopy={handleCopy}
-              onDownload={handleDownload}
+              onDownload={(content, idx) => { void handleDownload(content, idx) }}
             />
           ))}
 
-          {live && (() => {
-            const liveDag = live.dag
-            const liveTopText = live.text ?? ''
-            const liveTopRuns = live.runs ?? []
-            // Archived is always "done": no active-run chrome even if a run left
-            // running through the archive (see liveActive above).
-            const liveDone = !liveActive
-            // Which text is the user-facing answer: if a DAG ran, the terminal
-            // node's answer IS the response (execute always delivers from the
-            // node now - there's no orchestrator "synthesize" mode to prefer); liveTopText is the orchestrator's OWN narration (planning chatter, reasoning about the request) - never the answer when a DAG exists, falling back to it only masks a missing terminal answer. No DAG: the orchestrator answered directly, so its text IS the reply.
-            const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
-            // The orchestrator's own activity (deciding to research, plan/execute calls).
-            // get_user_choice is surfaced as its own QuestionBubble below, not a raw tool block.
-            const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))
-            // A get_user_choice clarification awaiting an answer on the (paused) live turn.
-            // Archived is read-only - never offer to answer it; unarchive to continue.
-            const choice = liveDone && !isArchived ? pendingChoice(liveTopRuns) : null
-            // A paused node's mid-node HITL question (only possible once the run has
-            // ended - the plan pauses the whole turn, so liveDone is implied). Same
-            // archived read-only rule as `choice` above.
-            const nodeQuestion = liveDag && !isArchived ? pendingNodeQuestion(liveDag) : undefined
-            // Show spinner while streaming until something VISIBLE arrives (DAG,
-            // answer text, or visible activity). Keyed on orchActivity, not run
-            // count - the orchestrator's top-level run is created empty on the first event, so a run-count check blanks the dots before the plan.
-            const showSpinner = showLiveSpinner({
-              streaming: liveActive,
-              hasDag: !!liveDag,
-              answerText: liveTopText,
-              visibleActivityCount: orchActivity.length,
-            })
-            // Answer-bubble attribution: a DAG turn credits its terminal node (agent +
-            // that node's own model/tokens); a plain reply credits the orchestrator,
-            // whose own top-level run carries its model/usage once complete (item 1).
-            const orchRun = liveTopRuns.find(r => r.runId === 'orchestrator')
-            const answerAttribution = liveDag
-              ? dagAnswerAttribution(liveDag)
-              : { agent: 'orchestrator', model: orchRun?.model, tokens: orchRun?.totalTokens }
-            // Skip the answer bubble when there's nothing in it yet.
-            const hasAnswerBubble = showSpinner || (liveDag ? !!liveText : (orchActivity.length > 0 || !!liveTopText))
-            const isChoiceAnswer = liveIsChoiceAnswer
-            const copyKey = `live-${live.userText.slice(0, 20)}`
-            return (
-              // role="log" + aria-live: screen readers announce streamed tokens as they
-              // arrive (aria-atomic=false → only the new text, not the whole region).
-              <div key="live" role="log" aria-live="polite" aria-atomic="false">
-                {/* User message - hidden when it's a clarification answer, or when the
-                    turn has no user text/attachments at all (#434): a label/webhook-
-                    triggered plan turn has no typed message, just its synthesized task
-                    (rendered in the DAG bubble below), so there's nothing for this
-                    bubble to show. */}
-                {!isChoiceAnswer && (live.userText || liveAttachmentPreviews.length > 0) && (
-                  <TriggerMessage
-                    content={live.userText}
-                    attachments={liveAttachmentsEl}
-                    priorContents={livePriorContents}
-                    chatId={activeChatId ?? undefined}
-                  />
-                )}
-                {/* Assistant response: DAG bubble → node question → answer bubble, as siblings */}
-                <div className="flex justify-start">
-                  <div className={liveDag ? 'w-full space-y-3' : 'w-auto space-y-3'}>
-                    {liveDag && (
-                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-                        <DagBubbleHeader dag={liveDag} />
-                        {/* The orchestrator agent wraps the DAG: show its own
-                            activity (deciding to research, the plan/execute calls)
-                            alongside the DAG. While running both are visible; once
-                            done they collapse into "Steps". */}
-                        {liveDone ? (
-                          <details className="rounded-lg border border-gray-200 dark:border-gray-700">
-                            <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                              Steps
-                            </summary>
-                            <div className="p-2 space-y-3">
-                              {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-                              {/* Start/Stop stay wired post-run: a paused node ends the
-                                  turn, so this is exactly where Start must work. */}
-                              <DagView dag={liveDag} chatId={activeChatId ?? undefined} onRetryNode={handleRetryNode} onResumeNode={handleResumeNode} onCancelNode={handleCancelNode} onAnswerNodeQuestion={handleAnswerNode} />
-                            </div>
-                          </details>
-                        ) : (
-                          <div className="space-y-3">
-                            {orchActivity.length > 0 && <LiveStatusLine activity={orchActivity} />}
-                            <DagView
-                              dag={liveDag}
-                              chatId={activeChatId ?? undefined}
-                              onCancelNode={handleCancelNode}
-                              onPauseNode={handlePauseNode}
-                              onQueueNodeMessage={handleQueueNodeMessage}
-                              onEditQueuedMessage={handleEditQueuedMessage}
-                              onRemoveQueuedMessage={handleRemoveQueuedMessage}
-                              onEditNodeTask={handleEditNodeTask}
-                              onAnswerNodeQuestion={handleAnswerNode}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {nodeQuestion && (
-                      <QuestionBubble
-                        agent={nodeQuestion.agent}
-                        question={nodeQuestion.question}
-                        disabled={submittingChoice}
-                        onSelect={answer => handleAnswerNode(nodeQuestion.nodeId, answer)}
-                      />
-                    )}
-                    {hasAnswerBubble && (
-                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-                      {showSpinner ? (
-                        <Dots className="h-5" size="w-2 h-2" />
-                      ) : liveDag ? (
-                        liveText && (
-                          <>
-                            <BubbleHeader agent={answerAttribution?.agent ?? 'orchestrator'} model={answerAttribution?.model} tokens={answerAttribution?.tokens} />
-                            <AssistantText text={liveText} streaming={liveActive} />
-                          </>
-                        )
-                      ) : (
-                        // No DAG: orchestrator answered directly (conversational or
-                        // tool-based research where DAG events don't reach the frontend).
-                        <div>
-                          <BubbleHeader
-                            agent="orchestrator"
-                            model={answerAttribution?.model}
-                            tokens={answerAttribution?.tokens}
-                            status={liveActive ? 'running' : 'done'}
-                          />
-                          {orchActivity.length > 0 && (
-                            liveActive ? <LiveStatusLine activity={orchActivity} /> : <ActivityList activity={orchActivity} />
-                          )}
-                          {/* Running is conveyed by the header's pulsing StatusDot
-                              (#416) - no separate spinner dot while text streams in. */}
-                          {liveTopText && <AssistantText text={liveTopText} streaming={liveActive} />}
-                        </div>
-                      )}
-                    </div>
-                    )}
-                    {choice && (
-                      <QuestionBubble
-                        agent="orchestrator"
-                        question={choice.question}
-                        options={choice.options}
-                        disabled={submittingChoice}
-                        onSelect={handleChoice}
-                      />
-                    )}
-                    {liveText && (!liveActive) && (
-                      <div className="flex items-center gap-3 mt-1.5 px-1">
-                        <button
-                          onClick={() => handleCopy(copyKey, liveText)}
-                          className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                        >
-                          {copied === copyKey ? 'Copied!' : 'Copy'}
-                        </button>
-                        <button
-                          onClick={() => handleDownload(liveText, state.turns.length)}
-                          className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                        >
-                          Download
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })()}
+          {live && (
+            <LiveTurnView
+              live={live}
+              liveActive={liveActive}
+              isArchived={isArchived}
+              activeChatId={activeChatId}
+              liveIsChoiceAnswer={liveIsChoiceAnswer}
+              livePriorContents={livePriorContents}
+              liveAttachmentsEl={liveAttachmentsEl}
+              liveAttachmentPreviews={liveAttachmentPreviews}
+              submittingChoice={submittingChoice}
+              copied={copied}
+              turnsCount={state.turns.length}
+              onChoice={(option) => { void handleChoice(option) }}
+              onCopy={handleCopy}
+              onDownload={(content, idx) => { void handleDownload(content, idx) }}
+              onCancelNode={handleCancelNode}
+              onPauseNode={handlePauseNode}
+              onQueueNodeMessage={handleQueueNodeMessage}
+              onEditQueuedMessage={handleEditQueuedMessage}
+              onRemoveQueuedMessage={handleRemoveQueuedMessage}
+              onEditNodeTask={handleEditNodeTask}
+              onRetryNode={handleRetryNode}
+              onResumeNode={handleResumeNode}
+              onAnswerNode={handleAnswerNode}
+            />
+          )}
 
           {/* Pending indicator: shown the instant a follow-up is submitted, while the
               previous turn is archived (the old `live` above still renders it, so it
               doesn't blink out). Replaced by the live turn once streaming starts. */}
-          {state.submitting && state.pendingUserText != null && (
+          {showPendingTurn(state) && (
             <div>
               <div className="flex justify-end mb-3">
                 <div className="max-w-2xl ml-auto">

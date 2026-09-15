@@ -34,6 +34,10 @@ const climateAnswer = 'Best months to visit Dublin: **May–September**, per [Me
 const attractionsAnswer = 'Top things to do: **Guinness Storehouse**, **Trinity College**, **Phoenix Park**, **Temple Bar**.'
 const synthAnswer = '## Dublin Guide\n\nVisit **May–September**. Don\'t miss the Guinness Storehouse, Trinity College, and Phoenix Park.'
 
+function dagNodeState(over: { status: DagTurnState['nodeStates'][string]['status']; error?: string } | undefined) {
+  return { status: over?.status ?? 'queued', error: over?.error }
+}
+
 function dag(over: {
   r1?: { status: DagTurnState['nodeStates'][string]['status']; error?: string; runs?: AgentRun[]; answer?: string }
   r2?: { status: DagTurnState['nodeStates'][string]['status']; error?: string; runs?: AgentRun[]; answer?: string }
@@ -48,9 +52,9 @@ function dag(over: {
     ],
     edges: [{ from: 'r1', to: 'synth' }, { from: 'r2', to: 'synth' }],
     nodeStates: {
-      r1: { status: over.r1?.status ?? 'queued', error: over.r1?.error },
-      r2: { status: over.r2?.status ?? 'queued', error: over.r2?.error },
-      synth: { status: over.synth?.status ?? 'queued', error: over.synth?.error },
+      r1: dagNodeState(over.r1),
+      r2: dagNodeState(over.r2),
+      synth: dagNodeState(over.synth),
     },
     nodeRuns: {
       r1: over.r1?.runs ?? [],

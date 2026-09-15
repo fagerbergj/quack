@@ -200,19 +200,292 @@ export interface AgentStreamHandlers {
   onArtifactJudgeRound?: (d: ArtifactJudgeRoundPayload) => void
 }
 
-// Wire-level event names. Mirrors internal/stream/event.go.
-const AGENT_EVENT_NAMES = [
-  'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
-  'confirmation_request', 'chat_title', 'error', 'done', 'response_created',
-  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_paused', 'node_steered', 'node_needs_input',
-  'delivery_result', 'compaction', 'artifact_revision', 'artifact_judge_round',
-] as const
-
 // nodeIdOf extracts the optional node_id field from a parsed payload.
 function nodeIdOf(parsed: unknown): string | undefined {
   const p = parsed as { node_id?: string }
   return typeof p?.node_id === 'string' && p.node_id ? p.node_id : undefined
 }
+
+function handleAgentStart(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { run_id?: string; agent?: string; stage?: string; round?: number; started_at_ms?: number; trace_id?: string }
+  if (typeof p.run_id === 'string') {
+    handlers.onAgentStart?.({
+      nodeId: nodeIdOf(parsed),
+      runId: p.run_id,
+      agent: typeof p.agent === 'string' ? p.agent : '',
+      stage: (p.stage ?? 'worker') as Stage,
+      round: typeof p.round === 'number' ? p.round : undefined,
+      startedAtMs: typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
+      traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
+    })
+  }
+}
+
+function handleAgentThinking(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { run_id?: string; text?: string }
+  if (typeof p.text === 'string') handlers.onAgentThinking?.(p.run_id ?? '', p.text, nodeIdOf(parsed))
+}
+
+function handleAgentToolCall(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { run_id?: string; call_id?: string; name?: string; args?: Record<string, unknown> }
+  if (typeof p.name === 'string') {
+    handlers.onAgentToolCall?.(p.run_id ?? '', p.call_id ?? '', p.name, p.args ?? {}, nodeIdOf(parsed))
+  }
+}
+
+function handleAgentToolResult(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { run_id?: string; call_id?: string; name?: string; result?: unknown }
+  if (typeof p.name === 'string') {
+    handlers.onAgentToolResult?.(p.run_id ?? '', p.call_id ?? '', p.name, p.result, nodeIdOf(parsed))
+  }
+}
+
+function handleAgentToken(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { run_id?: string; text?: string }
+  if (typeof p.text === 'string') handlers.onAgentToken?.(p.run_id ?? '', p.text, nodeIdOf(parsed))
+}
+
+// numField/strField: the field-extraction defaults the wire events share -
+// a typed pass-through, or undefined when the field is missing or mistyped.
+function numField(v: unknown): number | undefined {
+  return typeof v === 'number' ? v : undefined
+}
+
+function strField(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined
+}
+
+function handleAgentComplete(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as Record<string, unknown>
+  if (typeof p.run_id === 'string') {
+    handlers.onAgentComplete?.({
+      nodeId: nodeIdOf(parsed),
+      runId: p.run_id,
+      stage: (typeof p.stage === 'string' ? p.stage : 'worker') as Stage,
+      round: numField(p.round),
+      score: numField(p.score),
+      passed: p.passed === true,
+      threshold: numField((p.envelope as { threshold?: unknown } | undefined)?.threshold),
+      feedback: strField(p.feedback),
+      status: strField(p.status),
+      reason: strField(p.reason),
+      finishReason: strField(p.finish_reason),
+      model: strField(p.model),
+      totalTokens: numField(p.total_tokens),
+      contextTokens: numField(p.context_tokens),
+      finishedAtMs: numField(p.finished_at_ms),
+    })
+  }
+}
+
+function handleConfirmationRequest(parsed: unknown, handlers: AgentStreamHandlers): void {
+  if (hasStringField(parsed, 'call_id')) {
+    const p = parsed as { call_id: string; tool_name?: string; hint?: string; payload?: Record<string, unknown> }
+    handlers.onConfirmationRequest?.({
+      callId: p.call_id,
+      toolName: p.tool_name ?? '',
+      hint: p.hint ?? '',
+      payload: p.payload ?? {},
+    })
+  }
+}
+
+function handleChatTitle(parsed: unknown, handlers: AgentStreamHandlers): void {
+  if (hasStringField(parsed, 'title')) handlers.onChatTitle?.(parsed.title)
+}
+
+function handleError(parsed: unknown, handlers: AgentStreamHandlers): void {
+  if (hasStringField(parsed, 'error')) handlers.onError?.(parsed.error)
+}
+
+function handleDone(_parsed: unknown, handlers: AgentStreamHandlers): void {
+  handlers.onDone?.()
+}
+
+// DAG lifecycle events (M3)
+function handleResponseCreated(parsed: unknown, handlers: AgentStreamHandlers): void {
+  if (hasStringField(parsed, 'response_id')) handlers.onResponseCreated?.(parsed.response_id)
+}
+
+function handleDagPlan(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[]; started_at_ms?: number; trace_id?: string }
+  handlers.onDagPlan?.({
+    planId: typeof p.plan_id === 'string' ? p.plan_id : '',
+    nodes: (p.nodes ?? []) as DagNodeDef[],
+    edges: (p.edges ?? []) as DagEdgeDef[],
+    startedAtMs: typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
+    traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
+  })
+}
+
+function handleNodeQueued(parsed: unknown, handlers: AgentStreamHandlers): void {
+  if (hasStringField(parsed, 'node_id')) handlers.onNodeQueued?.(parsed.node_id)
+}
+
+function handleNodeStart(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { node_id?: string; agent?: string; started_at_ms?: number; trace_id?: string; resumed_from?: string }
+  if (typeof p.node_id === 'string') {
+    handlers.onNodeStart?.(p.node_id, typeof p.agent === 'string' ? p.agent : '',
+      typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
+      typeof p.trace_id === 'string' ? p.trace_id : undefined,
+      typeof p.resumed_from === 'string' ? p.resumed_from : undefined)
+  }
+}
+
+function handleNodeDone(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as {
+    node_id?: string; output_preview?: string
+    model?: string; prompt_tokens?: number; completion_tokens?: number
+    reasoning_tokens?: number; total_tokens?: number; cached_tokens?: number; context_tokens?: number
+    finish_reason?: string; duration_ms?: number; finished_at_ms?: number
+    judge_rounds?: number; judge_final_score?: number; judge_passed?: boolean
+  }
+  if (typeof p.node_id === 'string') {
+    const meta: NodeDoneMeta = {
+      model: p.model,
+      promptTokens: p.prompt_tokens,
+      completionTokens: p.completion_tokens,
+      reasoningTokens: p.reasoning_tokens,
+      totalTokens: p.total_tokens,
+      cachedTokens: p.cached_tokens,
+      contextTokens: p.context_tokens,
+      finishReason: p.finish_reason,
+      durationMs: p.duration_ms,
+      finishedAtMs: typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined,
+      judgeRounds: p.judge_rounds,
+      judgeFinalScore: p.judge_final_score,
+      judgePassed: p.judge_passed,
+    }
+    handlers.onNodeDone?.(p.node_id, typeof p.output_preview === 'string' ? p.output_preview : '', meta)
+  }
+}
+
+function handleNodeFailed(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { node_id?: string; error?: string; finished_at_ms?: number }
+  if (typeof p.node_id === 'string') {
+    handlers.onNodeFailed?.(p.node_id, typeof p.error === 'string' ? p.error : '',
+      typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined)
+  }
+}
+
+function handleNodeCancelled(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { node_id?: string; finished_at_ms?: number }
+  if (typeof p.node_id === 'string') {
+    handlers.onNodeCancelled?.(p.node_id, typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined)
+  }
+}
+
+function handleNodePaused(parsed: unknown, handlers: AgentStreamHandlers): void {
+  if (hasStringField(parsed, 'node_id')) handlers.onNodePaused?.(parsed.node_id)
+}
+
+function handleNodeSteered(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { node_id?: string; guidance?: string }
+  if (typeof p.node_id === 'string') {
+    handlers.onNodeSteered?.(p.node_id, typeof p.guidance === 'string' ? p.guidance : '')
+  }
+}
+
+function handleNodeNeedsInput(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { node_id?: string; interrupt_id?: string; message?: string }
+  if (typeof p.node_id === 'string') {
+    handlers.onNodeNeedsInput?.(p.node_id,
+      typeof p.interrupt_id === 'string' ? p.interrupt_id : '',
+      typeof p.message === 'string' ? p.message : '')
+  }
+}
+
+function handleCompaction(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as {
+    node_id?: string; run_id?: string; start_timestamp?: string; end_timestamp?: string
+    summary_input_tokens?: number; summary_output_tokens?: number
+  }
+  if (typeof p.node_id === 'string') {
+    handlers.onCompaction?.({
+      nodeId: p.node_id,
+      runId: typeof p.run_id === 'string' ? p.run_id : '',
+      startTimestamp: p.start_timestamp,
+      endTimestamp: p.end_timestamp,
+      summaryInputTokens: p.summary_input_tokens,
+      summaryOutputTokens: p.summary_output_tokens,
+    })
+  }
+}
+
+function handleDeliveryResult(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { node_id?: string; outcome?: string; kind?: string; url?: string; error?: string; trace_id?: string }
+  if (typeof p.node_id === 'string' && typeof p.outcome === 'string') {
+    handlers.onDeliveryResult?.({
+      nodeId: p.node_id,
+      outcome: p.outcome as DeliveryResultPayload['outcome'],
+      kind: typeof p.kind === 'string' ? p.kind : undefined,
+      url: typeof p.url === 'string' ? p.url : undefined,
+      error: typeof p.error === 'string' ? p.error : undefined,
+      traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
+    })
+  }
+}
+
+function handleArtifactRevision(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { id?: string; revision?: number; kind?: string; node_id?: string; round?: number }
+  if (typeof p.id === 'string') {
+    handlers.onArtifactRevision?.({
+      id: p.id,
+      revision: typeof p.revision === 'number' ? p.revision : 0,
+      kind: typeof p.kind === 'string' ? p.kind : '',
+      nodeId: typeof p.node_id === 'string' ? p.node_id : '',
+      round: typeof p.round === 'number' ? p.round : 0,
+    })
+  }
+}
+
+function handleArtifactJudgeRound(parsed: unknown, handlers: AgentStreamHandlers): void {
+  const p = parsed as { id?: string; passed?: boolean; score?: number; scored?: { artifact_id?: string; revision?: number }[] }
+  if (typeof p.id === 'string') {
+    handlers.onArtifactJudgeRound?.({
+      id: p.id,
+      passed: p.passed === true,
+      score: typeof p.score === 'number' ? p.score : 0,
+      scored: (p.scored ?? []).map(s => ({
+        artifactId: typeof s.artifact_id === 'string' ? s.artifact_id : '',
+        revision: typeof s.revision === 'number' ? s.revision : 0,
+      })),
+    })
+  }
+}
+
+// The dispatch table: one entry per wire event, so adding an
+// event is a handler + a line here. AGENT_EVENT_NAMES derives from it,
+// so EventSource registration cannot drift from what dispatch understands.
+const HANDLERS: Record<string, (parsed: unknown, handlers: AgentStreamHandlers) => void> = {
+  agent_start: handleAgentStart,
+  agent_thinking: handleAgentThinking,
+  agent_tool_call: handleAgentToolCall,
+  agent_tool_result: handleAgentToolResult,
+  agent_token: handleAgentToken,
+  agent_complete: handleAgentComplete,
+  confirmation_request: handleConfirmationRequest,
+  chat_title: handleChatTitle,
+  error: handleError,
+  done: handleDone,
+  response_created: handleResponseCreated,
+  dag_plan: handleDagPlan,
+  node_queued: handleNodeQueued,
+  node_start: handleNodeStart,
+  node_done: handleNodeDone,
+  node_failed: handleNodeFailed,
+  node_cancelled: handleNodeCancelled,
+  node_paused: handleNodePaused,
+  node_steered: handleNodeSteered,
+  node_needs_input: handleNodeNeedsInput,
+  delivery_result: handleDeliveryResult,
+  compaction: handleCompaction,
+  artifact_revision: handleArtifactRevision,
+  artifact_judge_round: handleArtifactJudgeRound,
+}
+
+// Wire-level event names. Mirrors internal/stream/event.go.
+const AGENT_EVENT_NAMES = Object.keys(HANDLERS)
 
 // dispatchAgentEvent routes one already-parsed SSE payload to the matching
 // handler. Returns true if the event was recognized (whether or not a
@@ -222,242 +495,11 @@ function dispatchAgentEvent(
   parsed: unknown,
   handlers: AgentStreamHandlers,
 ): boolean {
-  switch (event) {
-    case 'agent_start': {
-      const p = parsed as { run_id?: string; agent?: string; stage?: string; round?: number; started_at_ms?: number; trace_id?: string }
-      if (typeof p.run_id === 'string') {
-        handlers.onAgentStart?.({
-          nodeId: nodeIdOf(parsed),
-          runId: p.run_id,
-          agent: typeof p.agent === 'string' ? p.agent : '',
-          stage: (p.stage ?? 'worker') as Stage,
-          round: typeof p.round === 'number' ? p.round : undefined,
-          startedAtMs: typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
-          traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
-        })
-      }
-      return true
-    }
-    case 'agent_thinking': {
-      const p = parsed as { run_id?: string; text?: string }
-      if (typeof p.text === 'string') handlers.onAgentThinking?.(p.run_id ?? '', p.text, nodeIdOf(parsed))
-      return true
-    }
-    case 'agent_tool_call': {
-      const p = parsed as { run_id?: string; call_id?: string; name?: string; args?: Record<string, unknown> }
-      if (typeof p.name === 'string') {
-        handlers.onAgentToolCall?.(p.run_id ?? '', p.call_id ?? '', p.name, p.args ?? {}, nodeIdOf(parsed))
-      }
-      return true
-    }
-    case 'agent_tool_result': {
-      const p = parsed as { run_id?: string; call_id?: string; name?: string; result?: unknown }
-      if (typeof p.name === 'string') {
-        handlers.onAgentToolResult?.(p.run_id ?? '', p.call_id ?? '', p.name, p.result, nodeIdOf(parsed))
-      }
-      return true
-    }
-    case 'agent_token': {
-      const p = parsed as { run_id?: string; text?: string }
-      if (typeof p.text === 'string') handlers.onAgentToken?.(p.run_id ?? '', p.text, nodeIdOf(parsed))
-      return true
-    }
-    case 'agent_complete': {
-      const p = parsed as Record<string, unknown>
-      if (typeof p.run_id === 'string') {
-        handlers.onAgentComplete?.({
-          nodeId: nodeIdOf(parsed),
-          runId: p.run_id,
-          stage: (typeof p.stage === 'string' ? p.stage : 'worker') as Stage,
-          round: typeof p.round === 'number' ? p.round : undefined,
-          score: typeof p.score === 'number' ? p.score : undefined,
-          passed: p.passed === true,
-          threshold: typeof (p.envelope as { threshold?: unknown } | undefined)?.threshold === 'number' ? (p.envelope as { threshold: number }).threshold : undefined,
-          feedback: typeof p.feedback === 'string' ? p.feedback : undefined,
-          status: typeof p.status === 'string' ? p.status : undefined,
-          reason: typeof p.reason === 'string' ? p.reason : undefined,
-          finishReason: typeof p.finish_reason === 'string' ? p.finish_reason : undefined,
-          model: typeof p.model === 'string' ? p.model : undefined,
-          totalTokens: typeof p.total_tokens === 'number' ? p.total_tokens : undefined,
-          contextTokens: typeof p.context_tokens === 'number' ? p.context_tokens : undefined,
-          finishedAtMs: typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined,
-        })
-      }
-      return true
-    }
-    case 'confirmation_request':
-      if (hasStringField(parsed, 'call_id')) {
-        const p = parsed as { call_id: string; tool_name?: string; hint?: string; payload?: Record<string, unknown> }
-        handlers.onConfirmationRequest?.({
-          callId: p.call_id,
-          toolName: p.tool_name ?? '',
-          hint: p.hint ?? '',
-          payload: p.payload ?? {},
-        })
-      }
-      return true
-    case 'chat_title':
-      if (hasStringField(parsed, 'title')) handlers.onChatTitle?.(parsed.title)
-      return true
-    case 'error':
-      if (hasStringField(parsed, 'error')) handlers.onError?.(parsed.error)
-      return true
-    case 'done':
-      handlers.onDone?.()
-      return true
-    case 'response_created':
-      if (hasStringField(parsed, 'response_id')) handlers.onResponseCreated?.(parsed.response_id)
-      return true
-    // DAG lifecycle events (M3)
-    case 'dag_plan': {
-      const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[]; started_at_ms?: number; trace_id?: string }
-      handlers.onDagPlan?.({
-        planId: typeof p.plan_id === 'string' ? p.plan_id : '',
-        nodes: (p.nodes ?? []) as DagNodeDef[],
-        edges: (p.edges ?? []) as DagEdgeDef[],
-        startedAtMs: typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
-        traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
-      })
-      return true
-    }
-    case 'node_queued':
-      if (hasStringField(parsed, 'node_id')) handlers.onNodeQueued?.(parsed.node_id)
-      return true
-    case 'node_start': {
-      const p = parsed as { node_id?: string; agent?: string; started_at_ms?: number; trace_id?: string; resumed_from?: string }
-      if (typeof p.node_id === 'string') {
-        handlers.onNodeStart?.(p.node_id, typeof p.agent === 'string' ? p.agent : '',
-          typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
-          typeof p.trace_id === 'string' ? p.trace_id : undefined,
-          typeof p.resumed_from === 'string' ? p.resumed_from : undefined)
-      }
-      return true
-    }
-    case 'node_done': {
-      const p = parsed as {
-        node_id?: string; output_preview?: string
-        model?: string; prompt_tokens?: number; completion_tokens?: number
-        reasoning_tokens?: number; total_tokens?: number; cached_tokens?: number; context_tokens?: number
-        finish_reason?: string; duration_ms?: number; finished_at_ms?: number
-        judge_rounds?: number; judge_final_score?: number; judge_passed?: boolean
-      }
-      if (typeof p.node_id === 'string') {
-        const meta: NodeDoneMeta = {
-          model: p.model,
-          promptTokens: p.prompt_tokens,
-          completionTokens: p.completion_tokens,
-          reasoningTokens: p.reasoning_tokens,
-          totalTokens: p.total_tokens,
-          cachedTokens: p.cached_tokens,
-          contextTokens: p.context_tokens,
-          finishReason: p.finish_reason,
-          durationMs: p.duration_ms,
-          finishedAtMs: typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined,
-          judgeRounds: p.judge_rounds,
-          judgeFinalScore: p.judge_final_score,
-          judgePassed: p.judge_passed,
-        }
-        handlers.onNodeDone?.(p.node_id, typeof p.output_preview === 'string' ? p.output_preview : '', meta)
-      }
-      return true
-    }
-    case 'node_failed': {
-      const p = parsed as { node_id?: string; error?: string; finished_at_ms?: number }
-      if (typeof p.node_id === 'string') {
-        handlers.onNodeFailed?.(p.node_id, typeof p.error === 'string' ? p.error : '',
-          typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined)
-      }
-      return true
-    }
-    case 'node_cancelled': {
-      const p = parsed as { node_id?: string; finished_at_ms?: number }
-      if (typeof p.node_id === 'string') {
-        handlers.onNodeCancelled?.(p.node_id, typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined)
-      }
-      return true
-    }
-    case 'node_paused':
-      if (hasStringField(parsed, 'node_id')) handlers.onNodePaused?.(parsed.node_id)
-      return true
-    case 'node_steered': {
-      const p = parsed as { node_id?: string; guidance?: string }
-      if (typeof p.node_id === 'string') {
-        handlers.onNodeSteered?.(p.node_id, typeof p.guidance === 'string' ? p.guidance : '')
-      }
-      return true
-    }
-    case 'node_needs_input': {
-      const p = parsed as { node_id?: string; interrupt_id?: string; message?: string }
-      if (typeof p.node_id === 'string') {
-        handlers.onNodeNeedsInput?.(p.node_id,
-          typeof p.interrupt_id === 'string' ? p.interrupt_id : '',
-          typeof p.message === 'string' ? p.message : '')
-      }
-      return true
-    }
-    case 'compaction': {
-      const p = parsed as {
-        node_id?: string; run_id?: string; start_timestamp?: string; end_timestamp?: string
-        summary_input_tokens?: number; summary_output_tokens?: number
-      }
-      if (typeof p.node_id === 'string') {
-        handlers.onCompaction?.({
-          nodeId: p.node_id,
-          runId: typeof p.run_id === 'string' ? p.run_id : '',
-          startTimestamp: p.start_timestamp,
-          endTimestamp: p.end_timestamp,
-          summaryInputTokens: p.summary_input_tokens,
-          summaryOutputTokens: p.summary_output_tokens,
-        })
-      }
-      return true
-    }
-    case 'delivery_result': {
-      const p = parsed as { node_id?: string; outcome?: string; kind?: string; url?: string; error?: string; trace_id?: string }
-      if (typeof p.node_id === 'string' && typeof p.outcome === 'string') {
-        handlers.onDeliveryResult?.({
-          nodeId: p.node_id,
-          outcome: p.outcome as DeliveryResultPayload['outcome'],
-          kind: typeof p.kind === 'string' ? p.kind : undefined,
-          url: typeof p.url === 'string' ? p.url : undefined,
-          error: typeof p.error === 'string' ? p.error : undefined,
-          traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
-        })
-      }
-      return true
-    }
-    case 'artifact_revision': {
-      const p = parsed as { id?: string; revision?: number; kind?: string; node_id?: string; round?: number }
-      if (typeof p.id === 'string') {
-        handlers.onArtifactRevision?.({
-          id: p.id,
-          revision: typeof p.revision === 'number' ? p.revision : 0,
-          kind: typeof p.kind === 'string' ? p.kind : '',
-          nodeId: typeof p.node_id === 'string' ? p.node_id : '',
-          round: typeof p.round === 'number' ? p.round : 0,
-        })
-      }
-      return true
-    }
-    case 'artifact_judge_round': {
-      const p = parsed as { id?: string; passed?: boolean; score?: number; scored?: { artifact_id?: string; revision?: number }[] }
-      if (typeof p.id === 'string') {
-        handlers.onArtifactJudgeRound?.({
-          id: p.id,
-          passed: p.passed === true,
-          score: typeof p.score === 'number' ? p.score : 0,
-          scored: (p.scored ?? []).map(s => ({
-            artifactId: typeof s.artifact_id === 'string' ? s.artifact_id : '',
-            revision: typeof s.revision === 'number' ? s.revision : 0,
-          })),
-        })
-      }
-      return true
-    }
-  }
-  return false
+  const handle = HANDLERS[event]
+  if (!handle) return false
+  handle(parsed, handlers)
+  return true
 }
-
 // Parses a fetched SSE ReadableStream (the chat send flow: request body +
 // response stream). Returns whether a `done` event was actually seen before
 // the body ended - the caller's only signal the stream ended cleanly (vs. a dropped connection worth reconnecting over) - plus the highest `id:` line seen, so a dropped-connection handoff can resume past it instead of replaying the whole run (every event carries `id:`, same sseWriter as the GET stream; EventSource just parses it there). A read error (anything but an intentional abort) is treated the same as the body closing: report done=false and let the caller reconnect.

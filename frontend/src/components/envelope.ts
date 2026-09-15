@@ -160,6 +160,62 @@ function toChangedFile(item: unknown): ChangedFile {
   }
 }
 
+// toAskBlock builds the 'ask' block for an <issue>/<pull_request> tag - the
+// title/description child tags, falling back to the raw block when malformed.
+function toAskBlock(b: RawBlock): EnvelopeBlock {
+  const title = extractChildTag(b.content, 'title')
+  const description = extractChildTag(b.content, 'description')
+  return {
+    kind: 'ask',
+    askKind: b.tag as 'issue' | 'pull_request',
+    number: b.attrs.number,
+    title: title?.trim() ?? '',
+    // Neither child tag found (malformed) - fall back to the raw block so
+    // nothing silently disappears.
+    description: description != null ? description.trim() : (title == null ? b.content.trim() : ''),
+  }
+}
+
+function toCommentsBlock(b: RawBlock): EnvelopeBlock {
+  const raw = b.content.trim()
+  const parsed = tryParseJSON(raw)
+  const comments = Array.isArray(parsed) ? parsed.map(toComment) : null
+  return {
+    kind: 'comments',
+    total: numAttr(b.attrs.count),
+    added: numAttr(b.attrs.new),
+    edited: numAttr(b.attrs.edited),
+    deleted: numAttr(b.attrs.deleted),
+    comments,
+    raw,
+  }
+}
+
+function toChangedFilesBlock(b: RawBlock): EnvelopeBlock {
+  const raw = b.content.trim()
+  const parsed = tryParseJSON(raw)
+  const files = Array.isArray(parsed) ? parsed.map(toChangedFile) : null
+  return {
+    kind: 'changed_files',
+    count: numAttr(b.attrs.count),
+    additions: numAttr(b.attrs.additions),
+    deletions: numAttr(b.attrs.deletions),
+    files,
+    raw,
+  }
+}
+
+function toEventBlock(b: RawBlock): EnvelopeBlock {
+  const raw = b.content.trim()
+  const parsed = tryParseJSON(raw)
+  return {
+    kind: 'event',
+    name: b.attrs.name,
+    pretty: parsed !== undefined ? JSON.stringify(parsed, null, 2) : null,
+    raw,
+  }
+}
+
 function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
   switch (b.tag) {
     case 'permissions':
@@ -167,46 +223,12 @@ function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
     case 'deliverable':
       return { kind: 'deliverable', text: b.content.trim() }
     case 'issue':
-    case 'pull_request': {
-      const title = extractChildTag(b.content, 'title')
-      const description = extractChildTag(b.content, 'description')
-      return {
-        kind: 'ask',
-        askKind: b.tag,
-        number: b.attrs.number,
-        title: title?.trim() ?? '',
-        // Neither child tag found (malformed) - fall back to the raw block so
-        // nothing silently disappears.
-        description: description != null ? description.trim() : (title == null ? b.content.trim() : ''),
-      }
-    }
-    case 'comments': {
-      const raw = b.content.trim()
-      const parsed = tryParseJSON(raw)
-      const comments = Array.isArray(parsed) ? parsed.map(toComment) : null
-      return {
-        kind: 'comments',
-        total: numAttr(b.attrs.count),
-        added: numAttr(b.attrs.new),
-        edited: numAttr(b.attrs.edited),
-        deleted: numAttr(b.attrs.deleted),
-        comments,
-        raw,
-      }
-    }
-    case 'changed_files': {
-      const raw = b.content.trim()
-      const parsed = tryParseJSON(raw)
-      const files = Array.isArray(parsed) ? parsed.map(toChangedFile) : null
-      return {
-        kind: 'changed_files',
-        count: numAttr(b.attrs.count),
-        additions: numAttr(b.attrs.additions),
-        deletions: numAttr(b.attrs.deletions),
-        files,
-        raw,
-      }
-    }
+    case 'pull_request':
+      return toAskBlock(b)
+    case 'comments':
+      return toCommentsBlock(b)
+    case 'changed_files':
+      return toChangedFilesBlock(b)
     case 'checks': {
       const raw = b.content.trim()
       return {
@@ -217,16 +239,8 @@ function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
         raw,
       }
     }
-    case 'event': {
-      const raw = b.content.trim()
-      const parsed = tryParseJSON(raw)
-      return {
-        kind: 'event',
-        name: b.attrs.name,
-        pretty: parsed !== undefined ? JSON.stringify(parsed, null, 2) : null,
-        raw,
-      }
-    }
+    case 'event':
+      return toEventBlock(b)
     case 'context': {
       const files = parseTopLevel(b.content)
         .filter(c => c.tag === 'file')

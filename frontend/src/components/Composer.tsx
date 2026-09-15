@@ -90,6 +90,79 @@ export interface ComposerProps {
 // Composer owns the draft `input` + `attachments` locally so typing only re-renders
 // this small component, not the whole chat (the turn list / DAG trees). The
 // finished message goes up via onSubmit - the caller decides whether that's an immediate send or (while streaming) queuing it for after the current run.
+// QueuedMessages: the composer's pending follow-up rows - one line per
+// queued bubble, or a single "N queued" chip at compact width.
+function QueuedMessages({ queue, compact, onRemoveQueued }: {
+  queue: QueuedTurn[]
+  compact: boolean
+  onRemoveQueued?: (id: string) => void
+}) {
+  if (queue.length === 0) return null
+  return compact ? (
+    // #1174: a row per queued bubble stacks on top of the 60px budget -
+    // one "N queued" chip instead. <details> is DOM-handled, so the chip
+    // stays open across queue additions without re-rendering the composer (same disclosure pattern as TriggerEnvelope); remove is always visible because touch has no hover.
+    <details className="mb-3">
+      <summary className="list-none w-fit cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-700">
+        {`${queue.length} queued`}
+      </summary>
+      <div className="flex flex-col gap-2 mt-2">
+        {queue.map(item => (
+          <div key={item.id} className="flex justify-end">
+            <div className="max-w-2xl ml-auto">
+              <div className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                {item.text}
+              </div>
+              <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                <span>queued</span>
+                {onRemoveQueued && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveQueued(item.id)}
+                    aria-label="Remove queued message"
+                    title="Remove"
+                    className="min-h-[44px] -my-2 inline-flex items-center hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
+                  >
+                    remove
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
+  ) : (
+    <div className="flex flex-col gap-2 mb-3" aria-label="Queued messages">
+      {queue.map(item => (
+        // Looks like the user's own message bubble, just grayed out with a
+        // "queued" hint - not a separate pill design.
+        <div key={item.id} className="group flex justify-end">
+          <div className="max-w-2xl ml-auto">
+            <div className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+              {item.text}
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <span>queued</span>
+              {onRemoveQueued && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveQueued(item.id)}
+                  aria-label="Remove queued message"
+                  title="Remove"
+                  className="min-h-[44px] -my-2 inline-flex items-center opacity-0 group-hover:opacity-100 hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
+                >
+                  remove
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemoveQueued, archived = false, noChat = false }: ComposerProps) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<AttachmentItem[]>([])
@@ -145,70 +218,8 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
     // the pill surface below carries its own bg/shadow. Bottom offset is the
     // shared --composer-gap (index.css); don't add another safe-area-inset read here - that doubling caused the pre-#1249 excess.
     <div className="px-3 pt-2 pb-[var(--composer-gap)] medium:px-6 medium:pt-3">
-      {queue != null && queue.length > 0 && (
-        compact ? (
-          // #1174: a row per queued bubble stacks on top of the 60px budget -
-          // one "N queued" chip instead. <details> is DOM-handled, so the chip
-          // stays open across queue additions without re-rendering the composer (same disclosure pattern as TriggerEnvelope); remove is always visible because touch has no hover.
-          <details className="mb-3">
-            <summary className="list-none w-fit cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-700">
-              {`${queue.length} queued`}
-            </summary>
-            <div className="flex flex-col gap-2 mt-2">
-              {queue.map(item => (
-                <div key={item.id} className="flex justify-end">
-                  <div className="max-w-2xl ml-auto">
-                    <div className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                      {item.text}
-                    </div>
-                    <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      <span>queued</span>
-                      {onRemoveQueued && (
-                        <button
-                          type="button"
-                          onClick={() => onRemoveQueued(item.id)}
-                          aria-label="Remove queued message"
-                          title="Remove"
-                          className="min-h-[44px] -my-2 inline-flex items-center hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
-                        >
-                          remove
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </details>
-        ) : (
-          <div className="flex flex-col gap-2 mb-3" aria-label="Queued messages">
-            {queue.map(item => (
-              // Looks like the user's own message bubble, just grayed out with a
-              // "queued" hint - not a separate pill design.
-              <div key={item.id} className="group flex justify-end">
-                <div className="max-w-2xl ml-auto">
-                  <div className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                    {item.text}
-                  </div>
-                  <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                    <span>queued</span>
-                    {onRemoveQueued && (
-                      <button
-                        type="button"
-                        onClick={() => onRemoveQueued(item.id)}
-                        aria-label="Remove queued message"
-                        title="Remove"
-                        className="min-h-[44px] -my-2 inline-flex items-center opacity-0 group-hover:opacity-100 hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
-                      >
-                        remove
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )
+      {queue != null && (
+        <QueuedMessages queue={queue} compact={compact} onRemoveQueued={onRemoveQueued} />
       )}
       <form onSubmit={e => { e.preventDefault(); submit() }} className="flex flex-col gap-2">
         <AttachmentStrip

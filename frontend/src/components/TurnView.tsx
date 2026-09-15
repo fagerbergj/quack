@@ -4,7 +4,7 @@ import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
 import { TriggerMessage } from './TriggerEnvelope'
 import { AttachmentPreviews, type AttachmentPreview } from './AttachmentUI'
-import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, dagTurnStateFromItem } from '../state/chatStore'
+import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, dagTurnStateFromItem, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn } from '../generated'
 
@@ -38,6 +38,58 @@ export interface TurnViewProps {
   onChoice: (option: string) => void
   onCopy: (key: string, text: string) => void
   onDownload: (text: string, idx: number) => void
+}
+
+// TurnDagBubble is the completed turn's DAG card - the collapsed "Steps"
+// details (activity + graph), as opposed to the live turn's running view.
+function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity: Activity[]; chatId?: string }) {
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+      <DagBubbleHeader dag={dag} />
+      <details className="rounded-lg border border-gray-200 dark:border-gray-700">
+        <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+          Steps
+        </summary>
+        <div className="p-2 space-y-3">
+          {activity.length > 0 && <ActivityList activity={activity} />}
+          <DagView dag={dag} chatId={chatId} />
+        </div>
+      </details>
+    </div>
+  )
+}
+
+// TurnAnswerBubble is the completed turn's answer card: the attributed
+// header, the (DAG-less) activity, and the markdown answer.
+function TurnAnswerBubble({ dagState, activity, text, attribution }: { dagState: DagTurnState | undefined; activity: Activity[]; text: string | undefined; attribution: ReturnType<typeof dagAnswerAttribution> | undefined }) {
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} />
+      {!dagState && activity.length > 0 && <ActivityList activity={activity} />}
+      {text && <AssistantText text={text} />}
+    </div>
+  )
+}
+
+// CopyDownloadRow is the copy/download action pair under an answer that has
+// text - the live turn renders the same markup inline in Chat.tsx.
+function CopyDownloadRow({ text, copyKey, isCopied, onCopy, onDownload, idx }: { text: string; copyKey: string; isCopied: boolean; onCopy: (key: string, text: string) => void; onDownload: (text: string, idx: number) => void; idx: number }) {
+  return (
+    <div className="flex items-center gap-3 mt-1.5 px-1">
+      <button
+        onClick={() => onCopy(copyKey, text)}
+        className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+      >
+        {isCopied ? 'Copied!' : 'Copy'}
+      </button>
+      <button
+        onClick={() => onDownload(text, idx)}
+        className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+      >
+        Download
+      </button>
+    </div>
+  )
 }
 
 // TurnView renders one completed turn. Memoized: completed turns are immutable, so
@@ -83,27 +135,8 @@ export const TurnView = memo(function TurnView({
       {/* Assistant response: DAG bubble → answer bubble, as siblings */}
       <div className="flex justify-start">
         <div className="w-full space-y-3">
-          {dagState && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-              <DagBubbleHeader dag={dagState} />
-              <details className="rounded-lg border border-gray-200 dark:border-gray-700">
-                <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                  Steps
-                </summary>
-                <div className="p-2 space-y-3">
-                  {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
-                  <DagView dag={dagState} chatId={chatId} />
-                </div>
-              </details>
-            </div>
-          )}
-          {hasAnswerContent && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-              <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} />
-              {!dagState && turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
-              {text && <AssistantText text={text} />}
-            </div>
-          )}
+          {dagState && <TurnDagBubble dag={dagState} activity={turnActivity} chatId={chatId} />}
+          {hasAnswerContent && <TurnAnswerBubble dagState={dagState} activity={turnActivity} text={text} attribution={attribution} />}
           {turnChoice && (
             <QuestionBubble
               agent="orchestrator"
@@ -114,22 +147,7 @@ export const TurnView = memo(function TurnView({
               onSelect={onChoice}
             />
           )}
-          {text && (
-            <div className="flex items-center gap-3 mt-1.5 px-1">
-              <button
-                onClick={() => onCopy(copyKey, text)}
-                className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
-                {isCopied ? 'Copied!' : 'Copy'}
-              </button>
-              <button
-                onClick={() => onDownload(text, idx)}
-                className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
-                Download
-              </button>
-            </div>
-          )}
+          {text && <CopyDownloadRow text={text} copyKey={copyKey} isCopied={isCopied} onCopy={onCopy} onDownload={onDownload} idx={idx} />}
         </div>
       </div>
     </div>

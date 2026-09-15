@@ -11,7 +11,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
     // must copy WITHOUT toggling the enclosing disclosure.
     e.preventDefault()
     e.stopPropagation()
-    navigator.clipboard.writeText(text)
+    void navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }

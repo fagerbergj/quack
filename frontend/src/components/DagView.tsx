@@ -95,7 +95,7 @@ export function DagView({
       edges: dag.edges,
       nodeStates: dag.nodeStates,
     }
-    navigator.clipboard.writeText(JSON.stringify(payload, null, 2)).then(() => {
+    void navigator.clipboard.writeText(JSON.stringify(payload, null, 2)).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })

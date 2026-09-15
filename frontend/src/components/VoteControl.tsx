@@ -37,7 +37,7 @@ export function VoteControl({ score, ownVote, onVote, disabled }: VoteControlPro
     <div className="inline-flex items-center gap-0.5" role="group" aria-label="Vote on this memory">
       <button
         type="button"
-        onClick={() => handleClick('up')}
+        onClick={() => { void handleClick('up') }}
         disabled={pending || disabled}
         aria-pressed={ownVote === 'up'}
         aria-label="Upvote"
@@ -49,7 +49,7 @@ export function VoteControl({ score, ownVote, onVote, disabled }: VoteControlPro
       <span className="min-w-[1.5em] text-center text-xs font-medium tabular-nums text-gray-600 dark:text-gray-300">{score}</span>
       <button
         type="button"
-        onClick={() => handleClick('down')}
+        onClick={() => { void handleClick('down') }}
         disabled={pending || disabled}
         aria-pressed={ownVote === 'down'}
         aria-label="Downvote"

@@ -16,9 +16,6 @@ export default meta
 
 type Story = StoryObj<typeof ArtifactPanel>
 
-// The panel talks to the real REST client, so a story stubs global.fetch
-// with canned responses matching the generated schema - no MSW in this repo
-// (frontend-design skill), and this is its whole surface. Routes on the chat id in the URL: chat-1 (a finished review node), chat-failed (a failed node, no artifacts), chat-more (lots of secondary artifacts).
 const findingV1 = JSON.stringify({ path: 'a.go', title: 'missing nil check', rationale: 'x may be nil here', severity: 'high' })
 const findingV2 = JSON.stringify({ path: 'a.go', title: 'missing nil check (fixed)', rationale: 'x may be nil here', severity: 'high' })
 // One fixed review format (internal/vetting/reviewoverview.go): the panel
@@ -74,75 +71,73 @@ const reviewJudge2 = JSON.stringify({
 let reviewRev3Written = false
 const reviewMdV3 = '# Review summary (live update)\n\nA third revision just landed over SSE.\n'
 
-window.fetch = async (input: RequestInfo | URL) => {
-  // The generated client's per-request fetch always passes a real Request
-  // instance (client.gen.ts) - String(request) is "[object Request]", so its
-  // .url must be read; getArtifactText's plain fetch() still passes a bare string (the ternary covers it). buildUrl percent-encodes artifact_name (":" -> "%3A").
-  const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+// The generated client's per-request fetch always passes a real Request
+// instance (client.gen.ts) - String(request) is "[object Request]", so its
+// .url must be read; getArtifactText's plain fetch() still passes a bare string (the ternary covers it). buildUrl percent-encodes artifact_name (":" -> "%3A").
+function urlOf(input: RequestInfo | URL): string {
+  return decodeURIComponent(input instanceof Request ? input.url : String(input))
+}
 
-  if (url.includes('/chats/chat-failed/')) {
-    return jsonResponse({ data: [] }) // nothing for a failed node
-  }
-  if (url.includes('/chats/chat-review-legacy/')) {
-    if (url.endsWith('/artifacts')) {
-      return jsonResponse({
-        data: [{ name: 'code_review:pr:legacy', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', author: 'gate' }, revisions: [] }],
-      })
-    }
-    if (url.includes('/artifacts/code_review:pr:legacy')) {
-      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] })
-      return textResponse(JSON.stringify(codeReviewLegacy))
-    }
-    return jsonResponse({ data: [] })
-  }
-  if (url.includes('/chats/chat-more/')) {
-    if (url.endsWith('/artifacts')) {
-      return jsonResponse({
-        data: [
-          { name: 'document:spec', kind: 'document', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
-          { name: 'finding:692b00ee', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
-          { name: 'finding:0f4c1a22', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
-          { name: 'finding:77aa39be', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
-          { name: 'code_review:pr:1', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'dispatch' }, revisions: [] },
-          { name: 'pr_body:1', kind: 'pr_body', class: 'blob', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
-          { name: 'bytes:logo', kind: 'bytes', class: 'blob', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
-          { name: 'text:notes', kind: 'text', class: 'blob', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
-        ],
-      })
-    }
-    if (url.includes('/artifacts/document:spec')) {
-      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 20, kind: 'document', class: 'structured', lineage: { node_id: 'writer-1', author: 'worker' } }] })
-      return textResponse(JSON.stringify({ title: 'The spec', body: 'Spec body.' }))
-    }
-    const findingNames = ['finding:692b00ee', 'finding:0f4c1a22', 'finding:77aa39be']
-    if (findingNames.some(f => url.includes(`/artifacts/${f}`))) {
-      const f = findingNames.find(x => url.includes(`/artifacts/${x}`))!
-      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'finding', class: 'structured', lineage: { node_id: 'writer-1', author: 'worker' } }] })
-      return textResponse(JSON.stringify({ path: 'a.go', title: `finding ${f.slice(-4)}`, rationale: 'demo' }))
-    }
-    if (url.includes('/artifacts/code_review:pr:1')) {
-      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'writer-1', author: 'dispatch' } }] })
-      return textResponse(JSON.stringify(codeReviewNew))
-    }
-    if (url.includes('/artifacts/code_review:pr:legacy')) {
-      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] })
-      return textResponse(JSON.stringify(codeReviewLegacy))
-    }
-    if (url.includes('/artifacts/pr_body:1')) {
-      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'pr_body', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] })
-      return textResponse('# PR description\n\nWhat and why, briefly.')
-    }
-    if (url.includes('/artifacts/bytes:logo')) {
-      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'image/png', size: 10, kind: 'bytes', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] })
-      return textResponse('<binary png>')
-    }
-    if (url.includes('/artifacts/text:notes')) {
-      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'text', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] })
-      return textResponse('# Notes\n\nWorking notes here.')
-    }
-    return jsonResponse({ data: [] })
-  }
+// One artifact's two canned routes: its revision list, or its content body.
+function artifactRoute(url: string, name: string, revisions: Response, body: Response): Response | null {
+  if (!url.includes(`/artifacts/${name}`)) return null
+  return url.includes('/revisions') ? revisions : body
+}
 
+function chatFailedRoute(url: string): Response | null {
+  if (url.includes('/chats/chat-failed/')) return jsonResponse({ data: [] }) // nothing for a failed node
+  return null
+}
+
+function chatReviewLegacyRoute(url: string): Response | null {
+  if (!url.includes('/chats/chat-review-legacy/')) return null
+  if (url.endsWith('/artifacts')) {
+    return jsonResponse({
+      data: [{ name: 'code_review:pr:legacy', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', author: 'gate' }, revisions: [] }],
+    })
+  }
+  if (url.includes('/artifacts/code_review:pr:legacy')) {
+    if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] })
+    return textResponse(JSON.stringify(codeReviewLegacy))
+  }
+  return jsonResponse({ data: [] })
+}
+
+// The panel talks to the real REST client, so a story stubs global.fetch
+// with canned responses matching the generated schema - no MSW in this repo
+// (frontend-design skill), and this is its whole surface. Routes on the chat id in the URL: chat-1 (a finished review node), chat-failed (a failed node, no artifacts), chat-more (lots of secondary artifacts).
+function chatMoreRoute(url: string): Response | null {
+  if (!url.includes('/chats/chat-more/')) return null
+  if (url.endsWith('/artifacts')) {
+    return jsonResponse({
+      data: [
+        { name: 'document:spec', kind: 'document', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+        { name: 'finding:692b00ee', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+        { name: 'finding:0f4c1a22', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+        { name: 'finding:77aa39be', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+        { name: 'code_review:pr:1', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'dispatch' }, revisions: [] },
+        { name: 'pr_body:1', kind: 'pr_body', class: 'blob', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+        { name: 'bytes:logo', kind: 'bytes', class: 'blob', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+        { name: 'text:notes', kind: 'text', class: 'blob', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+      ],
+    })
+  }
+  const findingNames = ['finding:692b00ee', 'finding:0f4c1a22', 'finding:77aa39be']
+  const finding = findingNames.find(f => url.includes(`/artifacts/${f}`))
+  const findingRevisions = () => jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'finding', class: 'structured', lineage: { node_id: 'writer-1', author: 'worker' } }] })
+  return (
+    artifactRoute(url, 'document:spec', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 20, kind: 'document', class: 'structured', lineage: { node_id: 'writer-1', author: 'worker' } }] }), textResponse(JSON.stringify({ title: 'The spec', body: 'Spec body.' }))) ??
+    (finding != null ? artifactRoute(url, finding, findingRevisions(), textResponse(JSON.stringify({ path: 'a.go', title: `finding ${finding.slice(-4)}`, rationale: 'demo' }))) : null) ??
+    artifactRoute(url, 'code_review:pr:1', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'writer-1', author: 'dispatch' } }] }), textResponse(JSON.stringify(codeReviewNew))) ??
+    artifactRoute(url, 'code_review:pr:legacy', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] }), textResponse(JSON.stringify(codeReviewLegacy))) ??
+    artifactRoute(url, 'pr_body:1', jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'pr_body', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] }), textResponse('# PR description\n\nWhat and why, briefly.')) ??
+    artifactRoute(url, 'bytes:logo', jsonResponse({ data: [{ revision: 1, mime_type: 'image/png', size: 10, kind: 'bytes', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] }), textResponse('<binary png>')) ??
+    artifactRoute(url, 'text:notes', jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'text', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] }), textResponse('# Notes\n\nWorking notes here.')) ??
+    null
+  )
+}
+
+function chatOneRoute(url: string): Response | null {
   // chat-1: the finished review node (#1178's primary story).
   if (url.includes('/artifacts/text:review-1/revisions')) {
     return jsonResponse({
@@ -181,7 +176,18 @@ window.fetch = async (input: RequestInfo | URL) => {
       ],
     })
   }
-  return jsonResponse({ data: [] })
+  return null
+}
+
+window.fetch = async (input: RequestInfo | URL) => {
+  const url = urlOf(input)
+  return (
+    chatFailedRoute(url) ??
+    chatReviewLegacyRoute(url) ??
+    chatMoreRoute(url) ??
+    chatOneRoute(url) ??
+    jsonResponse({ data: [] })
+  )
 }
 
 function jsonResponse(body: unknown): Response {
