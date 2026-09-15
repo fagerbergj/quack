@@ -175,6 +175,31 @@ func newChatCmd() *cobra.Command {
 	return c
 }
 
+// targetCmd builds the thin shape the target-driven commands share: resolve
+// the server via withTarget, then call action. Commands with any flag beyond
+// --json keep their explicit cobra wiring.
+func targetCmd(use, short string, args cobra.PositionalArgs, asJSON *bool, action func(ctx context.Context, out io.Writer, t string, args []string) error, chatCompletion ...bool) *cobra.Command {
+	c := &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  args,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return action(cmd.Context(), cmd.OutOrStdout(), t, args)
+			})
+		},
+	}
+	if asJSON != nil {
+		asJSONFlag(c, asJSON)
+	}
+	// chatCompletion: the one option that varies between the shared-shape
+	// commands - chat-id completion, opt-in via a trailing true.
+	if len(chatCompletion) > 0 && chatCompletion[0] {
+		c.ValidArgsFunction = completeChatIDs
+	}
+	return c
+}
+
 func newArtifactListCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
@@ -212,16 +237,10 @@ func newArtifactDownloadCmd() *cobra.Command {
 }
 
 func newChatNewCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "new",
-		Short: "Create a chat and print its id (create-only - send the first message with `chat send`)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunChatNew(cmd.Context(), cmd.OutOrStdout(), t)
-			})
-		},
-	}
+	return targetCmd("new", "Create a chat and print its id (create-only - send the first message with `chat send`)", cobra.NoArgs, nil,
+		func(ctx context.Context, out io.Writer, t string, _ []string) error {
+			return cli.RunChatNew(ctx, out, t)
+		})
 }
 
 // newChatSendCmd: `chat send <id> "<msg>"` - the non-interactive way to answer
@@ -307,18 +326,10 @@ func newChatListCmd() *cobra.Command {
 }
 
 func newChatRenameCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "rename <id> <title>",
-		Short: "Rename a chat",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunChatRename(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1])
-			})
-		},
-	}
-	c.ValidArgsFunction = completeChatIDs
-	return c
+	return targetCmd("rename <id> <title>", "Rename a chat", cobra.ExactArgs(2), nil,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunChatRename(ctx, out, t, args[0], args[1])
+		}, true)
 }
 
 // newChatArchiveCmd builds both `chat archive` and `chat unarchive`.
@@ -327,51 +338,27 @@ func newChatArchiveCmd(archived bool) *cobra.Command {
 	if !archived {
 		use, short = "unarchive <id>", "Unarchive a chat"
 	}
-	c := &cobra.Command{
-		Use:   use,
-		Short: short,
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunChatArchive(cmd.Context(), cmd.OutOrStdout(), t, args[0], archived)
-			})
-		},
-	}
-	c.ValidArgsFunction = completeChatIDs
-	return c
+	return targetCmd(use, short, cobra.ExactArgs(1), nil,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunChatArchive(ctx, out, t, args[0], archived)
+		}, true)
 }
 
 func newChatExportCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "export <id>",
-		Short: "Export a chat transcript",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunChatExport(cmd.Context(), cmd.OutOrStdout(), t, args[0], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
+	c := targetCmd("export <id>", "Export a chat transcript", cobra.ExactArgs(1), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunChatExport(ctx, out, t, args[0], asJSON)
+		})
 	return c
 }
 
 func newChatStopCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "stop <id>",
-		Short: "Stop a chat's active run",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunChatStop(cmd.Context(), cmd.OutOrStdout(), t, args[0], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
-	c.ValidArgsFunction = completeChatIDs
-	return c
+	return targetCmd("stop <id>", "Stop a chat's active run", cobra.ExactArgs(1), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunChatStop(ctx, out, t, args[0], asJSON)
+		}, true)
 }
 
 func newChatDeleteCmd() *cobra.Command {
@@ -434,17 +421,10 @@ func newMemoryListCmd() *cobra.Command {
 // recalled (epic #1255 P1 observability).
 func newMemoryShowCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "show <memory-id>",
-		Short: "Show one memory's full detail, including votes/tier/last recalled",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunMemoryShow(cmd.Context(), cmd.OutOrStdout(), t, args[0], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
+	c := targetCmd("show <memory-id>", "Show one memory's full detail, including votes/tier/last recalled", cobra.ExactArgs(1), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunMemoryShow(ctx, out, t, args[0], asJSON)
+		})
 	c.ValidArgsFunction = completeMemoryIDs
 	return c
 }
@@ -553,17 +533,10 @@ func newNodeStopCmd() *cobra.Command {
 // turn boundary, keeping its accumulated work (updateNodeStatus status=paused).
 func newNodePauseCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "pause <chat-id> <node-id>",
-		Short: "Suspend a running node, keeping its accumulated work (resumable)",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunNodePause(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
+	c := targetCmd("pause <chat-id> <node-id>", "Suspend a running node, keeping its accumulated work (resumable)", cobra.ExactArgs(2), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunNodePause(ctx, out, t, args[0], args[1], asJSON)
+		})
 	c.ValidArgsFunction = completeChatThenNodeIDs
 	return c
 }
@@ -572,17 +545,10 @@ func newNodePauseCmd() *cobra.Command {
 // re-run (updateNodeStatus status=running).
 func newNodeResumeCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "resume <chat-id> <node-id>",
-		Short: "Resume a paused node (a fresh re-run, like retry)",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunNodeResume(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
+	c := targetCmd("resume <chat-id> <node-id>", "Resume a paused node (a fresh re-run, like retry)", cobra.ExactArgs(2), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunNodeResume(ctx, out, t, args[0], args[1], asJSON)
+		})
 	c.ValidArgsFunction = completeChatThenNodeIDs
 	return c
 }
@@ -592,17 +558,10 @@ func newNodeResumeCmd() *cobra.Command {
 // old interrupt-based `chat node steer`.
 func newNodeQueueCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "queue <chat-id> <node-id> <message>",
-		Short: "Queue a message for a running node, delivered at its next turn boundary",
-		Args:  cobra.ExactArgs(3),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunNodeQueue(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
+	c := targetCmd("queue <chat-id> <node-id> <message>", "Queue a message for a running node, delivered at its next turn boundary", cobra.ExactArgs(3), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunNodeQueue(ctx, out, t, args[0], args[1], args[2], asJSON)
+		})
 	c.ValidArgsFunction = completeChatThenNodeIDs
 	return c
 }
@@ -611,17 +570,10 @@ func newNodeQueueCmd() *cobra.Command {
 // queued message.
 func newNodeQueueEditCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "queue-edit <chat-id> <node-id> <message-id> <text>",
-		Short: "Edit a not-yet-delivered queued message",
-		Args:  cobra.ExactArgs(4),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunNodeQueueEdit(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2], args[3], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
+	c := targetCmd("queue-edit <chat-id> <node-id> <message-id> <text>", "Edit a not-yet-delivered queued message", cobra.ExactArgs(4), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunNodeQueueEdit(ctx, out, t, args[0], args[1], args[2], args[3], asJSON)
+		})
 	c.ValidArgsFunction = completeChatThenNodeIDs
 	return c
 }
@@ -630,17 +582,10 @@ func newNodeQueueEditCmd() *cobra.Command {
 // queued message.
 func newNodeQueueRemoveCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "queue-remove <chat-id> <node-id> <message-id>",
-		Short: "Remove a not-yet-delivered queued message",
-		Args:  cobra.ExactArgs(3),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunNodeQueueRemove(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
+	c := targetCmd("queue-remove <chat-id> <node-id> <message-id>", "Remove a not-yet-delivered queued message", cobra.ExactArgs(3), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunNodeQueueRemove(ctx, out, t, args[0], args[1], args[2], asJSON)
+		})
 	c.ValidArgsFunction = completeChatThenNodeIDs
 	return c
 }
@@ -649,17 +594,10 @@ func newNodeQueueRemoveCmd() *cobra.Command {
 // (immutable once the node has started).
 func newNodeEditCmd() *cobra.Command {
 	var asJSON bool
-	c := &cobra.Command{
-		Use:   "edit <chat-id> <node-id> <task>",
-		Short: "Edit a not-yet-started node's prompt",
-		Args:  cobra.ExactArgs(3),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunNodeEditTask(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2], asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
+	c := targetCmd("edit <chat-id> <node-id> <task>", "Edit a not-yet-started node's prompt", cobra.ExactArgs(3), &asJSON,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunNodeEditTask(ctx, out, t, args[0], args[1], args[2], asJSON)
+		})
 	c.ValidArgsFunction = completeChatThenNodeIDs
 	return c
 }
