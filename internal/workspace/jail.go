@@ -76,10 +76,8 @@ func (j *Jail) HomeDir(userID string) (string, error) {
 	return home, nil
 }
 
-// ScratchDir is a private, per-node writable tmp dir for a sandboxed
-// worker's own scratch use (mktemp, heredocs, a build's tmp files) - a home
-// for the TMPDIR grant that doesn't collide with, or get swept alongside, another node's. Nested under HomeDir (never inside the node's own workspace: a read-only node's tree must stay wholly immutable), one directory component per node so workspace gc's existing per-entry sweepHomeTmp TTL sweep (see gc.go) reaps it with no changes of its own.
-func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
+// nodeHomeDir: shared ScratchDir/ACPStateDir core - validates ids, creates a 0o700 per-node dir under home/subdir.
+func (j *Jail) nodeHomeDir(userID, chatID, nodeID, subdir, label string) (string, error) {
 	if !isSafePathComponent(chatID) {
 		return "", ErrInvalidChatID
 	}
@@ -90,31 +88,24 @@ func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, "tmp", ChatDirName(chatID)+"__"+nodeID)
+	dir := filepath.Join(home, subdir, ChatDirName(chatID)+"__"+nodeID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("workspace: create scratch dir %q: %w", dir, err)
+		return "", fmt.Errorf("workspace: create %s %q: %w", label, dir, err)
 	}
 	return dir, nil
+}
+
+// ScratchDir is a private, per-node writable tmp dir for a sandboxed
+// worker's own scratch use (mktemp, heredocs, a build's tmp files) - a home
+// for the TMPDIR grant that doesn't collide with, or get swept alongside, another node's. Nested under HomeDir (never inside the node's own workspace: a read-only node's tree must stay wholly immutable), one directory component per node so workspace gc's existing per-entry sweepHomeTmp TTL sweep (see gc.go) reaps it with no changes of its own.
+func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
+	return j.nodeHomeDir(userID, chatID, nodeID, "tmp", "scratch dir")
 }
 
 // ACPStateDir: per-node dir for the ACP shim's own session persistence (pi's
 // --session-dir) - unlike ScratchDir, never named in environment.go's prompt.
 func (j *Jail) ACPStateDir(userID, chatID, nodeID string) (string, error) {
-	if !isSafePathComponent(chatID) {
-		return "", ErrInvalidChatID
-	}
-	if !isSafePathComponent(nodeID) {
-		return "", ErrInvalidNodeID
-	}
-	home, err := j.HomeDir(userID)
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(home, "acp-state", ChatDirName(chatID)+"__"+nodeID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("workspace: create acp state dir %q: %w", dir, err)
-	}
-	return dir, nil
+	return j.nodeHomeDir(userID, chatID, nodeID, "acp-state", "acp state dir")
 }
 
 // Working directory a DAG node's tools default to (one component under chat scope). "" falls back to chat root.

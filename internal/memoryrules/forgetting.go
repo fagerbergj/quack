@@ -274,48 +274,36 @@ type exprParser struct {
 
 func (p *exprParser) cur() token { return p.toks[p.pos] }
 
-func (p *exprParser) parseOr() (value, error) {
-	v, err := p.parseAnd()
+// parseBinary folds a left-associative run of op over operand results: both
+// sides must be boolean at each step, and combine replaces the left value.
+func (p *exprParser) parseBinary(opKind tokKind, op string, operand func() (value, error), combine func(l, r value) value) (value, error) {
+	v, err := operand()
 	if err != nil {
 		return value{}, err
 	}
-	for p.cur().kind == tokOr {
+	for p.cur().kind == opKind {
 		if v.kind != valBool {
-			return value{}, fmt.Errorf("`||` at position %d requires boolean operands", p.cur().pos)
+			return value{}, fmt.Errorf("`%s` at position %d requires boolean operands", op, p.cur().pos)
 		}
 		p.pos++
-		rhs, err := p.parseAnd()
+		rhs, err := operand()
 		if err != nil {
 			return value{}, err
 		}
 		if rhs.kind != valBool {
-			return value{}, fmt.Errorf("`||` requires boolean operands")
+			return value{}, fmt.Errorf("`%s` requires boolean operands", op)
 		}
-		v = value{kind: valBool, b: v.b || rhs.b}
+		v = combine(v, rhs)
 	}
 	return v, nil
 }
 
+func (p *exprParser) parseOr() (value, error) {
+	return p.parseBinary(tokOr, "||", p.parseAnd, func(l, r value) value { return value{kind: valBool, b: l.b || r.b} })
+}
+
 func (p *exprParser) parseAnd() (value, error) {
-	v, err := p.parseUnary()
-	if err != nil {
-		return value{}, err
-	}
-	for p.cur().kind == tokAnd {
-		if v.kind != valBool {
-			return value{}, fmt.Errorf("`&&` at position %d requires boolean operands", p.cur().pos)
-		}
-		p.pos++
-		rhs, err := p.parseUnary()
-		if err != nil {
-			return value{}, err
-		}
-		if rhs.kind != valBool {
-			return value{}, fmt.Errorf("`&&` requires boolean operands")
-		}
-		v = value{kind: valBool, b: v.b && rhs.b}
-	}
-	return v, nil
+	return p.parseBinary(tokAnd, "&&", p.parseUnary, func(l, r value) value { return value{kind: valBool, b: l.b && r.b} })
 }
 
 func (p *exprParser) parseUnary() (value, error) {

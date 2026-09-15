@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -54,7 +55,8 @@ func diffMode(ref, root string) bool {
 	// so only runs the diff itself touches are gated (changed-code-only).
 	out, err := exec.Command("git", "diff", "-U0", ref+"...HEAD").Output()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
 			fmt.Fprintln(os.Stderr, "git diff failed:", strings.TrimSpace(string(ee.Stderr)))
 		} else {
 			fmt.Fprintln(os.Stderr, "git diff failed:", err)
@@ -206,7 +208,7 @@ func ccAllowed(src []byte, fset *token.FileSet, fd *ast.FuncDecl) bool {
 
 func goFiles(root string) []string {
 	var files []string
-	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -382,7 +384,7 @@ func printDupl(root string) bool {
 // testCounts: logic vs test SLOC per package.
 func testCounts(root string) map[string]struct{ logic, test int } {
 	pkgs := map[string]struct{ logic, test int }{}
-	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			if d != nil && d.IsDir() && p != root && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
 				return filepath.SkipDir

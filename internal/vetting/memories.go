@@ -26,20 +26,25 @@ type memoryVerdict struct {
 // judgeMemoriesInstructions: tells the judge to vote on every delivered memory.
 const judgeMemoriesInstructions = "RECALLED MEMORIES - the worker was given these before it started; vote on EVERY one in submit_verdict's `memories` array as {id, vote, reason}: `supported` if the delivered work is consistent with (or confirms) the memory, `contradicted` if the work shows the memory is wrong, `not_relevant` if the memory had nothing to do with this task. Votes are only recorded when the round passes the gate.\n\n"
 
-// receivedMemoriesSection renders the worker's recalled set for the judge -
-// the memories.go/findings.go twin, but sourced from what recall actually
-// delivered rather than staged findings.
-func receivedMemoriesSection(received []memory.Delivered) string {
-	if len(received) == 0 {
+// memorySection renders header plus one "- id=...: content" line per entry.
+func memorySection(header string, items []memory.Delivered) string {
+	if len(items) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(judgeMemoriesInstructions)
-	for _, m := range received {
+	sb.WriteString(header)
+	for _, m := range items {
 		fmt.Fprintf(&sb, "- id=%s: %s\n", m.ID, m.Content)
 	}
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+// receivedMemoriesSection renders the worker's recalled set for the judge -
+// the memories.go/findings.go twin, but sourced from what recall actually
+// delivered rather than staged findings.
+func receivedMemoriesSection(received []memory.Delivered) string {
+	return memorySection(judgeMemoriesInstructions, received)
 }
 
 // planJudgeMemoryHeader: unlike judgeMemoriesInstructions, these are NOT
@@ -50,16 +55,7 @@ const planJudgeMemoryHeader = "PROJECT MEMORY - background notes about this repo
 // planMemorySection renders top-k memories for the plan judge's prompt -
 // the receivedMemoriesSection twin for a round that never votes.
 func planMemorySection(hits []memory.Delivered) string {
-	if len(hits) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString(planJudgeMemoryHeader)
-	for _, m := range hits {
-		fmt.Fprintf(&sb, "- id=%s: %s\n", m.ID, m.Content)
-	}
-	sb.WriteString("\n")
-	return sb.String()
+	return memorySection(planJudgeMemoryHeader, hits)
 }
 
 // memoryIDs extracts ids from a received set, for the round-scoped tool

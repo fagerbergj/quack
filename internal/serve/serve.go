@@ -798,16 +798,33 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config,
 	return agent.BuildChat(b, m, nil, nil, guidance, nil, "")
 }
 
+// fetchGitCredential: the shared body of gitCredentialAdapter.GitCredential and
+// sdkGitCredentialAdapter.GitCredential - resolve, nil-check, and copy the three
+// Host/Username/Token fields into D.
+func fetchGitCredential[C, D any](ctx context.Context, rawURL string, fetch func(context.Context, string) (*C, error), fields func(*C) (string, string, string), mk func(string, string, string) D) (*D, error) {
+	c, err := fetch(ctx, rawURL)
+	if err != nil || c == nil {
+		return nil, err
+	}
+	h, u, t := fields(c)
+	d := mk(h, u, t)
+	return &d, nil
+}
+
 // gitCredentialAdapter bridges tools.GitTokenSource to vetting.GitCredentialSource -
 // vetting can't import internal/tools (tools already imports vetting), so it declares its own type.
 type gitCredentialAdapter struct{ src tools.GitTokenSource }
 
+func toolsCredFields(c *tools.GitCredential) (string, string, string) {
+	return c.Host, c.Username, c.Token
+}
+
+func newVettingGitCredential(h, u, t string) vetting.GitCredential {
+	return vetting.GitCredential{Host: h, Username: u, Token: t}
+}
+
 func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) (*vetting.GitCredential, error) {
-	c, err := a.src.GitCredential(ctx, rawURL)
-	if err != nil || c == nil {
-		return nil, err
-	}
-	return &vetting.GitCredential{Host: c.Host, Username: c.Username, Token: c.Token}, nil
+	return fetchGitCredential(ctx, rawURL, a.src.GitCredential, toolsCredFields, newVettingGitCredential)
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.

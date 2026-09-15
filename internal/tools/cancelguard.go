@@ -44,15 +44,7 @@ func (c *cancelGuard) SetLedgerCoords(coords ledger.Coords) {
 
 // ProcessRequest packs the wrapper into the request's tool map.
 func (c *cancelGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	if err := c.inner.ProcessRequest(ctx, req); err != nil {
-		return err
-	}
-	if req.Tools != nil {
-		if _, ok := req.Tools[c.Name()]; ok {
-			req.Tools[c.Name()] = c // re-point the dispatch entry at the wrapper
-		}
-	}
-	return nil
+	return rebindToolMap(c.inner, c, ctx, req)
 }
 
 // Run: refuses if node cancelled; calls without node scope are never blocked.

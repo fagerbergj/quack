@@ -311,13 +311,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		}
 		ds.Finish()
 		if answer := o.finalizeAnswer(ctx, plan, nodeOutputs, chatID); answer != "" {
-			persistCtx := context.WithoutCancel(ctx)
-			if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: chatID}); gerr == nil && resp != nil {
-				aev := session.NewEvent(persistCtx, "")
-				aev.Author = orchestratorName
-				aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
-				_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
-			}
+			o.persistAnswer(ctx, userID, chatID, answer)
 		}
 	}
 }

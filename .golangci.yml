@@ -29,7 +29,7 @@ linters:
     - rowserrcheck
     - nolintlint
   settings:
-    # ~6 lines of AST; the skill's dup run is >=6 source lines
+    # ~6 lines of AST; the skill's dup run is >=6 source lines.
     dupl:
       threshold: 60
     staticcheck:
@@ -45,6 +45,12 @@ linters:
       - (^|/)schema/ # openapi codegen; anchored so foo_schema.go stays gated
       - third_party
     rules:
+      # Table-driven test scaffolding (identical t.Run blocks) is
+      # intentional structure, triage-dead in Wave 2-F: deduplicating it
+      # makes tests less readable for zero behavior win.
+      - path: '_test\.go'
+        linters:
+          - dupl
       # test fixtures ignore errors by design - loosen the two noisiest
       # defect linters there only, not for real code
       - path: '_test\.go'
@@ -60,5 +66,3 @@ linters:
         linters:
           - errcheck
         text: 'Error return value of .?fmt\.(F)?print(f|ln)?.? is not checked'
-formatters:
-  default: none
