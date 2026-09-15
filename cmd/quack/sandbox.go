@@ -60,6 +60,22 @@ func newSandboxCmd() *cobra.Command {
 	return c
 }
 
+// withSeatAndAgent is the shared prologue of every sandbox form: open the
+// seat, tear it down on exit, and re-resolve the AgentConfig for the
+// spawnEnv merge.
+func withSeatAndAgent(f sandboxFlags, fn func(seat cli.SandboxSeat, ac config.AgentConfig, teardown func()) error) error {
+	seat, teardown, err := openSandboxSeat(f)
+	if err != nil {
+		return err
+	}
+	defer teardown()
+	ac, err := sandboxAgentConfig(f)
+	if err != nil {
+		return err
+	}
+	return fn(seat, ac, teardown)
+}
+
 // openSandboxSeat loads the local quack.yaml, opens the configured jail, and
 // resolves a cli.SandboxSeat for f - the shared setup every sandbox form does
 // first.
@@ -216,34 +232,21 @@ func newSandboxRunCmd() *cobra.Command {
 }
 
 func runSandboxRun(cmd *cobra.Command, f sandboxFlags, script string) error {
-	seat, teardown, err := openSandboxSeat(f)
-	if err != nil {
+	return withSeatAndAgent(f, func(seat cli.SandboxSeat, ac config.AgentConfig, teardown func()) error {
+		c := spawnSandboxCmd(cmd.Context(), seat.Dir, seat.Caps, ac, script)
+		c.Stdin = cmd.InOrStdin()
+		c.Stdout = cmd.OutOrStdout()
+		c.Stderr = cmd.ErrOrStderr()
+
+		err := c.Run()
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			teardown() // os.Exit below skips defer; run it before exiting
+			exitIfNonZero(exitErr.ExitCode())
+			return nil
+		}
 		return err
-	}
-	defer teardown()
-	ac, err := sandboxAgentConfig(f)
-	if err != nil {
-		return err
-	}
-
-	argv := workspace.WrapArgv(seat.Dir, []string{"sh", "-c", script}, seat.Caps, nil, nil)
-	env := cli.SandboxSpawnEnv(seat.Caps, ac, nil)
-
-	c := exec.CommandContext(cmd.Context(), argv[0], argv[1:]...)
-	c.Dir = seat.Dir
-	c.Env = env
-	c.Stdin = cmd.InOrStdin()
-	c.Stdout = cmd.OutOrStdout()
-	c.Stderr = cmd.ErrOrStderr()
-
-	err = c.Run()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		teardown() // os.Exit below skips defer; run it before exiting
-		exitIfNonZero(exitErr.ExitCode())
-		return nil
-	}
-	return err
+	})
 }
 
 // cmdSandboxRunner adapts a resolved seat to cli.SandboxRunner for `check`'s
@@ -254,12 +257,7 @@ type cmdSandboxRunner struct {
 }
 
 func (r cmdSandboxRunner) Run(ctx context.Context, script string) (string, int, error) {
-	argv := workspace.WrapArgv(r.seat.Dir, []string{"sh", "-c", script}, r.seat.Caps, nil, nil)
-	env := cli.SandboxSpawnEnv(r.seat.Caps, r.ac, nil)
-	c := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	c.Dir = r.seat.Dir
-	c.Env = env
-	out, err := c.CombinedOutput()
+	out, err := spawnSandboxCmd(ctx, r.seat.Dir, r.seat.Caps, r.ac, script).CombinedOutput()
 	code := 0
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
@@ -268,6 +266,18 @@ func (r cmdSandboxRunner) Run(ctx context.Context, script string) (string, int, 
 		return string(out), -1, err
 	}
 	return string(out), code, nil
+}
+
+// spawnSandboxCmd builds the exact child a sandboxed one-shot command gets:
+// WrapArgv + SandboxSpawnEnv + the exec context. Stdin/Stdout/Stderr stay
+// unset - each form wires its own.
+func spawnSandboxCmd(ctx context.Context, dir string, caps workspace.Caps, ac config.AgentConfig, script string) *exec.Cmd {
+	argv := workspace.WrapArgv(dir, []string{"sh", "-c", script}, caps, nil, nil)
+	env := cli.SandboxSpawnEnv(caps, ac, nil)
+	c := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	c.Dir = dir
+	c.Env = env
+	return c
 }
 
 // newSandboxCheckCmd: `quack sandbox check [flags]` - the probe table, exit
@@ -351,48 +361,40 @@ type sandboxInfo struct {
 }
 
 func runSandboxInfo(cmd *cobra.Command, f sandboxFlags, asJSON bool) error {
-	seat, teardown, err := openSandboxSeat(f)
-	if err != nil {
-		return err
-	}
-	defer teardown()
-	ac, err := sandboxAgentConfig(f)
-	if err != nil {
-		return err
-	}
+	return withSeatAndAgent(f, func(seat cli.SandboxSeat, ac config.AgentConfig, _ func()) error {
+		info := sandboxInfo{
+			Agent:    seat.AgentName,
+			ReadOnly: seat.ReadOnly,
+			Mode:     string(seat.Caps.Sandbox),
+			Cwd:      seat.Dir,
+			Tmp:      workspace.SandboxTmpDir(seat.Caps),
+			Home:     seat.Caps.HomeDir,
+			Path:     workspace.ChildPath(seat.Caps),
+			ROGrants: seat.Caps.ExtraRO,
+			RWGrant:  seat.Dir,
+			Env:      cli.SandboxSpawnEnv(seat.Caps, ac, nil),
+		}
+		if asJSON {
+			return cli.WriteJSON(cmd.OutOrStdout(), info)
+		}
 
-	info := sandboxInfo{
-		Agent:    seat.AgentName,
-		ReadOnly: seat.ReadOnly,
-		Mode:     string(seat.Caps.Sandbox),
-		Cwd:      seat.Dir,
-		Tmp:      workspace.SandboxTmpDir(seat.Caps),
-		Home:     seat.Caps.HomeDir,
-		Path:     workspace.ChildPath(seat.Caps),
-		ROGrants: seat.Caps.ExtraRO,
-		RWGrant:  seat.Dir,
-		Env:      cli.SandboxSpawnEnv(seat.Caps, ac, nil),
-	}
-	if asJSON {
-		return cli.WriteJSON(cmd.OutOrStdout(), info)
-	}
-
-	out := cmd.OutOrStdout()
-	readWrite := "rw"
-	if info.ReadOnly {
-		readWrite = "ro"
-	}
-	fmt.Fprintf(out, "agent:        %s (%s)\n", info.Agent, readWrite)
-	fmt.Fprintf(out, "mode:         %s\n", info.Mode)
-	fmt.Fprintf(out, "cwd:          %s\n", info.Cwd)
-	fmt.Fprintf(out, "tmp:          %s\n", info.Tmp)
-	fmt.Fprintf(out, "home:         %s\n", info.Home)
-	fmt.Fprintf(out, "path:         %s\n", info.Path)
-	fmt.Fprintf(out, "ro grants:    %s\n", strings.Join(info.ROGrants, ", "))
-	fmt.Fprintf(out, "rw grants:    %s\n", info.RWGrant)
-	fmt.Fprintln(out, "env:")
-	for _, kv := range info.Env {
-		fmt.Fprintf(out, "  %s\n", kv)
-	}
-	return nil
+		out := cmd.OutOrStdout()
+		readWrite := "rw"
+		if info.ReadOnly {
+			readWrite = "ro"
+		}
+		fmt.Fprintf(out, "agent:        %s (%s)\n", info.Agent, readWrite)
+		fmt.Fprintf(out, "mode:         %s\n", info.Mode)
+		fmt.Fprintf(out, "cwd:          %s\n", info.Cwd)
+		fmt.Fprintf(out, "tmp:          %s\n", info.Tmp)
+		fmt.Fprintf(out, "home:         %s\n", info.Home)
+		fmt.Fprintf(out, "path:         %s\n", info.Path)
+		fmt.Fprintf(out, "ro grants:    %s\n", strings.Join(info.ROGrants, ", "))
+		fmt.Fprintf(out, "rw grants:    %s\n", info.RWGrant)
+		fmt.Fprintln(out, "env:")
+		for _, kv := range info.Env {
+			fmt.Fprintf(out, "  %s\n", kv)
+		}
+		return nil
+	})
 }

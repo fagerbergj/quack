@@ -345,14 +345,33 @@ func revisionLockFor(appName, userID, sessionID, name string) *sync.Mutex {
 // gets a couple of fresh-MAX retries before giving up loud.
 const maxRevisionInsertAttempts = 5
 
+// scopedSessionID: user-namespaced artifacts share one synthetic session
+// scope instead of the caller's session id (every user's <name> lives in one place).
+func scopedSessionID(sessionID, fileName string) string {
+	if fileHasUserNamespace(fileName) {
+		return userScopedArtifactKey
+	}
+	return sessionID
+}
+
+// artifactRow: the row query Load, loadMeta, and GetArtifactVersion share -
+// the exact revision when one is requested, otherwise the latest (ordered DESC for First).
+func (s *gormArtifactService) artifactRow(ctx context.Context, appName, userID, sessionID, name string, version int64) *gorm.DB {
+	q := s.db.WithContext(ctx).Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?",
+		appName, userID, sessionID, name)
+	if version > 0 {
+		q = q.Where("revision = ?", version)
+	} else {
+		q = q.Order("revision DESC")
+	}
+	return q
+}
+
 func (s *gormArtifactService) Save(ctx context.Context, req *artifact.SaveRequest) (*artifact.SaveResponse, error) {
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	sessionID := req.SessionID
-	if fileHasUserNamespace(req.FileName) {
-		sessionID = userScopedArtifactKey
-	}
+	sessionID := scopedSessionID(req.SessionID, req.FileName)
 	data, mime := partBytes(req.Part)
 
 	// Blob write happens before the metadata row: a failure here orphans
@@ -399,17 +418,7 @@ func (s *gormArtifactService) Load(ctx context.Context, req *artifact.LoadReques
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	sessionID := req.SessionID
-	if fileHasUserNamespace(req.FileName) {
-		sessionID = userScopedArtifactKey
-	}
-	q := s.db.WithContext(ctx).Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?",
-		req.AppName, req.UserID, sessionID, req.FileName)
-	if req.Version > 0 {
-		q = q.Where("revision = ?", req.Version)
-	} else {
-		q = q.Order("revision DESC")
-	}
+	q := s.artifactRow(ctx, req.AppName, req.UserID, scopedSessionID(req.SessionID, req.FileName), req.FileName, req.Version)
 	var a Artifact
 	err := q.First(&a).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -444,17 +453,7 @@ func (w *TurnAwareService) RevisionExists(ctx context.Context, appName, userID, 
 // loadMeta backs TurnAwareService.LoadWithMeta: same lookup as Load, minus
 // the blob fetch, returning the row's kind/class/lineage instead.
 func (s *gormArtifactService) loadMeta(ctx context.Context, req *artifact.LoadRequest) (kind, class string, lineageJSON []byte, err error) {
-	sessionID := req.SessionID
-	if fileHasUserNamespace(req.FileName) {
-		sessionID = userScopedArtifactKey
-	}
-	q := s.db.WithContext(ctx).Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?",
-		req.AppName, req.UserID, sessionID, req.FileName)
-	if req.Version > 0 {
-		q = q.Where("revision = ?", req.Version)
-	} else {
-		q = q.Order("revision DESC")
-	}
+	q := s.artifactRow(ctx, req.AppName, req.UserID, scopedSessionID(req.SessionID, req.FileName), req.FileName, req.Version)
 	var a Artifact
 	if err := q.First(&a).Error; err != nil {
 		return "", "", nil, err
@@ -466,9 +465,7 @@ func (s *gormArtifactService) loadMeta(ctx context.Context, req *artifact.LoadRe
 // `quack ledger rebuild` write path. Bytes and revision number are never
 // touched; only the metadata a fold recomputes from the WAL.
 func (s *gormArtifactService) updateMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error {
-	if fileHasUserNamespace(name) {
-		sessionID = userScopedArtifactKey
-	}
+	sessionID = scopedSessionID(sessionID, name)
 	res := s.db.WithContext(ctx).Model(&Artifact{}).
 		Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ? AND revision = ?", appName, userID, sessionID, name, revision).
 		Updates(map[string]any{"kind": kind, "class": class, "lineage": string(lineageJSON)})
@@ -593,17 +590,7 @@ func (s *gormArtifactService) GetArtifactVersion(ctx context.Context, req *artif
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	sessionID := req.SessionID
-	if fileHasUserNamespace(req.FileName) {
-		sessionID = userScopedArtifactKey
-	}
-	q := s.db.WithContext(ctx).Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?",
-		req.AppName, req.UserID, sessionID, req.FileName)
-	if req.Version > 0 {
-		q = q.Where("revision = ?", req.Version)
-	} else {
-		q = q.Order("revision DESC")
-	}
+	q := s.artifactRow(ctx, req.AppName, req.UserID, scopedSessionID(req.SessionID, req.FileName), req.FileName, req.Version)
 	var a Artifact
 	err := q.First(&a).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

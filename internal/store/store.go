@@ -847,12 +847,18 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 		slog.Warn("chat deleted but its ADK session could not be reaped",
 			"component", "store", "chat", id, "err", err)
 	}
-	if err := s.ReapNodeSessions(ctx, id); err != nil {
-		slog.Warn("chat deleted but its per-node worker sessions could not be reaped",
-			"component", "store", "chat", id, "err", err)
-	}
+	reapNodeSessionsWarn(s, ctx, id, "chat deleted")
 	s.deleteChatArtifacts(ctx, id, sessionUser)
 	return nil
+}
+
+// reapNodeSessionsWarn: the best-effort per-node worker-session reaping shared
+// by ArchiveChat and DeleteChat - a reap failure must never fail the chat op.
+func reapNodeSessionsWarn(s *Store, ctx context.Context, id, what string) {
+	if err := s.ReapNodeSessions(ctx, id); err != nil {
+		slog.Warn(what+" but its per-node worker sessions could not be reaped",
+			"component", "store", "chat", id, "err", err)
+	}
 }
 
 // ReapNodeSessions deletes every per-DAG-node ADK session this chat owns: each node's A2A worker session (internal/agent.WorkerSessionID, "<chatID>:<nodeID>") and its in-node retry session ("<chatID>::retry"), across whichever agent bundle's AppName ran that node - the ADK schema's session PK is (app_name, user_id, id) with events cascading on delete (google.golang.org/adk/v2/session/database), so one raw sweep on id reaps both tables without knowing which bundle a node used.
@@ -1051,10 +1057,7 @@ func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error
 		return err
 	}
 	if archived {
-		if err := s.ReapNodeSessions(ctx, id); err != nil {
-			slog.Warn("chat archived but its per-node worker sessions could not be reaped",
-				"component", "store", "chat", id, "err", err)
-		}
+		reapNodeSessionsWarn(s, ctx, id, "chat archived")
 	}
 	return nil
 }

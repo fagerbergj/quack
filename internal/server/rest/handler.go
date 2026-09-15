@@ -300,13 +300,8 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
-	c, err := h.store.GetChat(r.Context(), chatID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if c == nil {
-		errMsg(w, http.StatusNotFound, "not found")
+	c, ok := h.loadChat(w, r, chatID)
+	if !ok {
 		return
 	}
 	turns, err := h.store.GetTurnsWithContent(r.Context(), orchestrator.AppName, store.SessionUserFor(*c), chatID)
@@ -476,13 +471,8 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		return
 	}
 
-	c, err := h.store.GetChat(r.Context(), chatID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if c == nil {
-		errMsg(w, http.StatusNotFound, "not found")
+	c, ok := h.loadChat(w, r, chatID)
+	if !ok {
 		return
 	}
 
@@ -1107,11 +1097,7 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
 		return false
 	}
-	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
-	h.hub.Reset(chatID)
-	h.eventLog.Reset(runCtx, chatID)
-	h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
-	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
+	runCtx, cancelRun := h.armRun(chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
@@ -1143,6 +1129,21 @@ func iterFromStart(ctx context.Context, o *orchestrator.Orchestrator, userID, ch
 	}
 }
 
+// armRun: the shared run start - a fresh timeout context, then the hub and
+// the durable log reset BEFORE RegisterRun so a subscriber landing in the
+// start window never reads the previous run's (possibly terminal) events
+// off the hub or the durable log (#audit-5), then the synchronous run
+// registration and the in-flight mark (a crash before stampRunOutcome must
+// be detectable, #738).
+func (h *Handler) armRun(chatID, turnID string) (context.Context, context.CancelFunc) {
+	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+	h.hub.Reset(chatID)
+	h.eventLog.Reset(runCtx, chatID)
+	h.hub.RegisterRun(chatID, turnID, cancelRun)
+	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
+	return runCtx, cancelRun
+}
+
 // retryNodeAsync re-runs nodeID and descendants in background, reusing the
 // plan's stored outputs, and returns whether it dispatched - see
 // startNodeAsync's doc for why a caller must check this.
@@ -1157,14 +1158,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 			seeded[n.NodeID] = n.Output
 		}
 	}
-	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
-	// Reset before RegisterRun so a subscriber landing in the start window
-	// never reads the previous run's (possibly terminal) events off the hub
-	// or the durable log (#audit-5).
-	h.hub.Reset(chatID)
-	h.eventLog.Reset(runCtx, chatID)
-	h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
-	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
+	runCtx, cancelRun := h.armRun(chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
@@ -1507,6 +1501,21 @@ func float64Ptr(f float64) *float64 {
 		return nil
 	}
 	return &f
+}
+
+// loadChat: the shared chat-fetch prologue for the chat-scope handlers -
+// 500 on a store error, 404 on a missing chat.
+func (h *Handler) loadChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) (*store.Chat, bool) {
+	c, err := h.store.GetChat(r.Context(), chatID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return nil, false
+	}
+	if c == nil {
+		errMsg(w, http.StatusNotFound, "not found")
+		return nil, false
+	}
+	return c, true
 }
 
 // chatTotalTokens is the single-chat convenience wrapper around

@@ -121,14 +121,23 @@ func (h *Handler) revisionsForArtifact(r *http.Request, chatID, name string) ([]
 	return nil, false, nil
 }
 
-// ListArtifactRevisions lists one artifact id's revisions, newest first,
-// each with lineage - the revision picker's data source (#1094).
-func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, artifactName schema.ArtifactName) {
+// artifactOK: the shared artifact-endpoint guard - the chat must exist and the
+// artifact backend must be configured (404 when it is not).
+func (h *Handler) artifactOK(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) bool {
 	if !h.requireChat(w, r, chatID) {
-		return
+		return false
 	}
 	if h.artifacts == nil {
 		errMsg(w, http.StatusNotFound, "not found")
+		return false
+	}
+	return true
+}
+
+// ListArtifactRevisions lists one artifact id's revisions, newest first,
+// each with lineage - the revision picker's data source (#1094).
+func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, artifactName schema.ArtifactName) {
+	if !h.artifactOK(w, r, chatID) {
 		return
 	}
 	storeRevs, ok, err := h.revisionsForArtifact(r, chatID, artifactName)
@@ -148,6 +157,16 @@ func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, schema.ArtifactRevisionList{Data: revs})
 }
 
+// artifactLoadErr: fs.ErrNotExist is a clean 404 (no such revision); anything
+// else is a 500.
+func artifactLoadErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, fs.ErrNotExist) {
+		errMsg(w, http.StatusNotFound, "not found")
+		return
+	}
+	httpError(w, http.StatusInternalServerError, err)
+}
+
 // diffable reports whether a MIME type is worth diffing at byte level:
 // binary blobs (images, PDFs) render as noise, not a review aid -
 // DiffArtifactRevisions 415s anything outside this allowlist instead of pretending a diff exists.
@@ -158,11 +177,7 @@ func diffable(mimeType string) bool {
 // DiffArtifactRevisions returns a unified diff between two revisions of one
 // artifact, text/structured only (415 for a binary blob).
 func (h *Handler) DiffArtifactRevisions(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, artifactName schema.ArtifactName, params schema.DiffArtifactRevisionsParams) {
-	if !h.requireChat(w, r, chatID) {
-		return
-	}
-	if h.artifacts == nil {
-		errMsg(w, http.StatusNotFound, "not found")
+	if !h.artifactOK(w, r, chatID) {
 		return
 	}
 	userID := h.sessionUser(r.Context(), chatID)
@@ -180,20 +195,12 @@ func (h *Handler) DiffArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 	}
 	fromData, fromMime, err := load(int64(params.From))
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			errMsg(w, http.StatusNotFound, "not found")
-			return
-		}
-		httpError(w, http.StatusInternalServerError, err)
+		artifactLoadErr(w, err)
 		return
 	}
 	toData, toMime, err := load(int64(params.To))
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			errMsg(w, http.StatusNotFound, "not found")
-			return
-		}
-		httpError(w, http.StatusInternalServerError, err)
+		artifactLoadErr(w, err)
 		return
 	}
 	if !diffable(fromMime) || !diffable(toMime) {
@@ -217,11 +224,7 @@ func (h *Handler) DiffArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 // default, or ?revision=n. Content-Disposition defaults to attachment;
 // only inlineArtifactMimeTypes renders inline.
 func (h *Handler) GetChatArtifact(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, artifactName schema.ArtifactName, params schema.GetChatArtifactParams) {
-	if !h.requireChat(w, r, chatID) {
-		return
-	}
-	if h.artifacts == nil {
-		errMsg(w, http.StatusNotFound, "not found")
+	if !h.artifactOK(w, r, chatID) {
 		return
 	}
 	userID := h.sessionUser(r.Context(), chatID)
@@ -233,11 +236,7 @@ func (h *Handler) GetChatArtifact(w http.ResponseWriter, r *http.Request, chatID
 		AppName: artifactref.AppName, UserID: userID, SessionID: chatID, FileName: artifactName, Version: version,
 	})
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			errMsg(w, http.StatusNotFound, "not found")
-			return
-		}
-		httpError(w, http.StatusInternalServerError, err)
+		artifactLoadErr(w, err)
 		return
 	}
 	if resp.Part == nil || resp.Part.InlineData == nil {
