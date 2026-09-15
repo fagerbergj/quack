@@ -11,6 +11,14 @@ export default defineConfig({
     // Extends (not replaces) Vitest's own defaults - a bare array here would
     // drop dist/cypress/config-file exclusions too.
     exclude: [...configDefaults.exclude, 'src/render-check.browser.test.tsx'],
+    coverage: {
+      provider: 'v8',
+      // lcov carries per-line hit counts for the changed-line coverage gate
+      // (scripts/coverage-diff.mjs); json-summary is just the rollup.
+      reporter: ['lcov', 'json-summary'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/generated/**'],
+    },
   },
   server: {
     port: 3000,

@@ -83,7 +83,7 @@ describe('AssistantText streaming split (audit finding 2)', () => {
     const totalCharsProcessed = calls.reduce((sum, c) => sum + c.length, 0)
     const unsplitWouldProcess = CHUNK * updateCount * (updateCount + 1) / 2
     expect(totalCharsProcessed).toBeLessThan(unsplitWouldProcess / 2)
-  }, 15000)
+  }, 60000)
 
   it('never splits inside an open fence even when it spans past the live-tail window', () => {
     const prose = block(0) + block(1) + block(2)
