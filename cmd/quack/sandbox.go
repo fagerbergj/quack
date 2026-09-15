@@ -60,9 +60,9 @@ func newSandboxCmd() *cobra.Command {
 	return c
 }
 
-// withSeatAndAgent is the shared prologue of every sandbox form: open the
-// seat, tear it down on exit, and re-resolve the AgentConfig for the
-// spawnEnv merge.
+// withSeatAndAgent is the shared prologue of the sandbox run and info
+// commands: open the seat, tear it down on exit, and re-resolve the
+// AgentConfig for the spawnEnv merge.
 func withSeatAndAgent(f sandboxFlags, fn func(seat cli.SandboxSeat, ac config.AgentConfig, teardown func()) error) error {
 	seat, teardown, err := openSandboxSeat(f)
 	if err != nil {
