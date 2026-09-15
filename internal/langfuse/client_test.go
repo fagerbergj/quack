@@ -9,11 +9,11 @@ import (
 	"time"
 )
 
-func testClient(t *testing.T, handler http.HandlerFunc) *Client {
+func testClient(t *testing.T, handler http.HandlerFunc, opts ...Option) *Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return New(srv.URL, "pub", "secret", WithHTTPClient(srv.Client()))
+	return New(srv.URL, "pub", "secret", append([]Option{WithHTTPClient(srv.Client())}, opts...)...)
 }
 
 // rawPrompt serves the real /api/public/v2/prompts/{name} JSON shape as a raw

@@ -196,6 +196,7 @@ func (c *Client) GetPrompt(ctx context.Context, name string, opts GetPromptOpts)
 	if err != nil {
 		return Prompt{}, false, fmt.Errorf("langfuse: get %q: %w", name, err)
 	}
+	defer resp.Body.Close()
 	defer drain(resp.Body)
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -242,6 +243,7 @@ func (c *Client) CreatePrompt(ctx context.Context, req CreatePromptRequest) (Pro
 	if err != nil {
 		return Prompt{}, fmt.Errorf("langfuse: create %q: %w", req.Name, err)
 	}
+	defer resp.Body.Close()
 	defer drain(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -280,7 +282,6 @@ func newAPIError(resp *http.Response) error {
 
 // drain reads a response body to completion before closing, so the transport
 // can reuse the connection (matches internal/httpx's own retry-path handling).
-func drain(body io.ReadCloser) {
+func drain(body io.Reader) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(body, maxOKBody))
-	_ = body.Close()
 }

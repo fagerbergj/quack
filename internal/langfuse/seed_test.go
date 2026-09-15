@@ -133,8 +133,7 @@ func TestResolvePinnedLabel(t *testing.T) {
 			t.Fatalf("expected label=production, got %q", r.URL.RawQuery)
 		}
 		rawPrompt(`{"name": "x", "version": 4, "type": "text", "prompt": "pinned"}`)(w, r)
-	})
-	c.pinLabel = "production"
+	}, WithPinLabel("production"))
 	p, found, err := c.Resolve(context.Background(), "x")
 	if err != nil || !found || p.Body != "pinned" {
 		t.Fatalf("p=%+v found=%v err=%v", p, found, err)
@@ -154,8 +153,7 @@ func TestResolveFallsBackToLatest(t *testing.T) {
 			t.Fatalf("expected label=latest fallback, got %q", label)
 		}
 		rawPrompt(`{"name": "x", "version": 7, "type": "text", "prompt": "latest"}`)(w, r)
-	})
-	c.pinLabel = "production"
+	}, WithPinLabel("production"))
 	p, found, err := c.Resolve(context.Background(), "x")
 	if err != nil || !found || p.Body != "latest" || calls != 2 {
 		t.Fatalf("p=%+v found=%v err=%v calls=%d", p, found, err, calls)
@@ -171,8 +169,7 @@ func TestResolveDoesNotFallThroughOn500(t *testing.T) {
 			return
 		}
 		t.Fatalf("should not fall through to latest on a 500, got label=%q", r.URL.Query().Get("label"))
-	})
-	c.pinLabel = "production"
+	}, WithPinLabel("production"))
 	_, found, err := c.Resolve(context.Background(), "x")
 	if err == nil || found {
 		t.Fatalf("found=%v err=%v, want an error and no fallback", found, err)
@@ -188,8 +185,7 @@ func TestResolveDoesNotFallThroughOn500(t *testing.T) {
 func TestResolveNotFound(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	})
-	c.pinLabel = "production"
+	}, WithPinLabel("production"))
 	_, found, err := c.Resolve(context.Background(), "x")
 	if err != nil || found {
 		t.Fatalf("found=%v err=%v", found, err)
