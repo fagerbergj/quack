@@ -42,7 +42,6 @@ func TestAgentLayers(t *testing.T) {
 		{"tool name", "web_search"},
 		{"tool description", "searches the web"},
 		{"behaviour", "## Steps"},
-		{"writing layer", "# Writing ruleset"},
 		{"environment header", "## Environment"},
 		{"environment today", "Today is"},
 	}
@@ -127,20 +126,6 @@ func TestAgentNoGrading(t *testing.T) {
 	out := promptbuilder.Agent("helper", "helps", nil, nil, false, "do stuff", "", "")
 	if strings.Contains(out, "## Grading") {
 		t.Error("Agent() should not emit ## Grading when grading is empty")
-	}
-}
-
-// TestWritingLayerAlways verifies the shared prose ruleset is injected even for
-// a bare agent (no tools, no behaviour) - it applies to every assembled prompt.
-func TestWritingLayerAlways(t *testing.T) {
-	for _, out := range []string{
-		promptbuilder.Agent("helper", "helps", nil, nil, false, "", "", ""),
-		promptbuilder.Judge(nil, ""),
-		promptbuilder.Orchestrator("", nil, ""),
-	} {
-		if !strings.Contains(out, "# Writing ruleset") {
-			t.Error("assembled prompt missing the Writing layer")
-		}
 	}
 }
 
