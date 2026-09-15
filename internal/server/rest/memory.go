@@ -31,27 +31,91 @@ func (h *Handler) memStores() []*memory.Store {
 	return stores
 }
 
+// listMemoriesArgs is the decoded state of one list/search query.
+type listMemoriesArgs struct {
+	bucketFilter       string
+	buckets            []string
+	limit              int
+	sortBy             string
+	offset             int
+	includeInvalidated bool
+	tier               string
+}
+
+// listMemoriesBase decodes the bucket filter and limit - everything the q
+// (search) branch needs before paging params are validated at all.
+func listMemoriesBase(params schema.ListMemoriesParams) *listMemoriesArgs {
+	a := &listMemoriesArgs{}
+	if params.Bucket != nil && strings.TrimSpace(*params.Bucket) != "" {
+		a.bucketFilter = strings.TrimSpace(*params.Bucket)
+		a.buckets = []string{a.bucketFilter}
+	}
+	a.limit = memory.DefaultListLimit
+	if params.Limit != nil && *params.Limit > 0 {
+		a.limit = *params.Limit
+	}
+	if a.limit > memory.MemoryPageMaxLimit {
+		a.limit = memory.MemoryPageMaxLimit
+	}
+	return a
+}
+
+// errListMemoriesSort is a bad `sort` value; the handler answers 400 with its text.
+var errListMemoriesSort = errors.New("sort must be one of the documented values")
+
+// listMemoriesPaging decodes sort, page token, includeInvalidated, and tier.
+// A non-nil error is a 400: errListMemoriesSort or a bad page token.
+func (a *listMemoriesArgs) listMemoriesPaging(params schema.ListMemoriesParams) error {
+	a.sortBy = memory.SortNewest
+	if params.Sort != nil {
+		if !params.Sort.Valid() {
+			return errListMemoriesSort
+		}
+		a.sortBy = string(*params.Sort)
+	}
+	if params.PageToken != nil && *params.PageToken != "" {
+		// Bound to sortBy too (not just bucketFilter): an offset from one sort
+		// order names a different row under another, so a page_token replayed
+		// against a changed `sort` must 400, not silently return the wrong page.
+		off, err := memory.DecodePageToken(*params.PageToken, a.bucketFilter, a.sortBy)
+		if err != nil {
+			return err
+		}
+		a.offset = off
+	}
+	if params.IncludeInvalidated != nil {
+		a.includeInvalidated = *params.IncludeInvalidated
+	}
+	if params.Tier != nil {
+		a.tier = string(*params.Tier)
+	}
+	return nil
+}
+
+// listMemoriesPage runs the store list call and adds the next-page token
+// while a page remains.
+func (a *listMemoriesArgs) listMemoriesPage(ctx context.Context, stores []*memory.Store) (schema.MemoryList, error) {
+	mems, total, err := listMemories(ctx, stores, a.buckets, a.offset, a.limit, a.includeInvalidated, a.tier, a.sortBy)
+	if err != nil {
+		return schema.MemoryList{}, err
+	}
+	out := schema.MemoryList{Memories: memoriesWire(mems), Total: total}
+	if next := a.offset + len(mems); len(mems) > 0 && next < total {
+		tok := memory.EncodePageToken(a.bucketFilter, a.sortBy, next)
+		out.NextPageToken = &tok
+	}
+	return out, nil
+}
+
 // ListMemories browses (or, with `q`, searches) every configured memory store.
 // A bucket filter is passed to each store as-is - a store that doesn't own that
 // bucket just contributes nothing, so no prefix-routing guesswork is needed.
 func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params schema.ListMemoriesParams) {
 	stores := h.memStores()
-	bucketFilter := ""
-	var buckets []string
-	if params.Bucket != nil && strings.TrimSpace(*params.Bucket) != "" {
-		bucketFilter = strings.TrimSpace(*params.Bucket)
-		buckets = []string{bucketFilter}
-	}
-	limit := memory.DefaultListLimit
-	if params.Limit != nil && *params.Limit > 0 {
-		limit = *params.Limit
-	}
-	if limit > memory.MemoryPageMaxLimit {
-		limit = memory.MemoryPageMaxLimit
-	}
+	a := listMemoriesBase(params)
 
 	if params.Q != nil && strings.TrimSpace(*params.Q) != "" {
-		mems, err := searchMemories(r.Context(), stores, buckets, *params.Q, limit)
+		mems, err := searchMemories(r.Context(), stores, a.buckets, *params.Q, a.limit)
 		if err != nil {
 			httpError(w, http.StatusInternalServerError, err)
 			return
@@ -60,40 +124,20 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 		return
 	}
 
-	sortBy := memory.SortNewest
-	if params.Sort != nil {
-		if !params.Sort.Valid() {
-			errMsg(w, http.StatusBadRequest, "sort must be one of the documented values")
+	if err := a.listMemoriesPaging(params); err != nil {
+		// errListMemoriesSort and a bad page token are both 400; the former carries its own text.
+		if errors.Is(err, errListMemoriesSort) {
+			errMsg(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		sortBy = string(*params.Sort)
+		httpError(w, http.StatusBadRequest, err)
+		return
 	}
-	offset := 0
-	if params.PageToken != nil && *params.PageToken != "" {
-		// Bound to sortBy too (not just bucketFilter): an offset from one sort
-		// order names a different row under another, so a page_token replayed
-		// against a changed `sort` must 400, not silently return the wrong page.
-		off, err := memory.DecodePageToken(*params.PageToken, bucketFilter, sortBy)
-		if err != nil {
-			httpError(w, http.StatusBadRequest, err)
-			return
-		}
-		offset = off
-	}
-	includeInvalidated := params.IncludeInvalidated != nil && *params.IncludeInvalidated
-	tier := ""
-	if params.Tier != nil {
-		tier = string(*params.Tier)
-	}
-	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit, includeInvalidated, tier, sortBy)
+
+	out, err := a.listMemoriesPage(r.Context(), stores)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
-	}
-	out := schema.MemoryList{Memories: memoriesWire(mems), Total: total}
-	if next := offset + len(mems); len(mems) > 0 && next < total {
-		tok := memory.EncodePageToken(bucketFilter, sortBy, next)
-		out.NextPageToken = &tok
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -202,6 +246,62 @@ func invalidateMemory(ctx context.Context, stores []*memory.Store, id, reason st
 	return memory.ErrMemoryNotFound
 }
 
+// sweepStoreErr aliases the report's per-store error shape so out.Errors stays assignable.
+type sweepStoreErr = struct {
+	Message string `json:"message"`
+	Store   string `json:"store"`
+}
+
+// namedSweepStore is a memory backend plus the name it reports under.
+type namedSweepStore struct {
+	name string
+	st   *memory.Store
+}
+
+// sweepStores lists every configured memory backend in report order.
+func (h *Handler) sweepStores() []namedSweepStore {
+	var stores []namedSweepStore
+	if h.taskMem != nil {
+		stores = append(stores, namedSweepStore{"task", h.taskMem})
+	}
+	if h.userMem != nil {
+		stores = append(stores, namedSweepStore{"user", h.userMem})
+	}
+	return stores
+}
+
+// runForgetSweep runs ForgetSweep over every store; a store's failure lands in
+// errs and never discards an earlier store's already-applied report.
+func runForgetSweep(ctx context.Context, stores []namedSweepStore, dryRun bool) ([]schema.SweepStoreResult, []sweepStoreErr) {
+	out := []schema.SweepStoreResult{}
+	var errs []sweepStoreErr
+	for _, s := range stores {
+		report, err := s.st.ForgetSweep(ctx, dryRun)
+		if err != nil {
+			errs = append(errs, sweepStoreErr{Message: err.Error(), Store: s.name})
+			continue
+		}
+		out = append(out, sweepReportWire(s.name, report))
+	}
+	return out, errs
+}
+
+// runDedupeSweep runs DedupeSweep over every store with the same error handling;
+// results stays nil when no store succeeded, so the caller omits the field.
+func runDedupeSweep(ctx context.Context, stores []namedSweepStore, apply bool) ([]schema.SweepDedupeStoreResult, []sweepStoreErr) {
+	var results []schema.SweepDedupeStoreResult
+	var errs []sweepStoreErr
+	for _, s := range stores {
+		report, err := s.st.DedupeSweep(ctx, apply)
+		if err != nil {
+			errs = append(errs, sweepStoreErr{Message: err.Error(), Store: s.name})
+			continue
+		}
+		results = append(results, dedupeReportWire(s.name, report))
+	}
+	return results, errs
+}
+
 // SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand
 // against every configured store - the same Store.ForgetSweep the nightly
 // consolidation job calls, so there is exactly one sweep code path.
@@ -215,18 +315,6 @@ func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
 	dedupe := body.Dedupe != nil && *body.Dedupe
 	apply := body.Apply != nil && *body.Apply
 
-	type named struct {
-		name string
-		st   *memory.Store
-	}
-	var stores []named
-	if h.taskMem != nil {
-		stores = append(stores, named{"task", h.taskMem})
-	}
-	if h.userMem != nil {
-		stores = append(stores, named{"user", h.userMem})
-	}
-
 	// A later store's failure must not discard an earlier store's already-applied
 	// report - sweep is idempotent, so callers can retry the failing store alone.
 	reportedDryRun := dryRun
@@ -234,38 +322,17 @@ func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
 		reportedDryRun = !apply
 	}
 	out := schema.SweepMemoriesResult{DryRun: reportedDryRun, Stores: []schema.SweepStoreResult{}}
-	var sweepErrs []struct {
-		Message string `json:"message"`
-		Store   string `json:"store"`
-	}
+	var sweepErrs []sweepStoreErr
 	if dedupe {
 		var results []schema.SweepDedupeStoreResult
-		for _, s := range stores {
-			report, err := s.st.DedupeSweep(r.Context(), apply)
-			if err != nil {
-				sweepErrs = append(sweepErrs, struct {
-					Message string `json:"message"`
-					Store   string `json:"store"`
-				}{Message: err.Error(), Store: s.name})
-				continue
-			}
-			results = append(results, dedupeReportWire(s.name, report))
-		}
+		results, sweepErrs = runDedupeSweep(r.Context(), h.sweepStores(), apply)
 		if results != nil {
 			out.Dedupe = &results
 		}
 	} else {
-		for _, s := range stores {
-			report, err := s.st.ForgetSweep(r.Context(), dryRun)
-			if err != nil {
-				sweepErrs = append(sweepErrs, struct {
-					Message string `json:"message"`
-					Store   string `json:"store"`
-				}{Message: err.Error(), Store: s.name})
-				continue
-			}
-			out.Stores = append(out.Stores, sweepReportWire(s.name, report))
-		}
+		var stores []schema.SweepStoreResult
+		stores, sweepErrs = runForgetSweep(r.Context(), h.sweepStores(), dryRun)
+		out.Stores = stores
 	}
 	if len(sweepErrs) > 0 {
 		out.Errors = &sweepErrs

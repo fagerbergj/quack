@@ -105,9 +105,26 @@ func vacuousTestsCriterion(cfg Config) (criterionScore, bool) {
 	if len(added) == 0 {
 		return criterionScore{}, false
 	}
+	checkedFiles, vacuous := classifyAddedTests(dir, added)
+	if len(checkedFiles) == 0 {
+		return criterionScore{}, false // nothing this check knows how to evaluate
+	}
+	if len(vacuous) == 0 {
+		return criterionScore{Score: 1, Reason: fmt.Sprintf(
+			"deterministic: %d added test file(s) each reference at least one production identifier", len(checkedFiles))}, true
+	}
+	sort.Strings(vacuous)
+	return criterionScore{Score: 0, Reason: fmt.Sprintf(
+		"deterministic: %d of %d added test file(s) never name a single identifier declared in the repo's non-test "+
+			"source - their assertions only touch locals/lambdas the test itself declares, so they pass even if the "+
+			"code under test is deleted: %s. Fix: reference the actual production type/function each test claims to cover.",
+		len(vacuous), len(checkedFiles), strings.Join(vacuous, ", "))}, true
+}
 
+// classifyAddedTests walks the newly added files, keeping the ones this check
+// can evaluate (checkedFiles) and the ones that name no production identifier.
+func classifyAddedTests(dir string, added []string) (checkedFiles, vacuous []string) {
 	prodCache := map[string]map[string]bool{}
-	var vacuous, checkedFiles []string
 	for _, line := range added {
 		_, path, cut := strings.Cut(line, "\t")
 		if !cut {
@@ -135,19 +152,7 @@ func vacuousTestsCriterion(cfg Config) (criterionScore, bool) {
 			vacuous = append(vacuous, path)
 		}
 	}
-	if len(checkedFiles) == 0 {
-		return criterionScore{}, false // nothing this check knows how to evaluate
-	}
-	if len(vacuous) == 0 {
-		return criterionScore{Score: 1, Reason: fmt.Sprintf(
-			"deterministic: %d added test file(s) each reference at least one production identifier", len(checkedFiles))}, true
-	}
-	sort.Strings(vacuous)
-	return criterionScore{Score: 0, Reason: fmt.Sprintf(
-		"deterministic: %d of %d added test file(s) never name a single identifier declared in the repo's non-test "+
-			"source - their assertions only touch locals/lambdas the test itself declares, so they pass even if the "+
-			"code under test is deleted: %s. Fix: reference the actual production type/function each test claims to cover.",
-		len(vacuous), len(checkedFiles), strings.Join(vacuous, ", "))}, true
+	return
 }
 
 // vacuousTestDiffRange: this node's own base/head, same fallback as diffSince (gitprobe.go).

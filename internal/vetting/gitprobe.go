@@ -70,8 +70,17 @@ func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 		return
 	}
 
-	nodeDir := workspace.NodeDir(cfg.NodeID)
 	changed := gitLines(dir, caps, "diff", "--name-only", base, head)
+	gp := buildGitProbe(dir, caps, cfg, base, head, changed)
+	gitProbeCache.Store(dir+"\x00"+head, gp)
+	applyGitProbe(act, gp, cfg)
+	result = map[string]any{"committed": true, "branch": act.currentBranch, "files_changed": len(changed)}
+}
+
+// buildGitProbe assembles the git-derived probe result for base..head: changed
+// files (node-dir scoped), branch, commit log, and the PR handoff.
+func buildGitProbe(dir string, caps workspace.Caps, cfg Config, base, head string, changed []string) *gitProbeResult {
+	nodeDir := workspace.NodeDir(cfg.NodeID)
 	gp := &gitProbeResult{}
 	for _, f := range changed {
 		gp.written = append(gp.written, joinWritten(nodeDir, f))
@@ -90,10 +99,7 @@ func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 		// Fallback body overridden by stage_pr/stage_push via augmentFromPRStage.
 		gp.prBody = "Commits:\n" + body
 	}
-
-	gitProbeCache.Store(dir+"\x00"+head, gp)
-	applyGitProbe(act, gp, cfg)
-	result = map[string]any{"committed": true, "branch": act.currentBranch, "files_changed": len(changed)}
+	return gp
 }
 
 // applyGitProbe replays a cached (or freshly computed) git probe onto act -

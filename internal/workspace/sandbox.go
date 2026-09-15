@@ -547,35 +547,22 @@ func buildDirGrants(work string, configured []string) []string {
 	if len(bare) == 0 && len(anchored) == 0 {
 		return nil
 	}
-	seen := map[string]bool{}
-	var out []string
-	add := func(rel string) {
-		rel = filepath.Clean(rel)
-		// filepath.IsLocal rejects "..", an absolute path, and anything else
-		// that would walk filepath.Join(work, rel) outside work - required
-		// since the bonus loop below feeds this a bare .gitignore line VERBATIM, and that file is untrusted content in the repo under review (e.g. a malicious PR branch), not workspace config.
-		if rel == "." || rel == "" || seen[rel] || !filepath.IsLocal(rel) {
-			return
-		}
-		// A build dir that is ITSELF a symlink (checked out from the repo
-		// under review, or planted by the agent using a prior grant) must
-		// never be granted: landlock resolves the granted path through the
-		// symlink and rw's its target, and bwrap's --bind-try binds the
-		// target's real directory - either way this is a full escape to
-		// wherever the symlink points, proven by
-		// TestBuildDirGrantsRejectsSymlinkedBuildDir. Lstat (not Stat) so the
-		// check itself never follows the link; a missing path is fine (it
-		// gets mkdir'd fresh by PrecreateBuildDirs).
-		// Same escape via a plain regular file: a repo can track a file
-		// named e.g. "node_modules" (gitignore doesn't untrack it), and
-		// PrecreateBuildDirs' MkdirAll on it fails non-fatally while the
-		// RW grant still applies to that tracked file path (#1321 review).
-		if fi, err := os.Lstat(filepath.Join(work, rel)); err == nil && (fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir()) {
-			return
-		}
-		seen[rel] = true
-		out = append(out, rel)
-	}
+	book := &dirGrantBook{work: work, seen: map[string]bool{}}
+	addConfiguredDirs(book, configured, bare, anchored)
+	addBareNames(book, bare)
+	return book.out
+}
+
+// dirGrantBook accumulates granted build dirs: work anchors the path checks,
+// seen dedupes a dir fed by both loops, out keeps feed order.
+type dirGrantBook struct {
+	work string
+	seen map[string]bool
+	out  []string
+}
+
+// addConfiguredDirs: workspace.build_dirs entries the repo already gitignores.
+func addConfiguredDirs(b *dirGrantBook, configured []string, bare, anchored map[string]bool) {
 	for _, d := range configured {
 		rel := filepath.Clean(d)
 		// ".git" is never a build dir - granting it exposes the gitdir
@@ -584,26 +571,48 @@ func buildDirGrants(work string, configured []string) []string {
 			continue
 		}
 		if bare[filepath.Base(rel)] || anchored[filepath.ToSlash(rel)] {
-			add(d)
+			b.grant(d)
 		}
 	}
+}
+
+// addBareNames: every top-level directory a bare .gitignore pattern names,
+// unconditionally - the escape hatch for a repo's own build-dir convention.
+func addBareNames(b *dirGrantBook, bare map[string]bool) {
 	names := make([]string, 0, len(bare))
 	for name := range bare {
 		names = append(names, name)
 	}
 	sort.Strings(names) // deterministic argv/mkdir order
 	for _, name := range names {
-		// ".git" is a real bare gitignore name (git ignores it by default)
-		// but never a build dir: in a linked worktree it's the gitdir
-		// pointer file, and in a shared clone it's the whole metadata
-		// directory other worktrees link to - granting RW to either is
-		// pure exposure with no build-output purpose (#1321 review).
+		// ".git" is a real bare gitignore name but never a build dir: in a linked
+		// worktree it's the gitdir pointer, in a shared clone the whole metadata dir
+		// other worktrees link to - granting RW to either is pure exposure (#1321 review).
 		if name == ".git" {
 			continue
 		}
-		add(name)
+		b.grant(name)
 	}
-	return out
+}
+
+// grant: clean + dedupe one candidate, reject escapes, and reject symlinked or
+// non-directory paths before it earns a RW grant.
+func (b *dirGrantBook) grant(rel string) {
+	rel = filepath.Clean(rel)
+	// filepath.IsLocal rejects "..", an absolute path, and anything else
+	// that would walk filepath.Join(work, rel) outside work - required since
+	// addBareNames feeds this a bare .gitignore line VERBATIM, and that file is untrusted content in the repo under review (e.g. a malicious PR branch), not workspace config.
+	if rel == "." || rel == "" || b.seen[rel] || !filepath.IsLocal(rel) {
+		return
+	}
+	// A symlink (planted or repo-checked-out) or a tracked regular file named like a build
+	// dir is a full escape: the grant would landlock/bwrap-resolve and RW the target's real
+	// directory (#1321; TestBuildDirGrantsRejectsSymlinkedBuildDir). Lstat, not Stat, and a missing path is fine (PrecreateBuildDirs mkdir's it).
+	if fi, err := os.Lstat(filepath.Join(b.work, rel)); err == nil && (fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir()) {
+		return
+	}
+	b.seen[rel] = true
+	b.out = append(b.out, rel)
 }
 
 // PrecreateBuildDirs makes buildDirs' gitignored entries exist, empty, under

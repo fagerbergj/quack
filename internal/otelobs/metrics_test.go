@@ -26,6 +26,25 @@ func newTestMeter(t *testing.T) *metric.ManualReader {
 	return reader
 }
 
+// TestInstrumentUnits pins the unit of every unit-carrying instrument - the
+// Int64Counter case once silently dropped d.unit (gen_ai.client.token.usage
+// lost "{"token}"; #1410 review), and no other test would have caught it.
+func TestInstrumentUnits(t *testing.T) {
+	reader := newTestMeter(t)
+	RecordTokenUsage("model-a", "", "", "", 1, 1, 0, 0)
+	RecordCost("model-a", "", "", "", 0.01)
+	for name, want := range map[string]string{
+		"gen_ai.client.token.usage": "{token}",
+		"gen_ai.client.cost":        "USD",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := collect(t, reader, name).Unit; got != want {
+				t.Fatalf("unit = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func collect(t *testing.T, reader *metric.ManualReader, name string) metricdata.Metrics {
 	t.Helper()
 	var rm metricdata.ResourceMetrics

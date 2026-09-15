@@ -612,6 +612,42 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}()
 
 	var readc *readCounter
+	v, readc, err = judgeAttemptLoop(ctx, factory, cfg, question, fitted, changedFiles, known, fittedPrompt, act, received, emit)
+
+	// A non-transient failure with images attached (400 on a multimodal
+	// request a vision-blind/misbehaving judge model rejects) degrades to a
+	// text-only retry once, rather than blocking delivery outright (#1229). q tracks that strip: once it fires, every later retry below must keep using the text-only content instead of re-attaching the images and re-triggering the same rejection (#1229 follow-up).
+	q := question
+	if err != nil && ctx.Err() == nil && !isTransientJudgeErr(err) && hasInlineData(question) {
+		slog.Warn("judge round failed with images attached; retrying once without them",
+			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID, "err", err)
+		q = stripInlineData(question)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, "", act, received, emit)
+	}
+
+	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
+		v, err = retryNoVerdict(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit)
+		return
+	}
+
+	if err == nil || ctx.Err() != nil {
+		v = finishJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, v, readc)
+		return
+	}
+	retryAnswer, retryPrompt := fitJudgeAnswer(cfg, q, fitted, changedFiles, known, act, 0.5)
+	if retryAnswer == fitted {
+		// Nothing left to shrink: return the zero verdict directly - it must never
+		// reach finishJudgeRound (which assumes a real verdict to re-check).
+		v = verdict{}
+		return
+	}
+	v, _, err = runJudgeRound(ctx, factory, cfg, q, retryAnswer, changedFiles, known, retryPrompt, act, received, emit)
+	return
+}
+
+// judgeAttemptLoop runs the judge round, retrying transient faults with
+// exponential backoff up to judgeRetryAttempts.
+func judgeAttemptLoop(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known, fittedPrompt string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool) (v verdict, readc *readCounter, err error) {
 	for attempt := 1; attempt <= judgeRetryAttempts; attempt++ {
 		// question/fitted/changedFiles/known/act are unchanged across attempts,
 		// so the prompt fitJudgeAnswer already built is still exactly right.
@@ -629,42 +665,20 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 			return
 		}
 	}
-
-	// A non-transient failure with images attached (400 on a multimodal
-	// request a vision-blind/misbehaving judge model rejects) degrades to a
-	// text-only retry once, rather than blocking delivery outright (#1229). q tracks that strip: once it fires, every later retry below must keep using the text-only content instead of re-attaching the images and re-triggering the same rejection (#1229 follow-up).
-	q := question
-	if err != nil && ctx.Err() == nil && !isTransientJudgeErr(err) && hasInlineData(question) {
-		slog.Warn("judge round failed with images attached; retrying once without them",
-			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID, "err", err)
-		q = stripInlineData(question)
-		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, "", act, received, emit)
-	}
-
-	// A round that ran but never reached a verdict (model stutter exhausting the
-	// budget, #853) gets exactly one retry with a fresh session before surfacing
-	// unvetted - shrinking the answer (the fallback below) wouldn't fix a stutter, so this returns unconditionally rather than falling into that path.
-	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
-		slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
-			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID)
-		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, "", act, received, emit)
-		if err == nil {
-			v = finishJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, v, readc)
-		}
-		return
-	}
-
-	if err == nil || ctx.Err() != nil {
-		v = finishJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, v, readc)
-		return
-	}
-	retryAnswer, retryPrompt := fitJudgeAnswer(cfg, q, fitted, changedFiles, known, act, 0.5)
-	if retryAnswer == fitted {
-		v = verdict{} // nothing left to shrink; the retry would repeat the same call
-		return
-	}
-	v, _, err = runJudgeRound(ctx, factory, cfg, q, retryAnswer, changedFiles, known, retryPrompt, act, received, emit)
 	return
+}
+
+// retryNoVerdict: a round that ran but never reached a verdict (model stutter
+// exhausting the budget, #853) gets exactly one retry with a fresh session
+// before surfacing unvetted - shrinking the answer wouldn't fix a stutter.
+func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool) (verdict, error) {
+	slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
+		"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID)
+	v, readc, err := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, "", act, received, emit)
+	if err == nil {
+		v = finishJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, received, emit, v, readc)
+	}
+	return v, err
 }
 
 // finishJudgeRound: discards and re-judges once before being trusted (second
@@ -1055,33 +1069,9 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 			continue
 		}
 		target := strings.TrimSpace(m[1])
-		u, err := url.Parse(target)
-		if err != nil || target == "" {
+		s, ok := linkBackingScore(target, dedup, fetchedURL, seenURL, fetchedHost, seenHost)
+		if !ok {
 			continue
-		}
-		if u.Scheme != "http" && u.Scheme != "https" {
-			continue // mailto:, local path, in-document anchor, … - not web-gradeable
-		}
-		norm, host := normalizeURL(target)
-		if norm == "" {
-			continue
-		}
-		if _, dup := dedup[norm]; dup {
-			continue
-		}
-		dedup[norm] = struct{}{}
-		var s float64
-		switch {
-		case fetchedURL[norm]:
-			s = 1.00
-		case seenURL[norm]:
-			s = 0.75
-		case host != "" && fetchedHost[host]:
-			s = 0.50
-		case host != "" && seenHost[host]:
-			s = 0.25
-		default:
-			s = 0.00
 		}
 		details = append(details, citationDetail{url: target, score: s})
 		sum += s
@@ -1090,6 +1080,38 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 		return 0, nil, false
 	}
 	return sum / float64(len(details)), details, true
+}
+
+// linkBackingScore: one cited link's deterministic backing tier -
+// fetched URL > seen URL > fetched host > seen host > unbacked. ok=false when
+// the target isn't web-gradeable or is a duplicate (dedup is mutated).
+func linkBackingScore(target string, dedup map[string]struct{}, fetchedURL, seenURL, fetchedHost, seenHost map[string]bool) (s float64, ok bool) {
+	u, err := url.Parse(target)
+	if err != nil || target == "" {
+		return 0, false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return 0, false // mailto:, local path, in-document anchor, … - not web-gradeable
+	}
+	norm, host := normalizeURL(target)
+	if norm == "" {
+		return 0, false
+	}
+	if _, dup := dedup[norm]; dup {
+		return 0, false
+	}
+	dedup[norm] = struct{}{}
+	switch {
+	case fetchedURL[norm]:
+		s = 1.00
+	case seenURL[norm]:
+		s = 0.75
+	case host != "" && fetchedHost[host]:
+		s = 0.50
+	case host != "" && seenHost[host]:
+		s = 0.25
+	}
+	return s, true
 }
 
 // normalizePath: trims "./" prefix and trailing "/". No symlink/.. resolution.
