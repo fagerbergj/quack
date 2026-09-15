@@ -1,0 +1,87 @@
+package main
+
+import (
+	"os"
+	"testing"
+)
+
+// diff/profile key alignment is the load-bearing part of the gate: a
+// mismatch is a silent no-op (every PR passes).
+func TestChangedFilesProfileKeyAlignment(t *testing.T) {
+	diff := `diff --git a/internal/cli/ledger.go b/internal/cli/ledger.go
+--- a/internal/cli/ledger.go
++++ b/internal/cli/ledger.go
+@@ -604,0 +605,6 @@
++// probe
++func Probe(x int) string {
++	if x > 0 {
++		return "pos"
++	}
++	return "neg"
++}
+diff --git a/internal/cli/ledger_test.go b/internal/cli/ledger_test.go
+--- a/internal/cli/ledger_test.go
++++ b/internal/cli/ledger_test.go
+@@ -1,0 +2,3 @@
++func TestProbe(t *testing.T) {
++	_ = Probe(1)
++}
+`
+	changed := changedFiles(diff)
+	rs, ok := changed["internal/cli/ledger"]
+	if !ok {
+		t.Fatalf("changed map has no profile-aligned key: got %v", changed)
+	}
+	for _, ln := range []int{605, 606, 607, 608, 609, 610} {
+		if !rs[ln] {
+			t.Fatalf("line %d not marked changed", ln)
+		}
+	}
+	if _, ok := changed["internal/cli/ledger_test"]; ok {
+		t.Fatal("_test.go must be excluded from the gated set")
+	}
+	if _, ok := changed["internal/schema/gen"]; ok {
+		t.Fatal("generated dirs must be excluded")
+	}
+}
+
+func TestRelRepoPath(t *testing.T) {
+	got := relRepoPath("github.com/fagerbergj/quack/internal/cli/ledger")
+	if got != "internal/cli/ledger" {
+		t.Fatalf("relRepoPath = %q, want internal/cli/ledger", got)
+	}
+}
+
+func writeFile(path, content string) error {
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func TestMatchProfile(t *testing.T) {
+	// profile line without the .go suffix, exactly as go emits it.
+	profile := `mode: set
+github.com/fagerbergj/quack/internal/cli/ledger.go:606.1,606.22 1 1
+github.com/fagerbergj/quack/internal/cli/ledger.go:607.2,608.11 1 0
+github.com/fagerbergj/quack/internal/cli/ledger.go:610.2,610.13 1 1
+github.com/fagerbergj/quack/internal/cli/ledger.go:200.1,200.10 1 0
+`
+	f := t.TempDir() + "/cov.out"
+	if err := writeFile(f, profile); err != nil {
+		t.Fatal(err)
+	}
+	changed := map[string]map[int]bool{
+		"internal/cli/ledger": {605: true, 606: true, 607: true, 608: true, 609: true, 610: true},
+	}
+	var num, den int
+	misses := map[string][]miss{}
+	if err := matchProfile(f, changed, &num, &den, misses); err != nil {
+		t.Fatal(err)
+	}
+	// 4 statements overlap changed lines (200 does not): 2 covered, 2
+	// uncovered - the 607 record spans 607-608, both changed.
+	if den != 3 || num != 2 {
+		t.Fatalf("num=%d den=%d, want 2/3", num, den)
+	}
+	if len(misses) != 1 || len(misses["internal/cli/ledger"]) != 1 {
+		t.Fatalf("misses = %v", misses)
+	}
+}
