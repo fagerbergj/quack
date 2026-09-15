@@ -1,8 +1,7 @@
-// Package promptbuilder: layered system prompts - Identity, Capabilities, Behaviour, Writing, Grading, Environment.
+// Package promptbuilder: layered system prompts - Identity, Capabilities, Behaviour, Grading, Environment.
 package promptbuilder
 
 import (
-	_ "embed"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,11 +10,6 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
-
-// writing: shared prose ruleset (Writing layer), adapted from Anbeeld/WRITING.md compact variant.
-//
-//go:embed writing.md
-var writing string
 
 // Agent: assembles layered system prompt for native or ACP agents. acp is
 // true only for the ACP shape, which has no load_skill tool.
@@ -71,7 +65,7 @@ func GradingFacts(threshold float64, judgeRounds int, readOnly, requireRetrieval
 	return b.String()
 }
 
-// layered assembles layers: identity, capabilities, behaviour, writing, grading, environment + workspace.
+// layered assembles layers: identity, capabilities, behaviour, grading, environment + workspace.
 func layered(identity, capsHeader, capsBody, behaviour, grading, workspaceFacts string) string {
 	var sb strings.Builder
 	sb.WriteString(identity)
@@ -82,11 +76,6 @@ func layered(identity, capsHeader, capsBody, behaviour, grading, workspaceFacts 
 	if b := strings.TrimSpace(behaviour); b != "" {
 		sb.WriteString("\n")
 		sb.WriteString(b)
-		sb.WriteString("\n")
-	}
-	if w := strings.TrimSpace(writing); w != "" {
-		sb.WriteString("\n")
-		sb.WriteString(w)
 		sb.WriteString("\n")
 	}
 	if g := strings.TrimSpace(grading); g != "" {
