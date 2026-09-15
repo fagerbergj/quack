@@ -28,11 +28,18 @@ func BuildChat(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolse
 	return build(b, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil)
 }
 
-func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
-	name, desc, behaviour := b.Card.Name, b.Card.Description, b.Prompt
+// behaviourLayer is the behaviour layer of an assembled system prompt: the
+// bundle's prompt.md followed by its memory guidance when the agent has one.
+func behaviourLayer(prompt, memoryGuidance string) string {
 	if g := strings.TrimSpace(memoryGuidance); g != "" {
-		behaviour = behaviour + "\n\n" + g
+		return prompt + "\n\n" + g
 	}
+	return prompt
+}
+
+func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
+	name, desc := b.Card.Name, b.Card.Description
+	behaviour := behaviourLayer(b.Prompt, memoryGuidance)
 	// Every Agent() input below is fixed once build() returns except today() -
 	// cache the assembled prompt instead of rebuilding it on every model call.
 	prompt := promptbuilder.CacheByDay(func() string {

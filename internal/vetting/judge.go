@@ -68,7 +68,7 @@ const (
 )
 
 // judgeBehaviour: assembles the judge's behaviour prompt from tool-presence clauses.
-func judgeBehaviour(hasReadTools, hasSkills bool) string {
+func judgeBehaviour(hasReadTools, hasSkills bool) (string, error) {
 	clause := judgeNoToolsClause
 	if hasReadTools {
 		clause = judgeReadToolsClause
@@ -77,7 +77,7 @@ func judgeBehaviour(hasReadTools, hasSkills bool) string {
 	if hasSkills {
 		skills = judgeSkillsClause
 	}
-	return judgeBehaviourHead + clause + skills + judgeBehaviourTail
+	return judgeBehaviourHead + clause + skills + judgeBehaviourTail, nil
 }
 
 // criterionScore: per-criterion assessment, normalised 0.0-1.0.
@@ -124,8 +124,12 @@ type JudgeFactory func(sink *verdict, forced *bool, maxIters, maxOutputTokens in
 
 // NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
-	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
+	hasReadTools, hasSkills := len(readTools) > 0, len(skillsets) > 0
 	return func(sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error) {
+		behaviour, err := judgeBehaviour(hasReadTools, hasSkills)
+		if err != nil {
+			return nil, nil, err
+		}
 		submit, err := newSubmitVerdictTool(sink, receivedIDs)
 		if err != nil {
 			return nil, nil, err
