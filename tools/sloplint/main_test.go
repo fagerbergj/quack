@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
+	"testing"
+)
 
 // The -U0 diff parser is load-bearing for the gate: a misparsed hunk
 // silently un-gates a function, so the parsing and overlap logic get
@@ -67,5 +73,94 @@ func TestOverlaps(t *testing.T) {
 		if got := overlaps(tc.s, tc.e, rs); got != tc.want {
 			t.Errorf("overlaps(%d,%d) = %v, want %v (%s)", tc.s, tc.e, got, tc.want, tc.reason)
 		}
+	}
+}
+
+func TestCcAllowed(t *testing.T) {
+	// sixteen if branches: CC 17, over the gate
+	body := "func big(x int) int {\n"
+	for n := 0; n < 16; n++ {
+		body += "\tif x == " + strconv.Itoa(n) + " {\n\t\treturn " + strconv.Itoa(n) + "\n\t}\n"
+	}
+	body += "\treturn -1\n}\n"
+	// preamble lines sit directly above the declaration (adjacent doc block)
+	build := func(preamble ...string) ([]byte, *token.FileSet, *ast.FuncDecl) {
+		t.Helper()
+		src := "package main\n"
+		for _, p := range preamble {
+			src += p + "\n"
+		}
+		src += body
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "t.go", []byte(src), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok {
+				return []byte(src), fset, fd
+			}
+		}
+		t.Fatal("no func")
+		return nil, nil, nil
+	}
+	src0, fset0, big := build()
+	if cc := funcCC(big); cc <= 15 {
+		t.Fatalf("fixture CC = %d, want > 15", cc)
+	}
+	_ = src0
+	_ = fset0
+	cases := []struct {
+		name      string
+		preamble  []string
+		wantAllow bool
+	}{
+		{"no doc", nil, false},
+		{"doc without directive", []string{"// some doc"}, false},
+		{"adjacent directive with reason", []string{"// sloplint: cc-allow flat protocol decoder"}, true},
+		{"directive under a doc line", []string{"// doc line", "// sloplint: cc-allow flat protocol decoder"}, true},
+		{"directive exactly three above", []string{"// sloplint: cc-allow flat protocol decoder", "// doc", "// doc"}, true},
+		{"directive four above is out of window", []string{"// sloplint: cc-allow flat protocol decoder", "// doc", "// doc", "// doc"}, false},
+		{"directive without reason", []string{"// sloplint: cc-allow"}, false},
+		{"mark on a non-comment line does not exempt", []string{`var marker = "sloplint: cc-allow x"`}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src, fset, fd := build(tc.preamble...)
+			if got := ccAllowed(src, fset, fd); got != tc.wantAllow {
+				t.Errorf("ccAllowed = %v, want %v", got, tc.wantAllow)
+			}
+		})
+	}
+}
+
+func TestFuncsFailCcAllowWiring(t *testing.T) {
+	// the wiring ccAllowed alone cannot pin: a CC>15 function whose body a
+	// hunk touches is exempt iff a directed line sits within 3 above
+	src := "package main\n" +
+		"// sloplint: cc-allow flat protocol decoder\n" +
+		"func big(x int) int {\n"
+	for n := 0; n < 16; n++ {
+		src += "\tif x == " + strconv.Itoa(n) + " {\n\t\treturn " + strconv.Itoa(n) + "\n\t}\n"
+	}
+	src += "\treturn -1\n}\n"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "t.go", []byte(src), parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// body spans lines 3..21; the hunk touches the middle
+	if funcsFail(fset, f, "t.go", []rng{{10, 12}}, []byte(src)) {
+		t.Error("directed function with an overlapping hunk: funcsFail = true, want false")
+	}
+	// no directive: same hunk fails
+	src2 := "package main\n" + src[len("package main\n// sloplint: cc-allow flat protocol decoder\n"):]
+	fset2 := token.NewFileSet()
+	f2, err := parser.ParseFile(fset2, "t.go", []byte(src2), parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !funcsFail(fset2, f2, "t.go", []rng{{10, 12}}, []byte(src2)) {
+		t.Error("undirected CC>15 function with an overlapping hunk: funcsFail = false, want true")
 	}
 }
