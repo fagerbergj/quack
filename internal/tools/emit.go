@@ -41,6 +41,19 @@ func EmitWrapForTesting(t tool.Tool, coords ledger.Coords) (tool.Tool, error) {
 	return emitWrap(t, coords)
 }
 
+// rebindToolMap: delegates to the inner tool, then re-points the request's dispatch entry at the wrapper.
+func rebindToolMap(inner runnableTool, w tool.Tool, ctx agent.Context, req *model.LLMRequest) error {
+	if err := inner.ProcessRequest(ctx, req); err != nil {
+		return err
+	}
+	if req.Tools != nil {
+		if _, ok := req.Tools[w.Name()]; ok {
+			req.Tools[w.Name()] = w
+		}
+	}
+	return nil
+}
+
 // SetLedgerCoords: updates coordinates for subsequent calls. Used when node identity is learned after Build.
 func (e *emitTool) SetLedgerCoords(c ledger.Coords) {
 	e.mu.Lock()
@@ -61,15 +74,7 @@ func (e *emitTool) Declaration() *genai.FunctionDeclaration { return e.inner.Dec
 
 // ProcessRequest packs the wrapper into the request's tool map.
 func (e *emitTool) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	if err := e.inner.ProcessRequest(ctx, req); err != nil {
-		return err
-	}
-	if req.Tools != nil {
-		if _, ok := req.Tools[e.Name()]; ok {
-			req.Tools[e.Name()] = e
-		}
-	}
-	return nil
+	return rebindToolMap(e.inner, e, ctx, req)
 }
 
 func (e *emitTool) Run(ctx agent.Context, args any) (map[string]any, error) {

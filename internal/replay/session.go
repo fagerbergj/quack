@@ -375,16 +375,21 @@ func (s *Session) recordFailure(err *MissError) *MissError {
 	return err
 }
 
-// nearMissChat builds the near-miss diff for a chat divergence at pos.
-func nearMissChat(chat []chatEntry, pos int) []NearMiss {
+// nearMissAround is the pos-1..pos+1 diff shared by nearMissChat/nearMissAgent.
+func nearMissAround(pos, n int, field string, nameAt func(int) string) []NearMiss {
 	var out []NearMiss
 	for _, i := range []int{pos - 1, pos, pos + 1} {
-		if i < 0 || i >= len(chat) {
+		if i < 0 || i >= n {
 			continue
 		}
-		out = append(out, NearMiss{Position: i, Name: chat[i].RequestModel, Field: "model"})
+		out = append(out, NearMiss{Position: i, Name: nameAt(i), Field: field})
 	}
 	return out
+}
+
+// nearMissChat builds the near-miss diff for a chat divergence at pos.
+func nearMissChat(chat []chatEntry, pos int) []NearMiss {
+	return nearMissAround(pos, len(chat), "model", func(i int) string { return chat[i].RequestModel })
 }
 
 // NextChat consumes the next recorded chat entry, enforcing sequence + modelName match.
@@ -464,14 +469,7 @@ func (s *Session) NextInvokeAgent(coords ledger.Coords, agentName string) (sent,
 
 // nearMissAgent builds the near-miss diff for an invoke_agent divergence.
 func nearMissAgent(agents []invokeAgentEntry, pos int) []NearMiss {
-	var out []NearMiss
-	for _, i := range []int{pos - 1, pos, pos + 1} {
-		if i < 0 || i >= len(agents) {
-			continue
-		}
-		out = append(out, NearMiss{Position: i, Name: agents[i].agentName, Field: "agent"})
-	}
-	return out
+	return nearMissAround(pos, len(agents), "agent", func(i int) string { return agents[i].agentName })
 }
 
 // nearMissTool builds the near-miss diff: other unconsumed tools in this stream.

@@ -201,15 +201,7 @@ func (g *repeatGuard) Declaration() *genai.FunctionDeclaration { return g.inner.
 
 // ProcessRequest re-points dispatch at the wrapper.
 func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	if err := g.inner.ProcessRequest(ctx, req); err != nil {
-		return err
-	}
-	if req.Tools != nil {
-		if _, ok := req.Tools[g.Name()]; ok {
-			req.Tools[g.Name()] = g
-		}
-	}
-	return nil
+	return rebindToolMap(g.inner, g, ctx, req)
 }
 
 // pathFailThreshold: consecutive failures against a (tool, resource) before refusing the next call.

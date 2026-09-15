@@ -243,45 +243,41 @@ func sdkExtensionTools(exts []builtSDKExtension) []extTool {
 	return out
 }
 
-// findGitCredentialSource returns the first built extension implementing sdk.GitCredentialSource,
-// detected the same way Starter is - not hardcoded to one extension's name. More than one match
-// logs a warning and keeps the first (deterministic build order, sorted by name).
-func findGitCredentialSource(exts []builtSDKExtension) (extsdk.GitCredentialSource, string) {
-	var found extsdk.GitCredentialSource
+// findFirstExt: the detection shared by the find* helpers below - the first extension
+// implementing the interface match asserts wins; later matches log a warning (ifaceName
+// only appears in that warning). Deterministic build order, sorted by name.
+func findFirstExt[T any](exts []builtSDKExtension, ifaceName string, match func(*builtSDKExtension) (T, bool)) (T, string) {
+	var found T
 	var foundName string
-	for _, e := range exts {
-		src, ok := e.ext.(extsdk.GitCredentialSource)
-		if !ok {
-			continue
+	have := false
+	for i := range exts {
+		e := &exts[i]
+		if v, ok := match(e); ok {
+			if have {
+				slog.Warn("multiple extensions implement "+ifaceName+"; keeping the first",
+					"component", "startup", "using", foundName, "ignoring", e.name)
+				continue
+			}
+			found, foundName, have = v, e.name, true
 		}
-		if found != nil {
-			slog.Warn("multiple extensions implement GitCredentialSource; keeping the first",
-				"component", "startup", "using", foundName, "ignoring", e.name)
-			continue
-		}
-		found, foundName = src, e.name
 	}
 	return found, foundName
 }
 
-// findDeliverer returns the first built extension implementing sdk.Deliverer -
-// same detection/ambiguity rule as findGitCredentialSource.
+// findGitCredentialSource returns the first built extension implementing sdk.GitCredentialSource.
+func findGitCredentialSource(exts []builtSDKExtension) (extsdk.GitCredentialSource, string) {
+	return findFirstExt(exts, "GitCredentialSource", func(e *builtSDKExtension) (extsdk.GitCredentialSource, bool) {
+		v, ok := e.ext.(extsdk.GitCredentialSource)
+		return v, ok
+	})
+}
+
+// findDeliverer returns the first built extension implementing sdk.Deliverer.
 func findDeliverer(exts []builtSDKExtension) (extsdk.Deliverer, string) {
-	var found extsdk.Deliverer
-	var foundName string
-	for _, e := range exts {
-		d, ok := e.ext.(extsdk.Deliverer)
-		if !ok {
-			continue
-		}
-		if found != nil {
-			slog.Warn("multiple extensions implement Deliverer; keeping the first",
-				"component", "startup", "using", foundName, "ignoring", e.name)
-			continue
-		}
-		found, foundName = d, e.name
-	}
-	return found, foundName
+	return findFirstExt(exts, "Deliverer", func(e *builtSDKExtension) (extsdk.Deliverer, bool) {
+		v, ok := e.ext.(extsdk.Deliverer)
+		return v, ok
+	})
 }
 
 // toSDKAssignment converts quack's own dag.Assignment into the sdk's wire
@@ -298,62 +294,28 @@ func toSDKAssignment(planID, agentName, contextID string, a dag.Assignment) exts
 	}
 }
 
-// findAssignmentFreshnessChecker: same detection/ambiguity rule as
-// findGitCredentialSource.
+// findAssignmentFreshnessChecker: same detection rule as findGitCredentialSource.
 func findAssignmentFreshnessChecker(exts []builtSDKExtension) (extsdk.AssignmentFreshnessChecker, string) {
-	var found extsdk.AssignmentFreshnessChecker
-	var foundName string
-	for _, e := range exts {
-		c, ok := e.ext.(extsdk.AssignmentFreshnessChecker)
-		if !ok {
-			continue
-		}
-		if found != nil {
-			slog.Warn("multiple extensions implement AssignmentFreshnessChecker; keeping the first",
-				"component", "startup", "using", foundName, "ignoring", e.name)
-			continue
-		}
-		found, foundName = c, e.name
-	}
-	return found, foundName
+	return findFirstExt(exts, "AssignmentFreshnessChecker", func(e *builtSDKExtension) (extsdk.AssignmentFreshnessChecker, bool) {
+		v, ok := e.ext.(extsdk.AssignmentFreshnessChecker)
+		return v, ok
+	})
 }
 
-// findAssignmentMetaExtension: same detection/ambiguity rule as findGitCredentialSource.
+// findAssignmentMetaExtension: same detection rule as findGitCredentialSource.
 func findAssignmentMetaExtension(exts []builtSDKExtension) (extsdk.AssignmentMetaExtension, string) {
-	var found extsdk.AssignmentMetaExtension
-	var foundName string
-	for _, e := range exts {
-		m, ok := e.ext.(extsdk.AssignmentMetaExtension)
-		if !ok {
-			continue
-		}
-		if found != nil {
-			slog.Warn("multiple extensions implement AssignmentMetaExtension; keeping the first",
-				"component", "startup", "using", foundName, "ignoring", e.name)
-			continue
-		}
-		found, foundName = m, e.name
-	}
-	return found, foundName
+	return findFirstExt(exts, "AssignmentMetaExtension", func(e *builtSDKExtension) (extsdk.AssignmentMetaExtension, bool) {
+		v, ok := e.ext.(extsdk.AssignmentMetaExtension)
+		return v, ok
+	})
 }
 
 // findRecoverer mirrors findDeliverer for sdk.DeliveryRecoverer.
 func findRecoverer(exts []builtSDKExtension) (extsdk.DeliveryRecoverer, string) {
-	var found extsdk.DeliveryRecoverer
-	var foundName string
-	for _, e := range exts {
-		r, ok := e.ext.(extsdk.DeliveryRecoverer)
-		if !ok {
-			continue
-		}
-		if found != nil {
-			slog.Warn("multiple extensions implement DeliveryRecoverer; keeping the first",
-				"component", "startup", "using", foundName, "ignoring", e.name)
-			continue
-		}
-		found, foundName = r, e.name
-	}
-	return found, foundName
+	return findFirstExt(exts, "DeliveryRecoverer", func(e *builtSDKExtension) (extsdk.DeliveryRecoverer, bool) {
+		v, ok := e.ext.(extsdk.DeliveryRecoverer)
+		return v, ok
+	})
 }
 
 // sdkGitCredentialAdapter bridges sdk.GitCredentialSource to
@@ -361,12 +323,16 @@ func findRecoverer(exts []builtSDKExtension) (extsdk.DeliveryRecoverer, string) 
 // (the SDK boundary can't share quack's own internal type).
 type sdkGitCredentialAdapter struct{ src extsdk.GitCredentialSource }
 
+func sdkCredFields(c *extsdk.GitCredential) (string, string, string) {
+	return c.Host, c.Username, c.Token
+}
+
+func newToolsGitCredential(h, u, t string) tools.GitCredential {
+	return tools.GitCredential{Host: h, Username: u, Token: t}
+}
+
 func (a sdkGitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) (*tools.GitCredential, error) {
-	c, err := a.src.GitCredential(ctx, rawURL)
-	if err != nil || c == nil {
-		return nil, err
-	}
-	return &tools.GitCredential{Host: c.Host, Username: c.Username, Token: c.Token}, nil
+	return fetchGitCredential(ctx, rawURL, a.src.GitCredential, sdkCredFields, newToolsGitCredential)
 }
 
 // sdkDeliverAdapter bridges sdk.Deliverer to vetting.DeliverFunc.

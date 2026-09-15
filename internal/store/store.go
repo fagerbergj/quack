@@ -774,13 +774,18 @@ func (s *Store) GetChat(ctx context.Context, id string) (*Chat, error) {
 	return &c, nil
 }
 
+// rowsExist reports whether any row of model matches "col = val".
+func (s *Store) rowsExist(ctx context.Context, model any, col, val string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Model(model).Where(col+" = ?", val).Count(&count).Error
+	return count > 0, err
+}
+
 // ChatExists reports whether id has a live chats row - the shared check
 // behind every boot-time resume/recovery pass (#1296), so a chat hard-deleted
 // by raw SQL (bypassing DeleteChat's cascade) is never resumed from its leftover dag_plans/dag_nodes rows.
 func (s *Store) ChatExists(ctx context.Context, id string) (bool, error) {
-	var count int64
-	err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Count(&count).Error
-	return count > 0, err
+	return s.rowsExist(ctx, &Chat{}, "id", id)
 }
 
 // Mirrors orchestrator.AppName (store can't import it).
@@ -926,49 +931,11 @@ func (s *Store) SetChatOrigin(ctx context.Context, id, sessionUser, originJSON s
 	}).Create(c).Error
 }
 
-func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, bool, error) {
-	var row GithubSnapshot
-	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return row.JSON, true, nil
-}
-
-func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) error {
-	row := &GithubSnapshot{ChatID: chatID, JSON: json, UpdatedAt: time.Now().UTC()}
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "chat_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"json", "updated_at"}),
-	}).Create(row).Error
-}
-
-func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (string, bool, error) {
-	var row GithubReviewBaseline
-	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return row.PatchIDs, true, nil
-}
-
-func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSON string) error {
-	row := &GithubReviewBaseline{ChatID: chatID, PatchIDs: patchIDsJSON, UpdatedAt: time.Now().UTC()}
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "chat_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"patch_ids", "updated_at"}),
-	}).Create(row).Error
-}
-
-func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFixState, error) {
-	var row GithubFixState
-	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
+// takeChatScoped returns one chat-scoped row by chat_id, or (nil, nil) when
+// absent.
+func takeChatScoped[T any](db *gorm.DB, ctx context.Context, chatID string) (*T, error) {
+	var row T
+	err := db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -976,6 +943,48 @@ func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFi
 		return nil, err
 	}
 	return &row, nil
+}
+
+// chatScopedField is takeChatScoped projected onto one string column.
+func chatScopedField[T any](db *gorm.DB, ctx context.Context, chatID string, field func(*T) string) (string, bool, error) {
+	row, err := takeChatScoped[T](db, ctx, chatID)
+	if row == nil {
+		return "", false, err
+	}
+	return field(row), true, nil
+}
+
+func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, bool, error) {
+	return chatScopedField[GithubSnapshot](s.db, ctx, chatID, func(row *GithubSnapshot) string {
+		return row.JSON
+	})
+}
+
+func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) error {
+	return s.upsertChatScoped(ctx, &GithubSnapshot{ChatID: chatID, JSON: json, UpdatedAt: time.Now().UTC()}, "json")
+}
+
+func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (string, bool, error) {
+	return chatScopedField[GithubReviewBaseline](s.db, ctx, chatID, func(row *GithubReviewBaseline) string {
+		return row.PatchIDs
+	})
+}
+
+func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSON string) error {
+	return s.upsertChatScoped(ctx, &GithubReviewBaseline{ChatID: chatID, PatchIDs: patchIDsJSON, UpdatedAt: time.Now().UTC()}, "patch_ids")
+}
+
+// upsertChatScoped inserts or updates a chat_id-conflict row, touching the
+// given column plus updated_at on conflict.
+func (s *Store) upsertChatScoped(ctx context.Context, row any, col string) error {
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{col, "updated_at"}),
+	}).Create(row).Error
+}
+
+func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFixState, error) {
+	return takeChatScoped[GithubFixState](s.db, ctx, chatID)
 }
 
 func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error {
@@ -991,15 +1000,7 @@ func (s *Store) DeleteGithubFixState(ctx context.Context, chatID string) error {
 }
 
 func (s *Store) GetGithubMergeIntent(ctx context.Context, chatID string) (*GithubMergeIntent, error) {
-	var row GithubMergeIntent
-	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &row, nil
+	return takeChatScoped[GithubMergeIntent](s.db, ctx, chatID)
 }
 
 func (s *Store) SetGithubMergeIntent(ctx context.Context, chatID, requestedBy string) error {
@@ -1194,9 +1195,7 @@ func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int6
 // regardless of seq - runlog.EventLog.LoadEvents' fold-fallback decision
 // (#1101): a chat with rows but none newer than some fromSeq is "caught up", not "table is gone", and must not trigger a resend of the whole reconstructed history.
 func (s *Store) ChatEventsExist(ctx context.Context, chatID string) (bool, error) {
-	var count int64
-	err := s.db.WithContext(ctx).Model(&ChatEvent{}).Where("chat_id = ?", chatID).Count(&count).Error
-	return count > 0, err
+	return s.rowsExist(ctx, &ChatEvent{}, "chat_id", chatID)
 }
 
 // DeleteChatEvents drops a chat's run events (fresh start for new run).

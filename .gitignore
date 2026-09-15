@@ -46,3 +46,4 @@ storybook-static
 # Personal, host-specific deployment notes - untracked by design.
 AGENTS.md.local
 testdata/qa/github/deliveries.jsonl
+.pi-glla/

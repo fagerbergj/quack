@@ -33,15 +33,7 @@ func (p *pathScrub) Declaration() *genai.FunctionDeclaration { return p.inner.De
 
 // ProcessRequest packs the wrapper into the request's tool map.
 func (p *pathScrub) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	if err := p.inner.ProcessRequest(ctx, req); err != nil {
-		return err
-	}
-	if req.Tools != nil {
-		if _, ok := req.Tools[p.Name()]; ok {
-			req.Tools[p.Name()] = p
-		}
-	}
-	return nil
+	return rebindToolMap(p.inner, p, ctx, req)
 }
 
 // Run is a pass-through except on error, where host paths are respelled.

@@ -280,22 +280,28 @@ func spawnSandboxCmd(ctx context.Context, dir string, caps workspace.Caps, ac co
 	return c
 }
 
-// newSandboxCheckCmd: `quack sandbox check [flags]` - the probe table, exit
-// non-zero on any FAIL.
-func newSandboxCheckCmd() *cobra.Command {
+// sandboxProbeCmd is the shared shape of the no-arg sandbox flag commands:
+// probe flags + --json, then a (cmd, flags, asJSON) run function.
+func sandboxProbeCmd(use, short string, run func(cmd *cobra.Command, f sandboxFlags, asJSON bool) error) *cobra.Command {
 	var f sandboxFlags
 	var asJSON bool
 	c := &cobra.Command{
-		Use:   "check",
-		Short: "Run the built-in jail probes; non-zero exit on any FAIL",
+		Use:   use,
+		Short: short,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSandboxCheck(cmd, f, asJSON)
+			return run(cmd, f, asJSON)
 		},
 	}
 	addSandboxFlags(c, &f)
 	asJSONFlag(c, &asJSON)
 	return c
+}
+
+// newSandboxCheckCmd: `quack sandbox check [flags]` - the probe table, exit
+// non-zero on any FAIL.
+func newSandboxCheckCmd() *cobra.Command {
+	return sandboxProbeCmd("check", "Run the built-in jail probes; non-zero exit on any FAIL", runSandboxCheck)
 }
 
 func runSandboxCheck(cmd *cobra.Command, f sandboxFlags, asJSON bool) error {
@@ -330,19 +336,7 @@ func runSandboxCheck(cmd *cobra.Command, f sandboxFlags, asJSON bool) error {
 // newSandboxInfoCmd: `quack sandbox info [flags]` - resolved mode/cwd/tmp/
 // home/grants/env, no exec.
 func newSandboxInfoCmd() *cobra.Command {
-	var f sandboxFlags
-	var asJSON bool
-	c := &cobra.Command{
-		Use:   "info",
-		Short: "Print the resolved jail (mode, cwd, tmp, home, grants, env) without running anything",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSandboxInfo(cmd, f, asJSON)
-		},
-	}
-	addSandboxFlags(c, &f)
-	asJSONFlag(c, &asJSON)
-	return c
+	return sandboxProbeCmd("info", "Print the resolved jail (mode, cwd, tmp, home, grants, env) without running anything", runSandboxInfo)
 }
 
 // sandboxInfo is `sandbox info --json`'s shape - the same fields the

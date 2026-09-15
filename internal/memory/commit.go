@@ -161,6 +161,18 @@ type neighbour struct {
 	AbsorbedIDs                   []string
 }
 
+// toNeighbour narrows a scored point to the fields a consolidation decision reads.
+func (p scored) toNeighbour() neighbour {
+	return neighbour{
+		ID: p.ID, Content: p.Content,
+		ChatID: p.ChatID, NodeID: p.NodeID, Source: p.Source, MintedAt: p.MintedAt,
+		Status: p.Status, ValidFrom: p.ValidFrom, ReinforcementCount: p.ReinforcementCount,
+		Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
+		LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
+		AbsorbedIDs: p.AbsorbedIDs,
+	}
+}
+
 type op struct {
 	Action  string `json:"action"`  // ADD | UPDATE | DELETE | NOOP
 	ID      string `json:"id"`      // existing memory id (UPDATE / DELETE)
@@ -215,14 +227,7 @@ func (s *Store) neighbours(ctx context.Context, bucket, sourceText string, stage
 	out := make([]neighbour, 0, len(pts))
 	for _, p := range pts {
 		if p.Content != "" {
-			out = append(out, neighbour{
-				ID: p.ID, Content: p.Content,
-				ChatID: p.ChatID, NodeID: p.NodeID, Source: p.Source, MintedAt: p.MintedAt,
-				Status: p.Status, ValidFrom: p.ValidFrom, ReinforcementCount: p.ReinforcementCount,
-				Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
-				LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
-				AbsorbedIDs: p.AbsorbedIDs,
-			})
+			out = append(out, p.toNeighbour())
 		}
 	}
 	return out, nil

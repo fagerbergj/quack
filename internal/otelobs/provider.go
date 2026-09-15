@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	otlptrace "go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -63,6 +64,39 @@ func signalURL(endpoint, path string) string {
 	return trimmed + path
 }
 
+// newSignalExporter builds one OTLP exporter at the signal's v1 endpoint,
+// wrapping the constructor error with the signal name.
+func newSignalExporter[T any](ctx context.Context, endpoint, signal, label string, newFn func(context.Context, string) (T, error)) (T, error) {
+	var zero T
+	exp, err := newFn(ctx, signalURL(endpoint, signal))
+	if err != nil {
+		return zero, fmt.Errorf("otelobs: otlp %s exporter (%s): %w", label, endpoint, err)
+	}
+	return exp, nil
+}
+
+// newTraceExporter / newMetricReader wrap each OTLP exporter in the provider
+// component (batch span processor / periodic reader) a destination feeds.
+func newTraceExporter(ctx context.Context, endpoint string) (sdktrace.SpanProcessor, error) {
+	texp, err := newSignalExporter(ctx, endpoint, "/v1/traces", "trace", func(ctx context.Context, url string) (*otlptrace.Exporter, error) {
+		return otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(url))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sdktrace.NewBatchSpanProcessor(texp), nil
+}
+
+func newMetricReader(ctx context.Context, endpoint string) (*metric.PeriodicReader, error) {
+	mexp, err := newSignalExporter(ctx, endpoint, "/v1/metrics", "metric", func(ctx context.Context, url string) (*otlpmetrichttp.Exporter, error) {
+		return otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(url))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return metric.NewPeriodicReader(mexp), nil
+}
+
 // newResource builds the resource every signal carries. version is the build
 // stamp (serve.Version); a dev build leaves it empty and the attributes are
 // omitted rather than exported as "".
@@ -86,7 +120,6 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	if err != nil {
 		return nil, nil, fmt.Errorf("otelobs: resource: %w", err)
 	}
-
 	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Otel.Sample))),
@@ -97,20 +130,18 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	// collector are usually different systems (#1045).
 	for _, e := range cfg.Otel.Exporters {
 		if e.Wants(config.SignalTraces) {
-			texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/traces")))
+			bsp, err := newTraceExporter(ctx, e.Endpoint)
 			if err != nil {
-				return nil, nil, fmt.Errorf("otelobs: otlp trace exporter (%s): %w", e.Endpoint, err)
+				return nil, nil, err
 			}
-			bsp := sdktrace.NewBatchSpanProcessor(texp)
 			tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(bsp))
 			shutdowns = append(shutdowns, bsp.Shutdown)
 		}
 		if e.Wants(config.SignalMetrics) {
-			mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/metrics")))
+			periodic, err := newMetricReader(ctx, e.Endpoint)
 			if err != nil {
-				return nil, nil, fmt.Errorf("otelobs: otlp metric exporter (%s): %w", e.Endpoint, err)
+				return nil, nil, err
 			}
-			periodic := metric.NewPeriodicReader(mexp)
 			mpOpts = append(mpOpts, metric.WithReader(periodic))
 			shutdowns = append(shutdowns, periodic.Shutdown)
 		}

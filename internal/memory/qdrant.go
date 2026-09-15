@@ -872,16 +872,22 @@ func (x *qdrantIndex) setHumanVote(ctx context.Context, id, vote string, invalid
 		set[payloadInvalidatedAt] = ts
 		set[payloadInvalidationReason] = OutcomeReasonNetScore
 	}
+	if err := x.setPointPayload(ctx, id, set); err != nil {
+		return false, fmt.Errorf("memory: set payload human vote: %w", err)
+	}
+	return true, nil
+}
+
+// setPointPayload writes set onto a single point with wait=true.
+func (x *qdrantIndex) setPointPayload(ctx context.Context, id string, set map[string]any) error {
 	wait := true
-	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+	_, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
 		CollectionName: x.coll,
 		Wait:           &wait,
 		Payload:        qdrant.NewValueMap(set),
 		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{id})}}},
-	}); err != nil {
-		return false, fmt.Errorf("memory: set payload human vote: %w", err)
-	}
-	return true, nil
+	})
+	return err
 }
 
 // recordRecall bumps recalls and stamps last_recalled_at per point. Qdrant
@@ -1011,7 +1017,6 @@ func (x *qdrantIndex) absorb(ctx context.Context, survivorID, absorbedID, reason
 		},
 		absorbedID,
 	)
-	wait := true
 	set := map[string]any{
 		payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadVoteScore: d.VoteScore, payloadTier: d.Tier,
 		payloadAbsorbedIDs: joinIDs(d.AbsorbedIDs),
@@ -1022,18 +1027,11 @@ func (x *qdrantIndex) absorb(ctx context.Context, survivorID, absorbedID, reason
 	if d.LastRecalledAt != "" {
 		set[payloadLastRecalledAt] = d.LastRecalledAt
 	}
-	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
-		CollectionName: x.coll, Wait: &wait, Payload: qdrant.NewValueMap(set),
-		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{survivorID})}}},
-	}); err != nil {
+	if err := x.setPointPayload(ctx, survivorID, set); err != nil {
 		return false, fmt.Errorf("memory: set payload absorb survivor: %w", err)
 	}
 	ts := nowRFC3339()
-	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
-		CollectionName: x.coll, Wait: &wait,
-		Payload:        qdrant.NewValueMap(map[string]any{payloadStatus: string(StatusInvalidated), payloadInvalidatedAt: ts, payloadInvalidationReason: reason}),
-		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{absorbedID})}}},
-	}); err != nil {
+	if err := x.setPointPayload(ctx, absorbedID, map[string]any{payloadStatus: string(StatusInvalidated), payloadInvalidatedAt: ts, payloadInvalidationReason: reason}); err != nil {
 		return false, fmt.Errorf("memory: set payload absorb invalidate: %w", err)
 	}
 	return true, nil

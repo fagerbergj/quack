@@ -22,20 +22,36 @@ func isConversationEvent(ev *session.Event) bool {
 	return ev != nil && (ev.Author == "user" || ev.Author == orchestratorName)
 }
 
-func (c conversationSessions) Create(ctx context.Context, req *session.CreateRequest) (*session.CreateResponse, error) {
-	resp, err := c.Service.Create(ctx, req)
-	if err != nil || resp == nil || resp.Session == nil {
+// passthroughView returns resp as-is on error or a missing session, otherwise
+// swaps the response's session for a conversation view.
+func passthroughView[T any](resp T, err error, s session.Session, viewOf func(conversationSession) T) (T, error) {
+	if err != nil || s == nil {
 		return resp, err
 	}
-	return &session.CreateResponse{Session: conversationSession{resp.Session}}, nil
+	return viewOf(conversationSession{s}), nil
+}
+
+// viewOfCreate / viewOfGet build the response carrying a conversation view.
+func viewOfCreate(v conversationSession) *session.CreateResponse {
+	return &session.CreateResponse{Session: v}
+}
+func viewOfGet(v conversationSession) *session.GetResponse { return &session.GetResponse{Session: v} }
+
+func (c conversationSessions) Create(ctx context.Context, req *session.CreateRequest) (*session.CreateResponse, error) {
+	resp, err := c.Service.Create(ctx, req)
+	var s session.Session
+	if resp != nil {
+		s = resp.Session
+	}
+	return passthroughView(resp, err, s, viewOfCreate)
 }
 
 func (c conversationSessions) Get(ctx context.Context, req *session.GetRequest) (*session.GetResponse, error) {
 	resp, err := c.Service.Get(ctx, req)
-	if err != nil || resp == nil || resp.Session == nil {
+	if resp == nil {
 		return resp, err
 	}
-	return &session.GetResponse{Session: conversationSession{resp.Session}}, nil
+	return passthroughView(resp, err, resp.Session, viewOfGet)
 }
 
 // AppendEvent unwraps the view before delegating (underlying services type-assert their own session).

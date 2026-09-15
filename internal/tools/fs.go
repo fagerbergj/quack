@@ -74,11 +74,25 @@ func newFSBinding(d Deps) (fsBinding, error) {
 	if userID == "" {
 		return fsBinding{}, fmt.Errorf("tools: filesystem tools require a WorkspaceUserID")
 	}
+	return fsBinding{userID: userID, jail: d.Workspace, caps: fsCaps(d)}, nil
+}
+
+// fsCaps: effective caps for Deps (zero means defaults).
+func fsCaps(d Deps) workspace.Caps {
 	caps := d.WorkspaceCaps
 	if caps.IsZero() {
 		caps = workspace.DefaultCaps()
 	}
-	return fsBinding{userID: userID, jail: d.Workspace, caps: caps}, nil
+	return caps
+}
+
+// newFSBoundTool: binds Deps into an fsBinding and wraps run (which receives the context-bound binding) as a function tool.
+func newFSBoundTool[TArgs any, TResult any](d Deps, name, desc string, run func(b fsBinding, a TArgs) (TResult, error)) (tool.Tool, error) {
+	b, err := newFSBinding(d)
+	if err != nil {
+		return nil, err
+	}
+	return functiontool.New[TArgs, TResult](functiontool.Config{Name: name, Description: desc}, func(ctx agent.Context, a TArgs) (TResult, error) { return run(b.withCwd(ctx), a) })
 }
 
 // isBinary: reports whether head bytes contain a NUL.
@@ -111,23 +125,19 @@ type readFileResult struct {
 	NextOffset int    `json:"next_offset,omitempty"`
 }
 
+func readFileDesc() string {
+	return fmt.Sprintf("Read a text file from your workspace. `path` is workspace-relative (never "+
+		"absolute). `offset` (0-based line, default 0) and `limit` (lines, default %d) window a large "+
+		"file; the result reports `total_lines` and sets `truncated: true` when more content exists than "+
+		"was returned. When truncated, the result gives `next_offset` - call again with `offset: next_offset` "+
+		"to continue (or read the file's END with `offset: total_lines - limit`). Never an error. Binary files are rejected.",
+		defaultReadLimit)
+}
+
+var readFileRun = func(b fsBinding, a readFileArgs) (readFileResult, error) { return b.readFile(a) }
+
 func newReadFile(d Deps) (tool.Tool, error) {
-	b, err := newFSBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[readFileArgs, readFileResult](
-		functiontool.Config{
-			Name: "read_file",
-			Description: fmt.Sprintf("Read a text file from your workspace. `path` is workspace-relative (never "+
-				"absolute). `offset` (0-based line, default 0) and `limit` (lines, default %d) window a large "+
-				"file; the result reports `total_lines` and sets `truncated: true` when more content exists than "+
-				"was returned. When truncated, the result gives `next_offset` - call again with `offset: next_offset` "+
-				"to continue (or read the file's END with `offset: total_lines - limit`). Never an error. Binary files are rejected.",
-				defaultReadLimit),
-		},
-		func(ctx agent.Context, a readFileArgs) (readFileResult, error) { return b.withCwd(ctx).readFile(a) },
-	)
+	return newFSBoundTool[readFileArgs, readFileResult](d, "read_file", readFileDesc(), readFileRun)
 }
 
 // readFile: binary detection on head, byte-capped read, offset/limit windowing.
@@ -212,21 +222,17 @@ type listDirResult struct {
 	Cwd       string     `json:"cwd"`
 }
 
+func listDirDesc(c workspace.Caps) string {
+	return fmt.Sprintf("List files and directories in your workspace. `path` is workspace-relative "+
+		"(default: workspace root). `depth` bounds how many levels are listed (default 2). Returned "+
+		"paths are workspace-relative. Caps at %d entries; `truncated: true` means more exist - narrow "+
+		"`path`, or use `glob`/`grep` instead.", c.MaxListEntries)
+}
+
+var listDirRun = func(b fsBinding, a listDirArgs) (listDirResult, error) { return b.listDir(a) }
+
 func newListDir(d Deps) (tool.Tool, error) {
-	b, err := newFSBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[listDirArgs, listDirResult](
-		functiontool.Config{
-			Name: "list_dir",
-			Description: fmt.Sprintf("List files and directories in your workspace. `path` is workspace-relative "+
-				"(default: workspace root). `depth` bounds how many levels are listed (default 2). Returned "+
-				"paths are workspace-relative. Caps at %d entries; `truncated: true` means more exist - narrow "+
-				"`path`, or use `glob`/`grep` instead.", b.caps.MaxListEntries),
-		},
-		func(ctx agent.Context, a listDirArgs) (listDirResult, error) { return b.withCwd(ctx).listDir(a) },
-	)
+	return newFSBoundTool[listDirArgs, listDirResult](d, "list_dir", listDirDesc(fsCaps(d)), listDirRun)
 }
 
 // listDir: depth-bounded walk under path, returning cwd-relative entries.
@@ -322,21 +328,17 @@ type globResult struct {
 	Cwd       string   `json:"cwd"`
 }
 
+func globDesc(c workspace.Caps) string {
+	return fmt.Sprintf("Find files by name pattern (doublestar glob syntax, e.g. `**/*.go` or "+
+		"`src/**/*.test.ts`). `path` scopes the search (default: workspace root). Returned paths are "+
+		"workspace-relative. Caps at %d results; `truncated: true` means more exist - narrow the "+
+		"pattern.", c.MaxResults)
+}
+
+var globRun = func(b fsBinding, a globArgs) (globResult, error) { return b.glob(a) }
+
 func newGlob(d Deps) (tool.Tool, error) {
-	b, err := newFSBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[globArgs, globResult](
-		functiontool.Config{
-			Name: "glob",
-			Description: fmt.Sprintf("Find files by name pattern (doublestar glob syntax, e.g. `**/*.go` or "+
-				"`src/**/*.test.ts`). `path` scopes the search (default: workspace root). Returned paths are "+
-				"workspace-relative. Caps at %d results; `truncated: true` means more exist - narrow the "+
-				"pattern.", b.caps.MaxResults),
-		},
-		func(ctx agent.Context, a globArgs) (globResult, error) { return b.withCwd(ctx).glob(a) },
-	)
+	return newFSBoundTool[globArgs, globResult](d, "glob", globDesc(fsCaps(d)), globRun)
 }
 
 // glob: doublestar matching rooted at path, workspace-relative results.
@@ -408,22 +410,18 @@ type grepResult struct {
 	Cwd       string      `json:"cwd"`
 }
 
+func grepDesc(c workspace.Caps) string {
+	return fmt.Sprintf("Search file contents by regular expression (Go/RE2 syntax) across your "+
+		"workspace. `path` scopes the search (default: workspace root); `glob` filters which files are "+
+		"searched by basename (e.g. `*.go`); `context` adds N surrounding lines to each match's `text`. "+
+		"Binary files are skipped. Caps at %d matches; `truncated: true` means more exist - narrow the "+
+		"pattern or path.", c.MaxResults)
+}
+
+var grepRun = func(b fsBinding, a grepArgs) (grepResult, error) { return b.grep(a) }
+
 func newGrep(d Deps) (tool.Tool, error) {
-	b, err := newFSBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[grepArgs, grepResult](
-		functiontool.Config{
-			Name: "grep",
-			Description: fmt.Sprintf("Search file contents by regular expression (Go/RE2 syntax) across your "+
-				"workspace. `path` scopes the search (default: workspace root); `glob` filters which files are "+
-				"searched by basename (e.g. `*.go`); `context` adds N surrounding lines to each match's `text`. "+
-				"Binary files are skipped. Caps at %d matches; `truncated: true` means more exist - narrow the "+
-				"pattern or path.", b.caps.MaxResults),
-		},
-		func(ctx agent.Context, a grepArgs) (grepResult, error) { return b.withCwd(ctx).grep(a) },
-	)
+	return newFSBoundTool[grepArgs, grepResult](d, "grep", grepDesc(fsCaps(d)), grepRun)
 }
 
 // grep: regexp scan of non-binary files under path, capped at MaxResults.
