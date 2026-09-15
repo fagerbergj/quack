@@ -138,8 +138,30 @@ jobs:
           # would let a PR ship a 4th unchecked Close of the same kind.
           $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./cmd/... ./internal/...
           go run ./tools/sloplint diff "$SLOP_BASE"
-          # Changed-line coverage gate: new code ships covered (>=70%).
-          go run ./tools/coverdiff diff "$SLOP_BASE"
+      # Changed-line coverage gate: new code ships covered (>=70%).
+      - name: coverage gate (changed code only)
+        env:
+          SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set +e
+          OUT=$(go run ./tools/coverdiff diff "$SLOP_BASE" 2>&1)
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          if [ "$RC" -ne 0 ]; then
+            # The job log carries the full suite output; the PR gets the
+            # verdict and the uncovered lines.
+            {
+              echo "### Coverage gate: changed lines below the 70% floor"
+              echo ""
+              echo '```'
+              printf '%s\n' "$OUT" | grep -E '^coverdiff:|^  uncovered:'
+              echo '```'
+              echo ""
+              echo "Cover the changed lines above (or split the change).";
+            } | gh pr comment "${{ github.event.pull_request.number }}" --body-file -
+            exit "$RC"
+          fi
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -214,7 +236,23 @@ jobs:
         working-directory: frontend
         run: |
           npm run test -- --coverage
-          node ../scripts/coverage-diff.mjs "$SLOP_BASE"
+          set +e
+          OUT=$(node ../scripts/coverage-diff.mjs "$SLOP_BASE" 2>&1)
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          if [ "$RC" -ne 0 ]; then
+            {
+              echo "### Coverage gate: changed lines below the 70% floor (frontend)"
+              echo ""
+              echo '```'
+              printf '%s\n' "$OUT" | grep -E '^coverage-diff:|^  uncovered:'
+              echo '```'
+              echo ""
+              echo "Cover the changed lines above (or split the change)."
+            } | gh pr comment "${{ github.event.pull_request.number }}" --body-file -
+            exit "$RC"
+          fi
 
   openapi-lint:
     runs-on: ubuntu-latest
