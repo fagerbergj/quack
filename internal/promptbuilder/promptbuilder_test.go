@@ -1,6 +1,7 @@
 package promptbuilder_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -180,11 +181,11 @@ func TestAgentMemoryToolsAndGuidance(t *testing.T) {
 // enabled) both render in its prompt.
 func TestAgentMemoryRealBundle(t *testing.T) {
 	const dir = "../../agents/web-researcher"
-	bundle, err := agent.LoadBundle(dir)
+	bundle, err := agent.LoadBundle(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}
-	mem, err := agent.LoadBundleMemory(dir)
+	mem, err := agent.LoadBundleMemory(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatalf("LoadBundleMemory: %v", err)
 	}
@@ -266,12 +267,12 @@ func TestOrchestratorLayers(t *testing.T) {
 // fixed - same-day repeat calls must reuse the first build.
 func TestCacheByDayBuildsOnce(t *testing.T) {
 	var builds int
-	cached := promptbuilder.CacheByDay(func() string {
+	cached := promptbuilder.CacheByDay(nil, func(context.Context) string {
 		builds++
 		return "prompt build " + strings.Repeat("x", builds)
 	})
-	first := cached()
-	second := cached()
+	first := cached(context.Background())
+	second := cached(context.Background())
 	if builds != 1 {
 		t.Fatalf("build func called %d times, want 1 (same-day calls must reuse the cache)", builds)
 	}

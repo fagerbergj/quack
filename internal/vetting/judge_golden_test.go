@@ -1,6 +1,7 @@
 package vetting
 
 import (
+	"context"
 	"flag"
 	"os"
 	"path/filepath"
@@ -41,7 +42,7 @@ func checkJudgeGolden(t *testing.T, name, got string) {
 // mustJudgeBehaviour assembles the judge behaviour layer or fails the test.
 func mustJudgeBehaviour(t *testing.T, readTools, skills bool) string {
 	t.Helper()
-	b, err := judgeBehaviour(readTools, skills)
+	b, _, err := judgeBehaviour(context.Background(), nil, readTools, skills)
 	if err != nil {
 		t.Fatalf("judge behaviour: %v", err)
 	}

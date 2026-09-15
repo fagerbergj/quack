@@ -49,7 +49,7 @@ func TestDeterministicFailSkipsJudgeOnTerminalRound(t *testing.T) {
 	}
 	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-3", RequireRetrieval: true}
 	var res GateResult
-	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatal(err)
 	}

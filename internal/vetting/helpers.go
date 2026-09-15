@@ -86,9 +86,14 @@ type Config struct {
 	// ledger provenance only (#1096), stamped onto worker ledger.Coords
 	// alongside Agent.
 	BundleHash string
-	User       string // observability only; resolved from the ADK session, not caller-set
-	Source     string // observability only; run origin (extension name or a fixed app value)
-	Task       string // delivery check; empty = no check
+	// PromptSource/PromptVersionID: where this round's system/<agent> artifact
+	// came from ("static" or the store name) and which version of it -
+	// ledger provenance only (#1420), stamped alongside BundleHash.
+	PromptSource    string
+	PromptVersionID string
+	User            string // observability only; resolved from the ADK session, not caller-set
+	Source          string // observability only; run origin (extension name or a fixed app value)
+	Task            string // delivery check; empty = no check
 	// UpstreamAnswers: this node's dependency output, same as buildTask gives
 	// the worker - the judge needs it too to verify upstream-sourced claims.
 	UpstreamAnswers string

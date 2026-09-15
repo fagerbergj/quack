@@ -48,7 +48,7 @@ func TestNodeFailed_CarriesRealContextIDEstablishedBeforeFailing(t *testing.T) {
 		t.Fatal(err)
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, map[string]model.LLM{"w": stub},
-		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(nil, stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
 
 	events, _ := runPlanSSE(t, ex, plan, "chat")

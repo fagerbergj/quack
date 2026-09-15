@@ -75,7 +75,7 @@ func Run(t testing.TB, bundlePath string, opts Options) Outcome {
 	if err != nil {
 		t.Fatalf("replaytest: build worker node: %v", err)
 	}
-	judgeFactory := vetting.NewJudgeFactory(judgeModel, nil, nil)
+	judgeFactory := vetting.NewJudgeFactory(nil, judgeModel, nil, nil)
 
 	var out Outcome
 	fn := func(ctx adkagent.Context, task string, emit func(*session.Event) error) (string, error) {

@@ -131,7 +131,7 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
 	readTool := newJailedReadTool(t, jail, userID)
-	factory := NewJudgeFactory(claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(nil, claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
 
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, question,
 		"I implemented Play() in game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
@@ -168,7 +168,7 @@ func TestJudgeReadToolsResolveViaConfigAdvisorToken(t *testing.T) {
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 
 	readTool := newJailedReadTool(t, jail, userID)
-	factory := NewJudgeFactory(claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(nil, claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
 
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10", AdvisorToken: token}, question,
 		"I implemented Play() in game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })

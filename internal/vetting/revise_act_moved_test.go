@@ -65,7 +65,7 @@ func TestReviseActMovedForcesRejudge(t *testing.T) {
 	}
 	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score the answer 0-10"}
 	var res GateResult
-	node, err := newTestGatedNodeCapture("impl-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("impl-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatal(err)
 	}

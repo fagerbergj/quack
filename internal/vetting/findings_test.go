@@ -57,7 +57,7 @@ func TestJudgeFindings_ContradictedSinksGroundingCriterion(t *testing.T) {
 				"why": "line 112 is a blank line inside a doc comment, not a loop bound - there is no off-by-one here"},
 		},
 	}
-	factory := NewJudgeFactory(judge, nil, nil)
+	factory := NewJudgeFactory(nil, judge, nil, nil)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"review": {Kind: "review", Event: "approve", Comments: []ReviewComment{
 			{Path: "internal/vetting/mermaid.go", Line: 112, Body: "off-by-one: the loop should stop at len(nodes)-1"},
@@ -91,7 +91,7 @@ func TestJudgeFindings_VerifiedFindingNoPenalty(t *testing.T) {
 				"why": "read the file: the validation call is exactly as the finding describes"},
 		},
 	}
-	factory := NewJudgeFactory(judge, nil, nil)
+	factory := NewJudgeFactory(nil, judge, nil, nil)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"review": {Kind: "review", Event: "approve", Comments: []ReviewComment{
 			{Path: "internal/vetting/mermaid.go", Line: 40, Body: "nit: this validation could use a comment"},
@@ -173,7 +173,7 @@ func TestJudgeFindings_ContextDependentRefutationReachesRelatedFile(t *testing.T
 	var calls []string
 	readTool := newMultiFileSpyReadTool(t, files, &calls)
 	judge := &relatedFileJudge{}
-	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(nil, judge, []tool.Tool{readTool}, nil)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"review": {Kind: "review", Event: "request_changes", Comments: []ReviewComment{
 			{Path: "internal/foo.go", Line: 1, Body: "blocking: possible nil deref - input is never checked before use"},
@@ -256,7 +256,7 @@ func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", IsReviewer: true, ReadOnly: true}
 	var res GateResult
-	node, err := newTestGatedNodeCapture("reviewer-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("reviewer-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}

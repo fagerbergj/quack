@@ -456,7 +456,7 @@ func TestArtifactSSEEventOrder(t *testing.T) {
 		Artifact: kindText, ChatID: "chat1", User: "u1",
 		Artifacts: newMetaAwareInMemory(),
 	}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -526,7 +526,7 @@ func TestTextArtifactEmitsSSE(t *testing.T) {
 		ChatID: "chat2", User: "u1",
 		Artifacts: newMetaAwareInMemory(),
 	}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}

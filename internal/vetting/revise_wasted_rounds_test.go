@@ -54,7 +54,7 @@ func TestEmptyReviseStopsRoundLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := Config{JudgeRounds: 3, Threshold: 0.7, Rubric: "score the answer 0-10"}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestIdenticalReviseStopsRoundLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := Config{JudgeRounds: 3, Threshold: 0.7, Rubric: "score the answer 0-10"}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

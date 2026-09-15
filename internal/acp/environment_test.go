@@ -31,7 +31,7 @@ func TestEnvironmentBlockShape(t *testing.T) {
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "-m", "init")
 
-	block := environmentBlock(context.Background(), dir, workspace.DefaultCaps())
+	block := environmentBlock(context.Background(), nil, dir, workspace.DefaultCaps())
 
 	if !strings.HasPrefix(block, "<environment_context>\n") || !strings.HasSuffix(block, "</environment_context>") {
 		t.Fatalf("block is not wrapped in <environment_context>: %q", block)
@@ -54,7 +54,7 @@ func TestEnvironmentBlockNonRepo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	block := environmentBlock(context.Background(), dir, workspace.DefaultCaps())
+	block := environmentBlock(context.Background(), nil, dir, workspace.DefaultCaps())
 	if !strings.Contains(block, "git: no") {
 		t.Errorf("block = %q, want \"git: no\" for a non-repo cwd", block)
 	}
@@ -81,7 +81,7 @@ func TestEnvironmentBlockBoundsEntries(t *testing.T) {
 	if len(entries) != maxEnvironmentEntries {
 		t.Errorf("topLevelEntries returned %d entries, want exactly %d", len(entries), maxEnvironmentEntries)
 	}
-	block := environmentBlock(context.Background(), dir, workspace.DefaultCaps())
+	block := environmentBlock(context.Background(), nil, dir, workspace.DefaultCaps())
 	if !strings.Contains(block, "first "+strconv.Itoa(maxEnvironmentEntries)) {
 		t.Errorf("block does not note truncation: %q", block)
 	}
@@ -91,7 +91,7 @@ func TestEnvironmentBlockBoundsEntries(t *testing.T) {
 // rather than an empty, ambiguous line.
 func TestEnvironmentBlockEmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	block := environmentBlock(context.Background(), dir, workspace.DefaultCaps())
+	block := environmentBlock(context.Background(), nil, dir, workspace.DefaultCaps())
 	if !strings.Contains(block, "entries: (none") {
 		t.Errorf("block = %q, want an explicit empty-entries line", block)
 	}
@@ -105,7 +105,7 @@ func TestEnvironmentBlockDisclosesReadOnly(t *testing.T) {
 
 	caps := workspace.DefaultCaps()
 	caps.ReadOnly = true
-	block := environmentBlock(context.Background(), dir, caps)
+	block := environmentBlock(context.Background(), nil, dir, caps)
 	if !strings.Contains(block, "filesystem: read-only") || !strings.Contains(block, dir) {
 		t.Errorf("block = %q, want the read-only path named", block)
 	}
@@ -119,7 +119,7 @@ func TestEnvironmentBlockDisclosesReadOnly(t *testing.T) {
 		t.Errorf("block = %q, want the EACCES consequence named", block)
 	}
 
-	block = environmentBlock(context.Background(), dir, workspace.DefaultCaps())
+	block = environmentBlock(context.Background(), nil, dir, workspace.DefaultCaps())
 	if strings.Contains(block, "filesystem:") {
 		t.Errorf("block = %q, want no filesystem line for a writable tree", block)
 	}

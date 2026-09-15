@@ -86,7 +86,7 @@ func TestNodeOverA2A_ReusedAcrossSeparateRunPlanAsGraphInvocations(t *testing.T)
 			{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"},
 		}}
 		ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": client}, nil,
-			vetting.NewJudgeFactory(&passJudge{}, nil, nil),
+			vetting.NewJudgeFactory(nil, &passJudge{}, nil, nil),
 			func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 		outputs := map[string]string{}
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
@@ -158,7 +158,7 @@ func TestRetryPlanInNode_NativeNodeGetsFreshSession(t *testing.T) {
 		{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"},
 	}}
 	ex := dag.NewExecutor(testNativeWorkerSessions, map[string]adkagent.Agent{"solo": nativeWorker}, nil,
-		vetting.NewJudgeFactory(&passJudge{}, nil, nil),
+		vetting.NewJudgeFactory(nil, &passJudge{}, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}
@@ -272,7 +272,7 @@ func TestNodeOverA2A_SiblingNodesDoNotShareSessionHistory(t *testing.T) {
 		{ID: "n2", AgentName: "b", Task: "Write B.", Rubric: "detailed"},
 		{ID: "synth", AgentName: "synth", Task: "Combine.", DependsOn: []string{"n1", "n2"}},
 	}}
-	ex := dag.NewExecutor(sessions, agents, nil, vetting.NewJudgeFactory(&passJudge{}, nil, nil),
+	ex := dag.NewExecutor(sessions, agents, nil, vetting.NewJudgeFactory(nil, &passJudge{}, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	run := func() map[string]string {

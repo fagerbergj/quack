@@ -27,7 +27,7 @@ func TestRetryPlanInNode_ConsumerPanicBecomesNodeError(t *testing.T) {
 		return a
 	}
 	agents := map[string]adkagent.Agent{"a": mk(), "b": mk()}
-	ex := NewExecutor(session.InMemoryService(), agents, nil, vetting.NewJudgeFactory(stub, nil, nil),
+	ex := NewExecutor(session.InMemoryService(), agents, nil, vetting.NewJudgeFactory(nil, stub, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{
 		{ID: "a", AgentName: "a"}, {ID: "b", AgentName: "b", DependsOn: []string{"a"}},

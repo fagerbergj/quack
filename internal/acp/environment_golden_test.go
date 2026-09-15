@@ -56,8 +56,8 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 		return strings.ReplaceAll(s, os.TempDir(), "<TMP>")
 	}
 	ctx := context.Background()
-	checkEnvGolden(t, "environment.txt", norm(populated, environmentBlock(ctx, populated, workspace.Caps{})))
-	checkEnvGolden(t, "environment.empty.txt", norm(empty, environmentBlock(ctx, empty, workspace.Caps{})))
+	checkEnvGolden(t, "environment.txt", norm(populated, environmentBlock(ctx, nil, populated, workspace.Caps{})))
+	checkEnvGolden(t, "environment.empty.txt", norm(empty, environmentBlock(ctx, nil, empty, workspace.Caps{})))
 	ro := workspace.Caps{ReadOnly: true, HomeDir: "/home/agent"}
-	checkEnvGolden(t, "environment.readonly.txt", norm(populated, environmentBlock(ctx, populated, ro)))
+	checkEnvGolden(t, "environment.readonly.txt", norm(populated, environmentBlock(ctx, nil, populated, ro)))
 }

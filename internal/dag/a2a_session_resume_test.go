@@ -95,7 +95,7 @@ func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
 		{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"},
 	}}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": client}, nil,
-		vetting.NewJudgeFactory(&failThenPassJudge{}, nil, nil),
+		vetting.NewJudgeFactory(nil, &failThenPassJudge{}, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}

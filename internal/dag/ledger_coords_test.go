@@ -174,7 +174,7 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	ex := dag.NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"w": scoped},
 		map[string]model.LLM{"w": workerModel},
-		vetting.NewJudgeFactory(workerModel, nil, nil),
+		vetting.NewJudgeFactory(nil, workerModel, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
 		nil)
 

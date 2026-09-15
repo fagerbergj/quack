@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -11,49 +12,53 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
 
 // Build turns a loaded bundle into a runnable ADK llmagent, given its model, selected built-in tools, and optional ADK toolsets (context compaction is
 // wired separately at the runner, see a2a.go's Serve). memoryGuidance (the bundle's memory.md, M6) is appended to the behaviour layer only for
 // memory-participating agents; skills is the agent's declared skill scope (promptbuilder.Agent); grading is the pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when ungated or judge-less.
-func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string) (adkagent.Agent, error) {
-	return build(b, m, tools, toolsets, memoryGuidance, skills, grading, "", drain)
+func Build(b *Bundle, res *artifactsrc.Resolver, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string) (adkagent.Agent, error) {
+	return build(b, res, m, tools, toolsets, memoryGuidance, skills, grading, "", drain)
 }
 
 // BuildChat is Build with the delegation mode PINNED to ModeChat, for agents
 // running as a runner's ROOT over a multi-turn session (e.g. the advisor). Pinning matters: runner.Run force-sets an unset mode to ModeChat with an
 // unsynchronized check-then-write on the shared agent - a data race under concurrent consults; a pre-set mode turns that write into a pure read. Workers keep Build's unset mode (single-turn task mode, what the gate wants).
-func BuildChat(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
-	return build(b, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil)
+func BuildChat(b *Bundle, res *artifactsrc.Resolver, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
+	return build(b, res, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil)
 }
 
-// behaviourLayer is the behaviour layer of an assembled system prompt: the
+// BehaviourLayer is the behaviour layer of an assembled system prompt: the
 // bundle's prompt.md followed by its memory guidance when the agent has one.
-func behaviourLayer(prompt, memoryGuidance string) string {
+func BehaviourLayer(prompt, memoryGuidance string) string {
 	if g := strings.TrimSpace(memoryGuidance); g != "" {
 		return prompt + "\n\n" + g
 	}
 	return prompt
 }
 
-func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
+func build(b *Bundle, res *artifactsrc.Resolver, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
 	name, desc := b.Card.Name, b.Card.Description
-	behaviour := behaviourLayer(b.Prompt, memoryGuidance)
-	// Every Agent() input below is fixed once build() returns except today() -
-	// cache the assembled prompt instead of rebuilding it on every model call.
-	prompt := promptbuilder.CacheByDay(func() string {
-		// "" workspace: native bundles are never a coding agent (those run as external ACP subprocesses - see internal/serve's ACP branch),
-		// so there is no sandboxed clone/toolchain to state facts about. skills is nil here (not the caller's skills arg): every ADK-native
-		// agent's Toolsets already carries a SkillToolset, whose own ProcessRequest renders the roster - rendering it here too would duplicate it in every request (audit finding A4).
-		return promptbuilder.Agent(name, desc, tools, nil, false, behaviour, grading, "")
-	})
+	behaviour := func(ctx context.Context) artifactsrc.Artifact { return b.ResolvePrompt(ctx, res) }
+	// Every Agent() input below is fixed once build() returns except today() and
+	// the resolved prompt - cache the assembled prompt on both.
+	prompt := promptbuilder.CacheByDay(
+		func(ctx context.Context) string { return behaviour(ctx).VersionID },
+		func(ctx context.Context) string {
+			// "" workspace: native bundles are never a coding agent (those run as external ACP subprocesses - see internal/serve's ACP branch),
+			// so there is no sandboxed clone/toolchain to state facts about. skills is nil here (not the caller's skills arg): every ADK-native
+			// agent's Toolsets already carries a SkillToolset, whose own ProcessRequest renders the roster - rendering it here too would duplicate it in every request (audit finding A4).
+			layer := BehaviourLayer(strings.TrimSpace(behaviour(ctx).Body), memoryGuidance)
+			return promptbuilder.Agent(name, desc, tools, nil, false, layer, grading, "")
+		})
 	cfg := llmagent.Config{
 		Name:        name,
 		Description: desc,
 		Model:       m,
-		InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
-			return prompt(), nil
+		InstructionProvider: func(rc adkagent.ReadonlyContext) (string, error) {
+			return prompt(rc), nil
 		},
 		Tools:    tools,
 		Toolsets: toolsets,

@@ -6,7 +6,8 @@ package quack
 import "embed"
 
 // .agents/vendor/dotagents is NOT in git - run `make plugins` on a fresh clone or
-// this embed fails to build. config/*.md ride along as vetting's gate fallback.
+// this embed fails to build. config/*.md ride along as vetting's gate fallback,
+// config/prompts as the static source for the named artifacts (internal/artifactsrc).
 //
-//go:embed all:agents all:skills all:.agents/vendor/dotagents/skills config/rubric.md config/constitution.md
+//go:embed all:agents all:skills all:.agents/vendor/dotagents/skills all:config/prompts config/rubric.md config/constitution.md
 var Embedded embed.FS

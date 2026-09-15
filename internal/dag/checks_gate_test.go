@@ -72,7 +72,7 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 		}
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"coder": ag}, nil,
-		vetting.NewJudgeFactory(stub, nil, nil), cfgFor, nil)
+		vetting.NewJudgeFactory(nil, stub, nil, nil), cfgFor, nil)
 	// One node at a time: the three root nodes share this ONE local llmagent, and a
 	// local llmagent is not safe for concurrent RunNode (production serves agents over
 	// A2A - separate sessions per call - so this only bites the test's local agent). The checks-folding assertions don't depend on concurrency; serial is deterministic.

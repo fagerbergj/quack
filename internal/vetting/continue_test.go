@@ -115,7 +115,7 @@ func runContGate(t *testing.T, stub model.LLM, cfg Config, task string) (string,
 	if err != nil {
 		t.Fatalf("worker: %v", err)
 	}
-	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}

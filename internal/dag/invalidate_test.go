@@ -225,7 +225,7 @@ func TestStaleFlagClearedOnFreshRunKeptOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub},
-		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{} }, nil)
+		vetting.NewJudgeFactory(nil, stub, nil, nil), func(string) vetting.Config { return vetting.Config{} }, nil)
 	ex.SetSetup(func(context.Context, string, string, string, Setup) error { return errors.New("clone denied") })
 	plan := Plan{
 		ID: "p", UserMessage: "go",

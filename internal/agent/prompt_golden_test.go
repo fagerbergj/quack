@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"flag"
 	"io/fs"
 	"os"
@@ -53,15 +54,15 @@ func TestGoldenAgentPrompts(t *testing.T) {
 			continue
 		}
 		dir := bundledir.PathJoin("agents", de.Name())
-		b, err := LoadBundle(dir)
+		b, err := LoadBundle(context.Background(), nil, dir)
 		if err != nil {
 			t.Fatalf("%s: %v", dir, err)
 		}
-		mem, err := LoadBundleMemory(dir)
+		mem, err := LoadBundleMemory(context.Background(), nil, dir)
 		if err != nil {
 			t.Fatalf("%s: %v", dir, err)
 		}
-		got := promptbuilder.Agent(b.Card.Name, b.Card.Description, nil, nil, false, behaviourLayer(b.Prompt, mem), "", "")
+		got := promptbuilder.Agent(b.Card.Name, b.Card.Description, nil, nil, false, BehaviourLayer(b.Prompt, mem), "", "")
 		checkGolden(t, "agent."+de.Name()+".txt", got)
 		seen++
 	}
@@ -72,7 +73,7 @@ func TestGoldenAgentPrompts(t *testing.T) {
 
 // TestGoldenCompactionPrompt pins the summarizer prompt NativeCompactionConfig builds.
 func TestGoldenCompactionPrompt(t *testing.T) {
-	sys, tmpl, err := compactionPrompts()
+	sys, tmpl, err := compactionPrompts(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

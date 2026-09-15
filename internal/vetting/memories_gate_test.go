@@ -90,7 +90,7 @@ func runMemoryVoteNode(t *testing.T, voteOnRetry bool) (res GateResult, lgr *led
 		ChatID: "chat1", Agent: "worker", NodeID: "n1", JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10",
 		ExternalWorker: true, CommitMemory: true, Memory: store, MemoryRole: "coding", Task: "run tests", Ledger: lgr,
 	}
-	node, err := newTestGatedNodeCapture("n1", worker, judge, NewJudgeFactory(judge, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("n1", worker, judge, NewJudgeFactory(nil, judge, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
