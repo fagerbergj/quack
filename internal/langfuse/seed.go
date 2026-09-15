@@ -22,10 +22,9 @@ const (
 	OperatorEdited SeedAction = "operator-edited"
 )
 
-// Seed implements the epic's rules (#1418 Decisions): GET latest; on 404 create with
-// empty config and no production label (Langfuse assigns "latest" itself); if the
-// latest version is itself a seed (commit message "quack-seed <hash>") and the hash
-// differs, create a new seeded version; if the latest was authored by a person, never touch it.
+// Seed applies #1418's seeding rules: create on 404 (no production label; Langfuse adds
+// "latest" itself), re-seed only when the latest version is itself a stale seed, and
+// never touch a version a person authored.
 func (c *Client) Seed(ctx context.Context, name, staticBody, staticHash string) (SeedAction, error) {
 	p, found, err := c.GetPrompt(ctx, name, GetPromptOpts{Label: "latest"})
 	if err != nil {
