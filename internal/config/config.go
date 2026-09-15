@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
@@ -49,6 +50,9 @@ type Config struct {
 	Observability ObservabilityConfig `yaml:"observability"`
 	Auth          *InboundAuthConfig  `yaml:"auth"`
 	Artifacts     ArtifactsConfig     `yaml:"artifacts"`
+	// Prompts binds the named prompt artifacts to a store; absent (the
+	// default) resolves every one from the shipped file.
+	Prompts PromptsConfig `yaml:"prompts"`
 	// Revision identifies the loaded config's content (sha256 of the raw file,
 	// short form) - a deployment-authored workflow shape's provenance stamps
 	// this as its version, so a shape changes version only when quack.yaml does.
@@ -735,10 +739,49 @@ func (c *Config) ModelEffort(name string) string {
 	return c.Models[name].Effort
 }
 
+// PromptsConfig binds the named prompt artifacts (internal/artifactsrc) to a
+// store. An unset Store means static only - exactly today's behaviour.
+type PromptsConfig struct {
+	Store    string `yaml:"store"`
+	CacheTTL string `yaml:"cache_ttl"`
+	PinLabel string `yaml:"pin_label"`
+}
+
+const (
+	defaultPromptCacheTTL = 60 * time.Second
+	// DefaultPromptPinLabel is the store label that pins a name to one version.
+	DefaultPromptPinLabel = "production"
+)
+
+// CacheTTLDuration is how long a resolved artifact is reused; validate has
+// already rejected an unparseable value, so a bad one here means the default.
+func (p PromptsConfig) CacheTTLDuration() time.Duration {
+	if p.CacheTTL == "" {
+		return defaultPromptCacheTTL
+	}
+	d, err := time.ParseDuration(p.CacheTTL)
+	if err != nil || d <= 0 {
+		return defaultPromptCacheTTL
+	}
+	return d
+}
+
+// Label is the store label that pins a name to a version.
+func (p PromptsConfig) Label() string {
+	if p.PinLabel == "" {
+		return DefaultPromptPinLabel
+	}
+	return p.PinLabel
+}
+
 type StoreConfig struct {
-	Kind          string               `yaml:"kind"`
-	URL           string               `yaml:"url"`
-	Extends       string               `yaml:"extends"`
+	Kind    string `yaml:"kind"`
+	URL     string `yaml:"url"`
+	Extends string `yaml:"extends"`
+	// PublicKey/SecretKey: langfuse store credentials, read by the prompt
+	// source in #1421.
+	PublicKey     string               `yaml:"public_key"`
+	SecretKey     string               `yaml:"secret_key"`
 	Embedder      *ProviderModel       `yaml:"embedder"`
 	Consolidation *ConsolidationConfig `yaml:"consolidation"`
 	TopK          int                  `yaml:"top_k"`
@@ -1029,6 +1072,7 @@ func (c *Config) validate() error {
 		c.validateOrchestrator,
 		c.validateAgentMemory,
 		c.validateStoreKinds,
+		c.validatePrompts,
 		c.validateStoreEmbedders,
 		c.validateStoreConsolidation,
 		c.validateSessionStore,
@@ -1193,12 +1237,37 @@ func (c *Config) validateStoreKinds() error {
 			return fmt.Errorf("config: store %q has an unknown or cyclic extends", name)
 		}
 		switch s.Kind {
-		case "postgres", "qdrant", "sqlite":
+		case "postgres", "qdrant", "sqlite", "langfuse":
 		default:
-			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite)", name, s.Kind)
+			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite, langfuse)", name, s.Kind)
 		}
 	}
 
+	return nil
+}
+
+// validatePrompts checks the prompts: block: a named store must exist and be a
+// langfuse one, and cache_ttl must parse.
+func (c *Config) validatePrompts() error {
+	if c.Prompts.CacheTTL != "" {
+		d, err := time.ParseDuration(c.Prompts.CacheTTL)
+		if err != nil {
+			return fmt.Errorf("config: prompts.cache_ttl %q is not a duration: %w", c.Prompts.CacheTTL, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("config: prompts.cache_ttl must be > 0, got %q", c.Prompts.CacheTTL)
+		}
+	}
+	if c.Prompts.Store == "" {
+		return nil
+	}
+	s, ok := c.Store(c.Prompts.Store)
+	if !ok {
+		return fmt.Errorf("config: prompts.store %q is not defined under stores", c.Prompts.Store)
+	}
+	if s.Kind != "langfuse" {
+		return fmt.Errorf("config: prompts.store %q must be a langfuse store, got kind %q", c.Prompts.Store, s.Kind)
+	}
 	return nil
 }
 
