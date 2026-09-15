@@ -7,6 +7,11 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+
+// The CI step runs this from frontend/; the pathspec below is repo-root
+// relative, so anchor the git call at the repo root (the script's parent).
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const MIN_PCT = 70
 const base = process.argv[2]
@@ -19,7 +24,7 @@ if (!base) {
 const lcov = parseLcov(readFileSync(new URL('../frontend/coverage/lcov.info', import.meta.url), 'utf8'))
 
 // --- changed lines from the diff (new-file numbering) ---
-const diff = execFileSync('git', ['diff', '-U0', `${base}...HEAD`, '--', 'frontend/src'], { encoding: 'utf8' })
+const diff = execFileSync('git', ['diff', '-U0', `${base}...HEAD`, '--', 'frontend/src'], { encoding: 'utf8', cwd: ROOT })
 const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/
 const changed = new Map() // repo-relative path -> Set(line)
 let cur = null
@@ -42,7 +47,7 @@ function isGated(p) {
   return (
     p.startsWith('frontend/src/') &&
     !p.startsWith('frontend/src/generated/') &&
-    !/(\.|\/)(test|spec|story)\.(ts|tsx)$/.test(p) &&
+    !/(\.|\/)(stories?|test|spec)\.(ts|tsx)$/.test(p) &&
     /\.(ts|tsx)$/.test(p)
   )
 }

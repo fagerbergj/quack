@@ -132,7 +132,7 @@ func report(num, den int, misses map[string][]miss) bool {
 	return true
 }
 
-// relRepoPath: "github.com/fagerbergj/quack/internal/x/y" -> "internal/x/y.go".
+// relRepoPath: "github.com/fagerbergj/quack/internal/x/y" -> "internal/x/y" (no .go suffix; the diff side strips it to match).
 func relRepoPath(profilePath string) string {
 	if i := strings.Index(profilePath, "quack/"); i >= 0 {
 		return profilePath[i+len("quack/"):]
@@ -142,6 +142,7 @@ func relRepoPath(profilePath string) string {
 
 func changedFiles(diff string) map[string]map[int]bool {
 	res := map[string]map[int]bool{}
+	cur := ""
 	for _, l := range strings.Split(diff, "\n") {
 		if strings.HasPrefix(l, "+++ b/") {
 			p := strings.TrimPrefix(l, "+++ b/")
@@ -169,8 +170,6 @@ func changedFiles(diff string) map[string]map[int]bool {
 	return res
 }
 
-var cur string // ponytail: package var beats threading the name through the loop
-
 func isGenerated(p string) bool {
 	return strings.HasPrefix(p, "internal/schema/") || strings.HasPrefix(p, "frontend/src/generated/")
 }
@@ -183,5 +182,3 @@ func sortedMissFiles(m map[string][]miss) []string {
 	sort.Strings(out)
 	return out
 }
-
-// silence: none
