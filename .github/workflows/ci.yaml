@@ -138,6 +138,8 @@ jobs:
           # would let a PR ship a 4th unchecked Close of the same kind.
           $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./cmd/... ./internal/...
           go run ./tools/sloplint diff "$SLOP_BASE"
+          # Changed-line coverage gate: new code ships covered (>=70%).
+          go run ./tools/coverdiff diff "$SLOP_BASE"
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -188,6 +190,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # the changed-line coverage gate diffs against the PR base SHA.
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -201,6 +206,15 @@ jobs:
         working-directory: frontend
       - run: npm test
         working-directory: frontend
+      # Changed-line coverage gate: new code ships covered (>=70%).
+      - name: changed-line coverage (frontend)
+        if: github.event_name == 'pull_request'
+        env:
+          SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+        working-directory: frontend
+        run: |
+          npm run test -- --coverage
+          node ../scripts/coverage-diff.mjs "$SLOP_BASE"
 
   openapi-lint:
     runs-on: ubuntu-latest
