@@ -196,8 +196,7 @@ func (c *Client) GetPrompt(ctx context.Context, name string, opts GetPromptOpts)
 	if err != nil {
 		return Prompt{}, false, fmt.Errorf("langfuse: get %q: %w", name, err)
 	}
-	defer resp.Body.Close()
-	defer drain(resp.Body)
+	defer func() { drain(resp.Body); _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return Prompt{}, false, nil
@@ -243,8 +242,7 @@ func (c *Client) CreatePrompt(ctx context.Context, req CreatePromptRequest) (Pro
 	if err != nil {
 		return Prompt{}, fmt.Errorf("langfuse: create %q: %w", req.Name, err)
 	}
-	defer resp.Body.Close()
-	defer drain(resp.Body)
+	defer func() { drain(resp.Body); _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Prompt{}, fmt.Errorf("langfuse: create %q: %w", req.Name, newAPIError(resp))
