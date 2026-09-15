@@ -85,6 +85,11 @@ const (
 	QuackBundleHash        = "quack.bundle.hash"
 	GenAIUsageCost         = "gen_ai.usage.cost"
 	GenAIUsageCachedTokens = "gen_ai.usage.cached_tokens"
+
+	// QuackPromptSource/QuackPromptVersionID: which store the round's system
+	// prompt resolved from and its version there (#1420); replay pins on these.
+	QuackPromptSource    = "quack.prompt.source"
+	QuackPromptVersionID = "quack.prompt.version_id"
 )
 
 // vars, not consts - attribute.Value has no constant form.

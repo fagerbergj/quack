@@ -171,7 +171,8 @@ func TestTracedModel_EmitsProvenance(t *testing.T) {
 	stub := &stubModel{name: "priced-model", resps: resps}
 	tm := &tracedModel{LLM: stub, name: "priced-model", pricing: &config.ModelPricing{InputPerMTok: 1, OutputPerMTok: 2}}
 
-	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1", Agent: "worker", BundleHash: "deadbeefcafe0000"})
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1", Agent: "worker", BundleHash: "deadbeefcafe0000",
+		PromptSource: "static", PromptVersionID: "0123456789ab"})
 	for range tm.GenerateContent(ctx, &model.LLMRequest{}, true) {
 	}
 
@@ -184,6 +185,13 @@ func TestTracedModel_EmitsProvenance(t *testing.T) {
 	}
 	if got := attrs["quack.bundle.hash"].AsString(); got != "deadbeefcafe0000" {
 		t.Errorf("quack.bundle.hash = %q, want deadbeefcafe0000", got)
+	}
+	// #1420: which prompt artifact version produced this call.
+	if got := attrs["quack.prompt.source"].AsString(); got != "static" {
+		t.Errorf("quack.prompt.source = %q, want static", got)
+	}
+	if got := attrs["quack.prompt.version_id"].AsString(); got != "0123456789ab" {
+		t.Errorf("quack.prompt.version_id = %q, want 0123456789ab", got)
 	}
 	// 1M input @ $1/Mtok + 2M output @ $2/Mtok = $1 + $4 = $5.
 	if got := attrs["gen_ai.usage.cost"].AsFloat64(); got != 5 {

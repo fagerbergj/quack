@@ -70,6 +70,12 @@ func chatProvenanceAttrs(ctx context.Context, sysHash string) []attribute.KeyVal
 	if c.BundleHash != "" {
 		attrs = append(attrs, attribute.String(otelobs.QuackBundleHash, c.BundleHash))
 	}
+	if c.PromptSource != "" {
+		attrs = append(attrs, attribute.String(otelobs.QuackPromptSource, c.PromptSource))
+	}
+	if c.PromptVersionID != "" {
+		attrs = append(attrs, attribute.String(otelobs.QuackPromptVersionID, c.PromptVersionID))
+	}
 	if sysHash != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIPromptVersion, sysHash))
 	}

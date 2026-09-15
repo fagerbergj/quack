@@ -14,6 +14,11 @@ type Coords struct {
 	// BundleHash: the acting agent's bundle content hash (agent.Bundle.Hash),
 	// stamped alongside Agent - provenance for which prompt version ran.
 	BundleHash string
+	// PromptSource/PromptVersionID: which store the round's system prompt came
+	// from ("static" or the prompts: store name) and its version there, so a
+	// replay can resolve the exact version the run used (#1420).
+	PromptSource    string
+	PromptVersionID string
 	// User: the ADK session identity that owns this run (local user, GitHub
 	// commenter login, etc) - observability attribution only.
 	User string
@@ -59,6 +64,12 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 	if ctx.BundleHash == "" {
 		ctx.BundleHash = stamp.BundleHash
 	}
+	if ctx.PromptSource == "" {
+		ctx.PromptSource = stamp.PromptSource
+	}
+	if ctx.PromptVersionID == "" {
+		ctx.PromptVersionID = stamp.PromptVersionID
+	}
 	if ctx.Round == "" {
 		ctx.Round = stamp.Round
 	}
@@ -79,7 +90,8 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 // (its TraceState wraps a slice), so this can't be a plain `== Coords{}`.
 func (c Coords) IsZero() bool {
 	return c.ChatID == "" && c.Node == "" && c.Agent == "" && c.Round == "" &&
-		c.BundleHash == "" && c.User == "" && c.Source == "" && !c.SpanContext.IsValid()
+		c.BundleHash == "" && c.PromptSource == "" && c.PromptVersionID == "" &&
+		c.User == "" && c.Source == "" && !c.SpanContext.IsValid()
 }
 
 // CoordSetter lets emission wrappers be re-stamped with fresh coordinates after construction.

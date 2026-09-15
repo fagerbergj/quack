@@ -942,7 +942,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	judgeCtx, jspan = startStageSpan(j.nodeCtx, j.sink, j.cfg, j.nodeID, "judge", stream.StageJudge, runID, round)
 	// Replay-ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.
-	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: "judge", BundleHash: j.cfg.BundleHash, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
+	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: "judge", BundleHash: j.cfg.BundleHash, PromptSource: j.cfg.PromptSource, PromptVersionID: j.cfg.PromptVersionID, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
 	ledgerCtx = ledger.WithCoords(j.ctx, judgeCoords)
 	// Same belt-and-suspenders as runWorkerNodeTraced's workerModel stamp.
 	if cs, ok := j.cfg.JudgeModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
@@ -1831,7 +1831,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
-	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, BundleHash: cfg.BundleHash, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
+	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, BundleHash: cfg.BundleHash, PromptSource: cfg.PromptSource, PromptVersionID: cfg.PromptVersionID, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
 	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))
 	// WithAgentContext stamp does not survive RunNode scheduling; inference models get stamped directly.
 	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
