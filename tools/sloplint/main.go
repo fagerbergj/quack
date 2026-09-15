@@ -179,11 +179,9 @@ func funcsFail(fset *token.FileSet, f *ast.File, rel string, rs []rng, src []byt
 	return fail
 }
 
-// ccAllowed: the explicit, reviewable exemption for inherent branchiness
-// (protocol decoders, flat dispatchers) that no split can reduce - the
-// directive must carry a reason, or it is not an exemption, a waiver. It
-// scans the lines directly above the declaration (fd.Doc only binds the
-// adjacent comment block, and the doc may precede the directive).
+// ccAllowed: the reviewable exemption for inherent branchiness no split
+// can reduce - the directive must carry a reason, scanning the lines
+// directly above the declaration (fd.Doc only binds the adjacent block).
 func ccAllowed(src []byte, fset *token.FileSet, fd *ast.FuncDecl) bool {
 	const mark = "sloplint: cc-allow"
 	top := fset.Position(fd.Pos()).Line
