@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
+	"testing"
+)
 
 // The -U0 diff parser is load-bearing for the gate: a misparsed hunk
 // silently un-gates a function, so the parsing and overlap logic get
@@ -67,5 +73,52 @@ func TestOverlaps(t *testing.T) {
 		if got := overlaps(tc.s, tc.e, rs); got != tc.want {
 			t.Errorf("overlaps(%d,%d) = %v, want %v (%s)", tc.s, tc.e, got, tc.want, tc.reason)
 		}
+	}
+}
+
+func TestCcAllowed(t *testing.T) {
+	// a function with CC > 15: ten distinct if/else branches
+	body := "func big(x int) int {\n"
+	for i := 0; i < 16; i++ {
+		body += "\tif x == " + strconv.Itoa(i) + " {\n\t\treturn " + strconv.Itoa(i) + "\n\t}\n"
+	}
+	body += "\treturn -1\n}\n"
+	parse := func(doc string) ([]byte, *token.FileSet, *ast.FuncDecl) {
+		src := "package main\n"
+		if doc != "" {
+			src += doc + "\n"
+		}
+		src += body
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "t.go", []byte(src), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok {
+				return []byte(src), fset, fd
+			}
+		}
+		t.Fatal("no func")
+		return nil, nil, nil
+	}
+	src0, fset0, big := parse("")
+	if cc := funcCC(big); cc <= 15 {
+		t.Fatalf("fixture CC = %d, want > 15", cc)
+	}
+	if ccAllowed(src0, fset0, big) {
+		t.Error("no doc: ccAllowed = true, want false")
+	}
+	if s, fs, fd := parse("// some doc\n"); ccAllowed(s, fs, fd) {
+		t.Error("doc without directive: ccAllowed = true, want false")
+	}
+	if s, fs, fd := parse("// sloplint: cc-allow flat protocol decoder\n"); !ccAllowed(s, fs, fd) {
+		t.Error("directed doc: ccAllowed = false, want true")
+	}
+	if s, fs, fd := parse("// doc line above\n// sloplint: cc-allow flat protocol decoder\n"); !ccAllowed(s, fs, fd) {
+		t.Error("directive under a doc line: ccAllowed = false, want true")
+	}
+	if s, fs, fd := parse("// sloplint: cc-allow\n"); ccAllowed(s, fs, fd) {
+		t.Error("directive without reason: ccAllowed = true, want false")
 	}
 }

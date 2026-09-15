@@ -132,11 +132,15 @@ func checkSlopFile(path, rel string, rs []rng) bool {
 		return false
 	}
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	src, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	return commentRunsFail(fset, f, rel, rs) || funcsFail(fset, f, rel, rs)
+	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+	if err != nil {
+		return false
+	}
+	return commentRunsFail(fset, f, rel, rs) || funcsFail(fset, f, rel, rs, src)
 }
 
 func commentRunsFail(fset *token.FileSet, f *ast.File, rel string, rs []rng) bool {
@@ -156,7 +160,7 @@ func commentRunsFail(fset *token.FileSet, f *ast.File, rel string, rs []rng) boo
 
 // CC on changed functions: golangci --new-from-rev anchors findings at the
 // decl line and misses extensions past CC 15; the hunk ranges catch them.
-func funcsFail(fset *token.FileSet, f *ast.File, rel string, rs []rng) bool {
+func funcsFail(fset *token.FileSet, f *ast.File, rel string, rs []rng, src []byte) bool {
 	fail := false
 	for _, d := range f.Decls {
 		fd, ok := d.(*ast.FuncDecl)
@@ -167,12 +171,34 @@ func funcsFail(fset *token.FileSet, f *ast.File, rel string, rs []rng) bool {
 		if !overlaps(s, e, rs) {
 			continue
 		}
-		if cc := funcCC(fd); cc > 15 {
+		if cc := funcCC(fd); cc > 15 && !ccAllowed(src, fset, fd) {
 			fmt.Printf("%s:%d: %s CC %d > 15 (changed)\n", rel, s, fd.Name.Name, cc)
 			fail = true
 		}
 	}
 	return fail
+}
+
+// ccAllowed: the explicit, reviewable exemption for inherent branchiness
+// (protocol decoders, flat dispatchers) that no split can reduce - the
+// directive must carry a reason, or it is not an exemption, a waiver. It
+// scans the lines directly above the declaration (fd.Doc only binds the
+// adjacent comment block, and the doc may precede the directive).
+func ccAllowed(src []byte, fset *token.FileSet, fd *ast.FuncDecl) bool {
+	const mark = "sloplint: cc-allow"
+	top := fset.Position(fd.Pos()).Line
+	lines := strings.Split(string(src), "\n")
+	for ln := top - 3; ln < top; ln++ {
+		if ln < 1 || ln >= len(lines) {
+			continue
+		}
+		text := lines[ln]
+		i := strings.Index(text, mark)
+		if i >= 0 && strings.TrimSpace(text[i+len(mark):]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------- report-only repo mode ----------
