@@ -15,31 +15,35 @@ import {
 // Per-tool rich body keyed by tool name, falling back to a tidy formatted
 // view (never a raw JSON blob); the flagship is edit_file → a before→after
 // diff. Long bodies are wrapped in Expandable so a big file/diff/output can't wall off the node. Every native quack tool (internal/tools/*) and every name internal/acp/translate.go remaps an ACP call onto has a case here; anything else - an ACP kind we don't specially map, or a tool added after this file was last updated - falls to GenericView, which is still formatted (key→value / pretty JSON), never a raw blob.
+// Lookup record (keyed like the old switch's cases) so unknown names fall
+// to GenericView; every view is a hoisted function declaration below.
+const TOOL_VIEWS: Record<string, (props: { tool: ToolCall }) => ReactNode> = {
+  edit_file: EditFileView,
+  write_file: WriteFileView,
+  read_file: ReadFileView,
+  delete_path: DeletePathView,
+  run_command: RunCommandView,
+  list_dir: ListDirView,
+  glob: GlobView,
+  grep: GrepView,
+  web_search: WebSearchView,
+  web_fetch: WebFetchView,
+  ask_advisor: AskAdvisorView,
+  stage_memory: StageMemoryView,
+  load_memory: LoadMemoryView,
+  get_user_choice: GetUserChoiceView,
+  ask_user: AskUserView,
+  git_commit: GitCommitView,
+  git_diff: GitDiffView,
+  git_log: GitLogView,
+  git_status: GitStatusView,
+  git_branch: GitBranchView,
+  git_push: GitPushView,
+}
+
 export function ToolCallView({ tool }: { tool: ToolCall }) {
-  switch (tool.name) {
-    case 'edit_file': return <EditFileView tool={tool} />
-    case 'write_file': return <WriteFileView tool={tool} />
-    case 'read_file': return <ReadFileView tool={tool} />
-    case 'delete_path': return <DeletePathView tool={tool} />
-    case 'run_command': return <RunCommandView tool={tool} />
-    case 'list_dir': return <ListDirView tool={tool} />
-    case 'glob': return <GlobView tool={tool} />
-    case 'grep': return <GrepView tool={tool} />
-    case 'web_search': return <WebSearchView tool={tool} />
-    case 'web_fetch': return <WebFetchView tool={tool} />
-    case 'ask_advisor': return <AskAdvisorView tool={tool} />
-    case 'stage_memory': return <StageMemoryView tool={tool} />
-    case 'load_memory': return <LoadMemoryView tool={tool} />
-    case 'get_user_choice': return <GetUserChoiceView tool={tool} />
-    case 'ask_user': return <AskUserView tool={tool} />
-    case 'git_commit': return <GitCommitView tool={tool} />
-    case 'git_diff': return <GitDiffView tool={tool} />
-    case 'git_log': return <GitLogView tool={tool} />
-    case 'git_status': return <GitStatusView tool={tool} />
-    case 'git_branch': return <GitBranchView tool={tool} />
-    case 'git_push': return <GitPushView tool={tool} />
-    default: return <GenericView tool={tool} />
-  }
+  const View = TOOL_VIEWS[tool.name] ?? GenericView
+  return <View tool={tool} />
 }
 
 

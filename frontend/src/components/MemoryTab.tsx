@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useLayoutEffect, useRef, type Ref } from 'react'
 import { api, type Memory, type VoteDirection, type MemoryWeekStats, type MemoryScopeStats } from '../api'
 import { MemoryTimeline } from './MemoryTimeline'
 import { MemorySortFilter, type MemorySort, type MemoryTierFilter } from './MemorySortFilter'
@@ -40,6 +40,93 @@ function applyOptimisticVote(m: Memory, vote: VoteDirection): Memory {
 // The Memory tab (#727): browse what quack believes (a list, never falling
 // back to search on error - a browse view that quietly shows a different
 // result set is worse than an error state), search "what would a run recall for this", and forget one entry at a time.
+// Stats fetch (#1267) is independent of the memory list fetch above - it
+// doesn't page or filter, so it has its own loading/error state and only
+// runs once per mount.
+function useMemoryStats(initialStats?: MemoryTabProps['initialStats']) {
+  const [weeks, setWeeks] = useState<MemoryWeekStats[]>(initialStats?.weeks ?? [])
+  const [scopes, setScopes] = useState<MemoryScopeStats[]>(initialStats?.scopes ?? [])
+  const [loading, setLoading] = useState(initialStats === undefined)
+  const [error, setError] = useState<string | null>(initialStats?.error ?? null)
+
+  useEffect(() => {
+    if (initialStats !== undefined) return // story/test seam
+    let cancelled = false
+    setLoading(true)
+    api.getMemoryStats()
+      .then(result => {
+        if (cancelled) return
+        setWeeks(result.weeks ?? [])
+        setScopes(result.scopes ?? [])
+        setError(null)
+      })
+      .catch(e => {
+        if (cancelled) return
+        setError(e instanceof Error ? e.message : 'Failed to load stats')
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [initialStats])
+
+  return { weeks, scopes, loading, error }
+}
+
+// The scrollable list area: loading / error / empty / populated, each an
+// exclusive branch of (loading, error, memories.length, searching).
+function MemoryListBody({ loading, error, searching, bucket, memories, grouped, onForget, onVote, style }:
+  { loading: boolean; error: string | null; searching: boolean; bucket: string; memories: Memory[]; grouped: boolean; onForget: (id: string) => Promise<void>; onVote: (id: string, vote: VoteDirection) => Promise<void>; style?: React.CSSProperties }) {
+  return (
+    <div className="flex-1 overflow-y-auto overscroll-contain" style={style}>
+      {loading && (
+        <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">Loading…</div>
+      )}
+      {!loading && error && (
+        <div className="m-3 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          {error}
+        </div>
+      )}
+      {!loading && !error && memories.length === 0 && (
+        <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">
+          {searching ? 'No memories match that search' : bucket ? 'No memories in this bucket yet' : 'No memories yet'}
+        </div>
+      )}
+      {!loading && !error && memories.length > 0 && (
+        <MemoryTimeline
+          memories={memories}
+          onForget={onForget}
+          onVote={onVote}
+          grouped={grouped}
+        />
+      )}
+    </div>
+  )
+}
+
+function MemoryTabFooter({ footerRef, rangeStart, rangeEnd, total, canGoPrev, canGoNext, onPrevPage, onNextPage }:
+  { footerRef: Ref<HTMLDivElement>; rangeStart: number; rangeEnd: number; total: number; canGoPrev: boolean; canGoNext: boolean; onPrevPage: () => void; onNextPage: () => void }) {
+  return (
+    <div ref={footerRef} className="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+      <span>{rangeStart}–{rangeEnd} of {total}</span>
+      <div className="flex gap-2">
+        <button
+          onClick={onPrevPage}
+          disabled={!canGoPrev}
+          className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+        >
+          Prev
+        </button>
+        <button
+          onClick={onNextPage}
+          disabled={!canGoNext}
+          className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
@@ -79,32 +166,7 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   const footerRef = useRef<HTMLDivElement>(null)
   const [footerHeight, setFooterHeight] = useState(0)
 
-  // Stats fetch (#1267) is independent of the memory list fetch above - it
-  // doesn't page or filter, so it has its own loading/error state and only
-  // runs once per mount.
-  const [statsWeeks, setStatsWeeks] = useState<MemoryWeekStats[]>(initialStats?.weeks ?? [])
-  const [statsScopes, setStatsScopes] = useState<MemoryScopeStats[]>(initialStats?.scopes ?? [])
-  const [statsLoading, setStatsLoading] = useState(initialStats === undefined)
-  const [statsError, setStatsError] = useState<string | null>(initialStats?.error ?? null)
-
-  useEffect(() => {
-    if (initialStats !== undefined) return // story/test seam
-    let cancelled = false
-    setStatsLoading(true)
-    api.getMemoryStats()
-      .then(result => {
-        if (cancelled) return
-        setStatsWeeks(result.weeks ?? [])
-        setStatsScopes(result.scopes ?? [])
-        setStatsError(null)
-      })
-      .catch(e => {
-        if (cancelled) return
-        setStatsError(e instanceof Error ? e.message : 'Failed to load stats')
-      })
-      .finally(() => { if (!cancelled) setStatsLoading(false) })
-    return () => { cancelled = true }
-  }, [initialStats])
+  const { weeks: statsWeeks, scopes: statsScopes, loading: statsLoading, error: statsError } = useMemoryStats(initialStats)
 
   // Debounce: reset paging and adopt the typed query only after 250ms of no
   // further keystrokes (prototype: 9 requests -> 2 for an 8-char query).
@@ -279,50 +341,29 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain" style={showFooter ? { paddingBottom: footerHeight } : undefined}>
-        {loading && (
-          <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">Loading…</div>
-        )}
-        {!loading && error && (
-          <div className="m-3 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
-            {error}
-          </div>
-        )}
-        {!loading && !error && memories.length === 0 && (
-          <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">
-            {searching ? 'No memories match that search' : bucket ? 'No memories in this bucket yet' : 'No memories yet'}
-          </div>
-        )}
-        {!loading && !error && memories.length > 0 && (
-          <MemoryTimeline
-            memories={memories}
-            onForget={handleForget}
-            onVote={handleVote}
-            grouped={sort === 'newest' || sort === 'oldest'}
-          />
-        )}
-      </div>
+      <MemoryListBody
+        loading={loading}
+        error={error}
+        searching={searching}
+        bucket={bucket}
+        memories={memories}
+        grouped={sort === 'newest' || sort === 'oldest'}
+        onForget={handleForget}
+        onVote={handleVote}
+        style={showFooter ? { paddingBottom: footerHeight } : undefined}
+      />
 
       {showFooter && (
-        <div ref={footerRef} className="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <span>{rangeStart}–{rangeEnd} of {total}</span>
-          <div className="flex gap-2">
-            <button
-              onClick={handlePrevPage}
-              disabled={pageIndex === 0}
-              className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              Prev
-            </button>
-            <button
-              onClick={handleNextPage}
-              disabled={!hasMore}
-              className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              Next
-            </button>
-          </div>
-        </div>
+        <MemoryTabFooter
+          footerRef={footerRef}
+          rangeStart={rangeStart}
+          rangeEnd={rangeEnd}
+          total={total}
+          canGoPrev={pageIndex > 0}
+          canGoNext={hasMore}
+          onPrevPage={handlePrevPage}
+          onNextPage={handleNextPage}
+        />
       )}
     </div>
   )

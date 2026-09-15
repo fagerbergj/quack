@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatSummary } from '../api'
-import { isGithubChat, parseGithubRef } from '../lib/github'
+import { isGithubChat, parseGithubRef, type GithubRef } from '../lib/github'
 import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
 import { paletteClasses } from '../lib/colorHash'
 import { FilterPanel } from './FilterPanel'
@@ -98,6 +98,161 @@ export interface ChatListProps {
 // A single chat row. Every row has exactly one always-visible kebab (#1319):
 // an active row's menu holds Archive (reversible); an archived row's holds
 // Restore and permanent Delete. Reusable by both sections.
+// ChatBadges: the row's badge line - GitHub repo/Issue/PR/state badges and
+// the generic origin chip (extension-dispatched chats, e.g. reMarkable).
+function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | undefined }) {
+  const ref = githubRef
+  return (
+    <>
+      {isGithubChat(s) && ref && (
+        <a
+          href={`https://github.com/${ref.repo}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          title={ref.repo}
+          className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-1 rounded hover:underline ${paletteClasses(ref.repo)}`}
+        >
+          {ref.repo.slice(ref.repo.indexOf('/') + 1)}
+        </a>
+      )}
+      {ref && s.github_url && (
+        <a
+          href={s.github_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
+          className="flex-shrink-0 text-[11px] font-semibold tracking-wide px-1 py-1 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+        >
+          {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
+        </a>
+      )}
+      {s.github_state && (
+        <span
+          className={`flex-shrink-0 inline-flex items-center gap-0.5 text-[11px] font-semibold tracking-wide px-1 py-1 rounded ${githubStateBadgeClass(s.github_state)}`}
+          title={s.github_state}
+        >
+          {githubStateIcon(s.github_state) && <Icon name={githubStateIcon(s.github_state)!} className="w-2.5 h-2.5" />}
+          {githubStateLabel(s.github_state)}
+        </span>
+      )}
+      {/* Generic origin chip (extension-dispatched chats, e.g. reMarkable) -
+          label chip, optional badge, subject link. GitHub stays on its own
+          dedicated fields above until it migrates to stamping origin itself. */}
+      {s.origin && (
+        <>
+          {s.origin.href ? (
+            <a
+              href={s.origin.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              title={s.origin.label}
+              className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-1 rounded hover:underline ${paletteClasses(s.origin.extension)}`}
+            >
+              {s.origin.label}
+            </a>
+          ) : (
+            <span
+              title={s.origin.label}
+              className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-1 rounded ${paletteClasses(s.origin.extension)}`}
+            >
+              {s.origin.label}
+            </span>
+          )}
+          {s.origin.badge && (
+            <span
+              className={`flex-shrink-0 text-[11px] font-semibold tracking-wide px-1 py-1 rounded ${originBadgeClass(s.origin.badge)}`}
+              title={s.origin.badge}
+            >
+              {s.origin.badge}
+            </span>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+// ChatRowMenu: the row's kebab - one action point, absolutely positioned in
+// the top-right corner, NOT in flow, so it never grows the row's height.
+// Always visible: touch has no hover to reveal it.
+function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchive, onUnarchive, onDelete }: {
+  s: ChatSummary
+  menuRef: React.RefObject<HTMLDivElement | null>
+  btnRef: React.RefObject<HTMLButtonElement | null>
+  menuOpen: boolean
+  onToggle: () => void
+  archived?: boolean
+  onArchive?: (chatId: string) => void
+  onUnarchive?: (chatId: string) => void
+  onDelete: (e: React.MouseEvent) => void
+}) {
+  return (
+    // Every row's one action point (#1319 - archive/delete both live here,
+    // two clicks instead of a bare one-tap control). Absolutely positioned
+    // in the top-right corner, NOT in flow, so it never grows the row's
+    // height. Always visible: touch has no hover to reveal it.
+    <div ref={menuRef} className="absolute right-0 top-0">
+      <button
+        ref={btnRef}
+        onClick={e => { e.stopPropagation(); onToggle() }}
+        aria-label="Chat actions"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        title="Chat actions"
+        className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+      >
+        <Icon name="more_vert" className="w-5 h-5" />
+      </button>
+      {menuOpen && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-1 z-10 min-w-[8rem] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1"
+        >
+          {!archived && (
+            <button
+              role="menuitem"
+              onClick={e => { e.stopPropagation(); onToggle(); onArchive?.(s.id) }}
+              aria-label="Archive chat"
+              title="Archive chat"
+              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              <Icon name="archive" className="w-3.5 h-3.5" /> Archive
+            </button>
+          )}
+          {archived && onUnarchive && (
+            <button
+              role="menuitem"
+              onClick={e => { e.stopPropagation(); onToggle(); onUnarchive(s.id) }}
+              aria-label="Unarchive chat"
+              title="Unarchive chat"
+              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
+            >
+              <Icon name="history" className="w-3.5 h-3.5" /> Restore
+            </button>
+          )}
+          {archived && (
+            <button
+              role="menuitem"
+              onClick={onDelete}
+              aria-label="Delete chat permanently"
+              title="Delete chat permanently"
+              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              <Icon name="delete" className="w-3.5 h-3.5" /> Delete
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// A single chat row. Every row has exactly one always-visible kebab (#1319):
+// an active row's menu holds Archive (reversible); an archived row's holds
+// Restore and permanent Delete. Reusable by both sections.
 function ChatRow({
   s,
   activeChatId,
@@ -180,132 +335,89 @@ function ChatRow({
           the same vertical space and stays aligned. Repo/Issue/PR badges
           link out to GitHub - filtering by repo/type lives in the FilterPanel. */}
       <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
-        {isGithubChat(s) && ref && (
-          <a
-            href={`https://github.com/${ref.repo}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
-            title={ref.repo}
-            className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-1 rounded hover:underline ${paletteClasses(ref.repo)}`}
-          >
-            {ref.repo.slice(ref.repo.indexOf('/') + 1)}
-          </a>
-        )}
-        {ref && s.github_url && (
-          <a
-            href={s.github_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
-            title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
-            className="flex-shrink-0 text-[11px] font-semibold tracking-wide px-1 py-1 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
-          >
-            {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
-          </a>
-        )}
-        {s.github_state && (
-          <span
-            className={`flex-shrink-0 inline-flex items-center gap-0.5 text-[11px] font-semibold tracking-wide px-1 py-1 rounded ${githubStateBadgeClass(s.github_state)}`}
-            title={s.github_state}
-          >
-            {githubStateIcon(s.github_state) && <Icon name={githubStateIcon(s.github_state)!} className="w-2.5 h-2.5" />}
-            {githubStateLabel(s.github_state)}
-          </span>
-        )}
-        {/* Generic origin chip (extension-dispatched chats, e.g. reMarkable) -
-            label chip, optional badge, subject link. GitHub stays on its own
-            dedicated fields above until it migrates to stamping origin itself. */}
-        {s.origin && (
-          <>
-            {s.origin.href ? (
-              <a
-                href={s.origin.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={e => e.stopPropagation()}
-                title={s.origin.label}
-                className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-1 rounded hover:underline ${paletteClasses(s.origin.extension)}`}
-              >
-                {s.origin.label}
-              </a>
-            ) : (
-              <span
-                title={s.origin.label}
-                className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-1 rounded ${paletteClasses(s.origin.extension)}`}
-              >
-                {s.origin.label}
-              </span>
-            )}
-            {s.origin.badge && (
-              <span
-                className={`flex-shrink-0 text-[11px] font-semibold tracking-wide px-1 py-1 rounded ${originBadgeClass(s.origin.badge)}`}
-                title={s.origin.badge}
-              >
-                {s.origin.badge}
-              </span>
-            )}
-          </>
-        )}
+        <ChatBadges s={s} githubRef={ref} />
       </div>
       <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{relativeDate(s.updated_at)}</span>
-      {/* Every row's one action point (#1319 - archive/delete both live here,
-          two clicks instead of a bare one-tap control). Absolutely positioned
-          in the top-right corner, NOT in flow, so it never grows the row's
-          height. Always visible: touch has no hover to reveal it. */}
-      <div ref={menuRef} className="absolute right-0 top-0">
-        <button
-          ref={btnRef}
-          onClick={e => { e.stopPropagation(); setMenuOpen(o => !o) }}
-          aria-label="Chat actions"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          title="Chat actions"
-          className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-        >
-          <Icon name="more_vert" className="w-5 h-5" />
-        </button>
-        {menuOpen && (
-          <div
-            role="menu"
-            className="absolute right-0 top-full mt-1 z-10 min-w-[8rem] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1"
-          >
-            {!archived && (
-              <button
-                role="menuitem"
-                onClick={e => { e.stopPropagation(); setMenuOpen(false); onArchive?.(s.id) }}
-                aria-label="Archive chat"
-                title="Archive chat"
-                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              >
-                <Icon name="archive" className="w-3.5 h-3.5" /> Archive
-              </button>
-            )}
-            {archived && onUnarchive && (
-              <button
-                role="menuitem"
-                onClick={e => { e.stopPropagation(); setMenuOpen(false); onUnarchive(s.id) }}
-                aria-label="Unarchive chat"
-                title="Unarchive chat"
-                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
-              >
-                <Icon name="history" className="w-3.5 h-3.5" /> Restore
-              </button>
-            )}
-            {archived && (
-              <button
-                role="menuitem"
-                onClick={handleDelete}
-                aria-label="Delete chat permanently"
-                title="Delete chat permanently"
-                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              >
-                <Icon name="delete" className="w-3.5 h-3.5" /> Delete
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+      <ChatRowMenu
+        s={s}
+        menuRef={menuRef}
+        btnRef={btnRef}
+        menuOpen={menuOpen}
+        onToggle={() => setMenuOpen(o => !o)}
+        archived={archived}
+        onArchive={onArchive}
+        onUnarchive={onUnarchive}
+        onDelete={handleDelete}
+      />
+    </div>
+  )
+}
+
+// mergeFilterState folds a partial update (search box / facet panel / clear)
+// into the current filter state - untouched fields keep their values.
+function mergeFilterState(q: string, selected: SelectedFacets, next: { q?: string; selected?: SelectedFacets }) {
+  return { q: next.q ?? q, selected: next.selected ?? selected }
+}
+
+// withFacetToggled toggles one facet value: present drops it, absent adds it.
+function withFacetToggled(selected: SelectedFacets, facetKey: string, value: string) {
+  const current = selected[facetKey] ?? []
+  return { ...selected, [facetKey]: current.includes(value) ? current.filter(v => v !== value) : [...current, value] }
+}
+
+// NoChats: the list's empty state - "No conversations yet" when the chat
+// list is empty, "No matches" when search/filters hide every chat.
+function NoChats({ chats, listEmpty }: { chats: ChatSummary[]; listEmpty: boolean }) {
+  if (!listEmpty) return null
+  return <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">{chats.length === 0 ? 'No conversations yet' : 'No matches'}</div>
+}
+
+// Archived section: collapsed by default. Always rendered (not gated
+// on archived.length) so it's discoverable before its own list has
+// ever been fetched - #809 loads it lazily on first expand.
+function ArchivedSection({ archived, loaded, expanded, onToggle, activeChatId, onSelect, onDelete, onUnarchive, hasMore, loading, onLoadMore }: {
+  archived: ChatSummary[]
+  loaded: boolean
+  expanded: boolean
+  onToggle: () => void
+  activeChatId: string | null
+  onSelect: (id: string) => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+  onUnarchive?: (chatId: string) => void
+  hasMore?: boolean
+  loading?: boolean
+  onLoadMore?: () => void
+}) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
+        aria-expanded={expanded}
+      >
+        <span aria-hidden="true" className={`transition-transform inline-block ${expanded ? 'rotate-90' : ''}`}>›</span>
+        Archived{loaded ? ` (${archived.length})` : ''}
+      </button>
+      {expanded && (
+        <>
+          {archived.length === 0 && (
+            <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-3 px-3">No archived chats</div>
+          )}
+          {archived.map(s => (
+            <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onUnarchive={onUnarchive} archived />
+          ))}
+          {hasMore && (
+            <button
+              onClick={onLoadMore}
+              disabled={loading}
+              aria-label="Load more archived chats"
+              className="w-full min-h-[44px] text-xs text-center text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+            >
+              {loading ? 'Loading…' : 'Load more'}
+            </button>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -316,15 +428,13 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   const { q, selected } = filterState
 
   function setFilterState(next: { q?: string; selected?: SelectedFacets }) {
-    const state = { q: next.q ?? q, selected: next.selected ?? selected }
+    const state = mergeFilterState(q, selected, next)
     const qs = serializeFilterState(state)
     navigate(window.location.pathname + '?' + qs, { replace: true })
   }
 
   function toggleFacet(facetKey: string, value: string) {
-    const current = selected[facetKey] ?? []
-    const next = current.includes(value) ? current.filter(v => v !== value) : [...current, value]
-    setFilterState({ selected: { ...selected, [facetKey]: next } })
+    setFilterState({ selected: withFacetToggled(selected, facetKey, value) })
   }
 
   const facets = computeFacets(chats)
@@ -360,13 +470,14 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   // the chat pane above it (#1131). The drawer a11y wiring (Esc, focus trap, scroll lock, return focus) is armed on that same query - no width where the panel is off-canvas but the wiring is dark.
   const offCanvas = useMediaQuery('(max-width: 599px)')
   const panelRef = useDrawer(open && offCanvas, onCloseMobile)
+  const dialogAria = offCanvas && open
 
   return (
     <div
       ref={panelRef}
-      role={offCanvas && open ? 'dialog' : undefined}
-      aria-modal={offCanvas && open ? true : undefined}
-      aria-label={offCanvas && open ? 'Chat list' : undefined}
+      role={dialogAria ? 'dialog' : undefined}
+      aria-modal={dialogAria ? true : undefined}
+      aria-label={dialogAria ? 'Chat list' : undefined}
       className={`
       fixed medium:static inset-y-0 left-0 z-40
       h-dvh w-[250px] flex-shrink-0 flex flex-col
@@ -408,12 +519,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
         />
       </div>
       <div className="flex-1 overflow-y-auto overscroll-contain chat-list-scroll">
-        {(running.length === 0 && active.length === 0 && archived.length === 0) && chats.length === 0 && (
-          <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">No conversations yet</div>
-        )}
-        {(running.length === 0 && active.length === 0 && archived.length === 0) && chats.length > 0 && (
-          <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">No matches</div>
-        )}
+        <NoChats chats={chats} listEmpty={running.length === 0 && active.length === 0 && archived.length === 0} />
 
         {/* Active groups: running then idle — empty groups render nothing */}
         {running.map(s => (
@@ -423,39 +529,19 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onArchive={onArchive} />
         ))}
 
-        {/* Archived section: collapsed by default. Always rendered (not gated
-            on archived.length) so it's discoverable before its own list has
-            ever been fetched - #809 loads it lazily on first expand. */}
-        <div>
-          <button
-            onClick={toggleArchived}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
-            aria-expanded={archivedExpanded}
-          >
-            <span aria-hidden="true" className={`transition-transform inline-block ${archivedExpanded ? 'rotate-90' : ''}`}>›</span>
-            Archived{archivedChats !== undefined ? ` (${archived.length})` : ''}
-          </button>
-          {archivedExpanded && (
-            <>
-              {archived.length === 0 && (
-                <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-3 px-3">No archived chats</div>
-              )}
-              {archived.map(s => (
-                <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onUnarchive={onUnarchive} archived />
-              ))}
-              {hasMoreArchivedChats && (
-                <button
-                  onClick={onLoadMoreArchivedChats}
-                  disabled={loadingMoreArchivedChats}
-                  aria-label="Load more archived chats"
-                  className="w-full min-h-[44px] text-xs text-center text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
-                >
-                  {loadingMoreArchivedChats ? 'Loading…' : 'Load more'}
-                </button>
-              )}
-            </>
-          )}
-        </div>
+        <ArchivedSection
+          archived={archived}
+          loaded={archivedChats !== undefined}
+          expanded={archivedExpanded}
+          onToggle={toggleArchived}
+          activeChatId={activeChatId}
+          onSelect={onSelect}
+          onDelete={onDelete}
+          onUnarchive={onUnarchive}
+          hasMore={hasMoreArchivedChats}
+          loading={loadingMoreArchivedChats}
+          onLoadMore={onLoadMoreArchivedChats}
+        />
 
         {hasMoreChats && (
           <button

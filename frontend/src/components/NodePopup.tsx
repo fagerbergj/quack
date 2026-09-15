@@ -71,13 +71,128 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
   )
 }
 
+// PromptBlock: the node's prompt as a chat bubble - AssistantText by
+// default, an inline editor while a not-yet-started prompt is being edited.
+function PromptBlock({ nodeId, agent, task, notStarted, onEditTask }: {
+  nodeId: string
+  agent: string
+  task: string
+  notStarted: boolean
+  onEditTask?: (nodeId: string, task: string) => void
+}) {
+  const [editingTask, setEditingTask] = useState(false)
+  const [taskText, setTaskText] = useState(task)
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <BubbleHeader agent={agent} />
+        {notStarted && onEditTask && !editingTask && (
+          <button onClick={() => { setTaskText(task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 min-w-[24px] min-h-[24px] inline-flex items-center justify-center text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">
+            <Icon name="edit" className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      {editingTask ? (
+        <div className="space-y-2">
+          <textarea
+            autoFocus
+            value={taskText}
+            onChange={e => setTaskText(e.target.value)}
+            rows={6}
+            className="w-full text-base px-2 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { onEditTask?.(nodeId, taskText); setEditingTask(false) }}
+              className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline"
+            >
+              save
+            </button>
+            <button onClick={() => setEditingTask(false)} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
+          </div>
+        </div>
+      ) : (
+        <AssistantText text={task} />
+      )}
+    </>
+  )
+}
+
+// QueueSection: the running node's queued messages - plain history,
+// immutable once delivered.
+function QueueSection({ nodeId, queue, onEditQueuedMessage, onRemoveQueuedMessage }: {
+  nodeId: string
+  queue: QueuedMessage[]
+  onEditQueuedMessage?: (nodeId: string, messageId: string, text: string) => void
+  onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
+}) {
+  if (queue.length === 0) return null
+  return (
+    <div>
+      <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+        Queued messages
+      </span>
+      <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
+        Delivered into the live round when possible; "parked" ones wait for the node's next turn boundary.
+      </p>
+      <ul className="space-y-1.5">
+        {queue.map(m => (
+          <QueuedMessageRow
+            key={m.id}
+            msg={m}
+            onEdit={onEditQueuedMessage ? (text) => onEditQueuedMessage(nodeId, m.id, text) : undefined}
+            onRemove={onRemoveQueuedMessage ? () => onRemoveQueuedMessage(nodeId, m.id) : undefined}
+          />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// InputRow: the shared input that queues a message on a running node or
+// answers a needs_input node - same widget, different destination.
+function InputRow({ answering, value, onChange, onSubmit }: {
+  answering: boolean
+  value: string
+  onChange: (text: string) => void
+  onSubmit: () => void
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        autoFocus={answering}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onSubmit() }
+        }}
+        placeholder={answering ? 'Type your answer…' : 'Queue a message for this node…'}
+        className={`flex-1 min-w-0 text-base px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
+          answering
+            ? 'border-blue-300 dark:border-blue-700 focus:ring-blue-400'
+            : 'border-gray-300 dark:border-gray-600 focus:ring-gray-400'
+        }`}
+      />
+      <button
+        onClick={onSubmit}
+        disabled={!value.trim()}
+        aria-label={answering ? 'Send answer' : 'Queue message'}
+        title={answering ? 'Send answer' : 'Queue message'}
+        className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+          answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'
+        }`}
+      >
+        <Icon name="send" className="w-4 h-4" />
+      </button>
+    </div>
+  )
+}
+
 export function NodePopup({
   node, state, onClose,
   onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask, onAnswerQuestion,
 }: Props) {
   const [inputText, setInputText] = useState('')
-  const [editingTask, setEditingTask] = useState(false)
-  const [taskText, setTaskText] = useState(node.task)
 
   // A node is editable-before-start only while still `queued` (never
   // dispatched) - matches the server's check (PATCH .../nodes/{id}).
@@ -117,36 +232,7 @@ export function NodePopup({
 
       {/* Prompt - the same bubble treatment as an assistant turn in chat. */}
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-        <div className="flex items-center justify-between">
-          <BubbleHeader agent={node.agent} />
-          {notStarted && onEditTask && !editingTask && (
-            <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 min-w-[24px] min-h-[24px] inline-flex items-center justify-center text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">
-              <Icon name="edit" className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        {editingTask ? (
-          <div className="space-y-2">
-            <textarea
-              autoFocus
-              value={taskText}
-              onChange={e => setTaskText(e.target.value)}
-              rows={6}
-              className="w-full text-base px-2 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-            />
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => { onEditTask?.(node.id, taskText); setEditingTask(false) }}
-                className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline"
-              >
-                save
-              </button>
-              <button onClick={() => setEditingTask(false)} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
-            </div>
-          </div>
-        ) : (
-          <AssistantText text={node.task} />
-        )}
+        <PromptBlock nodeId={node.id} agent={node.agent} task={node.task} notStarted={notStarted} onEditTask={onEditTask} />
       </div>
 
       {/* Pending mid-node question - rendered as its own chat-style bubble,
@@ -162,58 +248,15 @@ export function NodePopup({
       )}
 
       {/* Message queue, only while running - plain history, immutable once delivered. */}
-      {running && !answering && queue.length > 0 && (
-        <div>
-          <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-            Queued messages
-          </span>
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
-            Delivered into the live round when possible; "parked" ones wait for the node's next turn boundary.
-          </p>
-          <ul className="space-y-1.5">
-            {queue.map(m => (
-              <QueuedMessageRow
-                key={m.id}
-                msg={m}
-                onEdit={onEditQueuedMessage ? (text) => onEditQueuedMessage(node.id, m.id, text) : undefined}
-                onRemove={onRemoveQueuedMessage ? () => onRemoveQueuedMessage(node.id, m.id) : undefined}
-              />
-            ))}
-          </ul>
-        </div>
+      {running && !answering && (
+        <QueueSection nodeId={node.id} queue={queue} onEditQueuedMessage={onEditQueuedMessage} onRemoveQueuedMessage={onRemoveQueuedMessage} />
       )}
 
       {/* One shared input: queues a message on a running node (delivered at
           its next turn boundary), or answers a needs_input node (resumes
           it immediately) - same widget, different destination. */}
       {((running && onQueueMessage) || (answering && onAnswerQuestion)) && (
-        <div className="flex items-center gap-2">
-          <input
-            autoFocus={answering}
-            value={inputText}
-            onChange={e => setInputText(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && inputText.trim()) { e.preventDefault(); submitInput() }
-            }}
-            placeholder={answering ? 'Type your answer…' : 'Queue a message for this node…'}
-            className={`flex-1 min-w-0 text-base px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
-              answering
-                ? 'border-blue-300 dark:border-blue-700 focus:ring-blue-400'
-                : 'border-gray-300 dark:border-gray-600 focus:ring-gray-400'
-            }`}
-          />
-          <button
-            onClick={submitInput}
-            disabled={!inputText.trim()}
-            aria-label={answering ? 'Send answer' : 'Queue message'}
-            title={answering ? 'Send answer' : 'Queue message'}
-            className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
-              answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'
-            }`}
-          >
-            <Icon name="send" className="w-4 h-4" />
-          </button>
-        </div>
+        <InputRow answering={answering} value={inputText} onChange={setInputText} onSubmit={submitInput} />
       )}
       {answering && !onAnswerQuestion && (
         <p className="text-[11px] text-gray-500 dark:text-gray-400 italic">

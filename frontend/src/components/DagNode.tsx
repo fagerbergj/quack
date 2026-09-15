@@ -14,6 +14,23 @@ import { traceUrl } from '../state/clientConfig'
 import { Icon } from './Icon'
 import { Sheet } from './Sheet'
 
+// Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
+const isTerminal = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'cancelled'
+
+// needs_input is the legacy DB/SSE spelling of paused/awaiting_input - both
+// are "paused" for transition purposes (dag.CanTransition treats them alike).
+const isPausedStatus = (s: NodeStatus) => s === 'paused' || s === 'needs_input'
+
+// The per-status action flags for NodeMenu's items - startable/cancellable
+// mirror dag.CanTransition's legal transitions from each state.
+function menuFlags(status: NodeStatus, canQueue: boolean, canEdit: boolean) {
+  const terminal = isTerminal(status)
+  const startable = !terminal && (isPausedStatus(status) || status === 'queued')
+  const cancellable = !terminal && (status === 'running' || startable)
+  const hasSecondary = !terminal && (canQueue || canEdit)
+  return { startable, cancellable, hasSecondary }
+}
+
 // The node's ⋮ overflow menu: one click for pause/start/stop (no popup
 // round-trip); "queue a message…" / "edit prompt" open the popup only when
 // they need its input/editor. Hidden entirely on a terminal node (done/failed/cancelled) - nothing left to do.
@@ -55,19 +72,12 @@ function NodeMenu({
     }
   }, [open])
 
-  const terminal = status === 'done' || status === 'failed' || status === 'cancelled'
+  const terminal = isTerminal(status)
   // A terminal node has nothing left to control, but its output artifacts are
   // still worth a menu - the whole point of viewing them is usually AFTER a
   // node finishes. Only fully hide the menu when there's truly nothing in it.
   if (terminal && !onOpenArtifacts && !onOpenMemories) return null
-
-  const running = status === 'running'
-  // needs_input is the legacy DB/SSE spelling of paused/awaiting_input - both
-  // are "paused" for transition purposes (dag.CanTransition treats them alike).
-  const paused = status === 'paused' || status === 'needs_input'
-  const startable = !terminal && (paused || status === 'queued')
-  const cancellable = !terminal && (running || startable)
-  const hasSecondary = !terminal && (canQueue || canEdit)
+  const { startable, cancellable, hasSecondary } = menuFlags(status, canQueue, canEdit)
 
   return (
     <div ref={ref} className="relative shrink-0">
@@ -85,47 +95,89 @@ function NodeMenu({
         <Icon name="more_vert" className="w-5 h-5" />
       </button>
       {open && (
-        <div role="menu" className="absolute z-20 right-0 mt-1 w-48 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
-          {running && onPause && (
-            <button role="menuitem" onClick={() => { onPause(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="pause" className="w-3.5 h-3.5" /> Pause
-            </button>
-          )}
-          {startable && onResume && (
-            <button role="menuitem" onClick={() => { onResume(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="play_arrow" className="w-3.5 h-3.5" /> Start
-            </button>
-          )}
-          {cancellable && onCancel && (
-            <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="stop" className="w-3.5 h-3.5" /> Stop
-            </button>
-          )}
-          {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-          {canQueue && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
-            </button>
-          )}
-          {canEdit && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="edit" className="w-3.5 h-3.5" /> Edit prompt
-            </button>
-          )}
-          {onOpenArtifacts && (
-            <>
-              {!terminal && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-              <button role="menuitem" onClick={() => { onOpenArtifacts(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
-                <Icon name="archive" className="w-3.5 h-3.5" /> Artifacts
-              </button>
-            </>
-          )}
-          {onOpenMemories && (
-            <button role="menuitem" onClick={() => { onOpenMemories(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="memory" className="w-3.5 h-3.5" /> Memories
-            </button>
-          )}
-        </div>
+        <NodeMenuItems
+          nodeId={nodeId}
+          running={status === 'running'}
+          terminal={terminal}
+          startable={startable}
+          cancellable={cancellable}
+          hasSecondary={hasSecondary}
+          canQueue={canQueue}
+          canEdit={canEdit}
+          onPause={onPause}
+          onResume={onResume}
+          onCancel={onCancel}
+          onOpenPopup={onOpenPopup}
+          onOpenArtifacts={onOpenArtifacts}
+          onOpenMemories={onOpenMemories}
+          close={close}
+        />
+      )}
+    </div>
+  )
+}
+
+// NodeMenu's open state: the per-status items (pause/start/stop, queue a
+// message, edit prompt, artifacts, memories), each a 44px menu row.
+function NodeMenuItems({ nodeId, running, terminal, startable, cancellable, hasSecondary, canQueue, canEdit,
+  onPause, onResume, onCancel, onOpenPopup, onOpenArtifacts, onOpenMemories, close,
+}: {
+  nodeId: string
+  running: boolean
+  terminal: boolean
+  startable: boolean
+  cancellable: boolean
+  hasSecondary: boolean
+  canQueue: boolean
+  canEdit: boolean
+  onPause?: (nodeId: string) => void
+  onResume?: (nodeId: string) => void
+  onCancel?: (nodeId: string) => void
+  onOpenPopup: () => void
+  onOpenArtifacts?: () => void
+  onOpenMemories?: () => void
+  close: () => void
+}) {
+  return (
+    <div role="menu" className="absolute z-20 right-0 mt-1 w-48 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
+      {running && onPause && (
+        <button role="menuitem" onClick={() => { onPause(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <Icon name="pause" className="w-3.5 h-3.5" /> Pause
+        </button>
+      )}
+      {startable && onResume && (
+        <button role="menuitem" onClick={() => { onResume(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <Icon name="play_arrow" className="w-3.5 h-3.5" /> Start
+        </button>
+      )}
+      {cancellable && onCancel && (
+        <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <Icon name="stop" className="w-3.5 h-3.5" /> Stop
+        </button>
+      )}
+      {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
+      {canQueue && (
+        <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
+        </button>
+      )}
+      {canEdit && (
+        <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <Icon name="edit" className="w-3.5 h-3.5" /> Edit prompt
+        </button>
+      )}
+      {onOpenArtifacts && (
+        <>
+          {!terminal && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
+          <button role="menuitem" onClick={() => { onOpenArtifacts(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <Icon name="archive" className="w-3.5 h-3.5" /> Artifacts
+          </button>
+        </>
+      )}
+      {onOpenMemories && (
+        <button role="menuitem" onClick={() => { onOpenMemories(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <Icon name="memory" className="w-3.5 h-3.5" /> Memories
+        </button>
       )}
     </div>
   )
@@ -472,6 +524,199 @@ function RetryControl({ nodeId, onRetry }: {
 }
 
 
+// NodeStateChips: the amber "steered" chip (delivered queue messages, #998)
+// and the gray "continues" chip (a node resumed on its prior session).
+function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFrom?: string }) {
+  return (
+    <>
+      {steers && steers.length > 0 && (
+        <span
+          className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+          title={`Queued message(s) delivered:\n${steers.join('\n')}`}
+        >
+          <Icon name="mail" className="w-3 h-3" /> steered{steers.length > 1 ? ` ×${steers.length}` : ''}
+        </span>
+      )}
+      {resumedFrom && (
+        <span
+          className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
+          title={`This node picked up where it left off, on its own prior session (${resumedFrom})`}
+        >
+          <Icon name="history" className="w-3 h-3" /> continues
+        </span>
+      )}
+    </>
+  )
+}
+
+// The named state leads the metadata group so that below `medium`
+// it wraps onto the muted second line with the model/tokens instead
+// of squeezing the agent name off the first (a needs_input node
+// also carries the Answer button there).
+function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagNodeDef; pauseLabel?: string }) {
+  return (
+    <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
+      <StatusDot status={state.status} label={pauseLabel} />
+      {state.model && (
+        <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
+          {state.model}
+        </span>
+      )}
+      {state.finishReason === 'MAX_TOKENS' && (
+        <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400" title="Response was truncated at the token limit">
+          truncated
+        </span>
+      )}
+      {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
+        <span
+          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+          title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
+        >
+          <Icon name="warning" className="w-3 h-3" /> not checked
+        </span>
+      )}
+      {state.totalTokens != null && state.totalTokens > 0 && (
+        <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
+          {state.totalTokens.toLocaleString()} tokens
+          {state.cachedTokens != null && state.cachedTokens > 0 && (
+            <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
+          )}
+        </span>
+      )}
+      {traceUrl(state.traceId) && (
+        <a
+          href={traceUrl(state.traceId)}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline"
+          title="Open this run's trace in the tracing backend (whole run, not just this node)"
+        >
+          run trace
+        </a>
+      )}
+      <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
+    </div>
+  )
+}
+
+// NodeElapsed: the header's right-hand timer.
+// A finished node shows the server-measured duration (reconnect-proof);
+// a running one ticks live from the server start time.
+function NodeElapsed({ state }: { state: NodeState }) {
+  return (state.finishedAt != null && state.serverDurationMs != null) ? (
+    <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
+  ) : state.startedAt != null ? (
+    <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
+      <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
+    </span>
+  ) : null
+}
+
+// SidePanels: the node's Artifacts and Memories panels (a real chat only).
+// Three narrow fields, not the whole NodeState: DagNode is memoized
+// and the panel shouldn't re-render on every SSE event for the node
+// (#1178). nodeError is the same value the red banner below renders
+// (failed status), so a transient non-failure error never reads as
+// "the node failed" in an empty panel.
+function SidePanels({ chatId, node, state, artifactsOpen, memoriesOpen, onCloseArtifacts, onCloseMemories }: {
+  chatId: string
+  node: DagNodeDef
+  state: NodeState
+  artifactsOpen: boolean
+  memoriesOpen: boolean
+  onCloseArtifacts: () => void
+  onCloseMemories: () => void
+}) {
+  return (
+    <>
+      {artifactsOpen && (
+        <ArtifactPanel
+          chatId={chatId}
+          nodeId={node.id}
+          nodeAgent={agentLabel(node.agent)}
+          nodeTask={node.task}
+          nodeError={state.status === 'failed' && state.error ? state.error : undefined}
+          nodeArtifactKind={node.artifact ?? undefined}
+          onClose={onCloseArtifacts}
+        />
+      )}
+      {memoriesOpen && (
+        <NodeMemoriesPanel
+          chatId={chatId}
+          nodeId={node.id}
+          judgeRounds={state.judgeRounds}
+          onClose={onCloseMemories}
+        />
+      )}
+    </>
+  )
+}
+
+// RunGroupList: the per-run stage cards, grouped (groupWorkerRuns).
+function RunGroupList({ runs, activeIdx }: { runs: AgentRun[]; activeIdx: number }) {
+  return (
+    <>
+      {groupWorkerRuns(runs, activeIdx).map(group => {
+        const groupRunning = group.activeIdx >= 0
+        switch (group.stage) {
+          case 'judge':   return <JudgeCard key={group.runs[0].runId} run={group.runs[0]} running={groupRunning} />
+          case 'revise':  return <RevisionCard key={group.runs[0].runId} run={group.runs[0]} running={groupRunning} />
+          default:        return <WorkerCard key={group.runs[0].runId} runs={group.runs} running={groupRunning} />
+        }
+      })}
+    </>
+  )
+}
+
+// StatusBanners: the footer state banners under the vetted answer.
+function StatusBanners({ state }: { state: NodeState }) {
+  return (
+    <>
+      {/* Failed state */}
+      {state.status === 'failed' && state.error && (
+        <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
+          {state.error}
+        </div>
+      )}
+
+      {/* Stopped by the user (node_cancelled) - rendered neutrally, not as an error */}
+      {state.status === 'cancelled' && (
+        <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40">
+          Stopped by you
+        </div>
+      )}
+    </>
+  )
+}
+
+
+// NodeAnswerButton: the filled primary action on a node parked on a question.
+// A node blocked on the user is the one state where the fix is the
+// primary action, so it is a filled button, not a kebab item.
+function NodeAnswerButton({ canAnswer, onClick }: { canAnswer: boolean; onClick: () => void }) {
+  if (!canAnswer) return null
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="shrink-0 h-11 -my-3 px-3 inline-flex items-center gap-1 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors"
+    >
+      <Icon name="help" className="w-3.5 h-3.5" /> Answer
+    </button>
+  )
+}
+
+// RetryGate: RetryControl on a live turn, for a finished node only.
+function RetryGate({ nodeId, finished, onRetry }: {
+  nodeId: string
+  finished: boolean
+  onRetry?: (nodeId: string, guidance?: string) => void
+}) {
+  if (!finished || !onRetry) return null
+  return <RetryControl nodeId={nodeId} onRetry={onRetry} />
+}
+
+
 interface Props {
   node: DagNodeDef
   state: NodeState
@@ -503,15 +748,14 @@ export const DagNode = memo(function DagNode({
 }: Props) {
   const running = state.status === 'running'
   const notStarted = state.status === 'queued'
-  // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
-  const finished = state.status === 'done' || state.status === 'failed' || state.status === 'cancelled'
+  const finished = isTerminal(state.status)
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
   const [popupOpen, setPopupOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [memoriesOpen, setMemoriesOpen] = useState(false)
   const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
-  const isPaused = state.status === 'paused' || state.status === 'needs_input'
+  const isPaused = isPausedStatus(state.status)
   const pauseLabel = isPaused ? pausedStatusLabel(state.status, state.pauseReason) : undefined
   const canAnswer = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion
 
@@ -533,87 +777,10 @@ export const DagNode = memo(function DagNode({
         </span>
         {isAcpAgent(node.agent) && <AcpBadge />}
         <QueuedBadge count={pendingQueueCount} />
-        {state.steers && state.steers.length > 0 && (
-          <span
-            className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
-            title={`Queued message(s) delivered:\n${state.steers.join('\n')}`}
-          >
-            <Icon name="mail" className="w-3 h-3" /> steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
-          </span>
-        )}
-        {state.resumedFrom && (
-          <span
-            className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
-            title={`This node picked up where it left off, on its own prior session (${state.resumedFrom})`}
-          >
-            <Icon name="history" className="w-3 h-3" /> continues
-          </span>
-        )}
-        {/* The named state leads the metadata group so that below `medium`
-            it wraps onto the muted second line with the model/tokens instead
-            of squeezing the agent name off the first (a needs_input node
-            also carries the Answer button there). */}
-        <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
-          <StatusDot status={state.status} label={pauseLabel} />
-          {state.model && (
-            <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
-              {state.model}
-            </span>
-          )}
-          {state.finishReason === 'MAX_TOKENS' && (
-            <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400" title="Response was truncated at the token limit">
-              truncated
-            </span>
-          )}
-          {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
-            <span
-              className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
-              title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
-            >
-              <Icon name="warning" className="w-3 h-3" /> not checked
-            </span>
-          )}
-          {state.totalTokens != null && state.totalTokens > 0 && (
-            <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
-              {state.totalTokens.toLocaleString()} tokens
-              {state.cachedTokens != null && state.cachedTokens > 0 && (
-                <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
-              )}
-            </span>
-          )}
-          {traceUrl(state.traceId) && (
-            <a
-              href={traceUrl(state.traceId)}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline"
-              title="Open this run's trace in the tracing backend (whole run, not just this node)"
-            >
-              run trace
-            </a>
-          )}
-          <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
-        </div>
-        {/* A finished node shows the server-measured duration (reconnect-proof);
-            a running one ticks live from the server start time. */}
-        {(state.finishedAt != null && state.serverDurationMs != null) ? (
-          <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
-        ) : state.startedAt != null ? (
-          <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
-            <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
-          </span>
-        ) : null}
-        {/* A node blocked on the user is the one state where the fix is the
-            primary action, so it is a filled button, not a kebab item. */}
-        {canAnswer && (
-          <button
-            type="button"
-            onClick={() => setPopupOpen(true)}
-            className="shrink-0 h-11 -my-3 px-3 inline-flex items-center gap-1 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors"
-          >
-            <Icon name="help" className="w-3.5 h-3.5" /> Answer
-          </button>
-        )}
+        <NodeStateChips steers={state.steers} resumedFrom={state.resumedFrom} />
+        <NodeMetaRow state={state} node={node} pauseLabel={pauseLabel} />
+        <NodeElapsed state={state} />
+        <NodeAnswerButton canAnswer={canAnswer} onClick={() => setPopupOpen(true)} />
         <NodeMenu
           nodeId={node.id}
           status={state.status}
@@ -653,64 +820,30 @@ export const DagNode = memo(function DagNode({
           onAnswerQuestion={onAnswerQuestion}
         />
       )}
-      {/* Three narrow fields, not the whole NodeState: DagNode is memoized
-          and the panel shouldn't re-render on every SSE event for the node
-          (#1178). nodeError is the same value the red banner below renders
-          (failed status), so a transient non-failure error never reads as
-          "the node failed" in an empty panel. */}
-      {artifactsOpen && chatId && (
-        <ArtifactPanel
+      {chatId && (
+        <SidePanels
           chatId={chatId}
-          nodeId={node.id}
-          nodeAgent={agentLabel(node.agent)}
-          nodeTask={node.task}
-          nodeError={state.status === 'failed' && state.error ? state.error : undefined}
-          nodeArtifactKind={node.artifact ?? undefined}
-          onClose={() => setArtifactsOpen(false)}
-        />
-      )}
-      {memoriesOpen && chatId && (
-        <NodeMemoriesPanel
-          chatId={chatId}
-          nodeId={node.id}
-          judgeRounds={state.judgeRounds}
-          onClose={() => setMemoriesOpen(false)}
+          node={node}
+          state={state}
+          artifactsOpen={artifactsOpen}
+          memoriesOpen={memoriesOpen}
+          onCloseArtifacts={() => setArtifactsOpen(false)}
+          onCloseMemories={() => setMemoriesOpen(false)}
         />
       )}
 
       {/* Retry a finished node (failed or done) + its downstream, on a live turn */}
-      {finished && onRetry && (
-        <RetryControl nodeId={node.id} onRetry={onRetry} />
-      )}
+      <RetryGate nodeId={node.id} finished={finished} onRetry={onRetry} />
 
       {/* Per-run stage cards - consecutive worker runs (e.g. a deterministic-
           check retry continuation) merge into one activity feed rather than a
           new boxed block; a judge-triggered revise keeps its own labeled card. */}
-      {groupWorkerRuns(runs, activeIdx).map(group => {
-        const groupRunning = group.activeIdx >= 0
-        switch (group.stage) {
-          case 'judge':   return <JudgeCard key={group.runs[0].runId} run={group.runs[0]} running={groupRunning} />
-          case 'revise':  return <RevisionCard key={group.runs[0].runId} run={group.runs[0]} running={groupRunning} />
-          default:        return <WorkerCard key={group.runs[0].runId} runs={group.runs} running={groupRunning} />
-        }
-      })}
+      <RunGroupList runs={runs} activeIdx={activeIdx} />
 
       {/* Vetted answer (below the stage cards, for every node) */}
       {!isFinal && <NodeAnswer answer={answer} />}
 
-      {/* Failed state */}
-      {state.status === 'failed' && state.error && (
-        <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
-          {state.error}
-        </div>
-      )}
-
-      {/* Stopped by the user (node_cancelled) - rendered neutrally, not as an error */}
-      {state.status === 'cancelled' && (
-        <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40">
-          Stopped by you
-        </div>
-      )}
+      <StatusBanners state={state} />
     </div>
   )
 })

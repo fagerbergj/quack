@@ -143,7 +143,7 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
           {confirming ? (
             <div className="flex items-center gap-1.5 px-2 py-1">
               <button
-                onClick={handleConfirm}
+                onClick={() => { void handleConfirm() }}
                 disabled={forgetting}
                 className="text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
               >
@@ -172,13 +172,9 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
   )
 }
 
-// One memory row. memo: a page is 20 rows and a vote only changes one, so
-// without this every row re-renders (and re-formats its dates, #1286) on any
-// sibling's vote. Test-only render counter: the memo test asserts on counts, never on timings.
-export const memoryEntryRenderProbe = { count: 0 }
-
-export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
-  memoryEntryRenderProbe.count++
+// MetaRow: the memory row's secondary line - bucket/author/kind pills, the
+// lifecycle + vote tier badges, minted time, score, and recall stats.
+function MetaRow({ memory }: { memory: Memory }) {
   const voteTier = memory.tier ?? 'unverified'
   const lastUpvoted = relativeTime(memory.last_upvoted_at)
   const lastRecalled = relativeTime(memory.last_recalled_at)
@@ -191,36 +187,49 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
   const mintedTimeRelative = relativeTime(memory.timestamp) ?? mintedTimeText
 
   return (
+    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+      <Pill label={memory.bucket} seed={memory.bucket} />
+      <Pill label={memory.author} seed={memory.author} neutral />
+      {memory.kind && <Pill label={memory.kind} seed={memory.kind} />}
+      <TierBadge memory={memory} />
+      {voteTier === 'verified' && <VoteTierBadge tier={voteTier} />}
+      <span title={mintedTimeText} className="text-[11px] text-gray-500 dark:text-gray-400">{mintedTimeRelative}</span>
+      {memory.score != null && (
+        <span className="text-[11px] text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
+      )}
+      {lastUpvoted && (
+        <span className="text-[11px] text-gray-500 dark:text-gray-400">last upvoted {lastUpvoted}</span>
+      )}
+      {(memory.recalls ?? 0) > 0 && (
+        <span className="text-[11px] text-gray-500 dark:text-gray-400">
+          recalled {memory.recalls}× {lastRecalled ? `(last ${lastRecalled})` : ''}
+        </span>
+      )}
+      {(memory.absorbed_ids?.length ?? 0) > 0 && (
+        <span
+          title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
+          className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400"
+        >
+          merged ×{memory.absorbed_ids!.length}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// One memory row. memo: a page is 20 rows and a vote only changes one, so
+// without this every row re-renders (and re-formats its dates, #1286) on any
+// sibling's vote. Test-only render counter: the memo test asserts on counts, never on timings.
+export const memoryEntryRenderProbe = { count: 0 }
+
+export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
+  memoryEntryRenderProbe.count++
+
+  return (
     <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">{memory.content}</p>
-        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-          <Pill label={memory.bucket} seed={memory.bucket} />
-          <Pill label={memory.author} seed={memory.author} neutral />
-          {memory.kind && <Pill label={memory.kind} seed={memory.kind} />}
-          <TierBadge memory={memory} />
-          {voteTier === 'verified' && <VoteTierBadge tier={voteTier} />}
-          <span title={mintedTimeText} className="text-[11px] text-gray-500 dark:text-gray-400">{mintedTimeRelative}</span>
-          {memory.score != null && (
-            <span className="text-[11px] text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
-          )}
-          {lastUpvoted && (
-            <span className="text-[11px] text-gray-500 dark:text-gray-400">last upvoted {lastUpvoted}</span>
-          )}
-          {(memory.recalls ?? 0) > 0 && (
-            <span className="text-[11px] text-gray-500 dark:text-gray-400">
-              recalled {memory.recalls}× {lastRecalled ? `(last ${lastRecalled})` : ''}
-            </span>
-          )}
-          {(memory.absorbed_ids?.length ?? 0) > 0 && (
-            <span
-              title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
-              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400"
-            >
-              merged ×{memory.absorbed_ids!.length}
-            </span>
-          )}
-        </div>
+        <MetaRow memory={memory} />
         {memory.status === 'invalidated' && memory.invalidation_reason && (
           <p
             title={memory.invalidation_reason}

@@ -111,7 +111,20 @@ export function resolveScoredRevision(body: JudgeRoundContent, primaryId: string
   return body.scored?.find(s => s.artifact_id === primaryId)?.revision ?? fallback
 }
 
-// toAscending converts the revisions endpoint's newest-first ordering
+// makeActiveRoundEffect builds the "tapped chip moves the cursor" effect
+// body (not the click handler): a tap can land BEFORE the revision list has
+// arrived, since both fetches start together on open.
+function makeActiveRoundEffect(activeRoundId: string | null, judgeBodies: Record<string, JudgeRoundContent>, primaryId: string | null, revisions: ArtifactRevisionInfo[], latestRev: number | null, revIdx: number | null, setRevIdx: (i: number) => void) {
+  return () => {
+    if (activeRoundId == null || primaryId == null || revisions.length === 0) return
+    const b = judgeBodies[activeRoundId]
+    if (!b) return
+    const rev = resolveScoredRevision(b, primaryId, latestRev ?? revisions[revisions.length - 1].revision)
+    const idx = revisions.findIndex(x => x.revision === rev)
+    const target = idx >= 0 ? idx : revisions.length - 1
+    if (target !== revIdx) setRevIdx(target)
+  }
+}
 // (openapi.yaml's ArtifactRevisionList) into the ascending list the panel's
 // numeric cursor walks through.
 export function toAscending(revs: ArtifactRevisionInfo[]): ArtifactRevisionInfo[] {
@@ -169,6 +182,43 @@ function moreItemLabel(a: ArtifactSummary, ordinal: number): string {
   return instance
 }
 
+// cursorFor derives the primary's revision cursor values (cursor + previous
+// info, the viewed revision, the list's latest) - a pure function of the
+// list and cursor index, computed every render exactly as before.
+function cursorFor(revIdx: number | null, revisions: ArtifactRevisionInfo[], primary: ArtifactSummary | null) {
+  const curInfo = revIdx != null ? revisions[revIdx] ?? null : null
+  const prevInfo = revIdx != null && revIdx > 0 ? revisions[revIdx - 1] ?? null : null
+  const currentRev = curInfo?.revision ?? null
+  const latestRev = revisions.length > 0 ? revisions[revisions.length - 1]?.revision ?? null : primary?.latest_revision ?? null
+  return { curInfo, prevInfo, currentRev, latestRev }
+}
+
+// diffBlockReason is the Diff toggle's visible disabled reason - no cursor,
+// no previous revision, a binary mime on either side (the endpoint 415s),
+// or the server rejected the pair as too large (413).
+function diffBlockReason(curInfo: ArtifactRevisionInfo | null, prevInfo: ArtifactRevisionInfo | null, diffBlocked: string | null): string | null {
+  if (curInfo == null) return 'No revision to diff'
+  if (prevInfo == null) return 'No previous revision'
+  if (!isDiffableMime(curInfo.mime_type) || !isDiffableMime(prevInfo.mime_type)) return 'Only text and JSON revisions can be diffed'
+  return diffBlocked
+}
+
+// displayState derives what the shared renderer stack needs from the
+// cursor's content: the pretty-printed display text and the structured
+// flag (the JSON parse itself stays memoized at the call site).
+function displayState(content: string | null, primary: ArtifactSummary | null) {
+  const klass = primary == null ? undefined : primary.class
+  return { displayText: content != null ? prettyText(content, klass) : null, isStructured: klass === 'structured' }
+}
+
+// triggerActivation returns the Details "trigger" row's jump handler -
+// only when that trigger's judge round is one of this node's (a known
+// chip); undefined renders it as plain text.
+function triggerActivation(curInfo: ArtifactRevisionInfo | null, judgeBodies: Record<string, JudgeRoundContent>, activateRound: (id: string) => void) {
+  const triggerId = curInfo?.lineage?.trigger_annotation
+  return triggerId != null && judgeBodies[triggerId] != null ? () => activateRound(triggerId) : undefined
+}
+
 interface Props {
   chatId: string
   nodeId: string
@@ -211,7 +261,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     // awaits it to restore scroll only after the refetch actually lands.
     return api.listChatArtifacts(chatId).then(l => setSummaries(l.data ?? [])).catch(e => setError(String(e)))
   }, [chatId])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { void load() }, [load])
 
   // Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
   // only carries that revision's lineage - see toArtifactSummary in
@@ -269,7 +319,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       setJudgeBodies(map)
     })
   }, [chatId, judgeIds])
-  useEffect(() => { loadJudgeBodies() }, [loadJudgeBodies])
+  useEffect(() => { void loadJudgeBodies() }, [loadJudgeBodies])
 
   // The timeline: one chip per parsed judge body, round order.
   const chips = useMemo(() => {
@@ -282,9 +332,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // newest-first) - the cursor indexes this list.
   const [revisions, setRevisions] = useState<ArtifactRevisionInfo[]>([])
   const [revIdx, setRevIdx] = useState<number | null>(null)
-  const curInfo = revIdx != null ? revisions[revIdx] ?? null : null
-  const currentRev = curInfo?.revision ?? null
-  const latestRev = revisions.length > 0 ? revisions[revisions.length - 1]?.revision ?? null : primary?.latest_revision ?? null
+  const { curInfo, prevInfo, currentRev, latestRev } = cursorFor(revIdx, revisions, primary)
 
   const revisionsToken = useRef(0)
   // Read via a ref (not a useCallback dep) so a cursor MOVE never
@@ -310,21 +358,13 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       })
       .catch(e => { if (token === revisionsToken.current) setError(String(e)) })
   }, [chatId, primaryId])
-  useEffect(() => { loadRevisions() }, [loadRevisions])
+  useEffect(() => { void loadRevisions() }, [loadRevisions])
 
   // The tapped chip's judged revision, as an effect (not the click handler):
   // a tap can land BEFORE the revision list has arrived (both fetches start
   // together on open). move() clears activeRoundId before the cursor changes, so this never fights a manual prev/next.
   const activeBody = activeRoundId != null ? judgeBodies[activeRoundId] : null
-  useEffect(() => {
-    if (activeRoundId == null || primaryId == null || revisions.length === 0) return
-    const b = judgeBodies[activeRoundId]
-    if (!b) return
-    const rev = resolveScoredRevision(b, primaryId, latestRev ?? revisions[revisions.length - 1].revision)
-    const idx = revisions.findIndex(x => x.revision === rev)
-    const target = idx >= 0 ? idx : revisions.length - 1
-    if (target !== revIdx) setRevIdx(target)
-  }, [activeRoundId, judgeBodies, revisions])
+  useEffect(makeActiveRoundEffect(activeRoundId, judgeBodies, primaryId, revisions, latestRev, revIdx, setRevIdx), [activeRoundId, judgeBodies, revisions])
 
   // Content of the cursor's revision. A chip tap that targets an as-yet
   // unloaded revision reaches this same path: revIdx moves, this fires the
@@ -340,7 +380,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       .then(text => { if (token !== contentToken.current) return; setError(null); setContent(text) })
       .catch(e => { if (token === contentToken.current) setError(String(e)) })
   }, [chatId, primaryId, currentRev])
-  useEffect(() => { loadContent() }, [loadContent])
+  useEffect(() => { void loadContent() }, [loadContent])
 
   // Diff, always against the PREVIOUS revision (no "against" picker): one
   // toggle. Disabled with a visible reason when there is no previous
@@ -349,15 +389,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const [diffBlocked, setDiffBlocked] = useState<string | null>(null)
   const [diffFailed, setDiffFailed] = useState(false)
   const [diffText, setDiffText] = useState<string | null>(null)
-  const prevInfo = revIdx != null && revIdx > 0 ? revisions[revIdx - 1] ?? null : null
-  const diffDisabledReason =
-    curInfo == null
-      ? 'No revision to diff'
-      : prevInfo == null
-        ? 'No previous revision'
-        : !isDiffableMime(curInfo.mime_type) || !isDiffableMime(prevInfo.mime_type)
-          ? 'Only text and JSON revisions can be diffed'
-          : diffBlocked
+  const diffDisabledReason = diffBlockReason(curInfo, prevInfo, diffBlocked)
   const diffActive = diffOn && diffDisabledReason == null
 
   const diffToken = useRef(0)
@@ -391,7 +423,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
         }
       })
   }, [diffActive, chatId, primaryId, prevInfo, curInfo, diffFailed])
-  useEffect(() => { loadDiff() }, [loadDiff])
+  useEffect(() => { void loadDiff() }, [loadDiff])
 
   // Judge notes for what's on screen: a tapped chip contributes its OWN
   // round's notes for the primary at the revision that round judged; with no
@@ -408,11 +440,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // list, the judge bodies, and - when there is a primary - its
   // revisions/content/diff.
   const refresh = useCallback(() => {
-    load()
-    loadJudgeBodies()
-    loadRevisions()
-    loadContent()
-    loadDiff()
+    void load()
+    void loadJudgeBodies()
+    void loadRevisions()
+    void loadContent()
+    void loadDiff()
   }, [load, loadJudgeBodies, loadRevisions, loadContent, loadDiff])
 
   // Live SSE follow (#1114): chatStore.subscribe already fans out to any
@@ -435,7 +467,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const withScrollPreserved = useCallback((run: () => void | Promise<unknown>) => {
     const el = scrollRef.current
     const top = el?.scrollTop
-    Promise.resolve(run()).then(() => {
+    void Promise.resolve(run()).then(() => {
       requestAnimationFrame(() => {
         if (scrollRef.current && top != null) scrollRef.current.scrollTop = top
       })
@@ -490,10 +522,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     // covers a tap that lands before the revision list has arrived.
   }
 
-  const displayText = content != null ? prettyText(content, primary?.class) : null
+  const { displayText, isStructured } = displayState(content, primary)
   const lines = useMemo(() => (displayText != null ? displayText.split('\n') : []), [displayText])
   const { byLine, unanchored } = useMemo(() => anchorNotes(lines, notes), [lines, notes])
-  const isStructured = primary?.class === 'structured'
   const parsedJson = useMemo(() => (isStructured && content != null ? tryParseJSON(content) : undefined), [isStructured, content])
 
   // "More": every secondary artifact (inputs the node read - dispatch-
@@ -507,11 +538,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // Details: the one place a raw id may appear. onTrigger jumps to the
   // round that produced this revision - but only when that round is one of
   // this node's (a known chip); otherwise it renders as plain text.
-  const triggerId = curInfo?.lineage?.trigger_annotation
-  const onTrigger =
-    triggerId != null && judgeBodies[triggerId] != null
-      ? () => activateRound(triggerId)
-      : undefined
+  const onTrigger = triggerActivation(curInfo, judgeBodies, activateRound)
 
   // Native <dialog> + showModal(): Esc closes ('cancel' then 'close'), focus
   // is trapped in the top layer, and the browser restores focus to the opener
@@ -568,195 +595,60 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
           </div>
         </header>
 
-        {/* Judge-round timeline: pinned directly under the header,
-            non-scrolling block, horizontal scroll when the rounds overflow
-            390px. Chips are buttons, never a picker: tapping one shows that
-            round's notes on the revision it judged. */}
-        {chips.length > 0 && !empty && (
-          <div
-            role="group"
-            aria-label="Judge rounds"
-            className="shrink-0 flex items-center gap-1.5 overflow-x-auto px-4 py-1.5 border-b border-gray-200 dark:border-gray-700"
-          >
-            {chips.map(({ id, b }) => {
-              const active = activeRoundId === id
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  aria-pressed={active}
-                  aria-label={`Round ${b.round}, ${b.passed == null ? 'no verdict' : b.passed ? 'passed' : 'failed'}${b.score != null ? `, score ${Math.round(b.score * 100)}%` : ''}`}
-                  onClick={() => activateRound(id)}
-                  className={`shrink-0 inline-flex items-center gap-1 h-11 medium:h-8 px-3 rounded-full border text-xs transition-colors ${
-                    active
-                      ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-900/30'
-                      : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700'
-                  }`}
-                >
-                  <span className="font-medium text-gray-700 dark:text-gray-200">Round {b.round}</span>
-                  <span aria-hidden="true" className="text-gray-500 dark:text-gray-400">·</span>
-                  <span className={b.passed == null ? 'text-gray-500 dark:text-gray-400' : b.passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-                    {b.passed == null ? 'no verdict' : b.passed ? 'passed' : 'failed'}
-                  </span>
-                  {b.score != null && (
-                    <>
-                      <span aria-hidden="true" className="text-gray-500 dark:text-gray-400">·</span>
-                      <span className="text-gray-600 dark:text-gray-300 tabular-nums">{Math.round(b.score * 100)}%</span>
-                    </>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        )}
+        <TimelineBlock chips={chips} hidden={empty} activeRoundId={activeRoundId} onActivate={activateRound} />
 
         {/* The single scrolling region: revision bar, the rendered output
             (with judge-note highlights), More, Details. */}
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 medium:px-5 py-3 space-y-3">
-          {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
+          <ErrorLine error={error} />
 
-          {empty ? (
-            <div className="flex flex-col items-center justify-center gap-1 min-h-[14rem] text-center px-6">
-              {nodeError ? (
-                <>
-                  <p className="text-sm font-medium text-gray-700 dark:text-gray-200">This node failed before writing its result.</p>
-                  <p className="text-xs text-red-600 dark:text-red-400 break-words">{nodeError}</p>
-                </>
-              ) : (
-                <p className="text-sm text-gray-500 dark:text-gray-400">This node hasn't produced anything yet.</p>
-              )}
-            </div>
-          ) : (
+          {empty ? <EmptyState nodeError={nodeError} /> : (
             <>
-              {revisions.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap text-xs">
-                  <span aria-live="polite" className="text-gray-600 dark:text-gray-300 tabular-nums">
-                    Revision {currentRev ?? '–'} of {revisions.length}
-                  </span>
-                  <button
-                    onClick={() => move(-1)}
-                    aria-label="Previous revision"
-                    disabled={revIdx == null || revIdx <= 0}
-                    className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-                  >
-                    ← Prev
-                  </button>
-                  <button
-                    onClick={() => move(1)}
-                    aria-label="Next revision"
-                    disabled={revIdx == null || revIdx >= revisions.length - 1}
-                    className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-                  >
-                    Next →
-                  </button>
-                  <button
-                    onClick={() => setDiffOn(d => !d)}
-                    aria-pressed={diffActive}
-                    disabled={diffDisabledReason != null}
-                    title={diffDisabledReason ?? undefined}
-                    className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-                  >
-                    Diff
-                  </button>
-                  {diffDisabledReason != null && (
-                    <span className="text-gray-500 dark:text-gray-400">{diffDisabledReason}</span>
-                  )}
-                  <button
-                    onClick={() => setRawView(r => !r)}
-                    aria-pressed={rawView && !diffActive}
-                    disabled={diffActive}
-                    className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-                  >
-                    Raw
-                  </button>
-                  {displayText != null && <CopyButton text={displayText} label="Copy artifact text" />}
-                </div>
-              )}
+              <RevisionBar
+                currentRev={currentRev}
+                count={revisions.length}
+                revIdx={revIdx}
+                diffActive={diffActive}
+                diffDisabledReason={diffDisabledReason}
+                onPrev={() => move(-1)}
+                onNext={() => move(1)}
+                onToggleDiff={() => setDiffOn(d => !d)}
+                rawView={rawView}
+                onToggleRaw={() => setRawView(r => !r)}
+                displayText={displayText}
+              />
 
-              {diffActive && diffText != null ? (
-                <DiffView text={diffText} />
-              ) : displayText == null ? (
-                <p className="text-xs text-gray-500 dark:text-gray-400">Loading…</p>
-              ) : rawView && !diffActive ? (
-                <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
-              ) : isStructured ? (
-                parsedJson !== undefined ? (
-                  codeReviewRendered(primary?.kind, parsedJson) !== undefined ? (
-                    <ArtifactMarkdown text={codeReviewRendered(primary?.kind, parsedJson)!} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
-                  ) : (
-                    <JsonView data={parsedJson} kind={primary?.kind} />
-                  )
-                ) : (
-                  <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
-                )
-              ) : (
-                <ArtifactMarkdown text={content ?? ''} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
-              )}
+              <PrimaryView
+                diffActive={diffActive}
+                diffText={diffText}
+                content={content}
+                displayText={displayText}
+                lines={lines}
+                rawView={rawView}
+                isStructured={isStructured}
+                parsedJson={parsedJson}
+                kind={primary?.kind}
+                byLine={byLine}
+                activeNote={activeNote}
+                onSelectNote={setActiveNote}
+              />
 
-              {activeNote && (
-                <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-                  {activeNote.criterion && <span className="font-semibold mr-1">{activeNote.criterion}:</span>}
-                  {activeNote.text}
-                </div>
-              )}
+              <ActiveNoteCallout note={activeNote} />
 
-              {unanchored.length > 0 && (
-                <div>
-                  <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Unanchored notes
-                  </span>
-                  <ul className="mt-1 space-y-1">
-                    {unanchored.map((n, i) => (
-                      <li key={i} className="text-xs text-gray-500 dark:text-gray-400">
-                        {n.criterion && <span className="font-semibold mr-1">{n.criterion}:</span>}
-                        {n.text}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              <UnanchoredNotes notes={unanchored} />
 
-              {moreGroups.length > 0 && (
-                <div className="space-y-2">
-                  {moreGroups.map(g => (
-                    <details key={g.label} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
-                      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300">
-                        {g.label} ({g.items.length})
-                      </summary>
-                      <div className="px-3 pb-2 space-y-1">
-                        {g.items.map((a, i) => (
-                          <MoreItem key={a.name} chatId={chatId} artifact={a} ordinal={i + 1} />
-                        ))}
-                      </div>
-                    </details>
-                  ))}
-                </div>
-              )}
+              <MoreSection chatId={chatId} groups={moreGroups} />
 
-              {curInfo && (
-                <details
-                  onToggle={e => setDetailsOpen(e.currentTarget.open)}
-                  className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
-                >
-                  <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Details
-                  </summary>
-                  {detailsOpen && (
-                    <div className="px-3 pb-3">
-                      <MetaRow label="task">
-                        <p className="line-clamp-6 whitespace-pre-wrap">{nodeTask}</p>
-                      </MetaRow>
-                      <ArtifactMetadata
-                        summary={primary}
-                        revision={curInfo}
-                        revisionCount={revisions.length}
-                        onTrigger={onTrigger}
-                        url={artifactUrl(chatId, primary.name, curInfo.revision)}
-                      />
-                    </div>
-                  )}
-                </details>
-              )}
+              <DetailsSection
+                curInfo={curInfo}
+                open={detailsOpen}
+                onOpenChange={setDetailsOpen}
+                nodeTask={nodeTask}
+                primary={primary}
+                revisionCount={revisions.length}
+                onTrigger={onTrigger}
+                chatId={chatId}
+              />
             </>
           )}
         </div>
@@ -869,23 +761,18 @@ function MoreItem({ chatId, artifact, ordinal }: { chatId: string; artifact: Art
             </button>
             {displayText != null && <CopyButton text={displayText} label="Copy artifact text" />}
           </div>
-          {content == null ? (
-            <p className="text-xs text-gray-500 dark:text-gray-400">Loading…</p>
-          ) : rawView ? (
-            <ArtifactLines lines={lines} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
-          ) : isStructured ? (
-            parsedJson !== undefined ? (
-              codeReviewRendered(artifact.kind, parsedJson) !== undefined ? (
-                <ArtifactMarkdown text={codeReviewRendered(artifact.kind, parsedJson)!} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
-              ) : (
-                <JsonView data={parsedJson} kind={artifact.kind} />
-              )
-            ) : (
-              <ArtifactLines lines={lines} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
-            )
-          ) : (
-            <ArtifactMarkdown text={content ?? ''} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
-          )}
+          <ArtifactView
+            content={content}
+            displayText={displayText}
+            lines={lines}
+            rawView={rawView}
+            isStructured={isStructured}
+            parsedJson={parsedJson}
+            kind={artifact.kind}
+            byLine={emptyByLine}
+            activeNote={null}
+            onSelectNote={() => {}}
+          />
         </div>
       )}
     </div>
@@ -1166,6 +1053,307 @@ function JsonView({ data, kind }: { data: unknown; kind?: string }) {
   )
 }
 
+// The primary output and a More item share ONE renderer stack - the Raw
+// line list, the structured tree (with the code_review overview shortcut),
+// and rendered markdown - so both surfaces can't drift as kinds grow.
+function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote }: {
+  content: string | null
+  displayText: string | null
+  lines: string[]
+  rawView: boolean
+  isStructured: boolean
+  parsedJson: unknown
+  kind: string | undefined
+  byLine: Map<number, JudgeNote[]>
+  activeNote: JudgeNote | null
+  onSelectNote: (n: JudgeNote) => void
+}) {
+  if (displayText == null) return <p className="text-xs text-gray-500 dark:text-gray-400">Loading…</p>
+  if (rawView) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
+  if (!isStructured) return <ArtifactMarkdown text={content ?? ''} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
+  if (parsedJson === undefined) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
+  const rendered = codeReviewRendered(kind, parsedJson)
+  return rendered !== undefined
+    ? <ArtifactMarkdown text={rendered} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
+    : <JsonView data={parsedJson} kind={kind} />
+}
+
+// One tapped judge note's callout under the rendered output.
+function ActiveNoteCallout({ note }: { note: JudgeNote | null }) {
+  if (!note) return null
+  return (
+    <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+      {note.criterion && <span className="font-semibold mr-1">{note.criterion}:</span>}
+      {note.text}
+    </div>
+  )
+}
+
+// One chip of the judge-round timeline: a button, never a picker - tapping
+// one shows that round's notes on the revision it judged.
+function RoundChip({ id, round, passed, score, active, onActivate }: {
+  id: string
+  round: number | undefined
+  passed: boolean | undefined
+  score: number | undefined
+  active: boolean
+  onActivate: () => void
+}) {
+  const verdict = passed == null ? 'no verdict' : passed ? 'passed' : 'failed'
+  return (
+    <button
+      key={id}
+      type="button"
+      aria-pressed={active}
+      aria-label={`Round ${round}, ${verdict}${score != null ? `, score ${Math.round(score * 100)}%` : ''}`}
+      onClick={onActivate}
+      className={`shrink-0 inline-flex items-center gap-1 h-11 medium:h-8 px-3 rounded-full border text-xs transition-colors ${
+        active
+          ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-900/30'
+          : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700'
+      }`}
+    >
+      <span className="font-medium text-gray-700 dark:text-gray-200">Round {round}</span>
+      <span aria-hidden="true" className="text-gray-500 dark:text-gray-400">·</span>
+      <span className={passed == null ? 'text-gray-500 dark:text-gray-400' : passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
+        {verdict}
+      </span>
+      {score != null && (
+        <>
+          <span aria-hidden="true" className="text-gray-500 dark:text-gray-400">·</span>
+          <span className="text-gray-600 dark:text-gray-300 tabular-nums">{Math.round(score * 100)}%</span>
+        </>
+      )}
+    </button>
+  )
+}
+
+// The judge-round timeline: pinned directly under the header, non-scrolling
+// block, horizontal scroll when the rounds overflow 390px. Chips are buttons,
+// never a picker: tapping one shows that round's notes on the revision it judged.
+function TimelineBlock({ chips, hidden, activeRoundId, onActivate }: {
+  chips: { id: string; b: JudgeRoundContent }[]
+  hidden: boolean
+  activeRoundId: string | null
+  onActivate: (id: string) => void
+}) {
+  if (hidden || chips.length === 0) return null
+  return (
+    <div
+      role="group"
+      aria-label="Judge rounds"
+      className="shrink-0 flex items-center gap-1.5 overflow-x-auto px-4 py-1.5 border-b border-gray-200 dark:border-gray-700"
+    >
+      {chips.map(({ id, b }) => (
+        <RoundChip key={id} id={id} round={b.round} passed={b.passed} score={b.score} active={activeRoundId === id} onActivate={() => onActivate(id)} />
+      ))}
+    </div>
+  )
+}
+
+// The fetch-error line above the output - a content/diff failure shares it.
+function ErrorLine({ error }: { error: string | null }) {
+  if (!error) return null
+  return <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
+}
+
+// The primary output's view slot: the diff (when active with a loaded body)
+// or the shared renderer stack.
+function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote }: {
+  diffActive: boolean
+  diffText: string | null
+  content: string | null
+  displayText: string | null
+  lines: string[]
+  rawView: boolean
+  isStructured: boolean
+  parsedJson: unknown
+  kind: string | undefined
+  byLine: Map<number, JudgeNote[]>
+  activeNote: JudgeNote | null
+  onSelectNote: (n: JudgeNote) => void
+}) {
+  if (diffActive && diffText != null) return <DiffView text={diffText} />
+  return (
+    <ArtifactView
+      content={content}
+      displayText={displayText}
+      lines={lines}
+      rawView={rawView && !diffActive}
+      isStructured={isStructured}
+      parsedJson={parsedJson}
+      kind={kind}
+      byLine={byLine}
+      activeNote={activeNote}
+      onSelectNote={onSelectNote}
+    />
+  )
+}
+
+// The "Unanchored notes" list - judge notes that anchor to no line of the
+// shown revision (design V4 §9).
+function UnanchoredNotes({ notes }: { notes: JudgeNote[] }) {
+  if (notes.length === 0) return null
+  return (
+    <div>
+      <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+        Unanchored notes
+      </span>
+      <ul className="mt-1 space-y-1">
+        {notes.map((n, i) => (
+          <li key={i} className="text-xs text-gray-500 dark:text-gray-400">
+            {n.criterion && <span className="font-semibold mr-1">{n.criterion}:</span>}
+            {n.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// "More": every secondary artifact (inputs the node read - dispatch-
+// authored - findings, files, …) as labelled groups behind bottom
+// disclosures; each item expands inline into the same renderer stack.
+function MoreSection({ chatId, groups }: { chatId: string; groups: SecondaryGroup[] }) {
+  if (groups.length === 0) return null
+  return (
+    <div className="space-y-2">
+      {groups.map(g => (
+        <details key={g.label} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+            {g.label} ({g.items.length})
+          </summary>
+          <div className="px-3 pb-2 space-y-1">
+            {g.items.map((a, i) => (
+              <MoreItem key={a.name} chatId={chatId} artifact={a} ordinal={i + 1} />
+            ))}
+          </div>
+        </details>
+      ))}
+    </div>
+  )
+}
+
+// Details: the one place a raw id may appear (#1178). Its content renders
+// only while OPEN - a closed native <details> keeps content in the DOM
+// (readable by text-scanning tools), and the raw id must exist NOWHERE until opened.
+function DetailsSection({ curInfo, open, onOpenChange, nodeTask, primary, revisionCount, onTrigger, chatId }: {
+  curInfo: ArtifactRevisionInfo | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  nodeTask: string
+  primary: ArtifactSummary
+  revisionCount: number
+  onTrigger?: () => void
+  chatId: string
+}) {
+  if (curInfo == null) return null
+  return (
+    <details
+      onToggle={e => onOpenChange(e.currentTarget.open)}
+      className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
+    >
+      <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+        Details
+      </summary>
+      {open && (
+        <div className="px-3 pb-3">
+          <MetaRow label="task">
+            <p className="line-clamp-6 whitespace-pre-wrap">{nodeTask}</p>
+          </MetaRow>
+          <ArtifactMetadata
+            summary={primary}
+            revision={curInfo}
+            revisionCount={revisionCount}
+            onTrigger={onTrigger}
+            url={artifactUrl(chatId, primary.name, curInfo.revision)}
+          />
+        </div>
+      )}
+    </details>
+  )
+}
+
+// The primary output's Revision N-of-M bar: prev/next cursor, the single
+// Diff toggle (disabled with its visible reason), the Raw fallback toggle,
+// and copy.
+function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason, onPrev, onNext, onToggleDiff, rawView, onToggleRaw, displayText }: {
+  currentRev: number | null
+  count: number
+  revIdx: number | null
+  diffActive: boolean
+  diffDisabledReason: string | null
+  onPrev: () => void
+  onNext: () => void
+  onToggleDiff: () => void
+  rawView: boolean
+  onToggleRaw: () => void
+  displayText: string | null
+}) {
+  if (count === 0) return null
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap text-xs">
+      <span aria-live="polite" className="text-gray-600 dark:text-gray-300 tabular-nums">
+        Revision {currentRev ?? '–'} of {count}
+      </span>
+      <button
+        onClick={onPrev}
+        aria-label="Previous revision"
+        disabled={revIdx == null || revIdx <= 0}
+        className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+      >
+        ← Prev
+      </button>
+      <button
+        onClick={onNext}
+        aria-label="Next revision"
+        disabled={revIdx == null || revIdx >= count - 1}
+        className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+      >
+        Next →
+      </button>
+      <button
+        onClick={onToggleDiff}
+        aria-pressed={diffActive}
+        disabled={diffDisabledReason != null}
+        title={diffDisabledReason ?? undefined}
+        className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+      >
+        Diff
+      </button>
+      {diffDisabledReason != null && (
+        <span className="text-gray-500 dark:text-gray-400">{diffDisabledReason}</span>
+      )}
+      <button
+        onClick={onToggleRaw}
+        aria-pressed={rawView && !diffActive}
+        disabled={diffActive}
+        className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+      >
+        Raw
+      </button>
+      {displayText != null && <CopyButton text={displayText} label="Copy artifact text" />}
+    </div>
+  )
+}
+
+// The panel's empty state: the failure message when the node errored before
+// writing a non-judge artifact, "nothing yet" otherwise.
+function EmptyState({ nodeError }: { nodeError?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-1 min-h-[14rem] text-center px-6">
+      {nodeError ? (
+        <>
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">This node failed before writing its result.</p>
+          <p className="text-xs text-red-600 dark:text-red-400 break-words">{nodeError}</p>
+        </>
+      ) : (
+        <p className="text-sm text-gray-500 dark:text-gray-400">This node hasn't produced anything yet.</p>
+      )}
+    </div>
+  )
+}
+
 // fmtRelative renders "3m ago"/"in 2h" etc via the native
 // Intl.RelativeTimeFormat - no date library for one small formatter
 // (ponytail).
@@ -1201,6 +1389,42 @@ function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+// The Details' lineage block (node, round, parent revision, trigger, head
+// sha) - the one row that jumps to its chip: trigger, and only when that
+// round is one of this node's (onTrigger); plain text otherwise.
+function LineageRows({ l, onTrigger }: { l: NonNullable<ArtifactRevisionInfo['lineage']>; onTrigger?: () => void }) {
+  return (
+    <>
+      {l.node_id && <MetaRow label="node">{l.node_id}</MetaRow>}
+      {l.round != null && <MetaRow label="round">{l.round}</MetaRow>}
+      {l.parent_revision != null && <MetaRow label="parent revision">{l.parent_revision}</MetaRow>}
+      {l.trigger_annotation && (
+        <MetaRow label="trigger">
+          {onTrigger ? (
+            <button
+              type="button"
+              onClick={onTrigger}
+              className="text-blue-600 dark:text-blue-400 hover:underline break-words text-left"
+            >
+              {l.trigger_annotation}
+            </button>
+          ) : (
+            l.trigger_annotation
+          )}
+        </MetaRow>
+      )}
+      {l.head_sha && (
+        <MetaRow label="head sha">
+          <span className="inline-flex items-center gap-1">
+            <span className="font-mono">{l.head_sha.slice(0, 12)}</span>
+            <CopyButton text={l.head_sha} label="Copy head sha" />
+          </span>
+        </MetaRow>
+      )}
+    </>
+  )
+}
+
 // The panel's Details disclosure content (#1178): the one place the raw id,
 // kind, class, per-revision lineage, timestamps and the REST link appear.
 // The trigger row (the judge_round that produced this revision) jumps to that round's chip when it's one of this node's; plain text otherwise.
@@ -1220,32 +1444,7 @@ function ArtifactMetadata({ summary, revision, revisionCount, onTrigger, url }: 
       <MetaRow label="mime">{revision.mime_type}</MetaRow>
       <MetaRow label="size">{revision.size.toLocaleString()} bytes</MetaRow>
       <MetaRow label="revision">{revision.revision} of {revisionCount}</MetaRow>
-      {l?.node_id && <MetaRow label="node">{l.node_id}</MetaRow>}
-      {l?.round != null && <MetaRow label="round">{l.round}</MetaRow>}
-      {l?.parent_revision != null && <MetaRow label="parent revision">{l.parent_revision}</MetaRow>}
-      {l?.trigger_annotation && (
-        <MetaRow label="trigger">
-          {onTrigger ? (
-            <button
-              type="button"
-              onClick={onTrigger}
-              className="text-blue-600 dark:text-blue-400 hover:underline break-words text-left"
-            >
-              {l.trigger_annotation}
-            </button>
-          ) : (
-            l.trigger_annotation
-          )}
-        </MetaRow>
-      )}
-      {l?.head_sha && (
-        <MetaRow label="head sha">
-          <span className="inline-flex items-center gap-1">
-            <span className="font-mono">{l.head_sha.slice(0, 12)}</span>
-            <CopyButton text={l.head_sha} label="Copy head sha" />
-          </span>
-        </MetaRow>
-      )}
+      {l && <LineageRows l={l} onTrigger={onTrigger} />}
       {revision.turn_id && <MetaRow label="turn">{revision.turn_id}</MetaRow>}
       {/* author covers "dispatch source" for an input too - dispatch is
           already the value lineage.author carries for one; there's no
