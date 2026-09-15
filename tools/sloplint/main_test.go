@@ -77,16 +77,18 @@ func TestOverlaps(t *testing.T) {
 }
 
 func TestCcAllowed(t *testing.T) {
-	// a function with CC > 15: ten distinct if/else branches
+	// sixteen if branches: CC 17, over the gate
 	body := "func big(x int) int {\n"
-	for i := 0; i < 16; i++ {
-		body += "\tif x == " + strconv.Itoa(i) + " {\n\t\treturn " + strconv.Itoa(i) + "\n\t}\n"
+	for n := 0; n < 16; n++ {
+		body += "\tif x == " + strconv.Itoa(n) + " {\n\t\treturn " + strconv.Itoa(n) + "\n\t}\n"
 	}
 	body += "\treturn -1\n}\n"
-	parse := func(doc string) ([]byte, *token.FileSet, *ast.FuncDecl) {
+	// preamble lines sit directly above the declaration (adjacent doc block)
+	build := func(preamble ...string) ([]byte, *token.FileSet, *ast.FuncDecl) {
+		t.Helper()
 		src := "package main\n"
-		if doc != "" {
-			src += doc + "\n"
+		for _, p := range preamble {
+			src += p + "\n"
 		}
 		src += body
 		fset := token.NewFileSet()
@@ -102,23 +104,63 @@ func TestCcAllowed(t *testing.T) {
 		t.Fatal("no func")
 		return nil, nil, nil
 	}
-	src0, fset0, big := parse("")
+	src0, fset0, big := build()
 	if cc := funcCC(big); cc <= 15 {
 		t.Fatalf("fixture CC = %d, want > 15", cc)
 	}
-	if ccAllowed(src0, fset0, big) {
-		t.Error("no doc: ccAllowed = true, want false")
+	_ = src0
+	_ = fset0
+	cases := []struct {
+		name      string
+		preamble  []string
+		wantAllow bool
+	}{
+		{"no doc", nil, false},
+		{"doc without directive", []string{"// some doc"}, false},
+		{"adjacent directive with reason", []string{"// sloplint: cc-allow flat protocol decoder"}, true},
+		{"directive under a doc line", []string{"// doc line", "// sloplint: cc-allow flat protocol decoder"}, true},
+		{"directive exactly three above", []string{"// sloplint: cc-allow flat protocol decoder", "// doc", "// doc"}, true},
+		{"directive four above is out of window", []string{"// sloplint: cc-allow flat protocol decoder", "// doc", "// doc", "// doc"}, false},
+		{"directive without reason", []string{"// sloplint: cc-allow"}, false},
+		{"mark on a non-comment line does not exempt", []string{`var marker = "sloplint: cc-allow x"`}, false},
 	}
-	if s, fs, fd := parse("// some doc\n"); ccAllowed(s, fs, fd) {
-		t.Error("doc without directive: ccAllowed = true, want false")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src, fset, fd := build(tc.preamble...)
+			if got := ccAllowed(src, fset, fd); got != tc.wantAllow {
+				t.Errorf("ccAllowed = %v, want %v", got, tc.wantAllow)
+			}
+		})
 	}
-	if s, fs, fd := parse("// sloplint: cc-allow flat protocol decoder\n"); !ccAllowed(s, fs, fd) {
-		t.Error("directed doc: ccAllowed = false, want true")
+}
+
+func TestFuncsFailCcAllowWiring(t *testing.T) {
+	// the wiring ccAllowed alone cannot pin: a CC>15 function whose body a
+	// hunk touches is exempt iff a directed line sits within 3 above
+	src := "package main\n" +
+		"// sloplint: cc-allow flat protocol decoder\n" +
+		"func big(x int) int {\n"
+	for n := 0; n < 16; n++ {
+		src += "\tif x == " + strconv.Itoa(n) + " {\n\t\treturn " + strconv.Itoa(n) + "\n\t}\n"
 	}
-	if s, fs, fd := parse("// doc line above\n// sloplint: cc-allow flat protocol decoder\n"); !ccAllowed(s, fs, fd) {
-		t.Error("directive under a doc line: ccAllowed = false, want true")
+	src += "\treturn -1\n}\n"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "t.go", []byte(src), parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if s, fs, fd := parse("// sloplint: cc-allow\n"); ccAllowed(s, fs, fd) {
-		t.Error("directive without reason: ccAllowed = true, want false")
+	// body spans lines 3..21; the hunk touches the middle
+	if funcsFail(fset, f, "t.go", []rng{{10, 12}}, []byte(src)) {
+		t.Error("directed function with an overlapping hunk: funcsFail = true, want false")
+	}
+	// no directive: same hunk fails
+	src2 := "package main\n" + src[len("package main\n// sloplint: cc-allow flat protocol decoder\n"):]
+	fset2 := token.NewFileSet()
+	f2, err := parser.ParseFile(fset2, "t.go", []byte(src2), parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !funcsFail(fset2, f2, "t.go", []rng{{10, 12}}, []byte(src2)) {
+		t.Error("undirected CC>15 function with an overlapping hunk: funcsFail = false, want true")
 	}
 }

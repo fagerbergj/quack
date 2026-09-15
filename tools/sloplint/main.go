@@ -190,7 +190,10 @@ func ccAllowed(src []byte, fset *token.FileSet, fd *ast.FuncDecl) bool {
 		if ln < 1 || ln >= len(lines) {
 			continue
 		}
-		text := lines[ln]
+		text := strings.TrimSpace(lines[ln-1])
+		if !strings.HasPrefix(text, "//") {
+			continue
+		}
 		i := strings.Index(text, mark)
 		if i >= 0 && strings.TrimSpace(text[i+len(mark):]) != "" {
 			return true
