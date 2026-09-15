@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/memoryrules"
+	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
@@ -35,10 +37,10 @@ type Config struct {
 	Server       ServerConfig           `yaml:"server"`
 	Workspace    WorkspaceConfig        `yaml:"workspace"`
 	Skills       SkillsConfig           `yaml:"skills"`
-	// Plugins are the Agent Plugins roots quack loads. A root contributes
-	// skills, MCP servers, and quack's own extension declarations, so it is
-	// no longer a skills-only concern - skills.plugins stays a deprecated alias.
-	Plugins []string `yaml:"plugins"`
+	// Plugins is the dynamic plugin registry block (epic #1427): store, root
+	// and seed entries. A bare YAML list is treated as seed: (today's
+	// local-root form) - skills.plugins stays a deprecated alias of that form.
+	Plugins *PluginsConfig `yaml:"plugins"`
 	// Workflows is a top-level key, not nested under skills: - it's a
 	// binding mechanism onto the DAG planner, not a skill-library concern
 	// (skills.plugins is a different axis entirely).
@@ -64,17 +66,82 @@ type SkillsConfig struct {
 	Plugins []string `yaml:"plugins"`
 }
 
-// PluginRoots is the effective plugin-root list: the top-level plugins: key, else the deprecated skills.plugins, else the defaults. Each root is resolved
-// at startup via internal/plugin's Agent Plugins / Codex discovery order; a root
-// that fails to resolve is a startup warning, never an error. Order is preserved and never deduped.
+// PluginRoots is the effective local plugin-root list: the top-level plugins:
+// block's local (non-github:) seed entries, else the deprecated skills.plugins,
+// else the defaults. Each root is resolved at startup via internal/plugin's
+// Agent Plugins / Codex discovery order; a root that fails to resolve is a
+// startup warning, never an error. Order is preserved and never deduped.
+// github: seed entries are P1's concern (fetched into the registry, not
+// resolved as filesystem roots here).
 func (c *Config) PluginRoots() []string {
 	if c.Plugins != nil {
-		return c.Plugins
+		return localSeedEntries(c.Plugins.Seed)
 	}
 	if c.Skills.Plugins != nil {
 		return c.Skills.Plugins
 	}
 	return append([]string{}, defaultSkillPlugins...)
+}
+
+func localSeedEntries(seed []string) []string {
+	out := make([]string, 0, len(seed))
+	for _, s := range seed {
+		if !strings.HasPrefix(s, "github:") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// PluginsConfig is the plugins: block (epic #1427 P0): store selects the
+// registry backend (P3 wires it; P0 accepts only "" = filesystem), root is
+// where clones and rows live, seed is inserted into the registry if absent
+// at boot (P1) and validated here with pluginreg.ParseEntry.
+type PluginsConfig struct {
+	Store string   `yaml:"store"`
+	Root  string   `yaml:"root"`
+	Seed  []string `yaml:"seed"`
+}
+
+// UnmarshalYAML lets plugins: stay a bare list - today's local-root form,
+// treated as seed: - alongside the new {store, root, seed} block.
+func (p *PluginsConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.SequenceNode {
+		return value.Decode(&p.Seed)
+	}
+	type plain PluginsConfig
+	return value.Decode((*plain)(p))
+}
+
+// validatePlugins normalizes c.Plugins (nil -> skills.plugins or the
+// defaults), rejects a store other than filesystem (P3 wires the rest), fills
+// root's default, and checks every seed entry parses.
+func (c *Config) validatePlugins() error {
+	if c.Plugins != nil && c.Skills.Plugins != nil {
+		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
+	}
+	if c.Plugins == nil {
+		seed := append([]string{}, defaultSkillPlugins...)
+		if c.Skills.Plugins != nil {
+			seed = c.Skills.Plugins
+		}
+		c.Plugins = &PluginsConfig{Seed: seed}
+	}
+	if c.Skills.Plugins != nil {
+		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
+	}
+	if c.Plugins.Store != "" {
+		return fmt.Errorf("config: plugins.store %q not supported yet - filesystem is the only backend until P3", c.Plugins.Store)
+	}
+	if c.Plugins.Root == "" {
+		c.Plugins.Root = filepath.Join(c.Workspace.Root, ".quack", "plugins")
+	}
+	for _, s := range c.Plugins.Seed {
+		if _, err := pluginreg.ParseEntry(s); err != nil {
+			return fmt.Errorf("config: plugins.seed: %w", err)
+		}
+	}
+	return nil
 }
 
 // WorkflowShape teaches plan-work's "Common workflows" table a deployment-
@@ -970,12 +1037,8 @@ func (c *Config) validate() error {
 	if err := c.Workspace.applyDefaults(); err != nil {
 		return err
 	}
-	if c.Plugins != nil && c.Skills.Plugins != nil {
-		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
-	}
-	c.Plugins = c.PluginRoots()
-	if c.Skills.Plugins != nil {
-		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
+	if err := c.validatePlugins(); err != nil {
+		return err
 	}
 	if err := c.validateWorkflows(); err != nil {
 		return err
