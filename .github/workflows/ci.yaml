@@ -208,6 +208,7 @@ jobs:
         working-directory: frontend
       # Changed-line coverage gate: new code ships covered (>=70%).
       - name: changed-line coverage (frontend)
+        if: github.event_name == 'pull_request'
         env:
           SLOP_BASE: ${{ github.event.pull_request.base.sha }}
         working-directory: frontend

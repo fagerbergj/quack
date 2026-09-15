@@ -69,9 +69,16 @@ let num = 0
 let den = 0
 const misses = []
 for (const [p, lines] of changed) {
-  // lcov SF paths are absolute on the runner; match by suffix.
-  const cov = [...lcov.entries()].find(([f]) => f.endsWith('/' + p) || f.endsWith(p))?.[1]
-  if (!cov) continue // file never loaded (e.g. no test imports it) - see note below
+  // lcov SF paths are cwd-relative (src/...) from vitest; the diff paths
+  // are repo-relative (frontend/src/...). Match on the src/... suffix.
+  const suffix = p.startsWith('frontend/') ? p.slice('frontend/'.length) : p
+  const cov = [...lcov.entries()].find(([f]) => f.endsWith('/' + suffix) || f === suffix)?.[1]
+  if (!cov) {
+    // vitest reports every included file even unimported ones, so a gated
+    // file missing here is a real hole - fail loudly, not silently.
+    console.error(`coverage-diff: changed file missing from lcov report: ${p}`)
+    process.exit(1)
+  }
   for (const ln of lines) {
     if (!cov.has(ln)) continue // no statement on this line
     den++
