@@ -1129,12 +1129,9 @@ func iterFromStart(ctx context.Context, o *orchestrator.Orchestrator, userID, ch
 	}
 }
 
-// armRun: the shared run start - a fresh timeout context, then the hub and
-// the durable log reset BEFORE RegisterRun so a subscriber landing in the
-// start window never reads the previous run's (possibly terminal) events
-// off the hub or the durable log (#audit-5), then the synchronous run
-// registration and the in-flight mark (a crash before stampRunOutcome must
-// be detectable, #738).
+// armRun: the shared run start - reset the hub and durable log BEFORE
+// RegisterRun so a subscriber in the start window never reads the previous
+// run's events (#audit-5), then register and mark in-flight (#738).
 func (h *Handler) armRun(chatID, turnID string) (context.Context, context.CancelFunc) {
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 	h.hub.Reset(chatID)
