@@ -207,9 +207,10 @@ jobs:
       - name: changed-line coverage (frontend)
         env:
           SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+        working-directory: frontend
         run: |
           npm run test -- --coverage
-          node scripts/coverage-diff.mjs "$SLOP_BASE"
+          node ../scripts/coverage-diff.mjs "$SLOP_BASE"
 
   openapi-lint:
     runs-on: ubuntu-latest
