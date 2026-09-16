@@ -15,7 +15,7 @@ import (
 )
 
 // gitTimeout bounds every git call: a hung remote must not block a fetch or
-// an update check (mirrors internal/plugin/refresh.go's refreshTimeout).
+// an update check.
 const gitTimeout = 60 * time.Second
 
 // A full 40-hex sha is pinned and never behind; a short prefix like
