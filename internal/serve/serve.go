@@ -608,6 +608,10 @@ type skillsInit struct {
 	// (if any) non-seed rows were refused this pass - review#2: rebuild uses
 	// the SAME per-row admission as boot, not an all-or-nothing gate.
 	rebuildSkills func() (refusals map[string]error, err error)
+	// pinnedBundle is "" normally; a replay bundle path when it pinned the
+	// skill roster (#1427 P4 F1) - rest refuses every mutating call up
+	// front while set, not just the post-mutation rebuild.
+	pinnedBundle string
 }
 
 // resolves the plugin registry and builds the skill sources and toolsets.
@@ -693,6 +697,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 	return skillsInit{
 		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
 		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
+		pinnedBundle: pinnedBundle,
 	}, nil
 }
 
@@ -837,8 +842,8 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 }
 
 // mounts the HTTP handler and starts the workspace GC
-func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error)) (http.Handler, error) {
-	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills)
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pinnedBundle string) (http.Handler, error) {
+	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills, pinnedBundle)
 	if err != nil {
 		return nil, err
 	}
@@ -978,7 +983,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills)
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills, skills.pinnedBundle)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -2117,7 +2122,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	return orch, nil
 }
 
-func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error)) (http.Handler, error) {
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pinnedBundle string) (http.Handler, error) {
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
@@ -2140,7 +2145,9 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 	}
 
 	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
-	restHandler.SetPlugins(rest.NewPlugins(pluginreg.NewFSRegistry(cfg.Plugins.Root), cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills))
+	restPlugins := rest.NewPlugins(pluginreg.NewFSRegistry(cfg.Plugins.Root), cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills)
+	restPlugins.SetPinnedBundle(pinnedBundle)
+	restHandler.SetPlugins(restPlugins)
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
 
 	return server.New(server.Options{
