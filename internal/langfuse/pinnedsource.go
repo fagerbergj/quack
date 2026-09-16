@@ -24,8 +24,14 @@ func (s *PinnedSource) Get(ctx context.Context, name string) (artifactsrc.Artifa
 		return artifactsrc.Artifact{}, false, nil
 	}
 	p, ok, err := s.Client.GetPrompt(ctx, name, GetPromptOpts{Version: version})
-	if err != nil || !ok {
+	if err != nil {
 		return artifactsrc.Artifact{}, false, err
+	}
+	if !ok {
+		// A pinned name's version 404s: fail loudly rather than let ChainSource
+		// fall through to the store's unpinned version, which would silently
+		// break the "llm.call rows carry that exact version" guarantee.
+		return artifactsrc.Artifact{}, false, fmt.Errorf("pinned prompt %s@%d not found", name, version)
 	}
 	return artifactsrc.Artifact{Name: name, Body: p.Body, Config: p.Config, VersionID: strconv.Itoa(p.Version)}, true, nil // Source blank: the resolver stamps the store name
 }

@@ -36,6 +36,23 @@ func TestPinnedSource_SeedIsANoOp(t *testing.T) {
 	}
 }
 
+// TestPinnedSource_PinnedVersion404IsHardError pins suggestion 7: a pinned
+// name whose version 404s must return an error naming it, not the (false,
+// nil) miss shape ChainSource would silently fall through to the store on.
+func TestPinnedSource_PinnedVersion404IsHardError(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	src := &PinnedSource{Client: c, Pins: map[string]int{"system/code-reviewer": 9}}
+	_, ok, err := src.Get(context.Background(), "system/code-reviewer")
+	if ok {
+		t.Fatalf("Get on a 404'd pin: ok = true, want false")
+	}
+	if err == nil || !strings.Contains(err.Error(), "system/code-reviewer@9") {
+		t.Fatalf("Get on a 404'd pin: err = %v, want an error naming name@version", err)
+	}
+}
+
 func TestPinnedSource_UnpinnedNameFallsThrough(t *testing.T) {
 	src := &PinnedSource{Client: nil, Pins: map[string]int{"system/other": 1}}
 	_, ok, err := src.Get(context.Background(), "system/code-reviewer")
