@@ -69,13 +69,18 @@ func runDatasetExport(cmd *cobra.Command, chatID, repo, since, dataset string, l
 		return err
 	}
 
-	items, err := cli.RunDatasetExport(cmd.Context(), ls, st, lf, cli.ExportOpts{
+	items, excludedBySince, err := cli.RunDatasetExport(cmd.Context(), ls, st, lf, cli.ExportOpts{
 		ChatID: chatID, Repo: repo, Since: sinceT, Dataset: dataset, Limit: limit,
 	})
 	if err != nil {
 		// Export is idempotent (item ids are deterministic), so a re-run after
-		// this partial failure converges rather than duplicating.
-		fmt.Fprintf(cmd.ErrOrStderr(), "%d item(s) exported before failure: %v\n", len(items), err)
+		// this partial failure converges rather than duplicating. Cobra prints
+		// err itself; don't double it here.
+		fmt.Fprintf(cmd.ErrOrStderr(), "%d item(s) exported before failure\n", len(items))
+		return err
+	}
+	if excludedBySince {
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "chat %s excluded by --since\n", chatID)
 		return err
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), cli.FormatExportSummary(items))
