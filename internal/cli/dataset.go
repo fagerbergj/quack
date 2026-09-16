@@ -16,7 +16,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
 	"github.com/fagerbergj/quack/internal/ledger"
-	"github.com/fagerbergj/quack/internal/replay"
+	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
@@ -71,7 +71,7 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 
 	ensured := false
 	for _, chat := range chats {
-		sess, sessErr := replay.FromStore(ctx, ls, chat.ID)
+		sess, sessErr := bundle.FromStore(ctx, ls, chat.ID)
 		if sessErr != nil {
 			if errors.Is(sessErr, ledger.ErrNoRecording) {
 				continue
@@ -101,8 +101,8 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 
 // sortedStreamKeys orders NodeRuns' keys by answer recency (run.At, newest
 // first, ties broken by key string), so --limit favors the most recent run.
-func sortedStreamKeys(runs map[replay.StreamKey]replay.NodeRun) []replay.StreamKey {
-	keys := make([]replay.StreamKey, 0, len(runs))
+func sortedStreamKeys(runs map[bundle.StreamKey]bundle.NodeRun) []bundle.StreamKey {
+	keys := make([]bundle.StreamKey, 0, len(runs))
 	for k := range runs {
 		keys = append(keys, k)
 	}
@@ -215,7 +215,7 @@ func chatHref(c store.Chat) string {
 	return c.GithubURL
 }
 
-func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, dataset string, chat store.Chat, key replay.StreamKey, run replay.NodeRun) (ExportItem, error) {
+func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun) (ExportItem, error) {
 	input := datasetItemInput{Task: run.Task, DiffRef: chatHref(chat)}
 	var expected any
 	if chatMerged(chat) && run.Answer != "" {

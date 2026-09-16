@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fagerbergj/quack/internal/replay"
+	"github.com/fagerbergj/quack/internal/ledger/bundle"
 )
 
 // CriterionComparison is one rubric criterion's recorded-vs-new judge score.
@@ -38,7 +38,7 @@ type Comparison struct {
 
 // Build assembles a Comparison from both bundles' raw evaluation events and
 // final-answer texts.
-func Build(role, model string, changedAgents []string, recordedScores, newScores []replay.EvalScore, recordedAnswer, newAnswer string) Comparison {
+func Build(role, model string, changedAgents []string, recordedScores, newScores []bundle.EvalScore, recordedAnswer, newAnswer string) Comparison {
 	rec := latestPerCriterion(recordedScores)
 	neu := latestPerCriterion(newScores)
 
@@ -83,8 +83,8 @@ func Build(role, model string, changedAgents []string, recordedScores, newScores
 // latestPerCriterion collapses a bundle's raw evaluation.result events into one score per criterion name: the LATEST (by timestamp) reading, which is
 // the gate's final verdict for whichever node/round most recently judged it (an earlier, lower score from a revise loop is superseded - the gate's own
 // pass/fail decision only ever looks at the last round, see vetting/node.go). v1 ceiling: a multi-node run's SAME criterion name from two different nodes collapses into one row - fine for the common single/few-node eval target this feature ships for, not a cross-node breakdown.
-func latestPerCriterion(scores []replay.EvalScore) map[string]replay.EvalScore {
-	out := map[string]replay.EvalScore{}
+func latestPerCriterion(scores []bundle.EvalScore) map[string]bundle.EvalScore {
+	out := map[string]bundle.EvalScore{}
 	for _, s := range scores {
 		if prev, ok := out[s.Criterion]; !ok || s.Timestamp.After(prev.Timestamp) {
 			out[s.Criterion] = s
@@ -95,7 +95,7 @@ func latestPerCriterion(scores []replay.EvalScore) map[string]replay.EvalScore {
 
 // weakestLink is vetting.aggregateVerdict's own rule applied here: the
 // lowest criterion score, or 0 when there are none.
-func weakestLink(m map[string]replay.EvalScore) float64 {
+func weakestLink(m map[string]bundle.EvalScore) float64 {
 	if len(m) == 0 {
 		return 0
 	}

@@ -161,9 +161,10 @@ func TestPersistPluginRefusalLogsOnWriteFailure(t *testing.T) {
 	}
 }
 
-// TestAdmitPlugins_PersistRefusalsGatesTheRegistryWrite: a replay boot passes
-// persistRefusals=false, so a refused row's error is never written to the registry.
-func TestAdmitPlugins_PersistRefusalsGatesTheRegistryWrite(t *testing.T) {
+// TestAdmitPlugins_PersistsRefusalOnTheRegistryRow: a REST-added row's
+// refusal is dropped from the roster AND written to its registry row, so
+// GET /plugins shows why boot/rebuild dropped it.
+func TestAdmitPlugins_PersistsRefusalOnTheRegistryRow(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	row := pluginreg.Plugin{Name: "ghost", Source: pluginreg.SourceLocal, Entry: "ghost"}
@@ -173,7 +174,7 @@ func TestAdmitPlugins_PersistRefusalsGatesTheRegistryWrite(t *testing.T) {
 	rows := []pluginreg.Plugin{row}
 	ghost := plugin.Plugin{Name: "ghost", Modules: []plugin.Module{{Name: "ghost", Path: "github.com/fagerbergj/quack-extensions/ghost"}}}
 
-	admitted, refusals, err := admitPlugins(context.Background(), reg, rows, []plugin.Plugin{ghost}, nil, nil, false)
+	admitted, refusals, err := admitPlugins(context.Background(), reg, rows, []plugin.Plugin{ghost}, nil, nil)
 	if err != nil {
 		t.Fatalf("admitPlugins: %v", err)
 	}
@@ -181,16 +182,8 @@ func TestAdmitPlugins_PersistRefusalsGatesTheRegistryWrite(t *testing.T) {
 		t.Fatalf("admitted=%v refusals=%v, want ghost dropped and refused either way", admitted, refusals)
 	}
 	got, err := reg.List(context.Background())
-	if err != nil || got[0].Error != "" {
-		t.Fatalf("row after persistRefusals=false: %+v, err %v, want Error unwritten", got, err)
-	}
-
-	if _, _, err := admitPlugins(context.Background(), reg, rows, []plugin.Plugin{ghost}, nil, nil, true); err != nil {
-		t.Fatalf("admitPlugins: %v", err)
-	}
-	got, err = reg.List(context.Background())
 	if err != nil || got[0].Error == "" {
-		t.Fatalf("row after persistRefusals=true: %+v, err %v, want the refusal persisted", got, err)
+		t.Fatalf("row after admitPlugins: %+v, err %v, want the refusal persisted", got, err)
 	}
 }
 

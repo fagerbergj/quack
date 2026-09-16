@@ -15,13 +15,13 @@ type Coords struct {
 	// stamped alongside Agent - provenance for which prompt version ran.
 	BundleHash string
 	// PromptSource/PromptVersionID: which store the round's system prompt came
-	// from ("static" or the prompts: store name) and its version there, so a
-	// replay can resolve the exact version the run used (#1420).
+	// from ("static" or the prompts: store name) and its version there - provenance
+	// for which exact prompt version the run used (#1420).
 	PromptSource    string
 	PromptVersionID string
 	// PromptArtifact: the resolved artifact's name (e.g. "system/code-reviewer") -
-	// derived from the bundle directory, not the agent name, so replay can pin
-	// the right name for an out-of-tree or renamed bundle (#1422).
+	// derived from the bundle directory, not the agent name, so an out-of-tree
+	// or renamed bundle still gets the right name recorded (#1422).
 	PromptArtifact string
 	// User: the ADK session identity that owns this run (local user, GitHub
 	// commenter login, etc) - observability attribution only.

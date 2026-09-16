@@ -65,20 +65,17 @@ Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-i
 | `edit <task>` | Edit a not-yet-started node's prompt. |
 | `retry` | Re-run a finished node (done/failed/cancelled) and everything downstream of it. |
 
-## Recording, replay, and eval
+## Recording and eval
 
-Runs can be recorded to a replay ledger and re-driven later - the basis for regression-checking a prompt or model change against real traffic.
+Runs can be recorded to the ledger and re-driven later - the basis for regression-checking a prompt or model change against real traffic.
 
 | Command | Does |
 | --- | --- |
-| `quack ledger list` / `export <chat-id>` | List chats with a recording on the server; download one as a bundle for replay or a fixture. |
+| `quack ledger list` / `export <chat-id>` | List chats with a recording on the server; download one as a bundle for `eval` or a fixture. |
 | `quack ledger show <chat-id> [--from-seq N]` | Print a chat's raw ledger entries (server-side, from the local quack.yaml's stores). |
 | `quack ledger recover [chat-id] [--dry-run] [--json]` | Settle intents whose projection write is missing (the same pass the server runs at boot); `--dry-run` reports only. |
 | `quack ledger rebuild <chat-id> [--dry-run] [--json]` | Reconcile a chat's artifact metadata and SSE table against the ledger fold. |
-| `quack replay [--from-server <url>]` | Replay a recorded run offline (strict) or live from a changed node (fork). Hermetic: boot skips the plugin registry's seed step and `git fetch`, pinning every plugin's skills to its recorded sha from the clone's existing history instead. `--from-server` names where to fetch the recording when the argument is a chat id - distinct from the global `--server` (which this command doesn't otherwise use; the replay itself always runs from your local `quack.yaml`). |
-| `quack eval [--from-server <url>]` | Re-run a recorded conversation live with a swapped model and compare judge scores. Same `--from-server` meaning as `replay`. |
-
-An ACP-agent fork replay refuses to spawn its live subprocess when a recorded plugin's sha differs from the one currently installed, or the plugin is no longer registered - a live fork spawn always reads the current clone, so it cannot reproduce the recorded skill text once the plugin has moved. To fork-replay against the plugin state as recorded, re-pin the plugin to that sha before starting the replay: `POST /api/v1/plugins` with `github:owner/repo@<sha>`, which checks the clone out at that sha and records it as the installed sha. Through config alone: `DELETE /api/v1/plugins/{name}`, then set the seed entry to `@<sha>` and restart (an existing row is never re-pinned by a seed edit).
+| `quack eval [--from-server <url>]` | Re-run a recorded conversation live with a swapped model and compare judge scores. `--from-server` names where to fetch the recording when the argument is a chat id - distinct from the global `--server` (which this command doesn't otherwise use; the eval run itself always runs from your local `quack.yaml`). |
 
 ## Datasets and experiments
 

@@ -12,7 +12,6 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/inference/openaimodel"
-	"github.com/fagerbergj/quack/internal/replay"
 )
 
 // NewModel constructs an ADK model for the given provider and model name.
@@ -32,22 +31,6 @@ func NewModelWithEffort(p config.ProviderConfig, modelName string, artifacts art
 		tm := &tracedModel{LLM: live, name: modelName}
 		tm.pricing = cost
 		return tm, nil
-	case "replay":
-		sess, err := replay.Load(p.Bundle)
-		if err != nil {
-			return nil, fmt.Errorf("inference: replay provider: %w", err)
-		}
-		if p.ForkMode != "fork" {
-			return NewReplayModel(sess, modelName), nil
-		}
-		// Fork-replay (#605): p.Live is the caller's REAL provider config,
-		// built through this SAME factory - wrapped like any other model.
-		sess.EnableFork(p.ForkFrom)
-		live, err := NewModelWithEffort(*p.Live, modelName, artifacts, cost, effort)
-		if err != nil {
-			return nil, fmt.Errorf("inference: replay provider: live delegate: %w", err)
-		}
-		return NewReplayModelFork(sess, modelName, live), nil
 	default:
 		return nil, fmt.Errorf("inference: unsupported provider kind %q", p.Kind)
 	}

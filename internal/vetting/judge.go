@@ -1519,7 +1519,7 @@ func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 	for name := range v.Criteria {
 		names = append(names, name)
 	}
-	sort.Strings(names) // map iteration is random; a stable emit order matters for replay diffing
+	sort.Strings(names) // map iteration is random; a stable emit order keeps recorded-vs-new diffs meaningful
 	// gen_ai.agent.name: EmitLog stamps session/node/round only.
 	agent := ledger.CoordsFromContext(ctx).Agent
 	for _, name := range names {

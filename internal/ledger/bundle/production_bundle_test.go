@@ -1,7 +1,8 @@
-// This file drives Orchestrator.Run through the REAL ledger.Exporter/MemStore and replays the bundle:
-// UserTurns() must work against a production-shaped bundle (#617: before the fix, root events had no
-// ledger.Coords and fell into the shared "unscoped" bucket, so no chat's bundle ever had a root stream).
-package replay_test
+// This file drives Orchestrator.Run through the REAL ledger.Exporter/MemStore and reads
+// the result back: UserTurns() must work against a production-shaped bundle (#617: before
+// the fix, root events had no ledger.Coords and fell into the shared "unscoped" bucket, so
+// no chat's bundle ever had a root stream).
+package bundle_test
 
 import (
 	"context"
@@ -18,10 +19,10 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
-	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -82,9 +83,9 @@ func TestUserTurns_FromProductionShapedBundle(t *testing.T) {
 		}
 	}
 
-	sess, err := replay.FromStore(context.Background(), store, chatID)
+	sess, err := bundle.FromStore(context.Background(), store, chatID)
 	if err != nil {
-		t.Fatalf("replay.FromStore: %v (root events fell into no chat stream?)", err)
+		t.Fatalf("bundle.FromStore: %v (root events fell into no chat stream?)", err)
 	}
 
 	turns := sess.UserTurns()

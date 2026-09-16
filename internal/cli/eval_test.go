@@ -11,12 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fagerbergj/quack/internal/replay"
+	"github.com/fagerbergj/quack/internal/ledger/bundle"
 )
 
 // newRecordingBundle builds a minimal valid recording ZIP (manifest.json +
 // entries.jsonl with one eval.score entry) - the shape FetchRecording
-// downloads and replay.Load reads.
+// downloads and bundle.Load reads.
 func newRecordingBundle(t *testing.T, criterion string, score float64) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -65,7 +65,7 @@ func TestRunEval_MultiTurnAndScored(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	recorded := []replay.EvalScore{{Criterion: "accuracy", Score: 0.5}}
+	recorded := []bundle.EvalScore{{Criterion: "accuracy", Score: 0.5}}
 	var out, errOut bytes.Buffer
 	code := RunEval(context.Background(), &out, &errOut, srv.URL, "coder", "new-model",
 		[]string{"code-implementer"}, []string{"turn one", "turn two"}, recorded, "recorded final answer", false)
@@ -129,7 +129,7 @@ func TestRunEval_RecordingUnavailable(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	recorded := []replay.EvalScore{{Criterion: "accuracy", Score: 0.5}}
+	recorded := []bundle.EvalScore{{Criterion: "accuracy", Score: 0.5}}
 	var out, errOut bytes.Buffer
 	code := RunEval(context.Background(), &out, &errOut, srv.URL, "all", "m", nil, []string{"only turn"}, recorded, "recorded", false)
 	if code != 0 {

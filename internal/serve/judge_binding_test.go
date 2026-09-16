@@ -16,8 +16,8 @@ func testJudgeBindCfg(t *testing.T) (*config.Config, config.ProviderConfig) {
 	t.Helper()
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
-			"judge-prov": {Kind: "replay", Bundle: writeCurrentDateReplayFixture(t)},
-			"other-prov": {Kind: "replay", Bundle: writeCurrentDateReplayFixture(t)},
+			"judge-prov": {Kind: "openai", Endpoint: "http://fake-provider.invalid"},
+			"other-prov": {Kind: "openai", Endpoint: "http://fake-provider.invalid"},
 		},
 		Models: map[string]config.ModelConfig{
 			"judge-model": {Provider: "judge-prov"},
@@ -70,9 +70,9 @@ func TestBindJudgeRefresherCacheKeyIncludesProviderName(t *testing.T) {
 	sharedEndpoint := "http://shared-host"
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
-			"judge-prov": {Kind: "replay", Endpoint: sharedEndpoint, Bundle: writeCurrentDateReplayFixture(t)},
-			"acct-a":     {Kind: "replay", Endpoint: sharedEndpoint, Bundle: writeCurrentDateReplayFixture(t)},
-			"acct-b":     {Kind: "replay", Endpoint: sharedEndpoint, Bundle: writeCurrentDateReplayFixture(t)},
+			"judge-prov": {Kind: "openai", Endpoint: sharedEndpoint},
+			"acct-a":     {Kind: "openai", Endpoint: sharedEndpoint},
+			"acct-b":     {Kind: "openai", Endpoint: sharedEndpoint},
 		},
 		Models: map[string]config.ModelConfig{
 			"judge-model": {Provider: "judge-prov"},

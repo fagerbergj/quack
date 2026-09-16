@@ -1,4 +1,4 @@
-// Package otelobs is Quack's OTel wiring: provider setup, metrics, and the replay ledger emission seam.
+// Package otelobs is Quack's OTel wiring: provider setup, metrics, and the ledger's observation emission seam.
 package otelobs
 
 import (

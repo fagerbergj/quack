@@ -16,7 +16,7 @@ import (
 
 // newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list and
 // export talk to a running server; show/rebuild/recover have no REST surface
-// and run server-side against the SAME stores a LOCAL quack.yaml would boot `quack serve` against (config.Load(defaultConfigPath()), like `quack replay`) - there is no notion of "the active registered server" here, since the point is direct store access, not an HTTP round-trip.
+// and run server-side against the SAME stores a LOCAL quack.yaml would boot `quack serve` against (config.Load(defaultConfigPath()), like `quack eval`) - there is no notion of "the active registered server" here, since the point is direct store access, not an HTTP round-trip.
 func newLedgerCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "ledger",
@@ -102,8 +102,8 @@ func newLedgerListCmd() *cobra.Command {
 }
 
 // newLedgerExportCmd: `ledger export <chat-id> [-o file]` - the dogfooding
-// ritual for the replay engine: hit a bug -> export the chat -> attach the
-// zip to the issue or pin it in testdata/ as a replay fixture.
+// ritual: hit a bug -> export the chat -> attach the zip to the issue or
+// pin it in testdata/ as an eval/dataset fixture.
 func newLedgerExportCmd() *cobra.Command {
 	var output string
 	c := &cobra.Command{
@@ -111,7 +111,7 @@ func newLedgerExportCmd() *cobra.Command {
 		Short: "Download a chat's recording bundle",
 		Long: "Download a chat's recording bundle (a ZIP: manifest.json + entries.jsonl of\n" +
 			"typed ledger entries) - default filename <chat-id>.zip. Only bundles at the\n" +
-			"current ledger_version replay; older OTel-attribute bundles are unsupported.",
+			"current ledger_version load; older OTel-attribute bundles are unsupported.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withTarget(cmd, func(t string) error {

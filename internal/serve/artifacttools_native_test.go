@@ -42,12 +42,12 @@ func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
-			"replay-test": {Kind: "replay", Bundle: writeCurrentDateReplayFixture(t)},
+			"stub-test": {Kind: "openai", Endpoint: "http://fake-provider.invalid"},
 		},
 		Agents: map[string]config.AgentConfig{
 			"tester": {
 				Bundle:   "../../agents/web-researcher",
-				Provider: "replay-test",
+				Provider: "stub-test",
 				Model:    "any-model",
 				Tools:    []string{"current_date"},
 			},

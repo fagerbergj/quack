@@ -250,7 +250,7 @@ func jsonStr(s string) string {
 // TestPutPreservesShaOnFailedRefetch is the adversarial-review severe#2
 // regression: re-POSTing an already-installed entry must not wipe
 // installed_sha/fetched_at when the immediately-following Fetch fails - the
-// last good clone still serves that sha (replay, ledger provenance, P4).
+// last good clone still serves that sha (ledger provenance, P4).
 func TestPutPreservesShaOnFailedRefetch(t *testing.T) {
 	bare, _ := newFixtureRepo(t)
 	withFixedRemote(t, bare)

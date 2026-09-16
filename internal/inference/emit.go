@@ -177,7 +177,7 @@ func toolNames(tools map[string]any) []string {
 }
 
 // contentHash is the prompt-version content hash: a short, stable digest of
-// the system instruction bytes, so replay's divergence report can tell "the
+// the system instruction bytes, recorded so a later diff can tell "the
 // prompt changed" from "everything else did".
 func contentHash(b []byte) string {
 	sum := sha256.Sum256(b)

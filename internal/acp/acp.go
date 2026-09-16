@@ -26,7 +26,6 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/recordstore"
-	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -60,7 +59,6 @@ type Options struct {
 	StartTimeout    time.Duration
 	IdleTimeout     time.Duration
 	PermissionJudge func(ctx context.Context, toolName, title string, input map[string]any) (allow bool, reason string)
-	Replay          *replay.Session
 	// ModelName: the model this agent's PI_ACP_CONFIG binds it to -
 	// attrs the round's gen_ai metrics.
 	ModelName string
@@ -339,7 +337,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	if !fromPinned {
 		spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String(otelobs.GenAIAgentName, a.name))
 		_ = spawnCtx
-		h, err = a.start(ctx, cwd, caps)
+		h, err = a.startLive(ctx, cwd, caps)
 		otelobs.End(spawnSpan, err)
 		if err != nil {
 			return err

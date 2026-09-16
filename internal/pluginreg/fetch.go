@@ -108,8 +108,7 @@ func fetchInto(ctx context.Context, dir, url string) error {
 			return err
 		}
 	}
-	// Full clone, not blob-filtered: the pi-acp shim and skilltoolset read
-	// files, and replay needs git history.
+	// Full clone, not blob-filtered: the pi-acp shim and skilltoolset read files.
 	return gitRun(ctx, "", "clone", "--quiet", url, dir)
 }
 

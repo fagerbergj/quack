@@ -402,7 +402,7 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 		}
 	}
 	g.nodeDir = nodeDir
-	// Replay-ledger coords for gate's disk probes.
+	// Ledger coords for gate's disk probes.
 	probeCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound, User: cfg.User, Source: cfg.Source})
 	g.activity = func() workerActivity {
 		act := activityFromSessionAt(ctx.Session(), nodeDir)
@@ -921,7 +921,7 @@ func (j *judgeRounds) roundGate(round int) bool {
 }
 
 // prepareJudge: per-round act/memories scan, the always-written episodic
-// revision, the judge span, and the replay-ledger coords.
+// revision, the judge span, and the ledger coords.
 func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Context, jspan *stageSpan, ledgerCtx context.Context, act workerActivity) {
 	act = j.actFor(j.answer)
 	// recall_memory hits merge in fresh every round, from wherever this round's answer
@@ -948,7 +948,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	if jpErr != nil {
 		// promptArtifact stays "" (not "system/judge"): the version above is
 		// the WORKER's boot fallback, and pairing it with the judge's artifact
-		// name would record a mismatched triple replay could refuse on (#1422 N2).
+		// name would record a mismatched (source, version, artifact) triple (#1422 N2).
 		slog.WarnContext(judgeCtx, "judge prompt unresolved", "component", "vetting", "node", j.cfg.NodeID, "err", jpErr)
 	} else {
 		j.cfg.judgePrompt = jp
@@ -960,7 +960,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	if j.cfg.RefreshJudgeBinding != nil {
 		j.judge, j.cfg.JudgeModel, j.cfg.JudgeThinkingLevel = j.cfg.RefreshJudgeBinding(jp.art)
 	}
-	// Replay-ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
+	// Ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.
 	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: "judge", BundleHash: j.cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, PromptArtifact: promptArtifact, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
 	ledgerCtx = ledger.WithCoords(j.ctx, judgeCoords)
@@ -1872,7 +1872,7 @@ func modelName(m model.LLM) string {
 	return m.Name()
 }
 
-// runWorkerNodeTraced: wraps runWorkerNode with "quack.worker.round" span and replay-ledger coords.
+// runWorkerNodeTraced: wraps runWorkerNode with "quack.worker.round" span and ledger coords.
 func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Config, workerModel model.LLM, workerNode workflow.Node, input any, runID, stage string, emit func(*session.Event) error) (string, error) {
 	_, ts := otelobs.StartTimedSpan(spanCtx, "worker.round",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
@@ -1906,7 +1906,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 	return out, err
 }
 
-// checksPassCriterionTraced: wraps checksPassCriterion with gate.checks span and replay coords.
+// checksPassCriterionTraced: wraps checksPassCriterion with gate.checks span and ledger coords.
 func checksPassCriterionTraced(ctx context.Context, cfg Config) (criterionScore, bool) {
 	spanCtx, span := otelobs.Start(ctx, "gate.checks",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", cfg.NodeID))

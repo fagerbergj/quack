@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -9,13 +10,13 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/eval"
-	"github.com/fagerbergj/quack/internal/replay"
+	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/serve"
 )
 
 // newEvalCmd re-runs a recorded bundle's user turns LIVE through a fresh
 // in-process server built from the LOCAL quack.yaml, with --role's model
-// swapped in, then compares the fresh run's judge scores against the recording's own. Unlike `quack replay`, every model/tool/agent call is live - only the recorded USER TURNS are consumed from the bundle.
+// swapped in, then compares the fresh run's judge scores against the recording's own. Every model/tool/agent call is live - only the recorded USER TURNS are consumed from the bundle.
 func newEvalCmd() *cobra.Command {
 	var model, role, sourceServer string
 	var asJSON bool
@@ -31,9 +32,10 @@ func newEvalCmd() *cobra.Command {
 			"scored the same way the original bundle was, and a per-criterion\n" +
 			"recorded-vs-new table is printed. Exit code is 0 whenever the eval\n" +
 			"itself completed - a WORSE score is a result, not a failure.\n\n" +
-			"<chat-id-or-bundle.zip> resolves exactly like `quack replay`'s argument:\n" +
-			"a local bundle file, or a chat id fetched from --from-server's\n" +
-			"recording endpoint.",
+			"<chat-id-or-bundle.zip> is either a local bundle file (dropped in\n" +
+			"testdata/, or downloaded via `quack api GET .../recording`) or a chat\n" +
+			"id - fetched from --from-server (default: the active registered\n" +
+			"server)'s recording endpoint.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEval(cmd, args[0], model, role, sourceServer, asJSON)
@@ -55,7 +57,7 @@ func runEval(cmd *cobra.Command, target, model, role, sourceServer string, asJSO
 	}
 	defer cleanupBundle()
 
-	sess, err := replay.Load(bundlePath)
+	sess, err := bundle.Load(bundlePath)
 	if err != nil {
 		return fmt.Errorf("eval: load bundle: %w", err)
 	}
@@ -92,4 +94,36 @@ func runEval(cmd *cobra.Command, target, model, role, sourceServer string, asJSO
 	code := cli.RunEval(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), base, role, model, changed, turns, recordedScores, recordedAnswer, asJSON)
 	exitIfNonZero(code)
 	return nil
+}
+
+// resolveBundle resolves target into a local bundle file path: unchanged if
+// it's already a readable file, else fetched as a chat id from
+// sourceServer's recording endpoint (cli.Client.FetchRecording) into a temp file. cleanup removes that temp file; a no-op for an already-local path.
+func resolveBundle(ctx context.Context, sourceServer, target string) (path string, cleanup func(), err error) {
+	noop := func() {}
+	if st, statErr := os.Stat(target); statErr == nil && !st.IsDir() {
+		return target, noop, nil
+	}
+	c, err := cli.NewClient(ctx, sourceServer)
+	if err != nil {
+		return "", noop, err
+	}
+	body, err := c.FetchRecording(ctx, target)
+	if err != nil {
+		return "", noop, fmt.Errorf("fetch recording for chat %q: %w", target, err)
+	}
+	f, err := os.CreateTemp("", "quack-eval-*.zip")
+	if err != nil {
+		return "", noop, err
+	}
+	if _, err := f.Write(body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", noop, err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", noop, err
+	}
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
 }
