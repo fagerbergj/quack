@@ -12,11 +12,13 @@ import (
 	"github.com/fagerbergj/quack/internal/langfuse"
 )
 
-// promptChat builds one recorded llm.call entry stamped with prompt provenance
-// (#1420), the shape PromptSource pins from.
-func promptChat(ts time.Time, agent, promptSource, promptVersionID string) entry {
-	return chat(ts, "node-a", agent, "worker-r0", "gpt", map[string]any{
+// promptChat builds one recorded llm.call entry stamped with prompt
+// provenance (#1420, #1422): artifact is the resolved artifact name
+// (quack.prompt.artifact), agent the (possibly different) agent name.
+func promptChat(ts time.Time, round, agent, artifact, promptSource, promptVersionID string) entry {
+	return chat(ts, "node-a", agent, round, "gpt", map[string]any{
 		"gen_ai.prompt.name":      agent,
+		"quack.prompt.artifact":   artifact,
 		"quack.prompt.source":     promptSource,
 		"quack.prompt.version_id": promptVersionID,
 		"gen_ai.response.id":      "resp-1",
@@ -48,44 +50,75 @@ func TestNewPromptSource(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		entries []entry
-		lf      *langfuse.Client
-		wantErr string          // substring, "" = no error
-		want    map[string]bool // name -> expected in resolved map
+		name      string
+		entries   []entry
+		lf        *langfuse.Client
+		storeName string
+		wantErr   string          // substring, "" = no error
+		want      map[string]bool // name -> expected in resolved map
 	}{
 		{
 			name:    "static matching",
-			entries: []entry{promptChat(ts, "judge", artifactsrc.StaticSource, staticArt.VersionID)},
+			entries: []entry{promptChat(ts, "worker-r0", "judge", "system/judge", artifactsrc.StaticSource, staticArt.VersionID)},
 			want:    map[string]bool{"system/judge": true},
 		},
 		{
 			name:    "static drifted refuses",
-			entries: []entry{promptChat(ts, "judge", artifactsrc.StaticSource, "deadbeef0000")},
+			entries: []entry{promptChat(ts, "worker-r0", "judge", "system/judge", artifactsrc.StaticSource, "deadbeef0000")},
 			wantErr: "refusing to replay a different version",
 		},
 		{
 			name:    "static unknown artifact refuses",
-			entries: []entry{promptChat(ts, "no-such-agent", artifactsrc.StaticSource, "aaaa")},
+			entries: []entry{promptChat(ts, "worker-r0", "judge", "system/no-such-agent", artifactsrc.StaticSource, "aaaa")},
 			wantErr: "unknown artifact",
 		},
 		{
-			name:    "langfuse non-numeric version refuses",
-			entries: []entry{promptChat(ts, "code-reviewer", "langfuse", "not-a-number")},
-			lf:      fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("should not call langfuse") }),
-			wantErr: "not numeric",
+			// H2: the artifact name comes from the bundle directory, not the
+			// agent's own name - an agent key that differs from its bundle
+			// dir must still resolve via quack.prompt.artifact.
+			name:    "artifact name differs from agent name",
+			entries: []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", artifactsrc.StaticSource, mustStaticVersion(t, "system/code-reviewer"))},
+			want:    map[string]bool{"system/code-reviewer": true},
 		},
 		{
-			name:    "langfuse server error refuses",
-			entries: []entry{promptChat(ts, "code-reviewer", "langfuse", "7")},
+			// H1: rounds re-resolve by design: a name recorded at two different
+			// versions across rounds has no single version to pin.
+			name: "version moved mid-run refuses naming both",
+			entries: []entry{
+				promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", artifactsrc.StaticSource, "aaaaaaaaaaaa"),
+				promptChat(ts.Add(time.Minute), "worker-r1", "reviewer", "system/code-reviewer", artifactsrc.StaticSource, "bbbbbbbbbbbb"),
+			},
+			wantErr: "system/code-reviewer@aaaaaaaaaaaa vs system/code-reviewer@bbbbbbbbbbbb",
+		},
+		{
+			name:      "langfuse non-numeric version refuses",
+			entries:   []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", "langfuse", "not-a-number")},
+			lf:        fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("should not call langfuse") }),
+			storeName: "langfuse",
+			wantErr:   "not numeric",
+		},
+		{
+			name:      "langfuse unreachable is distinguished from missing version",
+			entries:   []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", "langfuse", "7")},
+			storeName: "langfuse",
 			lf: fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 			}),
-			wantErr: "system/code-reviewer@7",
+			wantErr: "unreachable, replay not attempted",
 		},
 		{
-			name:    "langfuse present",
-			entries: []entry{promptChat(ts, "code-reviewer", "langfuse", "7")},
+			name:      "langfuse permanent error is not reported as unreachable",
+			entries:   []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", "langfuse", "7")},
+			storeName: "langfuse",
+			lf: fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+			}),
+			wantErr: "status 400",
+		},
+		{
+			name:      "langfuse present",
+			entries:   []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", "langfuse", "7")},
+			storeName: "langfuse",
 			lf: fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) {
 				if got := r.URL.Query().Get("version"); got != "7" {
 					t.Errorf("version = %q, want 7", got)
@@ -96,21 +129,32 @@ func TestNewPromptSource(t *testing.T) {
 			want: map[string]bool{"system/code-reviewer": true},
 		},
 		{
-			name:    "langfuse missing version refuses naming name@version",
-			entries: []entry{promptChat(ts, "code-reviewer", "langfuse", "9")},
+			name:      "langfuse missing version refuses naming name@version",
+			entries:   []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", "langfuse", "9")},
+			storeName: "langfuse",
 			lf: fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
 			}),
-			wantErr: "system/code-reviewer@9",
+			wantErr: "system/code-reviewer@9: version no longer exists",
 		},
 		{
 			name:    "no store configured refuses",
-			entries: []entry{promptChat(ts, "code-reviewer", "langfuse", "7")},
+			entries: []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", "langfuse", "7")},
 			lf:      nil,
 			wantErr: "no prompts.store configured",
 		},
 		{
-			name: "pre-P1 entry has no provenance to pin",
+			// H3: the recorded store and the replaying deployment's configured
+			// store are different names - version numbers are per Langfuse
+			// project, so a version number alone is not enough.
+			name:      "recorded from a different store refuses naming both",
+			entries:   []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", "langfuse-prod", "7")},
+			lf:        fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("should not call langfuse") }),
+			storeName: "langfuse-staging",
+			wantErr:   `recorded from store "langfuse-prod", but this deployment's prompts.store is "langfuse-staging"`,
+		},
+		{
+			name: "pre-#1422 entry has no provenance to pin",
 			entries: []entry{chat(ts, "node-a", "judge", "worker-r0", "gpt", map[string]any{
 				"gen_ai.response.id": "resp-1",
 			})},
@@ -121,7 +165,7 @@ func TestNewPromptSource(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			sess := sessionFromEntries(t, tc.entries)
-			src, err := NewPromptSource(context.Background(), sess, tc.lf)
+			src, err := NewPromptSource(context.Background(), sess, tc.lf, tc.storeName)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
@@ -151,4 +195,13 @@ func TestNewPromptSource(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustStaticVersion(t *testing.T, name string) string {
+	t.Helper()
+	art, err := artifactsrc.Static(name)
+	if err != nil {
+		t.Fatalf("static %s: %v", name, err)
+	}
+	return art.VersionID
 }
