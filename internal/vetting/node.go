@@ -1393,8 +1393,36 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		slog.Error("delivery failed", "component", "vetting", "node", nodeID, "err", err, "items", len(dc.Items))
 		return
 	}
+	setDeliveryOutputAttr(ctx, dc)
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
 }
+
+// setDeliveryOutputAttr stamps the delivered text onto the node's root span (ctx here
+// is g.nodeCtx) as langfuse.observation.output - the post-gate text Langfuse should
+// show as the trace's result, not any one round's draft.
+func setDeliveryOutputAttr(ctx context.Context, dc DeliveryContext) {
+	span := oteltrace.SpanFromContext(ctx)
+	if !span.IsRecording() || !otelobs.CaptureContentEnabled() {
+		return
+	}
+	bodies := make([]string, 0, len(dc.Items))
+	for _, item := range dc.Items {
+		if item.Body != "" {
+			bodies = append(bodies, item.Body)
+		}
+	}
+	if len(bodies) == 0 {
+		return
+	}
+	out := ledger.Redact(strings.Join(bodies, "\n\n---\n\n")).(string)
+	if len(out) > deliveryOutputAttrCap {
+		out = out[:deliveryOutputAttrCap] + "…[truncated]"
+	}
+	span.SetAttributes(attribute.String("langfuse.observation.output", out))
+}
+
+// deliveryOutputAttrCap matches internal/inference/span.go's spanAttrCap convention.
+const deliveryOutputAttrCap = 8192
 
 // commitFanoutStage hands this node's review to the run's ReviewFanout (#867):
 // a synthesizer's consolidated answer (#965), or one reviewer's staged review.

@@ -12,11 +12,17 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// langfuse.observation.* have no OTel semconv form; Langfuse doesn't read
-// gen_ai.input/output.messages yet (langfuse#12657), so content needs both.
+// langfuse.observation.* and langfuse.prompt.* have no OTel semconv form.
+// observation.input/output duplicate gen_ai.input/output.messages because
+// Langfuse doesn't read those yet (langfuse#12657); prompt.name/version are
+// how Langfuse links a generation to the prompt version that produced it.
 const (
 	langfuseObservationInput  = "langfuse.observation.input"
 	langfuseObservationOutput = "langfuse.observation.output"
+	langfusePromptName        = "langfuse.prompt.name"
+	langfusePromptVersion     = "langfuse.prompt.version"
+	// langfuseSource mirrors internal/langfuse.Source's stamped Artifact.Source.
+	langfuseSource = "langfuse"
 )
 
 // spanAttrCap bounds gen_ai content span attribute values; matches
@@ -69,6 +75,14 @@ func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 		}
 		if c.Agent != "" {
 			attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
+		}
+		// langfuseSource must match internal/langfuse.SourceName; not imported here to
+		// avoid pulling langfuse's HTTP client into every model call's hot path.
+		if c.PromptSource == langfuseSource && c.PromptVersionID != "" {
+			attrs = append(attrs,
+				attribute.String(langfusePromptName, c.Agent),
+				attribute.String(langfusePromptVersion, c.PromptVersionID),
+			)
 		}
 	}
 	if !otelobs.CaptureContentEnabled() {

@@ -84,6 +84,10 @@ dag:
 
 `dag.max_active_runs` is deprecated: quack still accepts the key so an existing config doesn't crash-loop, but logs a boot warning and ignores it. Remove it from your config.
 
+## Binding on a prompt
+
+A prompt resolved from a `prompts:` store (see [observability.md](observability.md#langfuse-prompts)) can carry a `config` block with `model`, `provider` and/or `effort` keys. When it does, that round's worker binds to those values instead of the agent's static `model:`/`provider:` and the model's `models.<name>.effort` - useful for a Langfuse-side experiment that swaps a model without a config deploy. Each value is validated the same way its static counterpart is (`model` must be under `models:`, `provider` under `providers:`, `effort` one of low/medium/high); an invalid value is logged once and the round runs on the static binding instead. The ledger's `request_model`/`reasoning_effort` on that round reflect whichever binding actually ran.
+
 ## The judge is a separate model
 
 `gates.judge` (see [trust-gate.md](trust-gate.md)) names its own `provider` + `model`, independent of any worker's. That's deliberate - the trust gate's whole premise is that a genuinely different model catches blind spots a worker can't see in its own output. Reusing the worker's model for the judge would collapse that independence.

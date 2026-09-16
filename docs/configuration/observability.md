@@ -80,6 +80,10 @@ The in-flight gauges (`quack.runs.active`, `quack.nodes.active`) don't survive a
 
 `QUACK_PPROF_ADDR` (unset by default) starts a `net/http/pprof` debug listener on that address - a deliberate opt-in, since it's an unauthenticated profiling endpoint.
 
+## Langfuse prompts
+
+`prompts:` (see [index.md](index.md)) points named artifacts at a `stores:` entry of `kind: langfuse`; a round whose worker prompt resolved from that store gets its generation spans stamped `langfuse.prompt.name`/`langfuse.prompt.version`, the pair Langfuse uses to link a generation to the prompt version that produced it. Every span already carries `gen_ai.conversation.id` (the chat id) and `user.id` (the session's user, when known), so a Langfuse trace is filterable by session/user without extra wiring. A node's root span additionally gets `langfuse.observation.output` set to the delivered text once a delivery commits, so the trace's top-level output is the thing that actually shipped, not any one round's draft.
+
 ## Ledger and recording
 
 The ledger is quack's write-ahead log: one append-only stream of typed entries per chat in Postgres (`ledger_entries`). Intents (artifact revisions, delivery, node lifecycle, judge rounds) are appended before the state change they describe; observations (`llm.call`, `tool.call`, `agent.invoke`, `eval.score`) are appended after the fact from the `gen_ai.*` OTel log records that `inference.NewModel`, `tools.Build`, the ACP subprocess connection and the judge emit. Every entry carries the chat id plus `node_id`/`agent`/`round`, the replay stream identity, stamped by the vetting gate on the emitting object.
