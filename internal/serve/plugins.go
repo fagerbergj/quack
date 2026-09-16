@@ -234,11 +234,9 @@ func seedPluginNames(seed []string) map[string]bool {
 	return names
 }
 
-// admitBootPlugins checks every resolved plugin: one plugins.seed lists is
-// config, so a refusal is fatal, named, exactly as always. One added over
-// REST is operator data - a refusal there only drops that plugin (named in
-// a warning, stored on its row) and boot proceeds (#1430 severe: a
-// rebuildSkills 422 must not brick the next boot for the row it refused).
+// admitBootPlugins: a plugins.seed (config) plugin's refusal is fatal, named,
+// as always; a REST-added row's refusal only drops that plugin (warned,
+// stored on its row) so boot never bricks on operator data (#1430 severe).
 func admitBootPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, error) {
 	seedNames := seedPluginNames(seed)
 	out := make([]plugin.Plugin, 0, len(plugins))
