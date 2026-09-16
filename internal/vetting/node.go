@@ -940,9 +940,19 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	j.episodicRoundsWritten++
 	runID = fmt.Sprintf("judge-r%d", round)
 	judgeCtx, jspan = startStageSpan(j.nodeCtx, j.sink, j.cfg, j.nodeID, "judge", stream.StageJudge, runID, round)
+	// This round runs on system/judge, not the worker's bundle prompt, so its
+	// llm.call carries that artifact's provenance; BundleHash stays the
+	// worker's - whose answer is under review.
+	promptSource, promptVersion := j.cfg.PromptSource, j.cfg.PromptVersionID
+	if jp, err := resolveJudgePrompt(judgeCtx, j.cfg.Prompts); err != nil {
+		slog.WarnContext(judgeCtx, "judge prompt unresolved", "component", "vetting", "node", j.cfg.NodeID, "err", err)
+	} else {
+		j.cfg.judgePrompt = jp
+		promptSource, promptVersion = jp.art.Source, jp.art.VersionID
+	}
 	// Replay-ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.
-	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: "judge", BundleHash: j.cfg.BundleHash, PromptSource: j.cfg.PromptSource, PromptVersionID: j.cfg.PromptVersionID, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
+	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: "judge", BundleHash: j.cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
 	ledgerCtx = ledger.WithCoords(j.ctx, judgeCoords)
 	// Same belt-and-suspenders as runWorkerNodeTraced's workerModel stamp.
 	if cs, ok := j.cfg.JudgeModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
@@ -1831,7 +1841,16 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
-	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, BundleHash: cfg.BundleHash, PromptSource: cfg.PromptSource, PromptVersionID: cfg.PromptVersionID, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
+	// Round start is the one point the worker's prompt may move (epic #1418:
+	// nothing re-resolves mid-round), so the version recorded here is the one
+	// every model call of this round runs on.
+	promptSource, promptVersion := cfg.PromptSource, cfg.PromptVersionID
+	if cfg.RefreshPrompt != nil {
+		if art := cfg.RefreshPrompt(spanCtx); art.VersionID != "" {
+			promptSource, promptVersion = art.Source, art.VersionID
+		}
+	}
+	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, BundleHash: cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
 	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))
 	// WithAgentContext stamp does not survive RunNode scheduling; inference models get stamped directly.
 	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {

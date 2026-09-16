@@ -95,7 +95,7 @@ func TestRunGatedRefine_QueuedRerunKeepsRecalledMemory(t *testing.T) {
 	}
 	node := workflow.NewDynamicNode[string, string]("n1",
 		func(c adkagent.Context, task string, emit func(*session.Event) error) (string, error) {
-			answer, _, err := RunGatedRefine(c, "n1", workerNode, stub, NewJudgeFactory(nil, stub, nil, nil), cfg, task, nil, ctrl, emit)
+			answer, _, err := RunGatedRefine(c, "n1", workerNode, stub, NewJudgeFactory(stub, nil, nil), cfg, task, nil, ctrl, emit)
 			return answer, err
 		}, workflow.NodeConfig{})
 	root, err := workflowagent.New(workflowagent.Config{

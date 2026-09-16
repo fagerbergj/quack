@@ -84,7 +84,7 @@ func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeSc
 		t.Fatalf("worker: %v", err)
 	}
 	var res GateResult
-	node, err := newTestGatedNodeCapture(nodeID, worker, m, NewJudgeFactory(nil, m, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture(nodeID, worker, m, NewJudgeFactory(m, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}

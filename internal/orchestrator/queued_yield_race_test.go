@@ -73,8 +73,8 @@ func TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield(t *testing.T) {
 	ex := dag.NewExecutor(sessions,
 		map[string]adkagent.Agent{"web-researcher": worker, "synthesizer": synth},
 		map[string]model.LLM{"web-researcher": stub, "synthesizer": stub},
-		vetting.NewJudgeFactory(nil, stub, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 
 	// Cap web-researcher at 1 concurrent session: 3 ready nodes, so 2 MUST
 	// queue and fire onQueued while a sibling is still executing.

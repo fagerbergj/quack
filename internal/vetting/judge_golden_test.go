@@ -42,15 +42,15 @@ func checkJudgeGolden(t *testing.T, name, got string) {
 // mustJudgeBehaviour assembles the judge behaviour layer or fails the test.
 func mustJudgeBehaviour(t *testing.T, readTools, skills bool) string {
 	t.Helper()
-	b, _, err := judgeBehaviour(context.Background(), nil, readTools, skills)
+	p, err := resolveJudgePrompt(context.Background(), nil)
 	if err != nil {
-		t.Fatalf("judge behaviour: %v", err)
+		t.Fatalf("judge prompt: %v", err)
 	}
-	return b
+	return p.behaviour(readTools, skills)
 }
 
 // TestGoldenJudgePrompt pins the judge's assembled prompt for every
-// tool-presence combination judgeBehaviour branches on.
+// tool-presence combination the clause selection branches on.
 func TestGoldenJudgePrompt(t *testing.T) {
 	for _, c := range []struct {
 		name             string

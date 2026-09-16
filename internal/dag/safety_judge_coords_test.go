@@ -77,8 +77,8 @@ func TestSafetyJudgeCoords_MeasuredAtCallTime(t *testing.T) {
 	ex := dag.NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"w": scoped},
 		map[string]model.LLM{"w": workerModel},
-		vetting.NewJudgeFactory(nil, workerModel, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
+		vetting.NewJudgeFactory(workerModel, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
 		nil)
 
 	const chatID = "sj-coords-chat"

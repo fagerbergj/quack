@@ -64,7 +64,9 @@ func newCoopExecutor(t *testing.T, stub *coopStub, rounds int) (*Executor, Plan)
 		t.Fatalf("agent: %v", err)
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil,
-		vetting.NewJudgeFactory(nil, stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: rounds} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config {
+			return vetting.Config{Threshold: 0.6, JudgeRounds: rounds}
+		}, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
 	return ex, plan
 }
@@ -189,7 +191,9 @@ func newJudgeBlockExecutor(t *testing.T, stub *judgeBlockStub, rounds int) (*Exe
 		t.Fatalf("agent: %v", err)
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil,
-		vetting.NewJudgeFactory(nil, stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: rounds} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config {
+			return vetting.Config{Threshold: 0.6, JudgeRounds: rounds}
+		}, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
 	return ex, plan
 }
@@ -254,7 +258,9 @@ func newRepeatTripExecutor(t *testing.T, stub *repeatTripStub, rounds int) (*Exe
 		t.Fatalf("agent: %v", err)
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil,
-		vetting.NewJudgeFactory(nil, stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: rounds} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config {
+			return vetting.Config{Threshold: 0.6, JudgeRounds: rounds}
+		}, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
 	return ex, plan
 }

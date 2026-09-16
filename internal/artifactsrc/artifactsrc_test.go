@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
+	"text/template"
 	"time"
 )
 
@@ -131,6 +133,85 @@ func TestNamesDerivedFromShippedFiles(t *testing.T) {
 	}
 	if p, _ := StaticPath("rubric/global"); p != "config/rubric.md" {
 		t.Errorf("rubric/global maps to %q", p)
+	}
+}
+
+// TestResolveUsableRejectsBlankBody: a store handing back an empty prompt has
+// lost it, not edited it - the shipped file must win rather than the model
+// running with no instruction.
+func TestResolveUsableRejectsBlankBody(t *testing.T) {
+	src := &stubSource{art: Artifact{Body: "   \n\t "}, ok: true}
+	art, err := New("langfuse", src, time.Minute).ResolveUsable(context.Background(), "system/judge")
+	if err != nil {
+		t.Fatalf("a blank stored prompt must fall back, got %v", err)
+	}
+	shipped, _ := Static("system/judge")
+	if art.Source != StaticSource || art.VersionID != shipped.VersionID {
+		t.Errorf("got %+v, want the shipped %s@%s", art, StaticSource, shipped.VersionID)
+	}
+}
+
+// TestPinnedRefreshKeepsUsable: a round under way is worth more than the edit
+// that would have replaced its prompt.
+func TestPinnedRefreshKeepsUsable(t *testing.T) {
+	boot := Artifact{Body: "boot", Source: StaticSource, VersionID: "bootver"}
+	src := &stubSource{art: Artifact{Body: "stored", VersionID: "v9"}, ok: true}
+	p := NewPinned(New("langfuse", src, time.Nanosecond), "system/judge", boot)
+	if got := p.Get(); got.VersionID != "bootver" {
+		t.Fatalf("Get before any refresh = %+v, want boot", got)
+	}
+	if got := p.Refresh(context.Background()); got.Body != "stored" || p.Get().Body != "stored" {
+		t.Fatalf("refresh = %+v, want the stored version pinned", got)
+	}
+	src.art = Artifact{Body: ""} // blank is unusable: the shipped file wins
+	if got := p.Refresh(context.Background()); strings.TrimSpace(got.Body) == "" {
+		t.Error("refresh pinned a blank prompt")
+	}
+	// An unnamed holder (a bundle outside agents/) never re-resolves.
+	if got := NewPinned(nil, "", boot).Refresh(context.Background()); got.VersionID != "bootver" {
+		t.Errorf("unnamed holder refreshed to %+v, want boot", got)
+	}
+}
+
+// TestRenderFallsBackOnBadTemplate: a stored prompt that will not parse or
+// render degrades to the shipped file instead of erroring out its caller -
+// for system/judge, erroring would disable the trust gate deployment-wide.
+func TestRenderFallsBackOnBadTemplate(t *testing.T) {
+	for _, c := range []struct{ name, body string }{
+		{"unparseable", "{{if .Broken}}no end"},
+		{"missing block", "no define blocks here"},
+	} {
+		src := &stubSource{art: Artifact{Body: c.body, VersionID: "bad"}, ok: true}
+		var cache TemplateCache
+		var out strings.Builder
+		art, err := Render(context.Background(), New("langfuse", src, time.Minute), &cache, "system/judge",
+			func(tm *template.Template) error {
+				out.Reset()
+				return tm.ExecuteTemplate(&out, "head", nil)
+			})
+		if err != nil {
+			t.Errorf("%s: Render = %v, want a silent fall back to the shipped file", c.name, err)
+			continue
+		}
+		if art.Source != StaticSource || out.Len() == 0 {
+			t.Errorf("%s: got %+v with %d rendered bytes, want the shipped file", c.name, art, out.Len())
+		}
+	}
+}
+
+// TestTemplateCacheReparsesOnNewVersion: keyed on the version, so an edited
+// prompt is never served from a stale parse.
+func TestTemplateCacheReparsesOnNewVersion(t *testing.T) {
+	var cache TemplateCache
+	first, err := cache.parse(Artifact{Name: "x", Body: "A", Source: StaticSource, VersionID: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same, _ := cache.parse(Artifact{Name: "x", Body: "A", Source: StaticSource, VersionID: "1"}); first != same {
+		t.Error("same version re-parsed; the cache is not keyed on the version")
+	}
+	if next, _ := cache.parse(Artifact{Name: "x", Body: "B", Source: StaticSource, VersionID: "2"}); next == first {
+		t.Error("new version served a stale parse")
 	}
 }
 

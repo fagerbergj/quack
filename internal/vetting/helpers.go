@@ -14,6 +14,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -86,14 +87,24 @@ type Config struct {
 	// ledger provenance only (#1096), stamped onto worker ledger.Coords
 	// alongside Agent.
 	BundleHash string
-	// PromptSource/PromptVersionID: where this round's system/<agent> artifact
-	// came from ("static" or the store name) and which version of it -
-	// ledger provenance only (#1420), stamped alongside BundleHash.
+	// PromptSource/PromptVersionID: where this node's system/<agent> artifact
+	// came from ("static" or the store name) and which version of it - ledger
+	// provenance only (#1420), stamped alongside BundleHash.
 	PromptSource    string
 	PromptVersionID string
-	User            string // observability only; resolved from the ADK session, not caller-set
-	Source          string // observability only; run origin (extension name or a fixed app value)
-	Task            string // delivery check; empty = no check
+	// RefreshPrompt re-resolves the worker's system prompt at a round's start and
+	// reports what that round runs on, so the prompt the model sees and the
+	// version the ledger records can never disagree mid-round. nil keeps the above.
+	RefreshPrompt func(ctx context.Context) artifactsrc.Artifact
+	// Prompts resolves the judge's own system/judge, once per judge round;
+	// nil resolves the shipped file.
+	Prompts *artifactsrc.Resolver
+	// judgePrompt: the round's rendered system/judge, set by prepareJudge right
+	// where judgeCoords are built. Zero value = runJudgeRound resolves its own.
+	judgePrompt judgePrompt
+	User        string // observability only; resolved from the ADK session, not caller-set
+	Source      string // observability only; run origin (extension name or a fixed app value)
+	Task        string // delivery check; empty = no check
 	// UpstreamAnswers: this node's dependency output, same as buildTask gives
 	// the worker - the judge needs it too to verify upstream-sourced claims.
 	UpstreamAnswers string

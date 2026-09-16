@@ -38,8 +38,9 @@ type Options struct {
 	Caps    workspace.Caps
 	ExtraRO []string
 	Home    string
-	// Preamble is re-assembled at the start of every round, so an edited prompt
-	// artifact (and the date footer) takes effect without a restart.
+	// Preamble is re-assembled at the start of each round that sends one -
+	// round.go prepends it only on a FRESH session, so on a pinned process an
+	// edited prompt lands on the next node dispatch, not the next round.
 	Preamble func(ctx context.Context) string
 	// Prompts resolves system/acp.environment for the round's environment block.
 	Prompts         *artifactsrc.Resolver

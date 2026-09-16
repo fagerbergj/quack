@@ -29,7 +29,7 @@ type Executor struct {
 	agents      map[string]adkagent.Agent
 	models      map[string]model.LLM
 	judge       vetting.JudgeFactory
-	cfgFor      func(agentName string) vetting.Config
+	cfgFor      func(ctx context.Context, agentName string) vetting.Config
 	mediaAgents map[string]bool
 	controls    *runControls
 	maxActive   int
@@ -233,7 +233,7 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 		slog.Warn("dag: no session, skipping artifact tools", "component", "dag", "chat_id", chatID)
 	}
 	sink, _ := stream.YieldFromContext(ctx)
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
+	gateNodes, _, err := buildGateNodes(ctx, plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
 		}, e.admission, e.specFor, e.judgeSpec, artifacts, e.walLedger, nil, sink, e.sessions) // a subset run never re-runs setup, so nothing to refresh
@@ -272,7 +272,7 @@ func (e *Executor) resetNativeWorkerSession(ctx context.Context, plan Plan, chat
 }
 
 // NewExecutor: returns a graph Executor.
-func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
+func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(context.Context, string) vetting.Config, mediaAgents map[string]bool) *Executor {
 	return &Executor{sessions: sessions, agents: agents, models: models, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
 }
 

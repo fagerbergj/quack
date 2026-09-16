@@ -200,7 +200,7 @@ func runFixtureNode(t *testing.T, nodeID, prompt string) {
 	if err != nil {
 		t.Fatalf("fixture: build worker node: %v", err)
 	}
-	judgeFactory := vetting.NewJudgeFactory(nil, judgeModel, nil, nil)
+	judgeFactory := vetting.NewJudgeFactory(judgeModel, nil, nil)
 	cfg := fixtureCfg(nodeID)
 
 	fn := func(ctx adkagent.Context, task string, emit func(*session.Event) error) (string, error) {

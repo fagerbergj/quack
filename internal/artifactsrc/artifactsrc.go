@@ -8,11 +8,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"path"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/fagerbergj/quack/internal/bundledir"
@@ -91,8 +91,10 @@ func (r *Resolver) Resolve(ctx context.Context, name string) (Artifact, error) {
 	if err != nil {
 		return Artifact{}, err
 	}
+	// Timed after the fetch, not before: a slow store must not spend the TTL it
+	// was meant to start.
 	r.mu.Lock()
-	r.cache[name] = cached{art: art, at: now}
+	r.cache[name] = cached{art: art, at: time.Now()}
 	r.mu.Unlock()
 	return art, nil
 }
@@ -116,6 +118,130 @@ func (r *Resolver) fetch(ctx context.Context, name string) (Artifact, error) {
 	return Static(name)
 }
 
+// ResolveUsable is Resolve with a content check: a blank body from a store is a
+// prompt someone emptied by accident, not an edit, so it falls back to the
+// shipped file rather than running the model with no instruction.
+func (r *Resolver) ResolveUsable(ctx context.Context, name string) (Artifact, error) {
+	art, err := r.Resolve(ctx, name)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if strings.TrimSpace(art.Body) != "" {
+		return art, nil
+	}
+	if art.Source == StaticSource {
+		return Artifact{}, fmt.Errorf("artifacts: shipped %s is empty", name)
+	}
+	slog.Warn("resolved prompt is blank; using the shipped file",
+		"component", "artifacts", "artifact", name, "source", art.Source, "version", art.VersionID)
+	return Static(name)
+}
+
+// Pinned is the artifact one node is running on. A round refreshes it at its
+// start and nothing re-resolves until the next one, so the prompt the model
+// sees and the version the ledger records can never disagree mid-round.
+type Pinned struct {
+	res  *Resolver
+	name string
+	mu   sync.Mutex
+	art  Artifact
+}
+
+// NewPinned pins boot's artifact under name; an empty name never refreshes
+// (a bundle outside agents/ has no artifact to resolve).
+func NewPinned(res *Resolver, name string, boot Artifact) *Pinned {
+	return &Pinned{res: res, name: name, art: boot}
+}
+
+// Get is the pinned artifact - a field read, cheap enough for every model call.
+func (p *Pinned) Get() Artifact {
+	if p == nil {
+		return Artifact{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.art
+}
+
+// Refresh re-resolves at a round's start and returns what the round will use.
+// An unresolvable or unusable version keeps the pinned one: a round already
+// under way is worth more than the edit that would have replaced its prompt.
+func (p *Pinned) Refresh(ctx context.Context) Artifact {
+	if p == nil {
+		return Artifact{}
+	}
+	if p.name == "" {
+		return p.Get()
+	}
+	art, err := p.res.ResolveUsable(ctx, p.name)
+	if err != nil {
+		slog.Warn("prompt unresolved; keeping the pinned version",
+			"component", "artifacts", "artifact", p.name, "err", err)
+		return p.Get()
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.art = art
+	return art
+}
+
+// TemplateCache holds one parsed template per artifact version - the same
+// prompt is re-rendered every round and parsing is the expensive half.
+type TemplateCache struct {
+	mu  sync.Mutex
+	key string
+	t   *template.Template
+}
+
+func (c *TemplateCache) parse(art Artifact) (*template.Template, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.t != nil && c.key == art.Source+"/"+art.VersionID {
+		return c.t, nil
+	}
+	t, err := template.New(art.Name).Parse(art.Body)
+	if err != nil {
+		return nil, err
+	}
+	c.key, c.t = art.Source+"/"+art.VersionID, t
+	return t, nil
+}
+
+// Render resolves name, parses it and hands the template to render. A stored
+// version that will not parse or render falls back to the shipped file with one
+// warning - a bad prompt edit must degrade, never disable the gate that reads it.
+func Render(ctx context.Context, res *Resolver, cache *TemplateCache, name string, render func(*template.Template) error) (Artifact, error) {
+	art, err := res.ResolveUsable(ctx, name)
+	if err != nil {
+		return Artifact{}, err
+	}
+	rerr := renderWith(cache, art, render)
+	if rerr == nil {
+		return art, nil
+	}
+	if art.Source == StaticSource {
+		return Artifact{}, fmt.Errorf("artifacts: %s: %w", name, rerr)
+	}
+	slog.Warn("resolved prompt will not render; using the shipped file",
+		"component", "artifacts", "artifact", name, "source", art.Source, "version", art.VersionID, "err", rerr)
+	shipped, err := Static(name)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if err := renderWith(cache, shipped, render); err != nil {
+		return Artifact{}, fmt.Errorf("artifacts: shipped %s: %w", name, err)
+	}
+	return shipped, nil
+}
+
+func renderWith(cache *TemplateCache, art Artifact, render func(*template.Template) error) error {
+	t, err := cache.parse(art)
+	if err != nil {
+		return err
+	}
+	return render(t)
+}
+
 // Static reads name's shipped file: disk in cwd first, then the embedded copy.
 // VersionID is the body's content hash, so an edited file is a new version.
 func Static(name string) (Artifact, error) {
@@ -127,8 +253,15 @@ func Static(name string) (Artifact, error) {
 	if err != nil {
 		return Artifact{}, fmt.Errorf("artifacts: read %s (%s): %w", name, p, err)
 	}
+	return FileArtifact(name, raw), nil
+}
+
+// FileArtifact stamps raw as a static artifact under name. Exported for the
+// files that have no artifact name (a bundle outside agents/): they still need
+// a content-hash version id, or the ledger records none.
+func FileArtifact(name string, raw []byte) Artifact {
 	sum := sha256.Sum256(raw)
-	return Artifact{Name: name, Body: string(raw), Source: StaticSource, VersionID: hex.EncodeToString(sum[:])[:12]}, nil
+	return Artifact{Name: name, Body: string(raw), Source: StaticSource, VersionID: hex.EncodeToString(sum[:])[:12]}
 }
 
 // registry maps every shipped artifact name to its file. Derived from the
@@ -184,31 +317,33 @@ func ReadBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) 
 // rubric/global and rubric/constitution, and each config/prompts/<n>.md gives system/<n>.
 func scan() map[string]string {
 	reg := map[string]string{}
-	add := func(name, p string) {
-		if _, err := bundledir.ReadFile(p); err == nil {
-			reg[name] = p
+	add := func(name, p string) bool {
+		if _, err := bundledir.ReadFile(p); err != nil {
+			return false
 		}
+		reg[name] = p
+		return true
 	}
-	if des, err := fs.ReadDir(bundledir.SubFS("agents"), "."); err == nil {
-		for _, de := range des {
-			if !de.IsDir() {
-				continue
-			}
-			a := de.Name()
-			add("system/"+a, path.Join("agents", a, "prompt.md"))
-			add("rubric/"+a, path.Join("agents", a, "rubric.yaml"))
-			add("memory/"+a, path.Join("agents", a, "memory.md"))
+	for _, a := range bundledir.UnionDirNames("agents", ".") {
+		if !add("system/"+a, path.Join("agents", a, "prompt.md")) {
+			continue // not a bundle dir (a stray file under agents/)
 		}
+		add("rubric/"+a, path.Join("agents", a, "rubric.yaml"))
+		add("memory/"+a, path.Join("agents", a, "memory.md"))
 	}
 	add("rubric/global", "config/rubric.md")
 	add("rubric/constitution", "config/constitution.md")
-	if des, err := fs.ReadDir(bundledir.SubFS("config"), "prompts"); err == nil {
-		for _, de := range des {
-			if de.IsDir() || !strings.HasSuffix(de.Name(), ".md") {
-				continue
-			}
-			n := strings.TrimSuffix(de.Name(), ".md")
-			add("system/"+n, path.Join("config", "prompts", de.Name()))
+	for _, f := range bundledir.UnionDirNames("config", "prompts") {
+		if !strings.HasSuffix(f, ".md") {
+			continue
+		}
+		add("system/"+strings.TrimSuffix(f, ".md"), path.Join("config", "prompts", f))
+	}
+	// A shipped name that resolves nowhere means a broken image or a bind-mount
+	// that shadowed it; the resolver would fail the round with "unknown artifact".
+	for _, n := range []string{"system/judge", "system/compaction", "system/compaction.summary", "system/acp.environment", "rubric/global"} {
+		if _, ok := reg[n]; !ok {
+			slog.Error("shipped prompt artifact is missing", "component", "artifacts", "artifact", n)
 		}
 	}
 	return reg

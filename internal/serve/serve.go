@@ -800,7 +800,7 @@ func buildUserMemoryHookAgent(ctx context.Context, h config.UserMemoryHookConfig
 		return nil, fmt.Errorf("rubric.md: %w", err)
 	}
 	guidance := strings.TrimSpace(whatToRemember + "\n\n" + rubric)
-	return agent.BuildChat(b, res, m, nil, nil, guidance, nil, "")
+	return agent.BuildChat(b, b.PinPrompt(res), m, nil, nil, guidance, nil, "")
 }
 
 // fetchGitCredential: the shared body of gitCredentialAdapter.GitCredential and
@@ -837,21 +837,21 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 // run start, so an edited rubric or prompt reaches the next node without a restart.
 type gateConfigs struct {
 	boot    map[string]vetting.Config
-	refresh map[string]func() (vetting.Config, error)
+	refresh map[string]func(context.Context) (vetting.Config, error)
 }
 
 func newGateConfigs(n int) *gateConfigs {
-	return &gateConfigs{boot: make(map[string]vetting.Config, n), refresh: make(map[string]func() (vetting.Config, error), n)}
+	return &gateConfigs{boot: make(map[string]vetting.Config, n), refresh: make(map[string]func(context.Context) (vetting.Config, error), n)}
 }
 
 // For is dag's cfgFor: the agent's gate config as its artifacts resolve right
 // now. An unresolvable artifact keeps the boot config rather than failing the run.
-func (g *gateConfigs) For(name string) vetting.Config {
+func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 	c := g.boot[name]
 	if r := g.refresh[name]; r != nil {
-		fresh, err := r()
+		fresh, err := r(ctx)
 		if err != nil {
-			slog.Warn("gate artifacts unresolved; using the loaded config", "component", "serve", "agent", name, "err", err)
+			slog.WarnContext(ctx, "gate artifacts unresolved; using the loaded config", "component", "serve", "agent", name, "err", err)
 			return c
 		}
 		return fresh
@@ -970,6 +970,7 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 		if gateCfg, err = vetting.FromConfig(context.Background(), res, cfg.Gates); err != nil {
 			return vetting.Config{}, nil, nil, nil, nil, err
 		}
+		gateCfg.Prompts = res // system/judge, resolved once per judge round
 		gateCfg.Memory = taskStore
 		gateCfg.Workspace = jail
 		gateCfg.WorkspaceUserID = localUserID
@@ -1007,7 +1008,7 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			if skillTS != nil {
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
-			judgeFactory = vetting.NewJudgeFactory(res, judge, judgeReadTools, judgeSkillsets)
+			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
 			// Own instances: gated nodes stamp per-round coords on `judge` (vetting/node.go);
 			// these callers are not nodes, so sharing would inherit the last node's stamp (#1049).
 			unstamped := func() (model.LLM, error) {
@@ -1054,8 +1055,8 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		return nil, fmtErr(name, "skills: %v", err)
 	}
 	wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
-	// Re-assembled per round (acp.Options.Preamble), so an edited prompt.md
-	// reaches the next round without a restart.
+	// Resolved once at the one point the preamble is composed and immediately
+	// consumed (acp/round.go's steerHooks), so nothing swaps it mid-round.
 	preamble := promptbuilder.CacheByDay(
 		func(ctx context.Context) string { return bundle.ResolvePrompt(ctx, res).VersionID },
 		func(ctx context.Context) string {
@@ -1143,7 +1144,7 @@ type nativeNodeBuilder struct {
 	res                *artifactsrc.Resolver
 }
 
-func (b *nativeNodeBuilder) buildWorker(drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
+func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
 	wm, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1184,14 +1185,17 @@ func (b *nativeNodeBuilder) buildWorker(drain func() string, extraTools ...tool.
 	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
 	builtins = append(builtins, extraTools...)
-	wag, err := agent.Build(b.bundle, b.res, wm, builtins, []tool.Toolset{b.agentSkillTS}, b.memGuidance, b.skillFms, b.grading, drain)
+	wag, err := agent.Build(b.bundle, prompts, wm, builtins, []tool.Toolset{b.agentSkillTS}, b.memGuidance, b.skillFms, b.grading, drain)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
 	return wag, wm, builtins, nil
 }
 
-func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, nodeRelease, error) {
+func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
+	// One holder per dispatch: two nodes of this agent run concurrently, and a
+	// shared one would let either move the other's prompt mid-round.
+	prompts := b.bundle.PinPrompt(b.res)
 	var extraTools []tool.Tool
 	var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 	if artifacts != nil {
@@ -1204,30 +1208,30 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 		coords := &tools.RoundCoords{}
 		var terr error
 		if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.SubjectHint(chatID)); terr != nil {
-			return nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
 		}
 		setRoundCoords = func(round int, turnID, headSHA, triggerAnnotation string) {
 			*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
 		}
 	}
-	wag, wm, builtins, err := b.buildWorker(drain, extraTools...)
+	wag, wm, builtins, err := b.buildWorker(prompts, drain, extraTools...)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	srv, err := agent.Serve(wag, b.sessions, b.memSvc, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
 	if err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 	}
 	workerContextID := agent.WorkerSessionID(chatID, nodeID)
 	client, err := srv.ClientForNode(nodeKey, workerContextID)
 	if err != nil {
 		_ = srv.Close()
-		return nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
 	}
 	// The deterministic worker session created by this node's first dispatch outlives it
 	// - reaped only at chat archive/delete (ReapNodeSessions), so a later reuse finds it.
 	release := b.nodeServers.track(srv)
-	return client, wm, builtins, setRoundCoords, release, nil
+	return client, wm, builtins, setRoundCoords, prompts.Refresh, release, nil
 }
 
 // loadNativeReplay restores the shared replay session from the configured
@@ -1260,7 +1264,9 @@ func resolveGateCfg(cfg *config.Config, res *artifactsrc.Resolver, base vetting.
 		}
 		c = stampBundle(c, bundle)
 		gateCfgs.boot[name] = c
-		gateCfgs.refresh[name] = func() (vetting.Config, error) { return refreshGateCfg(res, cfg, ac, c) }
+		gateCfgs.refresh[name] = func(ctx context.Context) (vetting.Config, error) {
+			return refreshGateCfg(ctx, res, cfg, ac, c)
+		}
 		return promptbuilder.GradingFacts(c.Threshold, c.JudgeRounds, c.ReadOnly, c.RequireRetrieval), nil
 	}
 	return "", nil
@@ -1277,10 +1283,7 @@ func stampBundle(c vetting.Config, b *agent.Bundle) vetting.Config {
 // refreshGateCfg re-resolves only the artifact-backed parts of a gate config -
 // the global rubric and constitution, the agent's own rubric, and the bundle's
 // hash and prompt provenance. Every config-derived field stays as boot computed it.
-func refreshGateCfg(res *artifactsrc.Resolver, cfg *config.Config, ac config.AgentConfig, boot vetting.Config) (vetting.Config, error) {
-	// Background: the run's own context never reaches dag's cfgFor; a prompt
-	// source is expected to carry its own deadline.
-	ctx := context.Background()
+func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.Config, ac config.AgentConfig, boot vetting.Config) (vetting.Config, error) {
 	base, err := vetting.FromConfig(ctx, res, cfg.Gates)
 	if err != nil {
 		return boot, err
@@ -1368,7 +1371,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		nodeServers:        nodeServers,
 		res:                res,
 	}
-	protoAgent, _, _, err := b.buildWorker(nil)
+	protoAgent, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil)
 	if err != nil {
 		return nil, fmtErr(name, "%v", err)
 	}
@@ -1527,7 +1530,7 @@ func buildAdvisorAgent(ctx context.Context, cfg *config.Config, res *artifactsrc
 				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
 			} else if ab, berr := agent.LoadBundle(ctx, res, "agents/advisor"); berr != nil {
 				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
-			} else if built, aerr := agent.BuildChat(ab, res, am, nil, nil, "", nil, ""); aerr != nil {
+			} else if built, aerr := agent.BuildChat(ab, ab.PinPrompt(res), am, nil, nil, "", nil, ""); aerr != nil {
 				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
 			} else {
 				// ask_advisor runs the advisor as its own nested runner.Run - never a DAG node's own model call.

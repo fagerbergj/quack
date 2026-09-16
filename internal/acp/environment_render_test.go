@@ -4,7 +4,30 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// badSource hands back one broken body for every name.
+type badSource struct{ body string }
+
+func (b badSource) Get(context.Context, string) (artifactsrc.Artifact, bool, error) {
+	return artifactsrc.Artifact{Body: b.body, VersionID: "bad"}, true, nil
+}
+func (badSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
+
+// TestEnvironmentBlockSurvivesBadStoredTemplate: a typo in a stored
+// system/acp.environment falls back to the shipped file rather than silently
+// dropping the block the round is grounded on.
+func TestEnvironmentBlockSurvivesBadStoredTemplate(t *testing.T) {
+	res := artifactsrc.New("langfuse", badSource{body: "{{if .Git}}unclosed"}, time.Minute)
+	got := environmentBlock(context.Background(), res, t.TempDir(), workspace.Caps{})
+	if !strings.HasPrefix(got, "<environment_context>") || !strings.HasSuffix(got, "</environment_context>") {
+		t.Errorf("block = %q, want the shipped template's output", got)
+	}
+}
 
 // TestRenderEnvironmentBranches covers the system/acp.environment branches the
 // golden files cannot reach (a git repo, a truncated entry list) - the template

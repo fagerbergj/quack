@@ -54,7 +54,7 @@ func retryNodeMetricsHarness(t *testing.T) (o *Orchestrator, gate *gatedLLM, use
 	}
 	sessions := session.InMemoryService()
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": worker}, map[string]model.LLM{"w": gate},
-		vetting.NewJudgeFactory(nil, gate, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(gate, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	o = New(sessions, gate, "", nil, ex, nil, nil, nil)
 
 	plan := dag.Plan{ID: "plan-1", UserMessage: "x", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "TASK"}}}

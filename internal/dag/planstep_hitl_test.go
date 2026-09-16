@@ -30,7 +30,7 @@ func TestRunPlanStep_HITLPauseThenResume(t *testing.T) {
 	}
 	ex := NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"asker": worker}, nil,
-		vetting.NewJudgeFactory(nil, stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "p", UserMessage: "go", Nodes: []Node{
 		{ID: "n1", AgentName: "asker", Task: "ASK-TASK"},
 	}}
@@ -103,7 +103,7 @@ func TestRunPlanStep_ReusedNodeEmitsNodeQueuedFirst(t *testing.T) {
 	}
 	ex := NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"worker": worker}, nil,
-		vetting.NewJudgeFactory(nil, stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "p", UserMessage: "go", Nodes: []Node{
 		{ID: "n1", AgentName: "worker", Task: "PLAIN-TASK"},
 	}}

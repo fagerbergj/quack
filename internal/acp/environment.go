@@ -2,7 +2,6 @@ package acp
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -60,18 +59,18 @@ type envFacts struct {
 	Writable   string
 }
 
+// envTemplates caches the parsed system/acp.environment per version.
+var envTemplates artifactsrc.TemplateCache
+
 func renderEnvironment(ctx context.Context, res *artifactsrc.Resolver, f envFacts) (string, error) {
-	art, err := res.Resolve(ctx, "system/acp.environment")
-	if err != nil {
-		return "", err
-	}
-	t, err := template.New("acp.environment").Parse(art.Body)
-	if err != nil {
-		return "", fmt.Errorf("parse system/acp.environment: %w", err)
-	}
 	var b strings.Builder
-	if err := t.Execute(&b, f); err != nil {
-		return "", fmt.Errorf("render system/acp.environment: %w", err)
+	// A stored version that will not render falls back to the shipped file
+	// (artifactsrc.Render) - a typo must not silently drop the whole block.
+	if _, err := artifactsrc.Render(ctx, res, &envTemplates, "system/acp.environment", func(t *template.Template) error {
+		b.Reset()
+		return t.Execute(&b, f)
+	}); err != nil {
+		return "", err
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }

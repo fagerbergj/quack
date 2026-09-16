@@ -77,7 +77,7 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 		t.Fatalf("worker: %v", err)
 	}
 	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score the answer 0-10"}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestGatedRefine_AdmissionFollowsPhase(t *testing.T) {
 			return true
 		},
 	}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestRunGatedRefine_DeterministicFailureReachesJudgeBeforeVerdict(t *testing
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10", RequireRetrieval: true}
 	var res GateResult
-	node, err := newTestGatedNodeCapture("researcher-gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(nil, judgeStub, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("researcher-gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(judgeStub, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestRunGatedRefine_StampsJudgeModelWithRoundCoords(t *testing.T) {
 		ChatID: "chat1", Agent: "web-researcher", Source: "github", JudgeModel: spy,
 		BundleHash: "bundlehash123456",
 	}
-	node, err := newTestGatedNode("gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(nil, spy, nil, nil), cfg)
+	node, err := newTestGatedNode("gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(spy, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -451,7 +451,7 @@ func runGatedRefineOnce(t *testing.T, cfg Config, answer string) GateResult {
 		t.Fatalf("worker: %v", err)
 	}
 	var res GateResult
-	node, err := newTestGatedNodeCapture("impl-gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(nil, stubPassJudge{}, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("impl-gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(stubPassJudge{}, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -675,7 +675,7 @@ func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
 		t.Fatalf("worker: %v", err)
 	}
 	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10"}
-	node, err := newTestGatedNode("gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -736,7 +736,7 @@ func TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound(t *testing.T
 			calls = append(calls, roundCoordsCall{round, turnID, headSHA, triggerAnnotation})
 		},
 	}
-	node, err := newTestGatedNode("gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -795,7 +795,7 @@ func TestGatedWorkerNode_SingleRoundRevisesOnce(t *testing.T) {
 		t.Fatalf("worker: %v", err)
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10"}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -869,7 +869,7 @@ func TestRunGatedRefine_EntryClearDropsStaleFailureBeforeASilentGap(t *testing.T
 		t.Fatalf("worker: %v", err)
 	}
 	cfg := Config{JudgeRounds: 0, Threshold: 0.7, ChatID: chatID, NodeID: workspaceScope, Agent: agentName}
-	node, err := newTestGatedNode(planNodeID, worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode(planNodeID, worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -917,7 +917,7 @@ func TestGatedWorkerNode_ZeroRoundsSkipsJudge(t *testing.T) {
 		t.Fatalf("worker: %v", err)
 	}
 	cfg := Config{JudgeRounds: 0, Threshold: 0.7, Rubric: "score the answer 0-10"}
-	node, err := newTestGatedNode("reader-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("reader-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -1217,7 +1217,7 @@ func TestGatedWorkerNode_JudgeErrorFailsClosed(t *testing.T) {
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10"}
 	var res GateResult
-	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(nil, erroringJudge{}, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(erroringJudge{}, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -1274,7 +1274,7 @@ func TestGatedWorkerNode_JudgeNoVerdictFailsClosed(t *testing.T) {
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10", JudgeMaxIterations: 2}
 	var res GateResult
 	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub,
-		NewJudgeFactory(nil, &stuckJudge{}, []tool.Tool{readTool}, nil), cfg, &res)
+		NewJudgeFactory(&stuckJudge{}, []tool.Tool{readTool}, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}

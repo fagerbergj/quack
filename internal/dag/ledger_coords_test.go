@@ -25,6 +25,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -69,8 +70,8 @@ type lcScopedAgent struct {
 	tools []tool.Tool
 }
 
-func (a lcScopedAgent) ForNode(string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(bool), error) {
-	return a.Agent, a.model, a.tools, nil, func(bool) {}, nil
+func (a lcScopedAgent) ForNode(string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
+	return a.Agent, a.model, a.tools, nil, nil, func(bool) {}, nil
 }
 
 // ledgerCoordsStub calls current_date once, answers, and passes the judge (verdict 0.9) -
@@ -174,8 +175,8 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	ex := dag.NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"w": scoped},
 		map[string]model.LLM{"w": workerModel},
-		vetting.NewJudgeFactory(nil, workerModel, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
+		vetting.NewJudgeFactory(workerModel, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
 		nil)
 
 	const chatID = "ledger-coords-chat"

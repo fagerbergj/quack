@@ -45,7 +45,7 @@ func TestWorkerSeesToolError(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10"}
-	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestWorkerSeesItsOwnToolResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10"}
-	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

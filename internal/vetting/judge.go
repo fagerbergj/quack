@@ -48,38 +48,66 @@ const (
 	defaultJudgeMaxIterations = 14
 )
 
-// judgeBehaviour assembles the judge's behaviour prompt from the system/judge
-// artifact's clause blocks, selected by which tools this judge actually holds.
-func judgeBehaviour(ctx context.Context, res *artifactsrc.Resolver, hasReadTools, hasSkills bool) (behaviour, versionID string, err error) {
-	art, err := res.Resolve(ctx, "system/judge")
+// judgeBlocks are system/judge's clause blocks, every one required: a stored
+// version missing one would render a judge told less than it actually holds.
+var judgeBlocks = []string{"head", "no_tools", "read_tools", "skills", "tail"}
+
+// judgePrompt is system/judge as resolved for ONE judge round, rendered up
+// front so the version the round's ledger coords record is the one it ran on.
+type judgePrompt struct {
+	art    artifactsrc.Artifact
+	blocks map[string]string
+}
+
+// judgeTemplates caches the parsed system/judge per version across rounds.
+var judgeTemplates artifactsrc.TemplateCache
+
+// resolveJudgePrompt renders every clause block. A stored version that will not
+// parse, or is missing a block, falls back to the shipped file (artifactsrc.Render)
+// instead of erroring - a bad prompt edit must not disable the gate fleet-wide.
+func resolveJudgePrompt(ctx context.Context, res *artifactsrc.Resolver) (judgePrompt, error) {
+	blocks := map[string]string{}
+	art, err := artifactsrc.Render(ctx, res, &judgeTemplates, "system/judge", func(t *template.Template) error {
+		clear(blocks)
+		for _, b := range judgeBlocks {
+			var sb strings.Builder
+			if err := t.ExecuteTemplate(&sb, b, nil); err != nil {
+				return fmt.Errorf("block %q: %w", b, err)
+			}
+			if blocks[b] = strings.TrimSpace(sb.String()); blocks[b] == "" {
+				return fmt.Errorf("block %q is empty", b)
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return "", "", err
+		return judgePrompt{}, fmt.Errorf("vetting: system/judge: %w", err)
 	}
-	t, err := template.New("judge").Parse(art.Body)
-	if err != nil {
-		return "", "", fmt.Errorf("vetting: parse system/judge: %w", err)
+	return judgePrompt{art: art, blocks: blocks}, nil
+}
+
+// judgePromptFor is the round's system/judge: prepareJudge normally resolved it
+// already, so the round's ledger coords carry the same version; a caller that
+// builds no coords (the plan judge, tests) resolves its own here.
+func judgePromptFor(ctx context.Context, cfg Config) (judgePrompt, error) {
+	if cfg.judgePrompt.blocks != nil {
+		return cfg.judgePrompt, nil
 	}
-	blocks := []string{"head"}
+	return resolveJudgePrompt(ctx, cfg.Prompts)
+}
+
+// behaviour picks the clauses this judge's actual tools earn it.
+func (p judgePrompt) behaviour(hasReadTools, hasSkills bool) string {
+	parts := []string{p.blocks["head"]}
 	if hasReadTools {
-		blocks = append(blocks, "read_tools")
+		parts = append(parts, p.blocks["read_tools"])
 	} else {
-		blocks = append(blocks, "no_tools")
+		parts = append(parts, p.blocks["no_tools"])
 	}
 	if hasSkills {
-		blocks = append(blocks, "skills")
+		parts = append(parts, p.blocks["skills"])
 	}
-	blocks = append(blocks, "tail")
-	parts := make([]string, 0, len(blocks))
-	for _, b := range blocks {
-		var sb strings.Builder
-		if err := t.ExecuteTemplate(&sb, b, nil); err != nil {
-			return "", "", fmt.Errorf("vetting: system/judge block %q: %w", b, err)
-		}
-		if s := strings.TrimSpace(sb.String()); s != "" {
-			parts = append(parts, s)
-		}
-	}
-	return strings.Join(parts, " "), art.VersionID, nil
+	return strings.Join(append(parts, p.blocks["tail"]), " ")
 }
 
 // criterionScore: per-criterion assessment, normalised 0.0-1.0.
@@ -122,17 +150,13 @@ type verdict struct {
 // JudgeFactory: builds a fresh agentic judge per round, per-factory read-only tools, per-round readCounter. maxIters wires forcedVerdictCallback so the round's last allowed turn (or a repeated identical tool
 // call) forces a text-only verdict instead of silently exhausting the budget (#853). maxOutputTokens caps the round's own reply tokens against a runaway generation loop; <= 0 leaves it uncapped (#889). forced is set true by forcedVerdictCallback the moment it strips tools for a forced close - the
 // caller's own signal that this round already spent its last allowed turn (#1235). receivedIDs (#1259): the round's recalled-memory ids, so the tool description and force-close instruction can require votes on the exact set delivered this round, not a generic reminder.
-type JudgeFactory func(sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error)
+type JudgeFactory func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error)
 
 // NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
-// res resolves system/judge at the start of each judge round; nil is the shipped file.
-func NewJudgeFactory(res *artifactsrc.Resolver, judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
+func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
 	hasReadTools, hasSkills := len(readTools) > 0, len(skillsets) > 0
-	return func(sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error) {
-		behaviour, version, err := judgeBehaviour(context.Background(), res, hasReadTools, hasSkills)
-		if err != nil {
-			return nil, nil, err
-		}
+	return func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error) {
+		behaviour, version := prompt.behaviour(hasReadTools, hasSkills), prompt.art.VersionID
 		submit, err := newSubmitVerdictTool(sink, receivedIDs)
 		if err != nil {
 			return nil, nil, err
@@ -144,7 +168,7 @@ func NewJudgeFactory(res *artifactsrc.Resolver, judgeModel model.LLM, readTools 
 		// judgeTools/behaviour are fixed for this round; only today() moves,
 		// so cache instead of rebuilding the prompt on every model call in
 		// the round's multi-turn agentic loop.
-		prompt := promptbuilder.CacheByDay(
+		assembled := promptbuilder.CacheByDay(
 			func(context.Context) string { return version },
 			func(context.Context) string { return promptbuilder.Judge(judgeTools, behaviour) })
 		a, err := llmagent.New(llmagent.Config{
@@ -152,7 +176,7 @@ func NewJudgeFactory(res *artifactsrc.Resolver, judgeModel model.LLM, readTools 
 			Description: "independent adversarial verifier",
 			Model:       judgeModel,
 			InstructionProvider: func(rc adkagent.ReadonlyContext) (string, error) {
-				return prompt(rc), nil
+				return assembled(rc), nil
 			},
 			Tools:                 judgeTools,
 			Toolsets:              skillsets,
@@ -822,9 +846,13 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 	receivedIDs := memoryIDs(received)
 	st := &judgeRoundState{cfg: cfg, maxIters: maxIters, emit: emit, ctx: ctx}
+	prompt, err := judgePromptFor(ctx, cfg)
+	if err != nil {
+		return verdict{}, nil, err
+	}
 	// forcedClose is flipped by forcedVerdictCallback the instant it strips tools for
 	// a forced close (#1235) - the round's own signal, not the turn counter.
-	judgeAgent, reads, err := factory(&st.sink, &st.forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs)
+	judgeAgent, reads, err := factory(prompt, &st.sink, &st.forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs)
 	if err != nil {
 		return verdict{}, nil, fmt.Errorf("vetting: build judge agent: %w", err)
 	}

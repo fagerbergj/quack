@@ -143,7 +143,7 @@ func TestRunGatedRefine_SteerReachesRunningNativeNode(t *testing.T) {
 	node := workflow.NewDynamicNode[string, string]("researcher-gate",
 		func(ctx adkagent.Context, task string, emit func(*session.Event) error) (string, error) {
 			answer, _, err := RunGatedRefine(ctx, "researcher-gate", workerNode, stub,
-				NewJudgeFactory(nil, stub, nil, nil), cfg, "research something", nil, ctrl, emit)
+				NewJudgeFactory(stub, nil, nil), cfg, "research something", nil, ctrl, emit)
 			return answer, err
 		}, workflow.NodeConfig{})
 

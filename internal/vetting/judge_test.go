@@ -106,7 +106,7 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls int32
 			readTool := newSpyReadTool(t, tc.body, &calls)
-			factory := NewJudgeFactory(nil, scriptedJudge{}, []tool.Tool{readTool}, nil)
+			factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{readTool}, nil)
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 				"I implemented game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
@@ -161,7 +161,7 @@ func TestJudgeCharBudgetReservesConfiguredMaxOutputTokens(t *testing.T) {
 // the judge model's configured context window gets clamped BEFORE the call (fitJudgeAnswer), so the judge still sees a within-budget prompt and produces a verdict instead of the call 400ing against the model's slot.
 func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	var seenPrompt string
-	factory := NewJudgeFactory(nil, recordingJudge{prompt: &seenPrompt}, nil, nil)
+	factory := NewJudgeFactory(recordingJudge{prompt: &seenPrompt}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	// Far larger than any real judge slot (~125k tokens raw) - the same shape as
 	// the #291 incident's 34K-token judge call against a 32K/64K model slot.
@@ -192,7 +192,7 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 // fitJudgeAnswer used to build the full judge prompt purely to measure its
 // length, discard it, then runJudgeRound built the identical string again. A round with no clamp needed and no retries must build it exactly once.
 func TestRunJudgeAgent_BuildsPromptOnceForARound(t *testing.T) {
-	factory := NewJudgeFactory(nil, recordingJudge{prompt: new(string)}, nil, nil)
+	factory := NewJudgeFactory(recordingJudge{prompt: new(string)}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10"}
 
@@ -224,7 +224,7 @@ func TestRunJudgeAgent_SessionIDIsChatIDNotConstant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spy tool: %v", err)
 	}
-	factory := NewJudgeFactory(nil, scriptedJudge{}, []tool.Tool{spy}, nil)
+	factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{spy}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 	cfg := Config{Rubric: "score 0-10", ChatID: "chat-42"}
 
@@ -261,7 +261,7 @@ func (j *flakyTransientJudge) GenerateContent(_ context.Context, _ *model.LLMReq
 // backoff and, once the endpoint recovers, produces a NORMAL scored verdict - never a degrade.
 func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 2}
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
@@ -280,7 +280,7 @@ func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 // error (fail closed), not a silent pass - node.go's caller is what turns this into a visible caveat rather than a stripped verdict.
 func TestRunJudgeAgent_PermanentTransientErrorFailsClosed(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 100} // never recovers
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	_, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err == nil {
@@ -411,7 +411,7 @@ func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 			var calls int32
 			skillTool := newSpyLoadSkillTool(t, tc.skillBody, &calls)
 			ts := fakeToolset{tools: []tool.Tool{skillTool}}
-			factory := NewJudgeFactory(nil, skillJudge{}, nil, []tool.Toolset{ts})
+			factory := NewJudgeFactory(skillJudge{}, nil, []tool.Toolset{ts})
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 				"I implemented game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
@@ -444,7 +444,7 @@ func (oneShotJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bo
 // one-shot judge when no read tools are supplied (backward compat / research
 // deployments with no workspace jail).
 func TestJudgeNoReadToolsOneShot(t *testing.T) {
-	factory := NewJudgeFactory(nil, oneShotJudge{}, nil, nil)
+	factory := NewJudgeFactory(oneShotJudge{}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 		"Paris.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
@@ -633,7 +633,7 @@ func TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict(t *testing.T)
 	var reads int32
 	readTool := newSpyReadTool(t, "package x\n", &reads)
 	judge := &stuckJudge{}
-	factory := NewJudgeFactory(nil, judge, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
 
@@ -688,7 +688,7 @@ func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 	t.Run("within caps: no truncation note", func(t *testing.T) {
 		cfg, act := changedFilesFixture(t, 5)
 		var prompt string
-		factory := NewJudgeFactory(nil, recordingJudge{prompt: &prompt}, nil, nil)
+		factory := NewJudgeFactory(recordingJudge{prompt: &prompt}, nil, nil)
 		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", act, nil, nil, func(*genai.Part) bool { return true })
 		if err != nil {
 			t.Fatalf("runJudgeAgent: %v", err)
@@ -704,7 +704,7 @@ func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 	t.Run("over the cap: verdict carries scored and total", func(t *testing.T) {
 		cfg, act := changedFilesFixture(t, 18)
 		var prompt string
-		factory := NewJudgeFactory(nil, recordingJudge{prompt: &prompt}, nil, nil)
+		factory := NewJudgeFactory(recordingJudge{prompt: &prompt}, nil, nil)
 		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", act, nil, nil, func(*genai.Part) bool { return true })
 		if err != nil {
 			t.Fatalf("runJudgeAgent: %v", err)
@@ -845,7 +845,7 @@ func (j maxTokensRecordingJudge) GenerateContent(_ context.Context, req *model.L
 // reaches the actual model request as genai.GenerateContentConfig.MaxOutputTokens.
 func TestJudgeRequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 	got := int32(-1)
-	factory := NewJudgeFactory(nil, maxTokensRecordingJudge{got: &got}, nil, nil)
+	factory := NewJudgeFactory(maxTokensRecordingJudge{got: &got}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxOutputTokens: 4096}
 
@@ -862,7 +862,7 @@ func TestJudgeRequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 // must not set any MaxOutputTokens on the request at all.
 func TestJudgeRequestZeroMaxOutputTokensLeavesUncapped(t *testing.T) {
 	got := int32(-1)
-	factory := NewJudgeFactory(nil, maxTokensRecordingJudge{got: &got}, nil, nil)
+	factory := NewJudgeFactory(maxTokensRecordingJudge{got: &got}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10"} // JudgeMaxOutputTokens left unset
 
@@ -893,7 +893,7 @@ func (j *garbledVerdictJudge) GenerateContent(_ context.Context, _ *model.LLMReq
 // round must end in ErrJudgeNoVerdict, never a "valid" zero-value verdict silently accepted as a scored pass or fail.
 func TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict(t *testing.T) {
 	judge := &garbledVerdictJudge{}
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
 
@@ -931,7 +931,7 @@ func (j *loopingJudgeModel) GenerateContent(_ context.Context, _ *model.LLMReque
 func TestRunJudgeAgent_RunawayRepeatAbortsEarly(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
 	judge := &loopingJudgeModel{}
-	factory := NewJudgeFactory(nil, judge, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	// A generous turn budget that would let the loop run hundreds of turns per
 	// round if the repeat guard were not what stopped it.
@@ -980,7 +980,7 @@ func (j *variedJudgeModel) GenerateContent(_ context.Context, _ *model.LLMReques
 func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
 	judge := &variedJudgeModel{}
-	factory := NewJudgeFactory(nil, judge, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
@@ -1022,7 +1022,7 @@ func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
 	var reads int32
 	readTool := newSpyReadTool(t, "package x\n", &reads)
 	judge := &stutterJudge{}
-	factory := NewJudgeFactory(nil, judge, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6} // plenty of budget left - only the repeat should force the close
 
@@ -1085,7 +1085,7 @@ func (j *roundStuckThenRecoversJudge) GenerateContent(_ context.Context, req *mo
 func TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
 	judge := &roundStuckThenRecoversJudge{}
-	factory := NewJudgeFactory(nil, judge, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
 
@@ -1123,7 +1123,7 @@ func (j *alwaysStuckJudge) GenerateContent(_ context.Context, req *model.LLMRequ
 func TestRunJudgeAgent_NoVerdictRetryExhausted(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
 	judge := &alwaysStuckJudge{}
-	factory := NewJudgeFactory(nil, judge, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
 
@@ -1160,7 +1160,7 @@ func TestRunJudgeAgent_NormalRoundKeepsTools(t *testing.T) {
 	var reads int32
 	readTool := newSpyReadTool(t, "package x\n", &reads)
 	var sawTools bool
-	factory := NewJudgeFactory(nil, recordingToolsJudge{sawTools: &sawTools}, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(recordingToolsJudge{sawTools: &sawTools}, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
@@ -1342,7 +1342,7 @@ func (j *garbledThenSubmitsJudge) GenerateContent(_ context.Context, _ *model.LL
 // in-session nudge before the fresh-session retry, and a judge that submits on the nudge must not pay for a fresh round at all.
 func TestRunJudgeAgent_SubmitNudgeRecoversGarbledText(t *testing.T) {
 	judge := &garbledThenSubmitsJudge{}
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
@@ -1382,7 +1382,7 @@ func (j *neverSubmitsTextOnlyJudge) GenerateContent(_ context.Context, req *mode
 // the nudge AND the existing fresh-session retry, no more.
 func TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict(t *testing.T) {
 	judge := &neverSubmitsTextOnlyJudge{}
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
@@ -1422,7 +1422,7 @@ func (j *forceClosedGarbledJudge) GenerateContent(_ context.Context, req *model.
 // tools on that turn to call, so the nudge would ask for what was just declared unavailable. Calling runJudgeRound directly (not runJudgeAgent) isolates this from the separate fresh-session retry.
 func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
 	judge := &forceClosedGarbledJudge{}
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 3}
 
@@ -1472,7 +1472,7 @@ func (j *repeatTrippedJudgeModel) GenerateContent(_ context.Context, req *model.
 func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
 	judge := &repeatTrippedJudgeModel{}
-	factory := NewJudgeFactory(nil, judge, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	// Generous turn budget so a run to the turn cap (rather than the repeat
 	// guard) would make the test fail loud, not pass by accident.
@@ -1540,7 +1540,7 @@ func (j *imagePersistsAfterStripJudge) GenerateContent(_ context.Context, req *m
 // from the question, every later retry in the same runJudgeAgent call (the no-verdict fresh-session retry, the shrink fallback) must keep using the stripped content - re-attaching images would just repeat the rejection.
 func TestRunJudgeAgent_ImageStripPersistsAcrossRetries(t *testing.T) {
 	judge := &imagePersistsAfterStripJudge{}
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{
 		{Text: "Implement the feature."},
 		{InlineData: &genai.Blob{MIMEType: "image/png", Data: []byte("fake-png")}},
@@ -1627,7 +1627,7 @@ var requireFixOnFailSpecs = map[string]criterionSpec{
 // threshold with no fix is re-judged once; the corrected score wins.
 func TestFinishJudgeRound_ReasksOnInconsistentFailure(t *testing.T) {
 	judge := &inconsistentThenFixedJudge{}
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the change."}}}
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: requireFixOnFailSpecs}
 
@@ -1648,7 +1648,7 @@ func TestFinishJudgeRound_ReasksOnInconsistentFailure(t *testing.T) {
 // must never trigger the inconsistency re-ask.
 func TestFinishJudgeRound_NoReaskWhenFixGiven(t *testing.T) {
 	judge := &consistentFailJudge{}
-	factory := NewJudgeFactory(nil, judge, nil, nil)
+	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the change."}}}
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: requireFixOnFailSpecs}
 

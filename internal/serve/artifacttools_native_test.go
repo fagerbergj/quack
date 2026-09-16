@@ -68,11 +68,14 @@ func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
 	}
-	_, _, tools, setRoundCoords, release, err := na.ForNode("test-plan:test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node", nil)
+	_, _, tools, setRoundCoords, refreshPrompt, release, err := na.ForNode("test-plan:test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node", nil)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}
 	defer release(false)
+	if refreshPrompt == nil {
+		t.Error("refreshPrompt is nil, want the per-dispatch holder the gate refreshes at each round start")
+	}
 
 	if setRoundCoords == nil {
 		t.Error("setRoundCoords is nil, want a callback the gate can restamp round/turn/head-sha through")

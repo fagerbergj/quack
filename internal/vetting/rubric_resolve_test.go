@@ -4,7 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/config"
 )
 
@@ -75,18 +77,44 @@ func TestLoadBundleRubricResolvesAndAbsent(t *testing.T) {
 	}
 }
 
-// TestJudgeBehaviourBadTemplate: a system/judge body that is not a valid
-// template fails the round loudly instead of silently shipping an empty prompt.
-func TestJudgeBehaviourBadTemplate(t *testing.T) {
-	if _, _, err := judgeBehaviour(context.Background(), nil, true, true); err != nil {
-		t.Fatalf("shipped system/judge must parse: %v", err)
-	}
-	// Every clause block must be present; a missing one is an error, not "".
-	b, _, err := judgeBehaviour(context.Background(), nil, false, false)
+// TestJudgeBehaviourSelectsBlocks: the shipped system/judge renders every
+// clause, and only the ones this judge's tools earn it reach the prompt.
+func TestJudgeBehaviourSelectsBlocks(t *testing.T) {
+	p, err := resolveJudgePrompt(context.Background(), nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("shipped system/judge must render: %v", err)
 	}
+	if p.art.Source != artifactsrc.StaticSource || p.art.VersionID == "" {
+		t.Errorf("provenance = %+v, want the shipped file with a version id", p.art)
+	}
+	b := p.behaviour(false, false)
 	if !strings.Contains(b, "You have no tools") || strings.Contains(b, "skill tools") {
 		t.Errorf("no-tools behaviour selected the wrong blocks: %q", b)
+	}
+}
+
+// proseSource stands in for someone pasting plain prose over system/judge in a
+// prompt UI - no define blocks, so every clause would render empty.
+type proseSource struct{}
+
+func (proseSource) Get(context.Context, string) (artifactsrc.Artifact, bool, error) {
+	return artifactsrc.Artifact{Body: "just be a good judge, thanks", VersionID: "prose"}, true, nil
+}
+func (proseSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
+
+// TestJudgePromptSurvivesBadStoredVersion: a stored system/judge that will not
+// render falls back to the shipped file. Erroring instead would fail every
+// judge round, i.e. disable the trust gate deployment-wide.
+func TestJudgePromptSurvivesBadStoredVersion(t *testing.T) {
+	res := artifactsrc.New("langfuse", proseSource{}, time.Minute)
+	p, err := resolveJudgePrompt(context.Background(), res)
+	if err != nil {
+		t.Fatalf("resolve = %v, want a fall back to the shipped file", err)
+	}
+	if p.art.Source != artifactsrc.StaticSource {
+		t.Errorf("source = %q, want the shipped file", p.art.Source)
+	}
+	if b := p.behaviour(true, true); !strings.Contains(b, "read-only workspace tools") {
+		t.Errorf("behaviour = %q, want the shipped clauses", b)
 	}
 }

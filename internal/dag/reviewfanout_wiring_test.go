@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -17,20 +18,20 @@ func TestNodeGateConfig_MultiReviewerPlanGetsSharedFanout(t *testing.T) {
 		{ID: "r2", AgentName: reviewerAgent},
 		{ID: "r3", AgentName: reviewerAgent},
 	}}
-	cfgFor := func(string) vetting.Config { return vetting.Config{} }
+	cfgFor := func(context.Context, string) vetting.Config { return vetting.Config{} }
 
-	implCfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
+	implCfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 	if implCfg.ReviewFanout != nil {
 		t.Error("implementer node must not get a ReviewFanout")
 	}
-	exploreCfg := nodeGateConfig(plan, plan.Nodes[1], nil, cfgFor, "chat1", "")
+	exploreCfg := nodeGateConfig(context.Background(), plan, plan.Nodes[1], nil, cfgFor, "chat1", "")
 	if exploreCfg.ReviewFanout != nil {
 		t.Error("explorer node must not get a ReviewFanout")
 	}
 
-	r1Cfg := nodeGateConfig(plan, plan.Nodes[2], nil, cfgFor, "chat1", "")
-	r2Cfg := nodeGateConfig(plan, plan.Nodes[3], nil, cfgFor, "chat1", "")
-	r3Cfg := nodeGateConfig(plan, plan.Nodes[4], nil, cfgFor, "chat1", "")
+	r1Cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[2], nil, cfgFor, "chat1", "")
+	r2Cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[3], nil, cfgFor, "chat1", "")
+	r3Cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[4], nil, cfgFor, "chat1", "")
 	if r1Cfg.ReviewFanout == nil || r2Cfg.ReviewFanout == nil || r3Cfg.ReviewFanout == nil {
 		t.Fatal("every reviewer node in a multi-reviewer plan must get a ReviewFanout")
 	}
@@ -47,8 +48,8 @@ func TestNodeGateConfig_SingleReviewerPlanNoFanout(t *testing.T) {
 		{ID: "impl", AgentName: implementerAgent},
 		{ID: "r1", AgentName: reviewerAgent},
 	}}
-	cfgFor := func(string) vetting.Config { return vetting.Config{} }
-	r1Cfg := nodeGateConfig(plan, plan.Nodes[1], nil, cfgFor, "chat1", "")
+	cfgFor := func(context.Context, string) vetting.Config { return vetting.Config{} }
+	r1Cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[1], nil, cfgFor, "chat1", "")
 	if r1Cfg.ReviewFanout != nil {
 		t.Fatal("a single-reviewer plan must not get a ReviewFanout")
 	}

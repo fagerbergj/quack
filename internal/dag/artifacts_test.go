@@ -87,7 +87,7 @@ func TestRunPlanAsGraph_ArtifactServiceReachableAtNodeLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": worker}, map[string]model.LLM{"w": stub},
-		vetting.NewJudgeFactory(nil, stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	ex.SetArtifacts(artifact.InMemoryService())
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
 

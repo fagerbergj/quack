@@ -25,6 +25,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -93,7 +94,7 @@ type nodeScopedStub struct {
 	cachedT []tool.Tool
 }
 
-func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(bool), error) {
+func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
 	s.mu.Lock()
 	s.calls++
 	m, builtins := s.cachedM, s.cachedT
@@ -104,7 +105,7 @@ func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string, _ artifact.Ser
 		m = inference.TracedModelForTesting(stub, "nodeScopedStub")
 		var err error
 		if builtins, err = tools.Build([]string{"current_date"}, tools.Deps{}); err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, err
 		}
 		if s.share {
 			s.mu.Lock()
@@ -121,13 +122,13 @@ func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string, _ artifact.Ser
 		Tools:       builtins,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	s.mu.Lock()
 	s.built = append(s.built, fmt.Sprintf("%s:%p", nodeKey, m))
 	s.mu.Unlock()
-	return worker, m, builtins, nil, func(bool) {}, nil
+	return worker, m, builtins, nil, nil, func(bool) {}, nil
 }
 
 // runTwoConcurrentNodes drives a 2-node, no-dependency plan (both nodes named
@@ -153,8 +154,8 @@ func runTwoConcurrentNodes(t *testing.T, stub *nodeScopedStub) []string {
 
 	ex := dag.NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"w": stub, "synth": synth}, nil,
-		vetting.NewJudgeFactory(nil, nsJudge{}, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(nsJudge{}, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 
 	const chatID = "nodescoped-chat"
 	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{

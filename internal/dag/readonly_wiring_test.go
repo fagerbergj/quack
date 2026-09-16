@@ -59,7 +59,7 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, 
 		t.Fatal(err)
 	}
 	gateNodes := map[string]workflow.Node{
-		plan.Nodes[0].ID: newGatedNode(plan, plan.Nodes[0], wn, nil, nil, nil, vetting.NewJudgeFactory(nil, stub, nil, nil), cfg, nil, nil, "", nil, nil, nil, AdmissionSpec{}, AdmissionSpec{}, refresh, nil),
+		plan.Nodes[0].ID: newGatedNode(plan, plan.Nodes[0], wn, nil, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil, nil, AdmissionSpec{}, AdmissionSpec{}, refresh, nil),
 	}
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
@@ -88,8 +88,8 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, 
 func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
 	plan := Plan{ID: "t-planonly", UserMessage: "x", PlanOnly: true,
 		Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
+	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 	if !cfg.ReadOnly {
 		t.Fatal("precondition failed: nodeGateConfig did not force ReadOnly for a planOnly node")
 	}
@@ -112,8 +112,8 @@ func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
 // agent doesn't get its own working directory mounted RO.
 func TestNonPlanRunAdvisorTaskIsWritable(t *testing.T) {
 	plan := Plan{ID: "t-writable", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
+	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 	if cfg.ReadOnly {
 		t.Fatal("precondition failed: a non-planOnly node came out ReadOnly")
 	}

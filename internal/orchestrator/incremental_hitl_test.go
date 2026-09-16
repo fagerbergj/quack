@@ -102,8 +102,8 @@ func newHITLTestOrch(t *testing.T, stub model.LLM, askTool tool.Tool) *Orchestra
 	ex := dag.NewExecutor(sessions,
 		map[string]adkagent.Agent{"asker": worker},
 		map[string]model.LLM{"asker": stub},
-		vetting.NewJudgeFactory(nil, stub, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "asker", Description: "asks the user things"}}, nil, nil)
 	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
 	// A real dag_plan record store, shared across Run() and StartNode() calls -
@@ -324,8 +324,8 @@ func newBCHitlTestOrch(t *testing.T, stub model.LLM, askTool tool.Tool) *Orchest
 	ex := dag.NewExecutor(sessions,
 		map[string]adkagent.Agent{"asker": asker, "closer": closer},
 		map[string]model.LLM{"asker": stub, "closer": stub},
-		vetting.NewJudgeFactory(nil, stub, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{
 		{Name: "asker", Description: "asks the user things"},
 		{Name: "closer", Description: "closes out the work"},

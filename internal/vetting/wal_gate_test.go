@@ -125,7 +125,7 @@ func TestGatedNodeWALEntryOrder(t *testing.T) {
 		Artifact: kindText, ChatID: "chat1", User: "u1",
 		Artifacts: artifact.InMemoryService(), Ledger: fl,
 	}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestGatedNodeNoLedgerConfiguredNoWALCalls(t *testing.T) {
 		t.Fatalf("worker: %v", err)
 	}
 	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score the answer 0-10"}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestGatedNodeNodeEventAppendFailureIsBestEffort(t *testing.T) {
 		Artifact: kindText, ChatID: "chat1", User: "u1",
 		Artifacts: artifact.InMemoryService(), Ledger: fl,
 	}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestGatedNodeJudgeRoundAppendFailureStopsOnPassingRound(t *testing.T) {
 		Artifacts: artifact.InMemoryService(), Ledger: fl,
 	}
 	var res GateResult
-	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(nil, stub, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}

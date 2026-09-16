@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
@@ -25,9 +24,9 @@ type Bundle struct {
 	// produced this output" (#1096). rubric.yaml is read directly here rather than via vetting (would import-cycle). memory.md is deliberately excluded: its
 	// content is folded into the resolved system instruction the model actually sees, already covered by that call's gen_ai.prompt.version content hash.
 	Hash string
-	// Dir: where the bundle came from, so ResolvePrompt can re-read its
-	// sourceable parts each round. PromptSource/PromptVersion are where
-	// system/<agent> came from - the llm.call ledger's prompt provenance.
+	// Dir: where the bundle came from, so PinPrompt can re-resolve it each
+	// round. PromptSource/PromptVersion are where system/<agent> came from -
+	// the llm.call ledger's prompt provenance.
 	Dir           string
 	PromptSource  string
 	PromptVersion string
@@ -104,34 +103,33 @@ func LoadBundle(ctx context.Context, res *artifactsrc.Resolver, dir string) (*Bu
 	return &Bundle{Card: card, Prompt: prompt, Hash: hash, Dir: dir, PromptSource: promptArt.Source, PromptVersion: promptArt.VersionID}, nil
 }
 
-// ResolvePrompt re-resolves system/<agent> for a round; a resolver failure
-// keeps the bundle running on the bytes it loaded with rather than failing it.
+// PinPrompt pins the bundle's system/<agent> artifact for one node. The gate
+// refreshes it at each round's start; the assembled prompt reads it in between.
+func (b *Bundle) PinPrompt(res *artifactsrc.Resolver) *artifactsrc.Pinned {
+	boot := artifactsrc.Artifact{Name: b.Dir, Body: b.Prompt, Source: b.PromptSource, VersionID: b.PromptVersion}
+	return artifactsrc.NewPinned(res, artifactsrc.BundleName("system", b.Dir), boot)
+}
+
+// ResolvePrompt resolves system/<agent> once, for a caller that assembles the
+// prompt at a round's start and consumes it immediately (the ACP preamble).
+// A blank or unresolvable version keeps the bundle's loaded bytes.
 func (b *Bundle) ResolvePrompt(ctx context.Context, res *artifactsrc.Resolver) artifactsrc.Artifact {
-	boot := artifactsrc.Artifact{Body: b.Prompt, Source: b.PromptSource, VersionID: b.PromptVersion}
-	name := artifactsrc.BundleName("system", b.Dir)
-	if name == "" {
-		return boot
-	}
-	art, err := res.Resolve(ctx, name)
-	if err != nil {
-		slog.Warn("agent prompt unresolved; keeping the loaded bundle",
-			"component", "agent", "artifact", name, "err", err)
-		return boot
-	}
-	return art
+	return b.PinPrompt(res).Refresh(ctx)
 }
 
 // resolveBundle resolves one of a bundle's sourceable files, keeping the
-// artifact (its version id is the round's prompt provenance).
+// artifact (its version id is the round's prompt provenance). A bundle outside
+// agents/ has no name to resolve, so its bytes are hashed the same way.
 func resolveBundle(ctx context.Context, res *artifactsrc.Resolver, kind, dir, file string) (artifactsrc.Artifact, error) {
 	if name := artifactsrc.BundleName(kind, dir); name != "" {
-		return res.Resolve(ctx, name)
+		return res.ResolveUsable(ctx, name)
 	}
-	raw, err := bundledir.ReadFile(bundledir.PathJoin(dir, file))
+	p := bundledir.PathJoin(dir, file)
+	raw, err := bundledir.ReadFile(p)
 	if err != nil {
 		return artifactsrc.Artifact{}, err
 	}
-	return artifactsrc.Artifact{Body: string(raw), Source: artifactsrc.StaticSource}, nil
+	return artifactsrc.FileArtifact(p, raw), nil
 }
 
 // LoadBundleMemory resolves the bundle's optional memory.md ("" when it has none).
