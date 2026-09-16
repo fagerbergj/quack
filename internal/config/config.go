@@ -1771,7 +1771,8 @@ func (c *Config) resolveBindingModel(baseProv ProviderConfig, baseModel, modelNa
 	}
 	// #1007 admission (limits.sessions/kv_tokens) is sized from the static binding
 	// at boot; swapping to a model with its own limits would run it unmetered.
-	if modelName != baseModel && mc.Limits != nil {
+	// Matches buildAdmission's own field-by-field check - limits: {} (both zero) admits nothing.
+	if modelName != baseModel && mc.Limits != nil && (mc.Limits.Sessions > 0 || mc.Limits.KVTokens > 0) {
 		return ProviderConfig{}, "", fmt.Errorf("prompt binding: model %q declares limits: and differs from the static binding %q; admission is sized once at boot", modelName, baseModel)
 	}
 	// Same rule as validateAgentModelRef: an explicit provider that disagrees

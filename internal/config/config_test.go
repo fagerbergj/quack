@@ -2711,4 +2711,18 @@ func TestResolveBinding(t *testing.T) {
 			t.Fatalf("b=%+v err=%v, want the static m2 to stay usable", b, err)
 		}
 	})
+
+	t.Run("an empty limits block admits nothing, so the override is allowed", func(t *testing.T) {
+		empty := &Config{
+			Providers: map[string]ProviderConfig{"default": {Kind: "openai", Endpoint: "http://x"}},
+			Models: map[string]ModelConfig{
+				"m1": {Provider: "default"},
+				"m2": {Provider: "default", Limits: &ModelLimits{}},
+			},
+		}
+		b, err := empty.ResolveBinding(empty.Providers["default"], "m1", map[string]any{"model": "m2"})
+		if err != nil || b.Model != "m2" {
+			t.Fatalf("b=%+v err=%v, want limits: {} to be a no-op like buildAdmission treats it", b, err)
+		}
+	})
 }
