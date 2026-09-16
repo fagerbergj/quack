@@ -1,6 +1,5 @@
-// experiment.go: `quack experiment run`. --prompt pinning is built (langfuse.PinnedSource)
-// but not wired into the live resolver - that needs a hook in internal/serve/serve.go this
-// workstream's sandbox permissions refused to let it edit (see final report).
+// experiment.go: `quack experiment run`. --prompt pins the in-process resolver to one
+// Langfuse version through langfuse.PinnedSource (cmd/quack/experiment.go wires it).
 package cli
 
 import (
@@ -22,7 +21,7 @@ import (
 type ExperimentOpts struct {
 	Dataset string
 	Agent   string
-	Prompt  string // "system/<agent>@N", metadata only - see this file's header comment
+	Prompt  string // "system/<agent>@N", the pinned version, also recorded on the run item
 	RunName string
 	Limit   int
 }

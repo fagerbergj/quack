@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/langfuse"
 	"os"
 	"time"
 
@@ -39,7 +41,7 @@ func newExperimentRunCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&dataset, "dataset", "", "Langfuse dataset name")
 	c.Flags().StringVar(&agent, "agent", "", "agent name to run each item against")
-	c.Flags().StringVar(&prompt, "prompt", "", "system/<agent>@N - recorded on the run item (see docs/cli.md for the pinning limitation)")
+	c.Flags().StringVar(&prompt, "prompt", "", "system/<agent>@N - pin the run's prompt to that exact Langfuse version")
 	c.Flags().StringVar(&runName, "run-name", "", "Langfuse dataset run name (default: <agent>-<timestamp>)")
 	c.Flags().IntVar(&limit, "limit", 0, "run at most this many items (0 = no limit)")
 	asJSONFlag(c, &asJSON)
@@ -71,7 +73,11 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	}
 
 	ctx := cmd.Context()
-	base, stop, err := serve.InProcessFromConfig(ctx, cfg)
+	pinSrc, err := pinnedPromptSource(cfg, prompt)
+	if err != nil {
+		return err
+	}
+	base, stop, err := serve.InProcessWithPromptSource(ctx, cfg, pinSrc)
 	if err != nil {
 		return err
 	}
@@ -89,4 +95,21 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), cli.FormatExperimentSummary(results))
 	return err
+}
+
+// pinnedPromptSource turns --prompt into a Source that serves exactly that version; nil
+// when no pin was asked for, so the configured store resolves as in a live run.
+func pinnedPromptSource(cfg *config.Config, prompt string) (artifactsrc.Source, error) {
+	if prompt == "" {
+		return nil, nil
+	}
+	name, version, err := langfuse.ParsePin(prompt)
+	if err != nil {
+		return nil, err
+	}
+	sc, ok := cfg.Store(cfg.Prompts.Store)
+	if !ok || sc.Kind != "langfuse" {
+		return nil, fmt.Errorf("--prompt needs prompts.store to name a langfuse store")
+	}
+	return &langfuse.PinnedSource{Client: langfuse.New(sc.URL, sc.PublicKey, sc.SecretKey), Pins: map[string]int{name: version}}, nil
 }

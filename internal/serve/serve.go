@@ -440,9 +440,15 @@ func InProcess(ctx context.Context, configPath string) (baseURL string, stop fun
 
 // InProcessFromConfig is InProcess for a caller with a resolved *config.Config in memory.
 func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL string, stop func() error, err error) {
+	return InProcessWithPromptSource(ctx, cfg, nil)
+}
+
+// InProcessWithPromptSource is InProcessFromConfig with a prompt Source that wins over
+// the configured store (an experiment pinning `system/<agent>@N`); nil means the store.
+func InProcessWithPromptSource(ctx context.Context, cfg *config.Config, promptSrc artifactsrc.Source) (baseURL string, stop func() error, err error) {
 	setupLoggingTo(os.Stderr, slog.LevelWarn)
 	openaimodel.SetInProcess() // the CLI already reports a model failure; skip the duplicate boundary log
-	handler, cleanup, _, err := buildFromConfig(ctx, cfg, 0, false, nil)
+	handler, cleanup, _, err := buildFromConfig(ctx, cfg, 0, false, nil, promptSrc)
 	if err != nil {
 		return "", nil, err
 	}
@@ -484,7 +490,7 @@ func build(ctx context.Context, configPath string, port int, reconcile bool, hoo
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("config load failed: %w", err)
 	}
-	return buildFromConfig(ctx, cfg, port, reconcile, hooks)
+	return buildFromConfig(ctx, cfg, port, reconcile, hooks, nil)
 }
 
 // buildFromConfig is build for an already-loaded Config. reconcile gates startup orphan reconciliation.
@@ -906,8 +912,8 @@ func replaySkillSource(ctx context.Context, cfg *config.Config, rows []pluginreg
 	return replay.NewSkillSource(ctx, sess, cfg.Plugins.Root, rows, admitted, live)
 }
 
-func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	promptSrc, promptSrcName, err := promptSourceFor(ctx, cfg)
+func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks, promptOverride artifactsrc.Source) (handler http.Handler, cleanup func(), addr string, err error) {
+	promptSrc, promptSrcName, err := promptSourceFor(ctx, cfg, promptOverride)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -990,9 +996,12 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	return handler, b.runCleanups, addr, nil
 }
 
-// promptSourceFor: the live store Source (P2, #1421), unless this is a replay,
-// where the pinned Source (P3, #1422) takes its place so recorded versions win.
-func promptSourceFor(ctx context.Context, cfg *config.Config) (artifactsrc.Source, string, error) {
+// promptSourceFor: the live store Source (P2, #1421), unless a caller-supplied
+// override (an experiment's pins) or a replay's pinned Source (P3, #1422) takes its place.
+func promptSourceFor(ctx context.Context, cfg *config.Config, override artifactsrc.Source) (artifactsrc.Source, string, error) {
+	if override != nil {
+		return override, cfg.Prompts.Store, nil
+	}
 	src, name := buildPromptSource(cfg)
 	replaySrc, err := replayPromptSource(ctx, cfg)
 	if err != nil {

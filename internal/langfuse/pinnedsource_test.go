@@ -42,3 +42,15 @@ func TestPinnedSource_UnpinnedNameFallsThrough(t *testing.T) {
 		t.Fatalf("want (false, nil) for an unpinned name, got ok=%v err=%v", ok, err)
 	}
 }
+
+func TestParsePin(t *testing.T) {
+	name, v, err := ParsePin("system/code-reviewer@7")
+	if err != nil || name != "system/code-reviewer" || v != 7 {
+		t.Fatalf("got %q %d %v", name, v, err)
+	}
+	for _, bad := range []string{"system/x", "@3", "system/x@0", "system/x@seven", ""} {
+		if _, _, err := ParsePin(bad); err == nil {
+			t.Errorf("ParsePin(%q) = nil error, want error", bad)
+		}
+	}
+}

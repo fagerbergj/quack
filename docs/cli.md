@@ -85,7 +85,7 @@ Export recorded runs to a Langfuse dataset, then re-run an agent against that da
 | Command | Does |
 | --- | --- |
 | `quack dataset export --dataset <name> (--chat <id> \| --repo <owner/repo>) [--since <date>] [--limit N]` | Export gated code-reviewer/synthesizer node runs as Langfuse dataset items (creating the dataset if needed). Idempotent: re-exporting the same node run upserts the same item instead of duplicating it. |
-| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--json]` | Run `--agent`'s node against every item in `--dataset`, reporting each as a Langfuse dataset run item. `--prompt` is recorded on the run item but does not yet pin the resolver to that exact version (a known limitation - see the P5 issue). |
+| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--json]` | Run `--agent`'s node against every item in `--dataset`, reporting each as a Langfuse dataset run item. `--prompt system/<agent>@N` pins the run's resolver to that exact Langfuse version (the run's `llm.call` rows record it) and stamps it on the run item. |
 
 ## Memory
 
