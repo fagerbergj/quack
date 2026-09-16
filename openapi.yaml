@@ -1620,7 +1620,7 @@ components:
           description: Judge/human votes marking this memory `contradicted` against delivered work.
         supported:
           type: integer
-          description: The judge-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic #1456 P1).
+          description: The judge- or human-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic #1456 P1).
         not_relevant:
           type: integer
           description: Judge votes marking this memory `not_relevant`. Reaching 3 with zero `supported` votes invalidates the memory (epic #1456 P1).

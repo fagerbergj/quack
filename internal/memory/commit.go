@@ -386,7 +386,7 @@ func (s *Store) applyWrites(ctx context.Context, bucket, author string, prov Pro
 		fresh := strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == ""
 		mintedAt, chatID, nodeID, source := ts, prov.ChatID, prov.NodeID, prov.Source
 		status, reinforcementCount, validFrom := string(StatusUnverified), 0, ts
-		var upvotes, downvotes, voteScore, recalls int
+		var upvotes, downvotes, supported, notRelevant, voteScore, recalls int
 		var tier, lastUpvotedAt, lastRecalledAt string
 		var absorbedIDs []string
 		if !fresh {
@@ -400,7 +400,8 @@ func (s *Store) applyWrites(ctx context.Context, bucket, author string, prov Pro
 					validFrom = n.ValidFrom
 				}
 				upvotes, downvotes, voteScore = n.Upvotes, n.Downvotes, n.VoteScore
-				tier, lastUpvotedAt = n.Tier, n.LastUpvotedAt
+				supported, notRelevant = n.Supported, n.NotRelevant
+				tier, lastUpvotedAt = tierFromSupported(supported), n.LastUpvotedAt
 				recalls, lastRecalledAt = n.Recalls, n.LastRecalledAt
 				absorbedIDs = n.AbsorbedIDs
 			}
@@ -424,6 +425,8 @@ func (s *Store) applyWrites(ctx context.Context, bucket, author string, prov Pro
 			ReinforcementCount: reinforcementCount,
 			Upvotes:            upvotes,
 			Downvotes:          downvotes,
+			Supported:          supported,
+			NotRelevant:        notRelevant,
 			VoteScore:          voteScore,
 			Tier:               tier,
 			LastUpvotedAt:      lastUpvotedAt,

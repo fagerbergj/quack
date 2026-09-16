@@ -172,8 +172,8 @@ func TestCommit_AbsorptionMergesThreeDuplicates(t *testing.T) {
 		{"action":"DELETE","id":"dup2","reason":"duplicate of survivor"}
 	]}`
 	s := newSQLiteStore(t, "task", fakeModel{reply: reply})
-	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "run make test", Upvotes: 1, VoteScore: 1})
-	seedPoint(t, s, point{ID: "dup1", Scope: "role:coding", Content: "use make test not go test", Upvotes: 1, VoteScore: 1})
+	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "run make test", Upvotes: 1, Supported: 1, NotRelevant: 2, Tier: TierVerified, VoteScore: 1})
+	seedPoint(t, s, point{ID: "dup1", Scope: "role:coding", Content: "use make test not go test", Upvotes: 1, NotRelevant: 1, VoteScore: 1})
 	seedPoint(t, s, point{ID: "dup2", Scope: "role:coding", Content: "make test is required", Downvotes: 1, VoteScore: -1})
 
 	n, err := s.Commit(ctx, Scope{Role: RoleCoding}, "consolidator-test", Provenance{}, []Candidate{{Content: "run make test, not go test"}}, "")
@@ -200,6 +200,11 @@ func TestCommit_AbsorptionMergesThreeDuplicates(t *testing.T) {
 	// survivor started at +1, dup1 +1, dup2 -1: summed score = 1.
 	if sv.Upvotes != 2 || sv.Downvotes != 1 || sv.VoteScore != 1 {
 		t.Fatalf("survivor votes = +%d/-%d score %d, want +2/-1 score 1", sv.Upvotes, sv.Downvotes, sv.VoteScore)
+	}
+	// The consolidator's UPDATE on survivor (content-only) must carry supported/not_relevant
+	// forward, not reset them to zero, before absorb() sums them with dup1/dup2's.
+	if sv.Supported != 1 || sv.NotRelevant != 3 || sv.Tier != TierVerified {
+		t.Fatalf("survivor supported=%d not_relevant=%d tier=%q, want supported=1 not_relevant=3 tier=verified (carried through the UPDATE, then merged by absorb)", sv.Supported, sv.NotRelevant, sv.Tier)
 	}
 	if sv.Content != "merged: run make test, not go test" {
 		t.Fatalf("survivor content = %q, want the consolidator's merged wording", sv.Content)

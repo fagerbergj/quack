@@ -141,7 +141,7 @@ export type Memory = {
      */
     downvotes?: number;
     /**
-     * The judge-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic
+     * The judge- or human-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic
      */
     supported?: number;
     /**

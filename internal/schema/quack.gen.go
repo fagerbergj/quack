@@ -961,7 +961,7 @@ type Memory struct {
 	// Status Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
 	Status *MemoryStatus `json:"status,omitempty"`
 
-	// Supported The judge-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic
+	// Supported The judge- or human-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic
 	Supported *int `json:"supported,omitempty"`
 
 	// Tier Vote-based tier - `verified` only while `supported` >= 1, recomputed on every vote (epic

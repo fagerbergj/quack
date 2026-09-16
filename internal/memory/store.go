@@ -105,7 +105,7 @@ type scored struct {
 
 	// Vote fields (epic #1255 P1): Upvotes/Downvotes/VoteScore are the judge's (or a human's)
 	// accumulated votes on this memory, independent of Score (cosine rank). Supported (epic
-	// #1456 P1) is the judge-supported subset of Upvotes (reinforcement upvotes don't count); Tier is "verified" only while Supported >= 1, recomputed on every vote, not sticky.
+	// #1456 P1) is the judge- or human-supported subset of Upvotes (reinforcement upvotes don't count); Tier is "verified" only while Supported >= 1, recomputed on every vote, not sticky.
 	Upvotes        int
 	Downvotes      int
 	Supported      int
@@ -324,7 +324,7 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (res
 		previews = append(previews, preview(p.Content))
 		e := adkmemory.Entry{
 			ID:      p.ID,
-			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: tierPrefix(p.Status, p.ReinforcementCount) + p.Content}}},
+			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: tierPrefix(p.Tier, p.Supported) + p.Content}}},
 			Author:  p.Author,
 		}
 		if p.Timestamp != "" {

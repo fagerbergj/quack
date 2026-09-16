@@ -39,7 +39,7 @@ type OutcomeSignal struct {
 const OutcomeReasonClosedUnmerged = "subject closed unmerged"
 
 // ApplyOutcome applies o to every id in ids that isn't already invalidated (sticky: nothing
-// revives an invalidated memory, and invalidating twice is idempotent). ids is the chat's RECALLED set (epic #1255 P1: reinforcement is recall-based, not birth-based) - the caller folds the chat's ledger for memory.recall entries and passes their ids; minting still sets provenance, but no longer drives what gets reinforced/invalidated. Returns the count touched. Reinforce is +1 upvote (mirrored into reinforcement_count) with actor outcome-feedback but never sets tier - epic #1456 P1: tier promotion is judge-supported-vote only, so a chat merging is audit trail, not proof the content held up; invalidate stamps invalidated_at/invalidation_reason on every unverified id (a verified memory recalled into a closed-unmerged chat gets no vote, not an invalidation - it's never demoted by this path). Every touched memory writes one memory_ops row.
+// revives an invalidated memory, and invalidating twice is idempotent). ids is the chat's RECALLED set (epic #1255 P1: reinforcement is recall-based, not birth-based) - the caller folds the chat's ledger for memory.recall entries and passes their ids; minting still sets provenance, but no longer drives what gets reinforced/invalidated. Returns the count touched. Reinforce is +1 upvote (mirrored into reinforcement_count) with actor outcome-feedback but never sets tier - epic #1456 P1: tier promotion is a judge- or human-supported vote only, so a chat merging is audit trail, not proof the content held up; invalidate stamps invalidated_at/invalidation_reason on every unverified id (a verified memory recalled into a closed-unmerged chat gets no vote, not an invalidation - it's never demoted by this path). Every touched memory writes one memory_ops row.
 func (s *Store) ApplyOutcome(ctx context.Context, ids []string, o OutcomeSignal) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -150,19 +150,23 @@ func (s *Store) SetHumanVote(ctx context.Context, id, vote string) error {
 	return nil
 }
 
-// computeHumanVoteDelta re-derives upvotes/downvotes/vote_score/tier by undoing oldVote's
-// effect (if any) and applying newVote's - the toggle-safe twin of computeVoteDelta, which
-// only ever adds. Tier is sticky-verified (never demoted, matching computeVoteDelta/#1255 P1) even if undoing the vote that earned it drops upvotes back to 0.
-func computeHumanVoteDelta(upvotes, downvotes int, tier, oldVote, newVote, now string, invalidateThreshold int) voteDelta {
+// computeHumanVoteDelta re-derives upvotes/downvotes/supported/vote_score/tier by undoing
+// oldVote's effect (if any) and applying newVote's - the toggle-safe twin of computeVoteDelta,
+// which only ever adds. A human up counts as support exactly like a judge supported vote (epic
+// #1456 P1): supported moves with upvotes (+1 on up, -1 undoing an up, floored at 0), and tier is
+// derived from the resulting supported count via tierFromSupported - no longer sticky.
+func computeHumanVoteDelta(upvotes, downvotes, supported int, oldVote, newVote, now string, invalidateThreshold int) voteDelta {
 	switch oldVote {
 	case HumanVoteUp:
 		upvotes--
+		supported--
 	case HumanVoteDown:
 		downvotes--
 	}
 	switch newVote {
 	case HumanVoteUp:
 		upvotes++
+		supported++
 	case HumanVoteDown:
 		downvotes++
 	}
@@ -172,12 +176,11 @@ func computeHumanVoteDelta(upvotes, downvotes int, tier, oldVote, newVote, now s
 	if downvotes < 0 {
 		downvotes = 0
 	}
-	d := voteDelta{Upvotes: upvotes, Downvotes: downvotes, VoteScore: upvotes - downvotes, Tier: tier}
-	if d.Tier == "" {
-		d.Tier = TierUnverified
+	if supported < 0 {
+		supported = 0
 	}
+	d := voteDelta{Upvotes: upvotes, Downvotes: downvotes, Supported: supported, VoteScore: upvotes - downvotes, Tier: tierFromSupported(supported)}
 	if newVote == HumanVoteUp {
-		d.Tier = TierVerified
 		d.LastUpvotedAt = now
 	}
 	if d.VoteScore <= invalidateThreshold {
@@ -186,13 +189,13 @@ func computeHumanVoteDelta(upvotes, downvotes int, tier, oldVote, newVote, now s
 	return d
 }
 
-// TierUnverified/TierVerified: a memory's vote-based tier (epic #1255 P1), independent of Status. Epic #1456 P1: no longer sticky - verified holds only while at least one judge-supported vote is on record (tierFromSupported).
+// TierUnverified/TierVerified: a memory's vote-based tier (epic #1255 P1), independent of Status. Epic #1456 P1: no longer sticky - verified holds only while at least one judge- or human-supported vote is on record (tierFromSupported).
 const (
 	TierUnverified = "unverified"
 	TierVerified   = "verified"
 )
 
-// tierFromSupported derives tier from a memory's supported-vote count (epic #1456 P1): reinforcement-only upvotes never count, so tier is recomputed fresh on every judge vote instead of held sticky.
+// tierFromSupported derives tier from a memory's supported-vote count (epic #1456 P1): reinforcement-only upvotes never count, so tier is recomputed fresh on every judge or human vote instead of held sticky.
 func tierFromSupported(supported int) string {
 	if supported >= 1 {
 		return TierVerified
@@ -260,12 +263,13 @@ func dedupeVotes(votes []Vote) []Vote {
 	return out
 }
 
-// tierPrefix is the compact plain-string epistemic tag prepended to a recalled memory's
-// text, same convention as citeReasonLegend (#822). Any status other than
-// "reinforced" - including "" (pre-lifecycle points) and "invalidated" (shouldn't reach here; recall already excludes it) - reads as unverified rather than silently omitting the tag.
-func tierPrefix(status string, reinforcementCount int) string {
-	if status == string(StatusReinforced) {
-		return fmt.Sprintf("[reinforced ×%d] ", reinforcementCount)
+// tierPrefix is the compact plain-string epistemic tag prepended to a recalled memory's text,
+// same convention as citeReasonLegend (#822). Reads tier/supported (epic #1456 P1), not
+// status/reinforcement_count - a memory reinforced by a merge but never judge- or
+// human-supported must present as unverified, not as if the reinforcement itself verified it.
+func tierPrefix(tier string, supported int) string {
+	if tier == TierVerified {
+		return fmt.Sprintf("[verified, supported ×%d] ", supported)
 	}
-	return "[unverified, single run] "
+	return "[unverified] "
 }

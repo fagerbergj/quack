@@ -382,8 +382,8 @@ func (x *sqliteIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 		var upd map[string]any
 		switch o.Kind {
 		case OutcomeReinforced:
-			// Reinforcement bumps the audit trail only - epic #1456 P1: tier is judge-support-only,
-			// so this never writes "tier" (an existing verified/unverified value is left untouched).
+			// Reinforcement bumps the audit trail only - epic #1456 P1: tier is judge/human-support
+			// only, so this never writes "tier" (an existing verified/unverified value is left untouched).
 			upd = map[string]any{
 				"status": string(StatusReinforced), "reinforcement_count": r.ReinforcementCount + 1,
 				"upvotes": r.Upvotes + 1, "vote_score": reinforcedVoteScore(r.Upvotes, r.Downvotes), "last_upvoted_at": ts,
@@ -474,8 +474,11 @@ func (x *sqliteIndex) setHumanVote(ctx context.Context, id, vote string, invalid
 		return false, fmt.Errorf("memory: sqlite human-vote query: %w", err)
 	}
 	ts := nowRFC3339()
-	d := computeHumanVoteDelta(r.Upvotes, r.Downvotes, r.Tier, r.HumanVote, vote, ts, invalidateThreshold)
-	upd := map[string]any{"upvotes": d.Upvotes, "downvotes": d.Downvotes, "vote_score": d.VoteScore, "tier": d.Tier}
+	d := computeHumanVoteDelta(r.Upvotes, r.Downvotes, r.Supported, r.HumanVote, vote, ts, invalidateThreshold)
+	upd := map[string]any{
+		"upvotes": d.Upvotes, "downvotes": d.Downvotes, "supported": d.Supported,
+		"vote_score": d.VoteScore, "tier": d.Tier,
+	}
 	if vote == HumanVoteNone {
 		upd["human_vote"] = ""
 	} else {
@@ -544,7 +547,7 @@ func (x *sqliteIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("memory: sqlite backfill judge support (verified): %w", verified.Error)
 	}
 	unverified := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND tier = ? AND upvotes <= reinforcement_count", x.coll, TierVerified).
+		Where("collection = ? AND tier = ? AND upvotes <= reinforcement_count AND (supported IS NULL OR supported = 0)", x.coll, TierVerified).
 		Updates(map[string]any{"tier": TierUnverified, "supported": 0})
 	if unverified.Error != nil {
 		return 0, fmt.Errorf("memory: sqlite backfill judge support (unverified): %w", unverified.Error)

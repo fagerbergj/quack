@@ -781,7 +781,7 @@ func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 			return nil, fmt.Errorf("memory: set payload invalidate: %w", err)
 		}
 	case OutcomeReinforced:
-		// Audit trail only - epic #1456 P1: tier is judge-support-only, so this never
+		// Audit trail only - epic #1456 P1: tier is judge/human-support only, so this never
 		// writes payloadTier (an existing verified/unverified value is left untouched).
 		ts := nowRFC3339()
 		for _, c := range candidates {
@@ -868,8 +868,11 @@ func (x *qdrantIndex) setHumanVote(ctx context.Context, id, vote string, invalid
 	}
 	ts := nowRFC3339()
 	d := computeHumanVoteDelta(payloadInt(payload, payloadUpvotes), payloadInt(payload, payloadDownvotes),
-		payloadString(payload, payloadTier), payloadString(payload, payloadHumanVote), vote, ts, invalidateThreshold)
-	set := map[string]any{payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadVoteScore: d.VoteScore, payloadTier: d.Tier}
+		payloadInt(payload, payloadSupported), payloadString(payload, payloadHumanVote), vote, ts, invalidateThreshold)
+	set := map[string]any{
+		payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadSupported: d.Supported,
+		payloadVoteScore: d.VoteScore, payloadTier: d.Tier,
+	}
 	if vote == HumanVoteNone {
 		set[payloadHumanVote] = ""
 	} else {

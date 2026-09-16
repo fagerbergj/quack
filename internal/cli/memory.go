@@ -74,7 +74,8 @@ func RunMemoryShow(ctx context.Context, out io.Writer, server, id string, asJSON
 	fmt.Fprintf(out, "status:   %s\n", status)
 	fmt.Fprintf(out, "tier:     %s\n", tier)
 	fmt.Fprintf(out, "votes:    +%d / -%d (score %d)\n", intOr(m.Upvotes), intOr(m.Downvotes), intOr(m.VoteScore))
-	fmt.Fprintf(out, "supported: %d, not relevant: %d\n", intOr(m.Supported), intOr(m.NotRelevant))
+	fmt.Fprintf(out, "supported:    %d\n", intOr(m.Supported))
+	fmt.Fprintf(out, "not relevant: %d\n", intOr(m.NotRelevant))
 	fmt.Fprintf(out, "recalls:  %d\n", intOr(m.Recalls))
 	if m.LastUpvotedAt != nil {
 		fmt.Fprintf(out, "last upvoted:  %s\n", m.LastUpvotedAt.Format(time.RFC3339))

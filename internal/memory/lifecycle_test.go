@@ -212,7 +212,9 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 		t.Fatalf("m2 (sticky) = %+v, want unchanged (still invalidated, count 0)", rows["m2"])
 	}
 
-	// A recalled reinforced memory carries the tier prefix with its count.
+	// A recalled reinforced-only memory still reads unverified (epic #1456 P1: the tier prefix
+	// reflects tier/supported, not status/reinforcement_count - reinforcement alone must never
+	// present to the worker as trustworthy).
 	resp, _, err := s.recall(ctx, []string{"repo:r"}, "convention")
 	if err != nil {
 		t.Fatalf("recall: %v", err)
@@ -220,8 +222,8 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 	if len(resp.Memories) != 1 {
 		t.Fatalf("recall got %d, want 1 (m2 excluded, m1 included)", len(resp.Memories))
 	}
-	if text := extractText(resp.Memories[0]); !strings.HasPrefix(text, "[reinforced ×1] ") {
-		t.Fatalf("recalled text = %q, want the reinforced ×1 tier prefix", text)
+	if text := extractText(resp.Memories[0]); !strings.HasPrefix(text, "[unverified] ") {
+		t.Fatalf("recalled text = %q, want the unverified tier prefix (reinforcement alone never verifies)", text)
 	}
 
 	// Second reinforce bumps to ×2.
@@ -856,6 +858,33 @@ func TestInvalidateByID_HumanDelete(t *testing.T) {
 	})
 }
 
+// TestRecall_VerifiedTierPrefixShowsSupportedCount covers epic #1456 P1: tierPrefix reads
+// tier/supported, not status/reinforcement_count, so a judge-supported memory recalls with
+// "[verified, supported ×N]" - the honest trust signal this PR exists to give the worker.
+func TestRecall_VerifiedTierPrefixShowsSupportedCount(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "a judge-checked fact", Scope: "repo:r", Status: string(StatusUnverified)},
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+	if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: "m1", Vote: VoteSupported, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+		t.Fatalf("ApplyVotes: %v", err)
+	}
+
+	resp, _, err := s.recall(ctx, []string{"repo:r"}, "judge-checked")
+	if err != nil {
+		t.Fatalf("recall: %v", err)
+	}
+	if len(resp.Memories) != 1 {
+		t.Fatalf("recall got %d, want 1", len(resp.Memories))
+	}
+	if text := extractText(resp.Memories[0]); !strings.HasPrefix(text, "[verified, supported ×1] ") {
+		t.Fatalf("recalled text = %q, want the verified/supported tier prefix", text)
+	}
+}
+
 // TestRecall_PreLifecyclePointsReadAsValidAndUnverified covers points minted
 // by phase 1 (provenance-only, no status field at all): recall must still
 // surface them (missing status ≠ invalidated) and tag them unverified.
@@ -878,7 +907,7 @@ func TestRecall_PreLifecyclePointsReadAsValidAndUnverified(t *testing.T) {
 	if len(resp.Memories) != 1 {
 		t.Fatalf("recall got %d, want 1 (a missing status must read as valid)", len(resp.Memories))
 	}
-	if text := extractText(resp.Memories[0]); !strings.HasPrefix(text, "[unverified, single run] ") {
+	if text := extractText(resp.Memories[0]); !strings.HasPrefix(text, "[unverified] ") {
 		t.Fatalf("recalled text = %q, want the unverified tier prefix", text)
 	}
 }
@@ -934,9 +963,10 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 	}
 }
 
-// TestSetHumanVote_ToggleAndSwitch covers epic #1255 P4: an up vote is +1 upvote/verified;
-// voting up again is a no-op (not a double-count); "none" removes it back to 0; and
-// switching directly from up to down moves the vote rather than stacking it.
+// TestSetHumanVote_ToggleAndSwitch covers epic #1255 P4 (+ #1456 P1: a human up counts as
+// support): an up vote is +1 upvote/+1 supported/verified; voting up again is a no-op (not a
+// double-count); "none" removes it back to 0 and demotes tier (no longer sticky); and switching
+// directly from up to down moves the vote rather than stacking it.
 func TestSetHumanVote_ToggleAndSwitch(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -968,33 +998,106 @@ func TestSetHumanVote_ToggleAndSwitch(t *testing.T) {
 		if err := s.SetHumanVote(ctx, m1ID, HumanVoteUp); err != nil {
 			t.Fatalf("SetHumanVote up: %v", err)
 		}
-		if m := get(); m.Upvotes != 1 || m.Tier != TierVerified || m.HumanVote != HumanVoteUp {
-			t.Fatalf("after up: %+v, want upvotes=1 tier=verified human_vote=up", m)
+		if m := get(); m.Upvotes != 1 || m.Supported != 1 || m.Tier != TierVerified || m.HumanVote != HumanVoteUp {
+			t.Fatalf("after up: %+v, want upvotes=1 supported=1 tier=verified human_vote=up", m)
 		}
 
 		if err := s.SetHumanVote(ctx, m1ID, HumanVoteUp); err != nil {
 			t.Fatalf("SetHumanVote up again: %v", err)
 		}
-		if m := get(); m.Upvotes != 1 {
-			t.Fatalf("after repeat up: %+v, want upvotes still 1 (no double count)", m)
+		if m := get(); m.Upvotes != 1 || m.Supported != 1 {
+			t.Fatalf("after repeat up: %+v, want upvotes/supported still 1 (no double count)", m)
 		}
 
 		if err := s.SetHumanVote(ctx, m1ID, HumanVoteNone); err != nil {
 			t.Fatalf("SetHumanVote none: %v", err)
 		}
-		if m := get(); m.Upvotes != 0 || m.HumanVote != "" {
-			t.Fatalf("after none: %+v, want upvotes=0 human_vote=\"\"", m)
+		if m := get(); m.Upvotes != 0 || m.Supported != 0 || m.Tier != TierUnverified || m.HumanVote != "" {
+			t.Fatalf("after none: %+v, want upvotes=0 supported=0 tier=unverified (demoted, not sticky) human_vote=\"\"", m)
 		}
 
 		if err := s.SetHumanVote(ctx, m1ID, HumanVoteDown); err != nil {
 			t.Fatalf("SetHumanVote down: %v", err)
 		}
-		if m := get(); m.Downvotes != 1 || m.Upvotes != 0 || m.HumanVote != HumanVoteDown {
-			t.Fatalf("after down: %+v, want downvotes=1 upvotes=0 human_vote=down", m)
+		if m := get(); m.Downvotes != 1 || m.Upvotes != 0 || m.Supported != 0 || m.HumanVote != HumanVoteDown {
+			t.Fatalf("after down: %+v, want downvotes=1 upvotes=0 supported=0 human_vote=down", m)
 		}
 
 		if err := s.SetHumanVote(ctx, testID("does-not-exist"), HumanVoteUp); !errors.Is(err, ErrMemoryNotFound) {
 			t.Fatalf("SetHumanVote unknown id err = %v, want ErrMemoryNotFound", err)
+		}
+	})
+}
+
+// TestSetHumanVote_UpSurvivesNotRelevantVotes covers epic #1456 P1: a human up vote is real
+// support, so it must protect a memory exactly like a judge supported vote - three subsequent
+// not_relevant votes must not invalidate it, and it must stay verified.
+func TestSetHumanVote_UpSurvivesNotRelevantVotes(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		m1ID := testID("m1")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "human-checked fact", Scope: "repo:r", Status: string(StatusUnverified)},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+
+		if err := s.SetHumanVote(ctx, m1ID, HumanVoteUp); err != nil {
+			t.Fatalf("SetHumanVote up: %v", err)
+		}
+
+		for i := 0; i < 3; i++ {
+			if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: m1ID, Vote: VoteNotRelevant, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+				t.Fatalf("ApplyVotes not_relevant (%d): %v", i, err)
+			}
+		}
+
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if pts[0].Status == string(StatusInvalidated) || pts[0].Tier != TierVerified {
+			t.Fatalf("m1 = %+v, want still verified, NOT invalidated (the human upvote is real support)", pts[0])
+		}
+	})
+}
+
+// TestBackfillJudgeSupport_SkipsPostMigrationHumanUpvote covers epic #1456 P1: a row created
+// (or human-upvoted) after this migration ships already carries a correct supported count, so
+// the "one-time" backfill must not re-touch it on a later boot - a human vote is not a
+// perpetually-unmigrated row.
+func TestBackfillJudgeSupport_SkipsPostMigrationHumanUpvote(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		m1ID := testID("m1")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "reinforced then human-upvoted", Scope: "repo:r", Status: string(StatusReinforced), ReinforcementCount: 1},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+		if _, err := s.ApplyOutcome(ctx, []string{m1ID}, OutcomeSignal{Kind: OutcomeReinforced}); err != nil {
+			t.Fatalf("ApplyOutcome: %v", err)
+		}
+		if err := s.SetHumanVote(ctx, m1ID, HumanVoteUp); err != nil {
+			t.Fatalf("SetHumanVote up: %v", err)
+		}
+
+		n, err := s.idx.backfillJudgeSupport(ctx)
+		if err != nil {
+			t.Fatalf("backfillJudgeSupport: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("backfillJudgeSupport touched %d, want 0 (a post-migration human upvote already carries supported)", n)
+		}
+
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if pts[0].Tier != TierVerified || pts[0].Supported != 1 {
+			t.Fatalf("m1 = %+v, want still tier=verified supported=1, untouched by the backfill", pts[0])
 		}
 	})
 }
