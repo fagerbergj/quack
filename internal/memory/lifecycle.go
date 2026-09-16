@@ -39,7 +39,7 @@ type OutcomeSignal struct {
 const OutcomeReasonClosedUnmerged = "subject closed unmerged"
 
 // ApplyOutcome applies o to every id in ids that isn't already invalidated (sticky: nothing
-// revives an invalidated memory, and invalidating twice is idempotent). ids is the chat's RECALLED set (epic #1255 P1: reinforcement is recall-based, not birth-based) - the caller folds the chat's ledger for memory.recall entries and passes their ids; minting still sets provenance, but no longer drives what gets reinforced/invalidated. Returns the count touched. Reinforce is +1 upvote (see applyVotes) with actor outcome-feedback; invalidate stamps invalidated_at/invalidation_reason on every unverified id (a verified memory recalled into a closed-unmerged chat gets no vote, not an invalidation - it's never demoted by this path). Every touched memory writes one memory_ops row.
+// revives an invalidated memory, and invalidating twice is idempotent). ids is the chat's RECALLED set (epic #1255 P1: reinforcement is recall-based, not birth-based) - the caller folds the chat's ledger for memory.recall entries and passes their ids; minting still sets provenance, but no longer drives what gets reinforced/invalidated. Returns the count touched. Reinforce is +1 upvote (mirrored into reinforcement_count) with actor outcome-feedback but never sets tier - epic #1456 P1: tier promotion is judge-supported-vote only, so a chat merging is audit trail, not proof the content held up; invalidate stamps invalidated_at/invalidation_reason on every unverified id (a verified memory recalled into a closed-unmerged chat gets no vote, not an invalidation - it's never demoted by this path). Every touched memory writes one memory_ops row.
 func (s *Store) ApplyOutcome(ctx context.Context, ids []string, o OutcomeSignal) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -73,9 +73,8 @@ func (s *Store) ApplyOutcome(ctx context.Context, ids []string, o OutcomeSignal)
 // vote score dropping to invalidateThreshold or below stamps.
 const OutcomeReasonNetScore = "net score"
 
-// Vote is one judge's (or human's) verdict on a recalled memory (epic #1255
-// P1). NotRelevant carries no score delta but still logs a memory_ops row -
-// an audit trail of what the judge considered, not just what it moved.
+// Vote is one judge's (or human's) verdict on a recalled memory (epic #1255 P1). NotRelevant
+// carries no score delta but counts toward DefaultNotRelevantThreshold (epic #1456 P1) and always logs a memory_ops row - an audit trail of what the judge considered, not just what it moved.
 type Vote struct {
 	MemoryID string
 	Vote     string // "supported" | "contradicted" | "not_relevant"
@@ -93,9 +92,15 @@ const (
 // below this invalidates it (design decision #1255).
 const DefaultInvalidateThreshold = -2
 
-// ApplyVotes applies each vote to its memory (supported: +1 upvote, last_upvoted_at,
-// tier→verified; contradicted: +1 downvote, and a net score <= invalidateThreshold also
-// invalidates; not_relevant: no score change). Duplicate votes for the same id in one call are collapsed to the last one (a judge that names a memory twice in one round should not double-count it). Sticky: an already-invalidated memory is skipped. Every applied vote (including not_relevant) writes one memory_ops row (op=vote).
+// DefaultNotRelevantThreshold: a memory voted not_relevant this many times with zero
+// supported votes invalidates it (epic #1456 P1) - the majority vote finally has a consequence.
+const DefaultNotRelevantThreshold = 3
+
+// OutcomeReasonRecalledWithoutSupport is the fixed invalidation_reason a memory's not_relevant
+// count reaching DefaultNotRelevantThreshold with zero supported votes stamps (epic #1456 P1).
+const OutcomeReasonRecalledWithoutSupport = "recalled without support"
+
+// ApplyVotes applies each vote to its memory (supported: +1 upvote, +1 supported, last_upvoted_at; contradicted: +1 downvote, net score <= invalidateThreshold also invalidates; not_relevant: +1 not_relevant, DefaultNotRelevantThreshold reached with zero supported also invalidates reason OutcomeReasonRecalledWithoutSupport). Tier is recomputed on every vote from the resulting supported count (verified iff >=1, epic #1456 P1: no longer sticky). Duplicate votes for the same id in one call are collapsed to the last one (a judge that names a memory twice in one round should not double-count it). Sticky: an already-invalidated memory is skipped. Every applied vote (including not_relevant) writes one memory_ops row (op=vote).
 func (s *Store) ApplyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) (int, error) {
 	if len(votes) == 0 {
 		return 0, nil
@@ -181,45 +186,53 @@ func computeHumanVoteDelta(upvotes, downvotes int, tier, oldVote, newVote, now s
 	return d
 }
 
-// TierUnverified/TierVerified: a memory's vote-based tier (epic #1255 P1), independent of
-// Status (which tracks invalidation, not votes). Verified is sticky once reached - a
-// downvote can invalidate via net score, but never demotes a memory back to unverified.
+// TierUnverified/TierVerified: a memory's vote-based tier (epic #1255 P1), independent of Status. Epic #1456 P1: no longer sticky - verified holds only while at least one judge-supported vote is on record (tierFromSupported).
 const (
 	TierUnverified = "unverified"
 	TierVerified   = "verified"
 )
 
-// voteDelta is the field-level result of applying one vote to a memory's
-// current upvotes/downvotes/vote_score - the backend-agnostic core both
-// sqlite (a map of column updates) and qdrant (a payload SetPayload) build their own write from.
-type voteDelta struct {
-	Upvotes, Downvotes, VoteScore int
-	Tier                          string
-	LastUpvotedAt                 string // "" = unchanged
-	Invalidate                    bool
+// tierFromSupported derives tier from a memory's supported-vote count (epic #1456 P1): reinforcement-only upvotes never count, so tier is recomputed fresh on every judge vote instead of held sticky.
+func tierFromSupported(supported int) string {
+	if supported >= 1 {
+		return TierVerified
+	}
+	return TierUnverified
 }
 
-// computeVoteDelta is the one place vote arithmetic lives. supported: +1 upvote, tier verified,
-// last_upvoted_at stamped. contradicted: +1 downvote; net score <= invalidateThreshold also
-// invalidates. not_relevant: no score change (still returns the unchanged counts so the caller has a uniform write, and still gets logged by the caller).
-func computeVoteDelta(upvotes, downvotes int, tier, now string, v Vote, invalidateThreshold int) voteDelta {
-	d := voteDelta{Upvotes: upvotes, Downvotes: downvotes, VoteScore: upvotes - downvotes, Tier: tier}
-	if d.Tier == "" {
-		d.Tier = TierUnverified
-	}
+// voteDelta is the field-level result of applying one vote to a memory's current vote counts - the backend-agnostic core both sqlite (column updates) and qdrant (a payload SetPayload) build their own write from.
+type voteDelta struct {
+	Upvotes, Downvotes, Supported, NotRelevant, VoteScore int
+	Tier                                                  string
+	LastUpvotedAt                                         string // "" = unchanged
+	Invalidate                                            bool
+	InvalidateReason                                      string // set only when Invalidate is true
+}
+
+// computeVoteDelta is the one place vote arithmetic lives: supported +1 upvote/+1 supported; contradicted +1 downvote, net score <= invalidateThreshold invalidates (OutcomeReasonNetScore); not_relevant +1 not_relevant, DefaultNotRelevantThreshold reached with zero supported invalidates (OutcomeReasonRecalledWithoutSupport). Tier is always recomputed from the resulting supported count, never carried in (epic #1456 P1).
+func computeVoteDelta(upvotes, downvotes, supported, notRelevant int, now string, v Vote, invalidateThreshold int) voteDelta {
+	d := voteDelta{Upvotes: upvotes, Downvotes: downvotes, Supported: supported, NotRelevant: notRelevant, VoteScore: upvotes - downvotes}
 	switch v.Vote {
 	case VoteSupported:
 		d.Upvotes++
+		d.Supported++
 		d.VoteScore++
-		d.Tier = TierVerified
 		d.LastUpvotedAt = now
 	case VoteContradicted:
 		d.Downvotes++
 		d.VoteScore--
 		if d.VoteScore <= invalidateThreshold {
 			d.Invalidate = true
+			d.InvalidateReason = OutcomeReasonNetScore
+		}
+	case VoteNotRelevant:
+		d.NotRelevant++
+		if d.NotRelevant >= DefaultNotRelevantThreshold && d.Supported == 0 {
+			d.Invalidate = true
+			d.InvalidateReason = OutcomeReasonRecalledWithoutSupport
 		}
 	}
+	d.Tier = tierFromSupported(d.Supported)
 	return d
 }
 

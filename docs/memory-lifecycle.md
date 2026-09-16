@@ -120,26 +120,24 @@ Core maps: transition→merged ⇒ `ApplyOutcome(chat, reinforced)`; transition�
 
 Supersedes this doc's §5 `ApplyOutcome`/reinforcement description with the following (full epic in issue #1255; only P1 is implemented here).
 
-**New point fields** (both backends): `upvotes`, `downvotes`, `vote_score`
-(upvotes - downvotes), `tier` (`unverified` | `verified`, verified once
-`upvotes >= 1`), `last_upvoted_at`, `recalls`, `last_recalled_at`. `reinforcement_count`/`status=reinforced` are unchanged and kept as a mirror
-
-- reinforcement still bumps both.
+**New point fields** (both backends): `upvotes`, `downvotes`, `supported`,
+`not_relevant`, `vote_score` (upvotes - downvotes), `tier` (`unverified` |
+`verified`, verified while `supported >= 1`, recomputed on every judge vote - not sticky, epic #1456 P1), `last_upvoted_at`, `recalls`, `last_recalled_at`. `supported` is the judge-supported subset of `upvotes`; `reinforcement_count`/`status=reinforced` are unchanged and kept as a mirror - reinforcement still bumps both, but never `supported` or `tier`.
 
 **Usage tracking.** Every recall delivery (today: the prefill injection in
 `vetting/node.go`) appends a `memory.recall` ledger entry (chat, node, round, source, delivered ids+scores) and directly bumps `recalls`/ `last_recalled_at` on the point (one batched write). The ledger is the source of truth for what a chat retrieved - unlike a vote, a recall never writes a `memory_ops` row; the audit trail for retrieval lives entirely in the ledger (`internal/ledger`'s `KindMemoryRecall`), and `internal/ledger/fold` folds it into per-id recall counts so `quack ledger rebuild` can re-derive the same projection from scratch.
 
 **Judge votes.** The judge's prompt lists the worker's received memory set
 (id + content); `submit_verdict` gains an optional `memories: [{id, vote, reason}]` (`supported` | `contradicted` | `not_relevant`),
-applied ONLY when the round passes (`vetting.applyMemoryVotesOnPass`) - a failed round records nothing. A vote appends a `memory.vote` ledger entry (also folded for rebuild) AND is projected onto the point immediately (`memory.Store.ApplyVotes`): supported is +1 upvote (tier→verified, `last_upvoted_at` stamped); contradicted is +1 downvote, and a net score at or below the configured threshold (default -2, `OutcomeReasonNetScore`) soft-invalidates the memory, same sticky invalidation as everything else. A memory named twice by one round's votes collapses to the LAST vote (no double count). Every applied vote (including `not_relevant`) writes one `memory_ops` row, actor `judge`.
+applied ONLY when the round passes (`vetting.applyMemoryVotesOnPass`) - a failed round records nothing. A vote appends a `memory.vote` ledger entry (also folded for rebuild) AND is projected onto the point immediately (`memory.Store.ApplyVotes`): supported is +1 upvote, +1 `supported` (tier recomputed to `verified`, `last_upvoted_at` stamped); contradicted is +1 downvote, and a net score at or below the configured threshold (default -2, `OutcomeReasonNetScore`) soft-invalidates the memory; not_relevant is +1 `not_relevant`, and reaching 3 with zero `supported` also soft-invalidates (`OutcomeReasonRecalledWithoutSupport`, epic #1456 P1) - both are the same sticky invalidation as everything else. A memory named twice by one round's votes collapses to the LAST vote (no double count). Every applied vote (including `not_relevant`) writes one `memory_ops` row, actor `judge`.
 
 **Reinforcement is recall-based, not birth-based.** `ApplyOutcome`'s
-signature changed from `(ctx, chatID, outcome)` to `(ctx, ids, outcome)`: the caller (`serve.applyMemoryOutcome`) folds the chat's ledger for its `memory.recall` entries and passes that id set - memories RECALLED into the chat, not memories MINTED there (minting still stamps provenance via `Commit`, it just no longer drives what gets reinforced). Reinforce is +1 upvote (mirrored into `reinforcement_count`/`status=reinforced`) with actor `outcome-feedback`. Closed-unmerged invalidation now additionally skips any id already at tier `verified` - a verified memory recalled into a closed-unmerged chat gets no vote at all, not a demotion.
+signature changed from `(ctx, chatID, outcome)` to `(ctx, ids, outcome)`: the caller (`serve.applyMemoryOutcome`) folds the chat's ledger for its `memory.recall` entries and passes that id set - memories RECALLED into the chat, not memories MINTED there (minting still stamps provenance via `Commit`, it just no longer drives what gets reinforced). Reinforce is +1 upvote (mirrored into `reinforcement_count`/`status=reinforced`) with actor `outcome-feedback`, but never promotes tier - a merged chat is audit trail, not proof the content held up; tier promotion is judge-supported-vote only (epic #1456 P1). Closed-unmerged invalidation now additionally skips any id already at tier `verified` - a verified memory recalled into a closed-unmerged chat gets no vote at all, not a demotion.
 
 **Migration.** New fields default zero-value; a one-time, idempotent boot
-backfill (`index.backfillTiers`, logged once per boot with a nonzero count) sets `tier=verified, upvotes=reinforcement_count` where `reinforcement_count >= 1`, else `tier=unverified` - skipping any point that already carries a tier, so a second boot (or a vote landing between boots) touches nothing.
+backfill (`index.backfillTiers`, logged once per boot with a nonzero count) sets `tier=verified, upvotes=reinforcement_count` where `reinforcement_count >= 1`, else `tier=unverified` - skipping any point that already carries a tier, so a second boot (or a vote landing between boots) touches nothing. A second boot backfill (`index.backfillJudgeSupport`, epic #1456 P1) then demotes any point left `tier=verified` with `upvotes == reinforcement_count` (every upvote came from reinforcement, never a judge) back to `unverified` - naturally idempotent, since a demoted point no longer matches that query.
 
-**Observability.** `quack memory show <id>` prints votes/tier/last
+**Observability.** `quack memory show <id>` prints votes/tier/supported/not_relevant/last
 recalled/last upvoted. `Memory`/`MemoryList` (openapi.yaml) expose the new fields; no frontend rendering change (P4).
 
 ## 8c. Epic #1255 P3: criteria builder, age-out, retention

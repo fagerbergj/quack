@@ -29,14 +29,14 @@ func TestParseSurvivorID(t *testing.T) {
 
 func TestComputeAbsorbDelta(t *testing.T) {
 	// A absorbed by B: B inherits A's votes and lineage.
-	survivor := absorbFields{Upvotes: 1, Downvotes: 0, LastUpvotedAt: "2026-01-01T00:00:00Z"}
-	absorbed := absorbFields{Upvotes: 2, Downvotes: 1, LastRecalledAt: "2026-02-01T00:00:00Z"}
+	survivor := absorbFields{Upvotes: 1, Downvotes: 0, Supported: 1, LastUpvotedAt: "2026-01-01T00:00:00Z"}
+	absorbed := absorbFields{Upvotes: 2, Downvotes: 1, NotRelevant: 1, LastRecalledAt: "2026-02-01T00:00:00Z"}
 	d := computeAbsorbDelta(survivor, absorbed, "A")
-	if d.Upvotes != 3 || d.Downvotes != 1 || d.VoteScore != 2 {
-		t.Fatalf("votes = %+v, want up=3 down=1 score=2", d)
+	if d.Upvotes != 3 || d.Downvotes != 1 || d.VoteScore != 2 || d.Supported != 1 || d.NotRelevant != 1 {
+		t.Fatalf("votes = %+v, want up=3 down=1 score=2 supported=1 not_relevant=1", d)
 	}
 	if d.Tier != TierVerified {
-		t.Fatalf("tier = %q, want verified (upvotes >= 1)", d.Tier)
+		t.Fatalf("tier = %q, want verified (merged supported >= 1)", d.Tier)
 	}
 	if d.LastUpvotedAt != "2026-01-01T00:00:00Z" {
 		t.Fatalf("last_upvoted_at = %q, want survivor's (absorbed had none)", d.LastUpvotedAt)
@@ -83,7 +83,7 @@ func seedPoint(t *testing.T, s *Store, p point) {
 func TestSQLiteAbsorb_VotesAndTimestampsMerge(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
-	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "x", Upvotes: 1, VoteScore: 1, LastUpvotedAt: "2026-01-01T00:00:00Z"})
+	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "x", Upvotes: 1, Supported: 1, VoteScore: 1, LastUpvotedAt: "2026-01-01T00:00:00Z"})
 	seedPoint(t, s, point{ID: "dup", Scope: "role:coding", Content: "y", Upvotes: 2, Downvotes: 1, VoteScore: 1, LastRecalledAt: "2026-03-01T00:00:00Z"})
 
 	ok, err := s.idx.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
@@ -107,7 +107,7 @@ func TestSQLiteAbsorb_VotesAndTimestampsMerge(t *testing.T) {
 		t.Fatalf("survivor votes = +%d/-%d score %d, want +3/-1 score 2", sv.Upvotes, sv.Downvotes, sv.VoteScore)
 	}
 	if sv.Tier != TierVerified {
-		t.Fatalf("survivor tier = %q, want verified", sv.Tier)
+		t.Fatalf("survivor tier = %q, want verified (survivor's supported vote carries over)", sv.Tier)
 	}
 	if sv.LastUpvotedAt != "2026-01-01T00:00:00Z" {
 		t.Fatalf("survivor last_upvoted_at = %q, want carried from survivor", sv.LastUpvotedAt)

@@ -243,6 +243,39 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 	}
 }
 
+// TestApplyOutcome_ReinforceAloneNeverPromotesTier covers epic #1456 P1: merge reinforcement
+// still bumps reinforcement_count/upvotes for the audit trail, but tier promotion requires a
+// judge-supported vote - reinforcing a memory repeatedly must never flip it to verified.
+func TestApplyOutcome_ReinforceAloneNeverPromotesTier(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		m1ID := testID("m1")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "reinforced, never judged", Scope: "repo:r", Status: string(StatusUnverified)},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+
+		for i := 0; i < 2; i++ {
+			if _, err := s.ApplyOutcome(ctx, []string{m1ID}, OutcomeSignal{Kind: OutcomeReinforced}); err != nil {
+				t.Fatalf("ApplyOutcome (%d): %v", i, err)
+			}
+		}
+
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if pts[0].Tier == TierVerified {
+			t.Fatalf("m1 = %+v, want tier NOT verified (reinforcement alone never promotes)", pts[0])
+		}
+		if pts[0].Upvotes != 2 || pts[0].ReinforcementCount != 2 || pts[0].Supported != 0 {
+			t.Fatalf("m1 = %+v, want upvotes=2 reinforcement_count=2 supported=0 (audit trail still bumped)", pts[0])
+		}
+	})
+}
+
 // TestApplyVotes_SupportedAndContradicted covers epic #1255 P1: a supported
 // vote is +1 upvote and flips tier to verified, a contradicted vote is +1
 // downvote, and each vote writes one memory_ops row (actor=judge).
@@ -422,6 +455,60 @@ func TestApplyVotes_SkipsAlreadyInvalidated(t *testing.T) {
 	}
 }
 
+// TestApplyVotes_NotRelevantThreeInvalidatesWithoutSupport covers epic #1456 P1: three
+// not_relevant votes with zero supported invalidates (reason recalled without support), but a
+// supported vote anywhere in the sequence protects the memory even past that count.
+func TestApplyVotes_NotRelevantThreeInvalidatesWithoutSupport(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		neverSupportedID, supportedThenNotRelevantID := testID("m1"), testID("m2")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: neverSupportedID, Vector: []float32{1, 0, 0, 0}, Content: "never supported", Scope: "repo:r", Status: string(StatusUnverified)},
+			{ID: supportedThenNotRelevantID, Vector: []float32{1, 0, 0, 0}, Content: "supported once, then voted down", Scope: "repo:r", Status: string(StatusUnverified)},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+
+		for i := 0; i < 3; i++ {
+			if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: neverSupportedID, Vote: VoteNotRelevant, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+				t.Fatalf("ApplyVotes m1 (%d): %v", i, err)
+			}
+		}
+
+		// m2: two not_relevant, then a supported vote, then two MORE not_relevant - the
+		// supported vote must keep it alive past what would otherwise be the 3rd+ strike.
+		for i := 0; i < 2; i++ {
+			if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: supportedThenNotRelevantID, Vote: VoteNotRelevant, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+				t.Fatalf("ApplyVotes m2 not_relevant (%d): %v", i, err)
+			}
+		}
+		if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: supportedThenNotRelevantID, Vote: VoteSupported, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+			t.Fatalf("ApplyVotes m2 supported: %v", err)
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: supportedThenNotRelevantID, Vote: VoteNotRelevant, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+				t.Fatalf("ApplyVotes m2 not_relevant again (%d): %v", i, err)
+			}
+		}
+
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		byID := map[string]scored{}
+		for _, p := range pts {
+			byID[p.ID] = p
+		}
+		if m1 := byID[neverSupportedID]; m1.Status != string(StatusInvalidated) || m1.InvalidationReason != OutcomeReasonRecalledWithoutSupport || m1.NotRelevant != 3 {
+			t.Fatalf("m1 = %+v, want invalidated reason=%q not_relevant=3", m1, OutcomeReasonRecalledWithoutSupport)
+		}
+		if m2 := byID[supportedThenNotRelevantID]; m2.Status == string(StatusInvalidated) || m2.Tier != TierVerified || m2.NotRelevant != 4 || m2.Supported != 1 {
+			t.Fatalf("m2 = %+v, want still verified, NOT invalidated, not_relevant=4 supported=1 (a supported vote protects it)", m2)
+		}
+	})
+}
+
 // TestApplyOutcome_ReinforceKeepsVoteScoreInvariant covers the #1257 review finding: with a memory
 // already carrying both an upvote and a downvote (vote_score 0), a merged outcome's reinforce must land vote_score at upvotes-downvotes (1), not upvotes+1 (2) or vote_score+1 (1, coincidentally right here - the divergence only shows once downvotes != 0, which this case exercises). reinforcedVoteScore is the one function both backends call for this, so pinning it once here (sqlite) covers both backends without needing the live qdrant harness (qdranttest_test.go, #1268).
 func TestApplyOutcome_ReinforceKeepsVoteScoreInvariant(t *testing.T) {
@@ -508,7 +595,7 @@ func TestApplyOutcome_SkipsVerifiedOnInvalidate(t *testing.T) {
 
 // TestBackfillTiers_IdempotentAcrossTwoBoots covers epic #1255 P1's migration: a point with
 // reinforcement_count>=1 backfills to tier=verified with upvotes mirroring the count, a point
-// with none backfills to unverified, and a second boot (a fresh OpenSQLite against the same file) touches neither again - a manually-set upvotes value from between boots survives untouched.
+// with none backfills to unverified, and a second boot (a fresh OpenSQLite against the same file) leaves a judge-voted point untouched - though epic #1456 P1's backfillJudgeSupport, which runs the same boot, does demote the reinforcement-only point since it never earned real judge support.
 func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "mem.db")
@@ -571,14 +658,14 @@ func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
 	if r := after["fresh1"]; r.Tier != TierVerified || r.Upvotes != 1 {
 		t.Fatalf("fresh1 after boot 2 = %+v, want unchanged from its vote (tier=verified upvotes=1) - backfill must not re-touch it", r)
 	}
-	if r := after["reinforced1"]; r.Upvotes != 3 {
-		t.Fatalf("reinforced1 after boot 2 = %+v, want still upvotes=3 (idempotent)", r)
+	if r := after["reinforced1"]; r.Upvotes != 3 || r.Tier != TierUnverified {
+		t.Fatalf("reinforced1 after boot 2 = %+v, want upvotes=3 (idempotent) but tier demoted to unverified (backfillJudgeSupport, epic #1456 P1)", r)
 	}
 }
 
 // TestBackfillTiers_RealPreP1SchemaMigrates covers the #1257 review finding: a genuinely
 // pre-P1 sqlite file (created with raw SQL, none of the P1 columns present at all - not just
-// a fresh AutoMigrate'd file with them zero-valued) must migrate cleanly through OpenSQLite's AutoMigrate + backfillTiers, with no NULL-scan error and correct values. AutoMigrate's ADD COLUMN leaves existing rows NULL for a new column with no default; this proves that reads back as the Go zero value, never an error, and that backfill then computes tier/upvotes from reinforcement_count/status exactly as if the row had always had these columns.
+// a fresh AutoMigrate'd file with them zero-valued) must migrate cleanly through OpenSQLite's AutoMigrate + backfillTiers, with no NULL-scan error and correct values. AutoMigrate's ADD COLUMN leaves existing rows NULL for a new column with no default; this proves that reads back as the Go zero value, never an error, and that backfill then computes tier/upvotes from reinforcement_count/status exactly as if the row had always had these columns. old-reinforced ends up demoted back to unverified: backfillTiers sets upvotes=reinforcement_count for it, which backfillJudgeSupport (epic #1456 P1, same boot) then reads as "no judge ever voted supported".
 func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "mem.db")
@@ -625,8 +712,8 @@ func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
 		byID[p.ID] = p
 	}
 
-	if r := byID["old-reinforced"]; r.Tier != TierVerified || r.Upvotes != 2 || r.Downvotes != 0 || r.VoteScore != 2 || r.Recalls != 0 {
-		t.Fatalf("old-reinforced = %+v, want tier=verified upvotes=2 downvotes=0 vote_score=2 recalls=0 (no NULL surprises)", r)
+	if r := byID["old-reinforced"]; r.Tier != TierUnverified || r.Upvotes != 2 || r.Downvotes != 0 || r.VoteScore != 2 || r.Recalls != 0 {
+		t.Fatalf("old-reinforced = %+v, want tier=unverified (demoted, no judge support) upvotes=2 downvotes=0 vote_score=2 recalls=0 (no NULL surprises)", r)
 	}
 	if r := byID["old-fresh"]; r.Tier != TierUnverified || r.Upvotes != 0 || r.Downvotes != 0 || r.Recalls != 0 {
 		t.Fatalf("old-fresh = %+v, want tier=unverified upvotes=0 downvotes=0 recalls=0", r)
@@ -635,6 +722,62 @@ func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
 		t.Fatalf("last_upvoted_at/last_recalled_at = %+v / %+v, want empty (never voted/recalled pre-P1)",
 			byID["old-reinforced"].LastUpvotedAt, byID["old-fresh"].LastRecalledAt)
 	}
+}
+
+// TestBackfillJudgeSupport_DemotesReinforcementOnlyVerified covers epic #1456 P1's migration: a
+// legacy point verified purely by merge reinforcement (upvotes == reinforcement_count) demotes
+// to unverified, a legacy point with real judge support (upvotes > reinforcement_count) stays
+// verified untouched, and a second run touches neither again.
+func TestBackfillJudgeSupport_DemotesReinforcementOnlyVerified(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		reinforcedOnlyID, judgeSupportedID := testID("reinforced-only"), testID("judge-supported")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: reinforcedOnlyID, Vector: []float32{1, 0, 0, 0}, Content: "verified via reinforcement only", Scope: "repo:r",
+				Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 2, ReinforcementCount: 2},
+			{ID: judgeSupportedID, Vector: []float32{1, 0, 0, 0}, Content: "verified via real judge support", Scope: "repo:r",
+				Status: string(StatusUnverified), Tier: TierVerified, Upvotes: 1, ReinforcementCount: 0},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+
+		n, err := s.idx.backfillJudgeSupport(ctx)
+		if err != nil {
+			t.Fatalf("backfillJudgeSupport: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("backfillJudgeSupport touched %d, want 1 (only the reinforcement-only point)", n)
+		}
+
+		byID := func() map[string]scored {
+			pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			out := make(map[string]scored, len(pts))
+			for _, p := range pts {
+				out[p.ID] = p
+			}
+			return out
+		}
+
+		rows := byID()
+		if r := rows[reinforcedOnlyID]; r.Tier != TierUnverified {
+			t.Fatalf("reinforced-only = %+v, want demoted to unverified", r)
+		}
+		if r := rows[judgeSupportedID]; r.Tier != TierVerified {
+			t.Fatalf("judge-supported = %+v, want still verified", r)
+		}
+
+		n, err = s.idx.backfillJudgeSupport(ctx)
+		if err != nil {
+			t.Fatalf("backfillJudgeSupport (2nd run): %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("backfillJudgeSupport (2nd run) touched %d, want 0 (idempotent)", n)
+		}
+	})
 }
 
 // TestInvalidateByID_HumanDelete covers design doc §7 case 5: a human delete via the REST

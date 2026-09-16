@@ -599,6 +599,8 @@ func memoriesWire(mems []memory.Memory) []schema.Memory {
 		}
 		upvotes, downvotes, voteScore := m.Upvotes, m.Downvotes, m.VoteScore
 		w.Upvotes, w.Downvotes, w.VoteScore = &upvotes, &downvotes, &voteScore
+		supported, notRelevant := m.Supported, m.NotRelevant
+		w.Supported, w.NotRelevant = &supported, &notRelevant
 		tier := schema.MemoryTier(m.Tier)
 		if tier == "" {
 			tier = schema.MemoryTierUnverified

@@ -63,6 +63,8 @@ type memoryRow struct {
 
 	Upvotes        int
 	Downvotes      int
+	Supported      int
+	NotRelevant    int
 	VoteScore      int
 	Tier           string
 	LastUpvotedAt  string
@@ -127,6 +129,8 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			ReinforcementCount: r.ReinforcementCount,
 			Upvotes:            r.Upvotes,
 			Downvotes:          r.Downvotes,
+			Supported:          r.Supported,
+			NotRelevant:        r.NotRelevant,
 			VoteScore:          r.VoteScore,
 			Tier:               r.Tier,
 			LastUpvotedAt:      r.LastUpvotedAt,
@@ -193,7 +197,7 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 			ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
 			Status: r.Status, ValidFrom: r.ValidFrom, InvalidatedAt: r.InvalidatedAt,
 			InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
-			Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
+			Upvotes: r.Upvotes, Downvotes: r.Downvotes, Supported: r.Supported, NotRelevant: r.NotRelevant, VoteScore: r.VoteScore, Tier: r.Tier,
 			LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
 			AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote, ConsolidateFP: r.ConsolidateFP,
 		}
@@ -220,7 +224,7 @@ func (x *sqliteIndex) getByID(ctx context.Context, id string) (scored, bool, err
 		ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
 		Status: r.Status, ValidFrom: r.ValidFrom, InvalidatedAt: r.InvalidatedAt,
 		InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
-		Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
+		Upvotes: r.Upvotes, Downvotes: r.Downvotes, Supported: r.Supported, NotRelevant: r.NotRelevant, VoteScore: r.VoteScore, Tier: r.Tier,
 		LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
 		AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote, ConsolidateFP: r.ConsolidateFP,
 	}, true, nil
@@ -300,6 +304,8 @@ func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {
 			ReinforcementCount: p.ReinforcementCount,
 			Upvotes:            p.Upvotes,
 			Downvotes:          p.Downvotes,
+			Supported:          p.Supported,
+			NotRelevant:        p.NotRelevant,
 			VoteScore:          p.VoteScore,
 			Tier:               p.Tier,
 			LastUpvotedAt:      p.LastUpvotedAt,
@@ -376,9 +382,11 @@ func (x *sqliteIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 		var upd map[string]any
 		switch o.Kind {
 		case OutcomeReinforced:
+			// Reinforcement bumps the audit trail only - epic #1456 P1: tier is judge-support-only,
+			// so this never writes "tier" (an existing verified/unverified value is left untouched).
 			upd = map[string]any{
 				"status": string(StatusReinforced), "reinforcement_count": r.ReinforcementCount + 1,
-				"upvotes": r.Upvotes + 1, "vote_score": reinforcedVoteScore(r.Upvotes, r.Downvotes), "tier": TierVerified, "last_upvoted_at": ts,
+				"upvotes": r.Upvotes + 1, "vote_score": reinforcedVoteScore(r.Upvotes, r.Downvotes), "last_upvoted_at": ts,
 			}
 		case OutcomeInvalidated:
 			upd = map[string]any{"status": string(StatusInvalidated), "invalidated_at": ts, "invalidation_reason": o.Reason}
@@ -434,15 +442,18 @@ func (x *sqliteIndex) applyVotes(ctx context.Context, votes []Vote, invalidateTh
 
 // voteUpdate builds one row's column updates from computeVoteDelta.
 func voteUpdate(r memoryRow, v Vote, ts string, invalidateThreshold int) map[string]any {
-	d := computeVoteDelta(r.Upvotes, r.Downvotes, r.Tier, ts, v, invalidateThreshold)
-	upd := map[string]any{"upvotes": d.Upvotes, "downvotes": d.Downvotes, "vote_score": d.VoteScore, "tier": d.Tier}
+	d := computeVoteDelta(r.Upvotes, r.Downvotes, r.Supported, r.NotRelevant, ts, v, invalidateThreshold)
+	upd := map[string]any{
+		"upvotes": d.Upvotes, "downvotes": d.Downvotes, "supported": d.Supported, "not_relevant": d.NotRelevant,
+		"vote_score": d.VoteScore, "tier": d.Tier,
+	}
 	if d.LastUpvotedAt != "" {
 		upd["last_upvoted_at"] = d.LastUpvotedAt
 	}
 	if d.Invalidate {
 		upd["status"] = string(StatusInvalidated)
 		upd["invalidated_at"] = ts
-		upd["invalidation_reason"] = OutcomeReasonNetScore
+		upd["invalidation_reason"] = d.InvalidateReason
 	}
 	return upd
 }
@@ -522,6 +533,18 @@ func (x *sqliteIndex) backfillTiers(ctx context.Context) (int, error) {
 	return int(touched + res.RowsAffected), nil
 }
 
+// backfillJudgeSupport is the one-time migration (epic #1456 P1) demoting a legacy verified row
+// with no judge support back to unverified: upvotes == reinforcement_count means every upvote came from merge reinforcement, which never sets tier under the current code. Naturally idempotent: once demoted, tier no longer matches.
+func (x *sqliteIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
+	res := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND tier = ? AND upvotes = reinforcement_count", x.coll, TierVerified).
+		Updates(map[string]any{"tier": TierUnverified})
+	if res.Error != nil {
+		return 0, fmt.Errorf("memory: sqlite backfill judge support: %w", res.Error)
+	}
+	return int(res.RowsAffected), nil
+}
+
 // updateBucket moves a row to a new bucket, unconditionally.
 func (x *sqliteIndex) updateBucket(ctx context.Context, id, bucket string) error {
 	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
@@ -568,13 +591,13 @@ func (x *sqliteIndex) absorb(ctx context.Context, survivorID, absorbedID, reason
 		return false, nil
 	}
 	d := computeAbsorbDelta(
-		absorbFields{Upvotes: sv.Upvotes, Downvotes: sv.Downvotes, LastUpvotedAt: sv.LastUpvotedAt, LastRecalledAt: sv.LastRecalledAt, AbsorbedIDs: splitIDs(sv.AbsorbedIDs)},
-		absorbFields{Upvotes: ab.Upvotes, Downvotes: ab.Downvotes, LastUpvotedAt: ab.LastUpvotedAt, LastRecalledAt: ab.LastRecalledAt, AbsorbedIDs: splitIDs(ab.AbsorbedIDs)},
+		absorbFields{Upvotes: sv.Upvotes, Downvotes: sv.Downvotes, Supported: sv.Supported, NotRelevant: sv.NotRelevant, LastUpvotedAt: sv.LastUpvotedAt, LastRecalledAt: sv.LastRecalledAt, AbsorbedIDs: splitIDs(sv.AbsorbedIDs)},
+		absorbFields{Upvotes: ab.Upvotes, Downvotes: ab.Downvotes, Supported: ab.Supported, NotRelevant: ab.NotRelevant, LastUpvotedAt: ab.LastUpvotedAt, LastRecalledAt: ab.LastRecalledAt, AbsorbedIDs: splitIDs(ab.AbsorbedIDs)},
 		absorbedID,
 	)
 	upd := map[string]any{
-		"upvotes": d.Upvotes, "downvotes": d.Downvotes, "vote_score": d.VoteScore, "tier": d.Tier,
-		"absorbed_ids": joinIDs(d.AbsorbedIDs),
+		"upvotes": d.Upvotes, "downvotes": d.Downvotes, "supported": d.Supported, "not_relevant": d.NotRelevant,
+		"vote_score": d.VoteScore, "tier": d.Tier, "absorbed_ids": joinIDs(d.AbsorbedIDs),
 	}
 	if d.LastUpvotedAt != "" {
 		upd["last_upvoted_at"] = d.LastUpvotedAt

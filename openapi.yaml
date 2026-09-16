@@ -1618,13 +1618,19 @@ components:
         downvotes:
           type: integer
           description: Judge/human votes marking this memory `contradicted` against delivered work.
+        supported:
+          type: integer
+          description: The judge-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic #1456 P1).
+        not_relevant:
+          type: integer
+          description: Judge votes marking this memory `not_relevant`. Reaching 3 with zero `supported` votes invalidates the memory (epic #1456 P1).
         vote_score:
           type: integer
           description: upvotes - downvotes. A memory at or below the configured invalidation threshold (default -2) is invalidated.
         tier:
           type: string
           enum: [unverified, verified]
-          description: Vote-based tier - `verified` once upvotes >= 1. Independent of `status`; a verified memory is never aged out, only invalidated by net score or a human.
+          description: Vote-based tier - `verified` only while `supported` >= 1, recomputed on every vote (epic #1456 P1, no longer sticky). Independent of `status`.
         last_upvoted_at:
           type: string
           format: date-time

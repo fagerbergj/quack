@@ -62,6 +62,10 @@ type index interface {
 	// yet: verified (upvotes=reinforcement_count) if reinforcement_count >= 1, else
 	// unverified. Idempotent - a point that already carries a tier is left alone, so a second boot touches none.
 	backfillTiers(ctx context.Context) (int, error)
+	// backfillJudgeSupport is the one-time migration (epic #1456 P1) demoting any verified point
+	// with no judge support (upvotes == reinforcement_count: every upvote came from merge
+	// reinforcement, never a supported vote) to unverified. Naturally idempotent - once demoted, tier is no longer verified, so a re-run's query no longer matches it.
+	backfillJudgeSupport(ctx context.Context) (int, error)
 	// updateBucket moves a single point to a new bucket key (#1262's
 	// `quack memory rescope`) - a payload/column-only mutation, no re-embed.
 	updateBucket(ctx context.Context, id, bucket string) error
@@ -99,11 +103,13 @@ type scored struct {
 	ReinforcementCount int
 	Score              float32
 
-	// Vote fields (epic #1255 P1): Upvotes/Downvotes/VoteScore are the judge's (or a
-	// human's) accumulated votes on this memory, independent of Score (cosine
-	// rank). Tier is "verified" once Upvotes >= 1, else "unverified" - never demoted by a downvote alone (only net<=-2 invalidates, via Status).
+	// Vote fields (epic #1255 P1): Upvotes/Downvotes/VoteScore are the judge's (or a human's)
+	// accumulated votes on this memory, independent of Score (cosine rank). Supported (epic
+	// #1456 P1) is the judge-supported subset of Upvotes (reinforcement upvotes don't count); Tier is "verified" only while Supported >= 1, recomputed on every vote, not sticky.
 	Upvotes        int
 	Downvotes      int
+	Supported      int
+	NotRelevant    int
 	VoteScore      int
 	Tier           string
 	LastUpvotedAt  string
@@ -149,6 +155,8 @@ type point struct {
 
 	Upvotes        int
 	Downvotes      int
+	Supported      int
+	NotRelevant    int
 	VoteScore      int
 	Tier           string
 	LastUpvotedAt  string
@@ -256,6 +264,11 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 		s.log.Warn("memory tier backfill failed", "err", err)
 	} else if n > 0 {
 		s.log.Info("memory tier backfill", "touched", n)
+	}
+	if n, err := idx.backfillJudgeSupport(ctx); err != nil {
+		s.log.Warn("memory judge-support backfill failed", "err", err)
+	} else if n > 0 {
+		s.log.Info("memory judge-support backfill", "demoted", n)
 	}
 	return s, nil
 }
@@ -419,9 +432,11 @@ type Memory struct {
 	ReinforcementCount int
 	InvalidationReason string
 
-	// Vote fields (epic #1255 P1).
+	// Vote fields (epic #1255 P1). Supported/NotRelevant: see scored's field doc.
 	Upvotes        int
 	Downvotes      int
+	Supported      int
+	NotRelevant    int
 	VoteScore      int
 	Tier           string
 	LastUpvotedAt  string
@@ -537,7 +552,7 @@ func toMemories(pts []scored) []Memory {
 		out[i] = Memory{
 			ID: p.ID, Content: p.Content, Bucket: p.Scope, Author: p.Author, Timestamp: p.Timestamp, Kind: p.Kind, ChatID: p.ChatID, Score: p.Score,
 			Status: p.Status, ReinforcementCount: p.ReinforcementCount, InvalidationReason: p.InvalidationReason,
-			Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
+			Upvotes: p.Upvotes, Downvotes: p.Downvotes, Supported: p.Supported, NotRelevant: p.NotRelevant, VoteScore: p.VoteScore, Tier: p.Tier,
 			LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
 			AbsorbedIDs: p.AbsorbedIDs, HumanVote: p.HumanVote,
 		}

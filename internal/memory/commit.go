@@ -150,15 +150,15 @@ type neighbour struct {
 	ValidFrom          string
 	ReinforcementCount int
 
-	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s UPDATE path so a
-	// consolidation merge never wipes accumulated votes (they used to be dropped on every
-	// UPDATE - a latent bug this phase fixes as a prerequisite for absorption inheriting anything real).
-	Upvotes, Downvotes, VoteScore int
-	Tier                          string
-	LastUpvotedAt                 string
-	Recalls                       int
-	LastRecalledAt                string
-	AbsorbedIDs                   []string
+	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s UPDATE path so a consolidation
+	// merge never wipes accumulated votes (a latent bug this phase fixed). Supported/NotRelevant (epic
+	// #1456 P1) must travel too - Tier is derived from Supported and would desync otherwise.
+	Upvotes, Downvotes, Supported, NotRelevant, VoteScore int
+	Tier                                                  string
+	LastUpvotedAt                                         string
+	Recalls                                               int
+	LastRecalledAt                                        string
+	AbsorbedIDs                                           []string
 }
 
 // toNeighbour narrows a scored point to the fields a consolidation decision reads.
@@ -167,7 +167,7 @@ func (p scored) toNeighbour() neighbour {
 		ID: p.ID, Content: p.Content,
 		ChatID: p.ChatID, NodeID: p.NodeID, Source: p.Source, MintedAt: p.MintedAt,
 		Status: p.Status, ValidFrom: p.ValidFrom, ReinforcementCount: p.ReinforcementCount,
-		Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
+		Upvotes: p.Upvotes, Downvotes: p.Downvotes, Supported: p.Supported, NotRelevant: p.NotRelevant, VoteScore: p.VoteScore, Tier: p.Tier,
 		LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
 		AbsorbedIDs: p.AbsorbedIDs,
 	}
