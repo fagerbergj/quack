@@ -43,6 +43,7 @@ linters:
     generated: disable
     paths:
       - (^|/)schema/ # openapi codegen; anchored so foo_schema.go stays gated
+      - (^|/)langfusegen/ # openapi codegen (internal/langfuse/langfusegen)
       - third_party
     rules:
       # Table-driven test scaffolding (identical t.Run blocks) is

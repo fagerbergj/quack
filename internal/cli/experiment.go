@@ -1,3 +1,6 @@
+// experiment.go: `quack experiment run`. --prompt is run-item metadata only (real pinning
+// needs a Version param on internal/artifactsrc.Source.Get, owned by p2/langfuse-source);
+// TraceID is a minted correlation id, not the node's real OTel trace id (see final report).
 package cli
 
 import (
@@ -39,16 +42,9 @@ type experimentItemInput struct {
 	Task string `json:"task"`
 }
 
-// RunExperiment executes opts.Agent's node against every item in opts.Dataset, outside any
-// live GitHub event: each item's task becomes a fresh chat's initial message against base (an
-// in-process duck already booted from local config - see cmd/quack's `experiment run`), reusing
-// the same create-chat/send-message seam `quack eval` drives a chat through.
-//
-// LIMITATION (see final report): opts.Prompt is recorded as run-item metadata only. Actually
-// pinning the resolver to that exact Langfuse version would need a Version parameter threaded
-// through internal/artifactsrc.Source.Get, which is out of scope here (owned by p2/langfuse-source).
-// Likewise TraceID is a client-generated correlation id, not the real OTel trace id the node's
-// LLM call emits - that only exists inside internal/inference/internal/vetting, also out of scope.
+// RunExperiment runs opts.Agent's node against every item in opts.Dataset outside any live
+// GitHub event, reusing the create-chat/send-message seam `quack eval` drives a chat through.
+// See the package doc comment (experiment.go's header) for two known scope limits.
 func RunExperiment(ctx context.Context, out, errOut io.Writer, base string, lf *langfusegen.ClientWithResponses, opts ExperimentOpts) ([]ExperimentResult, error) {
 	items, err := listDatasetItems(ctx, lf, opts.Dataset, opts.Limit)
 	if err != nil {

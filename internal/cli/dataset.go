@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -72,7 +73,7 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 	for _, chat := range chats {
 		sess, err := replay.FromStore(ctx, ls, chat.ID)
 		if err != nil {
-			if err == ledger.ErrNoRecording {
+			if errors.Is(err, ledger.ErrNoRecording) {
 				continue
 			}
 			return items, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
