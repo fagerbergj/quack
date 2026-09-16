@@ -469,18 +469,20 @@ func (b *boot) runCleanups() {
 	}
 }
 
-// initAuthAndObservability builds auth and starts otel together - merged so
-// buildFromConfig checks one error instead of two.
-func (b *boot) initAuthAndObservability(ctx context.Context, ledgerStore ledger.LedgerStore) (*auth.Auth, *otelobs.Providers, error) {
+// initAuthAndObservability builds auth, then the ledger store, then starts
+// otel - merged so buildFromConfig checks one error instead of two, same
+// order as before the merge (auth.New first).
+func (b *boot) initAuthAndObservability(ctx context.Context) (*auth.Auth, ledger.LedgerStore, *otelobs.Providers, error) {
 	authMW, err := auth.New(b.cfg.Auth)
 	if err != nil {
-		return nil, nil, fmt.Errorf("auth init failed: %w", err)
+		return nil, nil, nil, fmt.Errorf("auth init failed: %w", err)
 	}
+	ledgerStore := LedgerStoreFromConfig(b.cfg)
 	otelProviders, err := b.initObservability(ctx, ledgerStore)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return authMW, otelProviders, nil
+	return authMW, ledgerStore, otelProviders, nil
 }
 
 // initializes otel, wiring its shutdown (with a bounded context) into the boot cleanups
@@ -806,8 +808,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		addr = fmt.Sprintf(":%d", port)
 	}
 
-	ledgerStore := LedgerStoreFromConfig(cfg)
-	authMW, otelProviders, err := b.initAuthAndObservability(ctx, ledgerStore)
+	authMW, ledgerStore, otelProviders, err := b.initAuthAndObservability(ctx)
 	if err != nil {
 		return nil, nil, "", err
 	}
