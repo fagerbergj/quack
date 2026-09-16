@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +50,15 @@ func TestNewPromptSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("static system/judge: %v", err)
 	}
+	outOfTreePath := filepath.Join(t.TempDir(), "custom-bundle", "prompt.md")
+	outOfTreeBody := []byte("you are a custom out-of-tree agent")
+	if err := os.MkdirAll(filepath.Dir(outOfTreePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outOfTreePath, outOfTreeBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outOfTreeVersion := artifactsrc.FileArtifact(outOfTreePath, outOfTreeBody).VersionID
 
 	tests := []struct {
 		name      string
@@ -68,9 +79,11 @@ func TestNewPromptSource(t *testing.T) {
 			wantErr: "refusing to replay a different version",
 		},
 		{
-			name:    "static unknown artifact refuses",
+			// Not a registered agents/ name and not a readable file either -
+			// H2's out-of-tree path falls through to reading it directly and fails there.
+			name:    "static unresolvable name refuses",
 			entries: []entry{promptChat(ts, "worker-r0", "judge", "system/no-such-agent", artifactsrc.StaticSource, "aaaa")},
-			wantErr: "unknown artifact",
+			wantErr: "no-such-agent",
 		},
 		{
 			// H2: the artifact name comes from the bundle directory, not the
@@ -79,6 +92,14 @@ func TestNewPromptSource(t *testing.T) {
 			name:    "artifact name differs from agent name",
 			entries: []entry{promptChat(ts, "worker-r0", "reviewer", "system/code-reviewer", artifactsrc.StaticSource, mustStaticVersion(t, "system/code-reviewer"))},
 			want:    map[string]bool{"system/code-reviewer": true},
+		},
+		{
+			// H2 out-of-tree: a bundle outside agents/ has no registry entry -
+			// its artifact name IS its file path (agent.FileArtifact), so it
+			// must still get the drift check via a direct file read, not a refusal.
+			name:    "out-of-tree bundle drift-checks by direct file read",
+			entries: []entry{promptChat(ts, "worker-r0", "custom", outOfTreePath, artifactsrc.StaticSource, outOfTreeVersion)},
+			want:    map[string]bool{outOfTreePath: true},
 		},
 		{
 			// H1: rounds re-resolve by design: a name recorded at two different

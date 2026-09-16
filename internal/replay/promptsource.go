@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/langfuse"
 )
 
@@ -75,13 +76,27 @@ func NewPromptSource(ctx context.Context, sess *Session, lf *langfuse.Client, st
 	return &PromptSource{resolved: resolved}, nil
 }
 
+// staticRecorded reads name's current shipped bytes: the registry for an
+// agents/-tree name, else name itself as a file path - an out-of-tree
+// bundle's artifact name IS its file path (agent.FileArtifact).
+func staticRecorded(name string) (artifactsrc.Artifact, error) {
+	if _, ok := artifactsrc.StaticPath(name); ok {
+		return artifactsrc.Static(name)
+	}
+	raw, err := bundledir.ReadFile(name)
+	if err != nil {
+		return artifactsrc.Artifact{}, err
+	}
+	return artifactsrc.FileArtifact(name, raw), nil
+}
+
 // resolveRecorded resolves and verifies one name@version: static must still
 // hash to the recorded id; langfuse is fetched by that exact version, only
 // from the store it was recorded from.
 func resolveRecorded(ctx context.Context, name string, rec recordedVersion, lf *langfuse.Client, storeName string) (artifactsrc.Artifact, error) {
 	ref := rec.ref(name)
 	if rec.source == artifactsrc.StaticSource {
-		art, err := artifactsrc.Static(name)
+		art, err := staticRecorded(name)
 		if err != nil {
 			return artifactsrc.Artifact{}, fmt.Errorf("replay: %s: %w", ref, err)
 		}
