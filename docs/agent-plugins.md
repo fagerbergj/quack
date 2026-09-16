@@ -32,8 +32,7 @@ plugins:
 
 ```yaml
 plugins:
-  - .agents/vendor/dotagents
-  - .agents/vendor/ponytail
+  - /opt/checkouts/my-plugin
   - .agents/plugins/usage
 ```
 
@@ -64,7 +63,7 @@ A bare skill name (no `plugin:` prefix) - in an agent's `skills:` scope, or a bo
 
 ### The bundled baseline and shadowing
 
-quack's shipped `skills/` tree, plus the vendored dotagents copy, are `go:embed`ded into the binary and registered as the plugin `quack`, source `embedded` - no entry, no clone, always present, and the offline fallback if the registry has nothing else.
+quack's shipped `skills/` tree, plus a tracked snapshot of dotagents' skills (`.agents/embedded/dotagents/skills`, pinned at the sha its `SOURCE.md` names), are `go:embed`ded into the binary and registered as the plugin `quack`, source `embedded` - no entry, no clone, always present, and the offline fallback if the registry has nothing else.
 
 - A registry row also named `quack` (e.g. `github:fagerbergj/quack`) **shadows the embedded copy by qualified name**: `quack:plan-work` resolves to the fetched clone's copy, not the embedded one.
 - Independently, an on-disk `dotagents` plugin under **any** registry name suppresses the embedded dotagents copy **by bare name**: with an on-disk `format-markdown` registered, a bare `format-markdown` lookup resolves to the on-disk copy, and the embedded `quack:format-markdown` is not served at all.
@@ -249,4 +248,4 @@ Nothing breaks. `sdk.Extension` is unchanged, extension code still arrives throu
 
 `github` is deliberately not converted. It is the largest and most coupled extension — webhooks, GitHub App identity, its own persisted state — and whatever the eventual shape, it should not be the thing proving the shape works.
 
-Manifests currently live in this repository under `.agents/plugins/` because quack chooses which modules it links. When quack-extensions ships manifests alongside its own modules, the vendored tree (`.agents/vendor/`, pinned in `.agents/vendor/plugins.yaml`) takes over and these are removed. That means a converted extension is pinned twice — a vendor ref for the manifest and skills, a `go.mod` version for the code. The linked-module boot check is what keeps the two pins from drifting apart silently.
+Manifests currently live in this repository under `.agents/plugins/` because quack chooses which modules it links. When quack-extensions ships manifests alongside its own modules, a `plugins.seed` row (`github:fagerbergj/quack-extensions`) takes over and these are removed. That means a converted extension is pinned twice — the registry row's ref for the manifest and skills, a `go.mod` version for the code. The linked-module boot check is what keeps the two pins from drifting apart silently.

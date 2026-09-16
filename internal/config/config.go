@@ -286,10 +286,10 @@ func workflowNodesAcyclic(nodes []WorkflowNode) bool {
 	return placed == len(nodes)
 }
 
-// defaultSkillPlugins are the plugin roots a stock quack loads: two vendored
-// skill libraries, plus the first-party manifest declaring the usage
-// extension. .agents/plugins/ holds quack's own manifests; .agents/vendor/ holds fetched trees.
-var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"}
+// defaultSkillPlugins are the plugin roots a stock quack loads: two
+// registry-fetched skill libraries, plus the first-party manifest declaring
+// the usage extension. .agents/plugins/ holds quack's own manifests.
+var defaultSkillPlugins = []string{"github:fagerbergj/dotagents", "github:DietrichGebert/ponytail@v4.9.0", ".agents/plugins/usage"}
 
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`

@@ -13,13 +13,13 @@ My motivation for building it this way: getting more real use out of smaller ope
 Needs Go 1.26+, Node 24+, and git.
 
 ```bash
-make build      # fetches skill plugins, compiles the frontend, embeds both, builds ./quack
+make build      # compiles the frontend, embeds it and the dotagents skill snapshot, builds ./quack
 ./quack init
 ```
 
-CLI only, no web UI: `make plugins && go build -o quack ./cmd/quack`.
+CLI only, no web UI: `go build -o quack ./cmd/quack`.
 
-On a fresh clone, bare `go build`/`go test` need `make plugins` first: `embed.go` embeds skill trees under `.agents/vendor` that are pinned, not committed. `make build`/`make test` handle it.
+A fresh clone builds and boots with nothing vendored: `embed.go` embeds a tracked snapshot of dotagents' skills as the offline fallback. At boot, the plugin registry seeds and fetches dotagents and ponytail; offline, only the embedded dotagents snapshot serves skills until a fetch succeeds.
 
 `quack init` asks a short sequence of questions, in order:
 

@@ -1165,7 +1165,7 @@ workspace:
   timeout_seconds: 30
   check_timeout_seconds: 300
   check_commands: ["go build", "go test"]
-  check_setup: ["make plugins"]
+  check_setup: ["npm --prefix scripts ci"]
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1195,8 +1195,8 @@ workspace:
 	if len(w.CheckCommands) != 2 || w.CheckCommands[0] != "go build" || w.CheckCommands[1] != "go test" {
 		t.Errorf("CheckCommands = %v, want [go build, go test]", w.CheckCommands)
 	}
-	if len(w.CheckSetup) != 1 || w.CheckSetup[0] != "make plugins" {
-		t.Errorf("CheckSetup = %v, want [make plugins]", w.CheckSetup)
+	if len(w.CheckSetup) != 1 || w.CheckSetup[0] != "npm --prefix scripts ci" {
+		t.Errorf("CheckSetup = %v, want [npm --prefix scripts ci]", w.CheckSetup)
 	}
 }
 

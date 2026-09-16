@@ -29,13 +29,6 @@ jobs:
           cache-dependency-path: scripts/package-lock.json
       - run: npm ci
         working-directory: scripts
-      - name: cache skill plugins
-        uses: actions/cache@v6
-        with:
-          path: .agents/vendor
-          key: plugins-${{ hashFiles('.agents/vendor/plugins.yaml') }}
-      - name: fetch skill plugins (not in git; go:embed needs them)
-        run: ./scripts/plugins.sh
       - run: go vet ./...
       # One pass, under the race detector: it is a superset of the plain run and the
       # concurrency regression guards (#1016, #1032) pass vacuously without it.
@@ -75,13 +68,6 @@ jobs:
           go-version-file: go.mod
       # Pinned to go.mod's toolchain: `@latest` alone builds against whatever the
       # tool's own go.mod allows, which can lag and then refuse to analyze this repo.
-      - name: cache skill plugins
-        uses: actions/cache@v6
-        with:
-          path: .agents/vendor
-          key: plugins-${{ hashFiles('.agents/vendor/plugins.yaml') }}
-      - name: fetch skill plugins (not in git; go:embed needs them)
-        run: ./scripts/plugins.sh
       - run: GOTOOLCHAIN=go1.26.5 go install golang.org/x/tools/cmd/deadcode@latest
       # -test so test-only helpers don't false-positive as unreachable. Package
       # patterns are explicit (not ./...) so a vendored JS package that happens to
@@ -112,13 +98,6 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: cache skill plugins
-        uses: actions/cache@v6
-        with:
-          path: .agents/vendor
-          key: plugins-${{ hashFiles('.agents/vendor/plugins.yaml') }}
-      - name: fetch skill plugins (not in git; go:embed needs them)
-        run: ./scripts/plugins.sh
       # Pinned: an unpinned @latest gate can shift findings (or break the
       # config schema) outside the PR author's control; key carries the version.
       - name: cache golangci-lint

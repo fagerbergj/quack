@@ -17,7 +17,7 @@ The per-step craft lives in loadable skills - `plan-work`, `develop-feature`, `f
 
 ## Development setup
 
-- **Cloning** - a plain `git clone`, then `make plugins`. The skill libraries under `.agents/vendor` (dotagents, ponytail) are not in git and not submodules: `.agents/vendor/plugins.yaml` pins each one and `make plugins` fetches them. `go build`/`go test` need them present (`embed.go` embeds dotagents' skills), so run it once after cloning; `make build`/`make test` do it for you. `make plugins-update` moves the pins.
+- **Cloning** - a plain `git clone`; nothing to fetch or bootstrap. `embed.go` embeds a tracked snapshot of dotagents' skills as the offline fallback; the plugin registry fetches dotagents and ponytail live at boot (see docs/agent-plugins.md).
 - **Go** - module `github.com/fagerbergj/quack`; server entrypoint `cmd/quack/main.go`.
 - **Frontend** - `cd frontend && npm install`, then `npm run dev` (hot reload on :3000).
 - **Full build** - `make build` (compiles the frontend and embeds `dist` into the binary).
