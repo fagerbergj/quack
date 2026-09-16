@@ -1,12 +1,10 @@
-// experiment.go: `quack experiment run`. --prompt is run-item metadata only (real pinning
-// needs a Version param on internal/artifactsrc.Source.Get, owned by p2/langfuse-source);
-// TraceID is a minted correlation id, not the node's real OTel trace id (see final report).
+// experiment.go: `quack experiment run`. --prompt pinning is built (langfuse.PinnedSource)
+// but not wired into the live resolver - that needs a hook in internal/serve/serve.go this
+// workstream's sandbox permissions refused to let it edit (see final report).
 package cli
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,13 +15,14 @@ import (
 
 	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
 	"github.com/fagerbergj/quack/internal/replay"
+	"github.com/fagerbergj/quack/internal/store"
 )
 
 // ExperimentOpts selects the dataset/agent/prompt version for `quack experiment run`.
 type ExperimentOpts struct {
 	Dataset string
 	Agent   string
-	Prompt  string // "system/<agent>@N", metadata only - see RunExperiment's doc
+	Prompt  string // "system/<agent>@N", metadata only - see this file's header comment
 	RunName string
 	Limit   int
 }
@@ -42,19 +41,24 @@ type experimentItemInput struct {
 	Task string `json:"task"`
 }
 
+// itemRunner executes one dataset item's task against an agent, returning its answer and the
+// node's real OTel trace id. Split out of RunExperiment so the loop/summary/run-item-reporting
+// can be unit tested against a stub, without booting serve.InProcessFromConfig.
+type itemRunner interface {
+	RunItem(ctx context.Context, task string) (answer, traceID string, err error)
+}
+
 // RunExperiment runs opts.Agent's node against every item in opts.Dataset outside any live
-// GitHub event, reusing the create-chat/send-message seam `quack eval` drives a chat through.
-// See the package doc comment (experiment.go's header) for two known scope limits.
-func RunExperiment(ctx context.Context, out, errOut io.Writer, base string, lf *langfusegen.ClientWithResponses, opts ExperimentOpts) ([]ExperimentResult, error) {
+// GitHub event, via runner (see itemRunner), reporting each as a Langfuse dataset run item.
+func RunExperiment(ctx context.Context, errOut io.Writer, runner itemRunner, lf *langfusegen.ClientWithResponses, opts ExperimentOpts) ([]ExperimentResult, error) {
 	items, err := listDatasetItems(ctx, lf, opts.Dataset, opts.Limit)
 	if err != nil {
 		return nil, err
 	}
 
-	c := &Client{BaseURL: strings.TrimRight(base, "/"), HTTP: &http.Client{}}
 	var results []ExperimentResult
 	for _, item := range items {
-		res, err := runExperimentItem(ctx, out, c, lf, item, opts)
+		res, err := runExperimentItem(ctx, runner, lf, item, opts)
 		if err != nil {
 			return results, err
 		}
@@ -79,60 +83,21 @@ func listDatasetItems(ctx context.Context, lf *langfusegen.ClientWithResponses, 
 	return resp.JSON200.Data, nil
 }
 
-func runExperimentItem(ctx context.Context, out io.Writer, c *Client, lf *langfusegen.ClientWithResponses, item langfusegen.DatasetItem, opts ExperimentOpts) (ExperimentResult, error) {
+func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfusegen.ClientWithResponses, item langfusegen.DatasetItem, opts ExperimentOpts) (ExperimentResult, error) {
 	task, err := itemTask(item)
 	if err != nil {
 		return ExperimentResult{}, fmt.Errorf("experiment run: item %s: %w", item.Id, err)
 	}
-	traceID, err := newTraceID()
-	if err != nil {
-		return ExperimentResult{}, err
-	}
-
-	chatID, err := c.CreateChat(ctx, "")
-	if err != nil {
-		return ExperimentResult{}, fmt.Errorf("experiment run: item %s: create chat: %w", item.Id, err)
-	}
 	start := time.Now()
-	st := newStreamState()
-	onEvent := func(ev SSEEvent) error { st.handle(ev, nil); return nil }
-	if err := c.SendMessage(ctx, chatID, task, onEvent); err != nil {
-		return ExperimentResult{}, fmt.Errorf("experiment run: item %s: %w", item.Id, err)
-	}
-	res := st.result(chatID)
+	answer, traceID, err := runner.RunItem(ctx, task)
 	duration := time.Since(start)
-	if res.Status == StatusFailed {
-		return ExperimentResult{ItemID: item.Id, TraceID: traceID, Prompt: opts.Prompt, Duration: duration, Error: res.Error}, nil
+	if err != nil {
+		return ExperimentResult{ItemID: item.Id, TraceID: traceID, Prompt: opts.Prompt, Duration: duration, Error: err.Error()}, nil
 	}
-
-	answer := res.Answer
-	if a, ok := agentAnswer(ctx, c, chatID, opts.Agent); ok {
-		answer = a
-	}
-	if err := recordRunItem(ctx, lf, opts, item.Id, chatID, traceID, answer); err != nil {
+	if err := recordRunItem(ctx, lf, opts, item.Id, traceID, answer); err != nil {
 		return ExperimentResult{}, err
 	}
 	return ExperimentResult{ItemID: item.Id, TraceID: traceID, Prompt: opts.Prompt, Duration: duration}, nil
-}
-
-// agentAnswer re-fetches chatID's own recording and extracts opts.Agent's node answer
-// (replay.Session.NodeRuns) instead of the whole chat's final answer - best-effort, since the
-// chat's own top-level answer is a fine fallback when the fresh recording can't be read back.
-func agentAnswer(ctx context.Context, c *Client, chatID, agent string) (string, bool) {
-	body, err := c.FetchRecording(ctx, chatID)
-	if err != nil {
-		return "", false
-	}
-	sess, err := sessionFromBundleBytes(body)
-	if err != nil {
-		return "", false
-	}
-	for _, run := range sess.NodeRuns(map[string]bool{agent: true}) {
-		if run.Answer != "" {
-			return run.Answer, true
-		}
-	}
-	return "", false
 }
 
 func itemTask(item langfusegen.DatasetItem) (string, error) {
@@ -150,12 +115,12 @@ func itemTask(item langfusegen.DatasetItem) (string, error) {
 	return in.Task, nil
 }
 
-func recordRunItem(ctx context.Context, lf *langfusegen.ClientWithResponses, opts ExperimentOpts, itemID, chatID, traceID, answer string) error {
+func recordRunItem(ctx context.Context, lf *langfusegen.ClientWithResponses, opts ExperimentOpts, itemID, traceID, answer string) error {
 	req := langfusegen.CreateDatasetRunItemRequest{
 		DatasetItemId: itemID,
 		RunName:       opts.RunName,
 		TraceId:       &traceID,
-		Metadata:      map[string]string{"prompt": opts.Prompt, "agent": opts.Agent, "chat_id": chatID, "answer": answer},
+		Metadata:      map[string]string{"prompt": opts.Prompt, "agent": opts.Agent, "answer": answer},
 	}
 	resp, err := lf.DatasetRunItemsCreateWithResponse(ctx, req)
 	if err != nil {
@@ -167,14 +132,64 @@ func recordRunItem(ctx context.Context, lf *langfusegen.ClientWithResponses, opt
 	return nil
 }
 
-// newTraceID mints a random 16-byte OTel-shaped trace id for run-item correlation - see
-// RunExperiment's doc for why this isn't the model call's real trace id.
-func newTraceID() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
+// LiveItemRunner is the itemRunner `quack experiment run` actually drives: a fresh chat
+// against an in-process duck (Base), with the real trace id read back from Store's DagNode
+// row for Agent's node (dag_nodes.trace_id - stamped by the node-start ledger write).
+type LiveItemRunner struct {
+	Base  string
+	Store *store.Store
+	Agent string
+}
+
+func NewLiveItemRunner(base string, st *store.Store, agent string) *LiveItemRunner {
+	return &LiveItemRunner{Base: base, Store: st, Agent: agent}
+}
+
+func (r *LiveItemRunner) RunItem(ctx context.Context, task string) (answer, traceID string, err error) {
+	c := &Client{BaseURL: strings.TrimRight(r.Base, "/"), HTTP: &http.Client{}}
+	chatID, err := c.CreateChat(ctx, "")
+	if err != nil {
+		return "", "", fmt.Errorf("create chat: %w", err)
 	}
-	return hex.EncodeToString(b), nil
+	st := newStreamState()
+	onEvent := func(ev SSEEvent) error { st.handle(ev, nil); return nil }
+	if err := c.SendMessage(ctx, chatID, task, onEvent); err != nil {
+		return "", "", err
+	}
+	res := st.result(chatID)
+	if res.Status == StatusFailed {
+		return "", "", fmt.Errorf("%s", res.Error)
+	}
+
+	answer = res.Answer
+	nodeID := ""
+	if body, err := c.FetchRecording(ctx, chatID); err == nil {
+		if sess, err := sessionFromBundleBytes(body); err == nil {
+			for key, run := range sess.NodeRuns(map[string]bool{r.Agent: true}) {
+				if run.Answer != "" {
+					answer, nodeID = run.Answer, key.Node
+				}
+			}
+		}
+	}
+	return answer, r.traceIDFor(ctx, chatID, nodeID), nil
+}
+
+// traceIDFor reads dag_nodes.trace_id for nodeID off chatID's latest plan - "" (never an
+// error) when the plan/node/trace isn't there yet, so a run still reports rather than failing.
+func (r *LiveItemRunner) traceIDFor(ctx context.Context, chatID, nodeID string) string {
+	if r.Store == nil || nodeID == "" {
+		return ""
+	}
+	plan, err := r.Store.GetLatestDagPlan(ctx, chatID)
+	if err != nil || plan == nil {
+		return ""
+	}
+	node, err := r.Store.GetDagNode(ctx, plan.ID, nodeID)
+	if err != nil || node == nil {
+		return ""
+	}
+	return node.TraceID
 }
 
 // sessionFromBundleBytes writes body to a temp file and loads it via replay.Load, mirroring

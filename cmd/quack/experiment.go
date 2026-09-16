@@ -65,6 +65,11 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 		return err
 	}
 
+	_, st, _, err := openLedgerAndStores()
+	if err != nil {
+		return err
+	}
+
 	ctx := cmd.Context()
 	base, stop, err := serve.InProcessFromConfig(ctx, cfg)
 	if err != nil {
@@ -72,7 +77,8 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	}
 	defer func() { _ = stop() }()
 
-	results, err := cli.RunExperiment(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), base, lf, cli.ExperimentOpts{
+	runner := cli.NewLiveItemRunner(base, st, agent)
+	results, err := cli.RunExperiment(ctx, cmd.ErrOrStderr(), runner, lf, cli.ExperimentOpts{
 		Dataset: dataset, Agent: agent, Prompt: prompt, RunName: runName, Limit: limit,
 	})
 	if err != nil {
