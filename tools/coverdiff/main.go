@@ -20,6 +20,10 @@ var (
 	// profile line: <file>.go:start.col,end.col numstmt count
 	profileRe = regexp.MustCompile(`^(.*)\.go:(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)$`)
 	hunkRe    = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
+	// The standard Go generated-code marker (golang.org/s/generatedcode): a whole line
+	// matching this in the file's leading comment block marks it generated - not
+	// anywhere in the file (see TestIsGenerated_MarkerOnlyInLeadingComments).
+	generatedRe = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
 )
 
 type miss struct {
@@ -171,7 +175,33 @@ func changedFiles(diff string) map[string]map[int]bool {
 }
 
 func isGenerated(p string) bool {
-	return strings.HasPrefix(p, "internal/schema/") || strings.HasPrefix(p, "frontend/src/generated/")
+	if strings.HasPrefix(p, "internal/schema/") || strings.HasPrefix(p, "frontend/src/generated/") {
+		return true
+	}
+	return hasGeneratedHeader(p)
+}
+
+// hasGeneratedHeader reports whether p's leading comment block carries the standard
+// DO NOT EDIT marker. Only that leading block counts - a marker later in the file
+// (a string literal, a doc example) must not exempt hand-written code.
+func hasGeneratedHeader(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "//") {
+			if generatedRe.MatchString(sc.Text()) {
+				return true
+			}
+			continue
+		}
+		return false // first non-comment, non-blank line: header block is over
+	}
+	return false
 }
 
 func sortedMissFiles(m map[string][]miss) []string {

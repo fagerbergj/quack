@@ -1,0 +1,24 @@
+# Langfuse OpenAPI spec (../openapi.yml) fetched from
+# http://jason-server:3008/generated/api/openapi.yml on 2026-09-16.
+#
+# Version 4.36.0: the spec's own info.version is empty and "4.36.0" appears
+# nowhere in it, so this is the only record - read off the running instance
+# with `docker exec langfuse-web cat package.json | grep version`. Next
+# re-vendor: confirm the version the same way against whichever instance you
+# fetch from (self-hosted: <instance>/generated/api/openapi.yml, same path
+# this comment names; public: https://cloud.langfuse.com/generated/api/openapi.yml).
+# oapi-codegen config: client-only code for the dataset endpoints the
+# hand-written prompt client (../client.go) doesn't cover - kept in a
+# sub-package to avoid colliding with client.go's own Client/Prompt types.
+# Prompts/Scores/ScoreConfigs are dropped: prompts are covered by client.go,
+# and nothing in this repo reads/writes scores.
+package: langfusegen
+output: langfusegen/openapi.gen.go
+generate:
+  client: true
+  models: true
+output-options:
+  include-tags:
+    - Datasets
+    - DatasetItems
+    - DatasetRunItems

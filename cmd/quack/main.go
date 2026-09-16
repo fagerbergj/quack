@@ -106,7 +106,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) - image/audio - to the prompt (repeatable)")
 	root.Flags().Bool("json", false, "with -p: print one JSON result object instead of plain text (same exit codes)")
 
-	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd(), newReplayCmd(), newEvalCmd(), newSandboxCmd(), newMemoryCmd(), newLedgerCmd())
+	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd(), newReplayCmd(), newEvalCmd(), newSandboxCmd(), newMemoryCmd(), newLedgerCmd(), newDatasetCmd(), newExperimentCmd())
 	return root
 }
 

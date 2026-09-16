@@ -130,7 +130,7 @@ func overlaps(s, e int, rs []rng) bool {
 
 func checkSlopFile(path, rel string, rs []rng) bool {
 	if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") ||
-		strings.Contains(rel, "/testdata/") || strings.Contains(rel, "/schema/") {
+		strings.Contains(rel, "/testdata/") || strings.Contains(rel, "/schema/") || strings.Contains(rel, "/langfusegen/") {
 		return false
 	}
 	fset := token.NewFileSet()
@@ -221,7 +221,7 @@ func goFiles(root string) []string {
 			return nil
 		}
 		if strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") &&
-			!strings.Contains(p, "/schema/") { // generated code is out of all counts
+			!strings.Contains(p, "/schema/") && !strings.Contains(p, "/langfusegen/") { // generated code is out of all counts
 			files = append(files, p)
 		}
 		return nil
@@ -391,7 +391,7 @@ func testCounts(root string) map[string]struct{ logic, test int } {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(p, ".go") || strings.Contains(p, "/testdata/") || strings.Contains(p, "/schema/") {
+		if !strings.HasSuffix(p, ".go") || strings.Contains(p, "/testdata/") || strings.Contains(p, "/schema/") || strings.Contains(p, "/langfusegen/") {
 			return nil
 		}
 		src, err := os.ReadFile(p)

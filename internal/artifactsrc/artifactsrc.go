@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path"
@@ -17,6 +18,11 @@ import (
 
 	"github.com/fagerbergj/quack/internal/bundledir"
 )
+
+// ErrHard (wrap with %w) marks a Source.Get error the Resolver propagates instead
+// of falling back to the shipped artifact: a pinned version gone missing must fail
+// the round rather than run a different prompt than the one requested.
+var ErrHard = errors.New("artifactsrc: hard error")
 
 // StaticSource is Artifact.Source for a shipped file (disk, then embedded).
 const StaticSource = "static"
@@ -42,6 +48,42 @@ type Artifact struct {
 type Source interface {
 	Get(ctx context.Context, name string) (Artifact, bool, error)
 	Seed(ctx context.Context, name string, static Artifact) error
+}
+
+// ChainSource tries each of Sources in order, returning the first hit - an
+// override pinned to a few names, backed by the full store for everything else.
+type ChainSource struct {
+	Sources []Source
+}
+
+// Chain builds a ChainSource over sources, in try-order.
+func Chain(sources ...Source) *ChainSource {
+	return &ChainSource{Sources: sources}
+}
+
+func (c *ChainSource) Get(ctx context.Context, name string) (Artifact, bool, error) {
+	for _, s := range c.Sources {
+		if s == nil {
+			continue
+		}
+		art, ok, err := s.Get(ctx, name)
+		if err != nil || ok {
+			return art, ok, err
+		}
+	}
+	return Artifact{}, false, nil
+}
+
+// Seed delegates to the last Source - the one actually backed by a store to seed.
+func (c *ChainSource) Seed(ctx context.Context, name string, static Artifact) error {
+	if len(c.Sources) == 0 {
+		return nil
+	}
+	last := c.Sources[len(c.Sources)-1]
+	if last == nil {
+		return nil
+	}
+	return last.Seed(ctx, name, static)
 }
 
 // Resolver resolves names through a Source with a TTL cache, falling back to
@@ -105,6 +147,8 @@ func (r *Resolver) fetch(ctx context.Context, name string) (Artifact, error) {
 	}
 	art, ok, err := r.src.Get(ctx, name)
 	switch {
+	case errors.Is(err, ErrHard):
+		return Artifact{}, err
 	case err != nil:
 		slog.Warn("prompt source failed; using the shipped artifact",
 			"component", "artifacts", "store", r.name, "artifact", name, "err", err)
