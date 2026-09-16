@@ -20,6 +20,9 @@ var (
 	// profile line: <file>.go:start.col,end.col numstmt count
 	profileRe = regexp.MustCompile(`^(.*)\.go:(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)$`)
 	hunkRe    = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
+	// The standard Go generated-code marker (golang.org/s/generatedcode): any whole line
+	// matching this, anywhere in the file, marks it generated regardless of directory.
+	generatedRe = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
 )
 
 type miss struct {
@@ -171,7 +174,21 @@ func changedFiles(diff string) map[string]map[int]bool {
 }
 
 func isGenerated(p string) bool {
-	return strings.HasPrefix(p, "internal/schema/") || strings.HasPrefix(p, "frontend/src/generated/")
+	if strings.HasPrefix(p, "internal/schema/") || strings.HasPrefix(p, "frontend/src/generated/") {
+		return true
+	}
+	return hasGeneratedHeader(p)
+}
+
+// hasGeneratedHeader reports whether p (repo-relative, cwd = repo root) carries the
+// standard "// Code generated ... DO NOT EDIT." marker - catches a generated dir this
+// list doesn't yet name (e.g. internal/langfuse/langfusegen) without editing this list.
+func hasGeneratedHeader(p string) bool {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return false
+	}
+	return generatedRe.Match(b)
 }
 
 func sortedMissFiles(m map[string][]miss) []string {
