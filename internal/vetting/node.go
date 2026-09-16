@@ -943,12 +943,15 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	// This round runs on system/judge, not the worker's bundle prompt, so its
 	// llm.call carries that artifact's provenance; BundleHash stays the
 	// worker's - whose answer is under review.
-	promptSource, promptVersion, promptArtifact := j.cfg.PromptSource, j.cfg.PromptVersionID, "system/judge"
+	promptSource, promptVersion, promptArtifact := j.cfg.PromptSource, j.cfg.PromptVersionID, ""
 	if jp, err := resolveJudgePrompt(judgeCtx, j.cfg.Prompts); err != nil {
+		// promptArtifact stays "" (not "system/judge"): the version above is
+		// the WORKER's boot fallback, and pairing it with the judge's artifact
+		// name would record a mismatched triple replay could refuse on (#1422 N2).
 		slog.WarnContext(judgeCtx, "judge prompt unresolved", "component", "vetting", "node", j.cfg.NodeID, "err", err)
 	} else {
 		j.cfg.judgePrompt = jp
-		promptSource, promptVersion = jp.art.Source, jp.art.VersionID
+		promptSource, promptVersion, promptArtifact = jp.art.Source, jp.art.VersionID, "system/judge"
 	}
 	// Replay-ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.
