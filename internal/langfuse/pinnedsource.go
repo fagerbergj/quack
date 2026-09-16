@@ -33,6 +33,20 @@ func (s *PinnedSource) Get(ctx context.Context, name string) (artifactsrc.Artifa
 // Seed is a no-op: an experiment run never seeds a store.
 func (s *PinnedSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
 
+// ResolveNow resolves name's pin eagerly, before the server boots - a bad --prompt
+// (unknown name/version, a 404) must fail the command naming it, not silently fall
+// back to the shipped static prompt the first time the resolver hits it.
+func (s *PinnedSource) ResolveNow(ctx context.Context, name string) error {
+	_, ok, err := s.Get(ctx, name)
+	if err != nil {
+		return fmt.Errorf("--prompt %s@%d: %w", name, s.Pins[name], err)
+	}
+	if !ok {
+		return fmt.Errorf("--prompt %s@%d: not found", name, s.Pins[name])
+	}
+	return nil
+}
+
 // ParsePin splits a --prompt value "system/<agent>@N" into its artifact name and version.
 func ParsePin(s string) (name string, version int, err error) {
 	name, v, ok := strings.Cut(s, "@")

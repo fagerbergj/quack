@@ -1,16 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"github.com/fagerbergj/quack/internal/artifactsrc"
-	"github.com/fagerbergj/quack/internal/langfuse"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/serve"
 )
 
@@ -73,7 +74,7 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	}
 
 	ctx := cmd.Context()
-	pinSrc, err := pinnedPromptSource(cfg, prompt)
+	pinSrc, err := pinnedPromptSource(ctx, cfg, prompt)
 	if err != nil {
 		return err
 	}
@@ -91,15 +92,33 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 		return err
 	}
 	if asJSON {
-		return cli.WriteJSON(cmd.OutOrStdout(), results)
+		if err := cli.WriteJSON(cmd.OutOrStdout(), results); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprint(cmd.OutOrStdout(), cli.FormatExperimentSummary(results)); err != nil {
+		return err
 	}
-	_, err = fmt.Fprint(cmd.OutOrStdout(), cli.FormatExperimentSummary(results))
-	return err
+	if n := errorCount(results); n > 0 {
+		return fmt.Errorf("experiment run: %d item(s) errored", n)
+	}
+	return nil
 }
 
-// pinnedPromptSource turns --prompt into a Source that serves exactly that version; nil
-// when no pin was asked for, so the configured store resolves as in a live run.
-func pinnedPromptSource(cfg *config.Config, prompt string) (artifactsrc.Source, error) {
+func errorCount(results []cli.ExperimentResult) int {
+	n := 0
+	for _, r := range results {
+		if r.Error != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// pinnedPromptSource turns --prompt into a Source that serves exactly that version,
+// resolved eagerly (before the server boots) so a bad name/version fails the command
+// naming it rather than silently falling back to the static prompt; nil when no pin
+// was asked for, so the configured store resolves as in a live run.
+func pinnedPromptSource(ctx context.Context, cfg *config.Config, prompt string) (artifactsrc.Source, error) {
 	if prompt == "" {
 		return nil, nil
 	}
@@ -111,5 +130,9 @@ func pinnedPromptSource(cfg *config.Config, prompt string) (artifactsrc.Source, 
 	if !ok || sc.Kind != "langfuse" {
 		return nil, fmt.Errorf("--prompt needs prompts.store to name a langfuse store")
 	}
-	return &langfuse.PinnedSource{Client: langfuse.New(sc.URL, sc.PublicKey, sc.SecretKey), Pins: map[string]int{name: version}}, nil
+	src := &langfuse.PinnedSource{Client: langfuse.New(sc.URL, sc.PublicKey, sc.SecretKey), Pins: map[string]int{name: version}}
+	if err := src.ResolveNow(ctx, name); err != nil {
+		return nil, err
+	}
+	return src, nil
 }

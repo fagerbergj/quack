@@ -3,6 +3,7 @@ package langfuse
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
@@ -40,6 +41,25 @@ func TestPinnedSource_UnpinnedNameFallsThrough(t *testing.T) {
 	_, ok, err := src.Get(context.Background(), "system/code-reviewer")
 	if err != nil || ok {
 		t.Fatalf("want (false, nil) for an unpinned name, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestPinnedSource_ResolveNow(t *testing.T) {
+	ok := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"system/code-reviewer","version":3,"type":"text","prompt":"pinned body"}`))
+	})
+	if err := (&PinnedSource{Client: ok, Pins: map[string]int{"system/code-reviewer": 3}}).
+		ResolveNow(context.Background(), "system/code-reviewer"); err != nil {
+		t.Fatalf("ResolveNow: %v", err)
+	}
+
+	notFound := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	err := (&PinnedSource{Client: notFound, Pins: map[string]int{"system/code-reviewer": 9}}).
+		ResolveNow(context.Background(), "system/code-reviewer")
+	if err == nil || !strings.Contains(err.Error(), "system/code-reviewer@9") {
+		t.Fatalf("ResolveNow on a 404 = %v, want an error naming name@version", err)
 	}
 }
 
