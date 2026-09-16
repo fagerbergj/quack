@@ -185,7 +185,7 @@ func chatRepo(c store.Chat) string {
 
 func chatMerged(c store.Chat) bool {
 	if o, ok := chatOriginDecoded(c); ok {
-		return o.Badge == "merged"
+		return o.State == extsdk.SubjectMerged || o.Badge == "merged"
 	}
 	return c.GithubState == "merged"
 }

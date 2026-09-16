@@ -184,7 +184,7 @@ func TestRunExperiment_RecordRunItemError(t *testing.T) {
 	defer srv.Close()
 	lf := newTestGenClient(t, srv)
 
-	_, err := RunExperiment(context.Background(), io.Discard, &stubRunner{}, lf, ExperimentOpts{Dataset: "my-dataset"})
+	_, err := RunExperiment(context.Background(), io.Discard, &stubRunner{traceID: "t1"}, lf, ExperimentOpts{Dataset: "my-dataset"})
 	if err == nil {
 		t.Fatal("want an error when creating the run item fails")
 	}
@@ -357,5 +357,31 @@ func TestItemTask(t *testing.T) {
 
 	if _, err := itemTask(datasetItemFromInput(t, "item1", map[string]any{})); err == nil {
 		t.Fatal("want error for missing task field")
+	}
+}
+
+// A node run whose trace id never landed must surface as an item error, not a run
+// item that links to nothing.
+func TestRunExperiment_EmptyTraceIDIsAnError(t *testing.T) {
+	var runItems int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/public/dataset-items":
+			writeJSON(w, map[string]any{"data": []map[string]any{{"id": "item1", "input": map[string]any{"task": "x"}}},
+				"meta": map[string]any{"page": 1, "limit": 1, "totalItems": 1, "totalPages": 1}})
+		case r.URL.Path == "/api/public/dataset-run-items":
+			runItems++
+			writeJSON(w, map[string]any{"id": "ri"})
+		}
+	}))
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	res, err := RunExperiment(context.Background(), io.Discard, &stubRunner{}, lf, ExperimentOpts{Dataset: "my-dataset"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].Error == "" || runItems != 0 {
+		t.Fatalf("results=%+v runItems=%d, want one errored result and no run item", res, runItems)
 	}
 }

@@ -107,6 +107,9 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfusegen.C
 	if err != nil {
 		return ExperimentResult{ItemID: item.Id, TraceID: traceID, Prompt: opts.Prompt, Duration: duration, Error: err.Error()}, nil
 	}
+	if traceID == "" {
+		return ExperimentResult{ItemID: item.Id, Prompt: opts.Prompt, Duration: duration, Error: "no trace id recorded for the node run"}, nil
+	}
 	if err := recordRunItem(ctx, lf, opts, item.Id, traceID); err != nil {
 		return ExperimentResult{}, err
 	}
