@@ -100,6 +100,9 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) ([]store
 		if err != nil {
 			return nil, fmt.Errorf("dataset export: get chat %q: %w", opts.ChatID, err)
 		}
+		if c == nil {
+			return nil, fmt.Errorf("dataset export: chat %q not found", opts.ChatID)
+		}
 		return []store.Chat{*c}, nil
 	}
 	var out []store.Chat
