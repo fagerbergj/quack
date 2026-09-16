@@ -638,6 +638,14 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 	// below holds this SAME instance, so rebuildSkills' Swap reaches native
 	// agents' next round with no rebuild plumbing beyond this one pointer.
 	swappable := newSwappableSkillSource(newSkillSource(plugins))
+	// Replay (#1427 P4): pin native agents to the skill text their bundle's
+	// agent.invoke entries recorded, same LOAD-time refusal as prompt pinning -
+	// an unreproducible plugin fails boot, not a round mid-run.
+	if replaySrc, err := replaySkillSource(ctx, b.cfg, rows, plugins); err != nil {
+		return skillsInit{}, err
+	} else if replaySrc != nil {
+		swappable.Swap(replaySrc)
+	}
 	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
@@ -830,10 +838,10 @@ func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator
 	return handler, nil
 }
 
-// replayPromptSource builds the P3 (#1422) prompt-pinning Source for a
-// replay run (every provider is kind "replay" over the same bundle - see
-// replayifyProviders); (nil, nil) for a normal, non-replay config.
-func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.Source, error) {
+// replayBundlePath returns the one bundle every replay provider names
+// (every provider is kind "replay" over the same bundle - see
+// replayifyProviders); "" for a normal, non-replay config.
+func replayBundlePath(cfg *config.Config) (string, error) {
 	var bundlePath string
 	for _, p := range cfg.Providers {
 		if p.Kind != "replay" || p.Bundle == "" {
@@ -842,11 +850,18 @@ func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.So
 		if bundlePath == "" {
 			bundlePath = p.Bundle
 		} else if p.Bundle != bundlePath {
-			return nil, fmt.Errorf("replay: providers name different bundles (%q vs %q) - replayifyProviders should have set them all the same", bundlePath, p.Bundle)
+			return "", fmt.Errorf("replay: providers name different bundles (%q vs %q) - replayifyProviders should have set them all the same", bundlePath, p.Bundle)
 		}
 	}
-	if bundlePath == "" {
-		return nil, nil
+	return bundlePath, nil
+}
+
+// replayPromptSource builds the P3 (#1422) prompt-pinning Source for a
+// replay run; (nil, nil) for a normal, non-replay config.
+func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.Source, error) {
+	bundlePath, err := replayBundlePath(cfg)
+	if err != nil || bundlePath == "" {
+		return nil, err
 	}
 	sess, err := replay.Load(bundlePath)
 	if err != nil {
@@ -859,6 +874,23 @@ func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.So
 		}
 	}
 	return replay.NewPromptSource(ctx, sess, lf, cfg.Prompts.Store)
+}
+
+// replaySkillSource builds the P4 (#1432) skill-pinning Source for a replay
+// run's native agents: every plugin the bundle's agent.invoke entries
+// recorded a sha for is served at that sha; (nil, nil) for a non-replay
+// config, or a replay bundle with no plugin provenance to pin (no ACP round
+// in it - native rounds carry none, P1 only stamps agent.invoke).
+func replaySkillSource(ctx context.Context, cfg *config.Config, rows []pluginreg.Plugin, plugins []plugin.Plugin) (skill.Source, error) {
+	bundlePath, err := replayBundlePath(cfg)
+	if err != nil || bundlePath == "" {
+		return nil, err
+	}
+	sess, err := replay.Load(bundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("replay: load bundle for skill pinning: %w", err)
+	}
+	return replay.NewSkillSource(ctx, sess, cfg.Plugins.Root, rows, plugins)
 }
 
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
@@ -1393,6 +1425,15 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		}
 		if prov.ForkMode == "fork" {
 			acpReplay.EnableFork(prov.ForkFrom)
+			// Fork mode's live spawn (proc.go's startLive) reads skill_paths
+			// off the CURRENT registry clone, not the recorded sha - #1427 P4
+			// stops short of materializing a historical worktree for it (ponytail:
+			// git worktree add --detach at the recorded sha, if a diverged fork
+			// replay needs the old skill text). Refuse rather than silently
+			// serve whatever the live clone now has.
+			if err := refuseIfPluginsMoved(acpReplay, cfg.Plugins.Root); err != nil {
+				return nil, fmtErr(name, "acp fork replay: %v", err)
+			}
 		}
 	}
 	ag, err := acp.New(name, bundle.Card.Description, acp.Options{
@@ -1623,6 +1664,37 @@ func loadNativeReplay(prov config.ProviderConfig) (*replay.Session, error) {
 		rs.EnableFork(prov.ForkFrom)
 	}
 	return rs, nil
+}
+
+// refuseIfPluginsMoved checks every plugin sess's agent.invoke entries
+// recorded a sha for against the registry's CURRENTLY installed sha (#1427
+// P4): fork mode's live spawn always uses the live clone, so a moved plugin
+// would silently serve different skill text after divergence.
+func refuseIfPluginsMoved(sess *replay.Session, registryRoot string) error {
+	recorded, err := sess.Plugins()
+	if err != nil {
+		return err
+	}
+	if len(recorded) == 0 {
+		return nil
+	}
+	rows, err := pluginreg.NewFSRegistry(registryRoot).List(context.Background())
+	if err != nil {
+		return fmt.Errorf("list plugin registry: %w", err)
+	}
+	installed := make(map[string]string, len(rows))
+	for _, r := range rows {
+		installed[r.Name] = r.SHA
+	}
+	for name, sha := range recorded {
+		if sha == "" {
+			continue // local/embedded: no clone, nothing to move
+		}
+		if live := installed[name]; live != sha {
+			return fmt.Errorf("plugin %q recorded at %s, registry now has %s - a live fork spawn would not reproduce the recorded skill text", name, sha, live)
+		}
+	}
+	return nil
 }
 
 // resolveGateCfg resolves the per-agent trust-gate config (and prompt grading facts

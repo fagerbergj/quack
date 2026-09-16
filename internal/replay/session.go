@@ -72,6 +72,7 @@ type invokeAgentEntry struct {
 	agentName string
 	sent      []json.RawMessage // client → agent (quack's requests)
 	received  []json.RawMessage // agent → client (session/updates + responses)
+	plugins   []ledger.PluginRef
 }
 
 // EvalScore is one recorded judge verdict. Not part of any replay stream (no operation.name).
@@ -222,7 +223,7 @@ func (s *Session) ingest(e ledger.Entry) {
 		if json.Unmarshal(e.Payload, &p) != nil {
 			return
 		}
-		ae := invokeAgentEntry{ts: e.At, agentName: e.Agent}
+		ae := invokeAgentEntry{ts: e.At, agentName: e.Agent, plugins: p.Plugins}
 		if p.Sent != "" {
 			_ = json.Unmarshal([]byte(p.Sent), &ae.sent)
 		}
@@ -360,6 +361,31 @@ func (s *Session) EvaluationResults() []EvalScore {
 	out := make([]EvalScore, len(s.evalScores))
 	copy(out, s.evalScores)
 	return out
+}
+
+// Plugins returns every plugin's provenance recorded on any agent.invoke
+// entry in the bundle, name -> sha (#1427 P4 first cut: one set for the
+// whole bundle, not per round - a name recorded at two different shas
+// refuses rather than guessing, same as recordedPrompts).
+func (s *Session) Plugins() (map[string]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]string{}
+	for _, st := range s.streams {
+		for _, ae := range st.agents {
+			for _, pr := range ae.plugins {
+				prev, ok := out[pr.Name]
+				if !ok {
+					out[pr.Name] = pr.SHA
+					continue
+				}
+				if prev != pr.SHA {
+					return nil, fmt.Errorf("replay: plugin %q moved shas mid-run (%s vs %s); refusing to guess which round to pin", pr.Name, prev, pr.SHA)
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // contentHash mirrors inference/emit.go's prompt-version hash (duplicated, not imported;
