@@ -13,10 +13,8 @@ import (
 // through a langfuse store.
 const SourceName = "langfuse"
 
-// Source adapts *Client to artifactsrc.Source. Get maps a Langfuse prompt
-// version to an Artifact; not-found is (_, false, nil), an auth failure is
-// wrapped so the resolver's log names the store to check, and any other
-// error is returned as-is so the resolver falls back to the shipped file.
+// Source adapts *Client to artifactsrc.Source; an auth failure is wrapped so
+// the resolver's log names the store to check.
 type Source struct {
 	Client   *Client
 	StoreKey string
