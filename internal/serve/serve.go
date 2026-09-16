@@ -2086,6 +2086,7 @@ func buildCompaction(cfg *config.Config, res *artifactsrc.Resolver, artifacts ar
 			return agent.Compaction{}
 		}
 		return agent.Compaction{
+			Prompts:            res,
 			Summarizer:         agent.ResolveSummarizer(workerModel, fallbackSummarizer),
 			ContextWindow:      ac.ContextWindow,
 			Enabled:            true,
