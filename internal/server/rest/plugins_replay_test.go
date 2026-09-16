@@ -13,27 +13,27 @@ import (
 	"github.com/fagerbergj/quack/internal/replay"
 )
 
-// countingRegistry wraps a real pluginRegistry and counts mutating calls -
+// countingRegistry wraps a real pluginreg.FetchRegistry and counts mutating calls -
 // proof that a pinned 409 (#1427 P4 F1) happens BEFORE any Put/Fetch/Delete
 // reaches the registry, not merely before the HTTP response is written.
 type countingRegistry struct {
-	pluginRegistry
+	pluginreg.FetchRegistry
 	puts, fetches, deletes int
 }
 
 func (c *countingRegistry) Put(ctx context.Context, p pluginreg.Plugin) error {
 	c.puts++
-	return c.pluginRegistry.Put(ctx, p)
+	return c.FetchRegistry.Put(ctx, p)
 }
 
 func (c *countingRegistry) Fetch(ctx context.Context, p pluginreg.Plugin) (pluginreg.Plugin, error) {
 	c.fetches++
-	return c.pluginRegistry.Fetch(ctx, p)
+	return c.FetchRegistry.Fetch(ctx, p)
 }
 
 func (c *countingRegistry) Delete(ctx context.Context, name string) error {
 	c.deletes++
-	return c.pluginRegistry.Delete(ctx, name)
+	return c.FetchRegistry.Delete(ctx, name)
 }
 
 // newPinnedPluginsTestHandler is newPluginsTestHandler's replay-pinned twin:
@@ -42,7 +42,7 @@ func (c *countingRegistry) Delete(ctx context.Context, name string) error {
 // ever called - requireMutable must refuse before reaching it.
 func newPinnedPluginsTestHandler(t *testing.T, root string) (*Handler, *countingRegistry) {
 	t.Helper()
-	reg := &countingRegistry{pluginRegistry: pluginreg.NewFSRegistry(root)}
+	reg := &countingRegistry{FetchRegistry: pluginreg.NewFSRegistry(root)}
 	h := &Handler{}
 	p := NewPlugins(reg, root, nil, func() (map[string]error, error) {
 		t.Fatal("rebuildSkills must not be called while the roster is pinned")

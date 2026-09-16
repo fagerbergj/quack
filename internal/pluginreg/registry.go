@@ -121,12 +121,21 @@ func rowPath(registryRoot, name string) string {
 	return filepath.Join(registryRoot, name, "entry.json")
 }
 
-// Registry stores plugin rows. Filesystem is the only backend P0 ships;
-// sqlite/postgres land in P3 behind the same interface.
+// Registry stores plugin rows. Filesystem, sqlite and postgres (P3) all
+// implement it identically.
 type Registry interface {
 	List(ctx context.Context) ([]Plugin, error)
 	Put(ctx context.Context, p Plugin) error
 	Delete(ctx context.Context, name string) error
+}
+
+// FetchRegistry is Registry plus the per-plugin git operations every
+// backend implements - what boot and the REST handlers operate against, so
+// they don't care which backend is wired.
+type FetchRegistry interface {
+	Registry
+	Fetch(ctx context.Context, p Plugin) (Plugin, error)
+	CheckUpdate(ctx context.Context, p Plugin) (behind bool, remoteSHA string, err error)
 }
 
 // FSRegistry stores each row at <root>/<name>/entry.json, with the plugin's

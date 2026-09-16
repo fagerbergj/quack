@@ -26,18 +26,9 @@ var pluginUpdateBudget = 30 * time.Second
 // once - a fixed small number, not one goroutine per row.
 const pluginConcurrency = 4
 
-// pluginRegistry is the subset of *pluginreg.FSRegistry these handlers use -
-// narrow enough that a test's own FSRegistry (against a fixture root) needs
-// no mock.
-type pluginRegistry interface {
-	pluginreg.Registry
-	Fetch(ctx context.Context, p pluginreg.Plugin) (pluginreg.Plugin, error)
-	CheckUpdate(ctx context.Context, p pluginreg.Plugin) (behind bool, remoteSHA string, err error)
-}
-
 // Plugins is the REST handler's boot-owned registry access (epic #1427 P2).
 type Plugins struct {
-	reg  pluginRegistry
+	reg  pluginreg.FetchRegistry
 	root string
 	seed []string
 	// rebuildSkills swaps in a fresh roster; refusals names non-seed rows
@@ -51,7 +42,7 @@ type Plugins struct {
 
 // NewPlugins builds the handler's registry access. rebuildSkills may be nil
 // (no-op) for a caller that doesn't need the roster kept live, e.g. a test.
-func NewPlugins(reg pluginRegistry, root string, seed []string, rebuildSkills func() (map[string]error, error)) *Plugins {
+func NewPlugins(reg pluginreg.FetchRegistry, root string, seed []string, rebuildSkills func() (map[string]error, error)) *Plugins {
 	return &Plugins{reg: reg, root: root, seed: seed, rebuildSkills: rebuildSkills}
 }
 

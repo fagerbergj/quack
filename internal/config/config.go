@@ -71,8 +71,8 @@ type SkillsConfig struct {
 }
 
 // PluginsConfig is the plugins: block (#1427): store picks the registry
-// backend ("" = filesystem until P3), root holds clones and rows. seed, like
-// today's bare list, replaces the defaults entirely rather than adding to them.
+// backend ("" filesystem, else a sqlite/postgres stores[] entry, P3); root
+// holds clones. seed, like today's bare list, replaces the defaults.
 type PluginsConfig struct {
 	Store string   `yaml:"store"`
 	Root  string   `yaml:"root"`
@@ -103,9 +103,9 @@ func (p *PluginsConfig) UnmarshalYAML(value *yaml.Node) error {
 	return value.Decode((*plain)(p))
 }
 
-// validatePlugins normalizes c.Plugins (nil, or a block with no seed: key ->
-// skills.plugins or the defaults), rejects a store other than filesystem (P3
-// wires the rest), fills root's default, and checks every seed entry parses.
+// validatePlugins normalizes c.Plugins, checks plugins.store names a sqlite
+// or postgres stores[] entry ("" = filesystem), fills root's default, and
+// checks every seed entry parses.
 func (c *Config) validatePlugins() error {
 	// bothSet: plugins: actually wins over skills.plugins (a block with no
 	// seed: key falls through to it below, so it isn't "ignored" at all).
@@ -126,8 +126,8 @@ func (c *Config) validatePlugins() error {
 	if c.Skills.Plugins != nil && !bothSet {
 		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
 	}
-	if c.Plugins.Store != "" {
-		return fmt.Errorf("config: plugins.store %q is not supported until P3 - omit plugins.store to use the filesystem backend", c.Plugins.Store)
+	if err := c.validatePluginsStore(); err != nil {
+		return err
 	}
 	if c.Plugins.Root == "" {
 		c.Plugins.Root = filepath.Join(c.Workspace.Root, ".quack", "plugins")
@@ -136,6 +136,26 @@ func (c *Config) validatePlugins() error {
 		if _, err := pluginreg.ParseEntry(s); err != nil {
 			return fmt.Errorf("config: plugins.seed: %w", err)
 		}
+	}
+	return nil
+}
+
+// validatePluginsStore checks plugins.store, if set, names a sqlite or
+// postgres stores[] entry - a DB registry backend needs a real table, not
+// a vector or prompt store.
+func (c *Config) validatePluginsStore() error {
+	if c.Plugins.Store == "" {
+		return nil
+	}
+	s, ok := c.Store(c.Plugins.Store)
+	if !ok {
+		return fmt.Errorf("config: plugins.store %q is not defined under stores", c.Plugins.Store)
+	}
+	if s.Kind != "postgres" && s.Kind != "sqlite" {
+		return fmt.Errorf("config: plugins.store %q must be a postgres or sqlite store, got kind %q", c.Plugins.Store, s.Kind)
+	}
+	if s.URL == "" && !c.skipRuntimeValidation {
+		return fmt.Errorf("config: plugins.store %q has empty url", c.Plugins.Store)
 	}
 	return nil
 }

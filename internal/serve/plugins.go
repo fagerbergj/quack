@@ -17,17 +17,19 @@ import (
 	"google.golang.org/adk/v2/tool/mcptoolset"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
+	"gorm.io/gorm"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/pluginreg"
+	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // seedRegistry inserts each seed entry into reg if its name is absent - Put
 // only when List lacks it, so the UI/REST (P2) own the list after boot. A
 // stale or identity-colliding on-disk row is warned about, not silent.
-func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string) error {
+func seedRegistry(ctx context.Context, reg pluginreg.FetchRegistry, seed []string) error {
 	existing, err := reg.List(ctx)
 	if err != nil {
 		return err
@@ -81,7 +83,7 @@ func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string)
 // fetchRegistryPlugins fetches every non-local row against its pinned/tracked
 // ref (P0's gitTimeout per call already bounds each one). A failure is logged
 // and left on the row - Fetch persists it - so boot continues on the last good clone.
-func fetchRegistryPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin) []pluginreg.Plugin {
+func fetchRegistryPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin) []pluginreg.Plugin {
 	out := make([]pluginreg.Plugin, 0, len(rows))
 	for _, p := range rows {
 		if p.Source != pluginreg.SourceGitHub {
@@ -97,11 +99,39 @@ func fetchRegistryPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows [
 	return out
 }
 
+// openPluginRegistry picks the backend plugins.store names ("" filesystem,
+// else a sqlite/postgres stores[] entry), reusing st's connection when it's
+// the SAME store session.store uses instead of opening a second pool.
+func (b *boot) openPluginRegistry(st *store.Store) (pluginreg.FetchRegistry, error) {
+	cfg := b.cfg
+	if cfg.Plugins.Store == "" {
+		return pluginreg.NewFSRegistry(cfg.Plugins.Root), nil
+	}
+	sc, ok := cfg.Store(cfg.Plugins.Store)
+	if !ok {
+		return nil, fmt.Errorf("plugins.store %q not found in stores registry", cfg.Plugins.Store)
+	}
+	var db *gorm.DB
+	if st != nil && cfg.Plugins.Store == cfg.Session.Store {
+		db = st.DB()
+	} else {
+		var err error
+		db, err = pluginreg.OpenDB(sc.Kind, sc.URL)
+		if err != nil {
+			return nil, fmt.Errorf("plugins.store %q: %w", cfg.Plugins.Store, err)
+		}
+	}
+	return pluginreg.NewDBRegistry(db, cfg.Plugins.Root)
+}
+
 // bootPluginRegistry seeds and fetches the plugin registry, returning every
 // row (github fetched, local as-is), ordered per plugins.seed (#1427 F2),
 // plus the in-memory embedded quack row appended last.
-func (b *boot) bootPluginRegistry(ctx context.Context) (*pluginreg.FSRegistry, []pluginreg.Plugin, error) {
-	reg := pluginreg.NewFSRegistry(b.cfg.Plugins.Root)
+func (b *boot) bootPluginRegistry(ctx context.Context, st *store.Store) (pluginreg.FetchRegistry, []pluginreg.Plugin, error) {
+	reg, err := b.openPluginRegistry(st)
+	if err != nil {
+		return nil, nil, fmt.Errorf("plugin registry open: %w", err)
+	}
 	if err := seedRegistry(ctx, reg, b.cfg.Plugins.Seed); err != nil {
 		return nil, nil, fmt.Errorf("plugin registry seed: %w", err)
 	}
@@ -129,17 +159,21 @@ func registryPluginRoots(registryRoot string, rows []pluginreg.Plugin) []string 
 	return out
 }
 
-// resolveRegistryPlugins resolves each row's root, then stamps the REGISTRY
-// ROW NAME onto each result (#1427 S3, never plugin.json's) - matched by
-// absolute root path, since plugin.Resolve silently drops a failed root.
+// resolveRegistryPlugins resolves each row's root, stamps the REGISTRY ROW
+// NAME onto each result (#1427 S3, never plugin.json's), and clears a
+// github-sourced row's mcp.json (ignored with a warning until #1434).
 func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plugin.Plugin, error) {
 	nameByAbsRoot := make(map[string]string, len(rows))
+	githubAbsRoot := make(map[string]bool, len(rows))
 	for _, p := range rows {
 		if p.Source == pluginreg.SourceEmbedded {
 			continue
 		}
 		if abs, err := filepath.Abs(p.Root(registryRoot)); err == nil {
 			nameByAbsRoot[abs] = p.Name
+			if p.Source == pluginreg.SourceGitHub {
+				githubAbsRoot[abs] = true
+			}
 		}
 	}
 	plugins, err := plugin.Resolve(registryPluginRoots(registryRoot, rows))
@@ -149,6 +183,11 @@ func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plu
 	for i := range plugins {
 		if name, ok := nameByAbsRoot[plugins[i].Root]; ok {
 			plugins[i].Name = name
+		}
+		if githubAbsRoot[plugins[i].Root] && len(plugins[i].MCPServers) > 0 {
+			slog.Warn("plugin mcp.json ignored: fetched (github:) plugins don't run MCP servers yet",
+				"component", "startup", "plugin", plugins[i].Name, "issue", "#1434")
+			plugins[i].MCPServers = nil
 		}
 	}
 	return plugins, nil
@@ -237,7 +276,7 @@ func seedPluginNames(seed []string) map[string]bool {
 // admitPlugins: a plugins.seed (config) plugin's refusal is fatal, named, as
 // always; a REST-added row's refusal only drops THAT plugin (warned, stored
 // on its row, named in refusals) - shared by boot and rebuildSkills (#1430).
-func admitPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, map[string]error, error) {
+func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, map[string]error, error) {
 	seedNames := seedPluginNames(seed)
 	refusals := make(map[string]error)
 	out := make([]plugin.Plugin, 0, len(plugins))
@@ -259,7 +298,7 @@ func admitPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginr
 
 // persistPluginRefusal stores cause on name's registry row so GET /plugins
 // shows why boot dropped it - best-effort; a write failure only logs.
-func persistPluginRefusal(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, name string, cause error) {
+func persistPluginRefusal(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin, name string, cause error) {
 	for _, row := range rows {
 		if row.Name == name {
 			row.Error = cause.Error()

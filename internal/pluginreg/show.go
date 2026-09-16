@@ -12,6 +12,14 @@ import (
 // Fails, naming the plugin and sha, if the clone is missing or unreachable.
 func TreeAt(ctx context.Context, root, name, sha, subdir string) (fstest.MapFS, error) {
 	dir := CloneDir(root, name)
+	// subdir is trusted off a row read from disk without re-parsing, same as
+	// Plugin.Root - an escaping one falls back to "skills" at the clone
+	// root instead, so replay never lists outside the plugin's own tree.
+	if joined, err := containedPath(".", subdir); err == nil {
+		subdir = joined
+	} else {
+		subdir = "skills"
+	}
 	// -z/NUL-split (core.quotePath would else C-quote a non-ASCII path and
 	// break the `show` below); ":(literal)" pins subdir against pathspec magic.
 	// ponytail: one `show` per file; `git archive` if a plugin ships hundreds.

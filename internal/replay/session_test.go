@@ -686,3 +686,30 @@ func TestNodeRuns_DraftPlusRevise(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionPluginsRefusesOnConflictingSHAs: a plugin recorded at two
+// different shas across two agent.invoke entries in one bundle must refuse
+// (#1427 P4), naming both shas rather than guessing which round to pin.
+func TestSessionPluginsRefusesOnConflictingSHAs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "entries.jsonl")
+	lines := `{"seq":1,"chat_id":"chat-1","node_id":"node-a","agent":"impl","round":"worker-r0","kind":"agent.invoke","at":"2026-01-01T00:00:00Z","payload":{"sent":"[]","received":"[]","plugins":[{"name":"widgets","sha":"` + strings.Repeat("a", 40) + `"}]}}
+{"seq":2,"chat_id":"chat-1","node_id":"node-a","agent":"impl","round":"worker-r1","kind":"agent.invoke","at":"2026-01-01T00:01:00Z","payload":{"sent":"[]","received":"[]","plugins":[{"name":"widgets","sha":"` + strings.Repeat("b", 40) + `"}]}}
+`
+	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	_, err = sess.Plugins()
+	if err == nil {
+		t.Fatal("Plugins() = nil error, want a refusal for a plugin recorded at two different shas")
+	}
+	for _, want := range []string{strings.Repeat("a", 40), strings.Repeat("b", 40)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Plugins() error = %q, want it to name sha %q", err.Error(), want)
+		}
+	}
+}

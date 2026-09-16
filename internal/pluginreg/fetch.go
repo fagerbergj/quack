@@ -71,12 +71,18 @@ func Fetch(ctx context.Context, root string, p Plugin) (Plugin, error) {
 	return p, nil
 }
 
+// fetchAndPut runs the free Fetch against root and persists via reg
+// regardless of success - shared by every backend's own Fetch method.
+func fetchAndPut(ctx context.Context, root string, reg Registry, p Plugin) (Plugin, error) {
+	p, fetchErr := Fetch(ctx, root, p)
+	putErr := reg.Put(ctx, p)
+	return p, errors.Join(fetchErr, putErr)
+}
+
 // Fetch runs the free Fetch against r's root and persists the result
 // regardless of success, so a failure is still visible via List.
 func (r *FSRegistry) Fetch(ctx context.Context, p Plugin) (Plugin, error) {
-	p, fetchErr := Fetch(ctx, r.root, p)
-	putErr := r.Put(ctx, p)
-	return p, errors.Join(fetchErr, putErr)
+	return fetchAndPut(ctx, r.root, r, p)
 }
 
 // fetchInto clones dir if absent or not a git repo, else points origin at

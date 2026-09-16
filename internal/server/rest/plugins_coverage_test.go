@@ -13,7 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// failingRegistry is a pluginRegistry whose every method returns a
+// failingRegistry is a pluginreg.FetchRegistry whose every method returns a
 // caller-set error (or delegates CheckUpdate to checkFn, for the budget
 // test) - the "failing registry stub" the adversarial review asked for,
 // exercising error branches no real FSRegistry fixture can force on demand.
@@ -40,7 +40,7 @@ func (f *failingRegistry) CheckUpdate(ctx context.Context, p pluginreg.Plugin) (
 	return false, "", f.checkErr
 }
 
-func handlerWith(reg pluginRegistry) *Handler {
+func handlerWith(reg pluginreg.FetchRegistry) *Handler {
 	h := &Handler{}
 	h.SetPlugins(NewPlugins(reg, "/root", nil, nil))
 	return h

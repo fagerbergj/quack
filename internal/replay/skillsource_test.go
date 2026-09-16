@@ -246,6 +246,50 @@ func TestNewSkillSource_LocalPluginFallsThroughToLive(t *testing.T) {
 	}
 }
 
+// TestNewSkillSource_ShaLessNonQuackWithNoLiveSkillsSkipsNotRefuses is the
+// #1446 carry-over: an admitted, sha-less plugin whose live roster serves
+// none of its skills (e.g. an MCP-only plugin, no skills/) must be skipped
+// with a warning, not refuse the whole bundle - only the embedded quack
+// name is load-bearing enough to hard-refuse on.
+func TestNewSkillSource_ShaLessNonQuackWithNoLiveSkillsSkipsNotRefuses(t *testing.T) {
+	live := buildLiveSource(t, map[string]map[string]string{
+		"other": {"thing": "---\nname: thing\ndescription: d\n---\nbody"},
+	})
+	rows := []pluginreg.Plugin{
+		{Name: "mcp-only", Source: pluginreg.SourceLocal, Entry: "some/local/path"},
+		{Name: "other", Source: pluginreg.SourceLocal, Entry: "some/other/path"},
+	}
+	bundle := writeAgentInvokeJSONL(t, `[{"name":"mcp-only","sha":""},{"name":"other","sha":""}]`)
+	sess, err := Load(bundle)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), rows, nil, live)
+	if err != nil {
+		t.Fatalf("NewSkillSource: %v, want no error (mcp-only skipped, not refused)", err)
+	}
+	if _, err := src.LoadFrontmatter(context.Background(), "other:thing"); err != nil {
+		t.Fatalf("LoadFrontmatter(other:thing): %v, want it still served", err)
+	}
+}
+
+// TestNewSkillSource_ShaLessQuackWithNoLiveSkillsRefuses: the embedded
+// quack bundle is always in scope - zero live skills for it is a real gap
+// and must still refuse, unlike any other sha-less plugin.
+func TestNewSkillSource_ShaLessQuackWithNoLiveSkillsRefuses(t *testing.T) {
+	live := buildLiveSource(t, nil) // no skills for any plugin, including quack
+	rows := []pluginreg.Plugin{pluginreg.EmbeddedQuackPlugin()}
+	bundle := writeAgentInvokeJSONL(t, `[{"name":"quack","sha":""}]`)
+	sess, err := Load(bundle)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	_, err = NewSkillSource(context.Background(), sess, t.TempDir(), rows, nil, live)
+	if err == nil || !strings.Contains(err.Error(), "quack") {
+		t.Fatalf("NewSkillSource err = %v, want a refusal naming quack", err)
+	}
+}
+
 // TestNewSkillSource_EmbeddedQuackServesFullLiveRoster is review S1: a
 // default-config bundle only ever records {"name":"quack","sha":""} (the
 // embedded baseline, no clone). Before the fix, sha=="" fell through to a

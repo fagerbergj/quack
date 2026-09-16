@@ -143,6 +143,29 @@ func TestTreeAt_NonASCIIPath(t *testing.T) {
 	}
 }
 
+// TestTreeAt_EscapingSubdirFallsBackToSkills is the #1446 carry-over: a
+// subdir that escapes the clone (a row trusted off disk without
+// re-parsing, same as Plugin.Root) falls back to "skills" at the clone
+// root instead, so replay matches live's own fallback.
+func TestTreeAt_EscapingSubdirFallsBackToSkills(t *testing.T) {
+	bare, _ := newFixtureRepoWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1")
+	withFixedRemote(t, bare)
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	got, err := reg.Fetch(context.Background(), FromEntry(mustParse(t, "github:acme/widgets")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fs, err := TreeAt(context.Background(), root, "widgets", got.SHA, "../../../etc/skills")
+	if err != nil {
+		t.Fatalf("TreeAt(escaping subdir): %v", err)
+	}
+	if _, err := fs.ReadFile("dothing/SKILL.md"); err != nil {
+		t.Fatalf("TreeAt(escaping subdir) did not fall back to \"skills\" at the clone root: %v", err)
+	}
+}
+
 func mustParse(t *testing.T, s string) Entry {
 	t.Helper()
 	e, err := ParseEntry(s)

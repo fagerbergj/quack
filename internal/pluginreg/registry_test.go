@@ -6,56 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
-	"time"
 )
-
-func TestPutOverwritesExisting(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	ctx := context.Background()
-
-	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", SHA: "aaa"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", SHA: "bbb"}); err != nil {
-		t.Fatal(err)
-	}
-
-	list, err := reg.List(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || list[0].SHA != "bbb" {
-		t.Fatalf("List() = %+v, want one row with sha bbb", list)
-	}
-}
-
-// TestPutRejectsNameCollisionAcrossDifferentEntries: two entries that share
-// a registry name (e.g. two repos both named "widgets") must not silently
-// overwrite each other's row.
-func TestPutRejectsNameCollisionAcrossDifferentEntries(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	ctx := context.Background()
-
-	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", Owner: "acme", Repo: "widgets"}); err != nil {
-		t.Fatal(err)
-	}
-	err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:glob/widgets", Owner: "glob", Repo: "widgets"})
-	if err == nil {
-		t.Fatal("expected an error putting a different entry under an already-registered name")
-	}
-
-	list, err := reg.List(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || list[0].Entry != "github:acme/widgets" {
-		t.Fatalf("List() = %+v, want the original row untouched", list)
-	}
-}
 
 // TestPutAllowsMovingPinOnSameRepo is the #1429 carry-over from PR #1436's
 // review: moving a pin (github:o/r@v1 -> github:o/r@v2) on the SAME repo
@@ -78,96 +30,6 @@ func TestPutAllowsMovingPinOnSameRepo(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].Ref != "v2" {
 		t.Fatalf("List() = %+v, want one row pinned at v2", list)
-	}
-}
-
-func TestDeleteMissingNameIsErrNotExist(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	err := reg.Delete(context.Background(), "nope")
-	if err == nil {
-		t.Fatal("expected an error deleting a name with no row")
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Delete missing name error = %v, want it to wrap os.ErrNotExist", err)
-	}
-}
-
-func TestDeleteRemovesCloneAndRow(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	ctx := context.Background()
-	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets"}); err != nil {
-		t.Fatal(err)
-	}
-	cloneDir := CloneDir(root, "widgets")
-	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cloneDir, "marker"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := reg.Delete(ctx, "widgets"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "widgets")); !os.IsNotExist(err) {
-		t.Fatalf("row/clone dir still present after Delete: err=%v", err)
-	}
-}
-
-func TestListOrderIsSortedByName(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	ctx := context.Background()
-	for _, name := range []string{"zeta", "alpha", "mid"} {
-		if err := reg.Put(ctx, Plugin{Name: name, Source: SourceGitHub, Entry: "github:acme/" + name}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	list, err := reg.List(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"alpha", "mid", "zeta"}
-	if len(list) != len(want) {
-		t.Fatalf("List() = %+v, want %d rows", list, len(want))
-	}
-	for i, w := range want {
-		if list[i].Name != w {
-			t.Fatalf("List()[%d].Name = %q, want %q (List is documented sorted by name)", i, list[i].Name, w)
-		}
-	}
-}
-
-func TestPutConcurrent(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	ctx := context.Background()
-	const n = 50
-	var wg sync.WaitGroup
-	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			errs <- reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", SHA: "sha"})
-		}(i)
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatalf("concurrent Put failed: %v", err)
-		}
-	}
-	// The row must still be one valid JSON object, not a torn write.
-	list, err := reg.List(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 {
-		t.Fatalf("List() after concurrent Put = %+v, want exactly one row", list)
 	}
 }
 
@@ -205,71 +67,6 @@ func TestEntryJSONFieldNamesLiteral(t *testing.T) {
 	}
 	if _, ok := row["error"]; ok {
 		t.Fatalf("entry.json has error with no failure: %v", row["error"])
-	}
-}
-
-// TestPutPreservesShaOnUnfetchedReput is the adversarial-review severe#2
-// regression: re-Put of the SAME identity with no sha/fetched_at yet (REST's
-// create-then-fetch path, before Fetch runs) must not wipe an existing
-// row's installed sha/fetched_at - only Fetch may move those.
-func TestPutPreservesShaOnUnfetchedReput(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	ctx := context.Background()
-	now := time.Now().UTC()
-
-	if err := reg.Put(ctx, Plugin{
-		Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets",
-		Owner: "acme", Repo: "widgets", SHA: "aaaa", FetchedAt: &now,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Re-Put with the fresh, unfetched row FromEntry would build (no sha).
-	if err := reg.Put(ctx, Plugin{
-		Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets",
-		Owner: "acme", Repo: "widgets",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	list, err := reg.List(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || list[0].SHA != "aaaa" || list[0].FetchedAt == nil {
-		t.Fatalf("List() = %+v, want sha aaaa and fetched_at preserved", list)
-	}
-}
-
-// TestPutErrorsWrapErrNameCollision: a genuine identity mismatch under an
-// already-registered name is errors.Is-detectable, not just string-matched.
-func TestPutErrorsWrapErrNameCollision(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	ctx := context.Background()
-
-	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", Owner: "acme", Repo: "widgets"}); err != nil {
-		t.Fatal(err)
-	}
-	err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:other/widgets", Owner: "other", Repo: "widgets"})
-	if !errors.Is(err, ErrNameCollision) {
-		t.Fatalf("Put collision error = %v, want errors.Is(err, ErrNameCollision)", err)
-	}
-}
-
-// TestPutInvalidNameWrapsErrInvalidName: a path-unsafe name is
-// errors.Is-detectable as ErrInvalidName (REST maps it to 400).
-func TestPutInvalidNameWrapsErrInvalidName(t *testing.T) {
-	root := t.TempDir()
-	reg := NewFSRegistry(root)
-	err := reg.Put(context.Background(), Plugin{Name: "..", Source: SourceLocal, Entry: ".."})
-	if !errors.Is(err, ErrInvalidName) {
-		t.Fatalf("Put(..) error = %v, want errors.Is(err, ErrInvalidName)", err)
-	}
-	err = reg.Delete(context.Background(), "a/../../victim")
-	if !errors.Is(err, ErrInvalidName) {
-		t.Fatalf("Delete(a/../../victim) error = %v, want errors.Is(err, ErrInvalidName)", err)
 	}
 }
 

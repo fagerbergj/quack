@@ -157,7 +157,7 @@ func TestRefuseIfPluginsMoved(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := refuseIfPluginsMoved(sess, root); err != nil {
+		if err := refuseIfPluginsMoved(sess, pluginreg.NewFSRegistry(root)); err != nil {
 			t.Fatalf("refuseIfPluginsMoved: %v", err)
 		}
 	})
@@ -168,7 +168,7 @@ func TestRefuseIfPluginsMoved(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = refuseIfPluginsMoved(sess, root)
+		err = refuseIfPluginsMoved(sess, pluginreg.NewFSRegistry(root))
 		if err == nil || !strings.Contains(err.Error(), "widgets") {
 			t.Fatalf("err = %v, want a refusal naming widgets", err)
 		}
@@ -180,7 +180,7 @@ func TestRefuseIfPluginsMoved(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := refuseIfPluginsMoved(sess, root); err != nil {
+		if err := refuseIfPluginsMoved(sess, pluginreg.NewFSRegistry(root)); err != nil {
 			t.Fatalf("refuseIfPluginsMoved: %v", err)
 		}
 	})
@@ -193,7 +193,7 @@ func TestRefuseIfPluginsMoved(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = refuseIfPluginsMoved(sess, root)
+		err = refuseIfPluginsMoved(sess, pluginreg.NewFSRegistry(root))
 		if err == nil || !strings.Contains(err.Error(), "no longer registered") {
 			t.Fatalf("err = %v, want containing %q", err, "no longer registered")
 		}

@@ -48,7 +48,7 @@ func TestAcpRegistrySkillPathsResolvesAndCaches(t *testing.T) {
 	}
 
 	cfg := &config.Config{Plugins: &config.PluginsConfig{Root: root}}
-	fn := acpRegistrySkillPaths(cfg)
+	fn := acpRegistrySkillPaths(cfg, reg)
 
 	got := fn()
 	if len(got) == 0 {

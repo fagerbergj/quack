@@ -59,13 +59,73 @@ plugins:
 	}
 }
 
-func TestLoadPluginsRejectsNonFilesystemStore(t *testing.T) {
+func TestLoadPluginsRejectsUndefinedStore(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 plugins:
-  store: default_postgres
+  store: nope
 `))
 	if err == nil {
-		t.Fatal("expected an error: plugins.store is filesystem-only until P3")
+		t.Fatal("expected an error: plugins.store names no stores[] entry")
+	}
+}
+
+// TestLoadPluginsRejectsNonDBStoreKind: plugins.store must be sqlite or
+// postgres (P3) - a qdrant/langfuse store makes no sense as a row store.
+func TestLoadPluginsRejectsNonDBStoreKind(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+  vec: { kind: qdrant, url: http://q }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+plugins:
+  store: vec
+`))
+	if err == nil {
+		t.Fatal("expected an error: plugins.store kind qdrant is not sqlite or postgres")
+	}
+}
+
+// TestLoadPluginsAcceptsPostgresStore: plugins.store naming a postgres
+// stores[] entry (e.g. the same one session.store uses) is valid config.
+func TestLoadPluginsAcceptsPostgresStore(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+plugins:
+  store: main
+`))
+	if err != nil {
+		t.Fatalf("plugins.store: main (postgres, same as session.store) should be valid: %v", err)
+	}
+	if c.Plugins.Store != "main" {
+		t.Fatalf("Plugins.Store = %q, want main", c.Plugins.Store)
+	}
+}
+
+// TestLoadPluginsAcceptsSqliteStore: plugins.store naming a sqlite
+// stores[] entry is valid config.
+func TestLoadPluginsAcceptsSqliteStore(t *testing.T) {
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+  plugindb: { kind: sqlite, url: /tmp/plugins.db }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+plugins:
+  store: plugindb
+`))
+	if err != nil {
+		t.Fatalf("plugins.store: plugindb (sqlite) should be valid: %v", err)
+	}
+	if c.Plugins.Store != "plugindb" {
+		t.Fatalf("Plugins.Store = %q, want plugindb", c.Plugins.Store)
 	}
 }
 
@@ -135,5 +195,28 @@ plugins:
 	got := c.Plugins.Seed
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("Plugins.Seed = %v, want %v (bare list means seed:, local and github: entries alike)", got, want)
+	}
+}
+
+// TestLoadPluginsRejectsEmptyStoreURL is the adversarial-review S2
+// regression: plugins.store naming a stores[] entry with no url must fail
+// load, not silently reach pluginreg.OpenDB with an empty DSN (which, for
+// sqlite, creates a db file literally named "?_pragma=..." in the CWD).
+func TestLoadPluginsRejectsEmptyStoreURL(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+  plugindb: { kind: sqlite }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+plugins:
+  store: plugindb
+`))
+	if err == nil {
+		t.Fatal("expected an error: plugins.store plugindb has an empty url")
 	}
 }
