@@ -70,6 +70,41 @@ func CloneDir(registryRoot, name string) string {
 	return filepath.Join(registryRoot, name, "repo")
 }
 
+// EmbeddedQuackPlugin is quack's go:embedded skill bundle's registry row
+// (#1427 P1): in-memory only, never Put to disk - it has no clone. Shared by
+// boot and the REST listing (#1427 P2) so both include it identically.
+func EmbeddedQuackPlugin() Plugin {
+	return Plugin{Name: "quack", Source: SourceEmbedded}
+}
+
+// OrderBySeed reorders rows to match seed's listed order (bare-name
+// resolution is "first in merge order wins", #1427 F2) - a row not in seed
+// (added via the UI/REST, P2) sorts after, in List's name order.
+func OrderBySeed(seed []string, rows []Plugin) []Plugin {
+	byName := make(map[string]Plugin, len(rows))
+	for _, p := range rows {
+		byName[p.Name] = p
+	}
+	out := make([]Plugin, 0, len(rows))
+	seen := make(map[string]bool, len(rows))
+	for _, s := range seed {
+		e, err := ParseEntry(s) // config.validatePlugins already checked every entry parses
+		if err != nil {
+			continue
+		}
+		if p, ok := byName[e.Name()]; ok && !seen[e.Name()] {
+			out = append(out, p)
+			seen[e.Name()] = true
+		}
+	}
+	for _, p := range rows {
+		if !seen[p.Name] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func rowPath(registryRoot, name string) string {
 	return filepath.Join(registryRoot, name, "entry.json")
 }
@@ -139,16 +174,34 @@ func (r *FSRegistry) readRow(name string) (Plugin, error) {
 
 // samePlugin is Put's collision identity: source+owner/repo for github (so
 // moving a pin, e.g. @v1 -> @v2 on the same repo, is a legal update, not a
-// collision - #1429 carry-over), the raw entry for local.
+// collision - #1429 carry-over), the raw entry for local. A github row with
+// Owner/Repo empty (a caller-built Plugin, e.g. REST, that populated only
+// Entry) is derived from Entry rather than refused outright (#1430 carry-over).
 func samePlugin(a, b Plugin) bool {
 	if a.Source != b.Source {
 		return false
 	}
 	if a.Source == SourceGitHub {
-		return a.Owner == b.Owner && a.Repo == b.Repo
+		ao, ar := githubIdentity(a)
+		bo, br := githubIdentity(b)
+		return ao == bo && ar == br
 	}
 	return a.Entry == b.Entry
 }
+
+func githubIdentity(p Plugin) (owner, repo string) {
+	if p.Owner != "" || p.Repo != "" {
+		return p.Owner, p.Repo
+	}
+	if e, err := ParseEntry(p.Entry); err == nil {
+		return e.Owner, e.Repo
+	}
+	return "", ""
+}
+
+// SameIdentity reports whether a and b identify the same plugin (samePlugin) -
+// exported for seedRegistry's seed/disk name-collision check (#1430 carry-over).
+func SameIdentity(a, b Plugin) bool { return samePlugin(a, b) }
 
 // Put writes p's row, replacing any row identifying the SAME plugin
 // (samePlugin). A different plugin under an already-registered name (e.g.

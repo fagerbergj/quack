@@ -1244,6 +1244,127 @@ paths:
               schema:
                 $ref: "#/components/schemas/MemoryStats"
 
+  /api/v1/plugins:
+    get:
+      operationId: listPlugins
+      summary: List every registered plugin (epic #1427 P2)
+      description: |
+        Every registry row plus the go:embedded `quack` baseline. A row with
+        `error` set still appears - the last good clone (if any) keeps
+        serving; the error is surfaced, not swallowed.
+      responses:
+        "200":
+          description: Every registered plugin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PluginList"
+    post:
+      operationId: createPlugin
+      summary: Register and fetch a plugin
+      description: |
+        Parses `entry` (`github:owner/repo[@ref][#path]`, or a local root
+        path), stores the row, then fetches it synchronously (bounded by the
+        registry's git timeout). A fetch failure still returns 201 with the
+        row - `error` set, no clone or a stale one - so the UI shows it
+        instead of the add silently failing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePluginBody"
+      responses:
+        "201":
+          description: The registered (and fetch-attempted) row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plugin"
+        "400":
+          description: entry does not match github:owner/repo[@ref][#path] (or is an invalid local root)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: name is already registered from a different entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/plugins/updates:
+    get:
+      operationId: listPluginUpdates
+      summary: Check every github-sourced plugin for a newer remote sha
+      description: |
+        Compares each row's installed sha against its tracked ref
+        (default-branch HEAD, or the pinned ref). A per-row check failure
+        (unreachable remote, etc.) lands in that row's `error` field and
+        never fails the rest of the response.
+      responses:
+        "200":
+          description: Update status per github-sourced plugin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PluginUpdateList"
+
+  /api/v1/plugins/update:
+    post:
+      operationId: updateAllPlugins
+      summary: Fetch every github-sourced plugin
+      responses:
+        "200":
+          description: The fetched rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PluginList"
+
+  /api/v1/plugins/{name}:
+    delete:
+      operationId: deletePlugin
+      summary: Remove a plugin's row and clone
+      parameters:
+        - $ref: "#/components/parameters/PluginName"
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: name is the reserved embedded "quack" plugin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such plugin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/plugins/{name}/update:
+    post:
+      operationId: updatePlugin
+      summary: Fetch one plugin against its tracked/pinned ref
+      parameters:
+        - $ref: "#/components/parameters/PluginName"
+      responses:
+        "200":
+          description: The fetched row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plugin"
+        "404":
+          description: No such plugin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   parameters:
     ChatID:
@@ -1283,6 +1404,13 @@ components:
 
     ArtifactName:
       name: artifact_name
+      in: path
+      required: true
+      schema:
+        type: string
+
+    PluginName:
+      name: name
       in: path
       required: true
       schema:
@@ -2118,6 +2246,98 @@ components:
         detail:
           type: string
           description: Optional additional context (e.g. which field failed validation).
+
+    # -------------------------------------------------------------------------
+    # Plugins (dynamic plugin registry, epic #1427 P2)
+    # -------------------------------------------------------------------------
+
+    PluginSource:
+      type: string
+      enum: [github, local, embedded]
+      description: >-
+        github = a git clone under plugins.root, tracked or pinned; local = a
+        bare root path (today's plugins: list form); embedded = quack's
+        go:embedded baseline, the "quack" row - never created or removed via this API.
+
+    Plugin:
+      type: object
+      required: [name, entry, source]
+      properties:
+        name:
+          type: string
+          description: Registry row name (plugin.json's name, else the repo/path base).
+        entry:
+          type: string
+          description: The raw entry string this row was created from. Empty for the embedded row.
+        source:
+          $ref: "#/components/schemas/PluginSource"
+        owner:
+          type: string
+          description: Present for a github row.
+        repo:
+          type: string
+          description: Present for a github row.
+        ref:
+          type: string
+          description: Pinned tag/branch/sha. Absent = tracks the remote default branch.
+        path:
+          type: string
+          description: Subdirectory holding the plugin root, relative to the repo. Absent = the repo root.
+        installed_sha:
+          type: string
+          description: The sha currently checked out. Absent if never fetched.
+        fetched_at:
+          type: string
+          format: date-time
+          description: When installed_sha was last fetched. Absent if never fetched.
+        error:
+          type: string
+          description: The last fetch/check failure, if any. The row (and its last good clone) still serves.
+        root:
+          type: string
+          description: Resolved on-disk plugin root this row currently serves from.
+
+    PluginList:
+      type: object
+      required: [plugins]
+      properties:
+        plugins:
+          type: array
+          items:
+            $ref: "#/components/schemas/Plugin"
+
+    CreatePluginBody:
+      type: object
+      required: [entry]
+      properties:
+        entry:
+          type: string
+          description: "github:owner/repo[@ref][#path], or a local root path."
+
+    PluginUpdate:
+      type: object
+      required: [name, behind]
+      properties:
+        name:
+          type: string
+        installed_sha:
+          type: string
+        remote_sha:
+          type: string
+        behind:
+          type: boolean
+        error:
+          type: string
+          description: This row's update check failed; behind is false and remote_sha absent.
+
+    PluginUpdateList:
+      type: object
+      required: [updates]
+      properties:
+        updates:
+          type: array
+          items:
+            $ref: "#/components/schemas/PluginUpdate"
 
     TransitionError:
       description: An illegal node-status transition - ErrorResponse refined with the

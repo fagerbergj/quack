@@ -247,7 +247,7 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 			Seed: []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"},
 		},
 	}}
-	_, builtinSkillSrc, skillSrc, _, _, err := b.initSkills(context.Background(), jail)
+	_, builtinSkillSrc, skillSrc, _, _, _, err := b.initSkills(context.Background(), jail)
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 			Seed: []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"},
 		},
 	}}
-	plugins, builtinSkillSrc, _, _, _, err := b.initSkills(context.Background(), jail)
+	plugins, builtinSkillSrc, _, _, _, _, err := b.initSkills(context.Background(), jail)
 	if err != nil {
 		t.Fatal(err)
 	}

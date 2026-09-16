@@ -24,24 +24,22 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// embeddedQuackPlugin is quack's go:embedded skill bundle's registry row
-// (#1427 P1): in-memory only, never Put to disk - it has no clone.
-func embeddedQuackPlugin() pluginreg.Plugin {
-	return pluginreg.Plugin{Name: "quack", Source: pluginreg.SourceEmbedded}
-}
-
 // seedRegistry inserts each seed entry into reg if its name is absent - Put
 // only when List lacks it, so the UI/REST (P2) own the list after boot. A
 // stale on-disk row (no longer in seed) is left alone but named in a warning (#1427 F6).
+// A seed name already on disk under a DIFFERENT identity (e.g. a local root
+// and a github repo landing on the same name) is otherwise silently skipped
+// forever - Put is re-attempted so the standard collision error surfaces as a
+// one-time warning instead (#1430 carry-over).
 func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string) error {
 	existing, err := reg.List(ctx)
 	if err != nil {
 		return err
 	}
-	have := make(map[string]bool, len(existing))
+	byName := make(map[string]pluginreg.Plugin, len(existing))
 	stale := make(map[string]bool, len(existing))
 	for _, p := range existing {
-		have[p.Name] = true
+		byName[p.Name] = p
 		stale[p.Name] = true
 	}
 	seenInSeed := make(map[string]string, len(seed)) // name -> raw entry
@@ -59,13 +57,20 @@ func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string)
 		}
 		seenInSeed[name] = e.Raw
 		delete(stale, name)
-		if have[name] {
+		row := pluginreg.FromEntry(e)
+		if existingRow, ok := byName[name]; ok {
+			if !pluginreg.SameIdentity(existingRow, row) {
+				if err := reg.Put(ctx, row); err != nil {
+					slog.Warn("plugin seed entry collides with a different plugin already registered under this name; keeping the on-disk row",
+						"component", "startup", "name", name, "err", err)
+				}
+			}
 			continue
 		}
-		if err := reg.Put(ctx, pluginreg.FromEntry(e)); err != nil {
+		if err := reg.Put(ctx, row); err != nil {
 			return err
 		}
-		have[name] = true
+		byName[name] = row
 	}
 	if len(stale) > 0 {
 		names := make([]string, 0, len(stale))
@@ -109,37 +114,9 @@ func (b *boot) bootPluginRegistry(ctx context.Context) (*pluginreg.FSRegistry, [
 		return nil, nil, fmt.Errorf("plugin registry list: %w", err)
 	}
 	rows = fetchRegistryPlugins(ctx, reg, rows)
-	rows = orderBySeed(b.cfg.Plugins.Seed, rows)
-	rows = append(rows, embeddedQuackPlugin())
+	rows = pluginreg.OrderBySeed(b.cfg.Plugins.Seed, rows)
+	rows = append(rows, pluginreg.EmbeddedQuackPlugin())
 	return reg, rows, nil
-}
-
-// orderBySeed reorders rows to match plugins.seed's listed order (bare-name
-// resolution is "first in merge order wins", #1427 F2) - a row not in seed
-// (added via the UI/REST, P2) sorts after, in List's name order.
-func orderBySeed(seed []string, rows []pluginreg.Plugin) []pluginreg.Plugin {
-	byName := make(map[string]pluginreg.Plugin, len(rows))
-	for _, p := range rows {
-		byName[p.Name] = p
-	}
-	out := make([]pluginreg.Plugin, 0, len(rows))
-	seen := make(map[string]bool, len(rows))
-	for _, s := range seed {
-		e, err := pluginreg.ParseEntry(s) // config.validatePlugins already checked every entry parses
-		if err != nil {
-			continue
-		}
-		if p, ok := byName[e.Name()]; ok && !seen[e.Name()] {
-			out = append(out, p)
-			seen[e.Name()] = true
-		}
-	}
-	for _, p := range rows {
-		if !seen[p.Name] {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // registryPluginRoots is every non-embedded row's resolved Root() - what

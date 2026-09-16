@@ -40,6 +40,11 @@ type Options struct {
 	// ExtraRO grant and PI_ACP_CONFIG's skill_paths - #1427 P1's per-round
 	// registry pickup, since a pinned process only re-spawns between nodes.
 	SkillPaths func() []string
+	// ExtraRO is consulted at every spawn for the sandbox's RO grant ONLY -
+	// never fed into skill_paths. Lets plugins.root be readable (replay,
+	// git history) without handing pi's recursive skill scan the whole
+	// registry root, every SKILL.md in every clone (#1430 carry-over).
+	ExtraRO func() []string
 	// Plugins, if set, is consulted per round for the agent.invoke ledger
 	// entry's plugin provenance (#1427 P1).
 	Plugins func() []ledger.PluginRef

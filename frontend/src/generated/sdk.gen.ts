@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetMemoryData, GetMemoryErrors, GetMemoryResponses, GetMemoryStatsData, GetMemoryStatsResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListNodeMemoriesData, ListNodeMemoriesErrors, ListNodeMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses, VoteMemoryData, VoteMemoryErrors, VoteMemoryResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, CreatePluginData, CreatePluginErrors, CreatePluginResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DeletePluginData, DeletePluginErrors, DeletePluginResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetMemoryData, GetMemoryErrors, GetMemoryResponses, GetMemoryStatsData, GetMemoryStatsResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListNodeMemoriesData, ListNodeMemoriesErrors, ListNodeMemoriesResponses, ListPluginsData, ListPluginsResponses, ListPluginUpdatesData, ListPluginUpdatesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateAllPluginsData, UpdateAllPluginsResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdatePluginData, UpdatePluginErrors, UpdatePluginResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses, VoteMemoryData, VoteMemoryErrors, VoteMemoryResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -642,5 +642,81 @@ export const rescopeMemories = <ThrowOnError extends boolean = false>(options?: 
 export const getMemoryStats = <ThrowOnError extends boolean = false>(options?: Options<GetMemoryStatsData, ThrowOnError>): RequestResult<GetMemoryStatsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetMemoryStatsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/memories/stats',
+    ...options
+});
+
+/**
+ * List every registered plugin (epic
+ *
+ * Every registry row plus the go:embedded `quack` baseline. A row with
+ * `error` set still appears - the last good clone (if any) keeps
+ * serving; the error is surfaced, not swallowed.
+ *
+ */
+export const listPlugins = <ThrowOnError extends boolean = false>(options?: Options<ListPluginsData, ThrowOnError>): RequestResult<ListPluginsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListPluginsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/plugins',
+    ...options
+});
+
+/**
+ * Register and fetch a plugin
+ *
+ * Parses `entry` (`github:owner/repo[@ref][#path]`, or a local root
+ * path), stores the row, then fetches it synchronously (bounded by the
+ * registry's git timeout). A fetch failure still returns 201 with the
+ * row - `error` set, no clone or a stale one - so the UI shows it
+ * instead of the add silently failing.
+ *
+ */
+export const createPlugin = <ThrowOnError extends boolean = false>(options: Options<CreatePluginData, ThrowOnError>): RequestResult<CreatePluginResponses, CreatePluginErrors, ThrowOnError> => (options.client ?? client).post<CreatePluginResponses, CreatePluginErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/plugins',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Check every github-sourced plugin for a newer remote sha
+ *
+ * Compares each row's installed sha against its tracked ref
+ * (default-branch HEAD, or the pinned ref). A per-row check failure
+ * (unreachable remote, etc.) lands in that row's `error` field and
+ * never fails the rest of the response.
+ *
+ */
+export const listPluginUpdates = <ThrowOnError extends boolean = false>(options?: Options<ListPluginUpdatesData, ThrowOnError>): RequestResult<ListPluginUpdatesResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListPluginUpdatesResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/plugins/updates',
+    ...options
+});
+
+/**
+ * Fetch every github-sourced plugin
+ */
+export const updateAllPlugins = <ThrowOnError extends boolean = false>(options?: Options<UpdateAllPluginsData, ThrowOnError>): RequestResult<UpdateAllPluginsResponses, unknown, ThrowOnError> => (options?.client ?? client).post<UpdateAllPluginsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/plugins/update',
+    ...options
+});
+
+/**
+ * Remove a plugin's row and clone
+ */
+export const deletePlugin = <ThrowOnError extends boolean = false>(options: Options<DeletePluginData, ThrowOnError>): RequestResult<DeletePluginResponses, DeletePluginErrors, ThrowOnError> => (options.client ?? client).delete<DeletePluginResponses, DeletePluginErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/plugins/{name}',
+    ...options
+});
+
+/**
+ * Fetch one plugin against its tracked/pinned ref
+ */
+export const updatePlugin = <ThrowOnError extends boolean = false>(options: Options<UpdatePluginData, ThrowOnError>): RequestResult<UpdatePluginResponses, UpdatePluginErrors, ThrowOnError> => (options.client ?? client).post<UpdatePluginResponses, UpdatePluginErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/plugins/{name}/update',
     ...options
 });

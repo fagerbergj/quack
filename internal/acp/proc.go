@@ -97,11 +97,15 @@ func traceparentEnv(ctx context.Context) []string {
 
 // wrappedArgv is the subprocess argv actually exec'd, wrapped through the
 // SAME sandbox seam every other child runs inside (workspace.WrapArgv) - RO
-// adds SkillPaths(), queried fresh every spawn (#1427 P1), on top of caps'.
+// adds SkillPaths() plus ExtraRO() (grant-only, e.g. plugins.root), both
+// queried fresh every spawn (#1427 P1, #1430).
 func (a *Agent) wrappedArgv(cwd string, caps workspace.Caps) []string {
 	var extraRO []string
 	if a.opts.SkillPaths != nil {
 		extraRO = a.opts.SkillPaths()
+	}
+	if a.opts.ExtraRO != nil {
+		extraRO = append(extraRO, a.opts.ExtraRO()...)
 	}
 	return workspace.WrapArgv(cwd, a.opts.Command, caps, extraRO, nil)
 }

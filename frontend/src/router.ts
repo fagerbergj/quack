@@ -34,14 +34,16 @@ export function useChatId(): string | undefined {
 // The app's pages: a plain path match, same spirit as readChatId - no
 // route table, no dependency, just the paths this needs. 'ext' (#870) hosts
 // an extension's own UI inside the SPA shell at /ext/<name>, not a real <a href> that would navigate away from the app.
-export type Route = 'chat' | 'memory' | 'ext'
+export type Route = 'chat' | 'memory' | 'plugins' | 'ext'
 
 // Pure (no window access) so it's directly testable - see router.test.ts.
 // Anchored to the full segment (/memory or /memory/...), not a bare prefix:
 // startsWith('/memory') would also match /memory-export.
 export function routeFor(pathname: string): Route {
   if (/^\/ext(\/|$)/.test(pathname)) return 'ext'
-  return /^\/memory(\/|$)/.test(pathname) ? 'memory' : 'chat'
+  if (/^\/memory(\/|$)/.test(pathname)) return 'memory'
+  if (/^\/plugins(\/|$)/.test(pathname)) return 'plugins'
+  return 'chat'
 }
 
 function readRoute(): Route {

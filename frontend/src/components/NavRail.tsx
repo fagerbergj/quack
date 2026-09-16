@@ -93,6 +93,7 @@ export function NavRail({ route, activeExtension, initialExtensions, versionOver
         <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
           <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
           <NavItem icon={<Icon name="lightbulb" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
+          <NavItem icon={<Icon name="extension" className="w-4 h-4" />} label="Plugins" active={route === 'plugins'} onClick={() => { navigate('/plugins'); onClose() }} />
           {linkedExtensions.length > 0 && (
             <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
               {linkedExtensions.map(ext => (
