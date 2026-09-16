@@ -9,10 +9,11 @@ func TestPluginRoots(t *testing.T) {
 		cfg  Config
 		want []string
 	}{
-		"neither set uses defaults": {Config{}, defaultSkillPlugins},
-		"top-level plugins wins":    {Config{Plugins: []string{"a"}, Skills: SkillsConfig{Plugins: []string{"b"}}}, []string{"a"}},
-		"deprecated alias read":     {Config{Skills: SkillsConfig{Plugins: []string{"b"}}}, []string{"b"}},
-		"explicit empty is honored": {Config{Plugins: []string{}}, []string{}},
+		"neither set uses defaults":                              {Config{}, defaultSkillPlugins},
+		"top-level plugins wins":                                 {Config{Plugins: &PluginsConfig{Seed: []string{"a"}}, Skills: SkillsConfig{Plugins: []string{"b"}}}, []string{"a"}},
+		"deprecated alias read":                                  {Config{Skills: SkillsConfig{Plugins: []string{"b"}}}, []string{"b"}},
+		"explicit empty is honored":                              {Config{Plugins: &PluginsConfig{Seed: []string{}}}, []string{}},
+		"github seed entries are P1's concern, not a local root": {Config{Plugins: &PluginsConfig{Seed: []string{"a", "github:acme/widgets"}}}, []string{"a"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

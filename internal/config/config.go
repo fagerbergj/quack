@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/memoryrules"
+	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
@@ -35,10 +37,10 @@ type Config struct {
 	Server       ServerConfig           `yaml:"server"`
 	Workspace    WorkspaceConfig        `yaml:"workspace"`
 	Skills       SkillsConfig           `yaml:"skills"`
-	// Plugins are the Agent Plugins roots quack loads. A root contributes
-	// skills, MCP servers, and quack's own extension declarations, so it is
-	// no longer a skills-only concern - skills.plugins stays a deprecated alias.
-	Plugins []string `yaml:"plugins"`
+	// Plugins is the dynamic plugin registry block (epic #1427): store, root
+	// and seed entries. A bare YAML list is treated as seed: (today's
+	// local-root form) - skills.plugins stays a deprecated alias of that form.
+	Plugins *PluginsConfig `yaml:"plugins"`
 	// Workflows is a top-level key, not nested under skills: - it's a
 	// binding mechanism onto the DAG planner, not a skill-library concern
 	// (skills.plugins is a different axis entirely).
@@ -64,12 +66,12 @@ type SkillsConfig struct {
 	Plugins []string `yaml:"plugins"`
 }
 
-// PluginRoots is the effective plugin-root list: the top-level plugins: key, else the deprecated skills.plugins, else the defaults. Each root is resolved
-// at startup via internal/plugin's Agent Plugins / Codex discovery order; a root
-// that fails to resolve is a startup warning, never an error. Order is preserved and never deduped.
+// PluginRoots: local (non-github:) seed entries, else deprecated skills.plugins,
+// else defaults; order kept, never deduped. Seed == nil means seed: was omitted
+// (unlike seed: []), which falls through like an absent plugins: block.
 func (c *Config) PluginRoots() []string {
-	if c.Plugins != nil {
-		return c.Plugins
+	if c.Plugins != nil && c.Plugins.Seed != nil {
+		return localSeedEntries(c.Plugins.Seed)
 	}
 	if c.Skills.Plugins != nil {
 		return c.Skills.Plugins
@@ -77,14 +79,89 @@ func (c *Config) PluginRoots() []string {
 	return append([]string{}, defaultSkillPlugins...)
 }
 
-// WorkflowShape teaches plan-work's "Common workflows" table a deployment-
-// specific DAG shape (issue #805) - a house-standard node chain (document
-// ingestion, reMarkable notes, ...) that isn't in the shipped catalog. Trigger
-// and Shape render as the table's two columns verbatim; Agents is the subset
-// of that prose the config layer can actually validate.
-//
-// Nodes is optional (workflow binding): when present, a dispatch naming this
-// shape gets Nodes built into a dag.Plan directly - no planner LLM call - instead of Trigger/Shape staying a planner hint; Trigger/Shape still render in the table either way, so the shape stays discoverable to an ordinary chat.
+func localSeedEntries(seed []string) []string {
+	out := make([]string, 0, len(seed))
+	for _, s := range seed {
+		if !strings.HasPrefix(s, "github:") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// PluginsConfig is the plugins: block (#1427): store picks the registry
+// backend ("" = filesystem until P3), root holds clones and rows. seed, like
+// today's bare list, replaces the defaults entirely rather than adding to them.
+type PluginsConfig struct {
+	Store string   `yaml:"store"`
+	Root  string   `yaml:"root"`
+	Seed  []string `yaml:"seed"`
+}
+
+// pluginsConfigFields is every field UnmarshalYAML's manual mapping-key
+// check accepts - kept in sync with PluginsConfig's yaml tags, since a
+// custom UnmarshalYAML bypasses the decoder's KnownFields(true).
+var pluginsConfigFields = map[string]bool{"store": true, "root": true, "seed": true}
+
+// UnmarshalYAML lets plugins: stay a bare list - today's local-root form,
+// treated as seed: - alongside the new {store, root, seed} block.
+func (p *PluginsConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.SequenceNode {
+		return value.Decode(&p.Seed)
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("config: plugins: expected a list or a mapping")
+	}
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		if !pluginsConfigFields[key] {
+			return fmt.Errorf("config: plugins: unknown field %q (known: store, root, seed)", key)
+		}
+	}
+	type plain PluginsConfig
+	return value.Decode((*plain)(p))
+}
+
+// validatePlugins normalizes c.Plugins (nil, or a block with no seed: key ->
+// skills.plugins or the defaults), rejects a store other than filesystem (P3
+// wires the rest), fills root's default, and checks every seed entry parses.
+func (c *Config) validatePlugins() error {
+	// bothSet: plugins: actually wins over skills.plugins (a block with no
+	// seed: key falls through to it below, so it isn't "ignored" at all).
+	bothSet := c.Plugins != nil && c.Plugins.Seed != nil && c.Skills.Plugins != nil
+	if bothSet {
+		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
+	}
+	if c.Plugins == nil {
+		c.Plugins = &PluginsConfig{}
+	}
+	if c.Plugins.Seed == nil {
+		seed := append([]string{}, defaultSkillPlugins...)
+		if c.Skills.Plugins != nil {
+			seed = c.Skills.Plugins
+		}
+		c.Plugins.Seed = seed
+	}
+	if c.Skills.Plugins != nil && !bothSet {
+		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
+	}
+	if c.Plugins.Store != "" {
+		return fmt.Errorf("config: plugins.store %q is not supported until P3 - omit plugins.store to use the filesystem backend", c.Plugins.Store)
+	}
+	if c.Plugins.Root == "" {
+		c.Plugins.Root = filepath.Join(c.Workspace.Root, ".quack", "plugins")
+	}
+	for _, s := range c.Plugins.Seed {
+		if _, err := pluginreg.ParseEntry(s); err != nil {
+			return fmt.Errorf("config: plugins.seed: %w", err)
+		}
+	}
+	return nil
+}
+
+// WorkflowShape adds a deployment-specific DAG shape to plan-work's "Common
+// workflows" table (#805). With Nodes set, a dispatch naming the shape builds
+// the dag.Plan directly (no planner call); Trigger/Shape still render either way.
 type WorkflowShape struct {
 	Name    string         `yaml:"name"`    // short id for logs/warnings; also the future storage key (#806)
 	Trigger string         `yaml:"trigger"` // "Request" column - when this shape applies
@@ -970,12 +1047,8 @@ func (c *Config) validate() error {
 	if err := c.Workspace.applyDefaults(); err != nil {
 		return err
 	}
-	if c.Plugins != nil && c.Skills.Plugins != nil {
-		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
-	}
-	c.Plugins = c.PluginRoots()
-	if c.Skills.Plugins != nil {
-		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
+	if err := c.validatePlugins(); err != nil {
+		return err
 	}
 	if err := c.validateWorkflows(); err != nil {
 		return err
