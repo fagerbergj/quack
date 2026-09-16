@@ -784,13 +784,9 @@ func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.So
 }
 
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	// A live store Source (P2, #1421); during a replay the pinned Source (P3,
-	// #1422) takes its place so recorded versions win over the store's latest.
-	promptSrc, promptSrcName := buildPromptSource(cfg)
-	if replaySrc, err := replayPromptSource(ctx, cfg); err != nil {
+	promptSrc, promptSrcName, err := promptSourceFor(ctx, cfg)
+	if err != nil {
 		return nil, nil, "", err
-	} else if replaySrc != nil {
-		promptSrc, promptSrcName = replaySrc, cfg.Prompts.Store
 	}
 	b := &boot{cfg: cfg, res: artifactsrc.New(promptSrcName, promptSrc, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
 	defer func() {
@@ -873,6 +869,20 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 
 // buildPromptSource builds the prompts: store's Source and its stores: name; (nil, "")
 // when prompts: names no store, so New falls back to the static-only Resolver.
+// promptSourceFor: the live store Source (P2, #1421), unless this is a replay,
+// where the pinned Source (P3, #1422) takes its place so recorded versions win.
+func promptSourceFor(ctx context.Context, cfg *config.Config) (artifactsrc.Source, string, error) {
+	src, name := buildPromptSource(cfg)
+	replaySrc, err := replayPromptSource(ctx, cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	if replaySrc != nil {
+		return replaySrc, cfg.Prompts.Store, nil
+	}
+	return src, name, nil
+}
+
 func buildPromptSource(cfg *config.Config) (artifactsrc.Source, string) {
 	if cfg.Prompts.Store == "" {
 		return nil, ""
