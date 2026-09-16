@@ -78,6 +78,15 @@ Runs can be recorded to a replay ledger and re-driven later - the basis for regr
 | `quack replay [--from-server <url>]` | Replay a recorded run offline (strict) or live from a changed node (fork). `--from-server` names where to fetch the recording when the argument is a chat id - distinct from the global `--server` (which this command doesn't otherwise use; the replay itself always runs from your local `quack.yaml`). |
 | `quack eval [--from-server <url>]` | Re-run a recorded conversation live with a swapped model and compare judge scores. Same `--from-server` meaning as `replay`. |
 
+## Datasets and experiments
+
+Export recorded runs to a Langfuse dataset, then re-run an agent against that dataset outside any live GitHub event - the basis for comparing prompt versions in Langfuse's evaluation/comparison views.
+
+| Command | Does |
+| --- | --- |
+| `quack dataset export --dataset <name> (--chat <id> \| --repo <owner/repo>) [--since <date>] [--limit N]` | Export gated code-reviewer/synthesizer node runs as Langfuse dataset items (creating the dataset if needed). Idempotent: re-exporting the same node run upserts the same item instead of duplicating it. |
+| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--json]` | Run `--agent`'s node against every item in `--dataset`, reporting each as a Langfuse dataset run item. `--prompt` is recorded on the run item but does not yet pin the resolver to that exact version (a known limitation - see the P5 issue). |
+
 ## Memory
 
 Browse or invalidate what quack has remembered (memory lifecycle design doc); `forget` is the CLI verb for the manual-delete remediation path a memory-poisoning incident needs.
