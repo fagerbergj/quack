@@ -95,6 +95,55 @@ func TestRunExperiment_ItemErrorIsReportedNotFatal(t *testing.T) {
 	}
 }
 
+// TestListDatasetItems_PagesUntilEmpty drives a 2-page fake: page 1 returns one item
+// with totalPages=2, page 2 returns the second and last item.
+func TestListDatasetItems_PagesUntilEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		switch page {
+		case "1":
+			writeJSON(w, map[string]any{"data": []map[string]any{{"id": "item1", "input": map[string]any{"task": "a"}}},
+				"meta": map[string]any{"page": 1, "limit": 1, "totalItems": 2, "totalPages": 2}})
+		case "2":
+			writeJSON(w, map[string]any{"data": []map[string]any{{"id": "item2", "input": map[string]any{"task": "b"}}},
+				"meta": map[string]any{"page": 2, "limit": 1, "totalItems": 2, "totalPages": 2}})
+		default:
+			t.Fatalf("unexpected page %q", page)
+		}
+	}))
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	items, err := listDatasetItems(context.Background(), lf, "my-dataset", 0)
+	if err != nil {
+		t.Fatalf("listDatasetItems: %v", err)
+	}
+	if len(items) != 2 || items[0].Id != "item1" || items[1].Id != "item2" {
+		t.Fatalf("want both pages' items in order, got %+v", items)
+	}
+}
+
+// TestListDatasetItems_LimitStopsBeforeSecondPage: --limit 1 must not fetch page 2.
+func TestListDatasetItems_LimitStopsBeforeSecondPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") != "1" {
+			t.Fatalf("must not fetch beyond the limit, got page %q", r.URL.Query().Get("page"))
+		}
+		writeJSON(w, map[string]any{"data": []map[string]any{{"id": "item1", "input": map[string]any{"task": "a"}}},
+			"meta": map[string]any{"page": 1, "limit": 1, "totalItems": 2, "totalPages": 2}})
+	}))
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	items, err := listDatasetItems(context.Background(), lf, "my-dataset", 1)
+	if err != nil {
+		t.Fatalf("listDatasetItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("want exactly 1 item, got %d", len(items))
+	}
+}
+
 func TestRunExperiment_ListDatasetItemsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -138,6 +187,94 @@ func TestRunExperiment_RecordRunItemError(t *testing.T) {
 	_, err := RunExperiment(context.Background(), io.Discard, &stubRunner{}, lf, ExperimentOpts{Dataset: "my-dataset"})
 	if err == nil {
 		t.Fatal("want an error when creating the run item fails")
+	}
+}
+
+// recordingBody builds a FetchRecording response body: one node run for chatID/node/agent
+// with the given answer, assembled the same way the real ledger does.
+func recordingBody(t *testing.T, chatID, node, agent, task, answer string) []byte {
+	t.Helper()
+	ls := ledgertest.NewMemStore()
+	if _, err := ls.AppendIntent(context.Background(), llmCallEntry(chatID, node, agent, task, answer)); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := ledger.AssembleBundle(context.Background(), ls, chatID, "test-version", &buf); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// TestLiveItemRunner_RunItem drives RunItem end to end against an httptest fake of the
+// quack HTTP API: create chat, stream SSE to completion, fetch the recording, resolve the
+// agent's node run and its trace id off a real Store.
+func TestLiveItemRunner_RunItem(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetChatOrigin(ctx, "c1", "u", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveDagPlan(ctx, "c1", "plan1", "turn1", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{NodeID: "n1", PlanID: "plan1", TraceID: "trace-1", TraceIDSet: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"id": "c1"})
+	})
+	mux.HandleFunc("/api/v1/chats/c1/responses", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: node_done\ndata: {\"node_id\":\"n1\",\"output\":\"orchestrator text\"}\n\n")
+		io.WriteString(w, "event: done\ndata: {}\n\n")
+	})
+	mux.HandleFunc("/api/v1/chats/c1/recording", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(recordingBody(t, "c1", "n1", "code-reviewer", "review this", "the real answer"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := NewLiveItemRunner(srv.URL, st, "code-reviewer")
+	answer, traceID, err := r.RunItem(ctx, "review this")
+	if err != nil {
+		t.Fatalf("RunItem: %v", err)
+	}
+	if answer != "the real answer" {
+		t.Fatalf("answer = %q, want the recorded node run's answer", answer)
+	}
+	if traceID != "trace-1" {
+		t.Fatalf("traceID = %q, want the node's recorded trace id", traceID)
+	}
+}
+
+// TestLiveItemRunner_RunItem_NoNodeRun pins item 8: no matching node run for Agent
+// must be an error, never a run item with the orchestrator's own answer.
+func TestLiveItemRunner_RunItem_NoNodeRun(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"id": "c1"})
+	})
+	mux.HandleFunc("/api/v1/chats/c1/responses", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: agent_token\ndata: {\"text\":\"orchestrator's own answer\"}\n\n")
+		io.WriteString(w, "event: done\ndata: {}\n\n")
+	})
+	mux.HandleFunc("/api/v1/chats/c1/recording", func(w http.ResponseWriter, r *http.Request) {
+		// A recording with no run for "code-reviewer" at all.
+		_, _ = w.Write(recordingBody(t, "c1", "n1", "synthesizer", "x", "y"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := NewLiveItemRunner(srv.URL, nil, "code-reviewer")
+	if _, _, err := r.RunItem(ctx, "review this"); err == nil {
+		t.Fatal("want an error when the agent produced no node run")
 	}
 }
 

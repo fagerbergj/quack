@@ -67,19 +67,33 @@ func RunExperiment(ctx context.Context, errOut io.Writer, runner itemRunner, lf 
 	return results, nil
 }
 
+// listDatasetItems pages through dataset's items (params.Page, 1-based) until a page
+// comes back empty or past meta.TotalPages, stopping early once limit items are
+// collected. limit <= 0 means no cap - every item in the dataset.
 func listDatasetItems(ctx context.Context, lf *langfusegen.ClientWithResponses, dataset string, limit int) ([]langfusegen.DatasetItem, error) {
-	params := &langfusegen.DatasetItemsListParams{DatasetName: &dataset}
-	if limit > 0 {
-		params.Limit = &limit
+	var out []langfusegen.DatasetItem
+	for page := 1; ; page++ {
+		p := page
+		params := &langfusegen.DatasetItemsListParams{DatasetName: &dataset, Page: &p}
+		resp, err := lf.DatasetItemsListWithResponse(ctx, params)
+		if err != nil {
+			return nil, fmt.Errorf("experiment run: list dataset %q items: %w", dataset, err)
+		}
+		if resp.JSON200 == nil {
+			return nil, fmt.Errorf("experiment run: list dataset %q items: %s", dataset, resp.Status())
+		}
+		if len(resp.JSON200.Data) == 0 {
+			break
+		}
+		out = append(out, resp.JSON200.Data...)
+		if limit > 0 && len(out) >= limit {
+			return out[:limit], nil
+		}
+		if page >= resp.JSON200.Meta.TotalPages {
+			break
+		}
 	}
-	resp, err := lf.DatasetItemsListWithResponse(ctx, params)
-	if err != nil {
-		return nil, fmt.Errorf("experiment run: list dataset %q items: %w", dataset, err)
-	}
-	if resp.JSON200 == nil {
-		return nil, fmt.Errorf("experiment run: list dataset %q items: %s", dataset, resp.Status())
-	}
-	return resp.JSON200.Data, nil
+	return out, nil
 }
 
 func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfusegen.ClientWithResponses, item langfusegen.DatasetItem, opts ExperimentOpts) (ExperimentResult, error) {
@@ -88,12 +102,12 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfusegen.C
 		return ExperimentResult{}, fmt.Errorf("experiment run: item %s: %w", item.Id, err)
 	}
 	start := time.Now()
-	answer, traceID, err := runner.RunItem(ctx, task)
+	_, traceID, err := runner.RunItem(ctx, task)
 	duration := time.Since(start)
 	if err != nil {
 		return ExperimentResult{ItemID: item.Id, TraceID: traceID, Prompt: opts.Prompt, Duration: duration, Error: err.Error()}, nil
 	}
-	if err := recordRunItem(ctx, lf, opts, item.Id, traceID, answer); err != nil {
+	if err := recordRunItem(ctx, lf, opts, item.Id, traceID); err != nil {
 		return ExperimentResult{}, err
 	}
 	return ExperimentResult{ItemID: item.Id, TraceID: traceID, Prompt: opts.Prompt, Duration: duration}, nil
@@ -114,12 +128,16 @@ func itemTask(item langfusegen.DatasetItem) (string, error) {
 	return in.Task, nil
 }
 
-func recordRunItem(ctx context.Context, lf *langfusegen.ClientWithResponses, opts ExperimentOpts, itemID, traceID, answer string) error {
+// recordRunItem's description names the run's prompt/agent once (RunDescription is
+// run-level and idempotent, unlike Metadata - openapi.yml:11282). The answer itself
+// isn't repeated here; it already lives on the trace RunItem reported.
+func recordRunItem(ctx context.Context, lf *langfusegen.ClientWithResponses, opts ExperimentOpts, itemID, traceID string) error {
+	desc := fmt.Sprintf("prompt=%s agent=%s", opts.Prompt, opts.Agent)
 	req := langfusegen.CreateDatasetRunItemRequest{
-		DatasetItemId: itemID,
-		RunName:       opts.RunName,
-		TraceId:       &traceID,
-		Metadata:      map[string]string{"prompt": opts.Prompt, "agent": opts.Agent, "answer": answer},
+		DatasetItemId:  itemID,
+		RunName:        opts.RunName,
+		TraceId:        &traceID,
+		RunDescription: &desc,
 	}
 	resp, err := lf.DatasetRunItemsCreateWithResponse(ctx, req)
 	if err != nil {
@@ -160,16 +178,26 @@ func (r *LiveItemRunner) RunItem(ctx context.Context, task string) (answer, trac
 		return "", "", fmt.Errorf("%s", res.Error)
 	}
 
-	answer = res.Answer
-	nodeID := ""
-	if body, err := c.FetchRecording(ctx, chatID); err == nil {
-		if sess, err := sessionFromBundleBytes(body); err == nil {
-			for key, run := range sess.NodeRuns(map[string]bool{r.Agent: true}) {
-				if run.Answer != "" {
-					answer, nodeID = run.Answer, key.Node
-				}
-			}
+	body, err := c.FetchRecording(ctx, chatID)
+	if err != nil {
+		return "", "", fmt.Errorf("chat %s: fetch recording: %w", chatID, err)
+	}
+	sess, err := sessionFromBundleBytes(body)
+	if err != nil {
+		return "", "", fmt.Errorf("chat %s: load recording: %w", chatID, err)
+	}
+	runs := sess.NodeRuns(map[string]bool{r.Agent: true})
+	var nodeID string
+	for _, key := range sortedStreamKeys(runs) {
+		if run := runs[key]; run.Answer != "" {
+			answer, nodeID = run.Answer, key.Node
+			break
 		}
+	}
+	// A run item with no node run would otherwise report an empty traceId and the
+	// orchestrator's own answer instead of the agent's - report it as an error.
+	if nodeID == "" {
+		return "", "", fmt.Errorf("chat %s: agent %q produced no node run", chatID, r.Agent)
 	}
 	return answer, r.traceIDFor(ctx, chatID, nodeID), nil
 }
