@@ -36,11 +36,6 @@ func emitWrap(t tool.Tool, coords ledger.Coords) (tool.Tool, error) {
 	return &emitTool{inner: rt, coords: coords}, nil
 }
 
-// EmitWrapForTesting: same emission wrapper Build uses, exported for tests.
-func EmitWrapForTesting(t tool.Tool, coords ledger.Coords) (tool.Tool, error) {
-	return emitWrap(t, coords)
-}
-
 // rebindToolMap: delegates to the inner tool, then re-points the request's dispatch entry at the wrapper.
 func rebindToolMap(inner runnableTool, w tool.Tool, ctx agent.Context, req *model.LLMRequest) error {
 	if err := inner.ProcessRequest(ctx, req); err != nil {
@@ -109,7 +104,7 @@ func emitToolEvent(ctx context.Context, name string, args any, result map[string
 	if err != nil {
 		attrs = append(attrs, attribute.String(otelobs.ErrorType, err.Error()))
 	}
-	// gen_ai.agent.name: same identity emitChatEvent stamps - replay's stream key needs it.
+	// gen_ai.agent.name: same identity emitChatEvent stamps, for consistent stream grouping.
 	if c := ledger.CoordsFromContext(ctx); c.Agent != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
 	}

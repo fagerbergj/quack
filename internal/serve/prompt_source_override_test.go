@@ -20,10 +20,7 @@ func (stubSource) Seed(context.Context, string, artifactsrc.Artifact) error { re
 func TestPromptSourceForChainsOverrideBeforeStore(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Prompts.Store = "lf"
-	got, name, err := promptSourceFor(context.Background(), cfg, stubSource{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	got, name := promptSourceFor(cfg, stubSource{})
 	chain, ok := got.(*artifactsrc.ChainSource)
 	if !ok || name != "lf" {
 		t.Fatalf("got %T %q, want *ChainSource \"lf\"", got, name)
@@ -35,8 +32,8 @@ func TestPromptSourceForChainsOverrideBeforeStore(t *testing.T) {
 		t.Fatalf("chain.Sources[0] = %T, want the override first", chain.Sources[0])
 	}
 
-	got, _, err = promptSourceFor(context.Background(), &config.Config{}, nil)
-	if err != nil || got != nil {
-		t.Fatalf("no override, no store: got %v %v", got, err)
+	got, _ = promptSourceFor(&config.Config{}, nil)
+	if got != nil {
+		t.Fatalf("no override, no store: got %v", got)
 	}
 }

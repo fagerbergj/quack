@@ -14,7 +14,6 @@ import (
 	"github.com/fagerbergj/quack/internal/httpx"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
-	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -38,10 +37,9 @@ type Deps struct {
 	NodeCancelled   func(chatID, nodeID string) bool
 	// RepeatGuardTripped ends a node's round when the repeat guard's hard
 	// stop fires (dag.Executor.RepeatGuardTripped) - nil leaves only the
-	// soft refusal (replay/test builds, no live executor).
+	// soft refusal (test builds, no live executor).
 	RepeatGuardTripped func(chatID, nodeID, msg string) bool
 	ExtTools           map[string]tool.Tool
-	Replayer           *replay.Session
 	LedgerCoords       ledger.Coords
 	Memory             *memory.Store      // recall_memory (nil = not offered - see resolveToolNames)
 	MemoryRole         string             // recall_memory's role bucket; empty falls back to repo then user
@@ -68,19 +66,6 @@ var registry = map[string]constructor{
 
 // Build: resolves tool names to ADK tools.
 func Build(names []string, d Deps) ([]tool.Tool, error) {
-	if d.Replayer != nil {
-		if d.Replayer.Mode() != replay.ModeFork {
-			return newReplayStubs(names, d.Replayer, d.LedgerCoords), nil
-		}
-		// Fork-replay: build real tools for stub fallback on divergence.
-		live := d
-		live.Replayer = nil
-		liveTools, err := Build(names, live)
-		if err != nil {
-			return nil, fmt.Errorf("tools: fork-mode live build: %w", err)
-		}
-		return newReplayStubsWithLive(names, d.Replayer, d.LedgerCoords, liveTools), nil
-	}
 	if d.Client == nil {
 		d.Client = &http.Client{Timeout: 30 * time.Second, Transport: httpx.NewTransport(nil)}
 	}

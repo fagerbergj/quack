@@ -147,7 +147,7 @@ export const getChatRecording = <ThrowOnError extends boolean = false>(options: 
 /**
  * List a chat's artifacts
  *
- * Every artifact name visible to this chat, each with its full revision history (oldest first) - the durable store behind historical attachment viewing, the reMarkable review page fetching the scan under review, and replay debugging. Nested under chats so chat access is artifact access - no new authz surface. Read-only: bytes enter only via dispatch/run-start, never through this API; lifecycle rides chat deletion. Deliberately unpaginated: bounded per chat, not an open-ended table (mirrors /api/v1/recordings).
+ * Every artifact name visible to this chat, each with its full revision history (oldest first) - the durable store behind historical attachment viewing and the reMarkable review page fetching the scan under review. Nested under chats so chat access is artifact access - no new authz surface. Read-only: bytes enter only via dispatch/run-start, never through this API; lifecycle rides chat deletion. Deliberately unpaginated: bounded per chat, not an open-ended table (mirrors /api/v1/recordings).
  *
  */
 export const listChatArtifacts = <ThrowOnError extends boolean = false>(options: Options<ListChatArtifactsData, ThrowOnError>): RequestResult<ListChatArtifactsResponses, ListChatArtifactsErrors, ThrowOnError> => (options.client ?? client).get<ListChatArtifactsResponses, ListChatArtifactsErrors, ThrowOnError>({

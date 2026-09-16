@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/fagerbergj/quack/internal/pluginreg"
-	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
@@ -34,29 +33,12 @@ type Plugins struct {
 	// rebuildSkills swaps in a fresh roster; refusals names non-seed rows
 	// dropped this pass - the same per-row admission boot uses (#1430).
 	rebuildSkills func() (refusals map[string]error, err error)
-	// pinnedBundle is "" normally; a replay bundle path once SetPinnedBundle
-	// marks the roster pinned (#1427 P4 F1) - every mutating handler refuses
-	// via checkMutable before touching the registry, not just post-mutation.
-	pinnedBundle string
 }
 
 // NewPlugins builds the handler's registry access. rebuildSkills may be nil
 // (no-op) for a caller that doesn't need the roster kept live, e.g. a test.
 func NewPlugins(reg pluginreg.FetchRegistry, root string, seed []string, rebuildSkills func() (map[string]error, error)) *Plugins {
 	return &Plugins{reg: reg, root: root, seed: seed, rebuildSkills: rebuildSkills}
-}
-
-// SetPinnedBundle marks p's roster pinned to bundle ("" clears the pin) -
-// called once at boot when a replay bundle swapped in the skill source.
-func (p *Plugins) SetPinnedBundle(bundle string) { p.pinnedBundle = bundle }
-
-// checkMutable refuses with replay.ErrPinned (409 via rebuildStatus) when
-// pinned; called first by every handler that writes to the registry (F1).
-func (p *Plugins) checkMutable() error {
-	if p == nil || p.pinnedBundle == "" {
-		return nil
-	}
-	return fmt.Errorf("plugin roster is pinned to replay bundle %s: %w", p.pinnedBundle, replay.ErrPinned)
 }
 
 // rebuild re-resolves the native skill roster. A non-nil err is fatal (a
@@ -67,15 +49,6 @@ func (p *Plugins) rebuild() (refusals map[string]error, err error) {
 		return nil, nil
 	}
 	return p.rebuildSkills()
-}
-
-// rebuildStatus maps a rebuild error to its HTTP status - replay.ErrPinned
-// (#1427 P4 F1) is a 409, everything else stays the existing 422.
-func rebuildStatus(err error) int {
-	if errors.Is(err, replay.ErrPinned) {
-		return http.StatusConflict
-	}
-	return http.StatusUnprocessableEntity
 }
 
 // rebuildOrWarn is DeletePlugin's rebuild call: the delete already
@@ -162,20 +135,6 @@ func (h *Handler) requirePlugins(w http.ResponseWriter) bool {
 	return false
 }
 
-// requireMutable is requirePlugins plus the pin check (#1427 P4 F1) - every
-// handler that writes to the registry calls this first, so a replay pin
-// refuses before Put/Fetch/Delete, not only on the rebuild that follows.
-func (h *Handler) requireMutable(w http.ResponseWriter) bool {
-	if !h.requirePlugins(w) {
-		return false
-	}
-	if err := h.plugins.checkMutable(); err != nil {
-		errMsg(w, rebuildStatus(err), err.Error())
-		return false
-	}
-	return true
-}
-
 // ListPlugins serves every registered plugin, embedded baseline included.
 func (h *Handler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
@@ -197,7 +156,7 @@ func (h *Handler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 // stores the row, then fetches it synchronously. A fetch failure still
 // returns 201 with the row (error set), not a failed add.
 func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMutable(w) {
+	if !h.requirePlugins(w) {
 		return
 	}
 	var body schema.CreatePluginBody
@@ -238,7 +197,7 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error), not the response
 	refusals, rerr := h.plugins.rebuild()
 	if rerr != nil {
-		errMsg(w, rebuildStatus(rerr), rerr.Error())
+		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
 		return
 	}
 	if refused, ok := refusals[fetched.Name]; ok {
@@ -254,7 +213,7 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 // DeletePlugin removes a row and its clone. "quack" is reserved outright,
 // even against a github row that shadows it (unshadowing is out of scope).
 func (h *Handler) DeletePlugin(w http.ResponseWriter, r *http.Request, name schema.PluginName) {
-	if !h.requireMutable(w) {
+	if !h.requirePlugins(w) {
 		return
 	}
 	if name == pluginreg.EmbeddedQuackPluginName {
@@ -316,7 +275,7 @@ func (h *Handler) ListPluginUpdates(w http.ResponseWriter, r *http.Request) {
 // per-row click, so unlike UpdateAllPlugins it fetches regardless of
 // CheckUpdate's answer.
 func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name schema.PluginName) {
-	if !h.requireMutable(w) {
+	if !h.requirePlugins(w) {
 		return
 	}
 	rows, err := h.plugins.reg.List(r.Context())
@@ -332,7 +291,7 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error)
 	refusals, rerr := h.plugins.rebuild()
 	if rerr != nil {
-		errMsg(w, rebuildStatus(rerr), rerr.Error())
+		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
 		return
 	}
 	if refused, ok := refusals[fetched.Name]; ok {
@@ -347,7 +306,7 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 // "(all behind)") - a row already current, or one whose check itself
 // failed, is reported but not fetched. Bounded like ListPluginUpdates.
 func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
-	if !h.requireMutable(w) {
+	if !h.requirePlugins(w) {
 		return
 	}
 	rows, err := h.plugins.reg.List(r.Context())
@@ -371,7 +330,7 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 	})
 	refusals, rerr := h.plugins.rebuild()
 	if rerr != nil {
-		errMsg(w, rebuildStatus(rerr), rerr.Error())
+		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
 		return
 	}
 	wire := make([]schema.Plugin, len(results))

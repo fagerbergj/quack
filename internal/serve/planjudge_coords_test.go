@@ -2,8 +2,8 @@ package serve
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"google.golang.org/adk/v2/session"
@@ -16,19 +16,20 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// Replay stream keys are Node/Agent/Round, so a plan-judge call that inherits a
-// gated node's stamp resolves a stream the bundle doesn't have -> MissError.
-func writePlanJudgeFixture(t *testing.T) string {
+// newPlanJudgeStubProvider serves a fixed OpenAI-compatible chat.completion
+// answering submit_plan_verdict(accept:true) - a gate round's non-streaming
+// default (RunConfig{}'s StreamingMode) needs no SSE framing.
+func newPlanJudgeStubProvider(t *testing.T) config.ProviderConfig {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "entries.jsonl")
-	out := `{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"submit_plan_verdict\",\"args\":{\"accept\":true,\"reason\":\"ok\"}}}]}`
-	line := `{"seq":1,"chat_id":"c","kind":"llm.call","at":"2026-01-01T00:00:00Z","payload":{` +
-		`"request_model":"judge-model","response_model":"judge-model","output":"` + out + `"` +
-		`}}` + "\n"
-	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	body := `{"id":"1","object":"chat.completion","model":"judge-model","choices":[{"index":0,"finish_reason":"tool_calls",` +
+		`"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function",` +
+		`"function":{"name":"submit_plan_verdict","arguments":"{\"accept\":true,\"reason\":\"ok\"}"}}]}}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return config.ProviderConfig{Kind: "openai", Endpoint: srv.URL, APIKey: "k"}
 }
 
 func TestBuildAgents_PlanJudgeDoesNotInheritGatedNodeStamp(t *testing.T) {
@@ -48,12 +49,12 @@ func TestBuildAgents_PlanJudgeDoesNotInheritGatedNodeStamp(t *testing.T) {
 	}
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
-			"replay-test": {Kind: "replay", Bundle: writePlanJudgeFixture(t)},
+			"judge-test": newPlanJudgeStubProvider(t),
 		},
 		Gates: config.GatesConfig{
 			Rubric: "be good",
 			Judge: config.JudgeConfig{
-				Provider: "replay-test", Model: "judge-model", MaxRounds: 1,
+				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
 				Threshold: 0.7, MaxIterations: 2,
 			},
 		},

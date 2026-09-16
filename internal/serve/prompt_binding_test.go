@@ -49,20 +49,19 @@ func TestPromptBindingOverridesWorkerModel(t *testing.T) {
 
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
-			"replay-test":  {Kind: "replay", Bundle: writeCurrentDateReplayFixture(t)},
-			"replay-other": {Kind: "replay", Bundle: writeCurrentDateReplayFixture(t)},
+			"stub-test":  {Kind: "openai", Endpoint: "http://fake-provider.invalid"},
+			"stub-other": {Kind: "openai", Endpoint: "http://fake-provider.invalid"},
 		},
 		Models: map[string]config.ModelConfig{
-			"any-model":   {Provider: "replay-test"},
-			"bound-model": {Provider: "replay-other", Effort: "high"},
+			"any-model":   {Provider: "stub-test"},
+			"bound-model": {Provider: "stub-other", Effort: "high"},
 		},
 		Agents: map[string]config.AgentConfig{
 			"tester": {
-				// Unlike replay's Bundle field (a real disk path from the test's cwd),
-				// this must be "agents/<x>" so artifactsrc.BundleName resolves a name -
+				// Must be "agents/<x>" so artifactsrc.BundleName resolves a name -
 				// bundledir falls back to the embedded copy when disk-in-cwd misses.
 				Bundle:   "agents/web-researcher",
-				Provider: "replay-test",
+				Provider: "stub-test",
 				Model:    "any-model",
 			},
 		},

@@ -88,15 +88,11 @@ Not every artifact is refreshed at the same point in a chat's lifecycle:
 - **Per node dispatch** (`agent.Serve` building that node's compaction config via `NativeCompactionConfig`): `system/compaction`, `system/compaction.summary`.
 - **Boot only, restart required**: `memory/<agent>` (`buildNativeNode`/`buildACPNode` read it once when the node is built; the ACP preamble cache keys only on the prompt version, so a memory-only edit never invalidates that cache either), `system/orchestrator` and `memory/orchestrator` (the orchestrator's system prompt is assembled once, into `orchSysPrompt`), and `system/advisor`/`system/memory-agent` (each is a `Pinned` that nothing ever calls `Refresh` on). These names are still seeded into and readable from Langfuse, but an edit to one of them needs a server restart to reach a running deployment.
 
-This split also means only `system/<agent>` and `system/judge` carry per-call provenance (`prompt_source`/`prompt_version_id`/`prompt_artifact` on the `llm.call` ledger entry). Every other name above resolves live/static during replay, unpinned - a known gap tracked in [#1439](https://github.com/fagerbergj/quack/issues/1439), not a deliberate design choice.
+This split also means only `system/<agent>` and `system/judge` carry per-call provenance (`prompt_source`/`prompt_version_id`/`prompt_artifact` on the `llm.call` ledger entry). Every other name above resolves live/static with no such provenance recorded - a known gap tracked in [#1439](https://github.com/fagerbergj/quack/issues/1439), not a deliberate design choice.
 
 ## Trace correlation and the delivered output
 
 See [observability.md](observability.md#langfuse-prompts) for the exact span attribute keys a store-resolved round's generation spans carry, and how the delivered output lands on the trace for Langfuse-side scoring.
-
-## Replay pinning
-
-See [observability.md](observability.md#ledger-and-recording) for how `quack replay` pins each `llm.call` to the exact prompt version it recorded, and the refusal messages for a version that no longer exists, a mismatched store, or a name that moved versions mid-run.
 
 ## Langfuse-side setup checklist
 

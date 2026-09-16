@@ -475,9 +475,9 @@ func readAll(r io.Reader) []byte {
 	return b
 }
 
-// FetchRecording downloads a chat's replay-ledger recording bundle (ZIP) -
-// the fetch endpoint GET /api/v1/chats/{chat_id}/recording (#601). `quack
-// replay <chat-id>` (#605) is the one caller today: it resolves a chat id into a local bundle file this way before driving a replayed run. ErrNotFound when the chat has no recording (never recorded, GC'd by retention, or recording disabled).
+// FetchRecording downloads a chat's ledger recording bundle (ZIP) - the
+// fetch endpoint GET /api/v1/chats/{chat_id}/recording (#601), resolved into
+// a local bundle file for `quack eval` and `quack experiment run`. ErrNotFound when the chat has no recording (never recorded, GC'd by retention, or recording disabled).
 func (c *Client) FetchRecording(ctx context.Context, chatID string) ([]byte, error) {
 	status, body, err := c.Request(ctx, http.MethodGet, "/api/v1/chats/"+chatID+"/recording", nil)
 	if err != nil {

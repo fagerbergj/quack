@@ -393,8 +393,8 @@ func TestSkillPathsQueriedFreshEachSpawn(t *testing.T) {
 }
 
 // TestExtraROGrantsSandboxButNotSkillPathsEnv is #1430's carry-over: ExtraRO
-// (e.g. plugins.root) must widen the sandbox RO grant so replay/the pi shim's
-// own file reads work, but must NOT reach PI_ACP_CONFIG's skill_paths - that
+// (e.g. plugins.root) must widen the sandbox RO grant so the pi shim's own
+// file reads work, but must NOT reach PI_ACP_CONFIG's skill_paths - that
 // would hand pi's recursive skill scan every SKILL.md in the whole registry.
 func TestExtraROGrantsSandboxButNotSkillPathsEnv(t *testing.T) {
 	a := &Agent{opts: Options{

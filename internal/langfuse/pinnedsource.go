@@ -10,7 +10,7 @@ import (
 )
 
 // PinnedSource pins names to exact Langfuse versions (--prompt system/<agent>@N),
-// mirroring replay's PromptSource (#1422 P3) but built from an explicit Pins map.
+// resolved from an explicit Pins map rather than a store lookup.
 type PinnedSource struct {
 	Client *Client
 	Pins   map[string]int // artifact name -> version

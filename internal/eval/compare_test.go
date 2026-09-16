@@ -7,20 +7,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack/internal/replay"
+	"github.com/fagerbergj/quack/internal/ledger/bundle"
 )
 
-func score(node, criterion string, s float64, ts time.Time) replay.EvalScore {
-	return replay.EvalScore{Node: node, Criterion: criterion, Score: s, Timestamp: ts}
+func score(node, criterion string, s float64, ts time.Time) bundle.EvalScore {
+	return bundle.EvalScore{Node: node, Criterion: criterion, Score: s, Timestamp: ts}
 }
 
 func TestBuild_PerCriterionDelta(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	recorded := []replay.EvalScore{
+	recorded := []bundle.EvalScore{
 		score("n1", "accuracy", 0.6, t0),
 		score("n1", "clarity", 0.9, t0),
 	}
-	fresh := []replay.EvalScore{
+	fresh := []bundle.EvalScore{
 		score("n1", "accuracy", 0.8, t0),
 		// clarity missing from the new run entirely (e.g. judge unavailable).
 	}
@@ -61,7 +61,7 @@ func TestBuild_LatestPerCriterionWinsOverEarlierRevise(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// A revise loop: round 1 scored low, round 2 (later) scored higher - only
 	// the later reading should count.
-	scores := []replay.EvalScore{
+	scores := []bundle.EvalScore{
 		score("n1", "accuracy", 0.3, t0),
 		score("n1", "accuracy", 0.9, t0.Add(time.Minute)),
 	}
@@ -73,8 +73,8 @@ func TestBuild_LatestPerCriterionWinsOverEarlierRevise(t *testing.T) {
 
 func TestRender_TextTable(t *testing.T) {
 	c := Build(RoleAll, "new-model", []string{"orchestrator"},
-		[]replay.EvalScore{score("n1", "accuracy", 0.6, time.Now())},
-		[]replay.EvalScore{score("n1", "accuracy", 0.9, time.Now())},
+		[]bundle.EvalScore{score("n1", "accuracy", 0.6, time.Now())},
+		[]bundle.EvalScore{score("n1", "accuracy", 0.9, time.Now())},
 		"old answer", "new answer, a bit longer")
 	var buf bytes.Buffer
 	Render(&buf, c)
@@ -88,8 +88,8 @@ func TestRender_TextTable(t *testing.T) {
 
 func TestRenderJSON_RoundTrips(t *testing.T) {
 	c := Build(RoleCoder, "new-model", []string{"code-implementer"},
-		[]replay.EvalScore{score("n1", "accuracy", 0.6, time.Now())},
-		[]replay.EvalScore{score("n1", "accuracy", 0.9, time.Now())},
+		[]bundle.EvalScore{score("n1", "accuracy", 0.6, time.Now())},
+		[]bundle.EvalScore{score("n1", "accuracy", 0.9, time.Now())},
 		"old", "new")
 	var buf bytes.Buffer
 	if err := RenderJSON(&buf, c); err != nil {

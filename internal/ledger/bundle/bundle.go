@@ -1,5 +1,7 @@
-// Package replay loads a recorded ledger bundle and replays it (sequence + shallow identity matching).
-package replay
+// Package bundle reads a recorded ledger bundle (quack ledger export's ZIP,
+// or a bare entries.jsonl) back into a queryable Session - the shared read
+// path `quack eval`, `quack dataset export` and `quack experiment run` need.
+package bundle
 
 import (
 	"archive/zip"
@@ -29,7 +31,7 @@ func Load(path string) (*Session, error) {
 func loadZip(path string) (*Session, error) {
 	zr, err := zip.OpenReader(path)
 	if err != nil {
-		return nil, fmt.Errorf("replay: open bundle %q: %w", path, err)
+		return nil, fmt.Errorf("bundle: open bundle %q: %w", path, err)
 	}
 	defer func() { _ = zr.Close() }()
 
@@ -40,27 +42,27 @@ func loadZip(path string) (*Session, error) {
 		case "manifest.json":
 			rc, err := f.Open()
 			if err != nil {
-				return nil, fmt.Errorf("replay: open manifest.json: %w", err)
+				return nil, fmt.Errorf("bundle: open manifest.json: %w", err)
 			}
 			err = json.NewDecoder(rc).Decode(&manifest)
 			_ = rc.Close()
 			if err != nil {
-				return nil, fmt.Errorf("replay: decode manifest.json: %w", err)
+				return nil, fmt.Errorf("bundle: decode manifest.json: %w", err)
 			}
 		case "entries.jsonl":
 			rc, err := f.Open()
 			if err != nil {
-				return nil, fmt.Errorf("replay: open entries.jsonl: %w", err)
+				return nil, fmt.Errorf("bundle: open entries.jsonl: %w", err)
 			}
 			entries = rc
 		}
 	}
 	if entries == nil {
-		return nil, fmt.Errorf("replay: bundle %q has no entries.jsonl", path)
+		return nil, fmt.Errorf("bundle: bundle %q has no entries.jsonl", path)
 	}
 	defer func() { _ = entries.Close() }()
 	if manifest.LedgerVersion != ledger.LedgerVersion {
-		return nil, fmt.Errorf("replay: bundle %q is ledger_version %d, this build reads %d only", path, manifest.LedgerVersion, ledger.LedgerVersion)
+		return nil, fmt.Errorf("bundle: bundle %q is ledger_version %d, this build reads %d only", path, manifest.LedgerVersion, ledger.LedgerVersion)
 	}
 	return buildSession(entries, manifest)
 }
@@ -68,7 +70,7 @@ func loadZip(path string) (*Session, error) {
 func loadJSONL(path string) (*Session, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("replay: open %q: %w", path, err)
+		return nil, fmt.Errorf("bundle: open %q: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	return buildSession(f, ledger.Manifest{})
@@ -79,7 +81,7 @@ func loadJSONL(path string) (*Session, error) {
 func FromStore(ctx context.Context, store ledger.LedgerStore, chatID string) (*Session, error) {
 	entries, err := ledger.ReadObservations(ctx, store, chatID)
 	if err != nil {
-		return nil, fmt.Errorf("replay: %w", err)
+		return nil, fmt.Errorf("bundle: %w", err)
 	}
 	s := &Session{manifest: ledger.Manifest{LedgerVersion: ledger.LedgerVersion, SessionID: chatID}, streams: map[StreamKey]*streamState{}}
 	for _, e := range entries {
@@ -102,12 +104,12 @@ func buildSession(r io.Reader, manifest ledger.Manifest) (*Session, error) {
 		}
 		var e ledger.Entry
 		if err := json.Unmarshal([]byte(raw), &e); err != nil {
-			return nil, fmt.Errorf("replay: parse entry: %w", err)
+			return nil, fmt.Errorf("bundle: parse entry: %w", err)
 		}
 		s.ingest(e)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("replay: read entries: %w", err)
+		return nil, fmt.Errorf("bundle: read entries: %w", err)
 	}
 	s.finalize()
 	return s, nil

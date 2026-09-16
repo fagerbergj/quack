@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
-	"github.com/fagerbergj/quack/internal/replay"
+	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
@@ -225,9 +225,9 @@ func (r *LiveItemRunner) traceIDFor(ctx context.Context, chatID, nodeID string) 
 	return node.TraceID
 }
 
-// sessionFromBundleBytes writes body to a temp file and loads it via replay.Load, mirroring
+// sessionFromBundleBytes writes body to a temp file and loads it via bundle.Load, mirroring
 // internal/cli/eval.go's fetchEvalScores.
-func sessionFromBundleBytes(body []byte) (*replay.Session, error) {
+func sessionFromBundleBytes(body []byte) (*bundle.Session, error) {
 	f, err := os.CreateTemp("", "quack-experiment-*.zip")
 	if err != nil {
 		return nil, err
@@ -240,7 +240,7 @@ func sessionFromBundleBytes(body []byte) (*replay.Session, error) {
 	if err := f.Close(); err != nil {
 		return nil, err
 	}
-	return replay.Load(f.Name())
+	return bundle.Load(f.Name())
 }
 
 // FormatExperimentSummary renders the experiment command's per-item table.

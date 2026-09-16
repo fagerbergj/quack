@@ -36,8 +36,7 @@ type tracedModel struct {
 	// pricing: nil = no price table entry for this model, cost metric skipped.
 	pricing *config.ModelPricing
 	// defaultAgent: metrics-only fallback agent (e.g. "orchestrator") for calls
-	// with no per-round Coords.Agent. Never joins ctx - replay's StreamKey{}
-	// needs the root chat event's Coords.Agent to stay empty (#617).
+	// with no per-round Coords.Agent. Never joins ctx - the root chat event's Coords.Agent must stay empty (#617).
 	defaultAgent string
 
 	mu     sync.Mutex

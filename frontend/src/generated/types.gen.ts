@@ -1859,7 +1859,7 @@ export type CreatePluginErrors = {
      */
     400: ErrorResponse;
     /**
-     * name is already registered from a different entry, or the roster is pinned to a replay bundle
+     * name is already registered from a different entry
      */
     409: ErrorResponse;
     /**
@@ -1904,10 +1904,6 @@ export type UpdateAllPluginsData = {
 
 export type UpdateAllPluginsErrors = {
     /**
-     * the roster is pinned to a replay bundle (#1427 P4) - refused before any row is fetched
-     */
-    409: ErrorResponse;
-    /**
      * the roster rebuild itself failed (a plugins.seed refusal, or a registry read failure) - a fetched row's OWN refusal lands in its `error` field in the 200 body instead, never as a 422
      */
     422: ErrorResponse;
@@ -1942,10 +1938,6 @@ export type DeletePluginErrors = {
      * No such plugin
      */
     404: ErrorResponse;
-    /**
-     * the roster is pinned to a replay bundle (#1427 P4) - refused before the row is deleted
-     */
-    409: ErrorResponse;
 };
 
 export type DeletePluginError = DeletePluginErrors[keyof DeletePluginErrors];
@@ -1973,10 +1965,6 @@ export type UpdatePluginErrors = {
      * No such plugin
      */
     404: ErrorResponse;
-    /**
-     * the roster is pinned to a replay bundle (#1427 P4) - refused before the row is fetched
-     */
-    409: ErrorResponse;
     /**
      * fetched, but the roster rebuild that followed was refused (e.g. the plugin declares an unlinked module)
      */

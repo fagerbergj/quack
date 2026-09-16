@@ -93,7 +93,7 @@ type Config struct {
 	PromptSource    string
 	PromptVersionID string
 	// PromptArtifact: the resolved artifact's name (#1422), from the bundle
-	// directory - what replay pins on, not Agent (the agent's own name).
+	// directory, not Agent (the agent's own name).
 	PromptArtifact string
 	// RefreshPrompt re-resolves the worker's system prompt at a round's start and
 	// reports what that round runs on, so the prompt the model sees and the

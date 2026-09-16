@@ -1,4 +1,4 @@
-package replay
+package bundle
 
 import "testing"
 

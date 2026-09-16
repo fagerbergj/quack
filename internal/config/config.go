@@ -660,13 +660,9 @@ func (t ToolConfig) APIKey() string {
 }
 
 type ProviderConfig struct {
-	Kind     string          `yaml:"kind"`
-	Endpoint string          `yaml:"endpoint"`
-	APIKey   string          `yaml:"api_key"`
-	Bundle   string          `yaml:"bundle"`
-	ForkMode string          `yaml:"fork_mode"`
-	ForkFrom string          `yaml:"fork_from"`
-	Live     *ProviderConfig `yaml:"live"`
+	Kind     string `yaml:"kind"`
+	Endpoint string `yaml:"endpoint"`
+	APIKey   string `yaml:"api_key"`
 	// Limits caps how many DISTINCT models per role may be resident at once
 	// (#1007, enforced by dag.Admission). Absent = any number of
 	// models resident.
@@ -1116,28 +1112,8 @@ func (c *Config) validateProviders() error {
 			if p.Endpoint == "" && !c.skipRuntimeValidation {
 				return fmt.Errorf("config: provider %q has empty endpoint", name)
 			}
-		case "replay":
-			if p.Bundle == "" {
-				return fmt.Errorf("config: provider %q (kind %q) has empty bundle", name, "replay")
-			}
-			switch p.ForkMode {
-			case "", "fork":
-			default:
-				return fmt.Errorf("config: provider %q has unsupported fork_mode %q (only \"\" and \"fork\")", name, p.ForkMode)
-			}
-			if p.ForkMode == "fork" {
-				if p.Live == nil {
-					return fmt.Errorf("config: provider %q has fork_mode: fork but no live provider config", name)
-				}
-				if p.Live.Kind != "openai" {
-					return fmt.Errorf("config: provider %q live config must be kind %q, got %q", name, "openai", p.Live.Kind)
-				}
-				if p.Live.Endpoint == "" {
-					return fmt.Errorf("config: provider %q live config has empty endpoint", name)
-				}
-			}
 		default:
-			return fmt.Errorf("config: provider %q has unsupported kind %q (only %q and %q are implemented)", name, p.Kind, "openai", "replay")
+			return fmt.Errorf("config: provider %q has unsupported kind %q (only %q is implemented)", name, p.Kind, "openai")
 		}
 	}
 

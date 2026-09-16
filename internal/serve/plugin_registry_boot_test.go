@@ -109,46 +109,6 @@ func TestBootPluginRegistrySeedsFetchesAndSkipsEmbedded(t *testing.T) {
 	}
 }
 
-// TestBootPluginRegistry_ReplayModeSkipsSeedAndFetch: a replay boot must
-// never fetch or seed - an unreachable remote proves the former, an unseeded row proves the latter.
-func TestBootPluginRegistry_ReplayModeSkipsSeedAndFetch(t *testing.T) {
-	prev := pluginreg.RemoteURL
-	pluginreg.RemoteURL = func(owner, repo string) string {
-		return filepath.Join(t.TempDir(), "does-not-exist.git")
-	}
-	t.Cleanup(func() { pluginreg.RemoteURL = prev })
-
-	root := t.TempDir()
-	reg := pluginreg.NewFSRegistry(root)
-	if err := reg.Put(context.Background(), pluginreg.Plugin{
-		Name: "widgets", Source: pluginreg.SourceGitHub, Entry: "github:acme/widgets",
-		Owner: "acme", Repo: "widgets",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := &config.Config{
-		Plugins:   &config.PluginsConfig{Root: root, Seed: []string{"github:acme/widgets", "github:acme/not-yet-seeded"}},
-		Providers: map[string]config.ProviderConfig{"replayed": {Kind: "replay", Bundle: "/tmp/bundle.jsonl"}},
-	}
-	b := &boot{cfg: cfg}
-	_, rows, err := b.bootPluginRegistry(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("bootPluginRegistry: %v", err)
-	}
-
-	byName := map[string]pluginreg.Plugin{}
-	for _, p := range rows {
-		byName[p.Name] = p
-	}
-	if p := byName["widgets"]; p.Error != "" || p.FetchedAt != nil {
-		t.Fatalf("widgets = %+v, want untouched (no fetch attempted in replay mode)", p)
-	}
-	if _, ok := byName["not-yet-seeded"]; ok {
-		t.Fatal("not-yet-seeded row exists: seeding must be skipped in replay mode")
-	}
-}
-
 // TestSeedRegistryPreservesFetchedState is #1427 F6: re-seeding a name
 // already on disk must never reset what a prior fetch recorded.
 func TestSeedRegistryPreservesFetchedState(t *testing.T) {

@@ -18,7 +18,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// GenAISemConvVersion pins the semconv vocabulary for replay divergence checks.
+// GenAISemConvVersion pins the semconv vocabulary the ledger's attrs are recorded under.
 const GenAISemConvVersion = "1.41.0"
 
 // gen_ai.* attribute keys drawn from OTel's semconv; quack.* attrs have no semconv equivalent.
@@ -87,13 +87,13 @@ const (
 	GenAIUsageCachedTokens = "gen_ai.usage.cached_tokens"
 
 	// QuackPromptSource/QuackPromptVersionID: which store the round's system
-	// prompt resolved from and its version there (#1420); replay pins on these.
+	// prompt resolved from and its version there (#1420) - provenance.
 	QuackPromptSource    = "quack.prompt.source"
 	QuackPromptVersionID = "quack.prompt.version_id"
 	// QuackPlugins: invoke_agent provenance (#1427 P1) - a JSON array of
 	// {name,sha} for the plugins in scope of the round, no semconv equivalent.
 	QuackPlugins = "quack.plugins"
-	// QuackPromptArtifact: the resolved artifact's name (#1422) - replay pins on this, not the agent name.
+	// QuackPromptArtifact: the resolved artifact's name (#1422), not the agent name.
 	QuackPromptArtifact = "quack.prompt.artifact"
 )
 

@@ -363,9 +363,9 @@ observability:
     # trace_url_template: "https://tracing.example.com/trace/{trace_id}"  # unset ⇒ no deep link rendered in the UI
   # The ledger: quack's write-ahead log (artifact revisions, deliveries, node
   # lifecycle) in the same Postgres as the artifacts. `observations` adds the
-  # gen_ai.* model/tool/agent calls and judge scores that `quack ledger export`
-  # and `quack replay` read; it rides the otel logger provider above, so it can
-  # only be on when otel is. The store must be postgres.
+  # gen_ai.* model/tool/agent calls and judge scores that `quack ledger export`,
+  # `quack eval` and `quack dataset export` read; it rides the otel logger
+  # provider above, so it can only be on when otel is. The store must be postgres.
   recording:
     observations: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
     store: default_postgres

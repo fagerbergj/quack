@@ -3,7 +3,6 @@ package acp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,8 +16,6 @@ import (
 	sdk "github.com/coder/acp-go-sdk"
 	oteltrace "go.opentelemetry.io/otel/trace"
 
-	"github.com/fagerbergj/quack/internal/ledger"
-	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -39,13 +36,9 @@ type procHandle struct {
 	stderr    *tailBuffer
 	once      sync.Once
 	// sent/received tee the raw JSON-RPC frames this handle's connection
-	// exchanges over stdin/stdout - the replay ledger's invoke_agent event
+	// exchanges over stdin/stdout - the ledger's invoke_agent event
 	// (emit.go) is built from these at the end of the round.
 	sent, received *teeBuffer
-	// replayIO is set instead of cmd for a replayed round (startReplay) - its
-	// pump goroutine needs closing on every exit path, same as a real
-	// subprocess needs killing.
-	replayIO io.Closer
 }
 
 // updatesStallThreshold: the old buffered-chan cap SessionUpdate used to
@@ -148,24 +141,7 @@ func mergeSkillPaths(env []string, skillPaths []string) []string {
 	return out
 }
 
-// start spawns the agent subprocess rooted at cwd and wires the ACP
-// connection - or, when Options.Replay is set, wires the SAME connection
-// machinery against a recorded conversation instead (startReplay): no subprocess, no ACP agent binary (#604). Fork-replay (#605): when the session is in fork mode and this round's stream goes live (startReplay returns a *replay.ForkSignal), start falls through to startLive - the SAME real-subprocess path a never-replayed round takes, so "live" for ACP needs no separate delegate object, only the opts every round already carries (Command, Env, Caps, ...).
-func (a *Agent) start(ctx context.Context, cwd string, caps workspace.Caps) (*procHandle, error) {
-	if a.opts.Replay != nil {
-		h, err := a.startReplay(ctx)
-		var fs *replay.ForkSignal
-		if errors.As(err, &fs) {
-			a.log.Info("acp round forked to live", "reason", fs.Reason, "stream", fs.Stream.String())
-			return a.startLive(ctx, cwd, caps)
-		}
-		return h, err
-	}
-	return a.startLive(ctx, cwd, caps)
-}
-
-// startLive spawns a real ACP subprocess and wires the ACP connection -
-// the only path before #605 added fork-replay's live fallback.
+// startLive spawns a real ACP subprocess and wires the ACP connection.
 func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) (*procHandle, error) {
 	h := &procHandle{
 		notify:   make(chan struct{}, 1),
@@ -197,44 +173,17 @@ func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) 
 	}
 	h.cmd = cmd
 	// Tee the wire: everything quack writes to the subprocess's stdin and
-	// everything it reads back off stdout, for the replay ledger's
-	// invoke_agent event (emit.go) - the ACP conversation itself, not just a summary of it.
+	// everything it reads back off stdout, for the ledger's invoke_agent
+	// event (emit.go) - the ACP conversation itself, not just a summary of it.
 	teedIn := io.MultiWriter(stdin, h.sent)
 	teedOut := io.TeeReader(stdout, h.received)
 	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, teedIn, teedOut)
 	return h, nil
 }
 
-// startReplay resolves this round's recorded invoke_agent entry (the SAME
-// ledger.Coords seam inference.NewReplayModel and the tools' replay stubs
-// read - ledger.CoordsFromContext) and wires the ACP connection over a replayAgentIO instead of a real subprocess's pipes: h.cmd stays nil (close then has nothing to kill/wait on), so the gate's view of this round is reproduced with no ACP agent binary at all.
-func (a *Agent) startReplay(ctx context.Context) (*procHandle, error) {
-	sent, received, err := a.opts.Replay.NextInvokeAgent(ledger.CoordsFromContext(ctx), a.name)
-	if err != nil {
-		return nil, fmt.Errorf("acp: replay: %w", err)
-	}
-	h := &procHandle{
-		notify:   make(chan struct{}, 1),
-		stderr:   &tailBuffer{max: 4096},
-		sent:     &teeBuffer{},
-		received: &teeBuffer{},
-	}
-	rio := newReplayAgentIO(sent, received)
-	h.replayIO = rio
-	teedIn := io.MultiWriter(rio, h.sent)
-	teedOut := io.TeeReader(rio, h.received)
-	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, teedIn, teedOut)
-	return h, nil
-}
-
-// close kills the subprocess's whole process group and reaps it - for a
-// replayed round (h.cmd nil; nothing was ever spawned) it instead closes
-// replayIO, unblocking its pump goroutine. Idempotent.
+// close kills the subprocess's whole process group and reaps it. Idempotent.
 func (h *procHandle) close(log *slog.Logger) {
 	h.once.Do(func() {
-		if h.replayIO != nil {
-			_ = h.replayIO.Close()
-		}
 		if h.cmd == nil {
 			return
 		}

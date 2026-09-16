@@ -56,7 +56,7 @@ func MigrateEntry(e Entry) Entry {
 }
 
 // IsObservation reports whether kind is one the Exporter writes - the half
-// of the log that replay and the recording bundle read.
+// of the log the recording bundle reader reads.
 func IsObservation(kind string) bool {
 	switch kind {
 	case KindLLMCall, KindToolCall, KindAgentInvoke, KindEvalScore:
@@ -67,7 +67,7 @@ func IsObservation(kind string) bool {
 
 // Entry is the WAL envelope: intents appended before they are acted on, observations after the fact.
 // Seq is store-allocated; Key/IdempotencyKey make repeats idempotent per chat (#1144 P4: *DuplicateIntentError).
-// NodeID/Agent/Round are the replay stream identity - a ctx value set inside a node body never crosses the RunNode scheduling boundary.
+// NodeID/Agent/Round are the bundle reader's stream identity - a ctx value set inside a node body never crosses the RunNode scheduling boundary.
 type Entry struct {
 	Seq            int64           `json:"seq"`
 	ChatID         string          `json:"chat_id"`
@@ -87,7 +87,7 @@ type Entry struct {
 
 // LLMCallPayload is a KindLLMCall entry's payload (one gen_ai "chat" call).
 // Input/Output/SystemInstructions/ToolDefinitions are the JSON strings the
-// emitter built, kept verbatim so replay hands back exactly what was seen.
+// emitter built, kept verbatim so a reader gets back exactly what was seen.
 type LLMCallPayload struct {
 	Provider      string `json:"provider,omitempty"`
 	RequestModel  string `json:"request_model"`
@@ -121,7 +121,7 @@ type LLMCallPayload struct {
 	CostUSD      *float64 `json:"cost_usd,omitempty"`
 	// PromptSource/PromptVersionID: which store this call's system prompt
 	// resolved from ("static" or the prompts: store name) and its version
-	// there (#1420) - what replay pins to reproduce the exact bytes.
+	// there (#1420) - provenance for reproducing the exact bytes sent.
 	PromptSource    string `json:"prompt_source,omitempty"`
 	PromptVersionID string `json:"prompt_version_id,omitempty"`
 	// PromptArtifact: the resolved artifact's name (#1422), e.g. "system/code-reviewer" -

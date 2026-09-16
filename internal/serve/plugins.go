@@ -124,29 +124,20 @@ func (b *boot) openPluginRegistry(st *store.Store) (pluginreg.FetchRegistry, err
 	return pluginreg.NewDBRegistry(db, cfg.Plugins.Root)
 }
 
-// bootPluginRegistry seeds and fetches the plugin registry; a replay config
-// skips both, so a replay makes no network calls and writes no rows.
+// bootPluginRegistry seeds and fetches the plugin registry.
 func (b *boot) bootPluginRegistry(ctx context.Context, st *store.Store) (pluginreg.FetchRegistry, []pluginreg.Plugin, error) {
 	reg, err := b.openPluginRegistry(st)
 	if err != nil {
 		return nil, nil, fmt.Errorf("plugin registry open: %w", err)
 	}
-	replayBundle, err := replayBundlePath(b.cfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("plugin registry: %w", err)
-	}
-	if replayBundle == "" {
-		if err := seedRegistry(ctx, reg, b.cfg.Plugins.Seed); err != nil {
-			return nil, nil, fmt.Errorf("plugin registry seed: %w", err)
-		}
+	if err := seedRegistry(ctx, reg, b.cfg.Plugins.Seed); err != nil {
+		return nil, nil, fmt.Errorf("plugin registry seed: %w", err)
 	}
 	rows, err := reg.List(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("plugin registry list: %w", err)
 	}
-	if replayBundle == "" {
-		rows = fetchRegistryPlugins(ctx, reg, rows)
-	}
+	rows = fetchRegistryPlugins(ctx, reg, rows)
 	rows = pluginreg.OrderBySeed(b.cfg.Plugins.Seed, rows)
 	rows = append(rows, pluginreg.EmbeddedQuackPlugin())
 	return reg, rows, nil
@@ -282,7 +273,7 @@ func seedPluginNames(seed []string) map[string]bool {
 
 // admitPlugins: a plugins.seed (config) plugin's refusal is fatal, named; a
 // REST-added row's refusal just drops that plugin, warned and named in refusals.
-func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node, persistRefusals bool) ([]plugin.Plugin, map[string]error, error) {
+func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, map[string]error, error) {
 	seedNames := seedPluginNames(seed)
 	refusals := make(map[string]error)
 	out := make([]plugin.Plugin, 0, len(plugins))
@@ -293,9 +284,7 @@ func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []plugi
 			}
 			slog.Warn("plugin refused; dropped from the roster, other plugins still load",
 				"component", "startup", "plugin", p.Name, "err", err)
-			if persistRefusals {
-				persistPluginRefusal(ctx, reg, rows, p.Name, err)
-			}
+			persistPluginRefusal(ctx, reg, rows, p.Name, err)
 			refusals[p.Name] = err
 			continue
 		}

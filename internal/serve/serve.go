@@ -52,7 +52,6 @@ import (
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/recordstore"
-	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/server/adkdebug"
@@ -606,10 +605,6 @@ type skillsInit struct {
 	// (if any) non-seed rows were refused this pass - review#2: rebuild uses
 	// the SAME per-row admission as boot, not an all-or-nothing gate.
 	rebuildSkills func() (refusals map[string]error, err error)
-	// pinnedBundle is "" normally; a replay bundle path when it pinned the
-	// skill roster (#1427 P4 F1) - rest refuses every mutating call up
-	// front while set, not just the post-mutation rebuild.
-	pinnedBundle string
 	// reg is the SAME registry bootPluginRegistry opened - initHTTP/mountHTTP
 	// reuse it instead of opening a second connection to a DB-backed store.
 	reg pluginreg.FetchRegistry
@@ -623,10 +618,6 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	if err != nil {
 		return skillsInit{}, err
 	}
-	replayBundle, err := replayBundlePath(b.cfg)
-	if err != nil {
-		return skillsInit{}, err
-	}
 	// One resolution of the registry roots drives all three component types.
 	// admitPlugins fails boot only on a plugins.seed (config) refusal -
 	// a REST-added row's refusal just drops that plugin (#1430 severe).
@@ -634,7 +625,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	if err != nil {
 		return skillsInit{}, err
 	}
-	plugins, _, err = admitPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules, replayBundle == "")
+	plugins, _, err = admitPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
 	if err != nil {
 		return skillsInit{}, err
 	}
@@ -643,18 +634,6 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	// agents' next round with no rebuild plumbing beyond this one pointer.
 	liveSkillSrc := newSkillSource(plugins)
 	swappable := newSwappableSkillSource(liveSkillSrc)
-	// Replay (#1427 P4): pin native agents to the bundle's recorded skill
-	// text at boot (same refusal timing as prompt pinning); pinnedBundle
-	// then blocks REST plugin mutations from unpinning it mid-run (F1).
-	var pinnedBundle string
-	replaySrc, err := replaySkillSource(ctx, b.cfg, rows, liveSkillSrc)
-	if err != nil {
-		return skillsInit{}, err
-	}
-	if replaySrc != nil {
-		swappable.Swap(replaySrc)
-		pinnedBundle = replayBundle
-	}
 	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
@@ -667,9 +646,6 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	}
 	var rebuildMu sync.Mutex
 	rebuildSkills := func() (map[string]error, error) {
-		if pinnedBundle != "" {
-			return nil, fmt.Errorf("plugin roster is pinned to replay bundle %s: %w", pinnedBundle, replay.ErrPinned)
-		}
 		rebuildMu.Lock()
 		defer rebuildMu.Unlock()
 		rows, err := reg.List(context.Background())
@@ -684,7 +660,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 		}
 		// Same admission as boot (#1430 review#2) - a refused non-seed row
 		// only drops itself; everything else still swaps in.
-		admitted, refusals, err := admitPlugins(context.Background(), reg, rows, freshPlugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules, replayBundle == "")
+		admitted, refusals, err := admitPlugins(context.Background(), reg, rows, freshPlugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
 		if err != nil {
 			return nil, err
 		}
@@ -694,7 +670,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	return skillsInit{
 		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
 		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
-		pinnedBundle: pinnedBundle, reg: reg,
+		reg: reg,
 	}, nil
 }
 
@@ -839,8 +815,8 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 }
 
 // mounts the HTTP handler and starts the workspace GC
-func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pinnedBundle string, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
-	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills, pinnedBundle, pluginReg)
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills, pluginReg)
 	if err != nil {
 		return nil, err
 	}
@@ -850,64 +826,8 @@ func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator
 	return handler, nil
 }
 
-// replayBundlePath returns the one bundle every replay provider names
-// (every provider is kind "replay" over the same bundle - see
-// replayifyProviders); "" for a normal, non-replay config.
-func replayBundlePath(cfg *config.Config) (string, error) {
-	var bundlePath string
-	for _, p := range cfg.Providers {
-		if p.Kind != "replay" || p.Bundle == "" {
-			continue
-		}
-		if bundlePath == "" {
-			bundlePath = p.Bundle
-		} else if p.Bundle != bundlePath {
-			return "", fmt.Errorf("replay: providers name different bundles (%q vs %q) - replayifyProviders should have set them all the same", bundlePath, p.Bundle)
-		}
-	}
-	return bundlePath, nil
-}
-
-// replayPromptSource builds the P3 (#1422) prompt-pinning Source for a
-// replay run; (nil, nil) for a normal, non-replay config.
-func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.Source, error) {
-	bundlePath, err := replayBundlePath(cfg)
-	if err != nil || bundlePath == "" {
-		return nil, err
-	}
-	sess, err := replay.Load(bundlePath)
-	if err != nil {
-		return nil, fmt.Errorf("replay: load bundle for prompt pinning: %w", err)
-	}
-	var lf *langfuse.Client
-	if cfg.Prompts.Store != "" {
-		if s, ok := cfg.Store(cfg.Prompts.Store); ok {
-			lf = langfuse.New(s.URL, s.PublicKey, s.SecretKey)
-		}
-	}
-	return replay.NewPromptSource(ctx, sess, lf, cfg.Prompts.Store)
-}
-
-// replaySkillSource builds the P4 (#1432) skill-pinning Source for a replay
-// run: (nil, nil) for a non-replay config or a bundle with no recorded
-// plugin provenance (no ACP round in it - native rounds carry none).
-func replaySkillSource(ctx context.Context, cfg *config.Config, rows []pluginreg.Plugin, live skill.Source) (skill.Source, error) {
-	bundlePath, err := replayBundlePath(cfg)
-	if err != nil || bundlePath == "" {
-		return nil, err
-	}
-	sess, err := replay.Load(bundlePath)
-	if err != nil {
-		return nil, fmt.Errorf("replay: load bundle for skill pinning: %w", err)
-	}
-	return replay.NewSkillSource(ctx, sess, cfg.Plugins.Root, rows, live)
-}
-
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks, promptOverride artifactsrc.Source) (handler http.Handler, cleanup func(), addr string, err error) {
-	promptSrc, promptSrcName, err := promptSourceFor(ctx, cfg, promptOverride)
-	if err != nil {
-		return nil, nil, "", err
-	}
+	promptSrc, promptSrcName := promptSourceFor(cfg, promptOverride)
 	b := &boot{cfg: cfg, res: artifactsrc.New(promptSrcName, promptSrc, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
 	defer func() {
 		if err != nil {
@@ -980,30 +900,23 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills, skills.pinnedBundle, skills.reg)
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills, skills.reg)
 	if err != nil {
 		return nil, nil, "", err
 	}
 	return handler, b.runCleanups, addr, nil
 }
 
-// promptSourceFor: the live store Source (P2, #1421), chained behind a caller-supplied
-// override (an experiment's pins), or a replay's pinned Source (P3, #1422) in its place.
-func promptSourceFor(ctx context.Context, cfg *config.Config, override artifactsrc.Source) (artifactsrc.Source, string, error) {
+// promptSourceFor: the live store Source (P2, #1421), chained behind a
+// caller-supplied override (an experiment's pins) in its place.
+func promptSourceFor(cfg *config.Config, override artifactsrc.Source) (artifactsrc.Source, string) {
 	src, name := buildPromptSource(cfg)
 	if override != nil {
 		// Chained, not swapped: a name the override doesn't pin (e.g. an experiment
 		// pinning only its own agent) still resolves off the configured store.
-		return artifactsrc.Chain(override, src), name, nil
+		return artifactsrc.Chain(override, src), name
 	}
-	replaySrc, err := replayPromptSource(ctx, cfg)
-	if err != nil {
-		return nil, "", err
-	}
-	if replaySrc != nil {
-		return replaySrc, cfg.Prompts.Store, nil
-	}
-	return src, name, nil
+	return src, name
 }
 
 // buildPromptSource builds the prompts: store's Source and its stores: name; (nil, "")
@@ -1432,26 +1345,9 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 	if safetyJudge != nil {
 		permJudge = acpPermJudge(safetyJudge, name)
 	}
-	var acpReplay *replay.Session
-	if prov.Kind == "replay" {
-		acpReplay, err = replay.Load(prov.Bundle)
-		if err != nil {
-			return nil, fmtErr(name, "acp replay: %v", err)
-		}
-		if prov.ForkMode == "fork" {
-			acpReplay.EnableFork(prov.ForkFrom)
-			// ponytail: fork's live spawn reads skill_paths off the
-			// CURRENT clone, not the recorded sha (no historical worktree
-			// materialization yet) - refuse rather than silently diverge.
-			if err := refuseIfPluginsMoved(acpReplay, reg); err != nil {
-				return nil, fmtErr(name, "acp fork replay: %v", err)
-			}
-		}
-	}
 	ag, err := acp.New(name, bundle.Card.Description, acp.Options{
 		Command:              ac.Acp.Command,
 		Env:                  env,
-		Replay:               acpReplay,
 		Caps:                 workspaceCaps,
 		SkillPaths:           skillPathsFn,
 		ExtraRO:              extraROFn,
@@ -1499,7 +1395,6 @@ type nativeNodeBuilder struct {
 	nodeCancelled      func(chatID, nodeID string) bool
 	repeatGuardTripped func(chatID, nodeID, msg string) bool
 	extToolsByName     map[string]tool.Tool
-	nativeReplay       *replay.Session
 	taskStore          *memory.Store
 	memSvc             adkmemory.Service
 	wantLoadMemory     bool
@@ -1543,7 +1438,6 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			NodeCancelled:      b.nodeCancelled,
 			RepeatGuardTripped: b.repeatGuardTripped,
 			ExtTools:           b.extToolsByName,
-			Replayer:           b.nativeReplay,
 			Memory:             b.taskStore,
 			MemoryRole:         b.ac.Memory.Bucket,
 			Ledger:             b.ledgerStore,
@@ -1662,57 +1556,6 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 	}
 }
 
-// loadNativeReplay restores the shared replay session from the configured
-// bundle; non-replay agents get nil.
-func loadNativeReplay(prov config.ProviderConfig) (*replay.Session, error) {
-	if prov.Kind != "replay" {
-		return nil, nil
-	}
-	rs, err := replay.Load(prov.Bundle)
-	if err != nil {
-		return nil, err
-	}
-	if prov.ForkMode == "fork" {
-		rs.EnableFork(prov.ForkFrom)
-	}
-	return rs, nil
-}
-
-// refuseIfPluginsMoved: fork mode's live spawn always reads the CURRENT
-// clone, so a plugin that moved past its recorded sha would silently serve
-// different skill text after divergence - refuse instead (#1427 P4).
-func refuseIfPluginsMoved(sess *replay.Session, reg pluginreg.Registry) error {
-	recorded, err := sess.Plugins()
-	if err != nil {
-		return err
-	}
-	if len(recorded) == 0 {
-		return nil
-	}
-	rows, err := reg.List(context.Background())
-	if err != nil {
-		return fmt.Errorf("list plugin registry: %w", err)
-	}
-	installed := make(map[string]string, len(rows))
-	registered := make(map[string]bool, len(rows))
-	for _, r := range rows {
-		installed[r.Name] = r.SHA
-		registered[r.Name] = true
-	}
-	for name, sha := range recorded {
-		if sha == "" {
-			continue // local/embedded: no clone, nothing to move
-		}
-		if !registered[name] {
-			return fmt.Errorf("plugin %q recorded at %s is no longer registered", name, sha)
-		}
-		if live := installed[name]; live != sha {
-			return fmt.Errorf("plugin %q recorded at %s, registry now has %s - a live fork spawn would not reproduce the recorded skill text", name, sha, live)
-		}
-	}
-	return nil
-}
-
 // resolveGateCfg resolves the per-agent trust-gate config (and prompt grading facts
 // for gated agents), recording gated configs in gateCfgs along with the closure
 // that re-resolves their artifacts at run start.
@@ -1767,7 +1610,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 }
 
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
-// skills, gate grading, replay session, and the per-dispatch worker builder.
+// skills, gate grading, and the per-dispatch worker builder.
 func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, advisorAgent adkagent.Agent, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers) (adkagent.Agent, error) {
 	toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
 
@@ -1799,11 +1642,6 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		return nil, fmtErr(name, "rubric: %v", err)
 	}
 
-	nativeReplay, err := loadNativeReplay(prov)
-	if err != nil {
-		return nil, fmtErr(name, "replay: tools: %v", err)
-	}
-
 	b := &nativeNodeBuilder{
 		prov:               prov,
 		ac:                 ac,
@@ -1820,7 +1658,6 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		nodeCancelled:      nodeCancelled,
 		repeatGuardTripped: repeatGuardTripped,
 		extToolsByName:     extToolsByName,
-		nativeReplay:       nativeReplay,
 		taskStore:          taskStore,
 		memSvc:             memSvc,
 		wantLoadMemory:     wantLoadMemory,
@@ -2124,7 +1961,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	return orch, nil
 }
 
-func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pinnedBundle string, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
@@ -2148,7 +1985,6 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 
 	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
 	restPlugins := rest.NewPlugins(pluginReg, cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills)
-	restPlugins.SetPinnedBundle(pinnedBundle)
 	restHandler.SetPlugins(restPlugins)
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
 
@@ -2538,8 +2374,8 @@ func acpRegistrySkillPaths(cfg *config.Config, reg pluginreg.FetchRegistry) func
 }
 
 // acpRegistryExtraRO is acp.Options.ExtraRO: grants plugins.root itself to
-// the sandbox (replay and the pi shim's own file reads need it) WITHOUT
-// feeding it into skill_paths (#1430 carry-over).
+// the sandbox (the pi shim's own file reads need it) WITHOUT feeding it
+// into skill_paths (#1430 carry-over).
 func acpRegistryExtraRO(cfg *config.Config) func() []string {
 	return func() []string {
 		if st, err := os.Stat(cfg.Plugins.Root); err == nil && st.IsDir() {
