@@ -2685,4 +2685,30 @@ func TestResolveBinding(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+
+	t.Run("provider disagreeing with the model's own provider is rejected (M4)", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"model": "m2", "provider": "default"})
+		if err == nil || !strings.Contains(err.Error(), `provider "default" disagrees with model "m2"'s provider "other"`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("a differently-limited model override is rejected (M1 admission)", func(t *testing.T) {
+		limited := &Config{
+			Providers: map[string]ProviderConfig{"default": {Kind: "openai", Endpoint: "http://x"}},
+			Models: map[string]ModelConfig{
+				"m1": {Provider: "default"},
+				"m2": {Provider: "default", Limits: &ModelLimits{Sessions: 4}},
+			},
+		}
+		_, err := limited.ResolveBinding(limited.Providers["default"], "m1", map[string]any{"model": "m2"})
+		if err == nil || !strings.Contains(err.Error(), "admission is sized once at boot") {
+			t.Fatalf("err = %v", err)
+		}
+		// The static binding itself is always allowed, even if IT declares limits.
+		b, err := limited.ResolveBinding(limited.Providers["default"], "m2", map[string]any{"effort": "low"})
+		if err != nil || b.Model != "m2" {
+			t.Fatalf("b=%+v err=%v, want the static m2 to stay usable", b, err)
+		}
+	})
 }

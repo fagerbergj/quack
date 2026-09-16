@@ -1741,21 +1741,11 @@ func (c *Config) ResolveBinding(baseProv ProviderConfig, baseModel string, overr
 	if effort != "" && effort != "low" && effort != "medium" && effort != "high" {
 		return nil, fmt.Errorf("prompt binding: effort %q must be low, medium or high", effort)
 	}
-	prov := baseProv
-	m := baseModel
-	if modelName != "" {
-		mc, ok := c.Models[modelName]
-		if !ok {
-			return nil, fmt.Errorf("prompt binding: model %q is not defined under models", modelName)
-		}
-		m = modelName
-		// A bound model carries its own provider (like agents: model resolution) unless
-		// the artifact also names one explicitly, checked next.
-		if p, ok := c.Provider(mc.Provider); ok {
-			prov = p
-		}
+	prov, m, err := c.resolveBindingModel(baseProv, baseModel, modelName, providerName)
+	if err != nil {
+		return nil, err
 	}
-	if providerName != "" {
+	if providerName != "" && modelName == "" {
 		p, ok := c.Provider(providerName)
 		if !ok {
 			return nil, fmt.Errorf("prompt binding: provider %q is not defined under providers", providerName)
@@ -1766,4 +1756,32 @@ func (c *Config) ResolveBinding(baseProv ProviderConfig, baseModel string, overr
 		effort = c.ModelEffort(m)
 	}
 	return &PromptBinding{Provider: prov, Model: m, Effort: effort}, nil
+}
+
+// resolveBindingModel is ResolveBinding's model/provider half: modelName == ""
+// keeps baseModel, else validates modelName (and providerName against it),
+// including the #1007 admission and provider-agreement rules.
+func (c *Config) resolveBindingModel(baseProv ProviderConfig, baseModel, modelName, providerName string) (ProviderConfig, string, error) {
+	if modelName == "" {
+		return baseProv, baseModel, nil
+	}
+	mc, ok := c.Models[modelName]
+	if !ok {
+		return ProviderConfig{}, "", fmt.Errorf("prompt binding: model %q is not defined under models", modelName)
+	}
+	// #1007 admission (limits.sessions/kv_tokens) is sized from the static binding
+	// at boot; swapping to a model with its own limits would run it unmetered.
+	if modelName != baseModel && mc.Limits != nil {
+		return ProviderConfig{}, "", fmt.Errorf("prompt binding: model %q declares limits: and differs from the static binding %q; admission is sized once at boot", modelName, baseModel)
+	}
+	// Same rule as validateAgentModelRef: an explicit provider that disagrees
+	// with the model's registered one is a config error, not a silent override.
+	if providerName != "" && providerName != mc.Provider {
+		return ProviderConfig{}, "", fmt.Errorf("prompt binding: provider %q disagrees with model %q's provider %q", providerName, modelName, mc.Provider)
+	}
+	prov := baseProv
+	if p, ok := c.Provider(mc.Provider); ok {
+		prov = p
+	}
+	return prov, modelName, nil
 }
