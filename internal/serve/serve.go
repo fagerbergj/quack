@@ -2174,12 +2174,9 @@ func hasQuackRow(plugins []plugin.Plugin) bool {
 	return false
 }
 
-// registrySignature is acpRegistrySkillPaths' cache key: names+shas, so an
-// add/remove/fetch invalidates it - re-resolving every spawn otherwise costs
-// ~10ms, serialized behind extractDotagentsSkillsMu (#1427 F5). A local row's
-// sha is always "" (no clone), so it only invalidates the cache when the row
-// SET changes - its content is still read live off disk on every call
-// regardless of this cache (#1430 carry-over nit).
+// registrySignature is acpRegistrySkillPaths' cache key: names+shas. A local
+// row's sha is always "" so it only invalidates on a row-set change - its
+// content is still read live off disk on every call regardless (#1430).
 func registrySignature(rows []pluginreg.Plugin) string {
 	parts := make([]string, len(rows))
 	for i, p := range rows {
@@ -2189,11 +2186,8 @@ func registrySignature(rows []pluginreg.Plugin) string {
 }
 
 // acpRegistrySkillPaths is acp.Options.SkillPaths: acpSkillPaths over a
-// fresh registry read, cached by registrySignature (#1427 F5). plugins.root
-// itself is NOT included here - see acpRegistryExtraRO (#1430 carry-over):
-// this list also feeds PI_ACP_CONFIG's skill_paths, and the whole registry
-// root there would hand pi's recursive skill scan every SKILL.md in every
-// clone, fixtures included.
+// fresh registry read, cached by registrySignature. plugins.root itself is
+// NOT here - see acpRegistryExtraRO - this also feeds skill_paths (#1430).
 func acpRegistrySkillPaths(cfg *config.Config) func() []string {
 	var mu sync.Mutex
 	var cachedKey string
