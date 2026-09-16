@@ -72,9 +72,12 @@ type SkillsConfig struct {
 // Agent Plugins / Codex discovery order; a root that fails to resolve is a
 // startup warning, never an error. Order is preserved and never deduped.
 // github: seed entries are P1's concern (fetched into the registry, not
-// resolved as filesystem roots here).
+// resolved as filesystem roots here). Plugins.Seed == nil (as opposed to an
+// explicit seed: []) means the block form omitted seed: entirely, e.g.
+// plugins: {root: ...} with no seed key - that still falls through to the
+// deprecated alias / defaults, same as plugins: being absent altogether.
 func (c *Config) PluginRoots() []string {
-	if c.Plugins != nil {
+	if c.Plugins != nil && c.Plugins.Seed != nil {
 		return localSeedEntries(c.Plugins.Seed)
 	}
 	if c.Skills.Plugins != nil {
@@ -103,29 +106,46 @@ type PluginsConfig struct {
 	Seed  []string `yaml:"seed"`
 }
 
+// pluginsConfigFields is every field UnmarshalYAML's manual mapping-key
+// check accepts - kept in sync with PluginsConfig's yaml tags, since a
+// custom UnmarshalYAML bypasses the decoder's KnownFields(true).
+var pluginsConfigFields = map[string]bool{"store": true, "root": true, "seed": true}
+
 // UnmarshalYAML lets plugins: stay a bare list - today's local-root form,
 // treated as seed: - alongside the new {store, root, seed} block.
 func (p *PluginsConfig) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.SequenceNode {
 		return value.Decode(&p.Seed)
 	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("config: plugins: expected a list or a mapping")
+	}
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		if !pluginsConfigFields[key] {
+			return fmt.Errorf("config: plugins: unknown field %q (known: store, root, seed)", key)
+		}
+	}
 	type plain PluginsConfig
 	return value.Decode((*plain)(p))
 }
 
-// validatePlugins normalizes c.Plugins (nil -> skills.plugins or the
-// defaults), rejects a store other than filesystem (P3 wires the rest), fills
-// root's default, and checks every seed entry parses.
+// validatePlugins normalizes c.Plugins (nil, or a block with no seed: key ->
+// skills.plugins or the defaults), rejects a store other than filesystem (P3
+// wires the rest), fills root's default, and checks every seed entry parses.
 func (c *Config) validatePlugins() error {
 	if c.Plugins != nil && c.Skills.Plugins != nil {
 		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
 	}
 	if c.Plugins == nil {
+		c.Plugins = &PluginsConfig{}
+	}
+	if c.Plugins.Seed == nil {
 		seed := append([]string{}, defaultSkillPlugins...)
 		if c.Skills.Plugins != nil {
 			seed = c.Skills.Plugins
 		}
-		c.Plugins = &PluginsConfig{Seed: seed}
+		c.Plugins.Seed = seed
 	}
 	if c.Skills.Plugins != nil {
 		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")

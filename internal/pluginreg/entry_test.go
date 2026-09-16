@@ -25,6 +25,12 @@ func TestParseEntry(t *testing.T) {
 			Raw: "github:fagerbergj/dotagents@c886ce1a8474939dc42f7c194f8c57242223ea19", Source: SourceGitHub,
 			Owner: "fagerbergj", Repo: "dotagents", Ref: "c886ce1a8474939dc42f7c194f8c57242223ea19",
 		}},
+		{"trailing .git is stripped from the repo name", "github:fagerbergj/dotagents.git", Entry{
+			Raw: "github:fagerbergj/dotagents.git", Source: SourceGitHub, Owner: "fagerbergj", Repo: "dotagents",
+		}},
+		{"redundant #. path means the repo root", "github:fagerbergj/dotagents#.", Entry{
+			Raw: "github:fagerbergj/dotagents#.", Source: SourceGitHub, Owner: "fagerbergj", Repo: "dotagents",
+		}},
 		{"local path", ".agents/vendor/dotagents", Entry{
 			Raw: ".agents/vendor/dotagents", Source: SourceLocal, Root: ".agents/vendor/dotagents",
 		}},
@@ -57,6 +63,16 @@ func TestParseEntryMalformed(t *testing.T) {
 		"github:owner/repo#",
 		"github:owner/repo@ref#",
 		"github:owner//repo",
+		"github:owner/repo@-x",              // ref must not start with "-" (flag injection)
+		"github:owner /repo",                // whitespace in owner
+		"github:owner/repo @v1",             // whitespace in ref
+		"github:owner/repo#usage skills",    // whitespace in path
+		"github:owner/..",                   // repo ".." (name traversal, issue #5)
+		"github:../repo",                    // owner ".." likewise
+		"github:owner/repo#..",              // path escapes the plugin root
+		"github:owner/repo#../../etc",       // path escapes the plugin root
+		"github:owner/repo#/etc/passwd",     // absolute path
+		"github:owner/repo#skills/../../..", // escapes after cleaning
 	}
 	for _, in := range cases {
 		t.Run(in, func(t *testing.T) {
@@ -79,7 +95,19 @@ func TestEntryName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if local.Name() != ".agents/vendor/dotagents" {
-		t.Fatalf("local Name() = %q, want the raw path", local.Name())
+	if local.Name() != "dotagents" {
+		t.Fatalf("local Name() = %q, want the path's last element", local.Name())
+	}
+}
+
+func TestValidName(t *testing.T) {
+	bad := []string{"", ".", "..", "a/b", `a\b`}
+	for _, n := range bad {
+		if err := validName(n); err == nil {
+			t.Fatalf("validName(%q) accepted an unsafe registry name", n)
+		}
+	}
+	if err := validName("widgets"); err != nil {
+		t.Fatalf("validName(\"widgets\") = %v, want nil", err)
 	}
 }

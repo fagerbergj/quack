@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,9 +22,11 @@ type Plugin struct {
 	Ref    string `json:"ref,omitempty"`
 	Path   string `json:"path,omitempty"`
 
-	SHA       string    `json:"sha,omitempty"`
-	FetchedAt time.Time `json:"fetched_at,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	SHA string `json:"sha,omitempty"`
+	// FetchedAt is a pointer so "never fetched" serializes as an absent field
+	// instead of the zero time.
+	FetchedAt *time.Time `json:"fetched_at,omitempty"`
+	Error     string     `json:"error,omitempty"`
 }
 
 // FromEntry builds an unfetched row from a parsed Entry.
@@ -33,12 +38,33 @@ func FromEntry(e Entry) Plugin {
 }
 
 // Root is the plugin's resolved skills root: for a local entry, the entry
-// itself; for a github entry, <registryRoot>/<name>/repo/<path>.
+// itself; for a github entry, <registryRoot>/<name>/repo/<path>. A Path that
+// escapes the clone (e.g. a row edited on disk, since ParseEntry runs once at
+// seed time and rows aren't re-parsed) falls back to the clone root rather
+// than serving outside it.
 func (p Plugin) Root(registryRoot string) string {
 	if p.Source == SourceLocal {
 		return p.Entry
 	}
-	return filepath.Join(CloneDir(registryRoot, p.Name), p.Path)
+	base := CloneDir(registryRoot, p.Name)
+	if p.Path == "" {
+		return base
+	}
+	if joined, err := containedPath(base, p.Path); err == nil {
+		return joined
+	}
+	return base
+}
+
+// containedPath joins rel under base and refuses any result that escapes it
+// (mirrors internal/plugin's containedPath).
+func containedPath(base, rel string) (string, error) {
+	p := filepath.Clean(filepath.Join(base, rel))
+	r, err := filepath.Rel(base, p)
+	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%q escapes %q", rel, base)
+	}
+	return p, nil
 }
 
 // CloneDir is where a github plugin's full clone lives under the registry root.
@@ -62,6 +88,9 @@ type Registry interface {
 // clone (if any) as a sibling at <root>/<name>/repo.
 type FSRegistry struct {
 	root string
+	// ponytail: mu only serializes writes within one process; a second quack
+	// process sharing root can still race. Add a lock file if that happens.
+	mu sync.Mutex
 }
 
 func NewFSRegistry(root string) *FSRegistry {
@@ -70,6 +99,7 @@ func NewFSRegistry(root string) *FSRegistry {
 
 func (r *FSRegistry) Root() string { return r.root }
 
+// List returns every row, sorted by name.
 func (r *FSRegistry) List(ctx context.Context) ([]Plugin, error) {
 	entries, err := os.ReadDir(r.root)
 	if err != nil {
@@ -92,10 +122,14 @@ func (r *FSRegistry) List(ctx context.Context) ([]Plugin, error) {
 		}
 		out = append(out, p)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
 func (r *FSRegistry) readRow(name string) (Plugin, error) {
+	if err := validName(name); err != nil {
+		return Plugin{}, err
+	}
 	b, err := os.ReadFile(rowPath(r.root, name))
 	if err != nil {
 		return Plugin{}, err
@@ -107,25 +141,52 @@ func (r *FSRegistry) readRow(name string) (Plugin, error) {
 	return p, nil
 }
 
+// Put writes p's row, replacing any existing row of the same name.
 func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
-	if p.Name == "" {
-		return fmt.Errorf("plugin row has no name")
-	}
-	dir := filepath.Join(r.root, p.Name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := validName(p.Name); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := rowPath(r.root, p.Name) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dir := filepath.Join(r.root, p.Name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
+	}
+	f, err := os.CreateTemp(dir, "entry-*.json")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(b)
+	cerr := f.Close()
+	if werr != nil || cerr != nil {
+		os.Remove(tmp)
+		if werr != nil {
+			return werr
+		}
+		return cerr
 	}
 	return os.Rename(tmp, rowPath(r.root, p.Name))
 }
 
+// Delete removes name's row and clone. A name with no row is an error
+// wrapping os.ErrNotExist.
 func (r *FSRegistry) Delete(ctx context.Context, name string) error {
-	return os.RemoveAll(filepath.Join(r.root, name))
+	if err := validName(name); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dir := filepath.Join(r.root, name)
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("plugin %q: %w", name, os.ErrNotExist)
+		}
+		return err
+	}
+	return os.RemoveAll(dir)
 }
