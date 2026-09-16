@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/pluginreg/pluginregtest"
 	"github.com/fagerbergj/quack/internal/replay"
@@ -67,7 +68,7 @@ func registryWithFetchedPlugin(t *testing.T, name, body string) (root, sha strin
 // "not a replay" case: no replay provider, no wiring, live source unchanged.
 func TestReplaySkillSource_NonReplayConfig(t *testing.T) {
 	cfg := &config.Config{Providers: map[string]config.ProviderConfig{"p": {Kind: "openai"}}}
-	src, err := replaySkillSource(context.Background(), cfg, nil, nil)
+	src, err := replaySkillSource(context.Background(), cfg, nil, nil, nil)
 	if err != nil || src != nil {
 		t.Fatalf("replaySkillSource(non-replay) = %v, %v; want nil, nil", src, err)
 	}
@@ -86,7 +87,7 @@ func TestReplaySkillSource_NoPluginsRecorded(t *testing.T) {
 		Providers: map[string]config.ProviderConfig{"replay-test": {Kind: "replay", Bundle: path}},
 		Plugins:   &config.PluginsConfig{Root: t.TempDir()},
 	}
-	src, err := replaySkillSource(context.Background(), cfg, nil, nil)
+	src, err := replaySkillSource(context.Background(), cfg, nil, nil, nil)
 	if err != nil || src != nil {
 		t.Fatalf("replaySkillSource(no recorded plugins) = %v, %v; want nil, nil", src, err)
 	}
@@ -106,7 +107,7 @@ func TestReplaySkillSource_ServesRecordedSHA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := replaySkillSource(context.Background(), cfg, rows, nil)
+	src, err := replaySkillSource(context.Background(), cfg, rows, []plugin.Plugin{{Name: "widgets"}}, nil)
 	if err != nil {
 		t.Fatalf("replaySkillSource: %v", err)
 	}
@@ -138,7 +139,7 @@ func TestReplaySkillSource_DeletedCloneRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = replaySkillSource(context.Background(), cfg, rows, nil)
+	_, err = replaySkillSource(context.Background(), cfg, rows, []plugin.Plugin{{Name: "widgets"}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "widgets") {
 		t.Fatalf("err = %v, want a refusal naming widgets", err)
 	}
@@ -181,6 +182,20 @@ func TestRefuseIfPluginsMoved(t *testing.T) {
 		}
 		if err := refuseIfPluginsMoved(sess, root); err != nil {
 			t.Fatalf("refuseIfPluginsMoved: %v", err)
+		}
+	})
+
+	// F5: a recorded plugin no longer in the registry at all names a clear
+	// "no longer registered" reason, not the empty installed-sha message.
+	t.Run("removed plugin names itself, not a blank sha", func(t *testing.T) {
+		bundle := writeAgentInvokeReplayFixture(t, `[{"name":"gone","sha":"`+sha1+`"}]`)
+		sess, err := replay.Load(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = refuseIfPluginsMoved(sess, root)
+		if err == nil || !strings.Contains(err.Error(), "no longer registered") {
+			t.Fatalf("err = %v, want containing %q", err, "no longer registered")
 		}
 	})
 }

@@ -38,32 +38,21 @@ func writeSkillCommit(t *testing.T, work, body string) string {
 	return strings.TrimSpace(run(t, work, "rev-parse", "HEAD"))
 }
 
-func TestVerifyCommit(t *testing.T) {
-	bare, work := newFixtureRepoWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1")
+func TestTreeAt_MissingCloneOrUnknownSHARefuses(t *testing.T) {
+	bare, _ := newFixtureRepoWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1")
 	withFixedRemote(t, bare)
 	root := t.TempDir()
 	reg := NewFSRegistry(root)
-	p := FromEntry(mustParse(t, "github:acme/widgets"))
-	got, err := reg.Fetch(context.Background(), p)
+	got, err := reg.Fetch(context.Background(), FromEntry(mustParse(t, "github:acme/widgets")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sha2 := writeSkillCommit(t, work, "---\nname: dothing\ndescription: v2\n---\nbody v2")
-	if _, err := reg.Fetch(context.Background(), got); err != nil {
-		t.Fatalf("re-fetch: %v", err)
-	}
 
-	if err := VerifyCommit(context.Background(), root, "widgets", got.SHA); err != nil {
-		t.Fatalf("VerifyCommit(old sha): %v", err)
+	if _, err := TreeAt(context.Background(), root, "widgets", strings.Repeat("a", 40), "skills"); err == nil {
+		t.Fatal("TreeAt(unknown sha): want error")
 	}
-	if err := VerifyCommit(context.Background(), root, "widgets", sha2); err != nil {
-		t.Fatalf("VerifyCommit(new sha): %v", err)
-	}
-	if err := VerifyCommit(context.Background(), root, "widgets", strings.Repeat("a", 40)); err == nil {
-		t.Fatal("VerifyCommit(unknown sha): want error")
-	}
-	if err := VerifyCommit(context.Background(), root, "no-such-plugin", got.SHA); err == nil {
-		t.Fatal("VerifyCommit(no clone): want error")
+	if _, err := TreeAt(context.Background(), root, "no-such-plugin", got.SHA, "skills"); err == nil {
+		t.Fatal("TreeAt(no clone): want error")
 	}
 }
 
@@ -113,6 +102,44 @@ func TestTreeAt(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("TreeAt(missing subdir) = %v entries, want 0", len(empty))
+	}
+}
+
+// TestTreeAt_NonASCIIPath is review S2: core.quotePath C-quotes a non-ASCII
+// path in `ls-tree`'s plain output, breaking the `git show` that follows -
+// -z/NUL-split must round-trip the path as written.
+func TestTreeAt_NonASCIIPath(t *testing.T) {
+	bare, work := pluginregtest.NewFixtureRepo(t)
+	run(t, work, "rm", "--quiet", "SKILL.md")
+	dir := filepath.Join(work, "skills", "café")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: cafe\ndescription: unicode\n---\nbody"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, work, "add", ".")
+	run(t, work, "commit", "--quiet", "-m", "unicode skill dir")
+	run(t, work, "push", "--quiet", "origin", "main")
+	sha := strings.TrimSpace(run(t, work, "rev-parse", "HEAD"))
+
+	withFixedRemote(t, bare)
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	if _, err := reg.Fetch(context.Background(), FromEntry(mustParse(t, "github:acme/widgets"))); err != nil {
+		t.Fatal(err)
+	}
+
+	fs, err := TreeAt(context.Background(), root, "widgets", sha, "skills")
+	if err != nil {
+		t.Fatalf("TreeAt: %v", err)
+	}
+	body, err := fs.ReadFile("café/SKILL.md")
+	if err != nil {
+		t.Fatalf("read café/SKILL.md: %v", err)
+	}
+	if !strings.Contains(string(body), "body") {
+		t.Fatalf("body = %q", body)
 	}
 }
 

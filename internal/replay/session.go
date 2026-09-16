@@ -364,9 +364,8 @@ func (s *Session) EvaluationResults() []EvalScore {
 }
 
 // Plugins returns every plugin's provenance recorded on any agent.invoke
-// entry in the bundle, name -> sha (#1427 P4 first cut: one set for the
-// whole bundle, not per round - a name recorded at two different shas
-// refuses rather than guessing, same as recordedPrompts).
+// entry, name -> sha (#1427 P4: one set per bundle, not per round). A name
+// recorded at two different shas refuses rather than guessing.
 func (s *Session) Plugins() (map[string]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

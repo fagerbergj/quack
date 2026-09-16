@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fagerbergj/quack/internal/pluginreg"
+	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
@@ -58,6 +59,15 @@ func (p *Plugins) rebuild() (refusals map[string]error, err error) {
 		return nil, nil
 	}
 	return p.rebuildSkills()
+}
+
+// rebuildStatus maps a rebuild error to its HTTP status - replay.ErrPinned
+// (#1427 P4 F1) is a 409, everything else stays the existing 422.
+func rebuildStatus(err error) int {
+	if errors.Is(err, replay.ErrPinned) {
+		return http.StatusConflict
+	}
+	return http.StatusUnprocessableEntity
 }
 
 // rebuildOrWarn is DeletePlugin's rebuild call: the delete already
@@ -206,7 +216,7 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error), not the response
 	refusals, rerr := h.plugins.rebuild()
 	if rerr != nil {
-		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+		errMsg(w, rebuildStatus(rerr), rerr.Error())
 		return
 	}
 	if refused, ok := refusals[fetched.Name]; ok {
@@ -300,7 +310,7 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error)
 	refusals, rerr := h.plugins.rebuild()
 	if rerr != nil {
-		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+		errMsg(w, rebuildStatus(rerr), rerr.Error())
 		return
 	}
 	if refused, ok := refusals[fetched.Name]; ok {
@@ -339,7 +349,7 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 	})
 	refusals, rerr := h.plugins.rebuild()
 	if rerr != nil {
-		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+		errMsg(w, rebuildStatus(rerr), rerr.Error())
 		return
 	}
 	wire := make([]schema.Plugin, len(results))
