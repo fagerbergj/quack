@@ -96,4 +96,4 @@ plugins:
   store: default_postgres
 ```
 
-The named store must be `kind: postgres` or `kind: sqlite` with a non-empty `url` - any other kind, or an empty url, is a config error. Rows land in a `plugin_rows` table (auto-migrated); clones themselves still live on disk under `plugins.root` regardless of which store holds the rows.
+The named store must be `kind: postgres` or `kind: sqlite` with a non-empty `url` - any other kind, or an empty url, is a config error (except under `quack sandbox`'s `LoadForSandbox`, which skips this check along with the other live-inference-plumbing checks). Rows land in a `plugin_rows` table (auto-migrated); clones themselves still live on disk under `plugins.root` regardless of which store holds the rows.

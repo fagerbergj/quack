@@ -385,16 +385,19 @@ artifacts: {}
 #   store: default_postgres
 
 # The dynamic plugin registry (epic #1427) - see docs/agent-plugins.md. A
-# plugin contributes skills (<root>/skills, merged into both the native skill
-# toolset and each ACP agent's skills.paths, qualified "<name>:<skill>"), MCP
-# servers (<root>/mcp.json), and quack extension declarations (plugin.json's
+# fetched (github:) plugin contributes its skills/ tree only - its mcp.json is
+# ignored with a warning (#1434). A local root (config-only, below) can still
+# contribute skills (<root>/skills, merged into both the native skill toolset
+# and each ACP agent's skills.paths, qualified "<name>:<skill>"), MCP servers
+# (<root>/mcp.json), and quack extension declarations (plugin.json's
 # extensions["io.github.fagerbergj.quack"]).
 #
 # store: which registry backend holds the rows - omit for the filesystem
 #   default (<root>/<name>/entry.json); or name a stores: entry of kind
 #   sqlite or postgres to hold rows in a plugin_rows table instead. Clones
 #   live on disk under root either way.
-# root: where clones live. Defaults to <workspace.root>/.quack/plugins.
+# root: where clones live - omitted here, defaults to
+#   <workspace.root>/.quack/plugins.
 # seed: entries inserted into the registry if their name is absent at boot;
 #   the UI/REST own the list after that. A bare plugins: list (no store/root
 #   keys) is treated as seed: with the filesystem backend. Each entry is
@@ -405,7 +408,6 @@ artifacts: {}
 #
 # skills.plugins: is the deprecated spelling of plugins.seed and is still read.
 plugins:
-  root: ${QUACK_WORKSPACE_ROOT}/.quack/plugins
   seed:
     - .agents/vendor/dotagents   # general-purpose skills (vendored, local root)
     - .agents/vendor/ponytail    # YAGNI/lazy-senior-dev discipline (vendored; Codex format)
