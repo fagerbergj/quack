@@ -638,6 +638,10 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	if err != nil {
 		return skillsInit{}, err
 	}
+	replayBundle, err := replayBundlePath(b.cfg)
+	if err != nil {
+		return skillsInit{}, err
+	}
 	// One resolution of the registry roots drives all three component types.
 	// admitPlugins fails boot only on a plugins.seed (config) refusal -
 	// a REST-added row's refusal just drops that plugin (#1430 severe).
@@ -645,7 +649,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	if err != nil {
 		return skillsInit{}, err
 	}
-	plugins, _, err = admitPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
+	plugins, _, err = admitPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules, replayBundle == "")
 	if err != nil {
 		return skillsInit{}, err
 	}
@@ -658,15 +662,13 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	// text at boot (same refusal timing as prompt pinning); pinnedBundle
 	// then blocks REST plugin mutations from unpinning it mid-run (F1).
 	var pinnedBundle string
-	replaySrc, err := replaySkillSource(ctx, b.cfg, rows, plugins, liveSkillSrc)
+	replaySrc, err := replaySkillSource(ctx, b.cfg, rows, liveSkillSrc)
 	if err != nil {
 		return skillsInit{}, err
 	}
 	if replaySrc != nil {
 		swappable.Swap(replaySrc)
-		if pinnedBundle, err = replayBundlePath(b.cfg); err != nil {
-			return skillsInit{}, err
-		}
+		pinnedBundle = replayBundle
 	}
 	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
@@ -697,7 +699,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 		}
 		// Same admission as boot (#1430 review#2) - a refused non-seed row
 		// only drops itself; everything else still swaps in.
-		admitted, refusals, err := admitPlugins(context.Background(), reg, rows, freshPlugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
+		admitted, refusals, err := admitPlugins(context.Background(), reg, rows, freshPlugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules, replayBundle == "")
 		if err != nil {
 			return nil, err
 		}
@@ -904,7 +906,7 @@ func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.So
 // replaySkillSource builds the P4 (#1432) skill-pinning Source for a replay
 // run: (nil, nil) for a non-replay config or a bundle with no recorded
 // plugin provenance (no ACP round in it - native rounds carry none).
-func replaySkillSource(ctx context.Context, cfg *config.Config, rows []pluginreg.Plugin, admitted []plugin.Plugin, live skill.Source) (skill.Source, error) {
+func replaySkillSource(ctx context.Context, cfg *config.Config, rows []pluginreg.Plugin, live skill.Source) (skill.Source, error) {
 	bundlePath, err := replayBundlePath(cfg)
 	if err != nil || bundlePath == "" {
 		return nil, err
@@ -913,7 +915,7 @@ func replaySkillSource(ctx context.Context, cfg *config.Config, rows []pluginreg
 	if err != nil {
 		return nil, fmt.Errorf("replay: load bundle for skill pinning: %w", err)
 	}
-	return replay.NewSkillSource(ctx, sess, cfg.Plugins.Root, rows, admitted, live)
+	return replay.NewSkillSource(ctx, sess, cfg.Plugins.Root, rows, live)
 }
 
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks, promptOverride artifactsrc.Source) (handler http.Handler, cleanup func(), addr string, err error) {

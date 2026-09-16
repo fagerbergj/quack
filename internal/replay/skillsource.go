@@ -2,15 +2,16 @@ package replay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"strings"
 	"testing/fstest"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
-	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/skillsource"
 )
@@ -20,12 +21,9 @@ import (
 // maps it to 409, not the generic 500/422.
 var ErrPinned = errors.New("plugin roster is pinned to a replay bundle")
 
-// NewSkillSource builds the replay-pinned plugin skill source (#1427 P4): a
-// recorded sha is served via git show against its own clone history, never
-// live admission (admitted is unused here); a no-sha row is scoped out of
-// live instead, keeping live's own embedded/backfill rules. rows' order
-// drives merge order (deterministic bare-name resolve, F3).
-func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, rows []pluginreg.Plugin, admitted []plugin.Plugin, live skill.Source) (skill.Source, error) {
+// NewSkillSource builds the replay-pinned plugin skill source: a recorded
+// sha is served from the clone's own history; a no-sha row is scoped out of live instead.
+func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, rows []pluginreg.Plugin, live skill.Source) (skill.Source, error) {
 	recorded, err := sess.Plugins()
 	if err != nil {
 		return nil, err
@@ -59,19 +57,19 @@ func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, row
 			sources = append(sources, skillsource.Scoped(live, names))
 			continue
 		}
-		// One TreeAt call covers both the manifest check and the skills
-		// tree; a missing clone or unknown sha refuses here, naming both.
-		tree, err := pluginreg.TreeAt(ctx, registryRoot, row.Name, sha, row.Path)
+		skillsDir, err := manifestSkillsDir(ctx, registryRoot, row.Name, sha, row.Path)
 		if err != nil {
+			// A missing clone or unknown sha refuses here, naming the plugin and sha.
 			return nil, fmt.Errorf("replay: %w", err)
 		}
-		if !hasManifest(tree) {
-			// Mirrors admitPlugins' live rule, decided from the recorded
-			// sha's tree instead of the clone's current disk state.
+		if skillsDir == "" {
 			slog.Warn("replay: recorded plugin has no manifest at its recorded sha; skipping its skills", "component", "replay", "plugin", row.Name, "sha", sha)
 			continue
 		}
-		treeFS := skillsSubtree(tree)
+		treeFS, err := pluginreg.TreeAt(ctx, registryRoot, row.Name, sha, path.Join(row.Path, skillsDir))
+		if err != nil {
+			return nil, fmt.Errorf("replay: %w", err)
+		}
 		sources = append(sources, skillsource.Prefixed(row.Name, skillsource.Tolerant(skillsource.NewFileSystemSource(treeFS), treeFS, row.Name+"@"+sha)))
 	}
 	for name := range recorded {
@@ -82,24 +80,45 @@ func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, row
 	return skill.NewMergedSource(sources...), nil
 }
 
-// hasManifest reports whether tree carries either manifest path
-// plugin.Resolve detects, checked at a recorded sha instead of on disk.
-func hasManifest(tree fstest.MapFS) bool {
-	_, agentPlugins := tree["plugin.json"]
-	_, codex := tree[".codex-plugin/plugin.json"]
-	return agentPlugins || codex
+// manifestSkillsDir resolves a plugin's skills directory at a recorded sha,
+// mirroring plugin.Resolve's live detection order; "" means neither admits.
+func manifestSkillsDir(ctx context.Context, registryRoot, name, sha, pluginPath string) (string, error) {
+	root, err := pluginreg.TreeAt(ctx, registryRoot, name, sha, path.Join(pluginPath, "plugin.json"))
+	if err != nil {
+		return "", err
+	}
+	if data, ok := soleFile(root); ok {
+		var m struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(data, &m) == nil && strings.TrimSpace(m.Name) != "" {
+			return "skills", nil
+		}
+		return "", nil // invalid manifest never falls through to codex, mirroring fromRootManifest
+	}
+	codex, err := pluginreg.TreeAt(ctx, registryRoot, name, sha, path.Join(pluginPath, ".codex-plugin/plugin.json"))
+	if err != nil {
+		return "", err
+	}
+	data, ok := soleFile(codex)
+	if !ok {
+		return "", nil
+	}
+	var m struct {
+		Skills string `json:"skills"`
+	}
+	if json.Unmarshal(data, &m) != nil || strings.TrimSpace(m.Skills) == "" {
+		return "", nil
+	}
+	return m.Skills, nil
 }
 
-// skillsSubtree narrows a plugin root tree to its skills/ prefix, the shape
-// skillsource.NewFileSystemSource expects.
-func skillsSubtree(tree fstest.MapFS) fstest.MapFS {
-	out := make(fstest.MapFS, len(tree))
-	for p, f := range tree {
-		if rel, ok := strings.CutPrefix(p, "skills/"); ok {
-			out[rel] = f
-		}
+// soleFile returns the one file TreeAt's single-path pathspec matched, if any.
+func soleFile(tree fstest.MapFS) ([]byte, bool) {
+	for _, f := range tree {
+		return f.Data, true
 	}
-	return out
+	return nil, false
 }
 
 // prefixedNames lists live's skill names qualified "plugin:skill" under
