@@ -263,13 +263,14 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
           )}
           {fetched && <span>fetched {fetched}</span>}
           {update?.error && (
-            <details className="min-w-0">
+            <details className="group min-w-0">
               <summary
                 className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 cursor-pointer"
                 title={`Update check failed: ${update.error}`}
               >
                 <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
                 check failed
+                <Icon name="expand_more" className="w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-180" />
               </summary>
               <div className="mt-1 text-amber-700 dark:text-amber-400 break-words whitespace-pre-line font-mono">{update.error}</div>
             </details>

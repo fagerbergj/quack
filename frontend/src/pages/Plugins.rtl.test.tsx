@@ -71,6 +71,7 @@ describe('Plugins row error rendering', () => {
     )
     const summary = screen.getByText('check failed')
     const details = summary.closest('details') as HTMLDetailsElement
+    expect(details.className).toContain('min-w-0')
     expect(details.open).toBe(false)
     summary.click()
     expect(details.open).toBe(true)
