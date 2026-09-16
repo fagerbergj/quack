@@ -25,16 +25,26 @@ func withRecordingSpan(t *testing.T) (context.Context, func(), *tracetest.InMemo
 }
 
 func outputAttr(exp *tracetest.InMemoryExporter) (string, bool) {
+	v, ok, _, _ := outputAttrs(exp)
+	return v, ok
+}
+
+// outputAttrs reads both keys setDeliveryOutputAttr writes in the same call
+// (node.go:1410): langfuse.observation.output and langfuse.trace.output.
+func outputAttrs(exp *tracetest.InMemoryExporter) (obs string, obsOK bool, trace string, traceOK bool) {
 	spans := exp.GetSpans()
 	if len(spans) == 0 {
-		return "", false
+		return "", false, "", false
 	}
 	for _, kv := range spans[0].Attributes {
-		if string(kv.Key) == "langfuse.observation.output" {
-			return kv.Value.AsString(), true
+		switch string(kv.Key) {
+		case "langfuse.observation.output":
+			obs, obsOK = kv.Value.AsString(), true
+		case "langfuse.trace.output":
+			trace, traceOK = kv.Value.AsString(), true
 		}
 	}
-	return "", false
+	return obs, obsOK, trace, traceOK
 }
 
 // TestSetDeliveryOutputAttr proves the delivered text lands on the enclosing
@@ -61,8 +71,8 @@ func TestSetDeliveryOutputAttr_ContentCaptureOff(t *testing.T) {
 	ctx, end, exp := withRecordingSpan(t)
 	setDeliveryOutputAttr(ctx, DeliveryContext{Items: []StagedDelivery{{Body: "the answer"}}})
 	end()
-	if _, ok := outputAttr(exp); ok {
-		t.Fatal("langfuse.observation.output present with content capture off, want absent")
+	if _, obsOK, _, traceOK := outputAttrs(exp); obsOK || traceOK {
+		t.Fatalf("langfuse.observation.output present=%v, langfuse.trace.output present=%v, with content capture off, want both absent", obsOK, traceOK)
 	}
 }
 
