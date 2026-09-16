@@ -65,6 +65,7 @@ func TestRunPlanAsGraph_JudgePromptProvenance(t *testing.T) {
 			return vetting.Config{
 				Threshold: 0.6, JudgeRounds: 1, JudgeModel: judgeModel,
 				BundleHash: wantBundle, PromptSource: artifactsrc.StaticSource, PromptVersionID: wantWorkerPrompt,
+				PromptArtifact: "system/code-reviewer",
 			}
 		}, nil)
 
@@ -108,6 +109,10 @@ func TestRunPlanAsGraph_JudgePromptProvenance(t *testing.T) {
 	if got := judgeAttrs["quack.bundle.hash"]; got != wantBundle {
 		t.Errorf("judge quack.bundle.hash = %q, want the worker's %q - whose answer is under review", got, wantBundle)
 	}
+	// #1422 N3: a typo in the attribute key must not silently disable pinning.
+	if got := judgeAttrs["quack.prompt.artifact"]; got != "system/judge" {
+		t.Errorf("judge quack.prompt.artifact = %q, want %q", got, "system/judge")
+	}
 
 	if workerAttrs == nil {
 		t.Fatal("no worker llm.call recorded")
@@ -117,5 +122,8 @@ func TestRunPlanAsGraph_JudgePromptProvenance(t *testing.T) {
 	}
 	if got := workerAttrs["quack.bundle.hash"]; got != wantBundle {
 		t.Errorf("worker quack.bundle.hash = %q, want %q", got, wantBundle)
+	}
+	if got := workerAttrs["quack.prompt.artifact"]; got != "system/code-reviewer" {
+		t.Errorf("worker quack.prompt.artifact = %q, want %q", got, "system/code-reviewer")
 	}
 }

@@ -43,6 +43,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/inference/openaimodel"
+	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -468,6 +469,22 @@ func (b *boot) runCleanups() {
 	}
 }
 
+// initAuthAndObservability builds auth, then the ledger store, then starts
+// otel - merged so buildFromConfig checks one error instead of two, same
+// order as before the merge (auth.New first).
+func (b *boot) initAuthAndObservability(ctx context.Context) (*auth.Auth, ledger.LedgerStore, *otelobs.Providers, error) {
+	authMW, err := auth.New(b.cfg.Auth)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("auth init failed: %w", err)
+	}
+	ledgerStore := LedgerStoreFromConfig(b.cfg)
+	otelProviders, err := b.initObservability(ctx, ledgerStore)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return authMW, ledgerStore, otelProviders, nil
+}
+
 // initializes otel, wiring its shutdown (with a bounded context) into the boot cleanups
 func (b *boot) initObservability(ctx context.Context, ledgerStore ledger.LedgerStore) (*otelobs.Providers, error) {
 	inference.Version = Version // llm.call ledger provenance (#1096)
@@ -735,9 +752,45 @@ func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator
 	return handler, nil
 }
 
+// replayPromptSource builds the P3 (#1422) prompt-pinning Source for a
+// replay run (every provider is kind "replay" over the same bundle - see
+// replayifyProviders); (nil, nil) for a normal, non-replay config.
+func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.Source, error) {
+	var bundlePath string
+	for _, p := range cfg.Providers {
+		if p.Kind != "replay" || p.Bundle == "" {
+			continue
+		}
+		if bundlePath == "" {
+			bundlePath = p.Bundle
+		} else if p.Bundle != bundlePath {
+			return nil, fmt.Errorf("replay: providers name different bundles (%q vs %q) - replayifyProviders should have set them all the same", bundlePath, p.Bundle)
+		}
+	}
+	if bundlePath == "" {
+		return nil, nil
+	}
+	sess, err := replay.Load(bundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("replay: load bundle for prompt pinning: %w", err)
+	}
+	var lf *langfuse.Client
+	if cfg.Prompts.Store != "" {
+		if s, ok := cfg.Store(cfg.Prompts.Store); ok {
+			lf = langfuse.New(s.URL, s.PublicKey, s.SecretKey)
+		}
+	}
+	return replay.NewPromptSource(ctx, sess, lf, cfg.Prompts.Store)
+}
+
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	// P2 (#1421) supplies a store Source here; P1 always resolves static.
-	b := &boot{cfg: cfg, res: artifactsrc.New(cfg.Prompts.Store, nil, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
+	promptSrc, err := replayPromptSource(ctx, cfg)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	// P2 (#1421) supplies a store Source for a live run; P3 (#1422) pins one
+	// during replay (promptSrc above, nil for a normal boot).
+	b := &boot{cfg: cfg, res: artifactsrc.New(cfg.Prompts.Store, promptSrc, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
 	defer func() {
 		if err != nil {
 			b.runCleanups()
@@ -755,13 +808,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		addr = fmt.Sprintf(":%d", port)
 	}
 
-	authMW, err := auth.New(cfg.Auth)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("auth init failed: %w", err)
-	}
-
-	ledgerStore := LedgerStoreFromConfig(cfg)
-	otelProviders, err := b.initObservability(ctx, ledgerStore)
+	authMW, ledgerStore, otelProviders, err := b.initAuthAndObservability(ctx)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1343,6 +1390,7 @@ func stampBundle(c vetting.Config, b *agent.Bundle) vetting.Config {
 	c.BundleHash = b.Hash
 	c.PromptSource = b.PromptSource
 	c.PromptVersionID = b.PromptVersion
+	c.PromptArtifact = b.PromptArtifact
 	return c
 }
 

@@ -30,6 +30,9 @@ type Bundle struct {
 	Dir           string
 	PromptSource  string
 	PromptVersion string
+	// PromptArtifact: the resolved system prompt's artifact name (#1422),
+	// e.g. "system/code-reviewer" - derived from Dir, not the agent's own name.
+	PromptArtifact string
 }
 
 // Card is the agent's identity, parsed from agent-card.json. Skills are
@@ -100,13 +103,13 @@ func LoadBundle(ctx context.Context, res *artifactsrc.Resolver, dir string) (*Bu
 	h.Write(rubric)
 	hash := hex.EncodeToString(h.Sum(nil))[:16]
 
-	return &Bundle{Card: card, Prompt: prompt, Hash: hash, Dir: dir, PromptSource: promptArt.Source, PromptVersion: promptArt.VersionID}, nil
+	return &Bundle{Card: card, Prompt: prompt, Hash: hash, Dir: dir, PromptSource: promptArt.Source, PromptVersion: promptArt.VersionID, PromptArtifact: promptArt.Name}, nil
 }
 
 // PinPrompt pins the bundle's system/<agent> artifact for one node. The gate
 // refreshes it at each round's start; the assembled prompt reads it in between.
 func (b *Bundle) PinPrompt(res *artifactsrc.Resolver) *artifactsrc.Pinned {
-	boot := artifactsrc.Artifact{Name: b.Dir, Body: b.Prompt, Source: b.PromptSource, VersionID: b.PromptVersion}
+	boot := artifactsrc.Artifact{Name: b.PromptArtifact, Body: b.Prompt, Source: b.PromptSource, VersionID: b.PromptVersion}
 	return artifactsrc.NewPinned(res, artifactsrc.BundleName("system", b.Dir), boot)
 }
 

@@ -93,6 +93,8 @@ const (
 	// QuackPlugins: invoke_agent provenance (#1427 P1) - a JSON array of
 	// {name,sha} for the plugins in scope of the round, no semconv equivalent.
 	QuackPlugins = "quack.plugins"
+	// QuackPromptArtifact: the resolved artifact's name (#1422) - replay pins on this, not the agent name.
+	QuackPromptArtifact = "quack.prompt.artifact"
 )
 
 // vars, not consts - attribute.Value has no constant form.
