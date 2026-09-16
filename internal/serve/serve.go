@@ -1206,6 +1206,20 @@ type judgeBinding struct {
 	cache        map[string]judgeBoundModel
 }
 
+// warnOnce logs msg via slog.Warn only the first time this call's err differs
+// from *last (deduping a persistent failure to one log per distinct error).
+func (b *judgeBinding) warnOnce(last *string, msg string, artifactName string, err error) {
+	b.mu.Lock()
+	changed := err.Error() != *last
+	if changed {
+		*last = err.Error()
+	}
+	b.mu.Unlock()
+	if changed {
+		slog.Warn(msg, "component", "artifacts", "artifact", artifactName, "err", err)
+	}
+}
+
 // bindJudgeRefresher returns prepareJudge's per-round binder: system/judge's Config
 // picks this round's OWN JudgeFactory+model+thinking_level; an invalid value falls
 // back to gates.judge's static factory/model and logs once per distinct bad value.
@@ -1215,16 +1229,7 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 	return func(art artifactsrc.Artifact) (vetting.JudgeFactory, model.LLM, string) {
 		bound, err := cfg.ResolveBinding(jprov, cfg.Gates.Judge.Model, art.Config)
 		if err != nil {
-			b.mu.Lock()
-			changed := err.Error() != b.lastBad
-			if changed {
-				b.lastBad = err.Error()
-			}
-			b.mu.Unlock()
-			if changed {
-				slog.Warn("judge prompt binding invalid; using gates.judge's static binding",
-					"component", "artifacts", "artifact", art.Name, "err", err)
-			}
+			b.warnOnce(&b.lastBad, "judge prompt binding invalid; using gates.judge's static binding", art.Name, err)
 			return staticFactory, staticModel, staticEffort
 		}
 		b.mu.Lock()
@@ -1249,16 +1254,7 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 		}
 		m, err := inference.NewModel(bound.Provider, bound.Model, artifacts, cfg.ModelCost(bound.Model))
 		if err != nil {
-			b.mu.Lock()
-			changed := err.Error() != b.lastBadBuild
-			if changed {
-				b.lastBadBuild = err.Error()
-			}
-			b.mu.Unlock()
-			if changed {
-				slog.Warn("judge prompt binding model build failed; using gates.judge's static binding",
-					"component", "artifacts", "artifact", art.Name, "err", err)
-			}
+			b.warnOnce(&b.lastBadBuild, "judge prompt binding model build failed; using gates.judge's static binding", art.Name, err)
 			return staticFactory, staticModel, staticEffort
 		}
 		f := vetting.NewJudgeFactory(m, readTools, skillsets)
