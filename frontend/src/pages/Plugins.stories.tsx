@@ -31,7 +31,7 @@ const samplePlugins: Plugin[] = [
   {
     name: 'broken', entry: 'github:acme/broken', source: 'github',
     owner: 'acme', repo: 'broken',
-    error: 'git clone: fatal: unable to access \'https://github.com/acme/broken.git/\': Could not resolve host: github.com\nfatal: clone of \'https://github.com/acme/broken.git\' into submodule path \'plugins/broken/repo\' failed\nretry 3/3 failed after 12.4s, giving up',
+    error: 'git clone: fatal: unable to access \'https://github.com/acme/broken.git/\': Could not resolve host: github.com\nfatal: clone of \'https://github.com/acme/broken.git\' into submodule path \'/data/.quack/plugins/broken/repo/vendor/some-long-vendored-dependency-name/subpackage\' failed\nretry 3/3 failed after 12.4s, giving up',
     root: '/data/.quack/plugins/broken/repo',
   },
   {

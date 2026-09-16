@@ -183,7 +183,7 @@ function AddPluginForm({ onAdded }: { onAdded: () => void }) {
         <button
           type="submit"
           disabled={adding || !entry.trim()}
-          className="flex items-center justify-center rounded-md px-3 py-1.5 min-h-[44px] text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center justify-center rounded-md px-3 py-1.5 min-h-[44px] medium:min-h-0 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Add
         </button>
@@ -242,6 +242,7 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
   const removable = p.source === 'github'
   const behind = update?.behind ?? false
   const fetched = relativeTime(p.fetched_at)
+  const ref = refLabel(p)
 
   return (
     <li className="flex items-center gap-3 px-4 py-3 sm:px-6">
@@ -256,15 +257,15 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
           )}
         </div>
         <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2 flex-wrap">
-          {refLabel(p) && <span>{refLabel(p)}</span>}
+          {ref && <span>{ref}</span>}
           {p.installed_sha && (
             <span title={p.installed_sha}>sha {shortSha(p.installed_sha)}</span>
           )}
           {fetched && <span>fetched {fetched}</span>}
           {update?.error && (
-            <details>
+            <details className="min-w-0">
               <summary
-                className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 cursor-pointer list-none [&::-webkit-details-marker]:hidden"
+                className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 cursor-pointer"
                 title={`Update check failed: ${update.error}`}
               >
                 <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
@@ -277,7 +278,7 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
         {p.error && (
           <div className="mt-1 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
             <Icon name="warning" className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span className="break-words whitespace-pre-line font-mono">{p.error}</span>
+            <span className="min-w-0 break-words whitespace-pre-line font-mono">{p.error}</span>
           </div>
         )}
       </div>
