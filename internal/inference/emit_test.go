@@ -253,3 +253,22 @@ func TestTracedModel_EmitsErrorType(t *testing.T) {
 		t.Errorf("error.type = %q, want %q", attrs["error.type"].AsString(), errBoom.Error())
 	}
 }
+
+// TestChatRequestAttrs_ReasoningEffortIsLowerCase pins L5: genai's ThinkingLevel
+// enum is upper-case ("LOW"), but ledger.LLMCallPayload.ReasoningEffort documents
+// low/medium/high (matching models.<id>.effort's own casing) - emit.go must lower it.
+func TestChatRequestAttrs_ReasoningEffortIsLowerCase(t *testing.T) {
+	req := &model.LLMRequest{Config: &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+	}}
+	attrs, _ := chatRequestAttrs(req)
+	var got string
+	for _, kv := range attrs {
+		if string(kv.Key) == otelobs.GenAIRequestReasoningEffort {
+			got = kv.Value.AsString()
+		}
+	}
+	if got != "high" {
+		t.Errorf("reasoning_effort = %q, want lower-case high", got)
+	}
+}
