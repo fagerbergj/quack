@@ -35,10 +35,11 @@ type ExportOpts struct {
 
 // ExportItem is one exported dataset item, reported back for the summary table.
 type ExportItem struct {
-	ItemID string
-	ChatID string
-	NodeID string
-	Agent  string
+	ItemID     string
+	ChatID     string
+	NodeID     string
+	Agent      string
+	NoExpected bool // true when the item was exported with no expectedOutput (chat unmerged or no answer)
 }
 
 // datasetItemInput is a dataset item's `input` field: the node's task plus
@@ -99,14 +100,20 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 	return items, nil
 }
 
-// sortedStreamKeys orders NodeRuns' keys deterministically (its map iteration
-// order isn't), so a re-export or a --limit subset always picks the same runs.
+// sortedStreamKeys orders NodeRuns' keys by answer recency (run.At, newest
+// first, ties broken by key string), so --limit favors the most recent run.
 func sortedStreamKeys(runs map[replay.StreamKey]replay.NodeRun) []replay.StreamKey {
 	keys := make([]replay.StreamKey, 0, len(runs))
 	for k := range runs {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+	sort.Slice(keys, func(i, j int) bool {
+		ai, aj := runs[keys[i]].At, runs[keys[j]].At
+		if !ai.Equal(aj) {
+			return ai.After(aj)
+		}
+		return keys[i].String() < keys[j].String()
+	})
 	return keys
 }
 
@@ -114,14 +121,7 @@ func sortedStreamKeys(runs map[replay.StreamKey]replay.NodeRun) []replay.StreamK
 // updated at or after --since, paged through Store.ListChats until the page turns too old.
 func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) ([]store.Chat, error) {
 	if opts.ChatID != "" {
-		c, err := st.GetChat(ctx, opts.ChatID)
-		if err != nil {
-			return nil, fmt.Errorf("dataset export: get chat %q: %w", opts.ChatID, err)
-		}
-		if c == nil {
-			return nil, fmt.Errorf("dataset export: chat %q not found", opts.ChatID)
-		}
-		return []store.Chat{*c}, nil
+		return exportSingleChat(ctx, st, opts)
 	}
 	var out []store.Chat
 	token := ""
@@ -148,6 +148,22 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) ([]store
 		}
 		token = next
 	}
+}
+
+// exportSingleChat resolves --chat, excluding it entirely if --since is set
+// and it's older (same semantics as --repo's per-chat filter).
+func exportSingleChat(ctx context.Context, st *store.Store, opts ExportOpts) ([]store.Chat, error) {
+	c, err := st.GetChat(ctx, opts.ChatID)
+	if err != nil {
+		return nil, fmt.Errorf("dataset export: get chat %q: %w", opts.ChatID, err)
+	}
+	if c == nil {
+		return nil, fmt.Errorf("dataset export: chat %q not found", opts.ChatID)
+	}
+	if !opts.Since.IsZero() && c.UpdatedAt.Before(opts.Since) {
+		return nil, nil
+	}
+	return []store.Chat{*c}, nil
 }
 
 // exportItemID derives a stable, ≤255-char Langfuse dataset item id from
@@ -185,8 +201,10 @@ func chatRepo(c store.Chat) string {
 
 func chatMerged(c store.Chat) bool {
 	if o, ok := chatOriginDecoded(c); ok {
-		return o.State == extsdk.SubjectMerged || o.Badge == "merged"
+		return o.State == extsdk.SubjectMerged
 	}
+	// Legacy fallback for pre-State rows: no Origin was ever stamped, so
+	// GithubState is all that's known.
 	return c.GithubState == "merged"
 }
 
@@ -219,7 +237,7 @@ func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, datase
 	if resp.JSON200 == nil {
 		return ExportItem{}, fmt.Errorf("dataset export: create item for chat %q node %q: %s", chat.ID, key.Node, resp.Status())
 	}
-	return ExportItem{ItemID: id, ChatID: chat.ID, NodeID: key.Node, Agent: key.Agent}, nil
+	return ExportItem{ItemID: id, ChatID: chat.ID, NodeID: key.Node, Agent: key.Agent, NoExpected: expected == nil}, nil
 }
 
 // ensureDataset creates the named Langfuse dataset if it doesn't already exist -
@@ -251,9 +269,13 @@ func ensureDataset(ctx context.Context, lf *langfusegen.ClientWithResponses, nam
 func FormatExportSummary(items []ExportItem) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%-40s %-24s %-16s %s\n", "ITEM ID", "CHAT", "NODE", "AGENT")
+	noExpected := 0
 	for _, it := range items {
 		fmt.Fprintf(&b, "%-40s %-24s %-16s %s\n", it.ItemID, it.ChatID, it.NodeID, it.Agent)
+		if it.NoExpected {
+			noExpected++
+		}
 	}
-	fmt.Fprintf(&b, "%d item(s) exported\n", len(items))
+	fmt.Fprintf(&b, "%d item(s) exported (%d without expected output)\n", len(items), noExpected)
 	return b.String()
 }

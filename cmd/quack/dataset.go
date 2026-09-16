@@ -36,7 +36,7 @@ func newDatasetExportCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&chatID, "chat", "", "export a single chat by id")
 	c.Flags().StringVar(&repo, "repo", "", "export every chat for owner/repo")
-	c.Flags().StringVar(&since, "since", "", "only chats updated at or after this date (RFC3339 or YYYY-MM-DD)")
+	c.Flags().StringVar(&since, "since", "", "only chats updated at or after this date (RFC3339 or YYYY-MM-DD); with --chat, excludes it entirely if it's older")
 	c.Flags().StringVar(&dataset, "dataset", "", "Langfuse dataset name (created if it doesn't exist)")
 	c.Flags().IntVar(&limit, "limit", 0, "stop after exporting this many items (0 = no limit)")
 	_ = c.MarkFlagRequired("dataset")
@@ -73,6 +73,9 @@ func runDatasetExport(cmd *cobra.Command, chatID, repo, since, dataset string, l
 		ChatID: chatID, Repo: repo, Since: sinceT, Dataset: dataset, Limit: limit,
 	})
 	if err != nil {
+		// Export is idempotent (item ids are deterministic), so a re-run after
+		// this partial failure converges rather than duplicating.
+		fmt.Fprintf(cmd.ErrOrStderr(), "%d item(s) exported before failure: %v\n", len(items), err)
 		return err
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), cli.FormatExportSummary(items))

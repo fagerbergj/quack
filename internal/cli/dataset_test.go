@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,10 +23,17 @@ import (
 
 // setChatOrigin stamps chatID's Origin the way the github extension's
 // chatOrigin/refreshChatOrigin do, so tests exercise the real production write path.
+// State is derived from badge the same way the extension sets both together
+// ("merged" -> SubjectMerged, else SubjectOpen) - dataset.go branches on
+// State only, never Badge (extsdk: "Badge remains display-only").
 func setChatOrigin(t *testing.T, st *store.Store, chatID, repo, url, badge string) {
 	t.Helper()
+	state := extsdk.SubjectOpen
+	if badge == "merged" {
+		state = extsdk.SubjectMerged
+	}
 	origin := extsdk.ChatOrigin{
-		Extension: "github", Label: repo, Kind: "pr", Href: url, Badge: badge,
+		Extension: "github", Label: repo, Kind: "pr", Href: url, Badge: badge, State: state,
 		Labels: map[string][]extsdk.LabelValue{"repo": {{Value: repo}}},
 	}
 	b, err := json.Marshal(origin)
@@ -86,10 +94,16 @@ func newTestGenClient(t *testing.T, srv *httptest.Server) *langfusegen.ClientWit
 
 // llmCallEntry builds a chat entry for a node stream: task -> answer.
 func llmCallEntry(chatID, node, agent, task, answer string) ledger.Entry {
+	return llmCallRoundEntry(chatID, node, agent, "worker-r0", time.Time{}, task, answer)
+}
+
+// llmCallRoundEntry is llmCallEntry with an explicit round and timestamp, for
+// tests that need several rounds of the same node (draft/continuation/revise).
+func llmCallRoundEntry(chatID, node, agent, round string, at time.Time, task, answer string) ledger.Entry {
 	in, _ := json.Marshal([]*genai.Content{{Role: genai.RoleUser, Parts: []*genai.Part{{Text: task}}}})
 	out, _ := json.Marshal(genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: answer}}})
 	payload, _ := json.Marshal(ledger.LLMCallPayload{RequestModel: "m", Input: string(in), Output: string(out)})
-	return ledger.Entry{ChatID: chatID, NodeID: node, Agent: agent, Kind: ledger.KindLLMCall, Payload: payload}
+	return ledger.Entry{ChatID: chatID, NodeID: node, Agent: agent, Round: round, At: at, Kind: ledger.KindLLMCall, Payload: payload}
 }
 
 func TestRunDatasetExport_Idempotent(t *testing.T) {
@@ -351,6 +365,35 @@ func TestRunDatasetExport_SinceFiltersOutOlderChats(t *testing.T) {
 	}
 }
 
+// TestRunDatasetExport_SinceAppliesToSingleChat pins nit 6: --since must
+// apply to --chat too, not just --repo (a chat older than --since exports 0).
+func TestRunDatasetExport_SinceAppliesToSingleChat(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setChatOrigin(t, st, chat.ID, "acme/widget", "https://github.com/acme/widget/pull/1", "merged")
+
+	var items map[string]map[string]any
+	srv := datasetExistsServer(t, &items)
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	got, err := RunDatasetExport(ctx, ledgertest.NewMemStore(), st, lf,
+		ExportOpts{ChatID: chat.ID, Since: time.Now().Add(24 * time.Hour), Dataset: "my-dataset"})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("--since in the future must exclude an older --chat, got %+v", got)
+	}
+}
+
 func TestRunDatasetExport_SkipsChatsWithNoRecording(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -520,5 +563,156 @@ func TestRunDatasetExport_ItemIDsAreDatasetScoped(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Fatalf("want two distinct stored items, got %d", len(items))
+	}
+}
+
+// TestRunDatasetExport_DraftPlusRevise pins PR #1444 blocking finding 2: a
+// node's draft and revise rounds are separate ledger streams, but must
+// export as ONE item - task from the draft, expectedOutput from the revise
+// (the node's actually-delivered answer), never the synthetic revise prompt.
+func TestRunDatasetExport_DraftPlusRevise(t *testing.T) {
+	ctx := context.Background()
+	ls := ledgertest.NewMemStore()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := ls.AppendIntent(ctx, llmCallRoundEntry("chat-1", "node-1", "code-reviewer", "worker-r0", base, "review this diff", "draft review")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ls.AppendIntent(ctx, llmCallRoundEntry("chat-1", "node-1", "code-reviewer", "worker-r1", base.Add(time.Minute), "judge feedback + prior answer inlined", "revised review")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setChatOrigin(t, st, chat.ID, "acme/widget", "https://github.com/acme/widget/pull/1", "merged")
+	entries, _ := ls.ReadEntries(ctx, "chat-1", 0)
+	ls2 := ledgertest.NewMemStore()
+	for _, e := range entries {
+		e.ChatID = chat.ID
+		if _, err := ls2.AppendIntent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var items map[string]map[string]any
+	srv := datasetExistsServer(t, &items)
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	got, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("draft+revise of one node must export exactly one item, got %d: %+v", len(got), got)
+	}
+	body := items[got[0].ItemID]
+	input, _ := body["input"].(map[string]any)
+	if input["task"] != "review this diff" {
+		t.Fatalf("input.task = %v, want the draft round's task", input["task"])
+	}
+	if body["expectedOutput"] != "revised review" {
+		t.Fatalf("expectedOutput = %v, want the revise round's (delivered) answer", body["expectedOutput"])
+	}
+}
+
+// TestRunDatasetExport_DraftPlusContinuation pins the same finding for a
+// continuation round: expectedOutput must be the continuation's answer, not
+// the incomplete draft's.
+func TestRunDatasetExport_DraftPlusContinuation(t *testing.T) {
+	ctx := context.Background()
+	ls := ledgertest.NewMemStore()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := ls.AppendIntent(ctx, llmCallRoundEntry("chat-1", "node-1", "code-reviewer", "worker-r0", base, "review this diff", "partial draft")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ls.AppendIntent(ctx, llmCallRoundEntry("chat-1", "node-1", "code-reviewer", "worker-cont1", base.Add(time.Minute), "continue", "completed review")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setChatOrigin(t, st, chat.ID, "acme/widget", "https://github.com/acme/widget/pull/1", "merged")
+	entries, _ := ls.ReadEntries(ctx, "chat-1", 0)
+	ls2 := ledgertest.NewMemStore()
+	for _, e := range entries {
+		e.ChatID = chat.ID
+		if _, err := ls2.AppendIntent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var items map[string]map[string]any
+	srv := datasetExistsServer(t, &items)
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	got, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("draft+continuation of one node must export exactly one item, got %d", len(got))
+	}
+	body := items[got[0].ItemID]
+	if body["expectedOutput"] != "completed review" {
+		t.Fatalf("expectedOutput = %v, want the continuation's (delivered) answer", body["expectedOutput"])
+	}
+}
+
+// TestRunDatasetExport_OpenOriginHasNoExpectedOutput pins the finding that an
+// unmerged/open chat must never carry an expectedOutput.
+func TestRunDatasetExport_OpenOriginHasNoExpectedOutput(t *testing.T) {
+	ctx := context.Background()
+	ls := ledgertest.NewMemStore()
+	if _, err := ls.AppendIntent(ctx, llmCallEntry("chat-1", "node-1", "code-reviewer", "review this", "looks good")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setChatOrigin(t, st, chat.ID, "acme/widget", "https://github.com/acme/widget/pull/1", "open")
+	entries, _ := ls.ReadEntries(ctx, "chat-1", 0)
+	ls2 := ledgertest.NewMemStore()
+	for _, e := range entries {
+		e.ChatID = chat.ID
+		if _, err := ls2.AppendIntent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var items map[string]map[string]any
+	srv := datasetExistsServer(t, &items)
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	got, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(got) != 1 || !got[0].NoExpected {
+		t.Fatalf("open-origin chat's item must be flagged NoExpected, got %+v", got)
+	}
+	body := items[got[0].ItemID]
+	if _, ok := body["expectedOutput"]; ok && body["expectedOutput"] != nil {
+		t.Fatalf("expectedOutput = %v, want absent/nil for an open chat", body["expectedOutput"])
+	}
+	summary := FormatExportSummary(got)
+	if !strings.Contains(summary, "1 without expected output") {
+		t.Fatalf("summary %q must report the item exported without expected output", summary)
 	}
 }
