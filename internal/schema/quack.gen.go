@@ -1869,7 +1869,7 @@ type ServerInterface interface {
 	// Stop a node - any non-terminal status, into cancelled
 	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/stop)
 	StopNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
-	// Download a chat's replay-ledger recording bundle
+	// Download a chat's ledger recording bundle
 	// (GET /api/v1/chats/{chat_id}/recording)
 	GetChatRecording(w http.ResponseWriter, r *http.Request, chatId ChatID)
 	// Send a message and stream the response
@@ -2043,7 +2043,7 @@ func (_ Unimplemented) StopNode(w http.ResponseWriter, r *http.Request, chatId C
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Download a chat's replay-ledger recording bundle
+// Download a chat's ledger recording bundle
 // (GET /api/v1/chats/{chat_id}/recording)
 func (_ Unimplemented) GetChatRecording(w http.ResponseWriter, r *http.Request, chatId ChatID) {
 	w.WriteHeader(http.StatusNotImplemented)

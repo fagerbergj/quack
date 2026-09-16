@@ -128,7 +128,7 @@ export const listRecordings = <ThrowOnError extends boolean = false>(options?: O
 });
 
 /**
- * Download a chat's replay-ledger recording bundle
+ * Download a chat's ledger recording bundle
  *
  * Streams a self-contained ZIP export of the chat's recorded
  * observations: `manifest.json` (quack version, ledger_version, session

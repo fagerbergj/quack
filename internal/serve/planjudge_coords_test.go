@@ -6,12 +6,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool/skilltoolset"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/skillsource"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -60,9 +63,16 @@ func TestBuildAgents_PlanJudgeDoesNotInheritGatedNodeStamp(t *testing.T) {
 		},
 		Workspace: config.WorkspaceConfig{Sandbox: "none"},
 	}
+	// The ledger is the observation point: a leaked stamp shows up as a
+	// non-empty node/agent/round on the emitted llm.call entry, not as an error.
+	store := ledgertest.NewMemStore()
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
 	var setupFn dag.SetupFunc
 	_, _, nodeServers, _, planJudge, _, judgeModel, err := buildAgents(cfg, nil, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil, nil, nil)
+		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil, store, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}
@@ -72,12 +82,32 @@ func TestBuildAgents_PlanJudgeDoesNotInheritGatedNodeStamp(t *testing.T) {
 	judgeModel.(interface{ SetLedgerCoords(ledger.Coords) }).SetLedgerCoords(
 		ledger.Coords{ChatID: "other-chat", Node: "n-gated", Agent: "judge", Round: "judge-r1"})
 
-	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "plan-chat"})
+	const chatID = "plan-chat"
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID})
 	ok, reason, err := planJudge(ctx, "do a thing", "node a: do the thing", "")
 	if err != nil {
-		t.Fatalf("plan judge call: %v (a stamped gate model leaked its node/agent/round into this call)", err)
+		t.Fatalf("plan judge call: %v", err)
 	}
 	if !ok {
 		t.Fatalf("verdict = false (%s), want the fixture's accept", reason)
+	}
+
+	entries, err := ledger.ReadObservations(context.Background(), store, chatID)
+	if err != nil {
+		t.Fatalf("ReadObservations: %v", err)
+	}
+	var call *ledger.Entry
+	for i := range entries {
+		if entries[i].Kind == ledger.KindLLMCall {
+			call = &entries[i]
+			break
+		}
+	}
+	if call == nil {
+		t.Fatal("no llm.call entry recorded for the plan-judge round")
+	}
+	if call.NodeID != "" || call.Agent != "" || call.Round != "" {
+		t.Fatalf("llm.call node/agent/round = %q/%q/%q, want all empty (a stamped gate model leaked its node/agent/round into this call)",
+			call.NodeID, call.Agent, call.Round)
 	}
 }

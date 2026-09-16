@@ -117,7 +117,7 @@ func (c *Client) UpdateChat(ctx context.Context, id string, title *string, archi
 	return out, json.Unmarshal(respBody, &out)
 }
 
-// ListRecordings returns every session the replay ledger has an entry for
+// ListRecordings returns every session the ledger has a recording entry for
 // (server orders however LedgerStore.List does; today that's directory
 // order, unsorted). 404 (recording disabled) surfaces as ErrNotFound.
 func (c *Client) ListRecordings(ctx context.Context) ([]schema.RecordingSummary, error) {

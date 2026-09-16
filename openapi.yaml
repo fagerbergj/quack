@@ -262,7 +262,7 @@ paths:
   /api/v1/chats/{chat_id}/recording:
     get:
       operationId: getChatRecording
-      summary: Download a chat's replay-ledger recording bundle
+      summary: Download a chat's ledger recording bundle
       description: |
         Streams a self-contained ZIP export of the chat's recorded
         observations: `manifest.json` (quack version, ledger_version, session
@@ -1978,7 +1978,7 @@ components:
             $ref: "#/components/schemas/MemoryScopeStats"
 
     # -------------------------------------------------------------------------
-    # Replay ledger
+    # Ledger recording
     # -------------------------------------------------------------------------
 
     RecordingSummary:

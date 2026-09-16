@@ -71,7 +71,7 @@ func newTracedTestOrch(t *testing.T, stub *orchStub) *Orchestrator {
 // orchestrator's own conversational "chat" ledger event carried NO
 // gen_ai.conversation.id at all, so ledger.Exporter filed it into the shared
 // "unscoped" bucket instead of this chat's stream - and with Node/Agent/Round
-// also empty, it stays part of the root stream (StreamKey{}) replay.Session
+// also empty, it stays part of the root stream (StreamKey{}) bundle.Session
 // and eval key off.
 func TestOrchestratorRun_RootChatCarriesChatID(t *testing.T) {
 	capExp := &ledgerCaptureExporter{}
