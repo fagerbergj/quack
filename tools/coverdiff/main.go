@@ -20,8 +20,9 @@ var (
 	// profile line: <file>.go:start.col,end.col numstmt count
 	profileRe = regexp.MustCompile(`^(.*)\.go:(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)$`)
 	hunkRe    = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
-	// The standard Go generated-code marker (golang.org/s/generatedcode): any whole line
-	// matching this, anywhere in the file, marks it generated regardless of directory.
+	// The standard Go generated-code marker (golang.org/s/generatedcode): a whole line
+	// matching this in the file's leading comment block marks it generated - not
+	// anywhere in the file (see TestIsGenerated_MarkerOnlyInLeadingComments).
 	generatedRe = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
 )
 
