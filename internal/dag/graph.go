@@ -16,6 +16,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -48,16 +49,13 @@ type nodeScopedWorker interface {
 	// (paused or not) and is only reaped at chat archive/delete, so a later
 	// reuse - a brand new ForNode call to the SAME deterministic session id -
 	// always finds its prior history.
-	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(paused bool), err error)
+	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
 }
 
-// buildGateNodes: one gated node per plan node. source: the run's origin
-// (extension name or a fixed app value) - observability only, see vetting.Config.Source.
-// userID scopes the recordstore.Client behind a native node's artifact tools
-// (#1123) - must match the userID the rest of the chat's artifacts (e.g. the
-// orchestrator's own writes) were saved under, or a node's list/read/edit
-// would silently see nothing.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
+// buildGateNodes: one gated node per plan node. source is the run's origin (extension name or a fixed
+// app value) - observability only, see vetting.Config.Source. userID scopes the recordstore.Client behind
+// a native node's artifact tools (#1123) and must match the userID the rest of the chat's artifacts (e.g. the orchestrator's own writes) were saved under, or a node's list/read/edit silently sees nothing.
+func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(context.Context, string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent), sessions session.Service) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
@@ -76,12 +74,13 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		var workerTools []tool.Tool
 		var release func(paused bool)
 		var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
+		var refreshPrompt func(context.Context) artifactsrc.Artifact
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, src, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
+			w, m, wt, src, rp, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
-			worker, workerModel, workerTools, setRoundCoords, release = w, m, wt, src, rel
+			worker, workerModel, workerTools, setRoundCoords, refreshPrompt, release = w, m, wt, src, rp, rel
 		}
 		worker, err := withRoundAbort(worker, controls, chatID, n.ID)
 		if err != nil {
@@ -92,7 +91,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 			return nil, nil, err
 		}
 		node := n
-		cfg := nodeGateConfig(plan, node, worker, cfgFor, chatID, source)
+		cfg := nodeGateConfig(ctx, plan, node, worker, cfgFor, chatID, source)
 		var spec AdmissionSpec
 		if specFor != nil {
 			spec = specFor(node.AgentName)
@@ -100,6 +99,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.Artifacts = artifacts
 		cfg.Ledger = walLedger
 		cfg.RoundCoordsSink = setRoundCoords
+		cfg.RefreshPrompt = refreshPrompt
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup, sessions)
 	}
 	return nodesByID, subAgents, nil
@@ -162,8 +162,8 @@ func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string 
 // cfgFor's result is turned into a node's actual config - regardless of which
 // agent the planner picked (#739). Filtering by agent name would miss a
 // future writable agent; this keys on the capability fields themselves.
-func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(string) vetting.Config, chatID, source string) vetting.Config {
-	cfg := cfgFor(node.AgentName)
+func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.Agent, cfgFor func(context.Context, string) vetting.Config, chatID, source string) vetting.Config {
+	cfg := cfgFor(ctx, node.AgentName)
 	cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
 	cfg.ResumedFrom = node.ResumedFrom
 	cfg.Checks = node.Checks

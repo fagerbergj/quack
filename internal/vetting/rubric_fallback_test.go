@@ -1,6 +1,7 @@
 package vetting
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 
 func TestLoadRubricFallsBackWhenPathMissing(t *testing.T) {
 	c := config.GatesConfig{RubricPath: "does/not/exist.md"}
-	rendered, _, _, err := loadRubric(c)
+	rendered, _, _, err := loadRubric(context.Background(), nil, c)
 	if err != nil {
 		t.Fatalf("loadRubric: %v", err)
 	}
@@ -20,7 +21,7 @@ func TestLoadRubricFallsBackWhenPathMissing(t *testing.T) {
 
 func TestLoadRubricUnsetPathWithJudgeEnabledUsesEmbeddedDefault(t *testing.T) {
 	c := config.GatesConfig{Judge: config.JudgeConfig{Model: "j", MaxRounds: 1}}
-	rendered, _, _, err := loadRubric(c)
+	rendered, _, _, err := loadRubric(context.Background(), nil, c)
 	if err != nil {
 		t.Fatalf("loadRubric: %v", err)
 	}
@@ -30,7 +31,7 @@ func TestLoadRubricUnsetPathWithJudgeEnabledUsesEmbeddedDefault(t *testing.T) {
 }
 
 func TestLoadRubricUnsetPathWithJudgeDisabledIsOptional(t *testing.T) {
-	rendered, specs, fixes, err := loadRubric(config.GatesConfig{})
+	rendered, specs, fixes, err := loadRubric(context.Background(), nil, config.GatesConfig{})
 	if err != nil {
 		t.Fatalf("loadRubric: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestLoadRubricUnsetPathWithJudgeDisabledIsOptional(t *testing.T) {
 func TestLoadRubricFileErrorNamesRubricPath(t *testing.T) {
 	// Exercises readWithFallback directly so this doesn't depend on the
 	// embed actually being broken.
-	_, err := readWithFallback("nope.md", "also/nope.md")
+	_, err := readWithFallback(context.Background(), nil, "nope.md", "also/nope.md")
 	if err == nil {
 		t.Fatal("expected an error when neither path resolves")
 	}
@@ -50,7 +51,7 @@ func TestLoadRubricFileErrorNamesRubricPath(t *testing.T) {
 
 func TestLoadConstitutionFallsBackWhenPathMissing(t *testing.T) {
 	c := config.GatesConfig{ConstitutionPath: "does/not/exist.md"}
-	got, err := loadConstitution(c)
+	got, err := loadConstitution(context.Background(), nil, c)
 	if err != nil {
 		t.Fatalf("loadConstitution: %v", err)
 	}

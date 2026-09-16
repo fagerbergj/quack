@@ -2,6 +2,7 @@ package dag
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -23,14 +24,14 @@ func TestNodeGateConfigDropsChecksForReadOnlyNode(t *testing.T) {
 	for _, agent := range []string{reviewerAgent, explorerAgent, "web-researcher"} {
 		t.Run(agent, func(t *testing.T) {
 			plan := Plan{Nodes: []Node{{ID: "n1", AgentName: agent, Checks: []string{"go build ./..."}, Workdir: "review-f65532f/repo"}}}
-			cfgFor := func(string) vetting.Config { return readOnlyGateCfg() }
+			cfgFor := func(context.Context, string) vetting.Config { return readOnlyGateCfg() }
 
 			var buf bytes.Buffer
 			restore := slog.Default()
 			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 			defer slog.SetDefault(restore)
 
-			cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
+			cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 
 			if cfg.Checks != nil {
 				t.Errorf("cfg.Checks = %v, want nil for a read-only node", cfg.Checks)
@@ -54,8 +55,8 @@ func TestNodeGateConfigDropsChecksForReadOnlyNode(t *testing.T) {
 // workdir untouched.
 func TestNodeGateConfigKeepsChecksForWritableNode(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent, Checks: []string{"go build ./..."}, Workdir: "sub"}}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
+	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 
 	if len(cfg.Checks) != 1 || cfg.Checks[0] != "go build ./..." {
 		t.Errorf("cfg.Checks = %v, want the planner-authored check kept", cfg.Checks)
@@ -70,8 +71,8 @@ func TestNodeGateConfigKeepsChecksForWritableNode(t *testing.T) {
 // (reviewer is never the implementer), vetting.checksPassCriterion's own "not_configured" skip fires - the gate never evaluates a checks_pass criterion for it at all.
 func TestNodeGateConfigReviewerHasNoChecksPassCriterion(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "review", AgentName: reviewerAgent, Checks: []string{"go build ./..."}, Workdir: "guessed"}}}
-	cfgFor := func(string) vetting.Config { return readOnlyGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
+	cfgFor := func(context.Context, string) vetting.Config { return readOnlyGateCfg() }
+	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 
 	if len(cfg.Checks) != 0 {
 		t.Fatalf("cfg.Checks = %v, want empty so checks_pass has nothing to run", cfg.Checks)

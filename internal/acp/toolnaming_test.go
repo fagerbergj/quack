@@ -23,7 +23,7 @@ var forbiddenToolCheckWording = regexp.MustCompile(`(?i)check your (actual )?too
 // prefix confusion is one way that misfires), so no bundle prompt may invite the agent to self-verify its tool list. The round preamble states the exact offered names as fact instead (mcpToolNames/mcpToolsBlock in acp.go).
 func TestBundlePromptsDoNotAskAgentToCheckToolExistence(t *testing.T) {
 	for _, bundle := range []string{"agents/code-reviewer", "agents/code-implementer", "agents/code-explorer"} {
-		b, err := agent.LoadBundle(bundle)
+		b, err := agent.LoadBundle(context.Background(), nil, bundle)
 		if err != nil {
 			t.Fatalf("LoadBundle(%q): %v", bundle, err)
 		}

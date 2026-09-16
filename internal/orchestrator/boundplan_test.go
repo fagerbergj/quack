@@ -44,7 +44,7 @@ func TestRunBoundPlan_UnreachableRepoAbortsWithHumanErrorBeforeAnyNodeRuns(t *te
 		map[string]adkagent.Agent{"code-implementer": ag},
 		map[string]model.LLM{"code-implementer": stub},
 		vetting.NewJudgeFactory(stub, nil, nil),
-		func(string) vetting.Config { return vetting.Config{} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{} }, nil)
 	// Mirrors runGit's real error shape (internal/tools/git.go).
 	ex.SetSetup(func(context.Context, string, string, string, dag.Setup) error {
 		return errors.New("git clone --quiet --branch main https://github.com/chrishay-quack/quack.git repo: " +

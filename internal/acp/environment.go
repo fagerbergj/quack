@@ -2,12 +2,14 @@ package acp
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/template"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -19,44 +21,58 @@ const maxEnvironmentEntries = 200
 // environmentBlock renders a FACTUAL, Codex-CLI-style <environment_context>
 // grounding the round's prompt: absolute cwd, whether it's a git repo (branch
 // + short HEAD sha when so), and the top-level entries. Observation, not instruction - this is what replaces the old "do not clone the repo, it's already here" prose (agents/code-explorer/prompt.md): prose asserting where the repo is competes with a task naming one and loses; a plain fact about the actual filesystem does not compete with anything. Deterministic given (cwd, repo state), so it costs nothing to include on every round.
-func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) string {
-	var b strings.Builder
-	b.WriteString("<environment_context>\n")
-	fmt.Fprintf(&b, "cwd: %s\n", cwd)
-	if branch, sha, ok := gitInfo(ctx, cwd, caps); ok {
-		if sha == "" {
-			fmt.Fprintf(&b, "git: yes (branch %s)\n", branch)
-		} else {
-			fmt.Fprintf(&b, "git: yes (branch %s, HEAD %s)\n", branch, sha)
-		}
-	} else {
-		b.WriteString("git: no\n")
-	}
+func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string, caps workspace.Caps) string {
+	f := envFacts{Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly}
+	f.Branch, f.Sha, f.Git = gitInfo(ctx, cwd, caps)
 	entries, truncated := topLevelEntries(cwd)
-	switch {
-	case len(entries) == 0:
-		b.WriteString("entries: (none - empty or unreadable)\n")
-	case truncated:
-		fmt.Fprintf(&b, "entries (first %d): %s\n", maxEnvironmentEntries, strings.Join(entries, ", "))
-	default:
-		fmt.Fprintf(&b, "entries: %s\n", strings.Join(entries, ", "))
-	}
+	f.Entries, f.Truncated = strings.Join(entries, ", "), truncated
 	if caps.ReadOnly {
 		// landlock and bwrap both enforce this. Name which paths, not what to do
 		// with them: an agent told only "read-only" either burns a round on
 		// EACCES or gives up on running the change. Naming the writable paths is what makes "run it" achievable here.
-		fmt.Fprintf(&b, "filesystem: read-only (OS-enforced, EACCES on write): %s\n", cwd)
 		writable := []string{workspace.SandboxTmpDir(caps)}
 		if caps.HomeDir != "" {
 			writable = append(writable, caps.HomeDir)
 		}
-		fmt.Fprintf(&b, "filesystem: writable: %s\n", strings.Join(writable, ", "))
-		// `cp -a`, not `git clone --local`: a copy needs no per-agent check of
-		// whether clone is allowed here, and it carries go.mod just the same.
-		b.WriteString("reads and execution work anywhere; in-tree writes (npm install, go build artifacts, file edits) fail. To run code against this tree, copy it into a writable path first (`cp -a \"$PWD\" \"$TMPDIR/probe\"`) - the copy carries go.mod, so language-level rules like Go's internal/ visibility still resolve.\n")
+		f.Writable = strings.Join(writable, ", ")
 	}
-	b.WriteString("</environment_context>")
-	return b.String()
+	out, err := renderEnvironment(ctx, res, f)
+	if err != nil {
+		// Cosmetic grounding: degrade to no block rather than fail the round,
+		// same as gitInfo degrading to "git: no".
+		slog.Warn("acp: environment block unavailable", "component", "acp", "err", err)
+		return ""
+	}
+	return out
+}
+
+// envFacts is system/acp.environment's template data.
+type envFacts struct {
+	Cwd        string
+	Git        bool
+	Branch     string
+	Sha        string
+	Entries    string
+	Truncated  bool
+	MaxEntries int
+	ReadOnly   bool
+	Writable   string
+}
+
+// envTemplates caches the parsed system/acp.environment per version.
+var envTemplates artifactsrc.TemplateCache
+
+func renderEnvironment(ctx context.Context, res *artifactsrc.Resolver, f envFacts) (string, error) {
+	var b strings.Builder
+	// A stored version that will not render falls back to the shipped file
+	// (artifactsrc.Render) - a typo must not silently drop the whole block.
+	if _, err := artifactsrc.Render(ctx, res, &envTemplates, "system/acp.environment", func(t *template.Template) error {
+		b.Reset()
+		return t.Execute(&b, f)
+	}); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 // gitInfo reports cwd's current branch and short HEAD sha via the SAME

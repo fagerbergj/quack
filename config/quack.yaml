@@ -92,6 +92,22 @@ stores:
       #       then: keep
     top_k: 5
     min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
+  # Langfuse prompt management as a store (epic #1418). Referenced by prompts.store below.
+  # langfuse:
+  #   kind: langfuse
+  #   url: ${LANGFUSE_BASE_URL}
+  #   public_key: ${LANGFUSE_PUBLIC_KEY}
+  #   secret_key: ${LANGFUSE_SECRET_KEY}
+
+# Where system prompts, rubrics and memory guidance are resolved from, per run.
+# Names: system/<agent>, rubric/<agent>, memory/<agent>, rubric/global,
+# rubric/constitution, and the lifted fragments under config/prompts/ (system/judge,
+# system/compaction, system/compaction.summary, system/acp.environment). Omit the
+# whole block for the shipped files only; a name the store lacks falls back to them.
+# prompts:
+#   store: langfuse               # a stores[] entry of kind langfuse
+#   cache_ttl: 60s                # how long a resolved version is reused before re-checking
+#   pin_label: production         # a version carrying this label pins the name; otherwise latest wins
 
 # ADK session + chat persistence (references a store) plus context compaction,
 # which operates over that session history.

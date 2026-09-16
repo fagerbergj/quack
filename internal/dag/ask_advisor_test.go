@@ -142,7 +142,7 @@ func runGraph(t *testing.T, worker adkagent.Agent, judgeModel model.LLM, session
 	t.Helper()
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil,
 		vetting.NewJudgeFactory(judgeModel, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 	outputs = map[string]string{}
 	yield := func(ev stream.SSEEvent, _ error) bool { events = append(events, ev); return true }
 	p, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", runGraphChatID, content, yield, outputs, resumeNodes)
@@ -541,7 +541,7 @@ func TestAskAdvisor_ConcurrentNodesIsolatedThreads(t *testing.T) {
 	}}
 	ex := dag.NewExecutor(sessions, agents, nil,
 		vetting.NewJudgeFactory(stubA, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 	outputs := map[string]string{}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
 	paused, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", "s", content,

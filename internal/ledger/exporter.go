@@ -94,7 +94,8 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 			PromptName:      str("gen_ai.prompt.name"), PromptVersion: str("gen_ai.prompt.version"),
 			SystemInstructions: str("gen_ai.system_instructions"), ToolDefinitions: str("gen_ai.tool.definitions"),
 			Input: str("gen_ai.input.messages"), Output: str("gen_ai.output.messages"), Error: str("error.type"),
-			QuackVersion: str("quack.version"), BundleHash: str("quack.bundle.hash")}
+			QuackVersion: str("quack.version"), BundleHash: str("quack.bundle.hash"),
+			PromptSource: str("quack.prompt.source"), PromptVersionID: str("quack.prompt.version_id")}
 		// Present-but-nil vs. present-with-zero: only set CostUSD when the
 		// emitter actually recorded a cost (pricing configured) - a plain
 		// num() lookup can't tell "unpriced" from a genuine $0 call.

@@ -7,6 +7,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -33,6 +34,9 @@ type Compaction struct {
 	// OverlapSize is how many already-windowed raw events carry into the next
 	// summarization pass, so a fact split across the cut isn't lost. 0 = default.
 	OverlapSize int
+	// Prompts resolves the summarizer prompt when the config is built (once
+	// per node build, not per compaction pass); nil resolves the shipped files.
+	Prompts *artifactsrc.Resolver
 }
 
 // ResolveSummarizer prefers the active worker model for compaction (swap-free), falling back to the configured one.

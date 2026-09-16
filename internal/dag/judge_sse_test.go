@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -29,7 +30,7 @@ func TestExecute_JudgeStreamsAsStageJudge(t *testing.T) {
 		"synth": mk("synth", "ROLE:synth"),
 	}
 	judge := vetting.NewJudgeFactory(stub, nil, nil)
-	cfgFor := func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }
+	cfgFor := func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }
 	ex := NewExecutor(session.InMemoryService(), agents, nil, judge, cfgFor, nil)
 
 	plan := Plan{ID: "t", UserMessage: "compare A and B", Nodes: []Node{

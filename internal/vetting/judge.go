@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"text/template"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -44,40 +46,68 @@ const (
 
 	// Cap on judge tool loops (model turns per round).
 	defaultJudgeMaxIterations = 14
-
-	// judgeBehaviour* compose the judge's behaviour prompt.
-	judgeBehaviourHead = "You are the LAST line of defense before this answer ships. You did NOT write it, and you must not trust its assertions, its self-report of what it did, OR its inline citations - an answer's own claim that it verified something is not verification. If garbage or a fabricated claim ships past you, that is YOUR failure, not the worker's: score as an adversarial, distrustful verifier whose job is to catch what a confident, fluent, possibly-wrong answer wants you to wave through. "
-
-	judgeNoToolsClause = "You have no tools. Judge the answer on its own merits against the rubric. "
-
-	judgeReadToolsClause = "You have read-only workspace tools: read_file, list_dir, glob, grep. They reach the SAME clone/workspace the worker used (no separate clone spins up), so any specific, checkable claim the answer makes about THIS repo's code - a file exists, a function/struct/field/symbol, a config key, a control-flow path - is no longer a matter of plausibility. These tools are STRICTLY read-only: you cannot and must not modify, create, delete, or run anything in the workspace. " +
-		"The clone root is your working root - use plain repo-relative paths (e.g. `frontend/src/pages/Chat.tsx`, `internal/foo.go`). NEVER use a leading slash or an absolute path (`/frontend`, `/workspace/...`) - those resolve ABOVE the clone and will not find the code. If a path isn't found, drop any leading slash and retry it repo-relative before concluding the claim is unverifiable. " +
-		"Your read-tool calls are counted, and a PASS with zero reads is discarded and re-judged: nothing in such a verdict was verified. So before scoring any grounding/accuracy/correctness criterion, identify every load-bearing specific claim the answer makes about this repo and check each one yourself with grep/glob/read_file - the ledger summary and the answer's own account of what it read are not substitutes. An in-repo claim you have not verified that way is UNSUPPORTED, not grounded, however confident it reads; one that contradicts what the file actually shows is a fabrication regardless of any citation, and sinks the criterion it backs. " +
-		"The workspace ledger below is evidence, not proof of diligence - treat it adversarially. If the answer makes claims about this repo's code but the ledger shows little or no local file reading (for example the worker web_fetched pages instead of using read_file/grep on the clone - a `web_fetch` entry hitting a repo host like raw.githubusercontent.com or api.github.com when read_file entries are sparse or absent is a RED FLAG, not a substitute), do not extend the benefit of the doubt: verify the claims yourself by reading the repo, and score the grounding/accuracy criteria harshly if you cannot confirm them. Read only what you need to reach a verdict - inspect the claimed files, do not spelunk the whole tree. For a pure-research answer with no in-repo claims you won't need these tools. "
-
-	judgeSkillsClause = "You also have skill tools (list_skills, load_skill, load_skill_resource) - the same skills the worker could use. When it helps, load a relevant review or quality skill (for example a code-review skill like `ponytail-review`, or call list_skills to see what is available) so you can ground your quality assessment in the SAME principles the worker was told to follow, rather than principles baked into this prompt. This is OPTIONAL and bounded: use your judgment, do not load a skill on every case, load at most what you need to reach a verdict, and still finish with exactly one submit_verdict call. "
-
-	judgeBehaviourTail = "If an image is attached to this message, you can see it - use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
-		"Do NOT try to verify which URLs were fetched - WEB citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. Local file/code citations (a repo-relative path, `<repo>@path[:lines]`) get NO such deterministic check - verify those yourself per the read-tools instructions above, or judge them on internal consistency alone when you hold no tools. " +
-		"CRITICAL - the leniency below is SCOPED, not a blanket pass for citations: it protects claims about LIVE WEB or EXTERNAL content you have no way to check from here (a fresh article, an external product, a fact outside this repo) and your own world knowledge is stale and incomplete, so NEVER treat such a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training - an unfamiliar title, name, product, or event is NOT evidence of fabrication there. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. This leniency NEVER applies to claims about the workspace/repo: when you hold read tools, verify them per the mandatory instructions above - a citation there is a pointer to go check, not proof, and an unverified in-repo claim scores as unsupported even if it 'sounds right'; when you hold no tools, judge in-repo claims on internal consistency only, same as any other unverifiable claim, without extending web-content leniency to them. " +
-		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign the INTEGER score (0, 1, 2, or 3) whose scoring-band descriptor actually matches the answer. The number IS the verdict; your reasoning is only there to justify it, so pick the band FIRST by matching its stated meaning against the answer, then write reasoning consistent with that band - never write a top-band justification and then submit a lower number because staying skeptical feels safer. Judge substance, not style: length and fluent prose earn no credit. The answer's overall score is its WEAKEST criterion - a single failing criterion sinks it, however strong the others are. " +
-		"When - and only when - you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {shortfall, fix, anchor, score}), `score` (a fallback the gate uses only if you submit no criteria - with criteria present it derives the overall score from them, so your per-criterion reasoning is the work that counts), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
-		"`shortfall`/`fix` describe what's MISSING, so they only apply to a criterion that fell short of the top band - a criterion that reached it gets a brief confirmation (or an empty shortfall), never invented ambivalence to match a field named 'shortfall'. For a FAILING criterion: `shortfall` names the specific thing that failed - the claim, file, path, link, or command - never a restatement of the score; `fix` is the concrete remedy. Both are handed to the worker verbatim as its brief for the next attempt, so a shortfall that leaves the worker unable to tell WHICH item to fix has told it nothing. " +
-		"`anchor` is OPTIONAL - where in the answer the criticism points, when it is locatable. Set kind to `quote` with `text` set to the exact offending substring (verbatim, or it will be dropped); `path` with `path` (and optional `line`) for a claim about a specific file in the repo; or `omission` with `expected` describing what should be present but is absent - use omission when nothing in the answer can be quoted or pointed to, never force a quote/path anchor onto an absence. Leave anchor out entirely when no span applies. " +
-		"submit_verdict is the only way to finish: a verdict written as prose or JSON in your reply is never read."
 )
 
-// judgeBehaviour: assembles the judge's behaviour prompt from tool-presence clauses.
-func judgeBehaviour(hasReadTools, hasSkills bool) string {
-	clause := judgeNoToolsClause
+// judgeBlocks are system/judge's clause blocks, every one required: a stored
+// version missing one would render a judge told less than it actually holds.
+var judgeBlocks = []string{"head", "no_tools", "read_tools", "skills", "tail"}
+
+// judgePrompt is system/judge as resolved for ONE judge round, rendered up
+// front so the version the round's ledger coords record is the one it ran on.
+type judgePrompt struct {
+	art    artifactsrc.Artifact
+	blocks map[string]string
+}
+
+// judgeTemplates caches the parsed system/judge per version across rounds.
+var judgeTemplates artifactsrc.TemplateCache
+
+// resolveJudgePrompt renders every clause block. A stored version that will not
+// parse, or is missing a block, falls back to the shipped file (artifactsrc.Render)
+// instead of erroring - a bad prompt edit must not disable the gate fleet-wide.
+func resolveJudgePrompt(ctx context.Context, res *artifactsrc.Resolver) (judgePrompt, error) {
+	blocks := map[string]string{}
+	art, err := artifactsrc.Render(ctx, res, &judgeTemplates, "system/judge", func(t *template.Template) error {
+		clear(blocks)
+		for _, b := range judgeBlocks {
+			var sb strings.Builder
+			if err := t.ExecuteTemplate(&sb, b, nil); err != nil {
+				return fmt.Errorf("block %q: %w", b, err)
+			}
+			if blocks[b] = strings.TrimSpace(sb.String()); blocks[b] == "" {
+				return fmt.Errorf("block %q is empty", b)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return judgePrompt{}, fmt.Errorf("vetting: system/judge: %w", err)
+	}
+	return judgePrompt{art: art, blocks: blocks}, nil
+}
+
+// judgePromptFor is the round's system/judge: prepareJudge normally resolved it
+// already, so the round's ledger coords carry the same version; a caller that
+// builds no coords (the plan judge, tests) resolves its own here.
+func judgePromptFor(ctx context.Context, cfg Config) (judgePrompt, error) {
+	if cfg.judgePrompt.blocks != nil {
+		return cfg.judgePrompt, nil
+	}
+	return resolveJudgePrompt(ctx, cfg.Prompts)
+}
+
+// behaviour picks the clauses this judge's actual tools earn it.
+func (p judgePrompt) behaviour(hasReadTools, hasSkills bool) string {
+	parts := []string{p.blocks["head"]}
 	if hasReadTools {
-		clause = judgeReadToolsClause
+		parts = append(parts, p.blocks["read_tools"])
+	} else {
+		parts = append(parts, p.blocks["no_tools"])
 	}
-	skills := ""
 	if hasSkills {
-		skills = judgeSkillsClause
+		parts = append(parts, p.blocks["skills"])
 	}
-	return judgeBehaviourHead + clause + skills + judgeBehaviourTail
+	return strings.Join(append(parts, p.blocks["tail"]), " ")
 }
 
 // criterionScore: per-criterion assessment, normalised 0.0-1.0.
@@ -120,12 +150,13 @@ type verdict struct {
 // JudgeFactory: builds a fresh agentic judge per round, per-factory read-only tools, per-round readCounter. maxIters wires forcedVerdictCallback so the round's last allowed turn (or a repeated identical tool
 // call) forces a text-only verdict instead of silently exhausting the budget (#853). maxOutputTokens caps the round's own reply tokens against a runaway generation loop; <= 0 leaves it uncapped (#889). forced is set true by forcedVerdictCallback the moment it strips tools for a forced close - the
 // caller's own signal that this round already spent its last allowed turn (#1235). receivedIDs (#1259): the round's recalled-memory ids, so the tool description and force-close instruction can require votes on the exact set delivered this round, not a generic reminder.
-type JudgeFactory func(sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error)
+type JudgeFactory func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error)
 
 // NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
-	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
-	return func(sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error) {
+	hasReadTools, hasSkills := len(readTools) > 0, len(skillsets) > 0
+	return func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error) {
+		behaviour, version := prompt.behaviour(hasReadTools, hasSkills), prompt.art.VersionID
 		submit, err := newSubmitVerdictTool(sink, receivedIDs)
 		if err != nil {
 			return nil, nil, err
@@ -137,15 +168,15 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 		// judgeTools/behaviour are fixed for this round; only today() moves,
 		// so cache instead of rebuilding the prompt on every model call in
 		// the round's multi-turn agentic loop.
-		prompt := promptbuilder.CacheByDay(func() string {
-			return promptbuilder.Judge(judgeTools, behaviour)
-		})
+		assembled := promptbuilder.CacheByDay(
+			func(context.Context) string { return version },
+			func(context.Context) string { return promptbuilder.Judge(judgeTools, behaviour) })
 		a, err := llmagent.New(llmagent.Config{
 			Name:        "judge",
 			Description: "independent adversarial verifier",
 			Model:       judgeModel,
-			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
-				return prompt(), nil
+			InstructionProvider: func(rc adkagent.ReadonlyContext) (string, error) {
+				return assembled(rc), nil
 			},
 			Tools:                 judgeTools,
 			Toolsets:              skillsets,
@@ -815,9 +846,13 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 	receivedIDs := memoryIDs(received)
 	st := &judgeRoundState{cfg: cfg, maxIters: maxIters, emit: emit, ctx: ctx}
+	prompt, err := judgePromptFor(ctx, cfg)
+	if err != nil {
+		return verdict{}, nil, err
+	}
 	// forcedClose is flipped by forcedVerdictCallback the instant it strips tools for
 	// a forced close (#1235) - the round's own signal, not the turn counter.
-	judgeAgent, reads, err := factory(&st.sink, &st.forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs)
+	judgeAgent, reads, err := factory(prompt, &st.sink, &st.forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs)
 	if err != nil {
 		return verdict{}, nil, fmt.Errorf("vetting: build judge agent: %w", err)
 	}

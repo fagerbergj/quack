@@ -75,7 +75,7 @@ func TestRun_ConsumerStopsRangingMidRun_ProcessSurvives(t *testing.T) {
 
 	sessions := session.InMemoryService()
 	ex := dag.NewExecutor(sessions, agents, models, vetting.NewJudgeFactory(stub, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	ex.SetMaxActive(fanN)
 	// Cap 1 so most nodes queue and fire onQueued through the ctx yield long
 	// after the consumer has gone.

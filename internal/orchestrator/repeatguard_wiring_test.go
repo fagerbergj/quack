@@ -66,7 +66,7 @@ func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 		map[string]adkagent.Agent{"web-researcher": worker},
 		map[string]model.LLM{"web-researcher": stub},
 		vetting.NewJudgeFactory(stub, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher", Description: "researches the web"}}, nil, nil)
 	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
 
@@ -136,7 +136,7 @@ func TestOrchestratorRepeatGuardCoversAppendedTools(t *testing.T) {
 	stub := &repeatWriteArtifactStub{}
 	sessions := session.InMemoryService()
 	ex := dag.NewExecutor(sessions, nil, nil, vetting.NewJudgeFactory(stub, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner(nil, nil, nil)
 	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
 	o.SetArtifacts(artifact.InMemoryService())

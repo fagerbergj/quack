@@ -130,7 +130,7 @@ func TestRunGatedRefine_SteerReachesRunningNativeNode(t *testing.T) {
 	// bare llmagent - the delivery hook lives on that path.
 	worker, err := agent.Build(
 		&agent.Bundle{Card: agent.Card{Name: "web-researcher", Description: "researcher"}, Prompt: "Answer the question."},
-		stub, []tool.Tool{newLookUpTool(t)}, nil, "", nil, "", ctrl.TakeQueued)
+		nil, stub, []tool.Tool{newLookUpTool(t)}, nil, "", nil, "", ctrl.TakeQueued)
 	if err != nil {
 		t.Fatalf("worker: %v", err)
 	}

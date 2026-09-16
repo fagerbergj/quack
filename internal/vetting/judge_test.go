@@ -460,7 +460,7 @@ func TestJudgeNoReadToolsOneShot(t *testing.T) {
 // tools clause appears only when the judge holds read tools, and the no-tools
 // clause only when it does not.
 func TestJudgeBehaviourSelectsClause(t *testing.T) {
-	with := judgeBehaviour(true, false)
+	with := mustJudgeBehaviour(t, true, false)
 	if !strings.Contains(with, "read-only workspace tools") || strings.Contains(with, "You have no tools") {
 		t.Errorf("read-tools behaviour missing its clause: %q", with)
 	}
@@ -470,12 +470,12 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 	if !strings.Contains(with, "plain repo-relative paths") || !strings.Contains(with, "NEVER use a leading slash") {
 		t.Errorf("read-tools behaviour missing repo-relative path grounding: %q", with)
 	}
-	without := judgeBehaviour(false, false)
+	without := mustJudgeBehaviour(t, false, false)
 	if !strings.Contains(without, "You have no tools") || strings.Contains(without, "read-only workspace tools") {
 		t.Errorf("no-tools behaviour missing its clause: %q", without)
 	}
 	// The skills clause appears only when the judge holds the skill toolset.
-	withSkills := judgeBehaviour(false, true)
+	withSkills := mustJudgeBehaviour(t, false, true)
 	if !strings.Contains(withSkills, "skill tools") || !strings.Contains(withSkills, "load a relevant") {
 		t.Errorf("with-skills behaviour missing its clause: %q", withSkills)
 	}

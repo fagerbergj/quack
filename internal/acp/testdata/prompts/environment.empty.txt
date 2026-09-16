@@ -1,0 +1,5 @@
+<environment_context>
+cwd: <CWD>
+git: no
+entries: (none - empty or unreadable)
+</environment_context>

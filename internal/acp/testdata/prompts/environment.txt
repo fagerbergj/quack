@@ -1,0 +1,5 @@
+<environment_context>
+cwd: <CWD>
+git: no
+entries: README.md, go.mod, internal/
+</environment_context>

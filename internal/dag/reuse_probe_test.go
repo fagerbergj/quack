@@ -87,7 +87,7 @@ func TestNodeOverA2A_ReusedAcrossSeparateRunPlanAsGraphInvocations(t *testing.T)
 		}}
 		ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": client}, nil,
 			vetting.NewJudgeFactory(&passJudge{}, nil, nil),
-			func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+			func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 		outputs := map[string]string{}
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
 		if _, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", chatID, content,
@@ -159,7 +159,7 @@ func TestRetryPlanInNode_NativeNodeGetsFreshSession(t *testing.T) {
 	}}
 	ex := dag.NewExecutor(testNativeWorkerSessions, map[string]adkagent.Agent{"solo": nativeWorker}, nil,
 		vetting.NewJudgeFactory(&passJudge{}, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
@@ -273,7 +273,7 @@ func TestNodeOverA2A_SiblingNodesDoNotShareSessionHistory(t *testing.T) {
 		{ID: "synth", AgentName: "synth", Task: "Combine.", DependsOn: []string{"n1", "n2"}},
 	}}
 	ex := dag.NewExecutor(sessions, agents, nil, vetting.NewJudgeFactory(&passJudge{}, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	run := func() map[string]string {
 		outputs := map[string]string{}

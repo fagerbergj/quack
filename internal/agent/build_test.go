@@ -80,7 +80,7 @@ func TestBuild_SkillRosterListedOnce(t *testing.T) {
 
 	b := &Bundle{Card: Card{Name: "tester", Description: "a test agent"}, Prompt: "Do the task."}
 	capture := &captureSystemInstructionModel{}
-	ag, err := Build(b, capture, nil, []tool.Toolset{ts}, "", fms, "", nil)
+	ag, err := Build(b, nil, capture, nil, []tool.Toolset{ts}, "", fms, "", nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

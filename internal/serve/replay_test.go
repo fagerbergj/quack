@@ -74,7 +74,7 @@ func TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs(t *testing.T) {
 	}
 
 	var setupFn dag.SetupFunc
-	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
+	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, nil, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
 		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
@@ -85,7 +85,7 @@ func TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs(t *testing.T) {
 	if !ok {
 		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
 	}
-	_, _, tools, _, release, err := na.ForNode("test-plan:test-node", nil, nil, "", "", "", "", nil)
+	_, _, tools, _, _, release, err := na.ForNode("test-plan:test-node", nil, nil, "", "", "", "", nil)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

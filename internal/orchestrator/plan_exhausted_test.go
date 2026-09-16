@@ -44,7 +44,7 @@ func newTestOrchWithJudge(t *testing.T, stub *orchStub, judge vetting.PlanJudge)
 		map[string]adkagent.Agent{"web-researcher": worker},
 		map[string]model.LLM{"web-researcher": stub},
 		vetting.NewJudgeFactory(stub, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher", Description: "researches the web"}}, nil, judge)
 	return New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
 }

@@ -72,7 +72,7 @@ func TestNewGatedNode_SeedsACPSessionIDFromResumedFrom(t *testing.T) {
 	}}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": worker}, nil,
 		vetting.NewJudgeFactory(&alwaysPassJudge{}, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
@@ -108,7 +108,7 @@ func TestNewGatedNode_FreshNodeHasNoACPSessionID(t *testing.T) {
 	}}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": worker}, nil,
 		vetting.NewJudgeFactory(&alwaysPassJudge{}, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}

@@ -18,7 +18,7 @@ func TestJudgeSystemPromptRoundInvariant(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return promptbuilder.Judge([]tool.Tool{st}, judgeBehaviour(true, true))
+		return promptbuilder.Judge([]tool.Tool{st}, mustJudgeBehaviour(t, true, true))
 	}
 	round1 := build([]string{"m1", "m2"})
 	round2 := build([]string{"m1", "m2", "m3"}) // round 2's revise called recall_memory and added m3

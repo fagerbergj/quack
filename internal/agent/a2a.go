@@ -124,7 +124,7 @@ func maxTranscriptChars(comp Compaction) int {
 
 // NativeCompactionConfig builds adk/v2's runner-level compaction.Config from
 // comp, or nil when compaction is disabled. It reuses quack's own tuned
-// summarizer prompt (compactionSystemPrompt + summaryTemplate, compaction_prompts.go) rather than adk's default.
+// summarizer prompt (system/compaction + system/compaction.summary, compaction_prompts.go) rather than adk's default.
 func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	if !comp.Enabled {
 		return nil, nil
@@ -132,8 +132,14 @@ func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	if comp.Summarizer == nil {
 		return nil, fmt.Errorf("compaction: enabled requires a summarizer model")
 	}
-	prompt := compactionSystemPrompt + "\n\n" + summaryTemplate + "\n\n" + compaction.ConversationHistoryPlaceholder
-	summarizer, err := compaction.NewLLMSummarizer(compaction.LLMSummarizerConfig{
+	// Background: this runs at node build, off any round's context, and a
+	// prompt source is expected to carry its own deadline.
+	sys, tmpl, err := compactionPrompts(context.Background(), comp.Prompts)
+	if err != nil {
+		return nil, err
+	}
+	prompt := sys + "\n\n" + tmpl + "\n\n" + compaction.ConversationHistoryPlaceholder
+	summarizer, serr := compaction.NewLLMSummarizer(compaction.LLMSummarizerConfig{
 		Model:              comp.Summarizer,
 		PromptTemplate:     prompt,
 		MaxTranscriptChars: maxTranscriptChars(comp),
@@ -142,8 +148,8 @@ func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 		// technical content and can legitimately run tens of KB.
 		MaxToolContentChars: -1,
 	})
-	if err != nil {
-		return nil, err
+	if serr != nil {
+		return nil, serr
 	}
 	cfg := &compaction.Config{
 		CompactionInterval: comp.CompactionInterval,
