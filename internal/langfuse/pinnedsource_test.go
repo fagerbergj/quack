@@ -2,6 +2,7 @@ package langfuse
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -50,6 +51,26 @@ func TestPinnedSource_PinnedVersion404IsHardError(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "system/code-reviewer@9") {
 		t.Fatalf("Get on a 404'd pin: err = %v, want an error naming name@version", err)
+	}
+	if !errors.Is(err, artifactsrc.ErrHard) {
+		t.Fatalf("Get on a 404'd pin: err = %v, want it to wrap artifactsrc.ErrHard", err)
+	}
+}
+
+// TestPinnedSource_PinnedVersion404PropagatesThroughResolver pins suggestion
+// 7 end to end: artifactsrc.New(Chain(PinnedSource, ...)).Resolve must return
+// the pin-miss error, not silently fall back to the shipped static artifact
+// (PR #1444 round-2 finding).
+func TestPinnedSource_PinnedVersion404PropagatesThroughResolver(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	src := &PinnedSource{Client: c, Pins: map[string]int{"system/code-reviewer": 9}}
+	res := artifactsrc.New("langfuse", artifactsrc.Chain(src, nil), 0)
+
+	_, err := res.Resolve(context.Background(), "system/code-reviewer")
+	if !errors.Is(err, artifactsrc.ErrHard) {
+		t.Fatalf("Resolve = %v, want the pin-miss error propagated, not a static fallback", err)
 	}
 }
 

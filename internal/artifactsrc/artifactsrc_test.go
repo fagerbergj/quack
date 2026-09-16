@@ -3,6 +3,7 @@ package artifactsrc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -109,6 +110,18 @@ func TestResolveFallsBackWhenSourceErrors(t *testing.T) {
 	static, _ := Static("system/judge")
 	if art.VersionID != static.VersionID {
 		t.Errorf("version id = %q, want the static %q", art.VersionID, static.VersionID)
+	}
+}
+
+// TestResolvePropagatesHardError: a Source error wrapping ErrHard must fail
+// the resolve, not fall back to the shipped static artifact (PR #1444
+// round-2 finding - pin-miss enforcement must hold end to end).
+func TestResolvePropagatesHardError(t *testing.T) {
+	wantErr := fmt.Errorf("pinned prompt %s@%d not found: %w", "system/judge", 3, ErrHard)
+	src := &stubSource{err: wantErr}
+	_, err := New("langfuse", src, time.Minute).Resolve(context.Background(), "system/judge")
+	if !errors.Is(err, ErrHard) {
+		t.Fatalf("Resolve err = %v, want it to wrap ErrHard rather than falling back", err)
 	}
 }
 

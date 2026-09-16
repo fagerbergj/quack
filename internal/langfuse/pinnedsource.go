@@ -28,10 +28,10 @@ func (s *PinnedSource) Get(ctx context.Context, name string) (artifactsrc.Artifa
 		return artifactsrc.Artifact{}, false, err
 	}
 	if !ok {
-		// A pinned name's version 404s: fail loudly rather than let ChainSource
-		// fall through to the store's unpinned version, which would silently
-		// break the "llm.call rows carry that exact version" guarantee.
-		return artifactsrc.Artifact{}, false, fmt.Errorf("pinned prompt %s@%d not found", name, version)
+		// A pinned name's version 404s: wrap ErrHard so the Resolver propagates
+		// this instead of falling back to the shipped static artifact, which
+		// would silently break the "llm.call rows carry that exact version" guarantee.
+		return artifactsrc.Artifact{}, false, fmt.Errorf("pinned prompt %s@%d not found: %w", name, version, artifactsrc.ErrHard)
 	}
 	return artifactsrc.Artifact{Name: name, Body: p.Body, Config: p.Config, VersionID: strconv.Itoa(p.Version)}, true, nil // Source blank: the resolver stamps the store name
 }
