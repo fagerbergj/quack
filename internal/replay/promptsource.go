@@ -38,8 +38,11 @@ func (s *Session) recordedPrompts() (map[string]recordedVersion, error) {
 				continue
 			}
 			if prev != rv {
-				return nil, fmt.Errorf("replay: %s moved versions mid-run (%s vs %s); refusing to guess which round to pin",
-					name, prev.ref(name), rv.ref(name))
+				a, b := prev.ref(name), rv.ref(name)
+				if b < a {
+					a, b = b, a
+				}
+				return nil, fmt.Errorf("replay: %s moved versions mid-run (%s vs %s); refusing to guess which round to pin", name, a, b)
 			}
 		}
 	}
