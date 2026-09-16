@@ -180,15 +180,30 @@ func isGenerated(p string) bool {
 	return hasGeneratedHeader(p)
 }
 
-// hasGeneratedHeader reports whether p (repo-relative, cwd = repo root) carries the
-// standard "// Code generated ... DO NOT EDIT." marker - catches a generated dir this
-// list doesn't yet name (e.g. internal/langfuse/langfusegen) without editing this list.
+// hasGeneratedHeader reports whether p's (repo-relative, cwd = repo root) leading
+// comment block carries the standard "// Code generated ... DO NOT EDIT." marker -
+// catches a generated dir this list doesn't yet name (e.g. internal/langfuse/langfusegen)
+// without editing this list. Only the file's OWN header counts: a marker line quoted or
+// embedded past the first non-comment, non-blank line (a string literal, a doc example)
+// must not exempt otherwise hand-written code from the gate.
 func hasGeneratedHeader(p string) bool {
-	b, err := os.ReadFile(p)
+	f, err := os.Open(p)
 	if err != nil {
 		return false
 	}
-	return generatedRe.Match(b)
+	defer func() { _ = f.Close() }()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "//") {
+			if generatedRe.MatchString(sc.Text()) {
+				return true
+			}
+			continue
+		}
+		return false // first non-comment, non-blank line: header block is over
+	}
+	return false
 }
 
 func sortedMissFiles(m map[string][]miss) []string {
