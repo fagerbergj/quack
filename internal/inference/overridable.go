@@ -27,6 +27,9 @@ func NewOverridable(base model.LLM) *OverridableModel {
 // Set installs target as what every subsequent call delegates to.
 func (m *OverridableModel) Set(target model.LLM) { m.target.Store(&target) }
 
+// Get returns the current delegate, e.g. to revert to it after a temporary override.
+func (m *OverridableModel) Get() model.LLM { return m.current() }
+
 func (m *OverridableModel) current() model.LLM { return *m.target.Load() }
 
 // Name reports the CURRENT target's name, e.g. a bound-in override.

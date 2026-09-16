@@ -131,6 +131,10 @@ type Config struct {
 	// instance NewJudgeFactory closes over) - stamped with per-round coords
 	// the same way workerModel is, so its metrics don't rely on ctx alone.
 	JudgeModel model.LLM
+	// RefreshJudgeBinding applies system/judge's resolved Config
+	// (model/provider/effort, #1421 P2) to JudgeModel for the round and
+	// returns the thinking_level to run it with; nil skips binding entirely.
+	RefreshJudgeBinding func(art artifactsrc.Artifact) string
 	// ResumedFrom: dag.Node.ResumedFrom passed through - "" for a fresh
 	// node. Seeds an ACP node's first-round session/load id and marks the
 	// node.started ledger entry/stream event as a continuation.

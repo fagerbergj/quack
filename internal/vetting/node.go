@@ -952,6 +952,9 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	} else {
 		j.cfg.judgePrompt = jp
 		promptSource, promptVersion, promptArtifact = jp.art.Source, jp.art.VersionID, "system/judge"
+		if j.cfg.RefreshJudgeBinding != nil {
+			j.cfg.JudgeThinkingLevel = j.cfg.RefreshJudgeBinding(jp.art)
+		}
 	}
 	// Replay-ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.

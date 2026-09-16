@@ -91,3 +91,5 @@ A prompt resolved from a `prompts:` store (see [observability.md](observability.
 ## The judge is a separate model
 
 `gates.judge` (see [trust-gate.md](trust-gate.md)) names its own `provider` + `model`, independent of any worker's. That's deliberate - the trust gate's whole premise is that a genuinely different model catches blind spots a worker can't see in its own output. Reusing the worker's model for the judge would collapse that independence.
+
+`system/judge` is sourceable the same way a worker's prompt is: a resolved version's `config` overrides `gates.judge.model`/`provider` for that judge round, with `effort` landing on the round's `thinking_level` (`gates.judge.thinking_level`) rather than a `models:` registry entry - the judge's per-call `ThinkingConfig`, not a model default. Validation and invalid-value fallback work exactly like the worker case above.

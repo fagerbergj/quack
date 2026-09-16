@@ -1137,8 +1137,12 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			if err != nil {
 				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
-			judgeModel = judge
-			gateCfg.JudgeModel = judge
+			// One shared instance (NewJudgeFactory closes over it): overridable so
+			// system/judge's Config (#1421 P2) can rebind it per round in place.
+			judgeOverridable := inference.NewOverridable(judge)
+			judgeModel = judgeOverridable
+			gateCfg.JudgeModel = judgeOverridable
+			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judgeOverridable)
 			var judgeReadTools []tool.Tool
 			if jail != nil {
 				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{
@@ -1154,7 +1158,7 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			if skillTS != nil {
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
-			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
+			judgeFactory = vetting.NewJudgeFactory(judgeOverridable, judgeReadTools, judgeSkillsets)
 			// Own instances: gated nodes stamp per-round coords on `judge` (vetting/node.go);
 			// these callers are not nodes, so sharing would inherit the last node's stamp (#1049).
 			unstamped := func() (model.LLM, error) {
@@ -1176,6 +1180,45 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			"judge", cfg.Gates.Judge.Model, "judge_rounds", gateCfg.JudgeRounds, "threshold", gateCfg.Threshold)
 	}
 	return gateCfg, judgeFactory, planJudge, judgeModel, safetyJudge, nil
+}
+
+// bindJudgeRefresher returns prepareJudge's per-round judge binder: system/judge's
+// resolved Config can rebind the shared judge model/provider, with effort landing
+// on the round's thinking_level (judge.go's per-call ThinkingConfig) rather than
+// models.<id>.effort - an invalid value falls back to gates.judge.* and logs once.
+func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, overridable *inference.OverridableModel) func(art artifactsrc.Artifact) string {
+	static := overridable.Get()
+	staticEffort := cfg.Gates.Judge.ThinkingLevel
+	var lastBad string
+	return func(art artifactsrc.Artifact) string {
+		bound, err := cfg.ResolveBinding(jprov, cfg.Gates.Judge.Model, art.Config)
+		if err != nil {
+			if err.Error() != lastBad {
+				lastBad = err.Error()
+				slog.Warn("judge prompt binding invalid; using gates.judge's static binding",
+					"component", "artifacts", "artifact", art.Name, "err", err)
+			}
+			overridable.Set(static)
+			return staticEffort
+		}
+		lastBad = ""
+		if bound == nil {
+			overridable.Set(static)
+			return staticEffort
+		}
+		m, err := inference.NewModel(bound.Provider, bound.Model, artifacts, cfg.ModelCost(bound.Model))
+		if err != nil {
+			slog.Warn("judge prompt binding model build failed; using gates.judge's static binding",
+				"component", "artifacts", "artifact", art.Name, "err", err)
+			overridable.Set(static)
+			return staticEffort
+		}
+		overridable.Set(m)
+		if effort, ok := art.Config["effort"].(string); ok && effort != "" {
+			return effort
+		}
+		return staticEffort
+	}
 }
 
 // buildACPNode builds one ACP-harness agent (external CLI child), registering
