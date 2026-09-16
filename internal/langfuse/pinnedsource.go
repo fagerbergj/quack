@@ -7,10 +7,8 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 )
 
-// PinnedSource is an artifactsrc.Source that pins specific names to specific Langfuse
-// versions (`quack experiment run --prompt system/<agent>@N`), following the same
-// per-name-pin pattern as replay's PromptSource (#1422 P3) but built from an explicit
-// Pins map instead of a recorded session.
+// PinnedSource pins names to exact Langfuse versions (--prompt system/<agent>@N),
+// mirroring replay's PromptSource (#1422 P3) but built from an explicit Pins map.
 type PinnedSource struct {
 	Client *Client
 	Pins   map[string]int // artifact name -> version
