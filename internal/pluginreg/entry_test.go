@@ -73,6 +73,9 @@ func TestParseEntryMalformed(t *testing.T) {
 		"github:owner/repo#../../etc",       // path escapes the plugin root
 		"github:owner/repo#/etc/passwd",     // absolute path
 		"github:owner/repo#skills/../../..", // escapes after cleaning
+		".",                                 // degenerate local root
+		"..",                                // degenerate local root
+		"/",                                 // degenerate local root
 	}
 	for _, in := range cases {
 		t.Run(in, func(t *testing.T) {

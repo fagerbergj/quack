@@ -46,10 +46,8 @@ func Fetch(ctx context.Context, root string, p Plugin) (Plugin, error) {
 		p.Error = err.Error()
 		return p, err
 	}
-	// sha is a resolved commit-ish from rev-parse --verify, never a raw ref,
-	// so it is safe as a bare argument here - "--" would instead tell
-	// checkout to treat it as a pathspec and fail ("--detach does not take a
-	// path argument").
+	// sha is resolved via rev-parse --verify, never a raw ref, so it's safe
+	// bare here - "--" would make checkout read it as a pathspec instead.
 	if err := gitRun(ctx, dir, "checkout", "--quiet", "--no-guess", "--detach", sha); err != nil {
 		p.Error = fmt.Sprintf("checkout: %v", err)
 		return p, err

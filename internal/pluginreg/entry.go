@@ -57,6 +57,11 @@ func ParseEntry(s string) (Entry, error) {
 		return Entry{}, fmt.Errorf("plugin entry is empty")
 	}
 	if len(s) < 7 || s[:7] != "github:" {
+		// Reject a degenerate root (".", "..", "/") here rather than let it
+		// surface later as an opaque "invalid name" from FSRegistry.Put.
+		if err := validName(filepath.Base(s)); err != nil {
+			return Entry{}, fmt.Errorf("plugin entry %q: local root %v", s, err)
+		}
 		return Entry{Raw: s, Source: SourceLocal, Root: s}, nil
 	}
 

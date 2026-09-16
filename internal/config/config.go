@@ -134,7 +134,9 @@ func (p *PluginsConfig) UnmarshalYAML(value *yaml.Node) error {
 // skills.plugins or the defaults), rejects a store other than filesystem (P3
 // wires the rest), fills root's default, and checks every seed entry parses.
 func (c *Config) validatePlugins() error {
-	if c.Plugins != nil && c.Skills.Plugins != nil {
+	// Only warn when plugins: actually wins - a block with no seed: key
+	// falls through to skills.plugins below, so it isn't ignored at all.
+	if c.Plugins != nil && c.Plugins.Seed != nil && c.Skills.Plugins != nil {
 		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
 	}
 	if c.Plugins == nil {

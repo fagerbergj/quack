@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"bytes"
+	"log/slog"
+	"strings"
+	"testing"
+)
 
 // TestLoadPluginsBlockOmittedSeedUsesDefaults covers issue #13: a plugins:
 // block that sets root but omits seed: must still fall back to the default
@@ -72,6 +77,35 @@ plugins:
 `))
 	if err == nil {
 		t.Fatal("expected an error for a seed entry whose #path escapes the plugin root")
+	}
+}
+
+// TestLoadPluginsBlockNoSeedFallsBackToSkillsPluginsWithoutWarning: a
+// plugins: block with no seed: key still falls through to skills.plugins
+// (issue #13's fix), so the "skills.plugins is ignored" warning must not
+// fire in that case - it would actually be used.
+func TestLoadPluginsBlockNoSeedFallsBackToSkillsPluginsWithoutWarning(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	c, err := Load(writeTemp(t, baseConfig+`
+skills:
+  plugins:
+    - .agents/vendor/dotagents
+plugins:
+  root: /custom/plugins/root
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.PluginRoots()
+	if len(got) != 1 || got[0] != ".agents/vendor/dotagents" {
+		t.Fatalf("PluginRoots() = %v, want skills.plugins to be used", got)
+	}
+	if strings.Contains(buf.String(), "skills.plugins is ignored") {
+		t.Fatalf("skills.plugins was actually used but the log says it was ignored:\n%s", buf.String())
 	}
 }
 
