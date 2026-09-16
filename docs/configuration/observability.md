@@ -80,6 +80,10 @@ The in-flight gauges (`quack.runs.active`, `quack.nodes.active`) don't survive a
 
 `QUACK_PPROF_ADDR` (unset by default) starts a `net/http/pprof` debug listener on that address - a deliberate opt-in, since it's an unauthenticated profiling endpoint.
 
+## Langfuse prompts
+
+`prompts:` (see [index.md](index.md)) points named artifacts at a `stores:` entry of `kind: langfuse`; a round whose prompt resolved from a store gets its generation spans stamped `langfuse.observation.prompt.name`/`langfuse.observation.prompt.version` (Langfuse v4's documented prompt-link keys), the pair Langfuse uses to link a generation to the prompt version that produced it - the name is the resolved artifact (`system/<agent>` or `system/judge`), not the agent's config key. Every span carries `gen_ai.conversation.id` (the chat id); `user.id` (the session's user, when known) is stamped only on `quack.*` spans by `otelobs.sessionAttrs`, not on ADK's own generation spans. Langfuse still lifts the span attribute to the trace, so a Langfuse trace is filterable by session/user without extra wiring. A node's own span additionally gets `langfuse.observation.output`/`langfuse.trace.output` set to the delivered text once a delivery commits (gated on `observability.otel.capture_content` like every other content span attribute, off by default), so the trace's result is the thing that actually shipped, not any one round's draft.
+
 ## Ledger and recording
 
 The ledger is quack's write-ahead log: one append-only stream of typed entries per chat in Postgres (`ledger_entries`). Intents (artifact revisions, delivery, node lifecycle, judge rounds) are appended before the state change they describe; observations (`llm.call`, `tool.call`, `agent.invoke`, `eval.score`) are appended after the fact from the `gen_ai.*` OTel log records that `inference.NewModel`, `tools.Build`, the ACP subprocess connection and the judge emit. Every entry carries the chat id plus `node_id`/`agent`/`round`, the replay stream identity, stamped by the vetting gate on the emitting object.

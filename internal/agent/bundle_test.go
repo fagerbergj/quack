@@ -57,6 +57,26 @@ func TestShippedWebResearcherBundle(t *testing.T) {
 	}
 }
 
+// TestBundlePromptArtifact guards H2's bug class: PromptArtifact (#1422) must
+// be the resolved "system/<dir>" artifact name, derived from Dir - not
+// Card.Name or any other caller-supplied key - and PinPrompt's own boot
+// artifact must carry that same name, not the raw Dir path.
+func TestBundlePromptArtifact(t *testing.T) {
+	// bundledir resolves relative to the repo root (embedded fallback), so this
+	// must be the "agents/<x>" shape BundleName expects, unlike the disk-relative
+	// "../../agents/web-researcher" other tests in this file use.
+	b, err := LoadBundle(context.Background(), nil, "agents/web-researcher")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.PromptArtifact != "system/web-researcher" {
+		t.Errorf("PromptArtifact = %q, want system/web-researcher", b.PromptArtifact)
+	}
+	if boot := b.PinPrompt(nil).Get(); boot.Name != "system/web-researcher" {
+		t.Errorf("PinPrompt boot artifact Name = %q, want system/web-researcher (not Dir)", boot.Name)
+	}
+}
+
 func TestLoadBundleErrors(t *testing.T) {
 	cases := map[string]struct{ card, prompt string }{
 		"missing card":   {"", "prompt"},

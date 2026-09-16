@@ -84,6 +84,12 @@ dag:
 
 `dag.max_active_runs` is deprecated: quack still accepts the key so an existing config doesn't crash-loop, but logs a boot warning and ignores it. Remove it from your config.
 
+## Binding on a prompt
+
+A prompt resolved from a `prompts:` store (see [observability.md](observability.md#langfuse-prompts)) can carry a `config` block with `model`, `provider` and/or `effort` keys. When it does, that round's worker binds to those values instead of the agent's static `model:`/`provider:` and the model's `models.<name>.effort` - useful for a Langfuse-side experiment that swaps a model without a config deploy. Each value is validated the same way its static counterpart is (`model` must be under `models:`, `provider` under `providers:` and must agree with the model's own registered provider, `effort` one of low/medium/high); an invalid value is logged once and the round runs on the static binding instead. A `model` override to a model that declares its own `limits:` (#1007 admission) is also rejected unless it's the static binding itself - admission is sized once at boot from the static model, so swapping to a differently-limited one would run unmetered; recomputing admission per round is not implemented. The ledger's `request_model`/`reasoning_effort` on that round reflect whichever binding actually ran.
+
 ## The judge is a separate model
 
 `gates.judge` (see [trust-gate.md](trust-gate.md)) names its own `provider` + `model`, independent of any worker's. That's deliberate - the trust gate's whole premise is that a genuinely different model catches blind spots a worker can't see in its own output. Reusing the worker's model for the judge would collapse that independence.
+
+`system/judge` is sourceable the same way a worker's prompt is: a resolved version's `config` overrides `gates.judge.model`/`provider` for that judge round, with `effort` landing on the round's `thinking_level` (`gates.judge.thinking_level`) rather than a `models:` registry entry - the judge's per-call `ThinkingConfig`, not a model default. Validation and invalid-value fallback work exactly like the worker case above.

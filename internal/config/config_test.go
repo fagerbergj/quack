@@ -2624,3 +2624,134 @@ orchestrator: { provider: default, model: m }
 		})
 	}
 }
+
+func TestResolveBinding(t *testing.T) {
+	cfg := &Config{
+		Providers: map[string]ProviderConfig{
+			"default": {Kind: "openai", Endpoint: "http://x"},
+			"other":   {Kind: "openai", Endpoint: "http://y"},
+		},
+		Models: map[string]ModelConfig{
+			"m1": {Provider: "default", Effort: "low"},
+			"m2": {Provider: "other", Effort: "high"},
+		},
+	}
+	base := cfg.Providers["default"]
+
+	t.Run("no override", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", nil)
+		if err != nil || b != nil {
+			t.Fatalf("b=%+v err=%v, want nil, nil", b, err)
+		}
+	})
+
+	t.Run("model override applied", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", map[string]any{"model": "m2"})
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if b.Model != "m2" || b.Provider.Endpoint != "http://y" || b.Effort != "high" {
+			t.Fatalf("got %+v", b)
+		}
+	})
+
+	t.Run("effort override applied", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", map[string]any{"effort": "medium"})
+		if err != nil || b.Effort != "medium" || b.Model != "m1" {
+			t.Fatalf("b=%+v err=%v", b, err)
+		}
+	})
+
+	t.Run("invalid model falls back with an error", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", map[string]any{"model": "ghost"})
+		if err == nil || b != nil {
+			t.Fatalf("b=%+v err=%v, want an error and nil binding", b, err)
+		}
+		if !strings.Contains(err.Error(), `"ghost" is not defined under models`) {
+			t.Errorf("err = %v", err)
+		}
+	})
+
+	t.Run("invalid effort falls back with an error", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"effort": "extreme"})
+		if err == nil || !strings.Contains(err.Error(), "must be low, medium or high") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("invalid provider falls back with an error", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"provider": "ghost"})
+		if err == nil || !strings.Contains(err.Error(), `"ghost" is not defined under providers`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("provider disagreeing with the model's own provider is rejected (M4)", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"model": "m2", "provider": "default"})
+		if err == nil || !strings.Contains(err.Error(), `provider "default" disagrees with model "m2"'s provider "other"`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("provider-only override agreeing with the static model's provider is applied", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", map[string]any{"provider": "default"})
+		if err != nil || b.Model != "m1" || b.Provider.Endpoint != "http://x" {
+			t.Fatalf("b=%+v err=%v", b, err)
+		}
+	})
+
+	t.Run("provider-only override disagreeing with the static model's provider is rejected", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"provider": "other"})
+		if err == nil || !strings.Contains(err.Error(), `provider "other" disagrees with model "m1"'s provider "default"`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("a non-string override value is an error naming the key", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"model": 123})
+		if err == nil || !strings.Contains(err.Error(), `"model" must be a string`) {
+			t.Fatalf("err = %v", err)
+		}
+		_, err = cfg.ResolveBinding(base, "m1", map[string]any{"provider": 123})
+		if err == nil || !strings.Contains(err.Error(), `"provider" must be a string`) {
+			t.Fatalf("err = %v", err)
+		}
+		_, err = cfg.ResolveBinding(base, "m1", map[string]any{"effort": 123})
+		if err == nil || !strings.Contains(err.Error(), `"effort" must be a string`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("a differently-limited model override is rejected (M1 admission)", func(t *testing.T) {
+		limited := &Config{
+			Providers: map[string]ProviderConfig{"default": {Kind: "openai", Endpoint: "http://x"}},
+			Models: map[string]ModelConfig{
+				"m1": {Provider: "default"},
+				"m2": {Provider: "default", Limits: &ModelLimits{Sessions: 4}},
+			},
+		}
+		_, err := limited.ResolveBinding(limited.Providers["default"], "m1", map[string]any{"model": "m2"})
+		if err == nil || !strings.Contains(err.Error(), "admission is sized once at boot") {
+			t.Fatalf("err = %v", err)
+		}
+		// The static binding itself is always allowed, even if IT declares limits.
+		b, err := limited.ResolveBinding(limited.Providers["default"], "m2", map[string]any{"effort": "low"})
+		if err != nil || b.Model != "m2" {
+			t.Fatalf("b=%+v err=%v, want the static m2 to stay usable", b, err)
+		}
+	})
+
+	t.Run("an empty limits block admits nothing, so the override is allowed", func(t *testing.T) {
+		empty := &Config{
+			Providers: map[string]ProviderConfig{"default": {Kind: "openai", Endpoint: "http://x"}},
+			Models: map[string]ModelConfig{
+				"m1": {Provider: "default"},
+				"m2": {Provider: "default", Limits: &ModelLimits{}},
+			},
+		}
+		b, err := empty.ResolveBinding(empty.Providers["default"], "m1", map[string]any{"model": "m2"})
+		if err != nil || b.Model != "m2" {
+			t.Fatalf("b=%+v err=%v, want limits: {} to be a no-op like buildAdmission treats it", b, err)
+		}
+	})
+}

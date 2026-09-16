@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/adk/v2/model"
@@ -52,7 +53,9 @@ func chatRequestAttrs(req *model.LLMRequest) ([]attribute.KeyValue, string) {
 			attrs = append(attrs, attribute.Int64(otelobs.GenAIRequestSeed, int64(*req.Config.Seed)))
 		}
 		if tc := req.Config.ThinkingConfig; tc != nil {
-			attrs = append(attrs, attribute.String(otelobs.GenAIRequestReasoningEffort, string(tc.ThinkingLevel)))
+			// genai's enum is upper-case ("LOW"); ledger.LLMCallPayload.ReasoningEffort
+			// documents low/medium/high, matching models.<id>.effort's own casing.
+			attrs = append(attrs, attribute.String(otelobs.GenAIRequestReasoningEffort, strings.ToLower(string(tc.ThinkingLevel))))
 		}
 	}
 	return attrs, sysHash

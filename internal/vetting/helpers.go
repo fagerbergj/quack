@@ -127,10 +127,13 @@ type Config struct {
 	ExternalWorker       bool         // ACP-backed; gate supplements session ledger
 	Setup                *SetupBranch // pre-cloned checkout; delivery on this branch
 	ExistingPR           bool         // run pushes onto an already-open PR; stage_push offered instead of stage_pr
-	// JudgeModel: the raw model behind judge (set once at startup, same
-	// instance NewJudgeFactory closes over) - stamped with per-round coords
-	// the same way workerModel is, so its metrics don't rely on ctx alone.
+	// JudgeModel: the boot judge model, or (#1421 P2) whichever bound-in model
+	// prepareJudge picked for the round - stamped with per-round coords like workerModel.
 	JudgeModel model.LLM
+	// RefreshJudgeBinding resolves system/judge's Config into this round's JudgeFactory,
+	// model (for JudgeModel/coord stamping) and thinking_level - never a shared mutable
+	// swapped in place, which would leak one round's binding into a concurrent one.
+	RefreshJudgeBinding func(art artifactsrc.Artifact) (JudgeFactory, model.LLM, string)
 	// ResumedFrom: dag.Node.ResumedFrom passed through - "" for a fresh
 	// node. Seeds an ACP node's first-round session/load id and marks the
 	// node.started ledger entry/stream event as a continuation.

@@ -8,15 +8,18 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/adk/v2/model"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// langfuse.observation.* have no OTel semconv form; Langfuse doesn't read
-// gen_ai.input/output.messages yet (langfuse#12657), so content needs both.
+// These have no OTel semconv form. observation.prompt.* are Langfuse v4's
+// documented prompt-link keys; the older langfuse.prompt.* alias is not sent.
 const (
-	langfuseObservationInput  = "langfuse.observation.input"
-	langfuseObservationOutput = "langfuse.observation.output"
+	langfuseObservationInput         = "langfuse.observation.input"
+	langfuseObservationOutput        = "langfuse.observation.output"
+	langfuseObservationPromptName    = "langfuse.observation.prompt.name"
+	langfuseObservationPromptVersion = "langfuse.observation.prompt.version"
 )
 
 // spanAttrCap bounds gen_ai content span attribute values; matches
@@ -47,6 +50,36 @@ func redactedSpanAttr(v any) (string, bool) {
 	return capSpanAttr(s), true
 }
 
+// correlationAttrs builds the chat/node/agent/prompt correlation keys from ctx's
+// ledger.Coords - never content, so these apply regardless of the capture-content gate.
+func correlationAttrs(ctx context.Context) []attribute.KeyValue {
+	var attrs []attribute.KeyValue
+	c := ledger.CoordsFromContext(ctx)
+	if c.ChatID == "" {
+		return attrs
+	}
+	attrs = append(attrs, attribute.String(otelobs.GenAIConversationID, c.ChatID))
+	// Node ids are free text from the orchestrator's plan (planner.assemble checks
+	// only non-empty and unique), so a verbose one could carry message-derived text
+	// onto a span the content gate doesn't cover.
+	if isSlug(c.Node) {
+		attrs = append(attrs, attribute.String(otelobs.QuackNode, c.Node))
+	}
+	if c.Agent != "" {
+		attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
+	}
+	// Any store-resolved prompt links to Langfuse this way - not just a
+	// literal "langfuse" source name, which M5 dropped in favor of the
+	// actual stores: entry name (there is only one Source kind today).
+	if c.PromptSource != "" && c.PromptSource != artifactsrc.StaticSource && c.PromptArtifact != "" && c.PromptVersionID != "" {
+		attrs = append(attrs,
+			attribute.String(langfuseObservationPromptName, c.PromptArtifact),
+			attribute.String(langfuseObservationPromptVersion, c.PromptVersionID),
+		)
+	}
+	return attrs
+}
+
 // setRequestSpanAttrs decorates ADK's own generate_content GENERATION span
 // (never opens a competing one - the span in ctx already IS the active one)
 // with request content. Must run before GenerateContent's inner loop yields a response: ADK ends this span synchronously on the first non-partial response, and SetAttributes on an ended span is a silent no-op.
@@ -55,22 +88,10 @@ func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 	if !span.IsRecording() {
 		return // nothing exporting - skip building the (possibly large) payload
 	}
-	var attrs []attribute.KeyValue
 	// Correlation keys, not content - these stay outside the gate below. ADK
 	// names the span but never says which node ran it; without node/agent a
 	// multi-node trace can't be narrowed to the card the user clicked.
-	if c := ledger.CoordsFromContext(ctx); c.ChatID != "" {
-		attrs = append(attrs, attribute.String(otelobs.GenAIConversationID, c.ChatID))
-		// Node ids are free text from the orchestrator's plan (planner.assemble
-		// checks only non-empty and unique), so a verbose one could carry
-		// message-derived text onto a span the content gate doesn't cover.
-		if isSlug(c.Node) {
-			attrs = append(attrs, attribute.String(otelobs.QuackNode, c.Node))
-		}
-		if c.Agent != "" {
-			attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
-		}
-	}
+	attrs := correlationAttrs(ctx)
 	if !otelobs.CaptureContentEnabled() {
 		if len(attrs) > 0 {
 			span.SetAttributes(attrs...)

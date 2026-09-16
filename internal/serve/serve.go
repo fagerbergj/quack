@@ -784,19 +784,18 @@ func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.So
 }
 
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	promptSrc, err := replayPromptSource(ctx, cfg)
+	promptSrc, promptSrcName, err := promptSourceFor(ctx, cfg)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	// P2 (#1421) supplies a store Source for a live run; P3 (#1422) pins one
-	// during replay (promptSrc above, nil for a normal boot).
-	b := &boot{cfg: cfg, res: artifactsrc.New(cfg.Prompts.Store, promptSrc, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
+	b := &boot{cfg: cfg, res: artifactsrc.New(promptSrcName, promptSrc, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
 	defer func() {
 		if err != nil {
 			b.runCleanups()
 			handler = nil
 		}
 	}()
+	seedPromptArtifacts(ctx, promptSrc)
 
 	// Pinned ACP processes (#1006) close on node-finish and again on shutdown (vetting can
 	// not import acp, hence the hook), so they never outlive their node or the server.
@@ -866,6 +865,55 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", err
 	}
 	return handler, b.runCleanups, addr, nil
+}
+
+// promptSourceFor: the live store Source (P2, #1421), unless this is a replay,
+// where the pinned Source (P3, #1422) takes its place so recorded versions win.
+func promptSourceFor(ctx context.Context, cfg *config.Config) (artifactsrc.Source, string, error) {
+	src, name := buildPromptSource(cfg)
+	replaySrc, err := replayPromptSource(ctx, cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	if replaySrc != nil {
+		return replaySrc, cfg.Prompts.Store, nil
+	}
+	return src, name, nil
+}
+
+// buildPromptSource builds the prompts: store's Source and its stores: name; (nil, "")
+// when prompts: names no store, so New falls back to the static-only Resolver.
+func buildPromptSource(cfg *config.Config) (artifactsrc.Source, string) {
+	if cfg.Prompts.Store == "" {
+		return nil, ""
+	}
+	// validatePrompts already checked the store exists, is kind langfuse, and has both keys.
+	sc, _ := cfg.Store(cfg.Prompts.Store)
+	client := langfuse.New(sc.URL, sc.PublicKey, sc.SecretKey, langfuse.WithPinLabel(cfg.Prompts.Label()))
+	return &langfuse.Source{Client: client, StoreKey: cfg.Prompts.Store}, cfg.Prompts.Store
+}
+
+// seedPromptArtifacts pushes every shipped artifact's current version to src in the
+// background: seeding must never delay readiness, and a failed name just stays on
+// whatever version the store already has (the resolver falls back to static anyway).
+func seedPromptArtifacts(ctx context.Context, src artifactsrc.Source) {
+	if src == nil {
+		return
+	}
+	go func() {
+		for _, name := range artifactsrc.Names() {
+			if ctx.Err() != nil {
+				return
+			}
+			static, err := artifactsrc.Static(name)
+			if err != nil {
+				continue // scan() already logged a missing shipped artifact
+			}
+			if err := src.Seed(ctx, name, static); err != nil {
+				slog.Warn("prompt seed failed", "component", "artifacts", "artifact", name, "err", err)
+			}
+		}
+	}()
 }
 
 // setupLoggingTo installs the process-wide slog handler from QUACK_LOG_LEVEL / QUACK_LOG_FORMAT.
@@ -1117,6 +1165,9 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
+			// #1421 P2: each round gets its own bound-in factory+model, never one shared
+			// instance swapped in place (H1 - that let concurrent rounds race each other).
+			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judge, judgeFactory, judgeReadTools, judgeSkillsets)
 			// Own instances: gated nodes stamp per-round coords on `judge` (vetting/node.go);
 			// these callers are not nodes, so sharing would inherit the last node's stamp (#1049).
 			unstamped := func() (model.LLM, error) {
@@ -1138,6 +1189,80 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			"judge", cfg.Gates.Judge.Model, "judge_rounds", gateCfg.JudgeRounds, "threshold", gateCfg.Threshold)
 	}
 	return gateCfg, judgeFactory, planJudge, judgeModel, safetyJudge, nil
+}
+
+// judgeBoundModel is one cached (provider, model) judge factory/model pair.
+type judgeBoundModel struct {
+	factory vetting.JudgeFactory
+	model   model.LLM
+}
+
+// judgeBinding caches every bound-in (provider, model) pair by that key, guarded
+// by mu since its closure is shared by every concurrent gated node's judge round.
+type judgeBinding struct {
+	mu           sync.Mutex
+	lastBad      string
+	lastBadBuild string
+	cache        map[string]judgeBoundModel
+}
+
+// warnOnce logs msg via slog.Warn only the first time this call's err differs
+// from *last (deduping a persistent failure to one log per distinct error).
+func (b *judgeBinding) warnOnce(last *string, msg string, artifactName string, err error) {
+	b.mu.Lock()
+	changed := err.Error() != *last
+	if changed {
+		*last = err.Error()
+	}
+	b.mu.Unlock()
+	if changed {
+		slog.Warn(msg, "component", "artifacts", "artifact", artifactName, "err", err)
+	}
+}
+
+// bindJudgeRefresher returns prepareJudge's per-round binder: system/judge's Config
+// picks this round's OWN JudgeFactory+model+thinking_level; an invalid value falls
+// back to gates.judge's static factory/model and logs once per distinct bad value.
+func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, staticModel model.LLM, staticFactory vetting.JudgeFactory, readTools []tool.Tool, skillsets []tool.Toolset) func(art artifactsrc.Artifact) (vetting.JudgeFactory, model.LLM, string) {
+	staticEffort := cfg.Gates.Judge.ThinkingLevel
+	b := &judgeBinding{cache: map[string]judgeBoundModel{}}
+	return func(art artifactsrc.Artifact) (vetting.JudgeFactory, model.LLM, string) {
+		bound, err := cfg.ResolveBinding(jprov, cfg.Gates.Judge.Model, art.Config)
+		if err != nil {
+			b.warnOnce(&b.lastBad, "judge prompt binding invalid; using gates.judge's static binding", art.Name, err)
+			return staticFactory, staticModel, staticEffort
+		}
+		b.mu.Lock()
+		b.lastBad = ""
+		b.mu.Unlock()
+		if bound == nil {
+			return staticFactory, staticModel, staticEffort
+		}
+		effort := staticEffort
+		if e, ok := art.Config["effort"].(string); ok && e != "" {
+			effort = e
+		}
+		// M3: (provider, model) identifies the swap; effort rides per-call thinking_level
+		// (judge.go), so it never needs a distinct model/HTTP pool of its own. Sound only
+		// because ResolveBinding's M4 check already forces provider to agree with model.
+		key := bound.ProviderName + "|" + bound.Provider.Endpoint + "|" + bound.Model
+		b.mu.Lock()
+		cached, ok := b.cache[key]
+		b.mu.Unlock()
+		if ok {
+			return cached.factory, cached.model, effort
+		}
+		m, err := inference.NewModel(bound.Provider, bound.Model, artifacts, cfg.ModelCost(bound.Model))
+		if err != nil {
+			b.warnOnce(&b.lastBadBuild, "judge prompt binding model build failed; using gates.judge's static binding", art.Name, err)
+			return staticFactory, staticModel, staticEffort
+		}
+		f := vetting.NewJudgeFactory(m, readTools, skillsets)
+		b.mu.Lock()
+		b.cache[key] = judgeBoundModel{factory: f, model: m}
+		b.mu.Unlock()
+		return f, m, effort
+	}
 }
 
 // buildACPNode builds one ACP-harness agent (external CLI child), registering
@@ -1258,10 +1383,14 @@ type nativeNodeBuilder struct {
 }
 
 func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
-	wm, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
+	base, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("model: %w", err)
 	}
+	// A prompt store can bind a different model/provider/effort per round (#1421 P2):
+	// wrapping in Overridable lets the round-start refresh swap targets without
+	// rebuilding the ADK agent, which holds this LLM for its whole lifetime.
+	wm := inference.NewOverridable(base)
 	var builtins []tool.Tool
 	if len(b.toolNames) > 0 {
 		if builtins, err = tools.Build(b.toolNames, tools.Deps{
@@ -1344,7 +1473,60 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 	// The deterministic worker session created by this node's first dispatch outlives it
 	// - reaped only at chat archive/delete (ReapNodeSessions), so a later reuse finds it.
 	release := b.nodeServers.track(srv)
-	return client, wm, builtins, setRoundCoords, prompts.Refresh, release, nil
+	refresh := b.bindPromptRefresher(prompts, wm.(*inference.OverridableModel))
+	return client, wm, builtins, setRoundCoords, refresh, release, nil
+}
+
+// bindPromptRefresher wraps prompts.Refresh: a resolved artifact's Config can
+// rebind the round's model/provider/effort; an invalid value falls back to
+// the static binding and logs once, until the bad value itself changes.
+func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, overridable *inference.OverridableModel) promptRefresher {
+	// L1: overridable was built FROM this same base model - reuse it, never a second
+	// NewModelWithEffort call whose error a plain `_` would drop (a nil Set would panic).
+	static := overridable.Get()
+	var lastBad string
+	var lastBadBuild string
+	var cachedKey string
+	var cachedModel model.LLM
+	return func(ctx context.Context) artifactsrc.Artifact {
+		art := prompts.Refresh(ctx)
+		bound, err := b.cfg.ResolveBinding(b.prov, b.ac.Model, art.Config)
+		if err != nil {
+			if err.Error() != lastBad {
+				lastBad = err.Error()
+				slog.Warn("prompt binding invalid; using the static binding",
+					"component", "artifacts", "artifact", art.Name, "err", err)
+			}
+			overridable.Set(static)
+			return art
+		}
+		lastBad = ""
+		if bound == nil {
+			overridable.Set(static)
+			return art
+		}
+		// M3: this node's rounds run sequentially (this closure is never shared across
+		// nodes), so a plain cache is enough - rebuild only when the tuple changes.
+		key := bound.ProviderName + "|" + bound.Provider.Endpoint + "|" + bound.Model + "|" + bound.Effort
+		if key == cachedKey && cachedModel != nil {
+			overridable.Set(cachedModel)
+			return art
+		}
+		m, err := inference.NewModelWithEffort(bound.Provider, bound.Model, b.artifacts, b.cfg.ModelCost(bound.Model), bound.Effort)
+		if err != nil {
+			if err.Error() != lastBadBuild {
+				lastBadBuild = err.Error()
+				slog.Warn("prompt binding model build failed; using the static binding",
+					"component", "artifacts", "artifact", art.Name, "err", err)
+			}
+			overridable.Set(static)
+			return art
+		}
+		lastBadBuild = ""
+		cachedKey, cachedModel = key, m
+		overridable.Set(m)
+		return art
+	}
 }
 
 // loadNativeReplay restores the shared replay session from the configured
