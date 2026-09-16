@@ -34,7 +34,7 @@ plugins:
   root: ${QUACK_WORKSPACE_ROOT}/.quack/plugins
   seed:
     - github:fagerbergj/dotagents
-    - github:fagerbergj/ponytail@v1.4
+    - github:DietrichGebert/ponytail@v4.9.0
 ```
 
 `store` picks the registry backend (filesystem by default, or a `stores:` entry of kind `sqlite`/`postgres` - see [stores.md](stores.md#plugin-registry)); `root` is where clones live; `seed` lists entries inserted if absent at boot (the UI/REST own the list after that). A bare `plugins:` list is treated as `seed:`. Each entry is either `github:owner/repo[@ref][#path]` (cloned and kept up to date) or a local directory path (config-only, no clone). Full detail - entry syntax, naming, the bundled baseline, updates, replay pinning - is in [`agent-plugins.md`](../agent-plugins.md#the-registry).

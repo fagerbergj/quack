@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path"
 	"strings"
+	"testing/fstest"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
@@ -21,8 +21,10 @@ import (
 var ErrPinned = errors.New("plugin roster is pinned to a replay bundle")
 
 // NewSkillSource builds the replay-pinned plugin skill source (#1427 P4): a
-// recorded sha is served via git show; a no-sha row is scoped out of live
-// instead, keeping live's own embedded/backfill rules. rows' order drives merge order (deterministic bare-name resolve, F3).
+// recorded sha is served via git show against its own clone history, never
+// live admission (admitted is unused here); a no-sha row is scoped out of
+// live instead, keeping live's own embedded/backfill rules. rows' order
+// drives merge order (deterministic bare-name resolve, F3).
 func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, rows []pluginreg.Plugin, admitted []plugin.Plugin, live skill.Source) (skill.Source, error) {
 	recorded, err := sess.Plugins()
 	if err != nil {
@@ -30,10 +32,6 @@ func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, row
 	}
 	if len(recorded) == 0 {
 		return nil, nil
-	}
-	admittedNames := make(map[string]bool, len(admitted))
-	for _, p := range admitted {
-		admittedNames[p.Name] = true
 	}
 
 	var sources []skill.Source
@@ -61,16 +59,19 @@ func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, row
 			sources = append(sources, skillsource.Scoped(live, names))
 			continue
 		}
-		if !admittedNames[row.Name] {
-			// Live skips a row with no plugin.json (admitPlugins never
-			// admitted it) - replay must not serve it either (#1427 F4).
-			slog.Warn("replay: recorded plugin was not admitted live; skipping its skills", "component", "replay", "plugin", row.Name)
-			continue
-		}
-		treeFS, err := pluginreg.TreeAt(ctx, registryRoot, row.Name, sha, path.Join(row.Path, "skills"))
+		// One TreeAt call covers both the manifest check and the skills
+		// tree; a missing clone or unknown sha refuses here, naming both.
+		tree, err := pluginreg.TreeAt(ctx, registryRoot, row.Name, sha, row.Path)
 		if err != nil {
 			return nil, fmt.Errorf("replay: %w", err)
 		}
+		if !hasManifest(tree) {
+			// Mirrors admitPlugins' live rule, decided from the recorded
+			// sha's tree instead of the clone's current disk state.
+			slog.Warn("replay: recorded plugin has no manifest at its recorded sha; skipping its skills", "component", "replay", "plugin", row.Name, "sha", sha)
+			continue
+		}
+		treeFS := skillsSubtree(tree)
 		sources = append(sources, skillsource.Prefixed(row.Name, skillsource.Tolerant(skillsource.NewFileSystemSource(treeFS), treeFS, row.Name+"@"+sha)))
 	}
 	for name := range recorded {
@@ -79,6 +80,26 @@ func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, row
 		}
 	}
 	return skill.NewMergedSource(sources...), nil
+}
+
+// hasManifest reports whether tree carries either manifest path
+// plugin.Resolve detects, checked at a recorded sha instead of on disk.
+func hasManifest(tree fstest.MapFS) bool {
+	_, agentPlugins := tree["plugin.json"]
+	_, codex := tree[".codex-plugin/plugin.json"]
+	return agentPlugins || codex
+}
+
+// skillsSubtree narrows a plugin root tree to its skills/ prefix, the shape
+// skillsource.NewFileSystemSource expects.
+func skillsSubtree(tree fstest.MapFS) fstest.MapFS {
+	out := make(fstest.MapFS, len(tree))
+	for p, f := range tree {
+		if rel, ok := strings.CutPrefix(p, "skills/"); ok {
+			out[rel] = f
+		}
+	}
+	return out
 }
 
 // prefixedNames lists live's skill names qualified "plugin:skill" under

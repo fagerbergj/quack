@@ -29,13 +29,16 @@ func writeAgentInvokeReplayFixture(t *testing.T, pluginsJSON string) string {
 	return path
 }
 
-// registryWithFetchedPlugin fetches a fixture repo (one skill, SKILL.md
-// body) into a fresh registry root and returns the root and the sha it
-// installed.
+// registryWithFetchedPlugin fetches a fixture repo (a plugin.json manifest
+// plus one skill, SKILL.md body) into a fresh registry root and returns the
+// root and the sha it installed.
 func registryWithFetchedPlugin(t *testing.T, name, body string) (root, sha string) {
 	t.Helper()
 	bare, work := pluginregtest.NewFixtureRepo(t)
 	pluginregtest.RunGit(t, work, "rm", "--quiet", "SKILL.md")
+	if err := os.WriteFile(filepath.Join(work, "plugin.json"), []byte(`{"name":"`+name+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	skillDir := filepath.Join(work, "skills", "dothing")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
