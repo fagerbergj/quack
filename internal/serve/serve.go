@@ -756,9 +756,13 @@ func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator
 func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.Source, error) {
 	var bundlePath string
 	for _, p := range cfg.Providers {
-		if p.Kind == "replay" && p.Bundle != "" {
+		if p.Kind != "replay" || p.Bundle == "" {
+			continue
+		}
+		if bundlePath == "" {
 			bundlePath = p.Bundle
-			break
+		} else if p.Bundle != bundlePath {
+			return nil, fmt.Errorf("replay: providers name different bundles (%q vs %q) - replayifyProviders should have set them all the same", bundlePath, p.Bundle)
 		}
 	}
 	if bundlePath == "" {
@@ -774,7 +778,7 @@ func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.So
 			lf = langfuse.New(s.URL, s.PublicKey, s.SecretKey)
 		}
 	}
-	return replay.NewPromptSource(ctx, sess, lf)
+	return replay.NewPromptSource(ctx, sess, lf, cfg.Prompts.Store)
 }
 
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
@@ -1385,6 +1389,7 @@ func stampBundle(c vetting.Config, b *agent.Bundle) vetting.Config {
 	c.BundleHash = b.Hash
 	c.PromptSource = b.PromptSource
 	c.PromptVersionID = b.PromptVersion
+	c.PromptArtifact = b.PromptArtifact
 	return c
 }
 
