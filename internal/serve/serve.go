@@ -867,8 +867,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	return handler, b.runCleanups, addr, nil
 }
 
-// buildPromptSource builds the prompts: store's Source and its stores: name; (nil, "")
-// when prompts: names no store, so New falls back to the static-only Resolver.
 // promptSourceFor: the live store Source (P2, #1421), unless this is a replay,
 // where the pinned Source (P3, #1422) takes its place so recorded versions win.
 func promptSourceFor(ctx context.Context, cfg *config.Config) (artifactsrc.Source, string, error) {
@@ -883,6 +881,8 @@ func promptSourceFor(ctx context.Context, cfg *config.Config) (artifactsrc.Sourc
 	return src, name, nil
 }
 
+// buildPromptSource builds the prompts: store's Source and its stores: name; (nil, "")
+// when prompts: names no store, so New falls back to the static-only Resolver.
 func buildPromptSource(cfg *config.Config) (artifactsrc.Source, string) {
 	if cfg.Prompts.Store == "" {
 		return nil, ""
