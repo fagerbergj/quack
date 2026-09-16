@@ -5,7 +5,7 @@ Setup and configuration guides for humans to use quack. For how the code itself 
 - [`cli.md`](cli.md) - the CLI: the main command tree, `-p`, exit codes (recording/replay/eval/validate have no prose yet).
 - [`ui.md`](ui.md) - the web SPA: what it does, running it, contributing to it.
 - [`api.md`](api.md) - the REST/MCP/A2A surface and streaming.
-- [`configuration/`](configuration/) - models, agents, the trust gate, stores, auth, workspace sandboxing, deployment shapes, observability.
+- [`configuration/`](configuration/) - models, prompts, agents, the trust gate, stores, auth, workspace sandboxing, deployment shapes, observability.
 - [`agent-plugins.md`](agent-plugins.md) - the Agent Plugins standard: how a plugin ships skills, MCP servers, and quack extension declarations.
 - [`extensions/github.md`](extensions/github.md) - the GitHub App.
 - [`extensions/remarkable.md`](extensions/remarkable.md) - the reMarkable document-ingest trigger.

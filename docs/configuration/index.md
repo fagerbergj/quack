@@ -13,7 +13,8 @@ Providers, stores, and several tools are pluggable through a `kind` discriminato
 ```yaml
 providers:      # named inference backends (openai-compatible endpoints)
 models:         # the canonical model registry (windows, admission limits, cost)
-stores:         # named data backends (postgres, qdrant, sqlite)
+stores:         # named data backends (postgres, qdrant, sqlite, langfuse)
+prompts:        # named prompt artifacts resolved from a langfuse store, static fallback
 session:        # ADK session/chat persistence + context compaction
 orchestrator:   # the planner's model + tools + skills
 agents:         # per-agent bundle bindings (model, tools, acp)
@@ -34,6 +35,7 @@ artifacts:      # the artifact store binding
 Each section gets its own page below:
 
 - **[Models](models.md)** — providers, per-agent inference, the llama-swap backend detail.
+- **[Prompts](prompts.md)** — the Langfuse prompt library: named artifacts, resolution, seeding, and bindings.
 - **[Tools](tools.md)** — the builtin tool registry and the `tools:` config section.
 - **[Agents](agents.md)** — bundles, tool bindings, native vs. external ACP agents.
 - **[Trust gate](trust-gate.md)** — deterministic checks, the independent judge, rubrics.

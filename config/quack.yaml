@@ -104,6 +104,7 @@ stores:
 # rubric/constitution, and the lifted fragments under config/prompts/ (system/judge,
 # system/compaction, system/compaction.summary, system/acp.environment). Omit the
 # whole block for the shipped files only; a name the store lacks falls back to them.
+# See docs/configuration/prompts.md for names, seeding, and model/effort bindings.
 # prompts:
 #   store: langfuse               # a stores[] entry of kind langfuse
 #   cache_ttl: 60s                # how long a resolved version is reused before re-checking
