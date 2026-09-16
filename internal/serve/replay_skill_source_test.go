@@ -28,9 +28,10 @@ func writeAgentInvokeReplayFixture(t *testing.T, pluginsJSON string) string {
 	return path
 }
 
-// registryWithFetchedPlugin fetches a fixture repo (plugin.json + one skill)
-// into a fresh registry root and returns the root and the installed sha.
-func registryWithFetchedPlugin(t *testing.T, name, body string) (root, sha string) {
+// pushFixturePlugin pushes a fixture repo (plugin.json + one skill) to a bare
+// git repo and points pluginreg.RemoteURL at it for "github:acme/<name>" -
+// shared by every fetch-based registry test, filesystem or DB-backed.
+func pushFixturePlugin(t *testing.T, name, body string) (bare string) {
 	t.Helper()
 	bare, work := pluginregtest.NewFixtureRepo(t)
 	pluginregtest.RunGit(t, work, "rm", "--quiet", "SKILL.md")
@@ -51,7 +52,14 @@ func registryWithFetchedPlugin(t *testing.T, name, body string) (root, sha strin
 	prev := pluginreg.RemoteURL
 	pluginreg.RemoteURL = func(owner, repo string) string { return bare }
 	t.Cleanup(func() { pluginreg.RemoteURL = prev })
+	return bare
+}
 
+// registryWithFetchedPlugin fetches a fixture repo (plugin.json + one skill)
+// into a fresh FS registry root and returns the root and the installed sha.
+func registryWithFetchedPlugin(t *testing.T, name, body string) (root, sha string) {
+	t.Helper()
+	pushFixturePlugin(t, name, body)
 	root = t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	e, err := pluginreg.ParseEntry("github:acme/" + name)
@@ -63,6 +71,22 @@ func registryWithFetchedPlugin(t *testing.T, name, body string) (root, sha strin
 		t.Fatal(err)
 	}
 	return root, got.SHA
+}
+
+// fetchFixturePluginInto fetches the same fixture shape into an arbitrary
+// registry backend - the DB-backend subtest below reuses this.
+func fetchFixturePluginInto(t *testing.T, reg pluginreg.FetchRegistry, name, body string) string {
+	t.Helper()
+	pushFixturePlugin(t, name, body)
+	e, err := pluginreg.ParseEntry("github:acme/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reg.Fetch(context.Background(), pluginreg.FromEntry(e))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got.SHA
 }
 
 // TestReplaySkillSource_NonReplayConfig mirrors replayPromptSource's own
@@ -197,6 +221,28 @@ func TestRefuseIfPluginsMoved(t *testing.T) {
 		err = refuseIfPluginsMoved(sess, pluginreg.NewFSRegistry(root))
 		if err == nil || !strings.Contains(err.Error(), "no longer registered") {
 			t.Fatalf("err = %v, want containing %q", err, "no longer registered")
+		}
+	})
+
+	// The guard's List() call must work the same against a DB-backed
+	// registry, not just the filesystem one exercised above.
+	t.Run("DB-backed registry: unmoved plugin is fine", func(t *testing.T) {
+		db, err := pluginreg.OpenDB("sqlite", filepath.Join(t.TempDir(), "plugins.db"))
+		if err != nil {
+			t.Fatalf("OpenDB: %v", err)
+		}
+		reg, err := pluginreg.NewDBRegistry(db, t.TempDir())
+		if err != nil {
+			t.Fatalf("NewDBRegistry: %v", err)
+		}
+		sha := fetchFixturePluginInto(t, reg, "gizmos", "---\nname: dothing\ndescription: v1\n---\nbody v1")
+		bundle := writeAgentInvokeReplayFixture(t, `[{"name":"gizmos","sha":"`+sha+`"}]`)
+		sess, err := replay.Load(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := refuseIfPluginsMoved(sess, reg); err != nil {
+			t.Fatalf("refuseIfPluginsMoved: %v", err)
 		}
 	})
 }

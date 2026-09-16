@@ -5,16 +5,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
-
-	"github.com/fagerbergj/quack/internal/plugin"
 )
 
 var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 
 // Every skill an agent's prompt tells it to load MUST exist in the skill
-// library we actually ship (embedded skills/ plus vendored ponytail skills).
-// A prompt naming an unshipped skill is not a harmless typo: the agent's
-// FIRST action fails, and it flails.
+// library we actually ship offline (embedded skills/ plus the tracked
+// dotagents snapshot). A prompt naming an unshipped skill is not a harmless
+// typo: the agent's FIRST action fails, and it flails.
 //
 // Regression: agents/code-explorer/prompt.md loaded a skill that only lived
 // in .agents/skills/ (project skills, loadable only after cd'ing into the
@@ -23,20 +21,16 @@ var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	root := repoRoot(t)
 
-	// Mirror what reaches an agent (serve's newSkillSource): quack's skills/ plus each
-	// plugin root via internal/plugin discovery. The trees are in-tree, so an unresolvable
-	// root is a real breakage; the old t.Skip (needs BOTH roots) never ran even with
-	// submodules initialised.
-	dotagents := filepath.Join(root, ".agents", "vendor", "dotagents")
-	ponytail := filepath.Join(root, ".agents", "vendor", "ponytail")
-	vendorPlugins, _ := plugin.Resolve([]string{dotagents, ponytail})
-	vendorDirs := plugin.SkillDirs(vendorPlugins)
-	if len(vendorDirs) != 2 {
-		t.Fatalf("vendored dotagents/ponytail plugins did not both resolve: got %v", vendorDirs)
+	// Mirror what an agent gets offline (serve's embeddedQuackSkillSource):
+	// quack's skills/ plus the tracked dotagents snapshot. ponytail is
+	// registry-fetched only and never guaranteed on disk.
+	dotagents := filepath.Join(root, dotagentsEmbeddedSkills)
+	if st, err := os.Stat(dotagents); err != nil || !st.IsDir() {
+		t.Fatalf("tracked dotagents skills missing at %s: %v", dotagents, err)
 	}
 
 	shipped := map[string]bool{}
-	for _, dir := range append([]string{filepath.Join(root, "skills")}, vendorDirs...) {
+	for _, dir := range []string{filepath.Join(root, "skills"), dotagents} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue

@@ -13,7 +13,7 @@ import (
 )
 
 // SetupClone: harness-executed clone + branch checkout, run once before any
-// node. checkSetup bootstraps the clone (e.g. `make plugins`) right after
+// node. checkSetup bootstraps the clone (e.g. `npm --prefix scripts ci`) right after
 // checkout, quack-side, before any sandboxed worker starts in it - the gate's checksPassCriterion reruns the same call, a no-op once this has (see workspace.RunCheckSetup's cache).
 func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource, checkSetup []string) (string, error) {
 	if _, err := validateCloneURL(repoURL); err != nil {

@@ -178,7 +178,7 @@ func TestChecksPassBaselineLeavesWorkerTreeIntact(t *testing.T) {
 	}
 }
 
-// #839: quack's own repo self-disarms nearly every derived check because they all fail in a fresh clone (embed.go needs `make plugins`, mermaid tests need
+// quack's own repo self-disarms nearly every derived check because they all fail in a fresh clone (mermaid tests need
 // `npm ci`), so a missing bootstrap gets waived exactly like real repo debt and the gate loses its teeth. check_setup runs a repo-declared bootstrap
 // once, in BOTH the worker's tree and the baseline worktree (runAtBase), so a check that only fails for lack of bootstrapping regains real teeth: the check here can never pass without check_setup (generated.txt never exists anywhere), and the worker's own regression is that its content diverges from the source setup projects it from.
 func TestCheckSetupMakesABaseFailingCheckGateAgain(t *testing.T) {

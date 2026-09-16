@@ -35,8 +35,6 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
-# Not in git and go:embed needs them, so fetch before building.
-RUN ./scripts/plugins.sh
 # -trimpath + -ldflags="-s -w": strip local paths and the symbol/DWARF tables
 # (smaller, reproducible binary). Build cache is mounted (pure speed, discarded);
 # /go/pkg/mod is not - see the go mod download comment above.
@@ -125,12 +123,10 @@ COPY config/ /config/
 COPY agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY skills/ /skills/
-# Agent Plugins roots, resolved against CWD / (config's plugins:): fetched
-# trees under .agents/vendor, first-party manifests under .agents/plugins.
-# From the builder: the context has no vendor trees.
+# Agent Plugins roots, resolved against CWD / (config's plugins:): the
+# tracked embedded-dotagents snapshot and first-party manifests under
+# .agents/plugins. Registry-fetched plugins clone under plugins.root instead.
 COPY --from=backend /app/.agents/ /.agents/
-# The startup refresh re-runs this against the pins in .agents/vendor.
-COPY scripts/plugins.sh /scripts/plugins.sh
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot
 EXPOSE 8080

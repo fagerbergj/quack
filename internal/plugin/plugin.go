@@ -1,6 +1,6 @@
 // Package plugin discovers plugins packaged per the Agent Plugins standard (https://agent-plugins.org/) or its Codex predecessor. A resolved root can
 // contribute skills (skills/, spec §7.1), MCP servers (mcp.json, spec §7.2),
-// and quack's own client-extension declarations (plugin.json's extensions[Namespace], spec §8). Distribution is out of scope - trees are vendored in-tree, see .agents/vendor/plugins.yaml.
+// and quack's own client-extension declarations (plugin.json's extensions[Namespace], spec §8). Distribution is out of scope - see internal/pluginreg for the fetch/clone side.
 package plugin
 
 import (

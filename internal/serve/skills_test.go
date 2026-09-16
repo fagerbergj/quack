@@ -21,7 +21,7 @@ import (
 // fails the skilltoolset's validation (bad name, description over the 1024-char
 // ceiling, …). Both libraries are checked: the shipped skills/ (a bad one crashes startup) and .claude/skills/ (quack's own project skills - a bad one poisons every agent that clones quack, exactly as `huh-wizard`/`go-testing` did at 1045 and 1039 description chars).
 func TestSkillsLoad(t *testing.T) {
-	for _, dir := range []string{"../../skills", "../../.claude/skills", "../../.agents/vendor/dotagents/skills"} {
+	for _, dir := range []string{"../../skills", "../../.claude/skills", "../../" + dotagentsEmbeddedSkills} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("read skills dir %s: %v", dir, err)
@@ -150,10 +150,10 @@ func TestNewSkillSourceDotagentsMissingOnDisk(t *testing.T) {
 // resolved plugin, not only a row literally named "quack" - that rule
 // covers only quack's own skills/ half, e.g. plan-work).
 func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
-	dotagents := "../../.agents/vendor/dotagents"
-	if st, err := os.Stat(dotagents + "/skills"); err != nil || !st.IsDir() {
-		t.Fatalf("vendored dotagents skills missing at %s/skills", dotagents)
-	}
+	dotagents := t.TempDir()
+	writePluginManifest(t, dotagents, "dotagents")
+	writeVendorSkill(t, filepath.Join(dotagents, "skills"), "format-markdown", "fixture")
+
 	src := newSkillSource(resolvePlugins([]string{dotagents}))
 	ctx := context.Background()
 	if _, err := src.ListFrontmatters(ctx); err != nil {
@@ -171,12 +171,17 @@ func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
 // ACP agent's skills.paths through ordinary plugin discovery - dotagents now
 // ships a root plugin.json (no backfill needed; see git history for the #864 workaround this replaced once the manifest landed upstream).
 func TestAcpSkillPathsResolvesDotagents(t *testing.T) {
-	root := repoRoot(t)
-	t.Chdir(root)
+	dotagents := t.TempDir()
+	writePluginManifest(t, dotagents, "dotagents")
+	writeVendorSkill(t, filepath.Join(dotagents, "skills"), "review-code", "fixture")
 
-	paths := acpSkillPaths(resolvePlugins([]string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}))
+	ponytail := t.TempDir()
+	writePluginManifest(t, ponytail, "ponytail")
+	writeVendorSkill(t, filepath.Join(ponytail, "skills"), "ponytail", "fixture")
 
-	wantDotagents := filepath.Join(root, ".agents", "vendor", "dotagents", "skills")
+	paths := acpSkillPaths(resolvePlugins([]string{dotagents, ponytail}))
+
+	wantDotagents := filepath.Join(dotagents, "skills")
 	if !slices.Contains(paths, wantDotagents) {
 		t.Fatalf("acpSkillPaths() = %v, want dotagents skills dir %q", paths, wantDotagents)
 	}
@@ -184,7 +189,7 @@ func TestAcpSkillPathsResolvesDotagents(t *testing.T) {
 		t.Errorf("review-code not found under the resolved dotagents dir: %v", err)
 	}
 
-	wantPonytail := filepath.Join(root, ".agents", "vendor", "ponytail", "skills")
+	wantPonytail := filepath.Join(ponytail, "skills")
 	if !slices.Contains(paths, wantPonytail) {
 		t.Errorf("acpSkillPaths() = %v, want ponytail's resolved skills dir %q", paths, wantPonytail)
 	}
@@ -237,6 +242,10 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 	root := repoRoot(t)
 	t.Chdir(root)
 
+	dotagents := t.TempDir()
+	writePluginManifest(t, dotagents, "dotagents")
+	writeVendorSkill(t, filepath.Join(dotagents, "skills"), "format-markdown", "fixture")
+
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +253,7 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 	b := &boot{cfg: &config.Config{
 		Plugins: &config.PluginsConfig{
 			Root: t.TempDir(),
-			Seed: []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"},
+			Seed: []string{dotagents, ".agents/plugins/usage"},
 		},
 	}}
 	skills, err := b.initSkills(context.Background(), jail, nil)
@@ -266,10 +275,34 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 // reviewer-mandated regression for #1427 R1: the shipped default seed on a
 // dev checkout must serve the SAME 27-skill roster and 3 ACP skill paths as
 // main did before the plugin registry existed - not a doubled roster from
-// missing by-bare-name suppression of the embedded dotagents copy.
+// missing by-bare-name suppression of the embedded dotagents copy. Local
+// fixtures stand in for the real registry-fetched dotagents/ponytail (no
+// test may hit the network); the dotagents fixture's bare names are read
+// from the tracked embedded snapshot so suppression fires exactly as it
+// would against a real fetch.
 func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) {
 	root := repoRoot(t)
 	t.Chdir(root)
+
+	daEntries, err := os.ReadDir(dotagentsEmbeddedSkills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	daRoot := t.TempDir()
+	writePluginManifest(t, daRoot, "dotagents")
+	for _, e := range daEntries {
+		if !e.IsDir() {
+			continue
+		}
+		writeVendorSkill(t, filepath.Join(daRoot, "skills"), e.Name(), "fixture")
+	}
+
+	ptRoot := t.TempDir()
+	writePluginManifest(t, ptRoot, "ponytail")
+	// ponytail isn't tracked anywhere in-repo, so these names are a fixed stand-in, not read from a real tree.
+	for _, name := range []string{"ponytail", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help", "ponytail-review"} {
+		writeVendorSkill(t, filepath.Join(ptRoot, "skills"), name, "fixture")
+	}
 
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -278,7 +311,7 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 	b := &boot{cfg: &config.Config{
 		Plugins: &config.PluginsConfig{
 			Root: t.TempDir(),
-			Seed: []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"},
+			Seed: []string{daRoot, ptRoot, ".agents/plugins/usage"},
 		},
 	}}
 	skills, err := b.initSkills(context.Background(), jail, nil)

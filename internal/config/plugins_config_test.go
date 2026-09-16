@@ -153,7 +153,7 @@ func TestLoadPluginsBlockNoSeedFallsBackToSkillsPluginsWithoutWarning(t *testing
 	c, err := Load(writeTemp(t, baseConfig+`
 skills:
   plugins:
-    - .agents/vendor/dotagents
+    - .agents/local/dotagents
 plugins:
   root: /custom/plugins/root
 `))
@@ -161,7 +161,7 @@ plugins:
 		t.Fatal(err)
 	}
 	got := c.Plugins.Seed
-	if len(got) != 1 || got[0] != ".agents/vendor/dotagents" {
+	if len(got) != 1 || got[0] != ".agents/local/dotagents" {
 		t.Fatalf("Plugins.Seed = %v, want skills.plugins to be used", got)
 	}
 	if strings.Contains(buf.String(), "skills.plugins is ignored") {
@@ -185,13 +185,13 @@ plugins:
 func TestLoadPluginsBareListStillMeansSeed(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 plugins:
-  - .agents/vendor/dotagents
+  - .agents/local/dotagents
   - github:fagerbergj/ponytail@v1.4
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{".agents/vendor/dotagents", "github:fagerbergj/ponytail@v1.4"}
+	want := []string{".agents/local/dotagents", "github:fagerbergj/ponytail@v1.4"}
 	got := c.Plugins.Seed
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("Plugins.Seed = %v, want %v (bare list means seed:, local and github: entries alike)", got, want)

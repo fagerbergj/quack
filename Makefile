@@ -1,19 +1,10 @@
-.PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean docs-check slop
+.PHONY: build run test vet fmt generate frontend-build docker-up docker-down clean docs-check slop
 
 BINARY := quack
 SANDBOX_BINARY := quack-sandbox
 
-## plugins: fetch the skill-library plugin trees pinned in .agents/vendor/plugins.yaml
-## (not in git; go:embed needs them present, so build/test/run depend on this)
-plugins:
-	./scripts/plugins.sh $(PLUGIN)
-
-## plugins-update: move each plugin's pin to its upstream HEAD
-plugins-update:
-	./scripts/plugins.sh --update $(PLUGIN)
-
 ## build: build the frontend, embed it, and compile the server + sandbox sidecar
-build: plugins frontend-build
+build: frontend-build
 	go build -o $(BINARY) ./cmd/quack
 	go build -o $(SANDBOX_BINARY) ./cmd/quack-sandbox
 
@@ -29,11 +20,11 @@ run: build
 	./$(BINARY) server run --config config/quack.yaml
 
 ## test: run Go tests
-test: plugins
+test:
 	go test ./...
 
 ## test-race: run Go tests under the race detector (what CI gates on)
-test-race: plugins
+test-race:
 	go test -race ./...
 
 ## vet: go vet

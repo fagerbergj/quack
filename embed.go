@@ -5,7 +5,7 @@ package quack
 
 import "embed"
 
-// .agents/vendor/dotagents is NOT in git (run `make plugins`); config/*.md and config/prompts are what internal/artifactsrc resolves a name to.
+// .agents/embedded/dotagents/skills is a tracked snapshot (see its SOURCE.md); config/*.md and config/prompts are what internal/artifactsrc resolves a name to.
 //
-//go:embed all:agents all:skills all:.agents/vendor/dotagents/skills all:config/prompts config/rubric.md config/constitution.md
+//go:embed all:agents all:skills all:.agents/embedded/dotagents/skills all:config/prompts config/rubric.md config/constitution.md
 var Embedded embed.FS
