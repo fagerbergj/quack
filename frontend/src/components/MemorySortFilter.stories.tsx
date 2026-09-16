@@ -66,9 +66,9 @@ export const WithScopes: Story = {
     <Controlled
       buckets={BUCKETS}
       scopes={[
-        { scope: 'repo:quack', live: 42, invalidated: 5 },
-        { scope: 'repo:NightsOut', live: 11, invalidated: 2 },
-        { scope: 'user:jason', live: 8, invalidated: 0 },
+        { scope: 'repo:quack', live: 42, invalidated: 5, never_recalled: 20, no_votes: 15, unsupported_verified: 3 },
+        { scope: 'repo:NightsOut', live: 11, invalidated: 2, never_recalled: 6, no_votes: 4, unsupported_verified: 0 },
+        { scope: 'user:jason', live: 8, invalidated: 0, never_recalled: 1, no_votes: 2, unsupported_verified: 1 },
       ]}
     />
   ),
@@ -76,12 +76,15 @@ export const WithScopes: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: 'Sort and filter memories' }))
     await canvas.findByText('Live / invalidated')
+    await expect(canvas.getByText('20 never recalled')).toBeInTheDocument()
+    await expect(canvas.getByText('15 no votes')).toBeInTheDocument()
+    await expect(canvas.getByText('3 unsupported verified')).toBeInTheDocument()
   },
 }
 
 // Below `medium` the sort/filter dialog is a bottom sheet with 44px rows.
 export const CompactSheet: Story = {
-  render: () => <Controlled buckets={BUCKETS} scopes={[{ scope: 'repo:quack', live: 42, invalidated: 5 }]} />,
+  render: () => <Controlled buckets={BUCKETS} scopes={[{ scope: 'repo:quack', live: 42, invalidated: 5, never_recalled: 20, no_votes: 15, unsupported_verified: 3 }]} />,
   parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)

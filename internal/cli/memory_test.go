@@ -403,6 +403,42 @@ func TestRunMemorySweepAllOK(t *testing.T) {
 	}
 }
 
+// TestRunMemoryStats checks the human table carries the new precision definition
+// (support_share dropped) and the three new per-scope diagnostic columns.
+func TestRunMemoryStats(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/memories/stats" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{
+			"weeks":[{"week":"2026-W36","recalls":4,"supported":2,"contradicted":1,"not_relevant":1,"precision":0.5,"minted":1,"invalidated":0}],
+			"scopes":[{"scope":"repo:quack","live":10,"invalidated":2,"never_recalled":3,"no_votes":4,"unsupported_verified":1}]
+		}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemoryStats(context.Background(), &out, srv.URL, 12, false); err != nil {
+		t.Fatalf("RunMemoryStats: %v", err)
+	}
+	s := out.String()
+	for _, want := range []string{
+		"WEEK", "PRECISION", "MINTED", "INVALIDATED",
+		"2026-W36", "0.50",
+		"SCOPE", "NEVER_RECALLED", "NO_VOTES", "UNSUPPORTED_VERIFIED",
+		"repo:quack", "10", "3", "4", "1",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("stats output missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "SUPPORT_SHARE") {
+		t.Errorf("stats output still has the dropped SUPPORT_SHARE column:\n%s", s)
+	}
+}
+
 func TestTruncateLine(t *testing.T) {
 	if got := truncateLine("short", 80); got != "short" {
 		t.Errorf("truncateLine short = %q", got)

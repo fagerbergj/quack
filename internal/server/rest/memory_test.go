@@ -642,8 +642,8 @@ func TestDeleteMemory_UnknownID_404WithBothStoresConfigured(t *testing.T) {
 }
 
 // TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot seeds a ledger vote/recall
-// and a memory_ops mint, then checks the stats endpoint reports them in the
-// current ISO week alongside a live-point scope snapshot (epic #1255 P5).
+// and a memory_ops mint, then checks the stats endpoint reports them in the current ISO week
+// alongside a scope snapshot - including the committed point's own never-recalled/no-votes counts.
 func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHandler(t)
@@ -696,6 +696,11 @@ func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
 	for _, s := range got.Scopes {
 		if s.Scope == "repo:NightsOut" && s.Live == 1 {
 			foundScope = true
+			// The committed point itself was never recalled/voted on via the store API
+			// (only the ledger events above), so it counts toward both diagnostics.
+			if s.NeverRecalled != 1 || s.NoVotes != 1 || s.UnsupportedVerified != 0 {
+				t.Fatalf("repo:NightsOut diagnostics = %+v, want never_recalled=1 no_votes=1 unsupported_verified=0", s)
+			}
 		}
 	}
 	if !foundScope {

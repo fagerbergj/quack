@@ -212,8 +212,7 @@ func printDedupeReport(out io.Writer, res schema.SweepMemoriesResult, hasErrors 
 }
 
 // RunMemoryStats is `quack memory stats [--weeks N]`: prints the weekly
-// recall precision/support-share/vote/recall table plus the current
-// live/invalidated snapshot per scope (epic #1255 P5).
+// recall precision/vote/recall table plus the current per-scope snapshot.
 func RunMemoryStats(ctx context.Context, out io.Writer, server string, weeks int, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -227,10 +226,10 @@ func RunMemoryStats(ctx context.Context, out io.Writer, server string, weeks int
 		return WriteJSON(out, stats)
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "WEEK\tRECALLS\tSUPPORTED\tCONTRADICTED\tNOT_RELEVANT\tPRECISION\tSUPPORT_SHARE\tMINTED\tINVALIDATED")
+	fmt.Fprintln(tw, "WEEK\tRECALLS\tSUPPORTED\tCONTRADICTED\tNOT_RELEVANT\tPRECISION\tMINTED\tINVALIDATED")
 	for _, w := range stats.Weeks {
-		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%.2f\t%.2f\t%d\t%d\n",
-			w.Week, w.Recalls, w.Supported, w.Contradicted, w.NotRelevant, w.Precision, w.SupportShare, w.Minted, w.Invalidated)
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%.2f\t%d\t%d\n",
+			w.Week, w.Recalls, w.Supported, w.Contradicted, w.NotRelevant, w.Precision, w.Minted, w.Invalidated)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -238,9 +237,10 @@ func RunMemoryStats(ctx context.Context, out io.Writer, server string, weeks int
 	if len(stats.Scopes) > 0 {
 		fmt.Fprintln(out)
 		tw2 := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw2, "SCOPE\tLIVE\tINVALIDATED")
+		fmt.Fprintln(tw2, "SCOPE\tLIVE\tINVALIDATED\tNEVER_RECALLED\tNO_VOTES\tUNSUPPORTED_VERIFIED")
 		for _, s := range stats.Scopes {
-			fmt.Fprintf(tw2, "%s\t%d\t%d\n", s.Scope, s.Live, s.Invalidated)
+			fmt.Fprintf(tw2, "%s\t%d\t%d\t%d\t%d\t%d\n",
+				s.Scope, s.Live, s.Invalidated, s.NeverRecalled, s.NoVotes, s.UnsupportedVerified)
 		}
 		return tw2.Flush()
 	}

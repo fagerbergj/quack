@@ -407,13 +407,9 @@ export type MemoryWeekStats = {
     contradicted: number;
     not_relevant: number;
     /**
-     * supported / (supported+contradicted), not-relevant votes excluded. 0 if no such votes.
+     * supported / (supported+contradicted+not_relevant), the share of every judged recall that actually helped. 0 if no such votes.
      */
     precision: number;
-    /**
-     * supported / recalls delivered this week; unvoted and not-relevant recalls count as no help. 0 if nothing was recalled.
-     */
-    support_share: number;
     /**
      * Memories added this week (memory_ops op=add).
      */
@@ -431,6 +427,18 @@ export type MemoryScopeStats = {
     scope: string;
     live: number;
     invalidated: number;
+    /**
+     * Live points that have never been recalled.
+     */
+    never_recalled: number;
+    /**
+     * Live points with no upvotes or downvotes.
+     */
+    no_votes: number;
+    /**
+     * Live points at tier=verified whose upvotes all came from outcome-reinforcement (upvotes == reinforcement_count), never an actual judge/human vote.
+     */
+    unsupported_verified: number;
 };
 
 export type MemoryStats = {

@@ -445,8 +445,8 @@ func (h *Handler) chatRepo(ctx context.Context, chatID string) (string, bool) {
 // query param is omitted (epic #1255 P5) - a quarter's worth at a glance.
 const defaultStatsWeeks = 12
 
-// GetMemoryStats serves weekly recall precision/support-share/vote/recall
-// counts plus a live/invalidated snapshot per scope (epic #1255 P5),
+// GetMemoryStats serves weekly recall precision/vote/recall counts plus a per-scope
+// live/invalidated/never-recalled/no-votes/unsupported-verified snapshot,
 // computed from every chat's ledger (memory.recall/memory.vote entries) and memory_ops - no new tables. Weeks with no ledger/memory_ops activity yet still appear, zeroed, so the caller can chart a continuous series.
 func (h *Handler) GetMemoryStats(w http.ResponseWriter, r *http.Request, params schema.GetMemoryStatsParams) {
 	weeks := defaultStatsWeeks
@@ -538,6 +538,9 @@ func mergeScopeStats(acc []memory.ScopeStats, add []memory.ScopeStats) []memory.
 		cur.Scope = s.Scope
 		cur.Live += s.Live
 		cur.Invalidated += s.Invalidated
+		cur.NeverRecalled += s.NeverRecalled
+		cur.NoVotes += s.NoVotes
+		cur.UnsupportedVerified += s.UnsupportedVerified
 		byScope[s.Scope] = cur
 	}
 	out := make([]memory.ScopeStats, 0, len(byScope))
@@ -553,7 +556,7 @@ func weekStatsWire(weeks []memory.WeekStats) []schema.MemoryWeekStats {
 	for i, w := range weeks {
 		out[i] = schema.MemoryWeekStats{
 			Week: w.Week, Recalls: w.Recalls, Supported: w.Supported, Contradicted: w.Contradicted,
-			NotRelevant: w.NotRelevant, Precision: w.Precision, SupportShare: w.SupportShare,
+			NotRelevant: w.NotRelevant, Precision: w.Precision,
 			Minted: w.Minted, Invalidated: w.Invalidated,
 		}
 	}
@@ -563,7 +566,10 @@ func weekStatsWire(weeks []memory.WeekStats) []schema.MemoryWeekStats {
 func scopeStatsWire(scopes []memory.ScopeStats) []schema.MemoryScopeStats {
 	out := make([]schema.MemoryScopeStats, len(scopes))
 	for i, s := range scopes {
-		out[i] = schema.MemoryScopeStats{Scope: s.Scope, Live: s.Live, Invalidated: s.Invalidated}
+		out[i] = schema.MemoryScopeStats{
+			Scope: s.Scope, Live: s.Live, Invalidated: s.Invalidated,
+			NeverRecalled: s.NeverRecalled, NoVotes: s.NoVotes, UnsupportedVerified: s.UnsupportedVerified,
+		}
 	}
 	return out
 }

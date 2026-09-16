@@ -1000,8 +1000,17 @@ type MemoryScopeStats struct {
 	Invalidated int `json:"invalidated"`
 	Live        int `json:"live"`
 
+	// NeverRecalled Live points that have never been recalled.
+	NeverRecalled int `json:"never_recalled"`
+
+	// NoVotes Live points with no upvotes or downvotes.
+	NoVotes int `json:"no_votes"`
+
 	// Scope Bucket key, e.g. repo:quack, role:coding, user:jason.
 	Scope string `json:"scope"`
+
+	// UnsupportedVerified Live points at tier=verified whose upvotes all came from outcome-reinforcement (upvotes == reinforcement_count), never an actual judge/human vote.
+	UnsupportedVerified int `json:"unsupported_verified"`
 }
 
 // MemoryStats defines model for MemoryStats.
@@ -1024,15 +1033,12 @@ type MemoryWeekStats struct {
 	Minted      int `json:"minted"`
 	NotRelevant int `json:"not_relevant"`
 
-	// Precision supported / (supported+contradicted), not-relevant votes excluded. 0 if no such votes.
+	// Precision supported / (supported+contradicted+not_relevant), the share of every judged recall that actually helped. 0 if no such votes.
 	Precision float64 `json:"precision"`
 
 	// Recalls Memories delivered to a worker this week (prefill or tool), from `memory.recall` ledger entries.
-	Recalls int `json:"recalls"`
-
-	// SupportShare supported / recalls delivered this week; unvoted and not-relevant recalls count as no help. 0 if nothing was recalled.
-	SupportShare float64 `json:"support_share"`
-	Supported    int     `json:"supported"`
+	Recalls   int `json:"recalls"`
+	Supported int `json:"supported"`
 
 	// Week ISO 8601 week (UTC), e.g. "2026-W23".
 	Week string `json:"week"`

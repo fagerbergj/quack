@@ -628,15 +628,15 @@ export const rescopeMemories = <ThrowOnError extends boolean = false>(options?: 
 /**
  * Weekly memory-usage stats
  *
- * Epic #1255 P5. Computed from the ledger's `memory.recall`/`memory.vote`
- * entries and `memory_ops`, no new tables. Per ISO week (UTC): recall
- * precision (`supported / (supported+contradicted)`: of the recalls the
- * judge ruled on, how often the memory was right), support share
- * (`supported / recalls`: how much of what was delivered helped; unvoted
- * and not-relevant recalls count as no help), vote counts by kind,
+ * Computed from the ledger's `memory.recall`/`memory.vote` entries and
+ * `memory_ops`, no new tables. Per ISO week (UTC): recall precision
+ * (`supported / (supported+contradicted+not_relevant)`: the share of
+ * every judged recall that actually helped), vote counts by kind,
  * recalls, and memories minted/invalidated that week. Also returns a
- * current snapshot of live/invalidated points per scope bucket. A week
- * with no activity still appears, zeroed.
+ * current snapshot per scope bucket: live/invalidated points, live
+ * points never recalled, live points with no votes, and live verified
+ * points whose only support came from outcome-reinforcement rather than
+ * a judge/human vote. A week with no activity still appears, zeroed.
  *
  */
 export const getMemoryStats = <ThrowOnError extends boolean = false>(options?: Options<GetMemoryStatsData, ThrowOnError>): RequestResult<GetMemoryStatsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetMemoryStatsResponses, unknown, ThrowOnError>({
