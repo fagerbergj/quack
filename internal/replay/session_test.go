@@ -595,3 +595,65 @@ func TestEvaluationResults(t *testing.T) {
 		t.Errorf("Report().Streams = %+v, want exactly the one worker chat stream", rep.Streams)
 	}
 }
+
+// TestNodeRuns_ACPOnlyStream: an ACP-backed agent (code-reviewer) emits no
+// llm.call, only one invoke_agent record per round - NodeRuns must still
+// produce a run for it, not drop it (PR #1444 blocking finding 1).
+func TestNodeRuns_ACPOnlyStream(t *testing.T) {
+	sent := []string{`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"review this diff"}]}}`}
+	received := []string{
+		`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Looks "}}}}`,
+		`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"good."}}}}`,
+	}
+	path := writeJSONL(t, []entry{
+		invokeAgent(t0(), "node-a", "code-reviewer", "worker-r0", sent, received),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	runs := sess.NodeRuns(map[string]bool{"code-reviewer": true})
+	if len(runs) != 1 {
+		t.Fatalf("NodeRuns len = %d, want 1 (ACP-only stream must not be dropped)", len(runs))
+	}
+	for _, run := range runs {
+		if run.Task != "review this diff" {
+			t.Errorf("Task = %q, want the sent session/prompt text", run.Task)
+		}
+		if run.Answer != "Looks good." {
+			t.Errorf("Answer = %q, want the concatenated agent_message_chunk text", run.Answer)
+		}
+	}
+}
+
+// TestNodeRuns_DraftPlusRevise: draft and revise are separate rounds/streams
+// of the same node - NodeRuns must collapse them into one run, task from the
+// draft, answer from the later (by At) revise (PR #1444 blocking finding 2).
+func TestNodeRuns_DraftPlusRevise(t *testing.T) {
+	path := writeJSONL(t, []entry{
+		chat(t0(), "node-a", "synthesizer", "worker-r0", "gpt", map[string]any{
+			"gen_ai.input.messages":  `[{"role":"user","parts":[{"text":"summarize this"}]}]`,
+			"gen_ai.output.messages": `{"role":"model","parts":[{"text":"draft answer"}]}`,
+		}),
+		chat(t0().Add(time.Minute), "node-a", "synthesizer", "worker-r1", "gpt", map[string]any{
+			"gen_ai.input.messages":  `[{"role":"user","parts":[{"text":"judge feedback + prior answer inlined"}]}]`,
+			"gen_ai.output.messages": `{"role":"model","parts":[{"text":"revised answer"}]}`,
+		}),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	runs := sess.NodeRuns(map[string]bool{"synthesizer": true})
+	if len(runs) != 1 {
+		t.Fatalf("NodeRuns len = %d, want 1 (draft+revise must collapse to one run)", len(runs))
+	}
+	for _, run := range runs {
+		if run.Task != "summarize this" {
+			t.Errorf("Task = %q, want the draft round's task, never the synthetic revise prompt", run.Task)
+		}
+		if run.Answer != "revised answer" {
+			t.Errorf("Answer = %q, want the revise round's (latest) answer", run.Answer)
+		}
+	}
+}

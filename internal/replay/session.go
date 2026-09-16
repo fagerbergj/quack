@@ -281,47 +281,167 @@ func (s *Session) rootStream() (*streamState, bool) {
 	return st, ok
 }
 
-// NodeRun is one (Node, Agent, Round) stream's task (earliest recorded user
-// text) and answer (latest recorded model text) - the shape `quack dataset
-// export` needs per gated node run, without exposing streamState itself.
+// NodeRun is one node's delivered task/answer - the shape `quack dataset
+// export` needs per gated node run. A node with several rounds (draft,
+// continuations, revises) collapses to one NodeRun: see NodeRuns.
 type NodeRun struct {
 	Task   string
 	Answer string
-	// Metadata off the run's last recorded llm.call - provenance for a dataset item.
+	// At is the answer's recorded timestamp - lets callers order/pick among
+	// several nodes by recency instead of key name.
+	At time.Time
+	// Metadata off the answer round's last recorded llm.call (or, for an ACP
+	// round, zero) - provenance for a dataset item.
 	PromptSource    string
 	PromptVersionID string
 	QuackVersion    string
 }
 
-// NodeRuns returns every non-root stream whose Agent is in agents, keyed by StreamKey.
+// roundRun is one (Node, Agent, Round) stream's task/answer before rounds
+// collapse into their node's single NodeRun.
+type roundRun struct {
+	key           StreamKey
+	task          string
+	taskAt        time.Time
+	answer        string
+	answerAt      time.Time
+	promptSource  string
+	promptVersion string
+	quackVersion  string
+}
+
+// NodeRuns returns one NodeRun per non-root node whose Agent is in agents:
+// task from its earliest round (the draft, never a synthetic revise prompt),
+// answer from its latest round by timestamp (what the node delivered).
 func (s *Session) NodeRuns(agents map[string]bool) map[StreamKey]NodeRun {
-	out := map[StreamKey]NodeRun{}
+	byNode := map[string][]roundRun{}
 	for key, st := range s.streams {
-		if key.Node == "" || !agents[key.Agent] || len(st.chat) == 0 {
+		if key.Node == "" || !agents[key.Agent] {
 			continue
 		}
-		run := NodeRun{}
-		if texts := userTexts(st.chat[0].Input); len(texts) > 0 {
-			run.Task = texts[len(texts)-1]
+		if rr, ok := chatRoundRun(key, st); ok {
+			byNode[key.Node] = append(byNode[key.Node], rr)
+		} else if rr, ok := acpRoundRun(key, st); ok {
+			byNode[key.Node] = append(byNode[key.Node], rr)
 		}
-		for i := len(st.chat) - 1; i >= 0; i-- {
-			if st.chat[i].Output == "" {
-				continue
+	}
+
+	out := map[StreamKey]NodeRun{}
+	for _, rounds := range byNode {
+		earliest, latest := rounds[0], rounds[0]
+		for _, rr := range rounds[1:] {
+			if rr.taskAt.Before(earliest.taskAt) {
+				earliest = rr
 			}
-			var c genai.Content
-			if json.Unmarshal([]byte(st.chat[i].Output), &c) == nil {
-				if text := partsText(c.Parts); text != "" {
-					run.Answer = text
-					run.PromptSource = st.chat[i].PromptSource
-					run.PromptVersionID = st.chat[i].PromptVersionID
-					run.QuackVersion = st.chat[i].QuackVersion
-					break
-				}
+			if rr.answerAt.After(latest.answerAt) {
+				latest = rr
 			}
 		}
-		out[key] = run
+		out[latest.key] = NodeRun{
+			Task: earliest.task, Answer: latest.answer, At: latest.answerAt,
+			PromptSource: latest.promptSource, PromptVersionID: latest.promptVersion, QuackVersion: latest.quackVersion,
+		}
 	}
 	return out
+}
+
+// chatRoundRun builds a round's task/answer from its native llm.call stream.
+func chatRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
+	if len(st.chat) == 0 {
+		return roundRun{}, false
+	}
+	rr := roundRun{key: key, taskAt: st.chat[0].ts}
+	if texts := userTexts(st.chat[0].Input); len(texts) > 0 {
+		rr.task = texts[len(texts)-1]
+	}
+	for i := len(st.chat) - 1; i >= 0; i-- {
+		if st.chat[i].Output == "" {
+			continue
+		}
+		var c genai.Content
+		if json.Unmarshal([]byte(st.chat[i].Output), &c) == nil {
+			if text := partsText(c.Parts); text != "" {
+				rr.answer, rr.answerAt = text, st.chat[i].ts
+				rr.promptSource, rr.promptVersion, rr.quackVersion = st.chat[i].PromptSource, st.chat[i].PromptVersionID, st.chat[i].QuackVersion
+				return rr, true
+			}
+		}
+	}
+	return roundRun{}, false // chat rows present but none carried a usable answer
+}
+
+// acpRoundRun builds a round's task/answer from its invoke_agent stream - an
+// ACP round (e.g. code-reviewer) emits no llm.call, only one invoke_agent
+// record per round (internal/acp/emit.go), so it needs its own extraction.
+func acpRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
+	if len(st.agents) == 0 {
+		return roundRun{}, false
+	}
+	ae := st.agents[len(st.agents)-1]
+	task, answer := acpTaskAndAnswer(ae)
+	if task == "" && answer == "" {
+		return roundRun{}, false
+	}
+	return roundRun{key: key, task: task, taskAt: ae.ts, answer: answer, answerAt: ae.ts}, true
+}
+
+// acpFrame is the JSON-RPC envelope shared by every ACP wire message.
+type acpFrame struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+}
+
+// acpContentBlock is the ACP ContentBlock fields NodeRuns needs (text only).
+type acpContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// acpTaskAndAnswer extracts the sent session/prompt's text (task) and the
+// received agent_message_chunk stream's concatenated text (answer) from one
+// invoke_agent round's teed protocol frames.
+func acpTaskAndAnswer(ae invokeAgentEntry) (task, answer string) {
+	for _, raw := range ae.sent {
+		var f acpFrame
+		if json.Unmarshal(raw, &f) != nil || f.Method != "session/prompt" {
+			continue
+		}
+		var params struct {
+			Prompt []acpContentBlock `json:"prompt"`
+		}
+		if json.Unmarshal(f.Params, &params) != nil {
+			continue
+		}
+		var b []byte
+		for _, blk := range params.Prompt {
+			if blk.Type == "text" {
+				b = append(b, []byte(blk.Text)...)
+			}
+		}
+		task = string(b)
+		break
+	}
+	var b []byte
+	for _, raw := range ae.received {
+		var f acpFrame
+		if json.Unmarshal(raw, &f) != nil || f.Method != "session/update" {
+			continue
+		}
+		var params struct {
+			Update struct {
+				SessionUpdate string          `json:"sessionUpdate"`
+				Content       acpContentBlock `json:"content"`
+			} `json:"update"`
+		}
+		if json.Unmarshal(f.Params, &params) != nil {
+			continue
+		}
+		if params.Update.SessionUpdate == "agent_message_chunk" && params.Update.Content.Type == "text" {
+			b = append(b, []byte(params.Update.Content.Text)...)
+		}
+	}
+	answer = string(b)
+	return task, answer
 }
 
 // UserTurns returns every recorded end-user turn from the root stream, oldest first.
