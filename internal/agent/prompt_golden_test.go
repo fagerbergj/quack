@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"testing"
 
+	"google.golang.org/adk/v2/tool/skilltoolset/skill"
+
 	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
@@ -69,6 +71,28 @@ func TestGoldenAgentPrompts(t *testing.T) {
 	if seen == 0 {
 		t.Fatal("no agent bundles found")
 	}
+}
+
+// TestGoldenACPPreamble pins the ACP preamble shape - promptbuilder.Agent with
+// acp=true, declared skills and a workspace block, as serve.buildACPNode
+// assembles it. The skills bullet without the load_skill hint, and the
+// workspace layer, are what differ from a native agent's prompt; only this
+// golden covers that branch.
+func TestGoldenACPPreamble(t *testing.T) {
+	const dir = "agents/code-reviewer"
+	b, err := LoadBundle(context.Background(), nil, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem, err := LoadBundleMemory(context.Background(), nil, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skills := []*skill.Frontmatter{{Name: "ponytail-review", Description: "Review for over-engineering."}}
+	got := promptbuilder.Agent(b.Card.Name, b.Card.Description, nil, skills, true,
+		BehaviourLayer(b.Prompt, mem), promptbuilder.GradingFacts(0.7, 2, true, false),
+		"## Workspace\n\nThe repo is cloned at the cwd.")
+	checkGolden(t, "acp.preamble.code-reviewer.txt", got)
 }
 
 // TestGoldenCompactionPrompt pins the summarizer prompt NativeCompactionConfig builds.
