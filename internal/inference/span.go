@@ -8,19 +8,18 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/adk/v2/model"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// langfuse.observation.* and langfuse.prompt.* have no OTel semconv form;
-// Langfuse doesn't read gen_ai.input/output.messages yet (langfuse#12657).
+// These have no OTel semconv form. observation.prompt.* are Langfuse v4's
+// documented prompt-link keys; the older langfuse.prompt.* alias is not sent.
 const (
-	langfuseObservationInput  = "langfuse.observation.input"
-	langfuseObservationOutput = "langfuse.observation.output"
-	langfusePromptName        = "langfuse.prompt.name"
-	langfusePromptVersion     = "langfuse.prompt.version"
-	// langfuseSource mirrors internal/langfuse.Source's stamped Artifact.Source.
-	langfuseSource = "langfuse"
+	langfuseObservationInput         = "langfuse.observation.input"
+	langfuseObservationOutput        = "langfuse.observation.output"
+	langfuseObservationPromptName    = "langfuse.observation.prompt.name"
+	langfuseObservationPromptVersion = "langfuse.observation.prompt.version"
 )
 
 // spanAttrCap bounds gen_ai content span attribute values; matches
@@ -69,12 +68,13 @@ func correlationAttrs(ctx context.Context) []attribute.KeyValue {
 	if c.Agent != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
 	}
-	// langfuseSource must match internal/langfuse.SourceName; not imported here to
-	// avoid pulling langfuse's HTTP client into every model call's hot path.
-	if c.PromptSource == langfuseSource && c.PromptVersionID != "" {
+	// Any store-resolved prompt links to Langfuse this way - not just a
+	// literal "langfuse" source name, which M5 dropped in favor of the
+	// actual stores: entry name (there is only one Source kind today).
+	if c.PromptSource != "" && c.PromptSource != artifactsrc.StaticSource && c.PromptArtifact != "" && c.PromptVersionID != "" {
 		attrs = append(attrs,
-			attribute.String(langfusePromptName, c.Agent),
-			attribute.String(langfusePromptVersion, c.PromptVersionID),
+			attribute.String(langfuseObservationPromptName, c.PromptArtifact),
+			attribute.String(langfuseObservationPromptVersion, c.PromptVersionID),
 		)
 	}
 	return attrs

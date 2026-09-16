@@ -2,16 +2,12 @@ package langfuse
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 )
-
-// SourceName is the artifactsrc.Artifact.Source stamp for artifacts resolved
-// through a langfuse store.
-const SourceName = "langfuse"
 
 // Source adapts *Client to artifactsrc.Source; an auth failure is wrapped so
 // the resolver's log names the store to check.
@@ -20,12 +16,14 @@ type Source struct {
 	StoreKey string
 }
 
-// Get resolves name through the client's pinned label.
+// Get resolves name through the client's pinned label. Source is left blank -
+// artifactsrc.Resolver.fetch stamps it with the stores: entry name (its own
+// documented contract), not a fixed "langfuse" that would hide which store answered.
 func (s *Source) Get(ctx context.Context, name string) (artifactsrc.Artifact, bool, error) {
 	p, found, err := s.Client.Resolve(ctx, name)
 	if err != nil {
 		if IsAuthError(err) {
-			return artifactsrc.Artifact{}, false, errors.Join(err, authHint(s.StoreKey))
+			return artifactsrc.Artifact{}, false, fmt.Errorf("%w: check stores.%s credentials", err, s.StoreKey)
 		}
 		return artifactsrc.Artifact{}, false, err
 	}
@@ -35,13 +33,8 @@ func (s *Source) Get(ctx context.Context, name string) (artifactsrc.Artifact, bo
 	return artifactsrc.Artifact{
 		Body:      p.Body,
 		Config:    p.Config,
-		Source:    SourceName,
 		VersionID: strconv.Itoa(p.Version),
 	}, true, nil
-}
-
-func authHint(storeKey string) error {
-	return errors.New("check stores." + storeKey + " credentials")
 }
 
 // Seed pushes the shipped version of name to Langfuse per #1418's seeding
