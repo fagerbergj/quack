@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,7 +20,18 @@ const gitTimeout = 60 * time.Second
 
 // A full 40-hex sha is pinned and never behind; a short prefix like
 // "deadbeef" may be a branch name, so it is resolved, not compared.
-var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var shaPattern = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+
+// cloneLocks serializes concurrent Fetch calls on the same clone dir, so two
+// in-flight fetches of one plugin can't RemoveAll each other's clone.
+var cloneLocks sync.Map // map[string]*sync.Mutex
+
+func lockClone(dir string) func() {
+	v, _ := cloneLocks.LoadOrStore(dir, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
 
 // remoteURL is overridable so tests can fetch from a local bare repo fixture
 // instead of github.com.
@@ -34,6 +47,7 @@ func Fetch(ctx context.Context, root string, p Plugin) (Plugin, error) {
 		return p, nil // no clone; Root() serves the path directly
 	}
 	dir := CloneDir(root, p.Name)
+	defer lockClone(dir)()
 	url := remoteURL(p.Owner, p.Repo)
 	if err := fetchInto(ctx, dir, url); err != nil {
 		p.Error = err.Error()
@@ -93,12 +107,23 @@ func fetchInto(ctx context.Context, dir, url string) error {
 	return gitRun(ctx, "", "clone", "--quiet", url, dir)
 }
 
+// isGitRepo reports whether dir is itself a git repo, not merely inside one -
+// rev-parse --git-dir walks up to an ancestor repo otherwise, which would
+// mistake a killed clone nested in the user's own checkout for that repo.
 func isGitRepo(ctx context.Context, dir string) bool {
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return false
 	}
-	_, err := gitOutput(ctx, dir, "rev-parse", "--git-dir")
-	return err == nil
+	out, err := gitOutput(ctx, dir, "rev-parse", "--git-dir")
+	if err != nil {
+		return false
+	}
+	gitDir := strings.TrimSpace(out)
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(dir, gitDir)
+	}
+	rel, err := filepath.Rel(dir, filepath.Clean(gitDir))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func originMatches(ctx context.Context, dir, want string) (bool, error) {
@@ -174,28 +199,36 @@ func lsRemoteHEAD(ctx context.Context, url string) (string, error) {
 	return firstField(out), nil
 }
 
-// lsRemoteRef resolves a branch or tag name to its commit sha, preferring an
-// annotated tag's peeled (^{}) entry.
+// lsRemoteRef resolves a branch/tag name to its sha, branch then peeled tag
+// then tag - the same precedence resolveSHA uses locally, so CheckUpdate and
+// Fetch never disagree on a same-named branch+tag pair.
 func lsRemoteRef(ctx context.Context, url, ref string) (string, error) {
 	out, err := gitOutput(ctx, "", "ls-remote", url, "refs/heads/"+ref, "refs/tags/"+ref, "refs/tags/"+ref+"^{}")
 	if err != nil {
 		return "", err
 	}
-	sha := ""
+	var head, tag, peeledTag string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line == "" {
-			continue
-		}
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
 			continue
 		}
-		sha = fields[0] // last match wins: peeled tag line sorts after the tag line
+		sha, refName := fields[0], fields[1]
+		switch refName {
+		case "refs/heads/" + ref:
+			head = sha
+		case "refs/tags/" + ref + "^{}":
+			peeledTag = sha
+		case "refs/tags/" + ref:
+			tag = sha
+		}
 	}
-	if sha == "" {
-		return "", fmt.Errorf("ref %q not found on remote", ref)
+	for _, sha := range []string{head, peeledTag, tag} {
+		if sha != "" {
+			return sha, nil
+		}
 	}
-	return sha, nil
+	return "", fmt.Errorf("ref %q not found on remote", ref)
 }
 
 func firstField(out string) string {

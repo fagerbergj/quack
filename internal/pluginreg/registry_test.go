@@ -31,6 +31,31 @@ func TestPutOverwritesExisting(t *testing.T) {
 	}
 }
 
+// TestPutRejectsNameCollisionAcrossDifferentEntries: two entries that share
+// a registry name (e.g. two repos both named "widgets") must not silently
+// overwrite each other's row.
+func TestPutRejectsNameCollisionAcrossDifferentEntries(t *testing.T) {
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	ctx := context.Background()
+
+	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets"}); err != nil {
+		t.Fatal(err)
+	}
+	err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:glob/widgets"})
+	if err == nil {
+		t.Fatal("expected an error putting a different entry under an already-registered name")
+	}
+
+	list, err := reg.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Entry != "github:acme/widgets" {
+		t.Fatalf("List() = %+v, want the original row untouched", list)
+	}
+}
+
 func TestDeleteMissingNameIsErrNotExist(t *testing.T) {
 	root := t.TempDir()
 	reg := NewFSRegistry(root)

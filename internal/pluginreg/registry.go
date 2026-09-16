@@ -137,7 +137,9 @@ func (r *FSRegistry) readRow(name string) (Plugin, error) {
 	return p, nil
 }
 
-// Put writes p's row, replacing any existing row of the same name.
+// Put writes p's row, replacing any row with the same name and entry. Two
+// different entries sharing a name (e.g. two repos both named "widgets") is
+// a collision, rejected rather than silently overwritten.
 func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 	if err := validName(p.Name); err != nil {
 		return err
@@ -148,6 +150,9 @@ func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if existing, err := r.readRow(p.Name); err == nil && existing.Entry != p.Entry {
+		return fmt.Errorf("plugin %q is already registered from %q, not %q", p.Name, existing.Entry, p.Entry)
+	}
 	dir := filepath.Join(r.root, p.Name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

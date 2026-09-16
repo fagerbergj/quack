@@ -89,9 +89,9 @@ func localSeedEntries(seed []string) []string {
 	return out
 }
 
-// PluginsConfig is the plugins: block (#1427): store picks the registry backend
-// ("" = filesystem until P3), root holds clones and rows, seed is validated here
-// and inserted at boot if absent.
+// PluginsConfig is the plugins: block (#1427): store picks the registry
+// backend ("" = filesystem until P3), root holds clones and rows. seed, like
+// today's bare list, replaces the defaults entirely rather than adding to them.
 type PluginsConfig struct {
 	Store string   `yaml:"store"`
 	Root  string   `yaml:"root"`
@@ -126,9 +126,10 @@ func (p *PluginsConfig) UnmarshalYAML(value *yaml.Node) error {
 // skills.plugins or the defaults), rejects a store other than filesystem (P3
 // wires the rest), fills root's default, and checks every seed entry parses.
 func (c *Config) validatePlugins() error {
-	// Only warn when plugins: actually wins - a block with no seed: key
-	// falls through to skills.plugins below, so it isn't ignored at all.
-	if c.Plugins != nil && c.Plugins.Seed != nil && c.Skills.Plugins != nil {
+	// bothSet: plugins: actually wins over skills.plugins (a block with no
+	// seed: key falls through to it below, so it isn't "ignored" at all).
+	bothSet := c.Plugins != nil && c.Plugins.Seed != nil && c.Skills.Plugins != nil
+	if bothSet {
 		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
 	}
 	if c.Plugins == nil {
@@ -141,11 +142,11 @@ func (c *Config) validatePlugins() error {
 		}
 		c.Plugins.Seed = seed
 	}
-	if c.Skills.Plugins != nil {
+	if c.Skills.Plugins != nil && !bothSet {
 		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
 	}
 	if c.Plugins.Store != "" {
-		return fmt.Errorf("config: plugins.store %q not supported yet - filesystem is the only backend until P3", c.Plugins.Store)
+		return fmt.Errorf("config: plugins.store %q is not supported until P3 - omit plugins.store to use the filesystem backend", c.Plugins.Store)
 	}
 	if c.Plugins.Root == "" {
 		c.Plugins.Root = filepath.Join(c.Workspace.Root, ".quack", "plugins")

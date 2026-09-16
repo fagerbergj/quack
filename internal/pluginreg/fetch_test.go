@@ -412,6 +412,55 @@ func TestCheckUpdateAnnotatedTagPeels(t *testing.T) {
 	}
 }
 
+// TestCheckUpdateBranchWinsOverSameNamedTag: a branch and a tag can share a
+// name; CheckUpdate must agree with resolveSHA's precedence (branch first),
+// or Fetch checks out one commit while CheckUpdate reports a different one
+// as "current" forever.
+func TestCheckUpdateBranchWinsOverSameNamedTag(t *testing.T) {
+	bare := newFixtureRepo(t)
+	work := t.TempDir()
+	run(t, "", "clone", "--quiet", bare, work)
+	run(t, work, "config", "user.email", "test@example.com")
+	run(t, work, "config", "user.name", "test")
+
+	// A lightweight tag "dup" on the initial commit ...
+	run(t, work, "tag", "dup")
+	run(t, work, "push", "--quiet", "origin", "refs/tags/dup")
+	// ... and a branch also named "dup", on a different commit. Both refspecs
+	// are qualified since "dup" alone is now ambiguous between the two.
+	run(t, work, "checkout", "--quiet", "-b", "dup")
+	if err := os.WriteFile(filepath.Join(work, "skills"), []byte("branch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, work, "add", ".")
+	run(t, work, "commit", "--quiet", "-m", "branch dup")
+	run(t, work, "push", "--quiet", "origin", "refs/heads/dup:refs/heads/dup")
+	branchSHA := strings.TrimSpace(run(t, work, "rev-parse", "HEAD"))
+
+	withFixedRemote(t, bare)
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	e, err := ParseEntry("github:acme/widgets@dup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := FromEntry(e)
+
+	if _, remoteSHA, err := reg.CheckUpdate(context.Background(), p); err != nil {
+		t.Fatal(err)
+	} else if remoteSHA != branchSHA {
+		t.Fatalf("CheckUpdate = %q, want the branch's sha %q (branch must win over the same-named tag)", remoteSHA, branchSHA)
+	}
+
+	fetched, err := reg.Fetch(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetched.SHA != branchSHA {
+		t.Fatalf("Fetch = %q, want the branch's sha %q", fetched.SHA, branchSHA)
+	}
+}
+
 func TestCheckUpdateShortHexRefIsNotPinned(t *testing.T) {
 	bare := newFixtureRepo(t)
 	work2 := t.TempDir()
@@ -536,6 +585,61 @@ func TestFetchDoesNotLeakTokenOnFailure(t *testing.T) {
 	}
 	if strings.Contains(string(b), "super-secret-token") {
 		t.Fatalf("entry.json leaks the token: %s", b)
+	}
+}
+
+// TestFetchDoesNotEscapeToOuterRepo: a killed clone's dir, nested inside the
+// user's own workspace checkout, must never be mistaken for that outer repo
+// (rev-parse --git-dir walks up when dir has no .git of its own).
+func TestFetchDoesNotEscapeToOuterRepo(t *testing.T) {
+	outer := t.TempDir()
+	run(t, "", "init", "--quiet", "--initial-branch=main", outer)
+	run(t, outer, "config", "user.email", "test@example.com")
+	run(t, outer, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(outer, "README"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, outer, "add", ".")
+	run(t, outer, "commit", "--quiet", "-m", "init")
+	run(t, outer, "remote", "add", "origin", "https://example.invalid/outer.git")
+	outerHEAD := strings.TrimSpace(run(t, outer, "rev-parse", "HEAD"))
+
+	// The registry root lives inside the outer repo's working tree, and the
+	// clone dir is pre-seeded as a plain (non-repo) dir - a killed clone.
+	root := filepath.Join(outer, ".quack", "plugins")
+	dir := CloneDir(root, "widgets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	bare := newFixtureRepo(t)
+	withFixedRemote(t, bare)
+	e, err := ParseEntry("github:acme/widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := FromEntry(e)
+
+	got, err := Fetch(context.Background(), root, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Error != "" {
+		t.Fatalf("Fetch failed: %s", got.Error)
+	}
+	wantSHA := strings.TrimSpace(run(t, bare, "rev-parse", "main"))
+	if got.SHA != wantSHA {
+		t.Fatalf("SHA = %q, want %q", got.SHA, wantSHA)
+	}
+
+	if url := strings.TrimSpace(run(t, outer, "remote", "get-url", "origin")); url != "https://example.invalid/outer.git" {
+		t.Fatalf("outer repo's origin url was changed: %q", url)
+	}
+	if head := strings.TrimSpace(run(t, outer, "rev-parse", "HEAD")); head != outerHEAD {
+		t.Fatalf("outer repo's HEAD moved: %q -> %q", outerHEAD, head)
+	}
+	if !isGitRepo(context.Background(), dir) {
+		t.Fatal("clone dir was not recognized as its own git repo after Fetch")
 	}
 }
 

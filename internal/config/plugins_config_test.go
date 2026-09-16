@@ -109,6 +109,19 @@ plugins:
 	}
 }
 
+// TestLoadPluginsRejectsDegenerateLocalSeed: a degenerate local root like "/"
+// must fail config load via ParseEntry, not surface later as an opaque
+// registry-put error.
+func TestLoadPluginsRejectsDegenerateLocalSeed(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+plugins:
+  seed: ["/"]
+`))
+	if err == nil {
+		t.Fatal("expected an error for the degenerate local seed entry \"/\"")
+	}
+}
+
 func TestLoadPluginsBareListStillMeansSeed(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 plugins:
