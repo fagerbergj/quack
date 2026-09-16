@@ -38,10 +38,8 @@ type Entry struct {
 	Root string
 }
 
-// Name is the plugin's registry-row name: the repo name for a github entry
-// (plugin.json may override it in P1), or the last path element for a local
-// one - the raw path itself isn't usable as a registry directory name, since
-// it typically contains separators (e.g. ".agents/vendor/dotagents").
+// Name is the registry-row name: the repo for a github entry, the base of the
+// path for a local one (the raw path has separators, unusable as a dir name).
 func (e Entry) Name() string {
 	if e.Source == SourceGitHub {
 		return e.Repo
@@ -109,10 +107,8 @@ func cleanSubPath(raw string) (string, error) {
 	return clean, nil
 }
 
-// validName rejects a repo/owner/registry-row name that is empty, ".", "..",
-// or contains a path separator - anything else becomes a directory name
-// under the registry root (FSRegistry.Put/Delete), so this is also the
-// traversal guard for those.
+// validName is the traversal guard: a name becomes a directory under the
+// registry root, so ".", "..", "" and separators are refused.
 func validName(name string) error {
 	if name == "" || name == "." || name == ".." {
 		return fmt.Errorf("invalid name %q", name)

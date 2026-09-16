@@ -16,10 +16,8 @@ import (
 // an update check (mirrors internal/plugin/refresh.go's refreshTimeout).
 const gitTimeout = 60 * time.Second
 
-// shaPattern matches a ref that is already a full commit sha - a pinned sha
-// is never behind, and never needs a remote lookup to resolve. Exactly 40
-// hex chars only: a short prefix like "deadbeef" is a name to resolve, not
-// something we can compare byte-for-byte against a remote sha.
+// A full 40-hex sha is pinned and never behind; a short prefix like
+// "deadbeef" may be a branch name, so it is resolved, not compared.
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // remoteURL is overridable so tests can fetch from a local bare repo fixture
@@ -111,11 +109,9 @@ func originMatches(ctx context.Context, dir, want string) (bool, error) {
 	return strings.TrimSpace(out) == want, nil
 }
 
-// resolveSHA resolves ref to a commit sha already present in dir's clone.
-// ref == "" means untracked: follow the remote's default branch, refreshed
-// via `remote set-head --auto` first since a stale local HEAD symref never
-// otherwise updates. A pinned ref is tried as a remote branch, then a tag,
-// then a bare commit-ish, in that order.
+// resolveSHA: "" follows the remote default branch (set-head --auto first,
+// the local HEAD symref never updates otherwise); a pinned ref is tried as
+// remote branch, then tag, then bare commit-ish.
 func resolveSHA(ctx context.Context, dir, ref string) (string, error) {
 	if ref == "" {
 		if err := gitRun(ctx, dir, "remote", "set-head", "origin", "--auto"); err != nil {

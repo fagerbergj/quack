@@ -66,16 +66,9 @@ type SkillsConfig struct {
 	Plugins []string `yaml:"plugins"`
 }
 
-// PluginRoots is the effective local plugin-root list: the top-level plugins:
-// block's local (non-github:) seed entries, else the deprecated skills.plugins,
-// else the defaults. Each root is resolved at startup via internal/plugin's
-// Agent Plugins / Codex discovery order; a root that fails to resolve is a
-// startup warning, never an error. Order is preserved and never deduped.
-// github: seed entries are P1's concern (fetched into the registry, not
-// resolved as filesystem roots here). Plugins.Seed == nil (as opposed to an
-// explicit seed: []) means the block form omitted seed: entirely, e.g.
-// plugins: {root: ...} with no seed key - that still falls through to the
-// deprecated alias / defaults, same as plugins: being absent altogether.
+// PluginRoots: local (non-github:) seed entries, else deprecated skills.plugins,
+// else defaults; order kept, never deduped. Seed == nil means seed: was omitted
+// (unlike seed: []), which falls through like an absent plugins: block.
 func (c *Config) PluginRoots() []string {
 	if c.Plugins != nil && c.Plugins.Seed != nil {
 		return localSeedEntries(c.Plugins.Seed)
@@ -96,10 +89,9 @@ func localSeedEntries(seed []string) []string {
 	return out
 }
 
-// PluginsConfig is the plugins: block (epic #1427 P0): store selects the
-// registry backend (P3 wires it; P0 accepts only "" = filesystem), root is
-// where clones and rows live, seed is inserted into the registry if absent
-// at boot (P1) and validated here with pluginreg.ParseEntry.
+// PluginsConfig is the plugins: block (#1427): store picks the registry backend
+// ("" = filesystem until P3), root holds clones and rows, seed is validated here
+// and inserted at boot if absent.
 type PluginsConfig struct {
 	Store string   `yaml:"store"`
 	Root  string   `yaml:"root"`
@@ -166,14 +158,9 @@ func (c *Config) validatePlugins() error {
 	return nil
 }
 
-// WorkflowShape teaches plan-work's "Common workflows" table a deployment-
-// specific DAG shape (issue #805) - a house-standard node chain (document
-// ingestion, reMarkable notes, ...) that isn't in the shipped catalog. Trigger
-// and Shape render as the table's two columns verbatim; Agents is the subset
-// of that prose the config layer can actually validate.
-//
-// Nodes is optional (workflow binding): when present, a dispatch naming this
-// shape gets Nodes built into a dag.Plan directly - no planner LLM call - instead of Trigger/Shape staying a planner hint; Trigger/Shape still render in the table either way, so the shape stays discoverable to an ordinary chat.
+// WorkflowShape adds a deployment-specific DAG shape to plan-work's "Common
+// workflows" table (#805). With Nodes set, a dispatch naming the shape builds
+// the dag.Plan directly (no planner call); Trigger/Shape still render either way.
 type WorkflowShape struct {
 	Name    string         `yaml:"name"`    // short id for logs/warnings; also the future storage key (#806)
 	Trigger string         `yaml:"trigger"` // "Request" column - when this shape applies

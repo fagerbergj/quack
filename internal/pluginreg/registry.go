@@ -37,11 +37,9 @@ func FromEntry(e Entry) Plugin {
 	}
 }
 
-// Root is the plugin's resolved skills root: for a local entry, the entry
-// itself; for a github entry, <registryRoot>/<name>/repo/<path>. A Path that
-// escapes the clone (e.g. a row edited on disk, since ParseEntry runs once at
-// seed time and rows aren't re-parsed) falls back to the clone root rather
-// than serving outside it.
+// Root: local entry = the path itself; github = <registryRoot>/<name>/repo/<path>.
+// Rows are trusted off disk without re-parsing, so a Path escaping the clone
+// falls back to the clone root instead of serving outside it.
 func (p Plugin) Root(registryRoot string) string {
 	if p.Source == SourceLocal {
 		return p.Entry
