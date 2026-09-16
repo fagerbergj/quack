@@ -114,10 +114,9 @@ func errorCount(results []cli.ExperimentResult) int {
 	return n
 }
 
-// pinnedPromptSource turns --prompt into a Source that serves exactly that version,
-// resolved eagerly (before the server boots) so a bad name/version fails the command
-// naming it rather than silently falling back to the static prompt; nil when no pin
-// was asked for, so the configured store resolves as in a live run.
+// pinnedPromptSource turns --prompt into a Source resolved eagerly, so a bad
+// name/version fails the command instead of falling back to the static prompt.
+// nil when no pin was asked for.
 func pinnedPromptSource(ctx context.Context, cfg *config.Config, prompt string) (artifactsrc.Source, error) {
 	if prompt == "" {
 		return nil, nil

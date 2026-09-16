@@ -180,12 +180,9 @@ func isGenerated(p string) bool {
 	return hasGeneratedHeader(p)
 }
 
-// hasGeneratedHeader reports whether p's (repo-relative, cwd = repo root) leading
-// comment block carries the standard "// Code generated ... DO NOT EDIT." marker -
-// catches a generated dir this list doesn't yet name (e.g. internal/langfuse/langfusegen)
-// without editing this list. Only the file's OWN header counts: a marker line quoted or
-// embedded past the first non-comment, non-blank line (a string literal, a doc example)
-// must not exempt otherwise hand-written code from the gate.
+// hasGeneratedHeader reports whether p's leading comment block carries the standard
+// DO NOT EDIT marker. Only that leading block counts - a marker later in the file
+// (a string literal, a doc example) must not exempt hand-written code.
 func hasGeneratedHeader(p string) bool {
 	f, err := os.Open(p)
 	if err != nil {
