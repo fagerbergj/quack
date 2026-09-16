@@ -21,6 +21,14 @@ function shortSha(sha?: string): string {
   return sha ? sha.slice(0, 7) : '—'
 }
 
+// Only a github row tracks a branch; local/embedded rows never had one, so
+// the no-ref fallback ("default branch") would otherwise mislabel them.
+function refLabel(p: Plugin): string | undefined {
+  if (p.source === 'github') return p.ref ?? 'default branch'
+  if (p.source === 'embedded') return 'bundled with quack'
+  return undefined
+}
+
 // useBusyRunner shares the mark-busy/clear-error/run/catch/unmark-busy shape
 // every per-row (and update-all) action follows, so handleRemove/handleUpdate/
 // handleUpdateAll are each one line instead of a repeated try/catch/finally.
@@ -103,7 +111,7 @@ export default function Plugins({ navOpen, onToggleNav, initialPlugins, initialU
         <button
           onClick={handleUpdateAll}
           disabled={!anyBehind || busy.has('*')}
-          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 min-h-[44px] text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           <Icon name="refresh" className="w-4 h-4" />
           Update all
@@ -175,7 +183,7 @@ function AddPluginForm({ onAdded }: { onAdded: () => void }) {
         <button
           type="submit"
           disabled={adding || !entry.trim()}
-          className="rounded-md px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center justify-center rounded-md px-3 py-1.5 min-h-[44px] text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Add
         </button>
@@ -248,22 +256,28 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
           )}
         </div>
         <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2 flex-wrap">
-          <span>{p.ref ?? 'default branch'}</span>
+          {refLabel(p) && <span>{refLabel(p)}</span>}
           {p.installed_sha && (
             <span title={p.installed_sha}>sha {shortSha(p.installed_sha)}</span>
           )}
           {fetched && <span>fetched {fetched}</span>}
           {update?.error && (
-            <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400" title={`Update check failed: ${update.error}`}>
-              <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
-              check failed
-            </span>
+            <details>
+              <summary
+                className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 cursor-pointer list-none [&::-webkit-details-marker]:hidden"
+                title={`Update check failed: ${update.error}`}
+              >
+                <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
+                check failed
+              </summary>
+              <div className="mt-1 text-amber-700 dark:text-amber-400 break-words whitespace-pre-line font-mono">{update.error}</div>
+            </details>
           )}
         </div>
         {p.error && (
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
-            <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">{p.error}</span>
+          <div className="mt-1 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+            <Icon name="warning" className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span className="break-words whitespace-pre-line font-mono">{p.error}</span>
           </div>
         )}
       </div>
@@ -274,7 +288,7 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
             disabled={busy}
             title="Update"
             aria-label={`Update ${p.name}`}
-            className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
+            className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
           >
             <Icon name="refresh" className="w-4 h-4" />
           </button>
@@ -285,7 +299,7 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
             disabled={busy}
             title="Remove"
             aria-label={`Remove ${p.name}`}
-            className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
+            className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
           >
             <Icon name="delete" className="w-4 h-4" />
           </button>

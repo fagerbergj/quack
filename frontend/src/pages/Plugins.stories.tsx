@@ -31,14 +31,22 @@ const samplePlugins: Plugin[] = [
   {
     name: 'broken', entry: 'github:acme/broken', source: 'github',
     owner: 'acme', repo: 'broken',
-    error: 'git clone: repository not found',
+    error: 'git clone: fatal: unable to access \'https://github.com/acme/broken.git/\': Could not resolve host: github.com\nfatal: clone of \'https://github.com/acme/broken.git\' into submodule path \'plugins/broken/repo\' failed\nretry 3/3 failed after 12.4s, giving up',
     root: '/data/.quack/plugins/broken/repo',
+  },
+  {
+    name: 'flaky', entry: 'github:acme/flaky', source: 'github',
+    owner: 'acme', repo: 'flaky',
+    installed_sha: 'aa11bb22cc33dd44ee55ff660011223344556677',
+    fetched_at: new Date(Date.now() - 5 * 3600_000).toISOString(),
+    root: '/data/.quack/plugins/flaky/repo',
   },
 ]
 
 const sampleUpdates: PluginUpdate[] = [
   { name: 'dotagents', installed_sha: samplePlugins[1].installed_sha, behind: false },
   { name: 'ponytail', installed_sha: samplePlugins[2].installed_sha, remote_sha: 'deadbeef1234567890deadbeef1234567890dead', behind: true },
+  { name: 'flaky', installed_sha: samplePlugins[4].installed_sha, behind: false, error: 'update check: dial tcp: lookup github.com: i/o timeout' },
 ]
 
 export const Default: Story = {
