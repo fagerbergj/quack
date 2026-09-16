@@ -281,6 +281,49 @@ func (s *Session) rootStream() (*streamState, bool) {
 	return st, ok
 }
 
+// NodeRun is one (Node, Agent, Round) stream's task (earliest recorded user
+// text) and answer (latest recorded model text) - the shape `quack dataset
+// export` needs per gated node run, without exposing streamState itself.
+type NodeRun struct {
+	Task   string
+	Answer string
+	// Metadata off the run's last recorded llm.call - provenance for a dataset item.
+	PromptSource    string
+	PromptVersionID string
+	QuackVersion    string
+}
+
+// NodeRuns returns every non-root stream whose Agent is in agents, keyed by StreamKey.
+func (s *Session) NodeRuns(agents map[string]bool) map[StreamKey]NodeRun {
+	out := map[StreamKey]NodeRun{}
+	for key, st := range s.streams {
+		if key.Node == "" || !agents[key.Agent] || len(st.chat) == 0 {
+			continue
+		}
+		run := NodeRun{}
+		if texts := userTexts(st.chat[0].Input); len(texts) > 0 {
+			run.Task = texts[len(texts)-1]
+		}
+		for i := len(st.chat) - 1; i >= 0; i-- {
+			if st.chat[i].Output == "" {
+				continue
+			}
+			var c genai.Content
+			if json.Unmarshal([]byte(st.chat[i].Output), &c) == nil {
+				if text := partsText(c.Parts); text != "" {
+					run.Answer = text
+					run.PromptSource = st.chat[i].PromptSource
+					run.PromptVersionID = st.chat[i].PromptVersionID
+					run.QuackVersion = st.chat[i].QuackVersion
+					break
+				}
+			}
+		}
+		out[key] = run
+	}
+	return out
+}
+
 // UserTurns returns every recorded end-user turn from the root stream, oldest first.
 func (s *Session) UserTurns() []string {
 	st, ok := s.rootStream()
