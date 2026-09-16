@@ -280,9 +280,8 @@ func seedPluginNames(seed []string) map[string]bool {
 	return names
 }
 
-// admitPlugins: a plugins.seed (config) plugin's refusal is fatal, named, as
-// always; a REST-added row's refusal only drops THAT plugin (warned, stored
-// on its row, named in refusals) - shared by boot and rebuildSkills (#1430).
+// admitPlugins: a plugins.seed (config) plugin's refusal is fatal, named; a
+// REST-added row's refusal just drops that plugin, warned and named in refusals.
 func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node, persistRefusals bool) ([]plugin.Plugin, map[string]error, error) {
 	seedNames := seedPluginNames(seed)
 	refusals := make(map[string]error)

@@ -110,7 +110,13 @@ func manifestSkillsDir(ctx context.Context, registryRoot, name, sha, pluginPath 
 	if json.Unmarshal(data, &m) != nil || strings.TrimSpace(m.Skills) == "" {
 		return "", nil
 	}
-	return m.Skills, nil
+	dir := path.Clean(m.Skills)
+	if path.IsAbs(dir) || dir == ".." || strings.HasPrefix(dir, "../") {
+		// An escaping path is skipped, not served from TreeAt's clone-root
+		// fallback - live refuses the same path via plugin.go's containedPath.
+		return "", nil
+	}
+	return dir, nil
 }
 
 // soleFile returns the one file TreeAt's single-path pathspec matched, if any.

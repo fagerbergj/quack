@@ -236,61 +236,79 @@ func TestNewSkillSource_UnadmittedGithubRowIsSkippedNotServed(t *testing.T) {
 // TestNewSkillSource_CodexManifestSkillsPath: a codex manifest's own
 // "skills" field, not a hardcoded "skills/", names the served directory.
 func TestNewSkillSource_CodexManifestSkillsPath(t *testing.T) {
-	bare, work := pluginregtest.NewFixtureRepo(t)
-	run(t, work, "rm", "--quiet", "SKILL.md")
-	if err := os.MkdirAll(filepath.Join(work, ".codex-plugin"), 0o755); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name       string
+		skills     string
+		wantServed bool
+	}{
+		{"custom directory is served", "resources/skills", true},
+		{"escaping path is skipped, not served from the clone root", "../../etc/skills", false},
 	}
-	manifest := `{"name":"widgets","skills":"resources/skills"}`
-	if err := os.WriteFile(filepath.Join(work, ".codex-plugin", "plugin.json"), []byte(manifest), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(work, "resources", "skills", "dothing")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := "---\nname: dothing\ndescription: v1\n---\nbody v1"
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run(t, work, "add", ".")
-	run(t, work, "commit", "--quiet", "-m", "codex v1")
-	run(t, work, "push", "--quiet", "origin", "main")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			bare, work := pluginregtest.NewFixtureRepo(t)
+			run(t, work, "rm", "--quiet", "SKILL.md")
+			if err := os.MkdirAll(filepath.Join(work, ".codex-plugin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			manifest := `{"name":"widgets","skills":"` + c.skills + `"}`
+			if err := os.WriteFile(filepath.Join(work, ".codex-plugin", "plugin.json"), []byte(manifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(work, "resources", "skills", "dothing")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			body := "---\nname: dothing\ndescription: v1\n---\nbody v1"
+			if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			run(t, work, "add", ".")
+			run(t, work, "commit", "--quiet", "-m", "codex v1")
+			run(t, work, "push", "--quiet", "origin", "main")
 
-	prevURL := pluginreg.RemoteURL
-	pluginreg.RemoteURL = func(owner, repo string) string { return bare }
-	t.Cleanup(func() { pluginreg.RemoteURL = prevURL })
+			prevURL := pluginreg.RemoteURL
+			pluginreg.RemoteURL = func(owner, repo string) string { return bare }
+			t.Cleanup(func() { pluginreg.RemoteURL = prevURL })
 
-	root := t.TempDir()
-	reg := pluginreg.NewFSRegistry(root)
-	e, err := pluginreg.ParseEntry("github:acme/widgets")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := reg.Fetch(context.Background(), pluginreg.FromEntry(e))
-	if err != nil {
-		t.Fatal(err)
-	}
+			root := t.TempDir()
+			reg := pluginreg.NewFSRegistry(root)
+			e, err := pluginreg.ParseEntry("github:acme/widgets")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := reg.Fetch(context.Background(), pluginreg.FromEntry(e))
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	bundle := writeAgentInvokeJSONL(t, `[{"name":"widgets","sha":"`+got.SHA+`"}]`)
-	sess, err := Load(bundle)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	rows, err := reg.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	src, err := NewSkillSource(context.Background(), sess, root, rows, nil)
-	if err != nil {
-		t.Fatalf("NewSkillSource: %v", err)
-	}
-	fm, err := src.LoadFrontmatter(context.Background(), "widgets:dothing")
-	if err != nil {
-		t.Fatalf("LoadFrontmatter: %v", err)
-	}
-	if fm.Description != "v1" {
-		t.Fatalf("description = %q, want v1", fm.Description)
+			bundle := writeAgentInvokeJSONL(t, `[{"name":"widgets","sha":"`+got.SHA+`"}]`)
+			sess, err := Load(bundle)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			rows, err := reg.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			src, err := NewSkillSource(context.Background(), sess, root, rows, nil)
+			if err != nil {
+				t.Fatalf("NewSkillSource: %v", err)
+			}
+			fm, err := src.LoadFrontmatter(context.Background(), "widgets:dothing")
+			if !c.wantServed {
+				if err == nil {
+					t.Fatal("LoadFrontmatter(escaping skills path) = nil error, want ErrSkillNotFound")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadFrontmatter: %v", err)
+			}
+			if fm.Description != "v1" {
+				t.Fatalf("description = %q, want v1", fm.Description)
+			}
+		})
 	}
 }
 
