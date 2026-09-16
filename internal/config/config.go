@@ -1743,19 +1743,25 @@ func stringOverride(override map[string]any, key string) (string, error) {
 	return s, nil
 }
 
+// stringOverrides reads model/provider/effort from override via stringOverride.
+func stringOverrides(override map[string]any) (model, provider, effort string, err error) {
+	if model, err = stringOverride(override, "model"); err != nil {
+		return "", "", "", err
+	}
+	if provider, err = stringOverride(override, "provider"); err != nil {
+		return "", "", "", err
+	}
+	if effort, err = stringOverride(override, "effort"); err != nil {
+		return "", "", "", err
+	}
+	return model, provider, effort, nil
+}
+
 // ResolveBinding computes override's binding against baseProv/baseModel. override is a
 // resolved artifact's Config; nil, or one with none of "model"/"provider"/"effort" set,
 // means no override (nil, nil). An invalid model/provider/effort is an error naming which.
 func (c *Config) ResolveBinding(baseProv ProviderConfig, baseModel string, override map[string]any) (*PromptBinding, error) {
-	modelName, err := stringOverride(override, "model")
-	if err != nil {
-		return nil, err
-	}
-	providerName, err := stringOverride(override, "provider")
-	if err != nil {
-		return nil, err
-	}
-	effort, err := stringOverride(override, "effort")
+	modelName, providerName, effort, err := stringOverrides(override)
 	if err != nil {
 		return nil, err
 	}
@@ -1769,38 +1775,34 @@ func (c *Config) ResolveBinding(baseProv ProviderConfig, baseModel string, overr
 	if err != nil {
 		return nil, err
 	}
-	if providerName != "" && modelName == "" {
-		p, ok := c.Provider(providerName)
-		if !ok {
-			return nil, fmt.Errorf("prompt binding: provider %q is not defined under providers", providerName)
-		}
-		// Same provider-agreement rule as resolveBindingModel's modelName != "" path:
-		// a provider-only override must still agree with the static model's registered provider.
-		if mc, ok := c.Models[baseModel]; ok && mc.Provider != providerName {
-			return nil, fmt.Errorf("prompt binding: provider %q disagrees with model %q's provider %q", providerName, baseModel, mc.Provider)
-		}
-		prov = p
-	}
 	if effort == "" {
 		effort = c.ModelEffort(m)
 	}
 	// The provider NAME identifies the (endpoint, model) cache key's owner; the
 	// endpoint alone collides when two providers share a host with different keys.
 	provName := providerName
-	if provName == "" {
-		if mc, ok := c.Models[m]; ok {
-			provName = mc.Provider
-		}
+	if provName == "" && c.Models[m].Provider != "" {
+		provName = c.Models[m].Provider
 	}
 	return &PromptBinding{Provider: prov, ProviderName: provName, Model: m, Effort: effort}, nil
 }
 
 // resolveBindingModel is ResolveBinding's model/provider half: modelName == ""
-// keeps baseModel, else validates modelName (and providerName against it),
-// including the #1007 admission and provider-agreement rules.
+// keeps baseModel, requiring a provider-only override to agree with its
+// registered provider; else validates modelName (and providerName), #1007 admission included.
 func (c *Config) resolveBindingModel(baseProv ProviderConfig, baseModel, modelName, providerName string) (ProviderConfig, string, error) {
 	if modelName == "" {
-		return baseProv, baseModel, nil
+		if providerName == "" {
+			return baseProv, baseModel, nil
+		}
+		p, ok := c.Provider(providerName)
+		if !ok {
+			return ProviderConfig{}, "", fmt.Errorf("prompt binding: provider %q is not defined under providers", providerName)
+		}
+		if mc, ok := c.Models[baseModel]; ok && mc.Provider != providerName {
+			return ProviderConfig{}, "", fmt.Errorf("prompt binding: provider %q disagrees with model %q's provider %q", providerName, baseModel, mc.Provider)
+		}
+		return p, baseModel, nil
 	}
 	mc, ok := c.Models[modelName]
 	if !ok {
