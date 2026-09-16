@@ -207,9 +207,9 @@ func (c *TemplateCache) parse(art Artifact) (*template.Template, error) {
 	return t, nil
 }
 
-// Render resolves name, parses it and hands the template to render. A stored
-// version that will not parse or render falls back to the shipped file with one
-// warning - a bad prompt edit must degrade, never disable the gate that reads it.
+// Render resolves name, parses it and hands the template to render. A stored version that will not
+// parse or render falls back to the shipped file with one warning - a bad prompt edit must degrade,
+// never disable the gate reading it. That fallback runs render a SECOND time, so render must reset whatever it appends to.
 func Render(ctx context.Context, res *Resolver, cache *TemplateCache, name string, render func(*template.Template) error) (Artifact, error) {
 	art, err := res.ResolveUsable(ctx, name)
 	if err != nil {
