@@ -150,11 +150,9 @@ func (s *Store) SetHumanVote(ctx context.Context, id, vote string) error {
 	return nil
 }
 
-// computeHumanVoteDelta re-derives upvotes/downvotes/supported/vote_score/tier by undoing
-// oldVote's effect (if any) and applying newVote's - the toggle-safe twin of computeVoteDelta,
-// which only ever adds. A human up counts as support exactly like a judge supported vote (epic
-// #1456 P1): supported moves with upvotes (+1 on up, -1 undoing an up, floored at 0), and tier is
-// derived from the resulting supported count via tierFromSupported - no longer sticky.
+// computeHumanVoteDelta re-derives upvotes/downvotes/supported/vote_score/tier by undoing oldVote's
+// effect (if any) and applying newVote's - the toggle-safe twin of computeVoteDelta, which only ever
+// adds. A human up counts as support like a judge supported vote (epic #1456 P1): supported moves with upvotes (floored at 0), and tier derives from it via tierFromSupported - no longer sticky.
 func computeHumanVoteDelta(upvotes, downvotes, supported int, oldVote, newVote, now string, invalidateThreshold int) voteDelta {
 	switch oldVote {
 	case HumanVoteUp:
@@ -263,10 +261,9 @@ func dedupeVotes(votes []Vote) []Vote {
 	return out
 }
 
-// tierPrefix is the compact plain-string epistemic tag prepended to a recalled memory's text,
-// same convention as citeReasonLegend (#822). Reads tier/supported (epic #1456 P1), not
-// status/reinforcement_count - a memory reinforced by a merge but never judge- or
-// human-supported must present as unverified, not as if the reinforcement itself verified it.
+// tierPrefix is the compact plain-string epistemic tag prepended to a recalled memory's text, same
+// convention as citeReasonLegend (#822). Reads tier/supported (epic #1456 P1), not status/reinforcement_count -
+// a memory reinforced by a merge but never judge- or human-supported must present as unverified.
 func tierPrefix(tier string, supported int) string {
 	if tier == TierVerified {
 		return fmt.Sprintf("[verified, supported ×%d] ", supported)
