@@ -92,6 +92,9 @@ type Config struct {
 	// provenance only (#1420), stamped alongside BundleHash.
 	PromptSource    string
 	PromptVersionID string
+	// PromptArtifact: the resolved artifact's name (#1422), from the bundle
+	// directory - what replay pins on, not Agent (the agent's own name).
+	PromptArtifact string
 	// RefreshPrompt re-resolves the worker's system prompt at a round's start and
 	// reports what that round runs on, so the prompt the model sees and the
 	// version the ledger records can never disagree mid-round. nil keeps the above.

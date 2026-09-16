@@ -19,6 +19,10 @@ type Coords struct {
 	// replay can resolve the exact version the run used (#1420).
 	PromptSource    string
 	PromptVersionID string
+	// PromptArtifact: the resolved artifact's name (e.g. "system/code-reviewer") -
+	// derived from the bundle directory, not the agent name, so replay can pin
+	// the right name for an out-of-tree or renamed bundle (#1422).
+	PromptArtifact string
 	// User: the ADK session identity that owns this run (local user, GitHub
 	// commenter login, etc) - observability attribution only.
 	User string
@@ -70,6 +74,9 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 	if ctx.PromptVersionID == "" {
 		ctx.PromptVersionID = stamp.PromptVersionID
 	}
+	if ctx.PromptArtifact == "" {
+		ctx.PromptArtifact = stamp.PromptArtifact
+	}
 	if ctx.Round == "" {
 		ctx.Round = stamp.Round
 	}
@@ -90,7 +97,7 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 // (its TraceState wraps a slice), so this can't be a plain `== Coords{}`.
 func (c Coords) IsZero() bool {
 	return c.ChatID == "" && c.Node == "" && c.Agent == "" && c.Round == "" &&
-		c.BundleHash == "" && c.PromptSource == "" && c.PromptVersionID == "" &&
+		c.BundleHash == "" && c.PromptSource == "" && c.PromptVersionID == "" && c.PromptArtifact == "" &&
 		c.User == "" && c.Source == "" && !c.SpanContext.IsValid()
 }
 

@@ -124,6 +124,9 @@ type LLMCallPayload struct {
 	// there (#1420) - what replay pins to reproduce the exact bytes.
 	PromptSource    string `json:"prompt_source,omitempty"`
 	PromptVersionID string `json:"prompt_version_id,omitempty"`
+	// PromptArtifact: the resolved artifact's name (#1422), e.g. "system/code-reviewer" -
+	// derived from the bundle directory, not PromptName (the agent name).
+	PromptArtifact string `json:"prompt_artifact,omitempty"`
 }
 
 // ToolCallPayload is a KindToolCall entry's payload (one execute_tool call).
