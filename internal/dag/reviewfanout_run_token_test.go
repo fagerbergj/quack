@@ -46,7 +46,7 @@ func TestRunPlanAsGraph_FreshRunResetsStaleReviewFanout(t *testing.T) {
 
 	ex := NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{reviewerAgent: newReviewerAgent(t, reviewerAgent)}, nil, nil,
-		func(string) vetting.Config { return vetting.Config{} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{} }, nil)
 	plan := Plan{ID: planID, Nodes: []Node{
 		{ID: "r1", AgentName: reviewerAgent},
 		{ID: "r2", AgentName: reviewerAgent},
@@ -87,7 +87,7 @@ func TestRunPlanAsGraph_ResumeDoesNotResetReviewFanout(t *testing.T) {
 
 	ex := NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{reviewerAgent: newReviewerAgent(t, reviewerAgent)}, nil, nil,
-		func(string) vetting.Config { return vetting.Config{} }, nil)
+		func(context.Context, string) vetting.Config { return vetting.Config{} }, nil)
 	plan := Plan{ID: planID, Nodes: []Node{
 		{ID: "r-done", AgentName: reviewerAgent},
 		{ID: "r-paused", AgentName: reviewerAgent},

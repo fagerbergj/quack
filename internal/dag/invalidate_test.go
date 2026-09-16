@@ -195,7 +195,7 @@ func TestRefreshedNodeTellsItsWorker(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			plan := Plan{ID: "t-refresh", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: reviewerAgent}}}
-			cfg := nodeGateConfig(plan, plan.Nodes[0], nil, func(string) vetting.Config { return writableGateCfg() }, "chat1", "")
+			cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, func(context.Context, string) vetting.Config { return writableGateCfg() }, "chat1", "")
 			stub := &promptSnoopStub{}
 			var sawSole bool
 			runSingleNode(t, plan, cfg, stub, func(context.Context, Node, vetting.Config) bool {
@@ -225,7 +225,7 @@ func TestStaleFlagClearedOnFreshRunKeptOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub},
-		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{} }, nil)
 	ex.SetSetup(func(context.Context, string, string, string, Setup) error { return errors.New("clone denied") })
 	plan := Plan{
 		ID: "p", UserMessage: "go",

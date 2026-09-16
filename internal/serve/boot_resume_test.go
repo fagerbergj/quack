@@ -285,7 +285,7 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 		t.Fatalf("agent: %v", err)
 	}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil,
-		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	ex.SetNodeStateStore(st)
 	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)
 	resp, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID,
@@ -371,7 +371,7 @@ func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
 		t.Fatalf("agent: %v", err)
 	}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil,
-		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	ex.SetNodeStateStore(st)
 	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)
 	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID,
@@ -458,7 +458,7 @@ func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 		t.Fatalf("agent: %v", err)
 	}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"reader": ag}, nil,
-		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	ex.SetNodeStateStore(st)
 
 	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)

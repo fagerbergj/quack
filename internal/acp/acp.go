@@ -21,6 +21,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -37,9 +38,12 @@ type Options struct {
 	Caps    workspace.Caps
 	ExtraRO []string
 	Home    string
-	// ponytail: computed once, not per round, so its date footer can go stale
-	// on a long-lived server; raise it to a func() string if that ever bites.
-	Preamble        string
+	// Preamble is re-assembled at the start of each round that sends one -
+	// round.go prepends it only on a FRESH session, so on a pinned process an
+	// edited prompt lands on the next node dispatch, not the next round.
+	Preamble func(ctx context.Context) string
+	// Prompts resolves system/acp.environment for the round's environment block.
+	Prompts         *artifactsrc.Resolver
 	Jail            *workspace.Jail
 	UserID          string
 	Worktree        func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (dir string, err error)
@@ -203,7 +207,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		// Environment block goes AFTER the task: it is regenerated every round
 		// (branch/HEAD/dir listing drift once a round commits anything), so
 		// leading with it broke the prompt-cache prefix from round 2 on.
-		outbound := prompt + "\n\n" + environmentBlock(ctx, cwd, caps)
+		outbound := prompt + "\n\n" + environmentBlock(ctx, a.opts.Prompts, cwd, caps)
 		stopped := false
 		err = a.round(ctx, cwd, memSecret, caps, outbound, steerChatID, steerNodeID, advisorToken, priorSessionID, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
@@ -371,7 +375,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		a.log.Info("acp round reusing pinned session", "cwd", cwd, "session", sessID)
 	}
 
-	outbound, unregSteer := a.steerHooks(h, outbound, steerChatID, steerNodeID, fromPinned)
+	outbound, unregSteer := a.steerHooks(ctx, h, outbound, steerChatID, steerNodeID, fromPinned)
 	defer unregSteer()
 
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound

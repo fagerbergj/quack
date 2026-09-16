@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -9,6 +10,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 
 	"github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -31,8 +33,13 @@ type roundCoordsSetter func(round int, turnID, headSHA, triggerAnnotation string
 // nodeRelease releases the node's pinned session, recording whether it stays paused.
 type nodeRelease func(paused bool)
 
+// promptRefresher re-resolves this node's system prompt at a round's start and
+// reports what that round runs on - one holder per dispatch, so two nodes of
+// the same agent can never move each other's prompt.
+type promptRefresher func(ctx context.Context) artifactsrc.Artifact
+
 // nodeBuilder builds one native node's dispatch worker.
-type nodeBuilder func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, nodeRelease, error)
+type nodeBuilder func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error)
 
 // ForNode builds this node's list/read/edit/write_<kind> artifact tools
 // (internal/tools.BuildNativeArtifactTools) into the worker's builtins
@@ -41,7 +48,7 @@ type nodeBuilder func(nodeKey string, drain func() string, artifacts artifact.Se
 // sink is grabbed from the caller's ctx at build time (stream.YieldFromContext)
 // and closed over by this node's own A2A server - it can't cross the A2A
 // wire later, so agent.Serve needs it passed in explicitly (see its doc).
-func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
+func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
 	return n.build(nodeKey, drain, artifacts, appName, userID, chatID, nodeID, sink)
 }
 

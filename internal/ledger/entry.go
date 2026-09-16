@@ -119,6 +119,11 @@ type LLMCallPayload struct {
 	QuackVersion string   `json:"quack_version,omitempty"`
 	BundleHash   string   `json:"bundle_hash,omitempty"`
 	CostUSD      *float64 `json:"cost_usd,omitempty"`
+	// PromptSource/PromptVersionID: which store this call's system prompt
+	// resolved from ("static" or the prompts: store name) and its version
+	// there (#1420) - what replay pins to reproduce the exact bytes.
+	PromptSource    string `json:"prompt_source,omitempty"`
+	PromptVersionID string `json:"prompt_version_id,omitempty"`
 }
 
 // ToolCallPayload is a KindToolCall entry's payload (one execute_tool call).

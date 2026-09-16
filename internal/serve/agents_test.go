@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestAgentBundlesLoad(t *testing.T) {
 		bundles = append(bundles, a.Bundle)
 	}
 	for _, b := range bundles {
-		if _, err := agent.LoadBundle("../../" + b); err != nil {
+		if _, err := agent.LoadBundle(context.Background(), nil, "../../"+b); err != nil {
 			t.Errorf("bundle %q failed to load: %v", b, err)
 		}
 	}
@@ -39,14 +40,14 @@ func TestAgentBundlesLoad(t *testing.T) {
 // the card's name matches its config key (buildAgents keys gate configs by that name), and
 // the rubric.md override loads non-empty via buildAgents' path (vetting.LoadBundleRubric).
 func TestCodeImplementerBundle(t *testing.T) {
-	b, err := agent.LoadBundle("../../agents/code-implementer")
+	b, err := agent.LoadBundle(context.Background(), nil, "../../agents/code-implementer")
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}
 	if b.Card.Name != "code-implementer" {
 		t.Errorf("card name = %q, want %q", b.Card.Name, "code-implementer")
 	}
-	rubric, err := vetting.LoadBundleRubric("../../agents/code-implementer")
+	rubric, err := vetting.LoadBundleRubric(context.Background(), nil, "../../agents/code-implementer")
 	if err != nil {
 		t.Fatalf("LoadBundleRubric: %v", err)
 	}
@@ -76,7 +77,7 @@ func TestCodeImplementerBundle(t *testing.T) {
 // the imperative and the structured tail a conditional fallback, not a
 // standing instruction that invites writing every finding twice.
 func TestCodeReviewerBundlePrefersStaging(t *testing.T) {
-	b, err := agent.LoadBundle("../../agents/code-reviewer")
+	b, err := agent.LoadBundle(context.Background(), nil, "../../agents/code-reviewer")
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}

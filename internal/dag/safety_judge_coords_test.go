@@ -78,7 +78,7 @@ func TestSafetyJudgeCoords_MeasuredAtCallTime(t *testing.T) {
 		map[string]adkagent.Agent{"w": scoped},
 		map[string]model.LLM{"w": workerModel},
 		vetting.NewJudgeFactory(workerModel, nil, nil),
-		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
 		nil)
 
 	const chatID = "sj-coords-chat"

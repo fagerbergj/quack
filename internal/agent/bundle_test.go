@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,7 +27,7 @@ func TestLoadBundleOK(t *testing.T) {
 	dir := writeBundle(t,
 		`{"name":"web-researcher","description":"Researches the web.","skills":[{"id":"search","name":"Search","description":"finds pages"}]}`,
 		"You are a web researcher.\n")
-	b, err := LoadBundle(dir)
+	b, err := LoadBundle(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +45,7 @@ func TestLoadBundleOK(t *testing.T) {
 // TestShippedWebResearcherBundle guards the real bundle that ships in the repo:
 // it must stay valid JSON with a name + non-empty prompt.
 func TestShippedWebResearcherBundle(t *testing.T) {
-	b, err := LoadBundle("../../agents/web-researcher")
+	b, err := LoadBundle(context.Background(), nil, "../../agents/web-researcher")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestLoadBundleErrors(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := LoadBundle(writeBundle(t, c.card, c.prompt)); err == nil {
+			if _, err := LoadBundle(context.Background(), nil, writeBundle(t, c.card, c.prompt)); err == nil {
 				t.Errorf("expected error for %s, got nil", name)
 			}
 		})
@@ -78,11 +79,11 @@ func TestLoadBundleErrors(t *testing.T) {
 func TestLoadBundleHash(t *testing.T) {
 	card := `{"name":"x","description":"d"}`
 	dir := writeBundle(t, card, "prompt one")
-	b1, err := LoadBundle(dir)
+	b1, err := LoadBundle(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b2, err := LoadBundle(dir)
+	b2, err := LoadBundle(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestLoadBundleHash(t *testing.T) {
 	}
 
 	dir2 := writeBundle(t, card, "prompt two")
-	b3, err := LoadBundle(dir2)
+	b3, err := LoadBundle(context.Background(), nil, dir2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestLoadBundleMemory(t *testing.T) {
 	dir := writeBundle(t, `{"name":"x","description":"d"}`, "prompt")
 
 	// Absent → "".
-	if got, err := LoadBundleMemory(dir); err != nil || got != "" {
+	if got, err := LoadBundleMemory(context.Background(), nil, dir); err != nil || got != "" {
 		t.Fatalf("absent memory.md = (%q, %v), want (\"\", nil)", got, err)
 	}
 
@@ -115,7 +116,7 @@ func TestLoadBundleMemory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, memoryFile), []byte("  ## What to remember\nstuff\n  "), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := LoadBundleMemory(dir)
+	got, err := LoadBundleMemory(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatalf("LoadBundleMemory: %v", err)
 	}

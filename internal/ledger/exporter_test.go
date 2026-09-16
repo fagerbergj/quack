@@ -36,6 +36,8 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 		attribute.Int64("gen_ai.usage.input_tokens", 7),
 		attribute.Int64("gen_ai.usage.cached_tokens", 3),
 		attribute.String("gen_ai.input.messages", `[{"authorization":"Bearer secret"}]`),
+		attribute.String("quack.prompt.source", "static"),
+		attribute.String("quack.prompt.version_id", "0123456789ab"),
 	)
 	emitVia(t, store,
 		attribute.String("gen_ai.conversation.id", "chat-42"),
@@ -76,6 +78,9 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	}
 	if p.RequestModel != "m1" || p.FinishReason != "stop" || p.InputTokens != 7 || p.CachedTokens != 3 {
 		t.Errorf("payload = %+v", p)
+	}
+	if p.PromptSource != "static" || p.PromptVersionID != "0123456789ab" {
+		t.Errorf("prompt provenance = %q/%q, want static/0123456789ab", p.PromptSource, p.PromptVersionID)
 	}
 	if p.Input != `[{"authorization":"[REDACTED]"}]` {
 		t.Errorf("input not redacted: %s", p.Input)

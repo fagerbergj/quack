@@ -2,6 +2,7 @@
 package promptbuilder
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -121,19 +122,22 @@ func today() string {
 	return time.Now().Format("2006-01-02")
 }
 
-// CacheByDay memoizes build's result, rebuilding only when today() has moved
-// on - an agent's InstructionProvider is called once per model request, but
-// every layered() input besides "Today is ..." is fixed at construction.
-func CacheByDay(build func() string) func() string {
+// CacheByDay memoizes build's result, rebuilding when today() moves on or when version reports a
+// different set of resolved artifact versions. version runs on every call (once per model request),
+// so it must be cheap - the artifact resolver's TTL cache is what makes it so; nil = date only.
+func CacheByDay(version, build func(context.Context) string) func(context.Context) string {
 	var mu sync.Mutex
-	var day, cached string
-	return func() string {
-		d := today()
+	var key, cached string
+	return func(ctx context.Context) string {
+		k := today()
+		if version != nil {
+			k += "\x00" + version(ctx)
+		}
 		mu.Lock()
 		defer mu.Unlock()
-		if d != day {
-			cached = build()
-			day = d
+		if k != key {
+			cached = build(ctx)
+			key = k
 		}
 		return cached
 	}

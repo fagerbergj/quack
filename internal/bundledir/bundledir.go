@@ -5,8 +5,10 @@ package bundledir
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"path"
+	"slices"
 
 	root "github.com/fagerbergj/quack"
 )
@@ -39,6 +41,29 @@ func SubFS(subdir string) fs.FS {
 		return errFS{}
 	}
 	return sub
+}
+
+// UnionDirNames lists dir under subdir from BOTH disk and the embedded copy,
+// deduped and sorted. SubFS prefers disk wholesale, so a partial bind-mount of
+// agents/ would otherwise silently hide every shipped entry it does not cover.
+func UnionDirNames(subdir, dir string) []string {
+	seen := map[string]bool{}
+	read := func(fsys fs.FS) {
+		des, err := fs.ReadDir(fsys, dir)
+		if err != nil {
+			return
+		}
+		for _, de := range des {
+			seen[de.Name()] = true
+		}
+	}
+	read(os.DirFS(subdir))
+	if sub, err := fs.Sub(embedded, subdir); err == nil {
+		read(sub)
+	}
+	names := slices.Collect(maps.Keys(seen))
+	slices.Sort(names)
+	return names
 }
 
 type errFS struct{}

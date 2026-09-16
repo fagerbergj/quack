@@ -154,7 +154,7 @@ func newAttachmentTestHandler(t *testing.T, dbPath string, stub *attachStub) *Ha
 		t.Fatalf("worker agent: %v", err)
 	}
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{"media": worker}, map[string]model.LLM{"media": hydratedStub},
-		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.5, JudgeRounds: 1} },
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.5, JudgeRounds: 1} },
 		map[string]bool{"media": true})
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "media", Description: "reads images"}}, nil, nil)
 	orch := orchestrator.New(st.Sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)

@@ -36,9 +36,9 @@ func TestPlanOnlyForcesReadOnlyNoDeliver(t *testing.T) {
 		{ID: "n2", AgentName: reviewerAgent},
 		{ID: "n3", AgentName: explorerAgent},
 	}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
 	for _, n := range plan.Nodes {
-		cfg := nodeGateConfig(plan, n, nil, cfgFor, "chat1", "")
+		cfg := nodeGateConfig(context.Background(), plan, n, nil, cfgFor, "chat1", "")
 		if !cfg.ReadOnly {
 			t.Errorf("node %q (%s): ReadOnly = false, want true for a planOnly plan", n.ID, n.AgentName)
 		}
@@ -58,9 +58,9 @@ func TestPlanOnlyOffersNoWritableNode(t *testing.T) {
 		{ID: "n2", AgentName: reviewerAgent},
 		{ID: "n3", AgentName: explorerAgent},
 	}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
 	for _, n := range plan.Nodes {
-		cfg := nodeGateConfig(plan, n, nil, cfgFor, "chat1", "")
+		cfg := nodeGateConfig(context.Background(), plan, n, nil, cfgFor, "chat1", "")
 		if prNode(cfg) {
 			t.Errorf("node %q (%s): prNode = true, stage_pr would be registered on a planOnly run", n.ID, n.AgentName)
 		}
@@ -72,8 +72,8 @@ func TestPlanOnlyOffersNoWritableNode(t *testing.T) {
 // stage_pr offered.
 func TestNonPlanRunKeepsWritableNode(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
+	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 
 	if cfg.ReadOnly {
 		t.Error("ReadOnly = true, want false for a non-planOnly run")
@@ -94,8 +94,8 @@ func TestNonPlanRunKeepsWritableNode(t *testing.T) {
 // result straight through with no plan.PlanOnly check at all.
 func TestPlanOnlyImplementerNodeHasNoWritableCapability(t *testing.T) {
 	plan := Plan{PlanOnly: true, Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
+	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 
 	if prNode(cfg) {
 		t.Fatal("a planOnly run's code-implementer node has prNode = true - stage_pr would be offered, reproducing document-pipeline#124")
@@ -110,8 +110,8 @@ func TestPlanOnlyImplementerNodeHasNoWritableCapability(t *testing.T) {
 // before any RunNode scheduling) must land on cfg.Source, like chatID on cfg.ChatID.
 func TestNodeGateConfig_CarriesSource(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "github")
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
+	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "github")
 
 	if cfg.Source != "github" {
 		t.Errorf("cfg.Source = %q, want %q", cfg.Source, "github")
@@ -130,10 +130,10 @@ func TestReviewPlanWiresSynthesizerIntoFanout(t *testing.T) {
 		{ID: "review-frontend", AgentName: reviewerAgent},
 		{ID: "synthesize", AgentName: synthesizerAgent, DependsOn: []string{"review-backend", "review-frontend"}},
 	}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
 	var fanouts []*vetting.ReviewFanout
 	for _, n := range plan.Nodes {
-		cfg := nodeGateConfig(plan, n, nil, cfgFor, "chat1", "")
+		cfg := nodeGateConfig(context.Background(), plan, n, nil, cfgFor, "chat1", "")
 		if cfg.ReviewFanout == nil {
 			t.Fatalf("node %s: ReviewFanout = nil, want the shared fan-in", n.ID)
 		}
@@ -152,11 +152,11 @@ func TestReviewPlanWithoutSynthesizerKeepsReviewerOnlyFanout(t *testing.T) {
 		{ID: "r2", AgentName: reviewerAgent},
 		{ID: "explore", AgentName: explorerAgent},
 	}}
-	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	if cfg := nodeGateConfig(plan, plan.Nodes[2], nil, cfgFor, "chat1", ""); cfg.ReviewFanout != nil {
+	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
+	if cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[2], nil, cfgFor, "chat1", ""); cfg.ReviewFanout != nil {
 		t.Fatal("explorer node got a ReviewFanout, want nil")
 	}
-	if cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", ""); cfg.ReviewFanout == nil {
+	if cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", ""); cfg.ReviewFanout == nil {
 		t.Fatal("reviewer node missing its ReviewFanout")
 	}
 }

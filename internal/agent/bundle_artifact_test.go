@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -30,7 +31,7 @@ func TestLoadBundleArtifactField(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := LoadBundle(writeBundle(t, string(card), "prompt"))
+		b, err := LoadBundle(context.Background(), nil, writeBundle(t, string(card), "prompt"))
 		if err != nil {
 			t.Fatalf("LoadBundle: %v", err)
 		}
@@ -41,14 +42,14 @@ func TestLoadBundleArtifactField(t *testing.T) {
 
 	t.Run("unregistered kind rejected", func(t *testing.T) {
 		card := `{"name":"x","artifact":"not-a-real-kind"}`
-		_, err := LoadBundle(writeBundle(t, card, "prompt"))
+		_, err := LoadBundle(context.Background(), nil, writeBundle(t, card, "prompt"))
 		if err == nil || !strings.Contains(err.Error(), "not-a-real-kind") {
 			t.Errorf("err = %v, want a rejection naming the bad kind", err)
 		}
 	})
 
 	t.Run("omitted defaults empty", func(t *testing.T) {
-		b, err := LoadBundle(writeBundle(t, `{"name":"x"}`, "prompt"))
+		b, err := LoadBundle(context.Background(), nil, writeBundle(t, `{"name":"x"}`, "prompt"))
 		if err != nil {
 			t.Fatalf("LoadBundle: %v", err)
 		}

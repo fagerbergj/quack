@@ -65,7 +65,7 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfgFor := func(string) vetting.Config {
+	cfgFor := func(context.Context, string) vetting.Config {
 		return vetting.Config{
 			Threshold: 0.6, JudgeRounds: 1,
 			Workspace: jail, WorkspaceUserID: "u", WorkspaceCaps: workspace.DefaultCaps(),

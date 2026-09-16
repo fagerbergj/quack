@@ -212,7 +212,7 @@ func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliver
 	runChainGit(t, bare, "init", "--quiet", "--bare", "--initial-branch=main")
 
 	deliverCh = make(chan vetting.DeliveryContext, 4)
-	cfgFor := func(string) vetting.Config {
+	cfgFor := func(context.Context, string) vetting.Config {
 		return vetting.Config{
 			Threshold: 0.6, JudgeRounds: 1,
 			Workspace: jail, WorkspaceUserID: "u1", WorkspaceCaps: workspace.DefaultCaps(),

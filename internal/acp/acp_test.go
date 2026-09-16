@@ -428,7 +428,7 @@ func TestRound_PreambleOnlyOnFreshSession(t *testing.T) {
 		Home:     t.TempDir(),
 		Jail:     jail,
 		UserID:   "u1",
-		Preamble: "PREAMBLE-TEXT",
+		Preamble: func(context.Context) string { return "PREAMBLE-TEXT" },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +469,7 @@ func TestRound_PreambleResentOnResumedSession(t *testing.T) {
 		Home:     t.TempDir(),
 		Jail:     jail,
 		UserID:   "u1",
-		Preamble: "PREAMBLE-TEXT",
+		Preamble: func(context.Context) string { return "PREAMBLE-TEXT" },
 	})
 	if err != nil {
 		t.Fatal(err)
