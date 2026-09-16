@@ -1268,6 +1268,13 @@ func (c *Config) validatePrompts() error {
 	if s.Kind != "langfuse" {
 		return fmt.Errorf("config: prompts.store %q must be a langfuse store, got kind %q", c.Prompts.Store, s.Kind)
 	}
+	// A half-populated store falls back to static on every name and looks
+	// exactly like Langfuse holding no prompts - reject it at load instead.
+	for _, f := range []struct{ key, val string }{{"url", s.URL}, {"public_key", s.PublicKey}, {"secret_key", s.SecretKey}} {
+		if strings.TrimSpace(f.val) == "" {
+			return fmt.Errorf("config: prompts.store %q has empty %s", c.Prompts.Store, f.key)
+		}
+	}
 	return nil
 }
 

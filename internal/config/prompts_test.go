@@ -69,3 +69,34 @@ func TestPromptsValidation(t *testing.T) {
 		}
 	}
 }
+
+// TestPromptsStoreNeedsCredentials: a half-populated langfuse store falls back
+// to static on every name and looks exactly like Langfuse holding no prompts,
+// so it must fail the config rather than boot into a silent no-op.
+func TestPromptsStoreNeedsCredentials(t *testing.T) {
+	const head = `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+  langfuse:
+    kind: langfuse
+`
+	const tail = `
+session: { store: main }
+orchestrator: { provider: default, model: m }
+prompts: { store: langfuse }
+`
+	for _, c := range []struct{ name, store, want string }{
+		{"no url", "    public_key: pk\n    secret_key: sk\n", "empty url"},
+		{"no public key", "    url: http://lf\n    secret_key: sk\n", "empty public_key"},
+		{"no secret key", "    url: http://lf\n    public_key: pk\n", "empty secret_key"},
+	} {
+		_, err := Load(writeTemp(t, head+c.store+tail))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want one containing %q", c.name, err, c.want)
+		}
+	}
+}
