@@ -146,6 +146,64 @@ func TestRunDatasetExport_Idempotent(t *testing.T) {
 	}
 }
 
+// TestRunDatasetExport_MetadataBlock pins issue #1424 item 16: the exported item's
+// metadata carries prompt_artifact/prompt_source/prompt_version_id (from the recorded
+// llm.call), plus repo (from Origin) and agent.
+func TestRunDatasetExport_MetadataBlock(t *testing.T) {
+	ctx := context.Background()
+	ls := ledgertest.NewMemStore()
+	entry := llmCallEntry("chat-1", "node-1", "code-reviewer", "review this", "looks good")
+	var payload ledger.LLMCallPayload
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload.PromptSource, payload.PromptVersionID, payload.QuackVersion = "langfuse", "7", "v1.2.3"
+	entry.Payload, _ = json.Marshal(payload)
+	if _, err := ls.AppendIntent(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setChatOrigin(t, st, chat.ID, "acme/widget", "https://github.com/acme/widget/pull/1", "open")
+	entries, _ := ls.ReadEntries(ctx, "chat-1", 0)
+	ls2 := ledgertest.NewMemStore()
+	for _, e := range entries {
+		e.ChatID = chat.ID
+		if _, err := ls2.AppendIntent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fake := newFakeLangfuse(t)
+	srv := fake.server()
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	items, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("want 1 item, got %d", len(items))
+	}
+	meta, _ := fake.items[items[0].ItemID]["metadata"].(map[string]any)
+	want := map[string]any{
+		"repo": "acme/widget", "agent": "code-reviewer",
+		"prompt_artifact": "system/code-reviewer", "prompt_source": "langfuse", "prompt_version_id": "7",
+	}
+	for k, v := range want {
+		if meta[k] != v {
+			t.Errorf("metadata[%q] = %v, want %v (full metadata: %+v)", k, meta[k], v, meta)
+		}
+	}
+}
+
 // datasetExistsServer answers DatasetsGet with 200 (already exists) instead of 404, so
 // ensureDataset's "no create needed" branch runs.
 func datasetExistsServer(t *testing.T, items *map[string]map[string]any) *httptest.Server {
