@@ -1859,7 +1859,7 @@ export type CreatePluginErrors = {
      */
     400: ErrorResponse;
     /**
-     * name is already registered from a different entry
+     * name is already registered from a different entry, or the roster is pinned to a replay bundle
      */
     409: ErrorResponse;
     /**

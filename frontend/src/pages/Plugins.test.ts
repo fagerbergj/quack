@@ -198,7 +198,7 @@ describe('Plugins', () => {
   // then fails - the rows on screen must survive, surfaced as actionError.
   it('keeps the rows and shows actionError when a silent post-action refresh fails', async () => {
     vi.stubGlobal('fetch', routedFetch({
-      'GET /plugins/updates': [jsonResponse({ updates: [] }), jsonResponse({ updates: [] })],
+      'GET /plugins/updates': [jsonResponse({ updates: [] })],
       'GET /plugins': [
         jsonResponse({ plugins: [ROW, ROW2] }),
         jsonResponse({ error: 'boom' }, 500),

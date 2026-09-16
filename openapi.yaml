@@ -1289,7 +1289,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: name is already registered from a different entry
+          description: name is already registered from a different entry, or the roster is pinned to a replay bundle
           content:
             application/json:
               schema:

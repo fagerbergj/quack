@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -115,9 +116,11 @@ func NewDBRegistry(db *gorm.DB, root string) (*DBRegistry, error) {
 // List returns every row, sorted by name.
 func (r *DBRegistry) List(ctx context.Context) ([]Plugin, error) {
 	var rows []PluginRow
-	if err := r.db.WithContext(ctx).Order("name").Find(&rows).Error; err != nil {
+	if err := r.db.WithContext(ctx).Find(&rows).Error; err != nil {
 		return nil, err
 	}
+	// Sort in Go: byte order like FSRegistry, independent of the DB collation.
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	out := make([]Plugin, len(rows))
 	for i, row := range rows {
 		out[i] = pluginFromRow(row)

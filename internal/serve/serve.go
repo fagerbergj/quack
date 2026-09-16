@@ -1456,7 +1456,7 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 			// ponytail: fork's live spawn reads skill_paths off the
 			// CURRENT clone, not the recorded sha (no historical worktree
 			// materialization yet) - refuse rather than silently diverge.
-			if err := refuseIfPluginsMoved(acpReplay, cfg.Plugins.Root); err != nil {
+			if err := refuseIfPluginsMoved(acpReplay, reg); err != nil {
 				return nil, fmtErr(name, "acp fork replay: %v", err)
 			}
 		}
@@ -1694,7 +1694,7 @@ func loadNativeReplay(prov config.ProviderConfig) (*replay.Session, error) {
 // refuseIfPluginsMoved: fork mode's live spawn always reads the CURRENT
 // clone, so a plugin that moved past its recorded sha would silently serve
 // different skill text after divergence - refuse instead (#1427 P4).
-func refuseIfPluginsMoved(sess *replay.Session, registryRoot string) error {
+func refuseIfPluginsMoved(sess *replay.Session, reg pluginreg.Registry) error {
 	recorded, err := sess.Plugins()
 	if err != nil {
 		return err
@@ -1702,7 +1702,7 @@ func refuseIfPluginsMoved(sess *replay.Session, registryRoot string) error {
 	if len(recorded) == 0 {
 		return nil
 	}
-	rows, err := pluginreg.NewFSRegistry(registryRoot).List(context.Background())
+	rows, err := reg.List(context.Background())
 	if err != nil {
 		return fmt.Errorf("list plugin registry: %w", err)
 	}
