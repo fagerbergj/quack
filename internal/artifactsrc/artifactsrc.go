@@ -19,10 +19,9 @@ import (
 	"github.com/fagerbergj/quack/internal/bundledir"
 )
 
-// ErrHard marks a Source.Get error the Resolver must propagate instead of
-// silently falling back to the shipped static artifact - e.g. a pinned
-// version that has gone missing, where serving a different prompt than the
-// one requested would be worse than failing the round. Wrap it with %w.
+// ErrHard (wrap with %w) marks a Source.Get error the Resolver propagates instead
+// of falling back to the shipped artifact: a pinned version gone missing must fail
+// the round rather than run a different prompt than the one requested.
 var ErrHard = errors.New("artifactsrc: hard error")
 
 // StaticSource is Artifact.Source for a shipped file (disk, then embedded).
