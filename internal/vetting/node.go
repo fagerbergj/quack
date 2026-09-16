@@ -952,7 +952,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 		slog.WarnContext(judgeCtx, "judge prompt unresolved", "component", "vetting", "node", j.cfg.NodeID, "err", jpErr)
 	} else {
 		j.cfg.judgePrompt = jp
-		promptSource, promptVersion, promptArtifact = jp.art.Source, jp.art.VersionID, jp.art.Name
+		promptSource, promptVersion, promptArtifact = jp.art.Source, jp.art.VersionID, "system/judge"
 	}
 	// L2: still apply the static binding for this round when the prompt itself
 	// didn't resolve - jp.art is its zero value then, which RefreshJudgeBinding

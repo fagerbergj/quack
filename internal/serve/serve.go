@@ -1227,7 +1227,8 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 			effort = e
 		}
 		// M3: (provider, model) identifies the swap; effort rides per-call thinking_level
-		// (judge.go), so it never needs a distinct model/HTTP pool of its own.
+		// (judge.go), so it never needs a distinct model/HTTP pool of its own. Sound only
+		// because ResolveBinding's M4 check already forces provider to agree with model.
 		key := bound.Provider.Endpoint + "|" + bound.Model
 		b.mu.Lock()
 		cached, ok := b.cache[key]
