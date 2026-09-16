@@ -725,19 +725,23 @@ func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
 }
 
 // TestBackfillJudgeSupport_DemotesReinforcementOnlyVerified covers epic #1456 P1's migration: a
-// legacy point verified purely by merge reinforcement (upvotes == reinforcement_count) demotes
-// to unverified, a legacy point with real judge support (upvotes > reinforcement_count) stays
-// verified untouched, and a second run touches neither again.
+// legacy point verified purely by merge reinforcement (upvotes == reinforcement_count) demotes to
+// unverified; a legacy point verified purely by judge support, and one verified by BOTH judge
+// support and reinforcement, both stay verified with `supported` backfilled to the true historical
+// count (upvotes - reinforcement_count) - not just left at zero, which would let a future
+// not_relevant vote wrongly re-invalidate a memory that really was judge-supported. A second run touches nothing.
 func TestBackfillJudgeSupport_DemotesReinforcementOnlyVerified(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
 		s := newStore("task", nil)
-		reinforcedOnlyID, judgeSupportedID := testID("reinforced-only"), testID("judge-supported")
+		reinforcedOnlyID, judgeSupportedID, partialSupportID := testID("reinforced-only"), testID("judge-supported"), testID("partial-support")
 		if err := s.idx.upsert(ctx, []point{
 			{ID: reinforcedOnlyID, Vector: []float32{1, 0, 0, 0}, Content: "verified via reinforcement only", Scope: "repo:r",
 				Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 2, ReinforcementCount: 2},
 			{ID: judgeSupportedID, Vector: []float32{1, 0, 0, 0}, Content: "verified via real judge support", Scope: "repo:r",
 				Status: string(StatusUnverified), Tier: TierVerified, Upvotes: 1, ReinforcementCount: 0},
+			{ID: partialSupportID, Vector: []float32{1, 0, 0, 0}, Content: "verified via judge support plus reinforcement", Scope: "repo:r",
+				Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 3, ReinforcementCount: 1},
 		}); err != nil {
 			t.Fatalf("seed upsert: %v", err)
 		}
@@ -746,8 +750,8 @@ func TestBackfillJudgeSupport_DemotesReinforcementOnlyVerified(t *testing.T) {
 		if err != nil {
 			t.Fatalf("backfillJudgeSupport: %v", err)
 		}
-		if n != 1 {
-			t.Fatalf("backfillJudgeSupport touched %d, want 1 (only the reinforcement-only point)", n)
+		if n != 3 {
+			t.Fatalf("backfillJudgeSupport touched %d, want 3 (every currently-verified point)", n)
 		}
 
 		byID := func() map[string]scored {
@@ -763,11 +767,23 @@ func TestBackfillJudgeSupport_DemotesReinforcementOnlyVerified(t *testing.T) {
 		}
 
 		rows := byID()
-		if r := rows[reinforcedOnlyID]; r.Tier != TierUnverified {
-			t.Fatalf("reinforced-only = %+v, want demoted to unverified", r)
+		if r := rows[reinforcedOnlyID]; r.Tier != TierUnverified || r.Supported != 0 {
+			t.Fatalf("reinforced-only = %+v, want demoted to unverified, supported=0", r)
 		}
-		if r := rows[judgeSupportedID]; r.Tier != TierVerified {
-			t.Fatalf("judge-supported = %+v, want still verified", r)
+		if r := rows[judgeSupportedID]; r.Tier != TierVerified || r.Supported != 1 {
+			t.Fatalf("judge-supported = %+v, want still verified, supported backfilled to 1", r)
+		}
+		if r := rows[partialSupportID]; r.Tier != TierVerified || r.Supported != 2 {
+			t.Fatalf("partial-support = %+v, want still verified, supported backfilled to 2 (3 upvotes - 1 reinforcement)", r)
+		}
+
+		// The regression this backfill closes: without a backfilled supported count, this
+		// not_relevant vote would see supported=0 and wrongly invalidate a memory that really did earn judge support.
+		if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: partialSupportID, Vote: VoteNotRelevant, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+			t.Fatalf("ApplyVotes not_relevant: %v", err)
+		}
+		if r := byID()[partialSupportID]; r.Tier != TierVerified {
+			t.Fatalf("partial-support after a not_relevant vote = %+v, want still verified", r)
 		}
 
 		n, err = s.idx.backfillJudgeSupport(ctx)

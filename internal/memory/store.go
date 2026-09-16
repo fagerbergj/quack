@@ -62,9 +62,9 @@ type index interface {
 	// yet: verified (upvotes=reinforcement_count) if reinforcement_count >= 1, else
 	// unverified. Idempotent - a point that already carries a tier is left alone, so a second boot touches none.
 	backfillTiers(ctx context.Context) (int, error)
-	// backfillJudgeSupport is the one-time migration (epic #1456 P1) demoting any verified point
-	// with no judge support (upvotes == reinforcement_count: every upvote came from merge
-	// reinforcement, never a supported vote) to unverified. Naturally idempotent - once demoted, tier is no longer verified, so a re-run's query no longer matches it.
+	// backfillJudgeSupport is the one-time migration (epic #1456 P1) for every currently-verified
+	// point still at supported=0: upvotes-reinforcement_count backfills supported (keeping tier
+	// verified) when positive, else demotes to unverified. Idempotent both ways - once fixed, a point no longer matches either branch's criteria, so a second boot touches none.
 	backfillJudgeSupport(ctx context.Context) (int, error)
 	// updateBucket moves a single point to a new bucket key (#1262's
 	// `quack memory rescope`) - a payload/column-only mutation, no re-embed.
@@ -268,7 +268,7 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 	if n, err := idx.backfillJudgeSupport(ctx); err != nil {
 		s.log.Warn("memory judge-support backfill failed", "err", err)
 	} else if n > 0 {
-		s.log.Info("memory judge-support backfill", "demoted", n)
+		s.log.Info("memory judge-support backfill", "touched", n)
 	}
 	return s, nil
 }

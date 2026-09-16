@@ -969,8 +969,9 @@ func (x *qdrantIndex) backfillTiers(ctx context.Context) (int, error) {
 	return touched, nil
 }
 
-// backfillJudgeSupport is the one-time migration (epic #1456 P1) demoting a legacy verified
-// point with no judge support back to unverified: upvotes == reinforcement_count means every upvote came from merge reinforcement, which never sets tier under the current code. Naturally idempotent: once demoted, tier no longer matches the server-side filter.
+// backfillJudgeSupport is the one-time migration (epic #1456 P1) for every currently-verified point
+// still at supported=0: upvotes-reinforcement_count is the historical non-reinforcement upvote count, so a
+// positive value backfills supported (keeping tier verified) while zero demotes to unverified. Idempotent both ways: a backfilled supported is skipped, and a demoted point drops out of the server-side tier filter.
 func (x *qdrantIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
 	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{
 		CollectionName: x.coll,
@@ -989,13 +990,18 @@ func (x *qdrantIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
 		}
 		for _, p := range pts {
 			payload := p.GetPayload()
-			if payloadInt(payload, payloadUpvotes) != payloadInt(payload, payloadReinforcementCount) {
+			if payloadInt(payload, payloadSupported) > 0 {
 				continue
+			}
+			supported := payloadInt(payload, payloadUpvotes) - payloadInt(payload, payloadReinforcementCount)
+			set := map[string]any{payloadSupported: 0, payloadTier: TierUnverified}
+			if supported > 0 {
+				set[payloadSupported], set[payloadTier] = supported, TierVerified
 			}
 			if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
 				CollectionName: x.coll,
 				Wait:           &wait,
-				Payload:        qdrant.NewValueMap(map[string]any{payloadTier: TierUnverified}),
+				Payload:        qdrant.NewValueMap(set),
 				PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: []*qdrant.PointId{p.GetId()}}}},
 			}); err != nil {
 				return touched, fmt.Errorf("memory: judge-support backfill set payload: %w", err)

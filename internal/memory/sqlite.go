@@ -533,16 +533,23 @@ func (x *sqliteIndex) backfillTiers(ctx context.Context) (int, error) {
 	return int(touched + res.RowsAffected), nil
 }
 
-// backfillJudgeSupport is the one-time migration (epic #1456 P1) demoting a legacy verified row
-// with no judge support back to unverified: upvotes == reinforcement_count means every upvote came from merge reinforcement, which never sets tier under the current code. Naturally idempotent: once demoted, tier no longer matches.
+// backfillJudgeSupport is the one-time migration (epic #1456 P1) for every currently-verified row
+// still at supported=0: upvotes-reinforcement_count is the historical non-reinforcement upvote count, so a
+// positive value backfills supported (keeping tier verified) while zero demotes to unverified. Idempotent both ways: a backfilled supported no longer matches, and a demoted tier no longer matches either branch.
 func (x *sqliteIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
-	res := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND tier = ? AND upvotes = reinforcement_count", x.coll, TierVerified).
-		Updates(map[string]any{"tier": TierUnverified})
-	if res.Error != nil {
-		return 0, fmt.Errorf("memory: sqlite backfill judge support: %w", res.Error)
+	verified := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND tier = ? AND upvotes > reinforcement_count AND (supported IS NULL OR supported = 0)", x.coll, TierVerified).
+		Updates(map[string]any{"supported": gorm.Expr("upvotes - reinforcement_count")})
+	if verified.Error != nil {
+		return 0, fmt.Errorf("memory: sqlite backfill judge support (verified): %w", verified.Error)
 	}
-	return int(res.RowsAffected), nil
+	unverified := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND tier = ? AND upvotes <= reinforcement_count", x.coll, TierVerified).
+		Updates(map[string]any{"tier": TierUnverified, "supported": 0})
+	if unverified.Error != nil {
+		return 0, fmt.Errorf("memory: sqlite backfill judge support (unverified): %w", unverified.Error)
+	}
+	return int(verified.RowsAffected + unverified.RowsAffected), nil
 }
 
 // updateBucket moves a row to a new bucket, unconditionally.
