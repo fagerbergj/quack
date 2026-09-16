@@ -43,6 +43,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/inference/openaimodel"
+	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -735,9 +736,42 @@ func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator
 	return handler, nil
 }
 
+// replayPromptSource builds the P3 (#1422) prompt-pinning Source for a replay
+// run: `quack replay` (replayifyProviders) switches every provider to kind
+// "replay" pointing at the same bundle, so the first one found identifies it.
+// Returns (nil, nil) for a normal (non-replay) config.
+func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.Source, error) {
+	var bundlePath string
+	for _, p := range cfg.Providers {
+		if p.Kind == "replay" && p.Bundle != "" {
+			bundlePath = p.Bundle
+			break
+		}
+	}
+	if bundlePath == "" {
+		return nil, nil
+	}
+	sess, err := replay.Load(bundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("replay: load bundle for prompt pinning: %w", err)
+	}
+	var lf *langfuse.Client
+	if cfg.Prompts.Store != "" {
+		if s, ok := cfg.Store(cfg.Prompts.Store); ok {
+			lf = langfuse.New(s.URL, s.PublicKey, s.SecretKey)
+		}
+	}
+	return replay.NewPromptSource(ctx, sess, lf)
+}
+
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	// P2 (#1421) supplies a store Source here; P1 always resolves static.
-	b := &boot{cfg: cfg, res: artifactsrc.New(cfg.Prompts.Store, nil, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
+	promptSrc, err := replayPromptSource(ctx, cfg)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	// P2 (#1421) supplies a store Source for a live run; P3 (#1422) pins one
+	// during replay (promptSrc above, nil for a normal boot).
+	b := &boot{cfg: cfg, res: artifactsrc.New(cfg.Prompts.Store, promptSrc, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
 	defer func() {
 		if err != nil {
 			b.runCleanups()
