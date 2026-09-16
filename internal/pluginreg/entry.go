@@ -60,7 +60,7 @@ func ParseEntry(s string) (Entry, error) {
 		// Reject a degenerate root (".", "..", "/") here rather than let it
 		// surface later as an opaque "invalid name" from FSRegistry.Put.
 		if err := validName(filepath.Base(s)); err != nil {
-			return Entry{}, fmt.Errorf("plugin entry %q: local root %v", s, err)
+			return Entry{}, fmt.Errorf("plugin entry %q: local root %w", s, err)
 		}
 		return Entry{Raw: s, Source: SourceLocal, Root: s}, nil
 	}
@@ -72,10 +72,10 @@ func ParseEntry(s string) (Entry, error) {
 	owner, repo, ref, path := m[1], m[2], m[3], m[4]
 	repo = strings.TrimSuffix(repo, ".git")
 	if err := validName(owner); err != nil {
-		return Entry{}, fmt.Errorf("plugin entry %q: owner %v", s, err)
+		return Entry{}, fmt.Errorf("plugin entry %q: owner %w", s, err)
 	}
 	if err := validName(repo); err != nil {
-		return Entry{}, fmt.Errorf("plugin entry %q: repo %v", s, err)
+		return Entry{}, fmt.Errorf("plugin entry %q: repo %w", s, err)
 	}
 	// A ref starting with "-" would be read as a git flag wherever it is
 	// interpolated into a bare rev-parse/checkout argument.
@@ -84,7 +84,7 @@ func ParseEntry(s string) (Entry, error) {
 	}
 	cleanPath, err := cleanSubPath(path)
 	if err != nil {
-		return Entry{}, fmt.Errorf("plugin entry %q: %v", s, err)
+		return Entry{}, fmt.Errorf("plugin entry %q: %w", s, err)
 	}
 	return Entry{Raw: s, Source: SourceGitHub, Owner: owner, Repo: repo, Ref: ref, Path: cleanPath}, nil
 }

@@ -97,8 +97,6 @@ func NewFSRegistry(root string) *FSRegistry {
 	return &FSRegistry{root: root}
 }
 
-func (r *FSRegistry) Root() string { return r.root }
-
 // List returns every row, sorted by name.
 func (r *FSRegistry) List(ctx context.Context) ([]Plugin, error) {
 	entries, err := os.ReadDir(r.root)
@@ -164,7 +162,7 @@ func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 	_, werr := f.Write(b)
 	cerr := f.Close()
 	if werr != nil || cerr != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		if werr != nil {
 			return werr
 		}
