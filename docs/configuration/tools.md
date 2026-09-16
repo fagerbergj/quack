@@ -23,3 +23,18 @@ There are deliberately no git or filesystem-write tools in the registry: code ag
 `web_search` and `web_fetch` are the two tools with pluggable backends - `kind` picks the adapter, the rest of the block is that adapter's connection details, the same `kind` shape as [providers and stores](index.md#the-kind-shape).
 
 One other entry lives in `tools:` in `config/quack.yaml` without its own registry constructor: `commit_memory` (the orchestrator's user-memory commit - store binding only, see [agents.md](agents.md#the-orchestrators-tools)).
+
+## Skills
+
+Skills are not a `tools:` entry - they come from the dynamic plugin registry, configured under the top-level `plugins:` key:
+
+```yaml
+plugins:
+  store: default_postgres      # omit for filesystem (default); or a stores[] entry of kind sqlite|postgres
+  root: ${QUACK_WORKSPACE_ROOT}/.quack/plugins
+  seed:
+    - github:fagerbergj/dotagents
+    - github:fagerbergj/ponytail@v1.4
+```
+
+`store` picks the registry backend (filesystem by default, or a `stores:` entry of kind `sqlite`/`postgres` - see [stores.md](stores.md#plugin-registry)); `root` is where clones live; `seed` lists entries inserted if absent at boot (the UI/REST own the list after that). A bare `plugins:` list is treated as `seed:`. Each entry is either `github:owner/repo[@ref][#path]` (cloned and kept up to date) or a local directory path (config-only, no clone). Full detail - entry syntax, naming, the bundled baseline, updates, replay pinning - is in [`agent-plugins.md`](../agent-plugins.md#the-registry).
