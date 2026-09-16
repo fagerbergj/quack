@@ -30,6 +30,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/pgdial"
+	"github.com/fagerbergj/quack/internal/sqlitedsn"
 )
 
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
@@ -567,6 +568,11 @@ func New(kind, url string) (*Store, error) {
 	return s, nil
 }
 
+// DB exposes the underlying *gorm.DB for a caller that owns its own schema
+// on this same database (pluginreg's DB registry backends, P3) rather than
+// opening a second connection pool to the identical DB.
+func (s *Store) DB() *gorm.DB { return s.db }
+
 // InstanceID identifies this Store for node-ownership tracking.
 func (s *Store) InstanceID() string { return s.instanceID }
 
@@ -604,7 +610,7 @@ func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 			return d
 		}, nil
 	case "sqlite":
-		sqlDB, err := sql.Open(sqlite.DriverName, sqliteDSN(url))
+		sqlDB, err := sql.Open(sqlite.DriverName, sqlitedsn.Build(url))
 		if err != nil {
 			return nil, fmt.Errorf("store: open sqlite: %w", err)
 		}
@@ -613,16 +619,6 @@ func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 	default:
 		return nil, fmt.Errorf("store: unsupported kind %q (postgres or sqlite)", kind)
 	}
-}
-
-// sqliteDSN enables WAL + busy timeout + FK enforcement (SQLite defaults
-// foreign_keys OFF per connection; the chat cascade FKs, #1296, are inert
-// without this). Existing query params are left untouched.
-func sqliteDSN(url string) string {
-	if strings.Contains(url, "?") {
-		return url
-	}
-	return url + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 }
 
 // CreateChat inserts a new chat and returns it. Fail-closed on the WAL

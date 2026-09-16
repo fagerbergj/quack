@@ -50,7 +50,13 @@ func NewSkillSource(ctx context.Context, sess *Session, registryRoot string, row
 				return nil, fmt.Errorf("replay: plugin %q: %w", row.Name, err)
 			}
 			if len(names) == 0 {
-				return nil, fmt.Errorf("replay: plugin %q: recorded with no sha, but the live roster serves none of its skills", row.Name)
+				// quack is always in scope (#1427 P1) - zero live skills for
+				// it is a real gap; any other plugin just has none to scope.
+				if row.Name == pluginreg.EmbeddedQuackPluginName {
+					return nil, fmt.Errorf("replay: plugin %q: recorded with no sha, but the live roster serves none of its skills", row.Name)
+				}
+				slog.Warn("replay: recorded plugin has no sha and no live skills; skipping", "component", "replay", "plugin", row.Name)
+				continue
 			}
 			sources = append(sources, skillsource.Scoped(live, names))
 			continue

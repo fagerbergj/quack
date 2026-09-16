@@ -618,10 +618,15 @@ type skillsInit struct {
 	// skill roster (#1427 P4 F1) - rest refuses every mutating call up
 	// front while set, not just the post-mutation rebuild.
 	pinnedBundle string
+	// reg is the SAME registry bootPluginRegistry opened - initHTTP/mountHTTP
+	// reuse it instead of opening a second connection to a DB-backed store.
+	reg pluginreg.FetchRegistry
 }
 
 // resolves the plugin registry and builds the skill sources and toolsets.
-func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit, error) {
+// st (nilable) is reused for the registry's own DB connection when
+// plugins.store names the same store as session.store (#1427 P3).
+func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store) (skillsInit, error) {
 	// Bring the vendored trees under .agents/vendor to their pinned refs before
 	// anything reads them - the local seed entries a dev checkout resolves
 	// against (#1427 P5 removes this once the registry owns fetching).
@@ -629,7 +634,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 	if len(pluginRevs) > 0 {
 		slog.Info("skill plugins resolved", "component", "startup", "revisions", plugin.Summary(pluginRevs))
 	}
-	reg, rows, err := b.bootPluginRegistry(ctx)
+	reg, rows, err := b.bootPluginRegistry(ctx, st)
 	if err != nil {
 		return skillsInit{}, err
 	}
@@ -680,7 +685,6 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 		}
 		rebuildMu.Lock()
 		defer rebuildMu.Unlock()
-		reg := pluginreg.NewFSRegistry(b.cfg.Plugins.Root)
 		rows, err := reg.List(context.Background())
 		if err != nil {
 			return nil, err
@@ -703,7 +707,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 	return skillsInit{
 		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
 		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
-		pinnedBundle: pinnedBundle,
+		pinnedBundle: pinnedBundle, reg: reg,
 	}, nil
 }
 
@@ -764,7 +768,7 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 }
 
 // builds the configured agents (and their gate config, executor lookups, and classify model)
-func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM]) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
+func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM], reg pluginreg.FetchRegistry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
 	advisorAgent := buildAdvisorAgent(context.Background(), b.cfg, b.res, artifacts)
 	var executorRef atomic.Pointer[dag.Executor]
 	nodeCancelled := func(chatID, nodeID string) bool {
@@ -796,7 +800,7 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 		}
 	}
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore, reg)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("agent build failed: %w", err)
 	}
@@ -848,8 +852,8 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 }
 
 // mounts the HTTP handler and starts the workspace GC
-func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pinnedBundle string) (http.Handler, error) {
-	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills, pinnedBundle)
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pinnedBundle string, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills, pinnedBundle, pluginReg)
 	if err != nil {
 		return nil, err
 	}
@@ -969,7 +973,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
-	skills, err := b.initSkills(ctx, jail)
+	skills, err := b.initSkills(ctx, jail, st)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -981,7 +985,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skills.skillTS, skills.builtinSkillSrc, skills.newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef)
+	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skills.skillTS, skills.builtinSkillSrc, skills.newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef, skills.reg)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -989,7 +993,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills, skills.pinnedBundle)
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills, skills.pinnedBundle, skills.reg)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1150,7 +1154,7 @@ func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
+func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := newNodeScope(jail)
@@ -1227,7 +1231,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 		}
 
 		if ac.Acp != nil {
-			ag, err := buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, acpPricing, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort)
+			ag, err := buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, acpPricing, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, reg)
 			if err != nil {
 				return nil, nil, nodeServers, nil, nil, nil, nil, err
 			}
@@ -1401,7 +1405,7 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 
 // buildACPNode builds one ACP-harness agent (external CLI child), registering
 // its gate config in gateCfgs when the agent is gated.
-func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, taskStore *memory.Store, builtinSkillSrc skill.Source, gateCfg vetting.Config, gateCfgs *gateConfigs, safetyJudge tools.SafetyJudge, acpPricing *config.ModelPricing, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string)) (adkagent.Agent, error) {
+func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, taskStore *memory.Store, builtinSkillSrc skill.Source, gateCfg vetting.Config, gateCfgs *gateConfigs, safetyJudge tools.SafetyJudge, acpPricing *config.ModelPricing, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), reg pluginreg.FetchRegistry) (adkagent.Agent, error) {
 	ctx := context.Background()
 	bundle, err := agent.LoadBundle(ctx, res, ac.Bundle)
 	if err != nil {
@@ -1434,9 +1438,9 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 	// baked in here - see skillPathsFn below.
 	env := piACPEnv(prov, ac, nil)
 	env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
-	skillPathsFn := acpRegistrySkillPaths(cfg)
+	skillPathsFn := acpRegistrySkillPaths(cfg, reg)
 	extraROFn := acpRegistryExtraRO(cfg)
-	pluginsFn := acpRegistryPluginRefs(cfg)
+	pluginsFn := acpRegistryPluginRefs(cfg, reg)
 	var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 	if safetyJudge != nil {
 		permJudge = acpPermJudge(safetyJudge, name)
@@ -2133,7 +2137,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	return orch, nil
 }
 
-func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pinnedBundle string) (http.Handler, error) {
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pinnedBundle string, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
@@ -2156,7 +2160,7 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 	}
 
 	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
-	restPlugins := rest.NewPlugins(pluginreg.NewFSRegistry(cfg.Plugins.Root), cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills)
+	restPlugins := rest.NewPlugins(pluginReg, cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills)
 	restPlugins.SetPinnedBundle(pinnedBundle)
 	restHandler.SetPlugins(restPlugins)
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
@@ -2517,12 +2521,11 @@ func registrySignature(rows []pluginreg.Plugin) string {
 // acpRegistrySkillPaths is acp.Options.SkillPaths: acpSkillPaths over a
 // fresh registry read, cached by registrySignature. plugins.root itself is
 // NOT here - see acpRegistryExtraRO - this also feeds skill_paths (#1430).
-func acpRegistrySkillPaths(cfg *config.Config) func() []string {
+func acpRegistrySkillPaths(cfg *config.Config, reg pluginreg.FetchRegistry) func() []string {
 	var mu sync.Mutex
 	var cachedKey string
 	var cachedPaths []string
 	return func() []string {
-		reg := pluginreg.NewFSRegistry(cfg.Plugins.Root)
 		rows, err := reg.List(context.Background())
 		if err != nil {
 			slog.Warn("acp: plugin registry list failed; skill paths may be stale", "component", "acp", "err", err)
@@ -2562,9 +2565,8 @@ func acpRegistryExtraRO(cfg *config.Config) func() []string {
 // acpRegistryPluginRefs: the round's ledger provenance = every registered row
 // plus the always-in-scope embedded quack bundle (P1 scope); a row named
 // "quack" wins over the synthetic embedded ref it shadows.
-func acpRegistryPluginRefs(cfg *config.Config) func() []ledger.PluginRef {
+func acpRegistryPluginRefs(cfg *config.Config, reg pluginreg.FetchRegistry) func() []ledger.PluginRef {
 	return func() []ledger.PluginRef {
-		reg := pluginreg.NewFSRegistry(cfg.Plugins.Root)
 		rows, err := reg.List(context.Background())
 		if err != nil {
 			rows = nil

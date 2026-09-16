@@ -193,4 +193,32 @@ describe('Plugins', () => {
     expect(host!.textContent).toContain('ponytail')
     expect(host!.textContent).toContain('boom')
   })
+
+  // PR #1442 carry-over: DELETE succeeds but the silent post-action refresh
+  // then fails - the rows on screen must survive, surfaced as actionError.
+  it('keeps the rows and shows actionError when a silent post-action refresh fails', async () => {
+    vi.stubGlobal('fetch', routedFetch({
+      'GET /plugins/updates': [jsonResponse({ updates: [] }), jsonResponse({ updates: [] })],
+      'GET /plugins': [
+        jsonResponse({ plugins: [ROW, ROW2] }),
+        jsonResponse({ error: 'boom' }, 500),
+      ],
+      'DELETE /plugins/dotagents': [new Response(null, { status: 204 })],
+    }))
+    await renderAndFlush()
+    expect(host!.textContent).toContain('dotagents')
+    expect(host!.textContent).toContain('ponytail')
+
+    const removeButton = host!.querySelector('button[aria-label="Remove dotagents"]') as HTMLButtonElement
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    // The DELETE succeeded, but the refresh it triggered failed - the rows
+    // from the first, successful GET must still be on screen.
+    expect(host!.textContent).toContain('dotagents')
+    expect(host!.textContent).toContain('ponytail')
+    expect(host!.textContent).toContain('boom')
+  })
 })

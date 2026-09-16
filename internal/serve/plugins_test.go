@@ -160,3 +160,64 @@ func TestPersistPluginRefusalLogsOnWriteFailure(t *testing.T) {
 		t.Fatalf("log output = %q, want the persist-failure warning", buf.String())
 	}
 }
+
+// mcpJSONBody is a minimal, schema-valid mcp.json declaring one stdio server.
+const mcpJSONBody = `{"$schema":"https://agent-plugins.org/schemas/1.1.0/mcp.schema.json","mcpServers":{"foo":{"type":"stdio","command":"echo"}}}`
+
+// TestResolveRegistryPlugins_GithubRowMCPIsClearedWithWarning is the epic's
+// documented scope (#1427: "mcp.json in a fetched plugin is ignored with a
+// warning, follow-up #1434") - a github: row's mcp.json must not spawn
+// stdio servers, unlike a local root's.
+func TestResolveRegistryPlugins_GithubRowMCPIsClearedWithWarning(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	registryRoot := t.TempDir()
+	clone := pluginreg.CloneDir(registryRoot, "ghrepo")
+	if err := os.MkdirAll(clone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePluginManifest(t, clone, "ghrepo")
+	if err := os.WriteFile(filepath.Join(clone, "mcp.json"), []byte(mcpJSONBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows := []pluginreg.Plugin{{Name: "ghrepo", Source: pluginreg.SourceGitHub, Entry: "github:acme/ghrepo", Owner: "acme", Repo: "ghrepo"}}
+
+	plugins, err := resolveRegistryPlugins(registryRoot, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("resolveRegistryPlugins = %d plugins, want 1", len(plugins))
+	}
+	if len(plugins[0].MCPServers) != 0 {
+		t.Fatalf("github row MCPServers = %v, want cleared (epic scope: fetched plugins ignore mcp.json)", plugins[0].MCPServers)
+	}
+	if !strings.Contains(buf.String(), "mcp.json ignored") || !strings.Contains(buf.String(), "ghrepo") || !strings.Contains(buf.String(), "#1434") {
+		t.Fatalf("log output = %q, want a warning naming ghrepo and #1434", buf.String())
+	}
+}
+
+// TestResolveRegistryPlugins_LocalRowKeepsMCPServers: a local root (config-
+// only, plugins.seed) is unaffected - only github: rows are in #1434's scope.
+func TestResolveRegistryPlugins_LocalRowKeepsMCPServers(t *testing.T) {
+	root := t.TempDir()
+	writePluginManifest(t, root, "local-plugin")
+	if err := os.WriteFile(filepath.Join(root, "mcp.json"), []byte(mcpJSONBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows := []pluginreg.Plugin{{Name: "local-plugin", Source: pluginreg.SourceLocal, Entry: root}}
+
+	plugins, err := resolveRegistryPlugins(t.TempDir(), rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("resolveRegistryPlugins = %d plugins, want 1", len(plugins))
+	}
+	if len(plugins[0].MCPServers) != 1 {
+		t.Fatalf("local row MCPServers = %v, want the one declared server kept", plugins[0].MCPServers)
+	}
+}

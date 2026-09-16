@@ -144,7 +144,7 @@ func TestAcpRegistryPluginRefs(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.Config{Plugins: &config.PluginsConfig{Root: root}}
 
-	empty := acpRegistryPluginRefs(cfg)()
+	empty := acpRegistryPluginRefs(cfg, reg)()
 	if len(empty) != 1 || empty[0].Name != "quack" || empty[0].SHA != "" {
 		t.Fatalf("acpRegistryPluginRefs() with an empty registry = %+v, want exactly [{quack, \"\"}]", empty)
 	}
@@ -152,7 +152,7 @@ func TestAcpRegistryPluginRefs(t *testing.T) {
 	if err := reg.Put(ctx, pluginreg.Plugin{Name: "dotagents", Source: pluginreg.SourceLocal, Entry: ".agents/vendor/dotagents"}); err != nil {
 		t.Fatal(err)
 	}
-	got := acpRegistryPluginRefs(cfg)()
+	got := acpRegistryPluginRefs(cfg, reg)()
 	if len(got) != 2 {
 		t.Fatalf("acpRegistryPluginRefs() = %+v, want 2 (dotagents + the synthetic embedded quack)", got)
 	}
@@ -174,7 +174,7 @@ func TestAcpRegistryPluginRefs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got = acpRegistryPluginRefs(cfg)()
+	got = acpRegistryPluginRefs(cfg, reg)()
 	quackCount = 0
 	for _, r := range got {
 		if r.Name != "quack" {
@@ -201,5 +201,65 @@ func TestRegistrySignature(t *testing.T) {
 	}
 	if registrySignature(a1) == registrySignature(b) {
 		t.Fatal("registrySignature must change when a row's sha changes")
+	}
+}
+
+// TestAcpRegistryClosuresUseTheDBBackedRegistry is the adversarial-review S1
+// regression: acpRegistrySkillPaths/acpRegistryPluginRefs used to always
+// build their own pluginreg.NewFSRegistry(cfg.Plugins.Root), so a
+// DB-backed plugins.store left ACP children with no skill_paths and no
+// plugin provenance - List() against the filesystem root always came back
+// empty. Both closures now take the SAME registry boot opened.
+func TestAcpRegistryClosuresUseTheDBBackedRegistry(t *testing.T) {
+	pluginRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{"name":"extra"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeVendorSkill(t, filepath.Join(pluginRoot, "skills"), "widget-maker", "Makes widgets.")
+	entry, err := pluginreg.ParseEntry(pluginRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "plugins.db")
+	db, err := pluginreg.OpenDB("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	reg, err := pluginreg.NewDBRegistry(db, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewDBRegistry: %v", err)
+	}
+	ctx := context.Background()
+	if err := reg.Put(ctx, pluginreg.FromEntry(entry)); err != nil {
+		t.Fatal(err)
+	}
+
+	// plugins.root here is deliberately a DIFFERENT, empty directory - if
+	// either closure fell back to a filesystem registry over cfg.Plugins.Root
+	// it would see zero rows, not the one Put above through the DB registry.
+	cfg := &config.Config{Plugins: &config.PluginsConfig{Root: t.TempDir()}}
+
+	refs := acpRegistryPluginRefs(cfg, reg)()
+	var found bool
+	for _, r := range refs {
+		if r.Name == entry.Name() {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("acpRegistryPluginRefs(cfg, dbReg)() = %+v, want a ref named %q", refs, entry.Name())
+	}
+
+	paths := acpRegistrySkillPaths(cfg, reg)()
+	wantDir := filepath.Join(pluginRoot, "skills")
+	found = false
+	for _, p := range paths {
+		if p == wantDir {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("acpRegistrySkillPaths(cfg, dbReg)() = %v, want %q among them", paths, wantDir)
 	}
 }

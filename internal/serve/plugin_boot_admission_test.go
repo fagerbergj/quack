@@ -64,7 +64,7 @@ func TestAdmitBootPluginsDropsRESTAddedRefusalKeepsBootAlive(t *testing.T) {
 
 	// No plugins.seed: both rows are REST-added operator data.
 	b := &boot{cfg: &config.Config{Plugins: &config.PluginsConfig{Root: registryRoot}}}
-	skills, err := b.initSkills(context.Background(), jail)
+	skills, err := b.initSkills(context.Background(), jail, nil)
 	if err != nil {
 		t.Fatalf("initSkills must not fail boot on a REST-added refusal: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestAdmitBootPluginsFailsBootForSeedListedRefusal(t *testing.T) {
 		Root: t.TempDir(),
 		Seed: []string{badRoot},
 	}}}
-	_, err = b.initSkills(context.Background(), jail)
+	_, err = b.initSkills(context.Background(), jail, nil)
 	if err == nil {
 		t.Fatal("initSkills = nil, want a fatal boot error for a plugins.seed refusal")
 	}
