@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, CreatePluginData, CreatePluginErrors, CreatePluginResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DeletePluginData, DeletePluginErrors, DeletePluginResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetMemoryData, GetMemoryErrors, GetMemoryResponses, GetMemoryStatsData, GetMemoryStatsResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListNodeMemoriesData, ListNodeMemoriesErrors, ListNodeMemoriesResponses, ListPluginsData, ListPluginsResponses, ListPluginUpdatesData, ListPluginUpdatesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateAllPluginsData, UpdateAllPluginsResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdatePluginData, UpdatePluginErrors, UpdatePluginResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses, VoteMemoryData, VoteMemoryErrors, VoteMemoryResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, CreatePluginData, CreatePluginErrors, CreatePluginResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DeletePluginData, DeletePluginErrors, DeletePluginResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetMemoryData, GetMemoryErrors, GetMemoryResponses, GetMemoryStatsData, GetMemoryStatsResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListNodeMemoriesData, ListNodeMemoriesErrors, ListNodeMemoriesResponses, ListPluginsData, ListPluginsResponses, ListPluginUpdatesData, ListPluginUpdatesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateAllPluginsData, UpdateAllPluginsErrors, UpdateAllPluginsResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdatePluginData, UpdatePluginErrors, UpdatePluginResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses, VoteMemoryData, VoteMemoryErrors, VoteMemoryResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -662,8 +662,9 @@ export const listPlugins = <ThrowOnError extends boolean = false>(options?: Opti
 /**
  * Register and fetch a plugin
  *
- * Parses `entry` (`github:owner/repo[@ref][#path]`, or a local root
- * path), stores the row, then fetches it synchronously (bounded by the
+ * Parses `entry` - `github:owner/repo[@ref][#path]` ONLY, REST does
+ * not manage local roots (those stay config-only, plugins.seed) -
+ * stores the row, then fetches it synchronously (bounded by the
  * registry's git timeout). A fetch failure still returns 201 with the
  * row - `error` set, no clone or a stale one - so the UI shows it
  * instead of the add silently failing.
@@ -683,7 +684,8 @@ export const createPlugin = <ThrowOnError extends boolean = false>(options: Opti
  * Check every github-sourced plugin for a newer remote sha
  *
  * Compares each row's installed sha against its tracked ref
- * (default-branch HEAD, or the pinned ref). A per-row check failure
+ * (default-branch HEAD, or the pinned ref), bounded to 30s total and a
+ * small concurrency limit across rows. A per-row check failure
  * (unreachable remote, etc.) lands in that row's `error` field and
  * never fails the rest of the response.
  *
@@ -695,9 +697,15 @@ export const listPluginUpdates = <ThrowOnError extends boolean = false>(options?
 });
 
 /**
- * Fetch every github-sourced plugin
+ * Fetch every github-sourced plugin that is behind
+ *
+ * Checks every row first, then fetches only the ones reported behind -
+ * a row already current, or one whose check itself failed, is
+ * reported (unchanged, or with `error` set) but not fetched. Same
+ * 30s/concurrency bound as listPluginUpdates.
+ *
  */
-export const updateAllPlugins = <ThrowOnError extends boolean = false>(options?: Options<UpdateAllPluginsData, ThrowOnError>): RequestResult<UpdateAllPluginsResponses, unknown, ThrowOnError> => (options?.client ?? client).post<UpdateAllPluginsResponses, unknown, ThrowOnError>({
+export const updateAllPlugins = <ThrowOnError extends boolean = false>(options?: Options<UpdateAllPluginsData, ThrowOnError>): RequestResult<UpdateAllPluginsResponses, UpdateAllPluginsErrors, ThrowOnError> => (options?.client ?? client).post<UpdateAllPluginsResponses, UpdateAllPluginsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/plugins/update',
     ...options

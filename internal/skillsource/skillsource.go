@@ -156,11 +156,9 @@ type projectAware struct {
 	userID  string
 }
 
-// ListFrontmatters: built-in plus non-colliding project skills; malformed
-// skills are skipped, not fatal. Built-in names are plugin-qualified
-// ("plugin:x"); a project skill's bare name is hidden by a built-in that
-// provides the SAME bare name, not only by an identical literal name (#1430
-// carry-over: restores "built-in wins collisions by bare name").
+// ListFrontmatters: built-in plus non-colliding project skills. A project
+// skill's BARE name is hidden by a built-in providing the same bare name
+// ("plugin:x"), not just an identical literal name (#1430).
 func (p *projectAware) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {
 	builtin, err := p.builtin.ListFrontmatters(ctx)
 	if err != nil {

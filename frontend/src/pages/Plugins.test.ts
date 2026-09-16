@@ -18,6 +18,11 @@ const ROW = {
   installed_sha: 'c886ce1a8474939dc42f7c194f8c57242223ea1',
 }
 
+const ROW2 = {
+  name: 'ponytail', entry: 'github:fagerbergj/ponytail', source: 'github' as const,
+  installed_sha: '0a4dd63ad4541f4f655c4108a295916f3c1d8fd',
+}
+
 // Routes each fetch by method+path substring to a queue of canned responses,
 // so a test only has to set up the endpoints it actually cares about -
 // list/updates/create/delete/update all interleave in one page.
@@ -145,5 +150,25 @@ describe('Plugins', () => {
     })
     expect(window.confirm).toHaveBeenCalled()
     expect(host!.textContent).toContain('No plugins registered')
+  })
+
+  // severe#3 regression: a failed action must not blank the list that
+  // already loaded fine.
+  it('shows a DELETE failure as a banner without hiding the other rows', async () => {
+    vi.stubGlobal('fetch', routedFetch({
+      'GET /plugins/updates': [jsonResponse({ updates: [] })],
+      'GET /plugins': [jsonResponse({ plugins: [ROW, ROW2] })],
+      'DELETE /plugins/dotagents': [jsonResponse({ error: 'boom' }, 500)],
+    }))
+    await renderAndFlush()
+
+    const removeButton = host!.querySelector('button[aria-label="Remove dotagents"]') as HTMLButtonElement
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(host!.textContent).toContain('dotagents')
+    expect(host!.textContent).toContain('ponytail')
+    expect(host!.textContent).toContain('boom')
   })
 })

@@ -3,6 +3,7 @@ package pluginreg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+)
+
+// ErrInvalidName is validName's sentinel (empty, ".", "..", or a separator).
+// ErrNameCollision is Put's sentinel: name is already registered under a
+// different identity - REST maps it to 409, everything else to 500.
+var (
+	ErrInvalidName   = errors.New("invalid plugin name")
+	ErrNameCollision = errors.New("plugin name already registered under a different entry")
 )
 
 // Plugin is one registry row: an entry plus its resolved fields and fetch state.
@@ -70,11 +79,14 @@ func CloneDir(registryRoot, name string) string {
 	return filepath.Join(registryRoot, name, "repo")
 }
 
-// EmbeddedQuackPlugin is quack's go:embedded skill bundle's registry row
-// (#1427 P1): in-memory only, never Put to disk - it has no clone. Shared by
-// boot and the REST listing (#1427 P2) so both include it identically.
+// EmbeddedQuackPluginName is the go:embedded skill bundle's fixed row name -
+// reserved, shadowable by a same-named github row, never Put or deleted.
+const EmbeddedQuackPluginName = "quack"
+
+// EmbeddedQuackPlugin is the embedded bundle's in-memory row (#1427 P1),
+// shared by boot and the REST listing so both include it identically.
 func EmbeddedQuackPlugin() Plugin {
-	return Plugin{Name: "quack", Source: SourceEmbedded}
+	return Plugin{Name: EmbeddedQuackPluginName, Source: SourceEmbedded}
 }
 
 // OrderBySeed reorders rows to match seed's listed order (bare-name
@@ -172,11 +184,9 @@ func (r *FSRegistry) readRow(name string) (Plugin, error) {
 	return p, nil
 }
 
-// samePlugin is Put's collision identity: source+owner/repo for github (so
-// moving a pin, e.g. @v1 -> @v2 on the same repo, is a legal update, not a
-// collision - #1429 carry-over), the raw entry for local. A github row with
-// Owner/Repo empty (a caller-built Plugin, e.g. REST, that populated only
-// Entry) is derived from Entry rather than refused outright (#1430 carry-over).
+// samePlugin is Put's collision identity: source+owner/repo for github (a
+// pin move like @v1 -> @v2 is a legal update, not a collision), the raw
+// entry for local. Empty Owner/Repo derives from Entry instead (#1430).
 func samePlugin(a, b Plugin) bool {
 	if a.Source != b.Source {
 		return false
@@ -184,6 +194,11 @@ func samePlugin(a, b Plugin) bool {
 	if a.Source == SourceGitHub {
 		ao, ar := githubIdentity(a)
 		bo, br := githubIdentity(b)
+		// Both sides unresolvable (empty owner/repo, unparsable entry) is
+		// never a match - two blank identities are not "the same" plugin.
+		if ao == "" && ar == "" {
+			return false
+		}
 		return ao == bo && ar == br
 	}
 	return a.Entry == b.Entry
@@ -210,14 +225,22 @@ func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 	if err := validName(p.Name); err != nil {
 		return err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing, err := r.readRow(p.Name); err == nil {
+		if !samePlugin(existing, p) {
+			return fmt.Errorf("%w: plugin %q is already registered from %q, not %q", ErrNameCollision, p.Name, existing.Entry, p.Entry)
+		}
+		// A re-Put of the same identity with no sha yet (REST's create/
+		// re-create path, before its own Fetch runs) must not wipe the last
+		// good clone's sha/fetched_at - only Fetch may move those forward.
+		if p.SHA == "" && p.FetchedAt == nil {
+			p.SHA, p.FetchedAt = existing.SHA, existing.FetchedAt
+		}
+	}
 	b, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if existing, err := r.readRow(p.Name); err == nil && !samePlugin(existing, p) {
-		return fmt.Errorf("plugin %q is already registered from %q, not %q", p.Name, existing.Entry, p.Entry)
 	}
 	dir := filepath.Join(r.root, p.Name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

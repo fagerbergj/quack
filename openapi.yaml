@@ -1263,8 +1263,9 @@ paths:
       operationId: createPlugin
       summary: Register and fetch a plugin
       description: |
-        Parses `entry` (`github:owner/repo[@ref][#path]`, or a local root
-        path), stores the row, then fetches it synchronously (bounded by the
+        Parses `entry` - `github:owner/repo[@ref][#path]` ONLY, REST does
+        not manage local roots (those stay config-only, plugins.seed) -
+        stores the row, then fetches it synchronously (bounded by the
         registry's git timeout). A fetch failure still returns 201 with the
         row - `error` set, no clone or a stale one - so the UI shows it
         instead of the add silently failing.
@@ -1282,13 +1283,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/Plugin"
         "400":
-          description: entry does not match github:owner/repo[@ref][#path] (or is an invalid local root)
+          description: entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, quack)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: name is already registered from a different entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: fetched, but the plugin's own content is refused (e.g. declares an unlinked module) - the row is stored with the refusal in `error`
           content:
             application/json:
               schema:
@@ -1300,7 +1307,8 @@ paths:
       summary: Check every github-sourced plugin for a newer remote sha
       description: |
         Compares each row's installed sha against its tracked ref
-        (default-branch HEAD, or the pinned ref). A per-row check failure
+        (default-branch HEAD, or the pinned ref), bounded to 30s total and a
+        small concurrency limit across rows. A per-row check failure
         (unreachable remote, etc.) lands in that row's `error` field and
         never fails the rest of the response.
       responses:
@@ -1314,14 +1322,25 @@ paths:
   /api/v1/plugins/update:
     post:
       operationId: updateAllPlugins
-      summary: Fetch every github-sourced plugin
+      summary: Fetch every github-sourced plugin that is behind
+      description: |
+        Checks every row first, then fetches only the ones reported behind -
+        a row already current, or one whose check itself failed, is
+        reported (unchanged, or with `error` set) but not fetched. Same
+        30s/concurrency bound as listPluginUpdates.
       responses:
         "200":
-          description: The fetched rows
+          description: Every github-sourced row's resulting state
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/PluginList"
+        "422":
+          description: fetched, but the roster rebuild that followed was refused (e.g. a fetched plugin declares an unlinked module)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/plugins/{name}:
     delete:
@@ -1333,7 +1352,7 @@ paths:
         "204":
           description: Removed
         "400":
-          description: name is the reserved embedded "quack" plugin
+          description: name is invalid, or is the reserved embedded "quack" plugin
           content:
             application/json:
               schema:
@@ -1360,6 +1379,12 @@ paths:
                 $ref: "#/components/schemas/Plugin"
         "404":
           description: No such plugin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: fetched, but the roster rebuild that followed was refused (e.g. the plugin declares an unlinked module)
           content:
             application/json:
               schema:
@@ -2312,7 +2337,7 @@ components:
       properties:
         entry:
           type: string
-          description: "github:owner/repo[@ref][#path], or a local root path."
+          description: "github:owner/repo[@ref][#path] - REST manages github: entries only."
 
     PluginUpdate:
       type: object

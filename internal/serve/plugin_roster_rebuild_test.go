@@ -24,10 +24,11 @@ func TestRebuildSkillsPicksUpNewlyRegisteredPlugin(t *testing.T) {
 	}
 	b := &boot{cfg: &config.Config{Plugins: &config.PluginsConfig{Root: registryRoot}}}
 
-	_, builtinSkillSrc, _, _, _, rebuildSkills, err := b.initSkills(context.Background(), jail)
+	skills, err := b.initSkills(context.Background(), jail)
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}
+	builtinSkillSrc, rebuildSkills := skills.builtinSkillSrc, skills.rebuildSkills
 	// A REST-style add: write a local plugin root (plugin.json + skills/) and
 	// Put it into the SAME registry initSkills resolved against - no git needed
 	// for a local entry. The registry row name is the entry's own base name

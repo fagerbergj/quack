@@ -247,16 +247,16 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 			Seed: []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"},
 		},
 	}}
-	_, builtinSkillSrc, skillSrc, _, _, _, err := b.initSkills(context.Background(), jail)
+	skills, err := b.initSkills(context.Background(), jail)
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}
-	if fms, err := builtinSkillSrc.ListFrontmatters(context.Background()); err != nil || len(fms) == 0 {
+	if fms, err := skills.builtinSkillSrc.ListFrontmatters(context.Background()); err != nil || len(fms) == 0 {
 		t.Fatalf("ListFrontmatters: %v (%d skills)", err, len(fms))
 	}
 
 	for _, name := range []string{"format-markdown", "plan-work"} {
-		if _, err := skillsource.Resolve(context.Background(), skillSrc, name); err != nil {
+		if _, err := skillsource.Resolve(context.Background(), skills.skillSrc, name); err != nil {
 			t.Errorf("skillsource.Resolve(%q) against the shipped seed: %v", name, err)
 		}
 	}
@@ -281,11 +281,11 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 			Seed: []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"},
 		},
 	}}
-	plugins, builtinSkillSrc, _, _, _, _, err := b.initSkills(context.Background(), jail)
+	skills, err := b.initSkills(context.Background(), jail)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fms, err := builtinSkillSrc.ListFrontmatters(context.Background())
+	fms, err := skills.builtinSkillSrc.ListFrontmatters(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 		t.Errorf("roster = %d skills, want 27 (main's count): %v", len(fms), names)
 	}
 
-	paths := acpSkillPaths(plugins)
+	paths := acpSkillPaths(skills.plugins)
 	if len(paths) != 3 {
 		t.Errorf("acpSkillPaths = %v (%d), want 3 (main's count)", paths, len(paths))
 	}

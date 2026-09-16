@@ -800,7 +800,7 @@ type CreateChatBody struct {
 
 // CreatePluginBody defines model for CreatePluginBody.
 type CreatePluginBody struct {
-	// Entry github:owner/repo[@ref][#path], or a local root path.
+	// Entry github:owner/repo[@ref][#path] - REST manages github: entries only.
 	Entry string `json:"entry"`
 }
 
@@ -1917,7 +1917,7 @@ type ServerInterface interface {
 	// Register and fetch a plugin
 	// (POST /api/v1/plugins)
 	CreatePlugin(w http.ResponseWriter, r *http.Request)
-	// Fetch every github-sourced plugin
+	// Fetch every github-sourced plugin that is behind
 	// (POST /api/v1/plugins/update)
 	UpdateAllPlugins(w http.ResponseWriter, r *http.Request)
 	// Check every github-sourced plugin for a newer remote sha
@@ -2139,7 +2139,7 @@ func (_ Unimplemented) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Fetch every github-sourced plugin
+// Fetch every github-sourced plugin that is behind
 // (POST /api/v1/plugins/update)
 func (_ Unimplemented) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)

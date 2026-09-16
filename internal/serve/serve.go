@@ -283,10 +283,9 @@ func newSkillSource(plugins []plugin.Plugin) skill.Source {
 	return skill.NewMergedSource(resolved, skillsource.Scoped(embedded, backfill))
 }
 
-// swappableSkillSource is a skill.Source whose backing source can be
-// replaced atomically - the seam a REST plugin add/remove/fetch rebuilds
-// through, so an already-built native SkillToolset (holding this instance)
-// re-lists the new roster on its next round without a restart (#1430 P2).
+// swappableSkillSource is a skill.Source whose backing source swaps
+// atomically - lets a REST plugin change reach an already-built native
+// SkillToolset's next round with no restart (#1430 P2).
 type swappableSkillSource struct {
 	cur atomic.Pointer[skill.Source]
 }
@@ -579,10 +578,20 @@ func (b *boot) initOrchestratorModel(artifacts artifact.Service) (model.LLM, err
 	return llm, nil
 }
 
+// skillsInit is initSkills' result: the resolved plugins, both skill
+// sources, the native toolset, a scoped-toolset builder, and the
+// roster-rebuild hook a REST plugin add/remove/fetch calls (#1430).
+type skillsInit struct {
+	plugins          []plugin.Plugin
+	builtinSkillSrc  skill.Source
+	skillSrc         skill.Source
+	skillTS          *skilltoolset.SkillToolset
+	newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error)
+	rebuildSkills    func() error
+}
+
 // resolves the plugin registry and builds the skill sources and toolsets.
-// The returned func rebuilds the registry-derived half of the roster after a
-// REST plugin add/remove/fetch (#1430 P2) - see rebuildSkills below.
-func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) ([]plugin.Plugin, skill.Source, skill.Source, *skilltoolset.SkillToolset, func(names []string) (*skilltoolset.SkillToolset, error), func() error, error) {
+func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit, error) {
 	// Bring the vendored trees under .agents/vendor to their pinned refs before
 	// anything reads them - the local seed entries a dev checkout resolves
 	// against (#1427 P5 removes this once the registry owns fetching).
@@ -592,38 +601,39 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) ([]plugin.P
 	}
 	_, rows, err := b.bootPluginRegistry(ctx)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return skillsInit{}, err
 	}
 	// One resolution of the registry roots drives all three component types.
 	// The module and config checks run before anything is constructed, so a
 	// manifest promising code this binary doesn't carry fails here, named.
 	plugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return skillsInit{}, err
 	}
 	if err := checkPluginModules(plugins); err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return skillsInit{}, err
 	}
 	if err := checkPluginConfig(plugins, b.cfg.Extensions.Modules); err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return skillsInit{}, err
 	}
-	// swappable is the only registry-derived half of builtinSkillSrc: native
-	// agents' SkillToolset holds this same instance (via skillTS/newScopedSkillTS's
-	// closures over builtinSkillSrc), so Swap-ing it after a REST add/remove/
-	// fetch is visible on the very next round with no rebuild plumbing beyond
-	// this one pointer (#1430 P2 - ACP already re-lists per spawn, P1).
+	// swappable is builtinSkillSrc's registry-derived half; every consumer
+	// below holds this SAME instance, so rebuildSkills' Swap reaches native
+	// agents' next round with no rebuild plumbing beyond this one pointer.
 	swappable := newSwappableSkillSource(newSkillSource(plugins))
 	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("skills toolset init failed: %w", err)
+		return skillsInit{}, fmt.Errorf("skills toolset init failed: %w", err)
 	}
 	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
+	var rebuildMu sync.Mutex
 	rebuildSkills := func() error {
+		rebuildMu.Lock()
+		defer rebuildMu.Unlock()
 		reg := pluginreg.NewFSRegistry(b.cfg.Plugins.Root)
 		rows, err := reg.List(context.Background())
 		if err != nil {
@@ -635,10 +645,21 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) ([]plugin.P
 		if err != nil {
 			return err
 		}
+		// Same refusals boot enforces (#1430 SF9) - a bad plugin never
+		// reaches the roster; swap only runs once both pass.
+		if err := checkPluginModules(freshPlugins); err != nil {
+			return err
+		}
+		if err := checkPluginConfig(freshPlugins, b.cfg.Extensions.Modules); err != nil {
+			return err
+		}
 		swappable.Swap(newSkillSource(freshPlugins))
 		return nil
 	}
-	return plugins, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, rebuildSkills, nil
+	return skillsInit{
+		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
+		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
+	}, nil
 }
 
 // opens the task/user memory stores and the shared boot event log
@@ -852,7 +873,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
-	plugins, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, rebuildSkills, err := b.initSkills(ctx, jail)
+	skills, err := b.initSkills(ctx, jail)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -860,19 +881,19 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, plugins)
+	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef)
+	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skills.skillTS, skills.builtinSkillSrc, skills.newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
+	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills)
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills)
 	if err != nil {
 		return nil, nil, "", err
 	}

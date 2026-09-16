@@ -26,11 +26,7 @@ import (
 
 // seedRegistry inserts each seed entry into reg if its name is absent - Put
 // only when List lacks it, so the UI/REST (P2) own the list after boot. A
-// stale on-disk row (no longer in seed) is left alone but named in a warning (#1427 F6).
-// A seed name already on disk under a DIFFERENT identity (e.g. a local root
-// and a github repo landing on the same name) is otherwise silently skipped
-// forever - Put is re-attempted so the standard collision error surfaces as a
-// one-time warning instead (#1430 carry-over).
+// stale or identity-colliding on-disk row is warned about, not silent.
 func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string) error {
 	existing, err := reg.List(ctx)
 	if err != nil {
@@ -59,11 +55,11 @@ func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string)
 		delete(stale, name)
 		row := pluginreg.FromEntry(e)
 		if existingRow, ok := byName[name]; ok {
+			// Put would only ever error here (SameIdentity is exactly its
+			// own collision check) - warn directly instead of re-deriving it.
 			if !pluginreg.SameIdentity(existingRow, row) {
-				if err := reg.Put(ctx, row); err != nil {
-					slog.Warn("plugin seed entry collides with a different plugin already registered under this name; keeping the on-disk row",
-						"component", "startup", "name", name, "err", err)
-				}
+				slog.Warn("plugin seed entry collides with a different plugin already registered under this name; keeping the on-disk row",
+					"component", "startup", "name", name, "entry", e.Raw)
 			}
 			continue
 		}

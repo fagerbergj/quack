@@ -62,3 +62,22 @@ export const MobileViewport390: Story = {
     </div>
   )],
 }
+
+// ActionError (severe#3): a failed per-row Update/Remove must show as a
+// banner ABOVE the list, not replace it - the rows stay visible.
+export const ActionError: Story = {
+  args: {
+    navOpen: false, onToggleNav: () => {}, initialPlugins: samplePlugins, initialUpdates: sampleUpdates,
+    initialActionError: 'Failed to remove dotagents (500)',
+  },
+}
+
+export const ActionErrorDark390: Story = {
+  ...ActionError,
+  globals: { theme: 'dark' },
+  decorators: [Story => (
+    <div className="w-[390px] h-[844px] overflow-hidden border border-gray-300 dark:border-gray-600">
+      <Story />
+    </div>
+  )],
+}

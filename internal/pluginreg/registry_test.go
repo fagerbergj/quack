@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPutOverwritesExisting(t *testing.T) {
@@ -204,5 +205,81 @@ func TestEntryJSONFieldNamesLiteral(t *testing.T) {
 	}
 	if _, ok := row["error"]; ok {
 		t.Fatalf("entry.json has error with no failure: %v", row["error"])
+	}
+}
+
+// TestPutPreservesShaOnUnfetchedReput is the adversarial-review severe#2
+// regression: re-Put of the SAME identity with no sha/fetched_at yet (REST's
+// create-then-fetch path, before Fetch runs) must not wipe an existing
+// row's installed sha/fetched_at - only Fetch may move those.
+func TestPutPreservesShaOnUnfetchedReput(t *testing.T) {
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if err := reg.Put(ctx, Plugin{
+		Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets",
+		Owner: "acme", Repo: "widgets", SHA: "aaaa", FetchedAt: &now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-Put with the fresh, unfetched row FromEntry would build (no sha).
+	if err := reg.Put(ctx, Plugin{
+		Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets",
+		Owner: "acme", Repo: "widgets",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := reg.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].SHA != "aaaa" || list[0].FetchedAt == nil {
+		t.Fatalf("List() = %+v, want sha aaaa and fetched_at preserved", list)
+	}
+}
+
+// TestPutErrorsWrapErrNameCollision: a genuine identity mismatch under an
+// already-registered name is errors.Is-detectable, not just string-matched.
+func TestPutErrorsWrapErrNameCollision(t *testing.T) {
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	ctx := context.Background()
+
+	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", Owner: "acme", Repo: "widgets"}); err != nil {
+		t.Fatal(err)
+	}
+	err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:other/widgets", Owner: "other", Repo: "widgets"})
+	if !errors.Is(err, ErrNameCollision) {
+		t.Fatalf("Put collision error = %v, want errors.Is(err, ErrNameCollision)", err)
+	}
+}
+
+// TestPutInvalidNameWrapsErrInvalidName: a path-unsafe name is
+// errors.Is-detectable as ErrInvalidName (REST maps it to 400).
+func TestPutInvalidNameWrapsErrInvalidName(t *testing.T) {
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	err := reg.Put(context.Background(), Plugin{Name: "..", Source: SourceLocal, Entry: ".."})
+	if !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("Put(..) error = %v, want errors.Is(err, ErrInvalidName)", err)
+	}
+	err = reg.Delete(context.Background(), "a/../../victim")
+	if !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("Delete(a/../../victim) error = %v, want errors.Is(err, ErrInvalidName)", err)
+	}
+}
+
+// TestSameIdentityEmptyBothIsFalse: two github rows that both fail to
+// resolve an owner/repo (empty fields, unparsable entry) are never "the
+// same" plugin merely because both are blank.
+func TestSameIdentityEmptyBothIsFalse(t *testing.T) {
+	a := Plugin{Source: SourceGitHub, Entry: "not-a-github-entry"}
+	b := Plugin{Source: SourceGitHub, Entry: "also-not-one"}
+	if SameIdentity(a, b) {
+		t.Fatalf("SameIdentity(%+v, %+v) = true, want false (both unresolvable)", a, b)
 	}
 }

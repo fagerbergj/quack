@@ -4,30 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
+// pluginUpdateBudget bounds one GET /plugins/updates or POST /plugins/update
+// call's total wall time, regardless of row count.
+const pluginUpdateBudget = 30 * time.Second
+
+// pluginConcurrency bounds how many rows' CheckUpdate/Fetch run in flight at
+// once - a fixed small number, not one goroutine per row.
+const pluginConcurrency = 4
+
 // pluginRegistry is the subset of *pluginreg.FSRegistry these handlers use -
 // narrow enough that a test's own FSRegistry (against a fixture root) needs
 // no mock.
 type pluginRegistry interface {
-	List(ctx context.Context) ([]pluginreg.Plugin, error)
-	Put(ctx context.Context, p pluginreg.Plugin) error
-	Delete(ctx context.Context, name string) error
+	pluginreg.Registry
 	Fetch(ctx context.Context, p pluginreg.Plugin) (pluginreg.Plugin, error)
 	CheckUpdate(ctx context.Context, p pluginreg.Plugin) (behind bool, remoteSHA string, err error)
 }
 
-// Plugins is the REST handler's boot-owned access to the dynamic plugin
-// registry (epic #1427 P2): the store, the registry root (Plugin.Root's wire
-// field), plugins.seed (row display order), and the hook that rebuilds
-// native agents' skill roster after a row-set or sha change.
+// Plugins is the REST handler's boot-owned registry access (epic #1427 P2).
 type Plugins struct {
 	reg           pluginRegistry
 	root          string
@@ -41,16 +47,22 @@ func NewPlugins(reg pluginRegistry, root string, seed []string, rebuildSkills fu
 	return &Plugins{reg: reg, root: root, seed: seed, rebuildSkills: rebuildSkills}
 }
 
-// rebuild re-resolves the native skill roster after a row/sha change. A
-// failure is logged, not returned - the REST call that triggered it already
-// succeeded and persisted; the roster catches up on the next successful call
-// or restart, same fail-open posture as every other boot-time skill resolve.
-func (p *Plugins) rebuild() {
+// rebuild re-resolves the native skill roster after a row/sha change -
+// checkPluginModules/checkPluginConfig run inside rebuildSkills itself, so a
+// bad plugin refuses the SAME way it would at boot (#1430 SF9).
+func (p *Plugins) rebuild() error {
 	if p == nil || p.rebuildSkills == nil {
-		return
+		return nil
 	}
-	if err := p.rebuildSkills(); err != nil {
-		slog.Warn("plugin roster rebuild failed; native agents may serve a stale skill list until restart",
+	return p.rebuildSkills()
+}
+
+// rebuildOrWarn is DeletePlugin's rebuild call: the delete already
+// committed, so a rebuild failure is logged, not surfaced - there is nothing
+// left to refuse.
+func (p *Plugins) rebuildOrWarn() {
+	if err := p.rebuild(); err != nil {
+		slog.Warn("plugin roster rebuild failed after delete; native agents may serve a stale skill list until restart",
 			"component", "rest", "err", err)
 	}
 }
@@ -100,6 +112,19 @@ func pluginWire(root string, p pluginreg.Plugin) schema.Plugin {
 	return w
 }
 
+// reservedPluginNames collide with a fixed REST path segment
+// (/plugins/update, /plugins/updates) or the embedded baseline.
+var reservedPluginNames = map[string]bool{
+	"update": true, "updates": true, pluginreg.EmbeddedQuackPluginName: true,
+}
+
+func reservedPluginNameError(name string) string {
+	if reservedPluginNames[name] {
+		return fmt.Sprintf("%q is a reserved plugin name", name)
+	}
+	return ""
+}
+
 // requirePlugins 500s with a clear message instead of a nil-pointer panic -
 // only reachable if a deployment's boot wiring ever omits SetPlugins.
 func (h *Handler) requirePlugins(w http.ResponseWriter) bool {
@@ -127,9 +152,9 @@ func (h *Handler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, schema.PluginList{Plugins: wire})
 }
 
-// CreatePlugin parses entry, stores the row, then fetches it synchronously.
-// A fetch failure still returns 201 with the row (error set) - the add
-// itself succeeded, the UI shows the fetch problem.
+// CreatePlugin parses entry (github: only - a local root stays config-only),
+// stores the row, then fetches it synchronously. A fetch failure still
+// returns 201 with the row (error set), not a failed add.
 func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
 		return
@@ -144,30 +169,62 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 		errMsg(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	row := pluginreg.FromEntry(entry)
-	if err := h.plugins.reg.Put(r.Context(), row); err != nil {
-		errMsg(w, http.StatusConflict, err.Error())
+	if entry.Source != pluginreg.SourceGitHub {
+		errMsg(w, http.StatusBadRequest, `entry must be "github:owner/repo[@ref][#path]"`)
 		return
 	}
+	if msg := reservedPluginNameError(entry.Name()); msg != "" {
+		errMsg(w, http.StatusBadRequest, msg)
+		return
+	}
+	row := pluginreg.FromEntry(entry)
+	if err := h.plugins.reg.Put(r.Context(), row); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, pluginreg.ErrNameCollision) {
+			status = http.StatusConflict
+		}
+		errMsg(w, status, err.Error())
+		return
+	}
+	// Put may have preserved an already-installed sha/fetched_at (a re-POST
+	// of the same entry, severe#2) - re-read so a failed Fetch below reports
+	// that preserved state, not the blank row this func built.
+	if rows, err := h.plugins.reg.List(r.Context()); err == nil {
+		if existing, ok := findPluginRow(rows, row.Name); ok {
+			row = existing
+		}
+	}
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error), not the response
-	h.plugins.rebuild()
+	if rerr := h.plugins.rebuild(); rerr != nil {
+		respondRebuildRefused(w, h.plugins, r.Context(), fetched, rerr)
+		return
+	}
 	writeJSON(w, http.StatusCreated, pluginWire(h.plugins.root, fetched))
 }
 
-// DeletePlugin removes a row and its clone. The embedded "quack" baseline
-// has no row and can never be deleted through this API.
+// respondRebuildRefused stores rerr on p's row (best-effort, fetch already
+// committed) and answers 422 - a bad plugin is refused like at boot (#1430).
+func respondRebuildRefused(w http.ResponseWriter, plugins *Plugins, ctx context.Context, p pluginreg.Plugin, rerr error) {
+	p.Error = rerr.Error()
+	_ = plugins.reg.Put(ctx, p)
+	errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+}
+
+// DeletePlugin removes a row and its clone. "quack" is reserved outright,
+// even against a github row that shadows it (unshadowing is out of scope).
 func (h *Handler) DeletePlugin(w http.ResponseWriter, r *http.Request, name schema.PluginName) {
 	if !h.requirePlugins(w) {
 		return
 	}
-	// "quack" is reserved outright, not just the embedded row's own name - a
-	// github plugin can shadow it by name (epic #1427), and unshadowing it
-	// through this route is out of scope for P2 (ponytail: revisit if that's needed).
-	if name == pluginreg.EmbeddedQuackPlugin().Name {
+	if name == pluginreg.EmbeddedQuackPluginName {
 		errMsg(w, http.StatusBadRequest, `"quack" is reserved for the built-in embedded plugin and cannot be removed`)
 		return
 	}
 	err := h.plugins.reg.Delete(r.Context(), name)
+	if errors.Is(err, pluginreg.ErrInvalidName) {
+		errMsg(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		errMsg(w, http.StatusNotFound, "not found")
 		return
@@ -176,12 +233,13 @@ func (h *Handler) DeletePlugin(w http.ResponseWriter, r *http.Request, name sche
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	h.plugins.rebuild()
+	h.plugins.rebuildOrWarn()
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ListPluginUpdates checks every github-sourced row against its tracked ref.
-// A per-row check failure lands in that row's error field only.
+// ListPluginUpdates checks every github-sourced row against its tracked ref,
+// bounded to pluginUpdateBudget total and pluginConcurrency in flight. A
+// per-row check failure lands in that row's error field only.
 func (h *Handler) ListPluginUpdates(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
 		return
@@ -191,31 +249,31 @@ func (h *Handler) ListPluginUpdates(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	updates := make([]schema.PluginUpdate, 0, len(rows))
-	for _, p := range rows {
-		if p.Source != pluginreg.SourceGitHub {
-			continue
-		}
+	ctx, cancel := context.WithTimeout(r.Context(), pluginUpdateBudget)
+	defer cancel()
+	updates := mapConcurrently(ctx, githubRows(rows), func(ctx context.Context, p pluginreg.Plugin) schema.PluginUpdate {
 		u := schema.PluginUpdate{Name: p.Name}
 		if p.SHA != "" {
 			u.InstalledSha = &p.SHA
 		}
-		behind, remoteSHA, err := h.plugins.reg.CheckUpdate(r.Context(), p)
+		behind, remoteSHA, err := h.plugins.reg.CheckUpdate(ctx, p)
 		if err != nil {
 			msg := err.Error()
 			u.Error = &msg
-		} else {
-			u.Behind = behind
-			if remoteSHA != "" {
-				u.RemoteSha = &remoteSHA
-			}
+			return u
 		}
-		updates = append(updates, u)
-	}
+		u.Behind = behind
+		if remoteSHA != "" {
+			u.RemoteSha = &remoteSHA
+		}
+		return u
+	})
 	writeJSON(w, http.StatusOK, schema.PluginUpdateList{Updates: updates})
 }
 
-// UpdatePlugin re-fetches one row against its tracked/pinned ref.
+// UpdatePlugin re-fetches one row against its tracked/pinned ref - a manual,
+// per-row click, so unlike UpdateAllPlugins it fetches regardless of
+// CheckUpdate's answer.
 func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name schema.PluginName) {
 	if !h.requirePlugins(w) {
 		return
@@ -231,11 +289,16 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 		return
 	}
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error)
-	h.plugins.rebuild()
+	if rerr := h.plugins.rebuild(); rerr != nil {
+		respondRebuildRefused(w, h.plugins, r.Context(), fetched, rerr)
+		return
+	}
 	writeJSON(w, http.StatusOK, pluginWire(h.plugins.root, fetched))
 }
 
-// UpdateAllPlugins re-fetches every github-sourced row.
+// UpdateAllPlugins fetches only the rows CheckUpdate reports behind (epic:
+// "(all behind)") - a row already current, or one whose check itself
+// failed, is reported but not fetched. Bounded like ListPluginUpdates.
 func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
 		return
@@ -245,15 +308,28 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	wire := make([]schema.Plugin, 0, len(rows))
-	for _, p := range rows {
-		if p.Source != pluginreg.SourceGitHub {
-			continue
+	ctx, cancel := context.WithTimeout(r.Context(), pluginUpdateBudget)
+	defer cancel()
+	results := mapConcurrently(ctx, githubRows(rows), func(ctx context.Context, p pluginreg.Plugin) pluginreg.Plugin {
+		behind, _, err := h.plugins.reg.CheckUpdate(ctx, p)
+		if err != nil {
+			p.Error = err.Error()
+			return p
 		}
-		fetched, _ := h.plugins.reg.Fetch(r.Context(), p) // fetch failure lands on the row (Error)
-		wire = append(wire, pluginWire(h.plugins.root, fetched))
+		if !behind {
+			return p
+		}
+		fetched, _ := h.plugins.reg.Fetch(ctx, p) // fetch failure lands on the row (Error)
+		return fetched
+	})
+	wire := make([]schema.Plugin, len(results))
+	for i, p := range results {
+		wire[i] = pluginWire(h.plugins.root, p)
 	}
-	h.plugins.rebuild()
+	if rerr := h.plugins.rebuild(); rerr != nil {
+		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, schema.PluginList{Plugins: wire})
 }
 
@@ -264,4 +340,33 @@ func findPluginRow(rows []pluginreg.Plugin, name string) (pluginreg.Plugin, bool
 		}
 	}
 	return pluginreg.Plugin{}, false
+}
+
+func githubRows(rows []pluginreg.Plugin) []pluginreg.Plugin {
+	out := make([]pluginreg.Plugin, 0, len(rows))
+	for _, p := range rows {
+		if p.Source == pluginreg.SourceGitHub {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// mapConcurrently runs fn over rows bounded to pluginConcurrency in flight,
+// preserving rows' order in the result regardless of completion order.
+func mapConcurrently[T any](ctx context.Context, rows []pluginreg.Plugin, fn func(context.Context, pluginreg.Plugin) T) []T {
+	out := make([]T, len(rows))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, pluginConcurrency)
+	for i, p := range rows {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, p pluginreg.Plugin) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			out[i] = fn(ctx, p)
+		}(i, p)
+	}
+	wg.Wait()
+	return out
 }

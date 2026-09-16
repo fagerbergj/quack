@@ -688,7 +688,7 @@ export type PluginList = {
 
 export type CreatePluginBody = {
     /**
-     * github:owner/repo[@ref][#path], or a local root path.
+     * github:owner/repo[@ref][#path] - REST manages github: entries only.
      */
     entry: string;
 };
@@ -1855,13 +1855,17 @@ export type CreatePluginData = {
 
 export type CreatePluginErrors = {
     /**
-     * entry does not match github:owner/repo[@ref][#path] (or is an invalid local root)
+     * entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, quack)
      */
     400: ErrorResponse;
     /**
      * name is already registered from a different entry
      */
     409: ErrorResponse;
+    /**
+     * fetched, but the plugin's own content is refused (e.g. declares an unlinked module) - the row is stored with the refusal in `error`
+     */
+    422: ErrorResponse;
 };
 
 export type CreatePluginError = CreatePluginErrors[keyof CreatePluginErrors];
@@ -1898,9 +1902,18 @@ export type UpdateAllPluginsData = {
     url: '/api/v1/plugins/update';
 };
 
+export type UpdateAllPluginsErrors = {
+    /**
+     * fetched, but the roster rebuild that followed was refused (e.g. a fetched plugin declares an unlinked module)
+     */
+    422: ErrorResponse;
+};
+
+export type UpdateAllPluginsError = UpdateAllPluginsErrors[keyof UpdateAllPluginsErrors];
+
 export type UpdateAllPluginsResponses = {
     /**
-     * The fetched rows
+     * Every github-sourced row's resulting state
      */
     200: PluginList;
 };
@@ -1918,7 +1931,7 @@ export type DeletePluginData = {
 
 export type DeletePluginErrors = {
     /**
-     * name is the reserved embedded "quack" plugin
+     * name is invalid, or is the reserved embedded "quack" plugin
      */
     400: ErrorResponse;
     /**
@@ -1952,6 +1965,10 @@ export type UpdatePluginErrors = {
      * No such plugin
      */
     404: ErrorResponse;
+    /**
+     * fetched, but the roster rebuild that followed was refused (e.g. the plugin declares an unlinked module)
+     */
+    422: ErrorResponse;
 };
 
 export type UpdatePluginError = UpdatePluginErrors[keyof UpdatePluginErrors];
