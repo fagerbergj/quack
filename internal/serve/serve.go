@@ -1200,9 +1200,10 @@ type judgeBoundModel struct {
 // judgeBinding caches every bound-in (provider, model) pair by that key, guarded
 // by mu since its closure is shared by every concurrent gated node's judge round.
 type judgeBinding struct {
-	mu      sync.Mutex
-	lastBad string
-	cache   map[string]judgeBoundModel
+	mu           sync.Mutex
+	lastBad      string
+	lastBadBuild string
+	cache        map[string]judgeBoundModel
 }
 
 // bindJudgeRefresher returns prepareJudge's per-round binder: system/judge's Config
@@ -1239,7 +1240,7 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 		// M3: (provider, model) identifies the swap; effort rides per-call thinking_level
 		// (judge.go), so it never needs a distinct model/HTTP pool of its own. Sound only
 		// because ResolveBinding's M4 check already forces provider to agree with model.
-		key := bound.Provider.Endpoint + "|" + bound.Model
+		key := bound.ProviderName + "|" + bound.Provider.Endpoint + "|" + bound.Model
 		b.mu.Lock()
 		cached, ok := b.cache[key]
 		b.mu.Unlock()
@@ -1248,8 +1249,16 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 		}
 		m, err := inference.NewModel(bound.Provider, bound.Model, artifacts, cfg.ModelCost(bound.Model))
 		if err != nil {
-			slog.Warn("judge prompt binding model build failed; using gates.judge's static binding",
-				"component", "artifacts", "artifact", art.Name, "err", err)
+			b.mu.Lock()
+			changed := err.Error() != b.lastBadBuild
+			if changed {
+				b.lastBadBuild = err.Error()
+			}
+			b.mu.Unlock()
+			if changed {
+				slog.Warn("judge prompt binding model build failed; using gates.judge's static binding",
+					"component", "artifacts", "artifact", art.Name, "err", err)
+			}
 			return staticFactory, staticModel, staticEffort
 		}
 		f := vetting.NewJudgeFactory(m, readTools, skillsets)
@@ -1480,6 +1489,7 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 	// NewModelWithEffort call whose error a plain `_` would drop (a nil Set would panic).
 	static := overridable.Get()
 	var lastBad string
+	var lastBadBuild string
 	var cachedKey string
 	var cachedModel model.LLM
 	return func(ctx context.Context) artifactsrc.Artifact {
@@ -1501,18 +1511,22 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 		}
 		// M3: this node's rounds run sequentially (this closure is never shared across
 		// nodes), so a plain cache is enough - rebuild only when the tuple changes.
-		key := bound.Provider.Endpoint + "|" + bound.Model + "|" + bound.Effort
+		key := bound.ProviderName + "|" + bound.Provider.Endpoint + "|" + bound.Model + "|" + bound.Effort
 		if key == cachedKey && cachedModel != nil {
 			overridable.Set(cachedModel)
 			return art
 		}
 		m, err := inference.NewModelWithEffort(bound.Provider, bound.Model, b.artifacts, b.cfg.ModelCost(bound.Model), bound.Effort)
 		if err != nil {
-			slog.Warn("prompt binding model build failed; using the static binding",
-				"component", "artifacts", "artifact", art.Name, "err", err)
+			if err.Error() != lastBadBuild {
+				lastBadBuild = err.Error()
+				slog.Warn("prompt binding model build failed; using the static binding",
+					"component", "artifacts", "artifact", art.Name, "err", err)
+			}
 			overridable.Set(static)
 			return art
 		}
+		lastBadBuild = ""
 		cachedKey, cachedModel = key, m
 		overridable.Set(m)
 		return art

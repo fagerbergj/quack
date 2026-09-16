@@ -61,6 +61,48 @@ func TestBindJudgeRefresher(t *testing.T) {
 	}
 }
 
+// TestBindJudgeRefresherCacheKeyIncludesProviderName is M-suggestion's regression
+// test: two providers sharing an Endpoint but registered under different names
+// (two accounts on one host) must resolve to distinct cached models, keyed by
+// provider name too - not just Endpoint+Model, which would let account B
+// silently reuse account A's built model/credentials.
+func TestBindJudgeRefresherCacheKeyIncludesProviderName(t *testing.T) {
+	sharedEndpoint := "http://shared-host"
+	cfg := &config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"judge-prov": {Kind: "replay", Endpoint: sharedEndpoint, Bundle: writeCurrentDateReplayFixture(t)},
+			"acct-a":     {Kind: "replay", Endpoint: sharedEndpoint, Bundle: writeCurrentDateReplayFixture(t)},
+			"acct-b":     {Kind: "replay", Endpoint: sharedEndpoint, Bundle: writeCurrentDateReplayFixture(t)},
+		},
+		Models: map[string]config.ModelConfig{
+			"judge-model": {Provider: "judge-prov"},
+			"model-a":     {Provider: "acct-a"},
+			"model-b":     {Provider: "acct-b"},
+		},
+		Gates: config.GatesConfig{
+			Judge: config.JudgeConfig{Provider: "judge-prov", Model: "judge-model", MaxRounds: 1, ThinkingLevel: "low"},
+		},
+	}
+	jprov := cfg.Providers["judge-prov"]
+	static, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
+	if err != nil {
+		t.Fatalf("static judge model: %v", err)
+	}
+	staticFactory := vetting.NewJudgeFactory(static, nil, nil)
+	refresh := bindJudgeRefresher(cfg, jprov, artifact.InMemoryService(), static, staticFactory, nil, nil)
+
+	_, modelA, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-a"}})
+	_, modelB, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-b"}})
+	if modelA == modelB {
+		t.Fatalf("model-a and model-b (different providers, same endpoint) resolved to the same cached model")
+	}
+	// Re-requesting model-a must hit the cache and return the exact same instance.
+	_, modelAAgain, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-a"}})
+	if modelAAgain != modelA {
+		t.Fatalf("model-a was rebuilt instead of served from cache")
+	}
+}
+
 // TestBindJudgeRefresherConcurrentNoCrossTalk is H1's required regression test:
 // two goroutines resolving two DIFFERENT bindings, 500 rounds each, must each
 // only ever see their own model - never a shared mutable swapped mid-flight.
