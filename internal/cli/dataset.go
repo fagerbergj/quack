@@ -60,44 +60,43 @@ type datasetItemMetadata struct {
 	QuackVersion    string `json:"quack_version,omitempty"`
 }
 
-// RunDatasetExport reads gated code-reviewer/synthesizer node runs out of the ledger and
-// upserts one Langfuse dataset item per run, keyed deterministically on (chat, node) so a
-// re-export updates in place instead of duplicating (issue #1424).
-func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Store, lf *langfusegen.ClientWithResponses, opts ExportOpts) ([]ExportItem, error) {
-	chats, err := exportChats(ctx, st, opts)
+// RunDatasetExport reads gated code-reviewer/synthesizer node runs out of the ledger and upserts
+// one Langfuse dataset item per run, keyed on (chat, node) so a re-export updates in place (#1424);
+// excludedBySince is true only when --chat plus --since excluded the named chat entirely.
+func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Store, lf *langfusegen.ClientWithResponses, opts ExportOpts) (items []ExportItem, excludedBySince bool, err error) {
+	chats, excludedBySince, err := exportChats(ctx, st, opts)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	var items []ExportItem
 	ensured := false
 	for _, chat := range chats {
-		sess, err := replay.FromStore(ctx, ls, chat.ID)
-		if err != nil {
-			if errors.Is(err, ledger.ErrNoRecording) {
+		sess, sessErr := replay.FromStore(ctx, ls, chat.ID)
+		if sessErr != nil {
+			if errors.Is(sessErr, ledger.ErrNoRecording) {
 				continue
 			}
-			return items, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
+			return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, sessErr)
 		}
 		runs := sess.NodeRuns(datasetAgents)
 		for _, key := range sortedStreamKeys(runs) {
 			if opts.Limit > 0 && len(items) >= opts.Limit {
-				return items, nil
+				return items, excludedBySince, nil
 			}
 			if !ensured {
 				if err := ensureDataset(ctx, lf, opts.Dataset); err != nil {
-					return items, err
+					return items, excludedBySince, err
 				}
 				ensured = true
 			}
 			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, runs[key])
 			if err != nil {
-				return items, err
+				return items, excludedBySince, err
 			}
 			items = append(items, item)
 		}
 	}
-	return items, nil
+	return items, excludedBySince, nil
 }
 
 // sortedStreamKeys orders NodeRuns' keys by answer recency (run.At, newest
@@ -119,7 +118,7 @@ func sortedStreamKeys(runs map[replay.StreamKey]replay.NodeRun) []replay.StreamK
 
 // exportChats resolves opts to the chats to scan: one (--chat) or every chat in --repo
 // updated at or after --since, paged through Store.ListChats until the page turns too old.
-func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) ([]store.Chat, error) {
+func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) (chats []store.Chat, excludedBySince bool, err error) {
 	if opts.ChatID != "" {
 		return exportSingleChat(ctx, st, opts)
 	}
@@ -128,7 +127,7 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) ([]store
 	for {
 		page, next, err := st.ListChats(ctx, store.ChatsPageMaxLimit, token, store.ChatsScope{Active: true, Archived: true})
 		if err != nil {
-			return nil, fmt.Errorf("dataset export: list chats: %w", err)
+			return nil, false, fmt.Errorf("dataset export: list chats: %w", err)
 		}
 		for _, c := range page {
 			if opts.Repo != "" && chatRepo(c) != opts.Repo {
@@ -140,30 +139,31 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) ([]store
 			out = append(out, c)
 		}
 		if next == "" || len(page) == 0 {
-			return out, nil
+			return out, false, nil
 		}
 		// ListChats is updated_at-desc; once a whole page is older than --since, nothing further qualifies.
 		if !opts.Since.IsZero() && page[len(page)-1].UpdatedAt.Before(opts.Since) {
-			return out, nil
+			return out, false, nil
 		}
 		token = next
 	}
 }
 
 // exportSingleChat resolves --chat, excluding it entirely if --since is set
-// and it's older (same semantics as --repo's per-chat filter).
-func exportSingleChat(ctx context.Context, st *store.Store, opts ExportOpts) ([]store.Chat, error) {
+// and it's older (same semantics as --repo's per-chat filter); excludedBySince
+// reports that exclusion so the caller can tell it apart from zero qualifying runs.
+func exportSingleChat(ctx context.Context, st *store.Store, opts ExportOpts) (chats []store.Chat, excludedBySince bool, err error) {
 	c, err := st.GetChat(ctx, opts.ChatID)
 	if err != nil {
-		return nil, fmt.Errorf("dataset export: get chat %q: %w", opts.ChatID, err)
+		return nil, false, fmt.Errorf("dataset export: get chat %q: %w", opts.ChatID, err)
 	}
 	if c == nil {
-		return nil, fmt.Errorf("dataset export: chat %q not found", opts.ChatID)
+		return nil, false, fmt.Errorf("dataset export: chat %q not found", opts.ChatID)
 	}
 	if !opts.Since.IsZero() && c.UpdatedAt.Before(opts.Since) {
-		return nil, nil
+		return nil, true, nil
 	}
-	return []store.Chat{*c}, nil
+	return []store.Chat{*c}, false, nil
 }
 
 // exportItemID derives a stable, ≤255-char Langfuse dataset item id from
@@ -200,11 +200,11 @@ func chatRepo(c store.Chat) string {
 }
 
 func chatMerged(c store.Chat) bool {
-	if o, ok := chatOriginDecoded(c); ok {
+	if o, ok := chatOriginDecoded(c); ok && o.State != "" {
 		return o.State == extsdk.SubjectMerged
 	}
-	// Legacy fallback for pre-State rows: no Origin was ever stamped, so
-	// GithubState is all that's known.
+	// Legacy fallback for pre-State rows (Origin absent, or stamped before
+	// State existed): no State is known, so GithubState is all that's known.
 	return c.GithubState == "merged"
 }
 
