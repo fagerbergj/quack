@@ -626,6 +626,35 @@ func TestNodeRuns_ACPOnlyStream(t *testing.T) {
 	}
 }
 
+// TestNodeRuns_ACPAnswerResetsOnToolCall: the delivered answer only ever
+// contains text after the last tool call (translate.go resets t.answer on
+// each u.ToolCall) - NodeRuns must mirror that, not concatenate the whole
+// round (PR #1444 round-2 blocking finding).
+func TestNodeRuns_ACPAnswerResetsOnToolCall(t *testing.T) {
+	sent := []string{`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"review this diff"}]}}`}
+	received := []string{
+		`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Let me look at the files first."}}}}`,
+		`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"t1"}}}`,
+		`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Final review: looks good."}}}}`,
+	}
+	path := writeJSONL(t, []entry{
+		invokeAgent(t0(), "node-a", "code-reviewer", "worker-r0", sent, received),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	runs := sess.NodeRuns(map[string]bool{"code-reviewer": true})
+	if len(runs) != 1 {
+		t.Fatalf("NodeRuns len = %d, want 1", len(runs))
+	}
+	for _, run := range runs {
+		if run.Answer != "Final review: looks good." {
+			t.Errorf("Answer = %q, want only the text after the last tool call", run.Answer)
+		}
+	}
+}
+
 // TestNodeRuns_DraftPlusRevise: draft and revise are separate rounds/streams
 // of the same node - NodeRuns must collapse them into one run, task from the
 // draft, answer from the later (by At) revise (PR #1444 blocking finding 2).

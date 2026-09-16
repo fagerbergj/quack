@@ -436,8 +436,14 @@ func acpTaskAndAnswer(ae invokeAgentEntry) (task, answer string) {
 		if json.Unmarshal(f.Params, &params) != nil {
 			continue
 		}
-		if params.Update.SessionUpdate == "agent_message_chunk" && params.Update.Content.Type == "text" {
-			b = append(b, []byte(params.Update.Content.Text)...)
+		switch params.Update.SessionUpdate {
+		case "tool_call":
+			// Delivered answer is text after the last tool call only (mirrors translate.go's answer.Reset()).
+			b = nil
+		case "agent_message_chunk":
+			if params.Update.Content.Type == "text" {
+				b = append(b, []byte(params.Update.Content.Text)...)
+			}
 		}
 	}
 	answer = string(b)
