@@ -1,0 +1,19 @@
+# Langfuse OpenAPI spec (../openapi.yml) fetched from
+# http://jason-server:3008/generated/api/openapi.yml on 2026-09-16, Langfuse version 4.36.0.
+#
+# oapi-codegen config: client-only code for the dataset/score endpoints the
+# hand-written prompt client (../client.go) doesn't cover - kept in a
+# sub-package to avoid colliding with client.go's own Client/Prompt types.
+package: langfusegen
+output: langfusegen/openapi.gen.go
+generate:
+  client: true
+  models: true
+output-options:
+  include-tags:
+    - Prompts
+    - Datasets
+    - DatasetItems
+    - DatasetRunItems
+    - Scores
+    - ScoreConfigs
