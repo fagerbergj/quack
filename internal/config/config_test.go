@@ -2624,3 +2624,65 @@ orchestrator: { provider: default, model: m }
 		})
 	}
 }
+
+func TestResolveBinding(t *testing.T) {
+	cfg := &Config{
+		Providers: map[string]ProviderConfig{
+			"default": {Kind: "openai", Endpoint: "http://x"},
+			"other":   {Kind: "openai", Endpoint: "http://y"},
+		},
+		Models: map[string]ModelConfig{
+			"m1": {Provider: "default", Effort: "low"},
+			"m2": {Provider: "other", Effort: "high"},
+		},
+	}
+	base := cfg.Providers["default"]
+
+	t.Run("no override", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", nil)
+		if err != nil || b != nil {
+			t.Fatalf("b=%+v err=%v, want nil, nil", b, err)
+		}
+	})
+
+	t.Run("model override applied", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", map[string]any{"model": "m2"})
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if b.Model != "m2" || b.Provider.Endpoint != "http://y" || b.Effort != "high" {
+			t.Fatalf("got %+v", b)
+		}
+	})
+
+	t.Run("effort override applied", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", map[string]any{"effort": "medium"})
+		if err != nil || b.Effort != "medium" || b.Model != "m1" {
+			t.Fatalf("b=%+v err=%v", b, err)
+		}
+	})
+
+	t.Run("invalid model falls back with an error", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", map[string]any{"model": "ghost"})
+		if err == nil || b != nil {
+			t.Fatalf("b=%+v err=%v, want an error and nil binding", b, err)
+		}
+		if !strings.Contains(err.Error(), `"ghost" is not defined under models`) {
+			t.Errorf("err = %v", err)
+		}
+	})
+
+	t.Run("invalid effort falls back with an error", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"effort": "extreme"})
+		if err == nil || !strings.Contains(err.Error(), "must be low, medium or high") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("invalid provider falls back with an error", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"provider": "ghost"})
+		if err == nil || !strings.Contains(err.Error(), `"ghost" is not defined under providers`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}

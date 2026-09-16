@@ -1719,3 +1719,51 @@ func (c *Config) Provider(name string) (ProviderConfig, bool) {
 	p, ok := c.Providers[name]
 	return p, ok
 }
+
+// PromptBinding is the model/provider/effort a resolved prompt artifact binds
+// its round's worker or judge model to (#1421 P2).
+type PromptBinding struct {
+	Provider ProviderConfig
+	Model    string
+	Effort   string
+}
+
+// ResolveBinding computes override's binding against baseProv/baseModel. override is a
+// resolved artifact's Config; nil, or one with none of "model"/"provider"/"effort" set,
+// means no override (nil, nil). An invalid model/provider/effort is an error naming which.
+func (c *Config) ResolveBinding(baseProv ProviderConfig, baseModel string, override map[string]any) (*PromptBinding, error) {
+	modelName, _ := override["model"].(string)
+	providerName, _ := override["provider"].(string)
+	effort, _ := override["effort"].(string)
+	if modelName == "" && providerName == "" && effort == "" {
+		return nil, nil
+	}
+	if effort != "" && effort != "low" && effort != "medium" && effort != "high" {
+		return nil, fmt.Errorf("prompt binding: effort %q must be low, medium or high", effort)
+	}
+	prov := baseProv
+	m := baseModel
+	if modelName != "" {
+		mc, ok := c.Models[modelName]
+		if !ok {
+			return nil, fmt.Errorf("prompt binding: model %q is not defined under models", modelName)
+		}
+		m = modelName
+		// A bound model carries its own provider (like agents: model resolution) unless
+		// the artifact also names one explicitly, checked next.
+		if p, ok := c.Provider(mc.Provider); ok {
+			prov = p
+		}
+	}
+	if providerName != "" {
+		p, ok := c.Provider(providerName)
+		if !ok {
+			return nil, fmt.Errorf("prompt binding: provider %q is not defined under providers", providerName)
+		}
+		prov = p
+	}
+	if effort == "" {
+		effort = c.ModelEffort(m)
+	}
+	return &PromptBinding{Provider: prov, Model: m, Effort: effort}, nil
+}

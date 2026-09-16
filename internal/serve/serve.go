@@ -784,19 +784,24 @@ func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.So
 }
 
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	promptSrc, err := replayPromptSource(ctx, cfg)
-	if err != nil {
+	// A live store Source (P2, #1421); during a replay the pinned Source (P3,
+	// #1422) takes its place so recorded versions win over the store's latest.
+	promptSrc, promptSrcName := buildPromptSource(cfg)
+	if replaySrc, err := replayPromptSource(ctx, cfg); err != nil {
 		return nil, nil, "", err
+	} else if replaySrc != nil {
+		promptSrc, promptSrcName = replaySrc, cfg.Prompts.Store
 	}
-	// P2 (#1421) supplies a store Source for a live run; P3 (#1422) pins one
-	// during replay (promptSrc above, nil for a normal boot).
-	b := &boot{cfg: cfg, res: artifactsrc.New(cfg.Prompts.Store, promptSrc, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
+	b := &boot{cfg: cfg, res: artifactsrc.New(promptSrcName, promptSrc, cfg.Prompts.CacheTTLDuration()), hooks: hooks}
 	defer func() {
 		if err != nil {
 			b.runCleanups()
 			handler = nil
 		}
 	}()
+	if promptSrc != nil {
+		seedPromptArtifacts(ctx, promptSrc)
+	}
 
 	// Pinned ACP processes (#1006) close on node-finish and again on shutdown (vetting can
 	// not import acp, hence the hook), so they never outlive their node or the server.
@@ -866,6 +871,38 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", err
 	}
 	return handler, b.runCleanups, addr, nil
+}
+
+// buildPromptSource builds the prompts: store's Source and its stores: name; (nil, "")
+// when prompts: names no store, so New falls back to the static-only Resolver.
+func buildPromptSource(cfg *config.Config) (artifactsrc.Source, string) {
+	if cfg.Prompts.Store == "" {
+		return nil, ""
+	}
+	// validatePrompts already checked the store exists, is kind langfuse, and has both keys.
+	sc, _ := cfg.Store(cfg.Prompts.Store)
+	client := langfuse.New(sc.URL, sc.PublicKey, sc.SecretKey, langfuse.WithPinLabel(cfg.Prompts.Label()))
+	return &langfuse.Source{Client: client, StoreKey: cfg.Prompts.Store}, cfg.Prompts.Store
+}
+
+// seedPromptArtifacts pushes every shipped artifact's current version to src in the
+// background: seeding must never delay readiness, and a failed name just stays on
+// whatever version the store already has (the resolver falls back to static anyway).
+func seedPromptArtifacts(ctx context.Context, src artifactsrc.Source) {
+	go func() {
+		for _, name := range artifactsrc.Names() {
+			if ctx.Err() != nil {
+				return
+			}
+			static, err := artifactsrc.Static(name)
+			if err != nil {
+				continue // scan() already logged a missing shipped artifact
+			}
+			if err := src.Seed(ctx, name, static); err != nil {
+				slog.Warn("prompt seed failed", "component", "artifacts", "artifact", name, "err", err)
+			}
+		}
+	}()
 }
 
 // setupLoggingTo installs the process-wide slog handler from QUACK_LOG_LEVEL / QUACK_LOG_FORMAT.
@@ -1258,10 +1295,14 @@ type nativeNodeBuilder struct {
 }
 
 func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
-	wm, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
+	base, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("model: %w", err)
 	}
+	// A prompt store can bind a different model/provider/effort per round (#1421 P2):
+	// wrapping in Overridable lets the round-start refresh swap targets without
+	// rebuilding the ADK agent, which holds this LLM for its whole lifetime.
+	wm := inference.NewOverridable(base)
 	var builtins []tool.Tool
 	if len(b.toolNames) > 0 {
 		if builtins, err = tools.Build(b.toolNames, tools.Deps{
@@ -1344,7 +1385,44 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 	// The deterministic worker session created by this node's first dispatch outlives it
 	// - reaped only at chat archive/delete (ReapNodeSessions), so a later reuse finds it.
 	release := b.nodeServers.track(srv)
-	return client, wm, builtins, setRoundCoords, prompts.Refresh, release, nil
+	refresh := b.bindPromptRefresher(prompts, wm.(*inference.OverridableModel))
+	return client, wm, builtins, setRoundCoords, refresh, release, nil
+}
+
+// bindPromptRefresher wraps prompts.Refresh: after a round's prompt re-resolves, a
+// Config of model/effort/provider on it overrides worker's static binding for that
+// round by swapping what overridable delegates to. Invalid values fall back to the
+// static binding and log once (until the bad value itself changes).
+func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, overridable *inference.OverridableModel) promptRefresher {
+	static, _ := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
+	var lastBad string
+	return func(ctx context.Context) artifactsrc.Artifact {
+		art := prompts.Refresh(ctx)
+		bound, err := b.cfg.ResolveBinding(b.prov, b.ac.Model, art.Config)
+		if err != nil {
+			if err.Error() != lastBad {
+				lastBad = err.Error()
+				slog.Warn("prompt binding invalid; using the static binding",
+					"component", "artifacts", "artifact", art.Name, "err", err)
+			}
+			overridable.Set(static)
+			return art
+		}
+		lastBad = ""
+		if bound == nil {
+			overridable.Set(static)
+			return art
+		}
+		m, err := inference.NewModelWithEffort(bound.Provider, bound.Model, b.artifacts, b.cfg.ModelCost(bound.Model), bound.Effort)
+		if err != nil {
+			slog.Warn("prompt binding model build failed; using the static binding",
+				"component", "artifacts", "artifact", art.Name, "err", err)
+			overridable.Set(static)
+			return art
+		}
+		overridable.Set(m)
+		return art
+	}
 }
 
 // loadNativeReplay restores the shared replay session from the configured
