@@ -42,7 +42,16 @@ func TestSourceGetAuthError(t *testing.T) {
 	}
 }
 
-func TestSourceSeedActions(t *testing.T) {
+func TestSourceGetOtherError(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadRequest) })
+	src := &Source{Client: c, StoreKey: "langfuse"}
+	_, ok, err := src.Get(context.Background(), "system/foo")
+	if ok || err == nil || strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("ok=%v err=%v, want a plain (non-auth) error", ok, err)
+	}
+}
+
+func TestSourceSeedCreated(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.WriteHeader(http.StatusNotFound)
@@ -53,5 +62,21 @@ func TestSourceSeedActions(t *testing.T) {
 	src := &Source{Client: c, StoreKey: "langfuse"}
 	if err := src.Seed(context.Background(), "system/foo", artifactsrc.Artifact{Body: "body", VersionID: "hash1"}); err != nil {
 		t.Fatalf("seed: %v", err)
+	}
+}
+
+func TestSourceSeedOperatorEdited(t *testing.T) {
+	c := testClient(t, rawPrompt(`{"name":"system/foo","version":2,"type":"text","prompt":"edited","commitMessage":"a person edited this"}`))
+	src := &Source{Client: c, StoreKey: "langfuse"}
+	if err := src.Seed(context.Background(), "system/foo", artifactsrc.Artifact{Body: "body", VersionID: "hash1"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+}
+
+func TestSourceSeedError(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
+	src := &Source{Client: c, StoreKey: "langfuse"}
+	if err := src.Seed(context.Background(), "system/foo", artifactsrc.Artifact{Body: "body", VersionID: "hash1"}); err == nil {
+		t.Fatal("expected an error from a failing Seed")
 	}
 }

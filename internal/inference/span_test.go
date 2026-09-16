@@ -135,6 +135,47 @@ func TestSetRequestSpanAttrs_ConversationID(t *testing.T) {
 	}
 }
 
+// TestSetRequestSpanAttrs_LangfusePromptLink proves a round resolved from a
+// langfuse prompt store stamps the pair Langfuse links a generation by.
+func TestSetRequestSpanAttrs_LangfusePromptLink(t *testing.T) {
+	withContentCapture(t, false)
+	exp := withTestTracer(t)
+
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{
+		ChatID: "chat-123", Agent: "reviewer", PromptSource: "langfuse", PromptVersionID: "7",
+	})
+	ctx, span := otel.Tracer("test").Start(ctx, "generate_content test-model")
+	setRequestSpanAttrs(ctx, &model.LLMRequest{})
+	span.End()
+
+	attrs := spanAttrsOf(exp.GetSpans()[0])
+	if got := attrs["langfuse.prompt.name"]; got != "reviewer" {
+		t.Errorf("langfuse.prompt.name = %q, want reviewer", got)
+	}
+	if got := attrs["langfuse.prompt.version"]; got != "7" {
+		t.Errorf("langfuse.prompt.version = %q, want 7", got)
+	}
+}
+
+// TestSetRequestSpanAttrs_NonLangfuseSourceSkipsPromptLink proves a static
+// (or other) prompt source never gets the langfuse.prompt.* pair.
+func TestSetRequestSpanAttrs_NonLangfuseSourceSkipsPromptLink(t *testing.T) {
+	withContentCapture(t, false)
+	exp := withTestTracer(t)
+
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{
+		ChatID: "chat-123", Agent: "reviewer", PromptSource: "static", PromptVersionID: "abc",
+	})
+	ctx, span := otel.Tracer("test").Start(ctx, "generate_content test-model")
+	setRequestSpanAttrs(ctx, &model.LLMRequest{})
+	span.End()
+
+	attrs := spanAttrsOf(exp.GetSpans()[0])
+	if _, ok := attrs["langfuse.prompt.name"]; ok {
+		t.Error("langfuse.prompt.name present for a static-sourced prompt, want absent")
+	}
+}
+
 // TestSpanAttrs_ContentCaptureOffByDefault proves the new invariant: with
 // captureContent unset (the deploy default), no message content reaches span
 // attributes even though the span is recording.
