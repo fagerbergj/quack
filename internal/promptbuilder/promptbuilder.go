@@ -122,10 +122,9 @@ func today() string {
 	return time.Now().Format("2006-01-02")
 }
 
-// CacheByDay memoizes build's result, rebuilding when today() moves on or when
-// version reports a different set of resolved artifact versions - an agent's
-// InstructionProvider runs once per model request, so version must be cheap
-// (the artifact resolver's TTL cache is what makes it so). nil version = date only.
+// CacheByDay memoizes build's result, rebuilding when today() moves on or when version reports a
+// different set of resolved artifact versions. version runs on every call (once per model request),
+// so it must be cheap - the artifact resolver's TTL cache is what makes it so; nil = date only.
 func CacheByDay(version, build func(context.Context) string) func(context.Context) string {
 	var mu sync.Mutex
 	var key, cached string

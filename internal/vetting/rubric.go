@@ -34,11 +34,9 @@ func readWithFallback(ctx context.Context, res *artifactsrc.Resolver, path, defa
 	return []byte(art.Body), nil
 }
 
-// FromConfig resolves the gates config into a gate Config, loading the
-// constitution (optional global principles) and rubric (scoring guide) from
-// their inline values or artifacts. Called at the start of every run rather than
-// once at boot, so an edited rubric reaches the next node without a restart.
-// Validation of the config itself happens in config.validate; this just materialises the text.
+// FromConfig resolves the gates config into a gate Config, loading the constitution (optional global
+// principles) and rubric (scoring guide) from their inline values or artifacts. Called at the start of
+// every run rather than once at boot, so an edited rubric reaches the next node without a restart.
 func FromConfig(ctx context.Context, res *artifactsrc.Resolver, c config.GatesConfig) (Config, error) {
 	constitution, err := loadConstitution(ctx, res, c)
 	if err != nil {

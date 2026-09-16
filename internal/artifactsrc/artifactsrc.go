@@ -165,10 +165,9 @@ func BundleName(kind, dir string) string {
 	return name
 }
 
-// ReadBundleFile reads file from the agent bundle at dir through the resolver
-// when the bundle is a shipped agents/<x> (kind is "system", "rubric" or
-// "memory"), and straight off disk-then-embedded otherwise - a bundle outside
-// agents/, or one missing that file, has no artifact name to resolve.
+// ReadBundleFile reads file from the agent bundle at dir through the resolver when the bundle is
+// a shipped agents/<x> (kind is "system", "rubric" or "memory"), and straight off disk-then-embedded
+// otherwise - a bundle outside agents/, or one missing that file, has no artifact name to resolve.
 func ReadBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) ([]byte, error) {
 	if name := BundleName(kind, dir); name != "" {
 		art, err := res.Resolve(ctx, name)
@@ -180,10 +179,9 @@ func ReadBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) 
 	return bundledir.ReadFile(bundledir.PathJoin(dir, file))
 }
 
-// scan derives the name registry from the shipped tree: each agents/<x>/ gives
-// system/<x> plus rubric/<x> and memory/<x> when present, config/rubric.md and
-// config/constitution.md give rubric/global and rubric/constitution, and each
-// config/prompts/<n>.md gives system/<n>.
+// scan derives the name registry from the shipped tree: each agents/<x>/ gives system/<x> plus
+// rubric/<x> and memory/<x> when present, config/rubric.md and config/constitution.md give
+// rubric/global and rubric/constitution, and each config/prompts/<n>.md gives system/<n>.
 func scan() map[string]string {
 	reg := map[string]string{}
 	add := func(name, p string) {
