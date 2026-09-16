@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/fagerbergj/quack/internal/config"
 )
 
 func TestRunExperimentRun_MissingConfigDegrades(t *testing.T) {
@@ -17,6 +21,16 @@ func TestRunExperimentRun_MissingConfigDegrades(t *testing.T) {
 func TestNowStamp_Format(t *testing.T) {
 	if got := nowStamp(); len(got) != len("20060102-150405") {
 		t.Fatalf("nowStamp() = %q, want the fixed-width 20060102-150405 layout", got)
+	}
+}
+
+// TestPinnedPromptSource_NameMustMatchAgent pins suggestion 8: a pin whose
+// artifact name doesn't match "system/"+agent must fail loudly rather than
+// silently resolving --agent's own unpinned prompt from the store.
+func TestPinnedPromptSource_NameMustMatchAgent(t *testing.T) {
+	_, err := pinnedPromptSource(context.Background(), &config.Config{}, "code-reviewer", "system/synthesizer@5")
+	if err == nil || !strings.Contains(err.Error(), "system/code-reviewer") {
+		t.Fatalf("err = %v, want a mismatch error naming system/code-reviewer", err)
 	}
 }
 

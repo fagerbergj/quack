@@ -59,6 +59,9 @@ func RunExperiment(ctx context.Context, errOut io.Writer, runner itemRunner, lf 
 	for _, item := range items {
 		res, err := runExperimentItem(ctx, runner, lf, item, opts)
 		if err != nil {
+			// Print what already completed - a hard error here otherwise drops
+			// it from the summary table/--as-json even though it ran.
+			fmt.Fprint(errOut, FormatExperimentSummary(results))
 			return results, err
 		}
 		results = append(results, res)

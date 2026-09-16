@@ -74,7 +74,7 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	}
 
 	ctx := cmd.Context()
-	pinSrc, err := pinnedPromptSource(ctx, cfg, prompt)
+	pinSrc, err := pinnedPromptSource(ctx, cfg, agent, prompt)
 	if err != nil {
 		return err
 	}
@@ -85,18 +85,23 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	defer func() { _ = stop() }()
 
 	runner := cli.NewLiveItemRunner(base, st, agent)
-	results, err := cli.RunExperiment(ctx, cmd.ErrOrStderr(), runner, lf, cli.ExperimentOpts{
+	results, runErr := cli.RunExperiment(ctx, cmd.ErrOrStderr(), runner, lf, cli.ExperimentOpts{
 		Dataset: dataset, Agent: agent, Prompt: prompt, RunName: runName, Limit: limit,
 	})
-	if err != nil {
-		return err
-	}
+	// Report whatever completed even on a hard mid-run error (runErr != nil):
+	// RunExperiment already printed the partial text summary to stderr, so
+	// --as-json's structured output isn't left as the only form that drops it.
 	if asJSON {
 		if err := cli.WriteJSON(cmd.OutOrStdout(), results); err != nil {
 			return err
 		}
-	} else if _, err := fmt.Fprint(cmd.OutOrStdout(), cli.FormatExperimentSummary(results)); err != nil {
-		return err
+	} else if runErr == nil {
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), cli.FormatExperimentSummary(results)); err != nil {
+			return err
+		}
+	}
+	if runErr != nil {
+		return runErr
 	}
 	if n := errorCount(results); n > 0 {
 		return fmt.Errorf("experiment run: %d item(s) errored", n)
@@ -117,13 +122,16 @@ func errorCount(results []cli.ExperimentResult) int {
 // pinnedPromptSource turns --prompt into a Source resolved eagerly, so a bad
 // name/version fails the command instead of falling back to the static prompt.
 // nil when no pin was asked for.
-func pinnedPromptSource(ctx context.Context, cfg *config.Config, prompt string) (artifactsrc.Source, error) {
+func pinnedPromptSource(ctx context.Context, cfg *config.Config, agent, prompt string) (artifactsrc.Source, error) {
 	if prompt == "" {
 		return nil, nil
 	}
 	name, version, err := langfuse.ParsePin(prompt)
 	if err != nil {
 		return nil, err
+	}
+	if want := "system/" + agent; name != want {
+		return nil, fmt.Errorf("--prompt %s: name must be %s to match --agent %s", prompt, want, agent)
 	}
 	sc, ok := cfg.Store(cfg.Prompts.Store)
 	if !ok || sc.Kind != "langfuse" {
