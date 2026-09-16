@@ -799,9 +799,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			handler = nil
 		}
 	}()
-	if promptSrc != nil {
-		seedPromptArtifacts(ctx, promptSrc)
-	}
+	seedPromptArtifacts(ctx, promptSrc)
 
 	// Pinned ACP processes (#1006) close on node-finish and again on shutdown (vetting can
 	// not import acp, hence the hook), so they never outlive their node or the server.
@@ -889,6 +887,9 @@ func buildPromptSource(cfg *config.Config) (artifactsrc.Source, string) {
 // background: seeding must never delay readiness, and a failed name just stays on
 // whatever version the store already has (the resolver falls back to static anyway).
 func seedPromptArtifacts(ctx context.Context, src artifactsrc.Source) {
+	if src == nil {
+		return
+	}
 	go func() {
 		for _, name := range artifactsrc.Names() {
 			if ctx.Err() != nil {
@@ -1389,10 +1390,9 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 	return client, wm, builtins, setRoundCoords, refresh, release, nil
 }
 
-// bindPromptRefresher wraps prompts.Refresh: after a round's prompt re-resolves, a
-// Config of model/effort/provider on it overrides worker's static binding for that
-// round by swapping what overridable delegates to. Invalid values fall back to the
-// static binding and log once (until the bad value itself changes).
+// bindPromptRefresher wraps prompts.Refresh: a resolved artifact's Config can
+// rebind the round's model/provider/effort; an invalid value falls back to
+// the static binding and logs once, until the bad value itself changes.
 func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, overridable *inference.OverridableModel) promptRefresher {
 	static, _ := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	var lastBad string
