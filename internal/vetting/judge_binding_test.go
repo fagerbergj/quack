@@ -6,6 +6,7 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	workflowagent "google.golang.org/adk/v2/agent/workflowagent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
@@ -29,16 +30,17 @@ func TestRunGatedRefine_RefreshesJudgeBindingEachRound(t *testing.T) {
 
 	var calls int
 	var lastArtName string
+	factory := NewJudgeFactory(spy, nil, nil)
 	cfg := Config{
 		JudgeRounds: 1, Threshold: 0.5, Rubric: "score 0-10",
 		ChatID: "chat1", Agent: "web-researcher", Source: "github", JudgeModel: spy,
-		RefreshJudgeBinding: func(art artifactsrc.Artifact) string {
+		RefreshJudgeBinding: func(art artifactsrc.Artifact) (JudgeFactory, model.LLM, string) {
 			calls++
 			lastArtName = art.Name
-			return "high"
+			return factory, spy, "high"
 		},
 	}
-	node, err := newTestGatedNode("gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(spy, nil, nil), cfg)
+	node, err := newTestGatedNode("gate", worker, stubFixedAnswerModel{}, factory, cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}

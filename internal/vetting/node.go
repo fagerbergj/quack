@@ -944,17 +944,21 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	// llm.call carries that artifact's provenance; BundleHash stays the
 	// worker's - whose answer is under review.
 	promptSource, promptVersion, promptArtifact := j.cfg.PromptSource, j.cfg.PromptVersionID, ""
-	if jp, err := resolveJudgePrompt(judgeCtx, j.cfg.Prompts); err != nil {
+	jp, jpErr := resolveJudgePrompt(judgeCtx, j.cfg.Prompts)
+	if jpErr != nil {
 		// promptArtifact stays "" (not "system/judge"): the version above is
 		// the WORKER's boot fallback, and pairing it with the judge's artifact
 		// name would record a mismatched triple replay could refuse on (#1422 N2).
-		slog.WarnContext(judgeCtx, "judge prompt unresolved", "component", "vetting", "node", j.cfg.NodeID, "err", err)
+		slog.WarnContext(judgeCtx, "judge prompt unresolved", "component", "vetting", "node", j.cfg.NodeID, "err", jpErr)
 	} else {
 		j.cfg.judgePrompt = jp
-		promptSource, promptVersion, promptArtifact = jp.art.Source, jp.art.VersionID, "system/judge"
-		if j.cfg.RefreshJudgeBinding != nil {
-			j.cfg.JudgeThinkingLevel = j.cfg.RefreshJudgeBinding(jp.art)
-		}
+		promptSource, promptVersion, promptArtifact = jp.art.Source, jp.art.VersionID, jp.art.Name
+	}
+	// L2: still apply the static binding for this round when the prompt itself
+	// didn't resolve - jp.art is its zero value then, which RefreshJudgeBinding
+	// (Config.ResolveBinding on a nil Config map) treats as no override.
+	if j.cfg.RefreshJudgeBinding != nil {
+		j.judge, j.cfg.JudgeModel, j.cfg.JudgeThinkingLevel = j.cfg.RefreshJudgeBinding(jp.art)
 	}
 	// Replay-ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.
@@ -1400,9 +1404,9 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
 }
 
-// setDeliveryOutputAttr stamps the delivered text onto the node's root span (ctx here
-// is g.nodeCtx) as langfuse.observation.output - the post-gate text Langfuse should
-// show as the trace's result, not any one round's draft.
+// setDeliveryOutputAttr stamps the delivered text onto ctx's span (g.nodeCtx's
+// "quack.node" span, not the trace root quack has no handle on here) as both
+// langfuse.observation.output and langfuse.trace.output (M2).
 func setDeliveryOutputAttr(ctx context.Context, dc DeliveryContext) {
 	span := oteltrace.SpanFromContext(ctx)
 	if !span.IsRecording() || !otelobs.CaptureContentEnabled() {
@@ -1421,7 +1425,10 @@ func setDeliveryOutputAttr(ctx context.Context, dc DeliveryContext) {
 	if len(out) > deliveryOutputAttrCap {
 		out = out[:deliveryOutputAttrCap] + "…[truncated]"
 	}
-	span.SetAttributes(attribute.String("langfuse.observation.output", out))
+	span.SetAttributes(
+		attribute.String("langfuse.observation.output", out),
+		attribute.String("langfuse.trace.output", out),
+	)
 }
 
 // deliveryOutputAttrCap matches internal/inference/span.go's spanAttrCap convention.
@@ -1883,6 +1890,9 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		if art := cfg.RefreshPrompt(spanCtx); art.VersionID != "" {
 			promptSource, promptVersion, promptArtifact = art.Source, art.VersionID, art.Name
 		}
+		// L3: RefreshPrompt is what performs a bound round's model swap (nativeNodeBuilder's
+		// OverridableModel) - re-read quack.model now so the span agrees with RecordRoundDuration below.
+		ts.Span.SetAttributes(attribute.String(otelobs.QuackModel, modelName(workerModel)))
 	}
 	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, BundleHash: cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, PromptArtifact: promptArtifact, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
 	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))

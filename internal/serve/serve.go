@@ -1137,12 +1137,8 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			if err != nil {
 				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
-			// One shared instance (NewJudgeFactory closes over it): overridable so
-			// system/judge's Config (#1421 P2) can rebind it per round in place.
-			judgeOverridable := inference.NewOverridable(judge)
-			judgeModel = judgeOverridable
-			gateCfg.JudgeModel = judgeOverridable
-			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judgeOverridable)
+			judgeModel = judge
+			gateCfg.JudgeModel = judge
 			var judgeReadTools []tool.Tool
 			if jail != nil {
 				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{
@@ -1158,7 +1154,10 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			if skillTS != nil {
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
-			judgeFactory = vetting.NewJudgeFactory(judgeOverridable, judgeReadTools, judgeSkillsets)
+			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
+			// #1421 P2: each round gets its own bound-in factory+model, never one shared
+			// instance swapped in place (H1 - that let concurrent rounds race each other).
+			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judge, judgeFactory, judgeReadTools, judgeSkillsets)
 			// Own instances: gated nodes stamp per-round coords on `judge` (vetting/node.go);
 			// these callers are not nodes, so sharing would inherit the last node's stamp (#1049).
 			unstamped := func() (model.LLM, error) {
@@ -1182,42 +1181,71 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 	return gateCfg, judgeFactory, planJudge, judgeModel, safetyJudge, nil
 }
 
-// bindJudgeRefresher returns prepareJudge's per-round judge binder: system/judge's
-// resolved Config can rebind the shared judge model/provider, with effort landing
-// on the round's thinking_level (judge.go's per-call ThinkingConfig) rather than
-// models.<id>.effort - an invalid value falls back to gates.judge.* and logs once.
-func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, overridable *inference.OverridableModel) func(art artifactsrc.Artifact) string {
-	static := overridable.Get()
+// judgeBoundModel is one cached (provider, model) judge factory/model pair.
+type judgeBoundModel struct {
+	factory vetting.JudgeFactory
+	model   model.LLM
+}
+
+// judgeBinding caches every bound-in (provider, model) pair by that key, guarded
+// by mu since its closure is shared by every concurrent gated node's judge round.
+type judgeBinding struct {
+	mu      sync.Mutex
+	lastBad string
+	cache   map[string]judgeBoundModel
+}
+
+// bindJudgeRefresher returns prepareJudge's per-round binder: system/judge's Config
+// picks this round's OWN JudgeFactory+model+thinking_level; an invalid value falls
+// back to gates.judge's static factory/model and logs once per distinct bad value.
+func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, staticModel model.LLM, staticFactory vetting.JudgeFactory, readTools []tool.Tool, skillsets []tool.Toolset) func(art artifactsrc.Artifact) (vetting.JudgeFactory, model.LLM, string) {
 	staticEffort := cfg.Gates.Judge.ThinkingLevel
-	var lastBad string
-	return func(art artifactsrc.Artifact) string {
+	b := &judgeBinding{cache: map[string]judgeBoundModel{}}
+	return func(art artifactsrc.Artifact) (vetting.JudgeFactory, model.LLM, string) {
 		bound, err := cfg.ResolveBinding(jprov, cfg.Gates.Judge.Model, art.Config)
 		if err != nil {
-			if err.Error() != lastBad {
-				lastBad = err.Error()
+			b.mu.Lock()
+			changed := err.Error() != b.lastBad
+			if changed {
+				b.lastBad = err.Error()
+			}
+			b.mu.Unlock()
+			if changed {
 				slog.Warn("judge prompt binding invalid; using gates.judge's static binding",
 					"component", "artifacts", "artifact", art.Name, "err", err)
 			}
-			overridable.Set(static)
-			return staticEffort
+			return staticFactory, staticModel, staticEffort
 		}
-		lastBad = ""
+		b.mu.Lock()
+		b.lastBad = ""
+		b.mu.Unlock()
 		if bound == nil {
-			overridable.Set(static)
-			return staticEffort
+			return staticFactory, staticModel, staticEffort
+		}
+		effort := staticEffort
+		if e, ok := art.Config["effort"].(string); ok && e != "" {
+			effort = e
+		}
+		// M3: (provider, model) identifies the swap; effort rides per-call thinking_level
+		// (judge.go), so it never needs a distinct model/HTTP pool of its own.
+		key := bound.Provider.Endpoint + "|" + bound.Model
+		b.mu.Lock()
+		cached, ok := b.cache[key]
+		b.mu.Unlock()
+		if ok {
+			return cached.factory, cached.model, effort
 		}
 		m, err := inference.NewModel(bound.Provider, bound.Model, artifacts, cfg.ModelCost(bound.Model))
 		if err != nil {
 			slog.Warn("judge prompt binding model build failed; using gates.judge's static binding",
 				"component", "artifacts", "artifact", art.Name, "err", err)
-			overridable.Set(static)
-			return staticEffort
+			return staticFactory, staticModel, staticEffort
 		}
-		overridable.Set(m)
-		if effort, ok := art.Config["effort"].(string); ok && effort != "" {
-			return effort
-		}
-		return staticEffort
+		f := vetting.NewJudgeFactory(m, readTools, skillsets)
+		b.mu.Lock()
+		b.cache[key] = judgeBoundModel{factory: f, model: m}
+		b.mu.Unlock()
+		return f, m, effort
 	}
 }
 
@@ -1437,8 +1465,12 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 // rebind the round's model/provider/effort; an invalid value falls back to
 // the static binding and logs once, until the bad value itself changes.
 func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, overridable *inference.OverridableModel) promptRefresher {
-	static, _ := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
+	// L1: overridable was built FROM this same base model - reuse it, never a second
+	// NewModelWithEffort call whose error a plain `_` would drop (a nil Set would panic).
+	static := overridable.Get()
 	var lastBad string
+	var cachedKey string
+	var cachedModel model.LLM
 	return func(ctx context.Context) artifactsrc.Artifact {
 		art := prompts.Refresh(ctx)
 		bound, err := b.cfg.ResolveBinding(b.prov, b.ac.Model, art.Config)
@@ -1456,6 +1488,13 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 			overridable.Set(static)
 			return art
 		}
+		// M3: this node's rounds run sequentially (this closure is never shared across
+		// nodes), so a plain cache is enough - rebuild only when the tuple changes.
+		key := bound.Provider.Endpoint + "|" + bound.Model + "|" + bound.Effort
+		if key == cachedKey && cachedModel != nil {
+			overridable.Set(cachedModel)
+			return art
+		}
 		m, err := inference.NewModelWithEffort(bound.Provider, bound.Model, b.artifacts, b.cfg.ModelCost(bound.Model), bound.Effort)
 		if err != nil {
 			slog.Warn("prompt binding model build failed; using the static binding",
@@ -1463,6 +1502,7 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 			overridable.Set(static)
 			return art
 		}
+		cachedKey, cachedModel = key, m
 		overridable.Set(m)
 		return art
 	}
