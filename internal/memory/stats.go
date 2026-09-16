@@ -16,6 +16,7 @@ type ScopeStats struct {
 	NeverRecalled int
 	NoVotes       int
 	// UnsupportedVerified: verified only via outcome-reinforcement (Upvotes == ReinforcementCount), never an actual judge/human vote.
+	// Undercounts after a dedupe absorb: the merge sums Upvotes across survivor+absorbed but neither backend carries ReinforcementCount along.
 	UnsupportedVerified int
 }
 
@@ -96,7 +97,7 @@ type WeekStats struct {
 	Contradicted int
 	NotRelevant  int
 	// Precision = Supported / (Supported+Contradicted+NotRelevant): share of every judged
-	// recall that actually helped (not_relevant is the majority vote in prod, so it now counts).
+	// recall that actually helped - not_relevant is a real miss, not noise, on prod it's the majority vote.
 	Precision   float64
 	Minted      int
 	Invalidated int

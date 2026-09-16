@@ -120,7 +120,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
                       <span className="flex-shrink-0 tabular-nums text-gray-500 dark:text-gray-400">{s.live} / {s.invalidated}</span>
                     </div>
                     <div
-                      className="flex flex-wrap gap-x-2 text-[10px] tabular-nums text-gray-400 dark:text-gray-500"
+                      className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] tabular-nums text-gray-500 dark:text-gray-400"
                       title="Of the live points: never recalled, no votes cast, verified with no real judge/human support"
                     >
                       <span>{s.never_recalled} never recalled</span>

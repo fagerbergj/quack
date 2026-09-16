@@ -403,8 +403,8 @@ func TestRunMemorySweepAllOK(t *testing.T) {
 	}
 }
 
-// TestRunMemoryStats checks the human table carries the new precision definition
-// (support_share dropped) and the three new per-scope diagnostic columns.
+// TestRunMemoryStats checks the human table's precision column and its per-scope
+// diagnostic columns, and that only one recall-quality column is printed.
 func TestRunMemoryStats(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
