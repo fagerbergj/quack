@@ -45,7 +45,7 @@ A seed entry, or an entry POSTed to `/api/v1/plugins`, is one of:
 
 - **`github:owner/repo[@ref][#path]`** - a git-hosted plugin, cloned under `root`.
   - No `@ref`: **tracked** - follows the repo's default branch; `GET /api/v1/plugins/updates` and the Update button move it forward.
-  - `@ref` (a tag, branch, or commit sha): **pinned** - only moves if the entry itself is edited (config) or re-POSTed at a different ref (REST); a 40-hex sha is always reported as not behind.
+  - `@ref` (a tag, branch, or commit sha): **pinned** - only moves when the entry is re-POSTed at a different ref (REST). Editing a `plugins.seed` entry does not move a row that already exists under that name: seeding inserts only absent names, so delete the row first (REST) and restart. A 40-hex sha is always reported as not behind.
   - `#path`: the plugin root is a subdirectory of the repo instead of its root. Relative, and rejected if it escapes the repo.
   - A trailing `.git` on the repo name is stripped.
   - Private repos: set `GITHUB_TOKEN` in the environment quack runs under; the token is passed to git via `GIT_CONFIG_*`, never written to argv or persisted in the row.
@@ -108,7 +108,7 @@ A replay reads the `plugins` provenance recorded on the run's `agent.invoke` ent
 
 - A **missing clone or unknown sha** refuses at load, naming the plugin and the sha it cannot find.
 - While a replay bundle has the roster pinned, every mutating plugin route (`POST /api/v1/plugins`, delete, update, update-all) returns **409**, naming the bundle - a replay in progress cannot have its pinned plugins moved out from under it.
-- **ACP fork mode** is different: once a round diverges, the shim spawns a real subprocess against the *live* clone, not the recorded sha. Construction refuses up front if any recorded plugin's installed sha differs from what the registry currently has, or if the plugin is no longer registered at all - a live fork spawn cannot silently serve different skill text than the recording did. Pure (non-fork) replay never spawns a subprocess, so this check doesn't apply to it. To fork-replay against the plugin state as recorded, re-pin the plugin to that sha before starting the replay: `POST /api/v1/plugins` with `github:owner/repo@<sha>` (or edit its `plugins.seed` entry and restart), which checks the clone out at that sha and records it as the installed sha.
+- **ACP fork mode** is different: once a round diverges, the shim spawns a real subprocess against the *live* clone, not the recorded sha. Construction refuses up front if any recorded plugin's installed sha differs from what the registry currently has, or if the plugin is no longer registered at all - a live fork spawn cannot silently serve different skill text than the recording did. Pure (non-fork) replay never spawns a subprocess, so this check doesn't apply to it. To fork-replay against the plugin state as recorded, re-pin the plugin to that sha before starting the replay: `POST /api/v1/plugins` with `github:owner/repo@<sha>`, which checks the clone out at that sha and records it as the installed sha. Through config alone: `DELETE /api/v1/plugins/{name}`, then set the seed entry to `@<sha>` and restart (an existing row is never re-pinned by a seed edit).
 
 ### Security
 
