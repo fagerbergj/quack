@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -312,5 +313,74 @@ func TestScopedPreservesProjectSkillDiscovery(t *testing.T) {
 	}
 	if fm.Description != "builtin plan-work" {
 		t.Errorf("LoadFrontmatter(plan-work).Description = %q, want the built-in one to win the collision", fm.Description)
+	}
+}
+
+// errSource is a skill.Source whose every method fails with the same
+// non-ErrSkillNotFound error - proves projectAware's Load*/ListResources
+// propagate a real builtin error immediately instead of falling to project.
+type errSource struct{ err error }
+
+func (e errSource) ListFrontmatters(context.Context) ([]*skill.Frontmatter, error) { return nil, e.err }
+func (e errSource) LoadFrontmatter(context.Context, string) (*skill.Frontmatter, error) {
+	return nil, e.err
+}
+func (e errSource) LoadInstructions(context.Context, string) (string, error) { return "", e.err }
+func (e errSource) LoadResource(context.Context, string, string) (io.ReadCloser, error) {
+	return nil, e.err
+}
+func (e errSource) ListResources(context.Context, string, string) ([]string, error) {
+	return nil, e.err
+}
+
+func TestLoadAndListResourcesResolveBuiltinBareName(t *testing.T) {
+	j, _, _ := setup(t, nil)
+	builtinDir := t.TempDir()
+	writeSkill(t, builtinDir, "plan-work", "b", "body")
+	refDir := filepath.Join(builtinDir, "plan-work", "references")
+	if err := os.MkdirAll(refDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(refDir, "notes.md"), []byte("NOTES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	builtin := skill.NewFileSystemSource(os.DirFS(builtinDir))
+	src := New(builtin, j, "u1")
+
+	rc, err := src.LoadResource(context.Background(), "plan-work", "references/notes.md")
+	if err != nil {
+		t.Fatalf("LoadResource: %v", err)
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil || string(b) != "NOTES" {
+		t.Errorf("LoadResource content = %q, %v, want NOTES", b, err)
+	}
+
+	names, err := src.ListResources(context.Background(), "plan-work", "")
+	if err != nil {
+		t.Fatalf("ListResources: %v", err)
+	}
+	if len(names) == 0 {
+		t.Errorf("ListResources = %v, want at least the reference file", names)
+	}
+}
+
+func TestLoadAndListResourcesPropagateNonNotFoundBuiltinError(t *testing.T) {
+	j, _, _ := setup(t, nil)
+	boom := errors.New("boom")
+	src := New(errSource{boom}, j, "u1")
+
+	if _, err := src.LoadResource(context.Background(), "anything", "references/x.md"); !errors.Is(err, boom) {
+		t.Errorf("LoadResource error = %v, want boom propagated (no project fallback)", err)
+	}
+	if _, err := src.ListResources(context.Background(), "anything", ""); !errors.Is(err, boom) {
+		t.Errorf("ListResources error = %v, want boom propagated (no project fallback)", err)
+	}
+	if _, err := src.LoadFrontmatter(context.Background(), "anything"); !errors.Is(err, boom) {
+		t.Errorf("LoadFrontmatter error = %v, want boom propagated", err)
+	}
+	if _, err := src.LoadInstructions(context.Background(), "anything"); !errors.Is(err, boom) {
+		t.Errorf("LoadInstructions error = %v, want boom propagated", err)
 	}
 }

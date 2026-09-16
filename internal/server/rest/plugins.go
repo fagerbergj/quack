@@ -17,8 +17,9 @@ import (
 )
 
 // pluginUpdateBudget bounds one GET /plugins/updates or POST /plugins/update
-// call's total wall time, regardless of row count.
-const pluginUpdateBudget = 30 * time.Second
+// call's total wall time, regardless of row count - var so a test can shrink
+// it to prove the budget actually expires, instead of waiting 30s.
+var pluginUpdateBudget = 30 * time.Second
 
 // pluginConcurrency bounds how many rows' CheckUpdate/Fetch run in flight at
 // once - a fixed small number, not one goroutine per row.

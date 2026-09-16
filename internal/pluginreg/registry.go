@@ -238,10 +238,8 @@ func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 			p.SHA, p.FetchedAt = existing.SHA, existing.FetchedAt
 		}
 	}
-	b, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		return err
-	}
+	// Plugin is all strings/*time.Time - MarshalIndent on it cannot fail.
+	b, _ := json.MarshalIndent(p, "", "  ")
 	dir := filepath.Join(r.root, p.Name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
