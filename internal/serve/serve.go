@@ -469,6 +469,20 @@ func (b *boot) runCleanups() {
 	}
 }
 
+// initAuthAndObservability builds auth and starts otel together - merged so
+// buildFromConfig checks one error instead of two.
+func (b *boot) initAuthAndObservability(ctx context.Context, ledgerStore ledger.LedgerStore) (*auth.Auth, *otelobs.Providers, error) {
+	authMW, err := auth.New(b.cfg.Auth)
+	if err != nil {
+		return nil, nil, fmt.Errorf("auth init failed: %w", err)
+	}
+	otelProviders, err := b.initObservability(ctx, ledgerStore)
+	if err != nil {
+		return nil, nil, err
+	}
+	return authMW, otelProviders, nil
+}
+
 // initializes otel, wiring its shutdown (with a bounded context) into the boot cleanups
 func (b *boot) initObservability(ctx context.Context, ledgerStore ledger.LedgerStore) (*otelobs.Providers, error) {
 	inference.Version = Version // llm.call ledger provenance (#1096)
@@ -736,10 +750,9 @@ func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator
 	return handler, nil
 }
 
-// replayPromptSource builds the P3 (#1422) prompt-pinning Source for a replay
-// run: `quack replay` (replayifyProviders) switches every provider to kind
-// "replay" pointing at the same bundle, so the first one found identifies it.
-// Returns (nil, nil) for a normal (non-replay) config.
+// replayPromptSource builds the P3 (#1422) prompt-pinning Source for a
+// replay run (every provider is kind "replay" over the same bundle - see
+// replayifyProviders); (nil, nil) for a normal, non-replay config.
 func replayPromptSource(ctx context.Context, cfg *config.Config) (artifactsrc.Source, error) {
 	var bundlePath string
 	for _, p := range cfg.Providers {
@@ -789,13 +802,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		addr = fmt.Sprintf(":%d", port)
 	}
 
-	authMW, err := auth.New(cfg.Auth)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("auth init failed: %w", err)
-	}
-
 	ledgerStore := LedgerStoreFromConfig(cfg)
-	otelProviders, err := b.initObservability(ctx, ledgerStore)
+	authMW, otelProviders, err := b.initAuthAndObservability(ctx, ledgerStore)
 	if err != nil {
 		return nil, nil, "", err
 	}

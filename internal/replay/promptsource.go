@@ -38,19 +38,15 @@ func (s *Session) recordedPrompts() map[string]recordedVersion {
 	return out
 }
 
-// PromptSource is an artifactsrc.Source that pins every named artifact to the
-// exact version a recorded run used (#1422). Built eagerly by NewPromptSource,
-// which resolves and verifies every recorded name up front - a version that
-// can no longer be reproduced fails replay's setup outright, rather than
-// falling back the way Resolver.fetch otherwise would for a live run's
-// transient store failure.
+// PromptSource is an artifactsrc.Source pinning every name to the exact
+// version a recorded run used (#1422): NewPromptSource resolves eagerly, so
+// an unreproducible version fails replay's setup, not Resolver.fetch's fallback.
 type PromptSource struct {
 	resolved map[string]artifactsrc.Artifact
 }
 
 // NewPromptSource resolves every artifact name sess's recorded calls used.
-// lf is the langfuse client for the replaying deployment's configured
-// prompts.store; nil means none is configured, and any name recorded from
+// lf is nil when no prompts.store is configured; a name recorded from
 // langfuse then refuses naming that requirement.
 func NewPromptSource(ctx context.Context, sess *Session, lf *langfuse.Client) (*PromptSource, error) {
 	resolved := map[string]artifactsrc.Artifact{}
@@ -95,10 +91,9 @@ func resolveRecorded(ctx context.Context, name string, rec recordedVersion, lf *
 	return artifactsrc.Artifact{Name: name, Body: p.Body, Config: p.Config, Source: rec.source, VersionID: strconv.Itoa(p.Version)}, nil
 }
 
-// Get returns the pinned artifact for name, or (_, false, nil) when sess has
-// no recorded provenance for it (pre-P1 entries, or a name never pinned like
-// a rubric/memory file) - the resolver then falls back to normal static
-// resolution and NextChat's content-hash drift check covers the rest.
+// Get returns the pinned artifact for name, or (_, false, nil) when sess
+// recorded no provenance for it (a pre-P1 entry, or an unpinned name like a
+// rubric/memory file) - the resolver then falls back to normal resolution.
 func (s *PromptSource) Get(_ context.Context, name string) (artifactsrc.Artifact, bool, error) {
 	art, ok := s.resolved[name]
 	return art, ok, nil

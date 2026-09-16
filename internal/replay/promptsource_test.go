@@ -65,6 +65,25 @@ func TestNewPromptSource(t *testing.T) {
 			wantErr: "refusing to replay a different version",
 		},
 		{
+			name:    "static unknown artifact refuses",
+			entries: []entry{promptChat(ts, "no-such-agent", artifactsrc.StaticSource, "aaaa")},
+			wantErr: "unknown artifact",
+		},
+		{
+			name:    "langfuse non-numeric version refuses",
+			entries: []entry{promptChat(ts, "code-reviewer", "langfuse", "not-a-number")},
+			lf:      fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("should not call langfuse") }),
+			wantErr: "not numeric",
+		},
+		{
+			name:    "langfuse server error refuses",
+			entries: []entry{promptChat(ts, "code-reviewer", "langfuse", "7")},
+			lf: fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			}),
+			wantErr: "system/code-reviewer@7",
+		},
+		{
 			name:    "langfuse present",
 			entries: []entry{promptChat(ts, "code-reviewer", "langfuse", "7")},
 			lf: fakeLangfuse(t, func(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +145,9 @@ func TestNewPromptSource(t *testing.T) {
 			}
 			if _, ok, _ := src.Get(context.Background(), "system/never-recorded"); ok {
 				t.Fatalf("Get of a never-recorded name should miss")
+			}
+			if err := src.Seed(context.Background(), "system/anything", artifactsrc.Artifact{}); err != nil {
+				t.Fatalf("Seed: %v, want nil (replay never seeds)", err)
 			}
 		})
 	}
