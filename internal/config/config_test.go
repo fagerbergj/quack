@@ -2693,6 +2693,35 @@ func TestResolveBinding(t *testing.T) {
 		}
 	})
 
+	t.Run("provider-only override agreeing with the static model's provider is applied", func(t *testing.T) {
+		b, err := cfg.ResolveBinding(base, "m1", map[string]any{"provider": "default"})
+		if err != nil || b.Model != "m1" || b.Provider.Endpoint != "http://x" {
+			t.Fatalf("b=%+v err=%v", b, err)
+		}
+	})
+
+	t.Run("provider-only override disagreeing with the static model's provider is rejected", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"provider": "other"})
+		if err == nil || !strings.Contains(err.Error(), `provider "other" disagrees with model "m1"'s provider "default"`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("a non-string override value is an error naming the key", func(t *testing.T) {
+		_, err := cfg.ResolveBinding(base, "m1", map[string]any{"model": 123})
+		if err == nil || !strings.Contains(err.Error(), `"model" must be a string`) {
+			t.Fatalf("err = %v", err)
+		}
+		_, err = cfg.ResolveBinding(base, "m1", map[string]any{"provider": 123})
+		if err == nil || !strings.Contains(err.Error(), `"provider" must be a string`) {
+			t.Fatalf("err = %v", err)
+		}
+		_, err = cfg.ResolveBinding(base, "m1", map[string]any{"effort": 123})
+		if err == nil || !strings.Contains(err.Error(), `"effort" must be a string`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
 	t.Run("a differently-limited model override is rejected (M1 admission)", func(t *testing.T) {
 		limited := &Config{
 			Providers: map[string]ProviderConfig{"default": {Kind: "openai", Endpoint: "http://x"}},
