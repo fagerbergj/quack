@@ -39,10 +39,10 @@ func TestPutRejectsNameCollisionAcrossDifferentEntries(t *testing.T) {
 	reg := NewFSRegistry(root)
 	ctx := context.Background()
 
-	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets"}); err != nil {
+	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", Owner: "acme", Repo: "widgets"}); err != nil {
 		t.Fatal(err)
 	}
-	err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:glob/widgets"})
+	err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:glob/widgets", Owner: "glob", Repo: "widgets"})
 	if err == nil {
 		t.Fatal("expected an error putting a different entry under an already-registered name")
 	}
@@ -53,6 +53,30 @@ func TestPutRejectsNameCollisionAcrossDifferentEntries(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].Entry != "github:acme/widgets" {
 		t.Fatalf("List() = %+v, want the original row untouched", list)
+	}
+}
+
+// TestPutAllowsMovingPinOnSameRepo is the #1429 carry-over from PR #1436's
+// review: moving a pin (github:o/r@v1 -> github:o/r@v2) on the SAME repo
+// must not be treated as a name collision.
+func TestPutAllowsMovingPinOnSameRepo(t *testing.T) {
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	ctx := context.Background()
+
+	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets@v1", Owner: "acme", Repo: "widgets", Ref: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets@v2", Owner: "acme", Repo: "widgets", Ref: "v2"}); err != nil {
+		t.Fatalf("moving the pin on the same repo was rejected: %v", err)
+	}
+
+	list, err := reg.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Ref != "v2" {
+		t.Fatalf("List() = %+v, want one row pinned at v2", list)
 	}
 }
 

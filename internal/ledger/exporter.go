@@ -113,7 +113,11 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 			Args: str("gen_ai.tool.call.arguments"), Result: str("gen_ai.tool.call.result"), Error: str("error.type")}
 	case op == "invoke_agent":
 		entry.Kind = KindAgentInvoke
-		payload = AgentInvokePayload{Sent: str("gen_ai.input.messages"), Received: str("gen_ai.output.messages"), Error: str("error.type")}
+		p := AgentInvokePayload{Sent: str("gen_ai.input.messages"), Received: str("gen_ai.output.messages"), Error: str("error.type")}
+		if raw := str("quack.plugins"); raw != "" {
+			_ = json.Unmarshal([]byte(raw), &p.Plugins)
+		}
+		payload = p
 	default:
 		return Entry{}, false
 	}

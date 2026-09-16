@@ -12,7 +12,9 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/plugin"
+	"github.com/fagerbergj/quack/internal/skillsource"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // TestSkillsLoad guards against a skill in THIS repo whose SKILL.md frontmatter
@@ -36,11 +38,11 @@ func TestSkillsLoad(t *testing.T) {
 	}
 }
 
-// resolveSkillDirs composes plugin.Resolve+plugin.SkillDirs, the way boot
-// does - tests want the resolved dirs without asserting on the error return.
-func resolveSkillDirs(roots []string) []string {
+// resolvePlugins composes plugin.Resolve the way boot does - tests want the
+// resolved plugins without asserting on the error return.
+func resolvePlugins(roots []string) []plugin.Plugin {
 	plugins, _ := plugin.Resolve(roots)
-	return plugin.SkillDirs(plugins)
+	return plugins
 }
 
 // writeVendorSkill lays down one SKILL.md under dir/<name>/ in the exact
@@ -77,10 +79,10 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 	writeVendorSkill(t, filepath.Join(vendor, "skills"), "ponytail", "Forces the laziest solution that actually works.")
 	writeVendorSkill(t, filepath.Join(vendor, "skills"), "ponytail-review", "Code review focused exclusively on over-engineering.")
 
-	src := newSkillSource(resolveSkillDirs([]string{vendor}))
+	src := newSkillSource(resolvePlugins([]string{vendor}))
 	ctx := context.Background()
 
-	for _, name := range []string{"ponytail", "ponytail-review"} {
+	for _, name := range []string{"ponytail:ponytail", "ponytail:ponytail-review"} {
 		fm, err := src.LoadFrontmatter(ctx, name)
 		if err != nil {
 			t.Fatalf("LoadFrontmatter(%q): %v", name, err)
@@ -93,10 +95,10 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 		}
 	}
 	// The primary (shipped) library still resolves through the same merged
-	// source. NOTE: bundledir falls back to the embedded copy here (cwd is this
-	// package dir, so no skills/ on disk) - proving the installed-binary path too.
-	if _, err := src.LoadFrontmatter(ctx, "plan-work"); err != nil {
-		t.Errorf("LoadFrontmatter(plan-work) via merged source: %v", err)
+	// source, as the embedded quack plugin (#1427 S2). NOTE: bundledir falls
+	// back to the embedded copy here (cwd is this package dir).
+	if _, err := src.LoadFrontmatter(ctx, "quack:plan-work"); err != nil {
+		t.Errorf("LoadFrontmatter(quack:plan-work) via merged source: %v", err)
 	}
 }
 
@@ -104,9 +106,9 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 // a configured plugin root that doesn't exist on disk (an operator pointing
 // skills.plugins at a path they never created) never fails the run - it's just absent from the merged source, and quack's own shipped skills resolve.
 func TestNewSkillSourceMissingPluginRoot(t *testing.T) {
-	src := newSkillSource(resolveSkillDirs([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
-	if _, err := src.LoadFrontmatter(context.Background(), "plan-work"); err != nil {
-		t.Errorf("LoadFrontmatter(plan-work): %v", err)
+	src := newSkillSource(resolvePlugins([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
+	if _, err := src.LoadFrontmatter(context.Background(), "quack:plan-work"); err != nil {
+		t.Errorf("LoadFrontmatter(quack:plan-work): %v", err)
 	}
 }
 
@@ -116,14 +118,14 @@ func TestNewSkillSourceMissingPluginRoot(t *testing.T) {
 func TestNewSkillSourceNoPluginsConfigured(t *testing.T) {
 	src := newSkillSource(nil)
 	ctx := context.Background()
-	if _, err := src.LoadFrontmatter(ctx, "plan-work"); err != nil {
-		t.Errorf("LoadFrontmatter(plan-work) via quack's own shipped skills: %v", err)
+	if _, err := src.LoadFrontmatter(ctx, "quack:plan-work"); err != nil {
+		t.Errorf("LoadFrontmatter(quack:plan-work) via quack's own shipped skills: %v", err)
 	}
-	if _, err := src.LoadFrontmatter(ctx, "format-markdown"); err != nil {
-		t.Errorf("LoadFrontmatter(format-markdown) via embedded dotagents fallback: %v", err)
+	if _, err := src.LoadFrontmatter(ctx, "quack:format-markdown"); err != nil {
+		t.Errorf("LoadFrontmatter(quack:format-markdown) via embedded dotagents fallback: %v", err)
 	}
-	if _, err := src.LoadFrontmatter(ctx, "ponytail"); err == nil {
-		t.Error("LoadFrontmatter(ponytail): want not-found without any plugin roots configured")
+	if _, err := src.LoadFrontmatter(ctx, "ponytail:ponytail"); err == nil {
+		t.Error("LoadFrontmatter(ponytail:ponytail): want not-found without any plugin roots configured")
 	}
 }
 
@@ -131,9 +133,9 @@ func TestNewSkillSourceNoPluginsConfigured(t *testing.T) {
 // dotagents configured as a plugin root but not checked out on disk (a standalone
 // install outside any repo checkout, where /.agents was not mounted) must still resolve format-markdown/plan-work - buildFromConfig hard-fails startup without them, and before dotagentsEmbeddedSkills existed, losing disk access to dotagents meant losing the server entirely, not just a skill.
 func TestNewSkillSourceDotagentsMissingOnDisk(t *testing.T) {
-	src := newSkillSource(resolveSkillDirs([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
+	src := newSkillSource(resolvePlugins([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
 	ctx := context.Background()
-	for _, name := range []string{"format-markdown", "plan-work"} {
+	for _, name := range []string{"quack:format-markdown", "quack:plan-work"} {
 		if _, err := src.LoadFrontmatter(ctx, name); err != nil {
 			t.Errorf("LoadFrontmatter(%q) via embedded dotagents fallback: %v", name, err)
 		}
@@ -141,16 +143,27 @@ func TestNewSkillSourceDotagentsMissingOnDisk(t *testing.T) {
 }
 
 // TestNewSkillSourceDotagentsOnDiskNoDuplicate proves the embedded fallback
-// is suppressed once dotagents already resolved via plugin discovery -
-// MergedSource.ListFrontmatters errors on a skill name defined by two sources at once (ErrDuplicateSkill), so double-adding it here would break every normal startup instead of only protecting the missing-disk case.
+// is suppressed once dotagents already resolved via plugin discovery - a
+// plugin registered as "dotagents" providing bare format-markdown suppresses
+// the embedded quack:format-markdown backfill (#1427 R1: the vendored-
+// dotagents half of the embedded bundle shadows by BARE name against any
+// resolved plugin, not only a row literally named "quack" - that rule
+// covers only quack's own skills/ half, e.g. plan-work).
 func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
 	dotagents := "../../.agents/vendor/dotagents"
 	if st, err := os.Stat(dotagents + "/skills"); err != nil || !st.IsDir() {
 		t.Fatalf("vendored dotagents skills missing at %s/skills", dotagents)
 	}
-	src := newSkillSource(resolveSkillDirs([]string{dotagents}))
-	if _, err := src.ListFrontmatters(context.Background()); err != nil {
+	src := newSkillSource(resolvePlugins([]string{dotagents}))
+	ctx := context.Background()
+	if _, err := src.ListFrontmatters(ctx); err != nil {
 		t.Fatalf("ListFrontmatters: %v (embedded fallback likely double-added dotagents)", err)
+	}
+	if _, err := src.LoadFrontmatter(ctx, "dotagents:format-markdown"); err != nil {
+		t.Errorf("LoadFrontmatter(dotagents:format-markdown): %v", err)
+	}
+	if _, err := src.LoadFrontmatter(ctx, "quack:format-markdown"); err == nil {
+		t.Error("LoadFrontmatter(quack:format-markdown) succeeded, want not-found - dotagents on disk must suppress the embedded copy")
 	}
 }
 
@@ -161,7 +174,7 @@ func TestAcpSkillPathsResolvesDotagents(t *testing.T) {
 	root := repoRoot(t)
 	t.Chdir(root)
 
-	paths := acpSkillPaths(resolveSkillDirs([]string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}))
+	paths := acpSkillPaths(resolvePlugins([]string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}))
 
 	wantDotagents := filepath.Join(root, ".agents", "vendor", "dotagents", "skills")
 	if !slices.Contains(paths, wantDotagents) {
@@ -182,12 +195,12 @@ func TestAcpSkillPathsResolvesDotagents(t *testing.T) {
 // newSkillSource): a deployment with no custom shapes must get the exact same plan-work instructions as before the extension point existed.
 func TestWorkflowCatalogNoShapesIsByteIdentical(t *testing.T) {
 	src := newSkillSource(nil)
-	want, err := src.LoadInstructions(context.Background(), "plan-work")
+	want, err := src.LoadInstructions(context.Background(), "quack:plan-work")
 	if err != nil {
 		t.Fatal(err)
 	}
 	wrapped := workflowcatalog.Wrap(src, workflowcatalog.FromConfig(nil, "rev"))
-	got, err := wrapped.LoadInstructions(context.Background(), "plan-work")
+	got, err := wrapped.LoadInstructions(context.Background(), "quack:plan-work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +211,7 @@ func TestWorkflowCatalogNoShapesIsByteIdentical(t *testing.T) {
 
 // TestWorkflowCatalogComposesIntoRealSkill is issue #805 test case 1 against
 // the real shipped skill: a configured shape lands in the same table
-// load_skill("plan-work") returns to the orchestrator.
+// load_skill("quack:plan-work") returns to the orchestrator.
 func TestWorkflowCatalogComposesIntoRealSkill(t *testing.T) {
 	src := newSkillSource(nil)
 	shapes := workflowcatalog.FromConfig([]config.WorkflowShape{{
@@ -206,11 +219,86 @@ func TestWorkflowCatalogComposesIntoRealSkill(t *testing.T) {
 		Agents: []string{"document-classifier"},
 		Shape:  "ONE `document-classifier` node (terminal - files the document in the KB)",
 	}}, "rev")
-	got, err := workflowcatalog.Wrap(src, shapes).LoadInstructions(context.Background(), "plan-work")
+	got, err := workflowcatalog.Wrap(src, shapes).LoadInstructions(context.Background(), "quack:plan-work")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(got, "| Ingest a new document into the knowledge base | ONE `document-classifier` node (terminal - files the document in the KB) |") {
 		t.Errorf("composed plan-work instructions missing the custom shape's row:\n%s", got)
+	}
+}
+
+// TestInitSkillsShippedSeedResolvesHardRequiredSkills is #1427 S1: boots
+// initSkills with the real shipped default seed (dotagents on disk shadows
+// the embedded quack:format-markdown), and proves the two hard-required
+// bare-name lookups assembleOrchestrator does still resolve - they used to
+// hard-fail boot once dotagents' skills became "dotagents:format-markdown".
+func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
+	root := repoRoot(t)
+	t.Chdir(root)
+
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &boot{cfg: &config.Config{
+		Plugins: &config.PluginsConfig{
+			Root: t.TempDir(),
+			Seed: []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"},
+		},
+	}}
+	_, builtinSkillSrc, skillSrc, _, _, err := b.initSkills(context.Background(), jail)
+	if err != nil {
+		t.Fatalf("initSkills: %v", err)
+	}
+	if fms, err := builtinSkillSrc.ListFrontmatters(context.Background()); err != nil || len(fms) == 0 {
+		t.Fatalf("ListFrontmatters: %v (%d skills)", err, len(fms))
+	}
+
+	for _, name := range []string{"format-markdown", "plan-work"} {
+		if _, err := skillsource.Resolve(context.Background(), skillSrc, name); err != nil {
+			t.Errorf("skillsource.Resolve(%q) against the shipped seed: %v", name, err)
+		}
+	}
+}
+
+// TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts is the
+// reviewer-mandated regression for #1427 R1: the shipped default seed on a
+// dev checkout must serve the SAME 27-skill roster and 3 ACP skill paths as
+// main did before the plugin registry existed - not a doubled roster from
+// missing by-bare-name suppression of the embedded dotagents copy.
+func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) {
+	root := repoRoot(t)
+	t.Chdir(root)
+
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &boot{cfg: &config.Config{
+		Plugins: &config.PluginsConfig{
+			Root: t.TempDir(),
+			Seed: []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"},
+		},
+	}}
+	plugins, builtinSkillSrc, _, _, _, err := b.initSkills(context.Background(), jail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fms, err := builtinSkillSrc.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fms) != 27 {
+		names := make([]string, len(fms))
+		for i, fm := range fms {
+			names[i] = fm.Name
+		}
+		t.Errorf("roster = %d skills, want 27 (main's count): %v", len(fms), names)
+	}
+
+	paths := acpSkillPaths(plugins)
+	if len(paths) != 3 {
+		t.Errorf("acpSkillPaths = %v (%d), want 3 (main's count)", paths, len(paths))
 	}
 }

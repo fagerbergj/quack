@@ -161,9 +161,9 @@ func TestSpawnEnvAllowsLocalGitPush(t *testing.T) {
 func TestWrappedArgvLandlock(t *testing.T) {
 	cwd := t.TempDir()
 	a := &Agent{opts: Options{
-		Command: []string{"pi-acp", "run"},
-		Caps:    workspace.Caps{Sandbox: workspace.SandboxLandlock},
-		ExtraRO: []string{"/skills"},
+		Command:    []string{"pi-acp", "run"},
+		Caps:       workspace.Caps{Sandbox: workspace.SandboxLandlock},
+		SkillPaths: func() []string { return []string{"/skills"} },
 	}}
 	argv := a.wrappedArgv(cwd, a.opts.Caps)
 	if len(argv) < 2 || argv[1] != workspace.SandboxExecArg {
@@ -185,9 +185,9 @@ func TestWrappedArgvBwrap(t *testing.T) {
 	cwd := t.TempDir()
 	home := t.TempDir()
 	a := &Agent{opts: Options{
-		Command: []string{"pi-acp", "run"},
-		Caps:    workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: home},
-		ExtraRO: []string{"/skills"},
+		Command:    []string{"pi-acp", "run"},
+		Caps:       workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: home},
+		SkillPaths: func() []string { return []string{"/skills"} },
 	}}
 	argv := a.wrappedArgv(cwd, a.opts.Caps)
 	joined := strings.Join(argv, "\x00")
@@ -292,7 +292,8 @@ func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 		// view); a dev host keeps it elsewhere, which is exactly what exec_path/ExtraPath is for.
 		ExtraPath: []string{filepath.Dir(node)},
 	}
-	a := &Agent{opts: Options{Command: []string{node, shim}, ExtraRO: []string{filepath.Dir(shim)}, Caps: caps, Home: home}}
+	shimDir := filepath.Dir(shim)
+	a := &Agent{opts: Options{Command: []string{node, shim}, SkillPaths: func() []string { return []string{shimDir} }, Caps: caps, Home: home}}
 
 	argv := a.wrappedArgv(cwd, caps)
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -366,6 +367,42 @@ func TestSpawnEnvSetsGoCacheVars(t *testing.T) {
 		if fi, err := os.Stat(got[k]); err != nil || !fi.IsDir() {
 			t.Errorf("%s = %q is not a directory that exists: %v", k, got[k], err)
 		}
+	}
+}
+
+// TestSkillPathsQueriedFreshEachSpawn proves #1427 P1's seam: wrappedArgv
+// consults Options.SkillPaths (not a snapshot taken at New) so a registry
+// change between two spawns is picked up without rebuilding the Agent.
+func TestSkillPathsQueriedFreshEachSpawn(t *testing.T) {
+	paths := []string{"/plugins/a"}
+	a := &Agent{opts: Options{
+		Command:    []string{"pi-acp", "run"},
+		Caps:       workspace.Caps{Sandbox: workspace.SandboxLandlock},
+		SkillPaths: func() []string { return paths },
+	}}
+	cwd := t.TempDir()
+	if joined := strings.Join(a.wrappedArgv(cwd, a.opts.Caps), " "); !strings.Contains(joined, "/plugins/a") {
+		t.Fatalf("wrappedArgv = %q, want /plugins/a granted", joined)
+	}
+	paths = []string{"/plugins/b"}
+	joined := strings.Join(a.wrappedArgv(cwd, a.opts.Caps), " ")
+	if strings.Contains(joined, "/plugins/a") || !strings.Contains(joined, "/plugins/b") {
+		t.Fatalf("wrappedArgv after registry change = %q, want /plugins/b only", joined)
+	}
+}
+
+// TestMergeSkillPathsRewritesPIAcpConfig proves spawnEnv folds a fresh
+// SkillPaths result into PI_ACP_CONFIG's skill_paths field (the pi-acp shim
+// reads it into settings.json per spawn), leaving other env entries alone.
+func TestMergeSkillPathsRewritesPIAcpConfig(t *testing.T) {
+	env := []string{"FOO=bar", `PI_ACP_CONFIG={"model":"m1"}`}
+	got := mergeSkillPaths(env, []string{"/plugins/dotagents"})
+	if got[0] != "FOO=bar" {
+		t.Errorf("unrelated env entry changed: %q", got[0])
+	}
+	want := `PI_ACP_CONFIG={"model":"m1","skill_paths":["/plugins/dotagents"]}`
+	if got[1] != want {
+		t.Errorf("PI_ACP_CONFIG = %q, want %q", got[1], want)
 	}
 }
 

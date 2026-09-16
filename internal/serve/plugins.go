@@ -20,8 +20,166 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/plugin"
+	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// embeddedQuackPlugin is quack's go:embedded skill bundle's registry row
+// (#1427 P1): in-memory only, never Put to disk - it has no clone.
+func embeddedQuackPlugin() pluginreg.Plugin {
+	return pluginreg.Plugin{Name: "quack", Source: pluginreg.SourceEmbedded}
+}
+
+// seedRegistry inserts each seed entry into reg if its name is absent - Put
+// only when List lacks it, so the UI/REST (P2) own the list after boot. A
+// stale on-disk row (no longer in seed) is left alone but named in a warning (#1427 F6).
+func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string) error {
+	existing, err := reg.List(ctx)
+	if err != nil {
+		return err
+	}
+	have := make(map[string]bool, len(existing))
+	stale := make(map[string]bool, len(existing))
+	for _, p := range existing {
+		have[p.Name] = true
+		stale[p.Name] = true
+	}
+	seenInSeed := make(map[string]string, len(seed)) // name -> raw entry
+	for _, s := range seed {
+		e, err := pluginreg.ParseEntry(s) // config.validatePlugins already checked every entry parses
+		if err != nil {
+			return err
+		}
+		name := e.Name()
+		// A name repeated under a different entry is a config error, not a
+		// Put collision (#1427 S3) - the vendored copy and a github: copy of
+		// the SAME repo are expected to coexist under DIFFERENT names.
+		if prev, dup := seenInSeed[name]; dup && prev != e.Raw {
+			return fmt.Errorf("config: plugins.seed: name %q is listed twice, as %q and %q", name, prev, e.Raw)
+		}
+		seenInSeed[name] = e.Raw
+		delete(stale, name)
+		if have[name] {
+			continue
+		}
+		if err := reg.Put(ctx, pluginreg.FromEntry(e)); err != nil {
+			return err
+		}
+		have[name] = true
+	}
+	if len(stale) > 0 {
+		names := make([]string, 0, len(stale))
+		for n := range stale {
+			names = append(names, n)
+		}
+		slog.Warn("plugin registry rows are absent from plugins.seed; they still load", "component", "startup", "names", names)
+	}
+	return nil
+}
+
+// fetchRegistryPlugins fetches every non-local row against its pinned/tracked
+// ref (P0's gitTimeout per call already bounds each one). A failure is logged
+// and left on the row - Fetch persists it - so boot continues on the last good clone.
+func fetchRegistryPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin) []pluginreg.Plugin {
+	out := make([]pluginreg.Plugin, 0, len(rows))
+	for _, p := range rows {
+		if p.Source != pluginreg.SourceGitHub {
+			out = append(out, p)
+			continue
+		}
+		fetched, err := reg.Fetch(ctx, p)
+		if err != nil {
+			slog.Warn("plugin fetch failed at boot; serving the last good clone", "component", "startup", "plugin", p.Name, "err", err)
+		}
+		out = append(out, fetched)
+	}
+	return out
+}
+
+// bootPluginRegistry seeds and fetches the plugin registry, returning every
+// row (github fetched, local as-is), ordered per plugins.seed (#1427 F2),
+// plus the in-memory embedded quack row appended last.
+func (b *boot) bootPluginRegistry(ctx context.Context) (*pluginreg.FSRegistry, []pluginreg.Plugin, error) {
+	reg := pluginreg.NewFSRegistry(b.cfg.Plugins.Root)
+	if err := seedRegistry(ctx, reg, b.cfg.Plugins.Seed); err != nil {
+		return nil, nil, fmt.Errorf("plugin registry seed: %w", err)
+	}
+	rows, err := reg.List(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("plugin registry list: %w", err)
+	}
+	rows = fetchRegistryPlugins(ctx, reg, rows)
+	rows = orderBySeed(b.cfg.Plugins.Seed, rows)
+	rows = append(rows, embeddedQuackPlugin())
+	return reg, rows, nil
+}
+
+// orderBySeed reorders rows to match plugins.seed's listed order (bare-name
+// resolution is "first in merge order wins", #1427 F2) - a row not in seed
+// (added via the UI/REST, P2) sorts after, in List's name order.
+func orderBySeed(seed []string, rows []pluginreg.Plugin) []pluginreg.Plugin {
+	byName := make(map[string]pluginreg.Plugin, len(rows))
+	for _, p := range rows {
+		byName[p.Name] = p
+	}
+	out := make([]pluginreg.Plugin, 0, len(rows))
+	seen := make(map[string]bool, len(rows))
+	for _, s := range seed {
+		e, err := pluginreg.ParseEntry(s) // config.validatePlugins already checked every entry parses
+		if err != nil {
+			continue
+		}
+		if p, ok := byName[e.Name()]; ok && !seen[e.Name()] {
+			out = append(out, p)
+			seen[e.Name()] = true
+		}
+	}
+	for _, p := range rows {
+		if !seen[p.Name] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// registryPluginRoots is every non-embedded row's resolved Root() - what
+// plugin.Resolve reads (plugin.json/skills/mcp.json), replacing
+// cfg.PluginRoots() as of #1427 P1.
+func registryPluginRoots(registryRoot string, rows []pluginreg.Plugin) []string {
+	var out []string
+	for _, p := range rows {
+		if p.Source == pluginreg.SourceEmbedded {
+			continue
+		}
+		out = append(out, p.Root(registryRoot))
+	}
+	return out
+}
+
+// resolveRegistryPlugins resolves each row's root, then stamps the REGISTRY
+// ROW NAME onto each result (#1427 S3, never plugin.json's) - matched by
+// absolute root path, since plugin.Resolve silently drops a failed root.
+func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plugin.Plugin, error) {
+	nameByAbsRoot := make(map[string]string, len(rows))
+	for _, p := range rows {
+		if p.Source == pluginreg.SourceEmbedded {
+			continue
+		}
+		if abs, err := filepath.Abs(p.Root(registryRoot)); err == nil {
+			nameByAbsRoot[abs] = p.Name
+		}
+	}
+	plugins, err := plugin.Resolve(registryPluginRoots(registryRoot, rows))
+	if err != nil {
+		return nil, err
+	}
+	for i := range plugins {
+		if name, ok := nameByAbsRoot[plugins[i].Root]; ok {
+			plugins[i].Name = name
+		}
+	}
+	return plugins, nil
+}
 
 // mcpEnumerateTimeout bounds the one blocking connect+ListTools a declared
 // server gets at boot. Per-call contexts govern everything after.

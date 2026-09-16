@@ -33,9 +33,9 @@ func lockClone(dir string) func() {
 	return mu.Unlock
 }
 
-// remoteURL is overridable so tests can fetch from a local bare repo fixture
+// RemoteURL is overridable so tests can fetch from a local bare repo fixture
 // instead of github.com.
-var remoteURL = func(owner, repo string) string {
+var RemoteURL = func(owner, repo string) string {
 	return fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 }
 
@@ -48,7 +48,7 @@ func Fetch(ctx context.Context, root string, p Plugin) (Plugin, error) {
 	}
 	dir := CloneDir(root, p.Name)
 	defer lockClone(dir)()
-	url := remoteURL(p.Owner, p.Repo)
+	url := RemoteURL(p.Owner, p.Repo)
 	if err := fetchInto(ctx, dir, url); err != nil {
 		p.Error = err.Error()
 		return p, err
@@ -174,7 +174,7 @@ func CheckUpdate(ctx context.Context, p Plugin) (behind bool, remoteSHA string, 
 	if p.Ref != "" && shaPattern.MatchString(p.Ref) {
 		return false, p.Ref, nil
 	}
-	url := remoteURL(p.Owner, p.Repo)
+	url := RemoteURL(p.Owner, p.Repo)
 	if p.Ref == "" {
 		remoteSHA, err = lsRemoteHEAD(ctx, url)
 	} else {

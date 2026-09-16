@@ -19,13 +19,13 @@ plugins:
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := c.PluginRoots()
+	got := c.Plugins.Seed
 	if len(got) != len(defaultSkillPlugins) {
-		t.Fatalf("PluginRoots() = %v, want the defaults %v", got, defaultSkillPlugins)
+		t.Fatalf("Plugins.Seed = %v, want the defaults %v", got, defaultSkillPlugins)
 	}
 	for i, want := range defaultSkillPlugins {
 		if got[i] != want {
-			t.Fatalf("PluginRoots() = %v, want the defaults %v", got, defaultSkillPlugins)
+			t.Fatalf("Plugins.Seed = %v, want the defaults %v", got, defaultSkillPlugins)
 		}
 	}
 	if c.Plugins.Root != "/custom/plugins/root" {
@@ -41,8 +41,8 @@ plugins:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := c.PluginRoots(); len(got) != 0 {
-		t.Fatalf("PluginRoots() = %v, want empty (explicit seed: [])", got)
+	if got := c.Plugins.Seed; len(got) != 0 {
+		t.Fatalf("Plugins.Seed = %v, want empty (explicit seed: [])", got)
 	}
 }
 
@@ -100,9 +100,9 @@ plugins:
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := c.PluginRoots()
+	got := c.Plugins.Seed
 	if len(got) != 1 || got[0] != ".agents/vendor/dotagents" {
-		t.Fatalf("PluginRoots() = %v, want skills.plugins to be used", got)
+		t.Fatalf("Plugins.Seed = %v, want skills.plugins to be used", got)
 	}
 	if strings.Contains(buf.String(), "skills.plugins is ignored") {
 		t.Fatalf("skills.plugins was actually used but the log says it was ignored:\n%s", buf.String())
@@ -131,8 +131,9 @@ plugins:
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := c.PluginRoots()
-	if len(got) != 1 || got[0] != ".agents/vendor/dotagents" {
-		t.Fatalf("PluginRoots() = %v, want just the local entry", got)
+	want := []string{".agents/vendor/dotagents", "github:fagerbergj/ponytail@v1.4"}
+	got := c.Plugins.Seed
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("Plugins.Seed = %v, want %v (bare list means seed:, local and github: entries alike)", got, want)
 	}
 }

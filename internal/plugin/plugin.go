@@ -161,6 +161,9 @@ func fromRootManifest(abs string) (*Plugin, error) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, fmt.Errorf("parse plugin.json: %w", err)
 	}
+	if strings.TrimSpace(m.Name) == "" {
+		return nil, fmt.Errorf("plugin.json at %s: \"name\" is required", abs)
+	}
 
 	p := &Plugin{Name: m.Name, Root: abs}
 	// §6.2: an absent skills/ is not an error - a plugin may carry only MCP

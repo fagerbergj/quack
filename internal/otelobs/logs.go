@@ -90,6 +90,9 @@ const (
 	// prompt resolved from and its version there (#1420); replay pins on these.
 	QuackPromptSource    = "quack.prompt.source"
 	QuackPromptVersionID = "quack.prompt.version_id"
+	// QuackPlugins: invoke_agent provenance (#1427 P1) - a JSON array of
+	// {name,sha} for the plugins in scope of the round, no semconv equivalent.
+	QuackPlugins = "quack.plugins"
 )
 
 // vars, not consts - attribute.Value has no constant form.

@@ -8,6 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
@@ -73,7 +74,7 @@ func (t *teeBuffer) lines() []json.RawMessage {
 // emitInvokeAgent records one gen_ai "invoke_agent" ledger event per ACP
 // round (teeBuffer.reset makes this true even when a pinned subprocess spans
 // several rounds), carrying the full teed protocol conversation: sent is what quack wrote to the subprocess's stdin, received is what it read back from stdout. Coordinates (conversation/node/round) come off ctx - the SAME ledger.Coords the vetting gate stamped before invoking this agent's RunNode, since an ACP round runs inside that same call tree.
-func emitInvokeAgent(ctx context.Context, agentName string, sent, received *teeBuffer, roundErr error) {
+func emitInvokeAgent(ctx context.Context, agentName string, sent, received *teeBuffer, roundErr error, plugins []ledger.PluginRef) {
 	if !otelobs.LoggingEnabled(acpScope) {
 		return // nothing listening - skip parsing/marshaling the teed conversation
 	}
@@ -86,6 +87,11 @@ func emitInvokeAgent(ctx context.Context, agentName string, sent, received *teeB
 	}
 	if b, err := json.Marshal(received.lines()); err == nil {
 		attrs = append(attrs, attribute.String(otelobs.GenAIOutputMessages, string(b)))
+	}
+	if len(plugins) > 0 {
+		if b, err := json.Marshal(plugins); err == nil {
+			attrs = append(attrs, attribute.String(otelobs.QuackPlugins, string(b)))
+		}
 	}
 	if roundErr != nil {
 		attrs = append(attrs, attribute.String(otelobs.ErrorType, roundErr.Error()))

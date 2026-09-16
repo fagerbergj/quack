@@ -138,9 +138,17 @@ type ToolCallPayload struct {
 // AgentInvokePayload is a KindAgentInvoke entry's payload: one ACP round's
 // full protocol conversation, both directions as JSON arrays of frames.
 type AgentInvokePayload struct {
-	Sent     string `json:"sent,omitempty"`
-	Received string `json:"received,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Sent     string      `json:"sent,omitempty"`
+	Received string      `json:"received,omitempty"`
+	Error    string      `json:"error,omitempty"`
+	Plugins  []PluginRef `json:"plugins,omitempty"`
+}
+
+// PluginRef is one plugin's provenance on an agent.invoke entry (#1427 P1):
+// SHA is "" for a local or embedded plugin, which have no clone to pin.
+type PluginRef struct {
+	Name string `json:"name"`
+	SHA  string `json:"sha,omitempty"`
 }
 
 // EvalScorePayload is a KindEvalScore entry's payload: one judge criterion.

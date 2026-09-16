@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/plugin"
 )
 
 var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
@@ -27,7 +29,8 @@ func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	// submodules initialised.
 	dotagents := filepath.Join(root, ".agents", "vendor", "dotagents")
 	ponytail := filepath.Join(root, ".agents", "vendor", "ponytail")
-	vendorDirs := resolveSkillDirs([]string{dotagents, ponytail})
+	vendorPlugins, _ := plugin.Resolve([]string{dotagents, ponytail})
+	vendorDirs := plugin.SkillDirs(vendorPlugins)
 	if len(vendorDirs) != 2 {
 		t.Fatalf("vendored dotagents/ponytail plugins did not both resolve: got %v", vendorDirs)
 	}

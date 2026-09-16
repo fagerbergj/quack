@@ -24,14 +24,57 @@ type scoped struct {
 	allow map[string]bool
 }
 
+// resolve maps name to the name to forward to src: a real allowed literal
+// name wins, else the FIRST src name whose bare form is allowed (merge
+// order) - keeps every method agreeing with ListFrontmatters (#1427 F3).
+func (s *scoped) resolve(ctx context.Context, name string) (string, error) {
+	// allow can itself hold a bare entry, so "in allow" alone isn't proof
+	// name is real - confirm src actually has a skill by that exact name.
+	if s.allow[name] {
+		if _, err := s.src.LoadFrontmatter(ctx, name); err == nil {
+			return name, nil
+		}
+	}
+	bare := BareName(name)
+	if !s.allow[bare] {
+		return "", skill.ErrSkillNotFound
+	}
+	fms, err := s.src.ListFrontmatters(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, fm := range fms {
+		if BareName(fm.Name) != bare {
+			continue
+		}
+		// fm.Name is the first-wins resolution of bare. A caller that asked
+		// for a DIFFERENT plugin's qualified name is out of scope, never
+		// silently redirected to this one (#1427 R2).
+		if name == bare || name == fm.Name {
+			return fm.Name, nil
+		}
+		return "", skill.ErrSkillNotFound
+	}
+	return "", skill.ErrSkillNotFound
+}
+
 func (s *scoped) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {
 	all, err := s.src.ListFrontmatters(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]*skill.Frontmatter, 0, len(all))
+	seenBare := map[string]bool{}
 	for _, fm := range all {
 		if s.allow[fm.Name] {
+			out = append(out, fm)
+			continue
+		}
+		bare := BareName(fm.Name)
+		// A bare config name matches the FIRST plugin providing it (source
+		// order = merge order), not every plugin that happens to ship it.
+		if s.allow[bare] && !seenBare[bare] {
+			seenBare[bare] = true
 			out = append(out, fm)
 		}
 	}
@@ -39,29 +82,33 @@ func (s *scoped) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, er
 }
 
 func (s *scoped) ListResources(ctx context.Context, name, subpath string) ([]string, error) {
-	if !s.allow[name] {
+	resolved, err := s.resolve(ctx, name)
+	if err != nil {
 		return nil, skill.ErrSkillNotFound
 	}
-	return s.src.ListResources(ctx, name, subpath)
+	return s.src.ListResources(ctx, resolved, subpath)
 }
 
 func (s *scoped) LoadFrontmatter(ctx context.Context, name string) (*skill.Frontmatter, error) {
-	if !s.allow[name] {
+	resolved, err := s.resolve(ctx, name)
+	if err != nil {
 		return nil, skill.ErrSkillNotFound
 	}
-	return s.src.LoadFrontmatter(ctx, name)
+	return s.src.LoadFrontmatter(ctx, resolved)
 }
 
 func (s *scoped) LoadInstructions(ctx context.Context, name string) (string, error) {
-	if !s.allow[name] {
+	resolved, err := s.resolve(ctx, name)
+	if err != nil {
 		return "", skill.ErrSkillNotFound
 	}
-	return s.src.LoadInstructions(ctx, name)
+	return s.src.LoadInstructions(ctx, resolved)
 }
 
 func (s *scoped) LoadResource(ctx context.Context, name, resourcePath string) (io.ReadCloser, error) {
-	if !s.allow[name] {
+	resolved, err := s.resolve(ctx, name)
+	if err != nil {
 		return nil, skill.ErrSkillNotFound
 	}
-	return s.src.LoadResource(ctx, name, resourcePath)
+	return s.src.LoadResource(ctx, resolved, resourcePath)
 }

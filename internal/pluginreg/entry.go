@@ -17,6 +17,9 @@ const (
 	// SourceLocal is any entry not starting with "github:" - today's bare
 	// plugins: list, kept working unchanged. No clone: Root is the path itself.
 	SourceLocal = "local"
+	// SourceEmbedded is quack's go:embedded skill bundle, registered as the
+	// plugin "quack" (#1427 P1). In-memory only - never Put, no Entry, no clone.
+	SourceEmbedded = "embedded"
 )
 
 // entryPattern is github:owner/repo[@ref][#path]. Groups: owner, repo, ref,

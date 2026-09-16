@@ -2,11 +2,13 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -93,18 +95,52 @@ func traceparentEnv(ctx context.Context) []string {
 	return []string{fmt.Sprintf("TRACEPARENT=00-%s-%s-%s", sc.TraceID(), sc.SpanID(), sc.TraceFlags())}
 }
 
-// wrappedArgv is the subprocess argv actually exec'd: a.opts.Command wrapped
-// through the SAME sandbox seam every other child runs inside
-// (workspace.WrapArgv) - RW (or RO, per caps.ReadOnly - #754) is cwd's own scope (the node dir), RO adds the skill paths the ACP agent needs to read (ExtraRO) on top of the caps' own system + exec_path grants. landlock applies them as a ruleset, bwrap as identity bind mounts (#921); `none` passes Command through unchanged.
+// wrappedArgv is the subprocess argv actually exec'd, wrapped through the
+// SAME sandbox seam every other child runs inside (workspace.WrapArgv) - RO
+// adds SkillPaths(), queried fresh every spawn (#1427 P1), on top of caps'.
 func (a *Agent) wrappedArgv(cwd string, caps workspace.Caps) []string {
-	return workspace.WrapArgv(cwd, a.opts.Command, caps, a.opts.ExtraRO, nil)
+	var extraRO []string
+	if a.opts.SkillPaths != nil {
+		extraRO = a.opts.SkillPaths()
+	}
+	return workspace.WrapArgv(cwd, a.opts.Command, caps, extraRO, nil)
 }
 
 // spawnEnv is the subprocess environment: PATH is HERMETIC in every sandbox
 // mode (workspace.ChildPath - the same fixed PATH the gate's own children
 // get), never the server's ambient PATH - the toolchain the agent needs to RUN is covered by Caps.ExtraPath + the system dirs already in ChildPath, so ambient added no reach a leak couldn't also use. caps is THIS round's effective caps (ReadOnly/ScratchDir already resolved by the caller, same as wrappedArgv takes) - TMPDIR must track caps.ScratchDir's per-node grant, not the agent's static opts.Caps, or every round would share one scratch dir. The GIT_* trio strips the child's authority to authenticate to any real remote (#936) - GIT_ASKPASS/GIT_SSH_COMMAND point at /bin/false so an HTTPS or SSH credential prompt fails closed instead of hanging or succeeding, and GIT_TERMINAL_PROMPT=0 kills git's own fallback prompt. `git push` itself stays fully allowed: it works against a local/file:// remote (the test suite's own target) and merely can't authenticate anywhere else. This is independent of internal/vetting's gate-owned push, which builds its own env from scratch (pushGitEnv) and is never touched here.
 func (a *Agent) spawnEnv(caps workspace.Caps) []string {
-	return SpawnEnv(a.opts.Home, a.opts.Env, caps)
+	env := SpawnEnv(a.opts.Home, a.opts.Env, caps)
+	if a.opts.SkillPaths != nil {
+		env = mergeSkillPaths(env, a.opts.SkillPaths())
+	}
+	return env
+}
+
+// mergeSkillPaths rewrites PI_ACP_CONFIG's skill_paths field in place with a
+// freshly-queried list - the env slice built once at agent construction
+// (piACPEnv) otherwise never sees a registry update (#1427 P1).
+func mergeSkillPaths(env []string, skillPaths []string) []string {
+	if len(skillPaths) == 0 {
+		return env
+	}
+	out := slices.Clone(env)
+	for i, kv := range out {
+		rest, ok := strings.CutPrefix(kv, "PI_ACP_CONFIG=")
+		if !ok {
+			continue
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(rest), &cfg); err != nil {
+			break
+		}
+		cfg["skill_paths"] = skillPaths
+		if b, err := json.Marshal(cfg); err == nil {
+			out[i] = "PI_ACP_CONFIG=" + string(b)
+		}
+		break
+	}
+	return out
 }
 
 // start spawns the agent subprocess rooted at cwd and wires the ACP

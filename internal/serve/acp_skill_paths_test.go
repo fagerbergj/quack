@@ -27,15 +27,16 @@ func TestAcpSkillPathsBackfillsEmbeddedDotagents(t *testing.T) {
 	}
 }
 
-// TestAcpSkillPathsNoDuplicateWhenOnDisk proves the by-name backfill rule: a plugin root
-// that resolves review-code on disk must not also get the embedded copy appended -
-// pi's skill loader may error on a duplicate name.
+// TestAcpSkillPathsNoDuplicateWhenOnDisk proves the by-BARE-name backfill
+// rule (#1427 R1): a plugin root - registered under ANY name - that resolves
+// review-code on disk must not also get the embedded copy extracted, since
+// pi's skill loader sees bare directory names and may error on a duplicate.
 func TestAcpSkillPathsNoDuplicateWhenOnDisk(t *testing.T) {
 	vendor := t.TempDir()
 	writePluginManifest(t, vendor, "review-code-standin")
 	writeVendorSkill(t, filepath.Join(vendor, "skills"), "review-code", "standin for the vendored review-code skill")
 
-	paths := acpSkillPaths(resolveSkillDirs([]string{vendor}))
+	paths := acpSkillPaths(resolvePlugins([]string{vendor}))
 
 	count := 0
 	for _, p := range paths {
@@ -64,8 +65,8 @@ func TestAcpSkillFrontmatters_Scoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acpSkillFrontmatters: %v", err)
 	}
-	if len(scoped) != 1 || scoped[0].Name != "review-code" {
-		t.Fatalf("acpSkillFrontmatters(..., [review-code]) = %v, want exactly the one named skill", scoped)
+	if len(scoped) != 1 || scoped[0].Name != "quack:review-code" {
+		t.Fatalf("acpSkillFrontmatters(..., [review-code]) = %v, want exactly quack:review-code (bare name, plugin-qualified result)", scoped)
 	}
 }
 
