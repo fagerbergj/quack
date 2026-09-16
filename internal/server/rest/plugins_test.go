@@ -46,9 +46,9 @@ func newPluginsTestHandler(t *testing.T) (*Handler, *atomic.Int64) {
 	reg := pluginreg.NewFSRegistry(root)
 	var rebuilds atomic.Int64
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() error {
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) {
 		rebuilds.Add(1)
-		return nil
+		return nil, nil
 	}))
 	return h, &rebuilds
 }
@@ -386,16 +386,18 @@ func findWirePlugin(rows []schema.Plugin, name string) (schema.Plugin, bool) {
 }
 
 // TestRebuildRefusalIs422AndStoresError is should-fix#9: a rebuild refusal
-// (e.g. checkPluginModules) must 422, store the refusal on the row, and
-// never silently admit a bad plugin the way boot would refuse it.
+// naming the JUST-CREATED row must 422 with that row's own message. Real
+// persistence of the refusal onto the row (admitPlugins' job, not REST's -
+// review#2) is covered by internal/serve's TestRebuildSkillsDropsOnlyTheRefusedRow.
 func TestRebuildRefusalIs422AndStoresError(t *testing.T) {
 	bare, _ := newFixtureRepo(t)
 	withFixedRemote(t, bare)
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() error {
-		return errors.New("plugin \"widgets\" declares module \"x\", which is not linked")
+	refusal := errors.New(`plugin "widgets" declares module "x", which is not linked`)
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) {
+		return map[string]error{"widgets": refusal}, nil
 	}))
 
 	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
@@ -404,13 +406,5 @@ func TestRebuildRefusalIs422AndStoresError(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "not linked") {
 		t.Fatalf("422 body should carry the refusal, got %s", w.Body.String())
-	}
-	rows, err := reg.List(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	row, ok := findPluginRow(rows, "widgets")
-	if !ok || row.Error == "" {
-		t.Fatalf("row after a refused rebuild = %+v, want error stored", row)
 	}
 }

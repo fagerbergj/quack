@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -456,5 +457,32 @@ func TestTraceparentEnv(t *testing.T) {
 	want := "TRACEPARENT=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("traceparentEnv = %v, want [%s]", got, want)
+	}
+}
+
+// TestWrappedArgvDoesNotMutateSkillPathsCache is the #1430 review-2 race
+// fix: SkillPaths() can return a cached slice with spare capacity
+// (acpRegistrySkillPaths) - concurrent spawns appending ExtraRO onto it in
+// place would race and corrupt the cache's backing array under -race.
+func TestWrappedArgvDoesNotMutateSkillPathsCache(t *testing.T) {
+	cached := make([]string, 1, 4) // cap > len, like the real cache
+	cached[0] = "/plugins/dotagents/skills"
+	a := &Agent{opts: Options{
+		Command:    []string{"pi-acp", "run"},
+		Caps:       workspace.Caps{Sandbox: workspace.SandboxNone},
+		SkillPaths: func() []string { return cached },
+		ExtraRO:    func() []string { return []string{"/plugins"} },
+	}}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = a.wrappedArgv(t.TempDir(), a.opts.Caps)
+		}()
+	}
+	wg.Wait()
+	if len(cached) != 1 || cached[0] != "/plugins/dotagents/skills" {
+		t.Fatalf("cached SkillPaths slice was mutated: %v", cached)
 	}
 }

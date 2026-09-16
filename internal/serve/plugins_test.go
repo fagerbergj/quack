@@ -1,8 +1,10 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,6 +143,11 @@ func TestSeedRegistryPropagatesPutFailureOnNewInsert(t *testing.T) {
 // persisting a boot refusal is logged, not returned or panicked on -
 // there is nothing left for the caller to do about it.
 func TestPersistPluginRefusalLogsOnWriteFailure(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "bad"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -148,4 +155,8 @@ func TestPersistPluginRefusalLogsOnWriteFailure(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(root)
 	rows := []pluginreg.Plugin{{Name: "bad", Source: pluginreg.SourceLocal, Entry: "bad"}}
 	persistPluginRefusal(context.Background(), reg, rows, "bad", errors.New("boom"))
+
+	if !strings.Contains(buf.String(), "failed to persist plugin refusal") {
+		t.Fatalf("log output = %q, want the persist-failure warning", buf.String())
+	}
 }

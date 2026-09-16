@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
@@ -59,4 +60,35 @@ func TestSwappableSkillSourceDelegatesAndSwaps(t *testing.T) {
 	if len(fms) != 1 || fms[0].Name != "v2" {
 		t.Fatalf("ListFrontmatters after Swap = %v, want v2", fms)
 	}
+}
+
+// TestSwappableSkillSourceConcurrentReadsDuringSwap proves the atomic
+// pointer under Swap is race-safe: a reader goroutine looping
+// ListFrontmatters/LoadFrontmatter must never see a torn value while Swap
+// runs concurrently on the main goroutine.
+func TestSwappableSkillSourceConcurrentReadsDuringSwap(t *testing.T) {
+	s := newSwappableSkillSource(fakeSkillSource{"v1"})
+	ctx := context.Background()
+	done := make(chan struct{})
+
+	var readerWG sync.WaitGroup
+	readerWG.Add(1)
+	go func() {
+		defer readerWG.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				_, _ = s.ListFrontmatters(ctx)
+				_, _ = s.LoadFrontmatter(ctx, "x")
+			}
+		}
+	}()
+
+	for i := 0; i < 100; i++ {
+		s.Swap(fakeSkillSource{"v2"})
+	}
+	close(done)
+	readerWG.Wait()
 }

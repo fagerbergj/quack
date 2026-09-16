@@ -1151,7 +1151,7 @@ type Plugin struct {
 	// InstalledSha The sha currently checked out. Absent if never fetched.
 	InstalledSha *string `json:"installed_sha,omitempty"`
 
-	// Name Registry row name (plugin.json's name, else the repo/path base).
+	// Name Registry row name - the repo base for a github entry, the path base for a local one. Never plugin.json's own name.
 	Name string `json:"name"`
 
 	// Owner Present for a github row.
@@ -1911,7 +1911,7 @@ type ServerInterface interface {
 	// Cast (or clear) the human's own vote on one memory
 	// (POST /api/v1/memories/{memory_id}/vote)
 	VoteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
-	// List every registered plugin (epic
+	// List every registered plugin (epic #1427 P2)
 	// (GET /api/v1/plugins)
 	ListPlugins(w http.ResponseWriter, r *http.Request)
 	// Register and fetch a plugin
@@ -2127,7 +2127,7 @@ func (_ Unimplemented) VoteMemory(w http.ResponseWriter, r *http.Request, memory
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// List every registered plugin (epic
+// List every registered plugin (epic #1427 P2)
 // (GET /api/v1/plugins)
 func (_ Unimplemented) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)

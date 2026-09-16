@@ -587,7 +587,10 @@ type skillsInit struct {
 	skillSrc         skill.Source
 	skillTS          *skilltoolset.SkillToolset
 	newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error)
-	rebuildSkills    func() error
+	// rebuildSkills swaps in a freshly-admitted roster and returns which
+	// (if any) non-seed rows were refused this pass - review#2: rebuild uses
+	// the SAME per-row admission as boot, not an all-or-nothing gate.
+	rebuildSkills func() (refusals map[string]error, err error)
 }
 
 // resolves the plugin registry and builds the skill sources and toolsets.
@@ -604,13 +607,13 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 		return skillsInit{}, err
 	}
 	// One resolution of the registry roots drives all three component types.
-	// admitBootPlugins fails boot only on a plugins.seed (config) refusal -
+	// admitPlugins fails boot only on a plugins.seed (config) refusal -
 	// a REST-added row's refusal just drops that plugin (#1430 severe).
 	plugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
 	if err != nil {
 		return skillsInit{}, err
 	}
-	plugins, err = admitBootPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
+	plugins, _, err = admitPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
 	if err != nil {
 		return skillsInit{}, err
 	}
@@ -629,30 +632,28 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
 	var rebuildMu sync.Mutex
-	rebuildSkills := func() error {
+	rebuildSkills := func() (map[string]error, error) {
 		rebuildMu.Lock()
 		defer rebuildMu.Unlock()
 		reg := pluginreg.NewFSRegistry(b.cfg.Plugins.Root)
 		rows, err := reg.List(context.Background())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		rows = pluginreg.OrderBySeed(b.cfg.Plugins.Seed, rows)
 		rows = append(rows, pluginreg.EmbeddedQuackPlugin())
 		freshPlugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		// Same refusals boot enforces (#1430 SF9), fatal on the first one -
-		// the REST caller 422s and the previous roster stays; swap only
-		// runs once every row passes (unlike admitBootPlugins, no per-row drop).
-		for _, p := range freshPlugins {
-			if err := checkPlugin(p, b.cfg.Extensions.Modules); err != nil {
-				return err
-			}
+		// Same admission as boot (#1430 review#2) - a refused non-seed row
+		// only drops itself; everything else still swaps in.
+		admitted, refusals, err := admitPlugins(context.Background(), reg, rows, freshPlugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
+		if err != nil {
+			return nil, err
 		}
-		swappable.Swap(newSkillSource(freshPlugins))
-		return nil
+		swappable.Swap(newSkillSource(admitted))
+		return refusals, nil
 	}
 	return skillsInit{
 		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
@@ -801,7 +802,7 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 }
 
 // mounts the HTTP handler and starts the workspace GC
-func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() error) (http.Handler, error) {
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error)) (http.Handler, error) {
 	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills)
 	if err != nil {
 		return nil, err
@@ -1805,7 +1806,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	return orch, nil
 }
 
-func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() error) (http.Handler, error) {
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error)) (http.Handler, error) {
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("embed SPA fs failed: %w", err)

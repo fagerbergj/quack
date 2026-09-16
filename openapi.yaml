@@ -1247,7 +1247,7 @@ paths:
   /api/v1/plugins:
     get:
       operationId: listPlugins
-      summary: List every registered plugin (epic #1427 P2)
+      summary: "List every registered plugin (epic #1427 P2)"
       description: |
         Every registry row plus the go:embedded `quack` baseline. A row with
         `error` set still appears - the last good clone (if any) keeps
@@ -2290,7 +2290,7 @@ components:
       properties:
         name:
           type: string
-          description: Registry row name (plugin.json's name, else the repo/path base).
+          description: Registry row name - the repo base for a github entry, the path base for a local one. Never plugin.json's own name.
         entry:
           type: string
           description: The raw entry string this row was created from. Empty for the embedded row.

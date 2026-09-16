@@ -646,7 +646,7 @@ export const getMemoryStats = <ThrowOnError extends boolean = false>(options?: O
 });
 
 /**
- * List every registered plugin (epic
+ * List every registered plugin (epic #1427 P2)
  *
  * Every registry row plus the go:embedded `quack` baseline. A row with
  * `error` set still appears - the last good clone (if any) keeps

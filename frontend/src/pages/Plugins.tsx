@@ -68,7 +68,14 @@ export default function Plugins({ navOpen, onToggleNav, initialPlugins, initialU
           .then(u => { if (!cancelled) setUpdates(new Map(u.updates.map(row => [row.name, row]))) })
           .catch(() => {})
       })
-      .catch(e => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Failed to load plugins') })
+      .catch(e => {
+        if (cancelled) return
+        const msg = e instanceof Error ? e.message : 'Failed to load plugins'
+        // A silent (post-action) refresh failing must not blank the list
+        // that's already on screen - surface it as an action error instead.
+        if (opts?.silent) setActionError(msg)
+        else setLoadError(msg)
+      })
       .finally(() => { if (!cancelled && !opts?.silent) setLoading(false) })
     return () => { cancelled = true }
   }, [initialPlugins])
@@ -221,7 +228,10 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
   onUpdate: () => void
   onRemove: () => void
 }) {
-  const removable = p.source !== 'embedded'
+  // Only a github row is REST-managed - local rows are config (plugins.seed)
+  // and re-seeded at boot, so "remove" would just come back; embedded never
+  // had a row to remove.
+  const removable = p.source === 'github'
   const behind = update?.behind ?? false
   const fetched = relativeTime(p.fetched_at)
 
@@ -243,6 +253,12 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
             <span title={p.installed_sha}>sha {shortSha(p.installed_sha)}</span>
           )}
           {fetched && <span>fetched {fetched}</span>}
+          {update?.error && (
+            <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400" title={`Update check failed: ${update.error}`}>
+              <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
+              check failed
+            </span>
+          )}
         </div>
         {p.error && (
           <div className="mt-1 flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">

@@ -223,7 +223,7 @@ func checkPlugin(p plugin.Plugin, modules map[string]yaml.Node) error {
 }
 
 // seedPluginNames is the set of registry-row names plugins.seed configures -
-// admitBootPlugins' fatal-vs-drop boundary.
+// admitPlugins' fatal-vs-drop boundary.
 func seedPluginNames(seed []string) map[string]bool {
 	names := make(map[string]bool, len(seed))
 	for _, s := range seed {
@@ -234,25 +234,27 @@ func seedPluginNames(seed []string) map[string]bool {
 	return names
 }
 
-// admitBootPlugins: a plugins.seed (config) plugin's refusal is fatal, named,
-// as always; a REST-added row's refusal only drops that plugin (warned,
-// stored on its row) so boot never bricks on operator data (#1430 severe).
-func admitBootPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, error) {
+// admitPlugins: a plugins.seed (config) plugin's refusal is fatal, named, as
+// always; a REST-added row's refusal only drops THAT plugin (warned, stored
+// on its row, named in refusals) - shared by boot and rebuildSkills (#1430).
+func admitPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, map[string]error, error) {
 	seedNames := seedPluginNames(seed)
+	refusals := make(map[string]error)
 	out := make([]plugin.Plugin, 0, len(plugins))
 	for _, p := range plugins {
 		if err := checkPlugin(p, modules); err != nil {
 			if seedNames[p.Name] {
-				return nil, err
+				return nil, nil, err
 			}
-			slog.Warn("plugin refused at boot; dropped from the roster, other plugins still load",
+			slog.Warn("plugin refused; dropped from the roster, other plugins still load",
 				"component", "startup", "plugin", p.Name, "err", err)
 			persistPluginRefusal(ctx, reg, rows, p.Name, err)
+			refusals[p.Name] = err
 			continue
 		}
 		out = append(out, p)
 	}
-	return out, nil
+	return out, refusals, nil
 }
 
 // persistPluginRefusal stores cause on name's registry row so GET /plugins

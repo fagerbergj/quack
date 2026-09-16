@@ -113,7 +113,7 @@ func TestDeletePluginRebuildFailureIsWarnOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() error { return errors.New("roster refused") }))
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }))
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	w := httptest.NewRecorder()
 	h.DeletePlugin(w, r, "widgets")
@@ -161,7 +161,7 @@ func TestUpdatePluginRebuildRefusalIs422(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() error { return errors.New("roster refused") }))
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }))
 	doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`) // already 422s, row still stored
 
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -197,7 +197,7 @@ func TestUpdateAllPluginsRebuildRefusalIs422(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() error { return errors.New("roster refused") }))
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }))
 	w := doJSON(t, h.UpdateAllPlugins, http.MethodPost, "")
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body %s, want 422", w.Code, w.Body.String())
@@ -209,8 +209,8 @@ func TestUpdateAllPluginsRebuildRefusalIs422(t *testing.T) {
 // a second line of defense, cheap to prove directly.
 func TestRebuildNilReceiverIsNoop(t *testing.T) {
 	var p *Plugins
-	if err := p.rebuild(); err != nil {
-		t.Fatalf("rebuild() on a nil *Plugins = %v, want nil", err)
+	if refusals, err := p.rebuild(); err != nil || refusals != nil {
+		t.Fatalf("rebuild() on a nil *Plugins = (%v, %v), want (nil, nil)", refusals, err)
 	}
 }
 
@@ -258,5 +258,29 @@ func decodeJSON(t *testing.T, w *httptest.ResponseRecorder, v any) {
 	t.Helper()
 	if err := json.Unmarshal(w.Body.Bytes(), v); err != nil {
 		t.Fatalf("decode response: %v\nbody: %s", err, w.Body.String())
+	}
+}
+
+// TestListPluginsShadowedEmbeddedRowNotDuplicated is review#4: a real row
+// already named "quack" (it shadows the embedded baseline, epic #1427 S2)
+// must appear once, never alongside a synthetic embedded row of the same name.
+func TestListPluginsShadowedEmbeddedRowNotDuplicated(t *testing.T) {
+	h := handlerWith(&failingRegistry{
+		rows: []pluginreg.Plugin{{Name: "quack", Source: pluginreg.SourceGitHub, Owner: "acme", Repo: "quack"}},
+	})
+	w := doJSON(t, h.ListPlugins, http.MethodGet, "")
+	var list schema.PluginList
+	decodeJSON(t, w, &list)
+	count := 0
+	for _, p := range list.Plugins {
+		if p.Name == "quack" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("plugins named quack = %d, want exactly 1 (the shadowing row, no synthetic embedded duplicate): %+v", count, list.Plugins)
+	}
+	if list.Plugins[0].Source != "github" {
+		t.Errorf("the one quack row's source = %q, want github (the real row wins, not embedded)", list.Plugins[0].Source)
 	}
 }

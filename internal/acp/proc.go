@@ -100,7 +100,10 @@ func traceparentEnv(ctx context.Context) []string {
 func (a *Agent) wrappedArgv(cwd string, caps workspace.Caps) []string {
 	var extraRO []string
 	if a.opts.SkillPaths != nil {
-		extraRO = a.opts.SkillPaths()
+		// Copy: SkillPaths() may return a cached slice (acpRegistrySkillPaths)
+		// whose backing array has spare capacity - appending in place would
+		// race a concurrent spawn reading that same cache.
+		extraRO = append([]string(nil), a.opts.SkillPaths()...)
 	}
 	if a.opts.ExtraRO != nil {
 		extraRO = append(extraRO, a.opts.ExtraRO()...)

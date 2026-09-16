@@ -156,13 +156,7 @@ export const api = {
     unwrap(await sdkCreatePlugin({ body: { entry } })),
 
   deletePlugin: async (name: string): Promise<void> => {
-    const r = await sdkDeletePlugin({ path: { name } })
-    if (!r.response || !r.response.ok) {
-      const msg = r.error && typeof r.error === 'object' && 'error' in r.error
-        ? String((r.error as { error: unknown }).error)
-        : `Remove failed (${r.response ? r.response.status : 'no response'})`
-      throw new Error(msg)
-    }
+    unwrap(await sdkDeletePlugin({ path: { name } }))
   },
 
   listPluginUpdates: async (): Promise<PluginUpdateList> => unwrap(await sdkListPluginUpdates()),

@@ -36,24 +36,26 @@ type pluginRegistry interface {
 
 // Plugins is the REST handler's boot-owned registry access (epic #1427 P2).
 type Plugins struct {
-	reg           pluginRegistry
-	root          string
-	seed          []string
-	rebuildSkills func() error
+	reg  pluginRegistry
+	root string
+	seed []string
+	// rebuildSkills swaps in a fresh roster; refusals names non-seed rows
+	// dropped this pass - the same per-row admission boot uses (#1430).
+	rebuildSkills func() (refusals map[string]error, err error)
 }
 
 // NewPlugins builds the handler's registry access. rebuildSkills may be nil
 // (no-op) for a caller that doesn't need the roster kept live, e.g. a test.
-func NewPlugins(reg pluginRegistry, root string, seed []string, rebuildSkills func() error) *Plugins {
+func NewPlugins(reg pluginRegistry, root string, seed []string, rebuildSkills func() (map[string]error, error)) *Plugins {
 	return &Plugins{reg: reg, root: root, seed: seed, rebuildSkills: rebuildSkills}
 }
 
-// rebuild re-resolves the native skill roster after a row/sha change -
-// checkPluginModules/checkPluginConfig run inside rebuildSkills itself, so a
-// bad plugin refuses the SAME way it would at boot (#1430 SF9).
-func (p *Plugins) rebuild() error {
+// rebuild re-resolves the native skill roster. A non-nil err is fatal (a
+// seed refusal, or a registry read failure); refusals[name] is set when
+// name was refused and dropped - the caller decides what that means.
+func (p *Plugins) rebuild() (refusals map[string]error, err error) {
 	if p == nil || p.rebuildSkills == nil {
-		return nil
+		return nil, nil
 	}
 	return p.rebuildSkills()
 }
@@ -62,20 +64,26 @@ func (p *Plugins) rebuild() error {
 // committed, so a rebuild failure is logged, not surfaced - there is nothing
 // left to refuse.
 func (p *Plugins) rebuildOrWarn() {
-	if err := p.rebuild(); err != nil {
+	if _, err := p.rebuild(); err != nil {
 		slog.Warn("plugin roster rebuild failed after delete; native agents may serve a stale skill list until restart",
 			"component", "rest", "err", err)
 	}
 }
 
-// allRows lists every registry row in seed order, plus the embedded "quack"
-// baseline (#1427 P2 scope: "Include the embedded quack row").
+// allRows lists every registry row plus the embedded "quack" baseline -
+// unless a real row already named "quack" shadows it (epic #1427 S2):
+// one row named quack, never two.
 func (p *Plugins) allRows(ctx context.Context) ([]pluginreg.Plugin, error) {
 	rows, err := p.reg.List(ctx)
 	if err != nil {
 		return nil, err
 	}
 	rows = pluginreg.OrderBySeed(p.seed, rows)
+	for _, row := range rows {
+		if row.Name == pluginreg.EmbeddedQuackPluginName {
+			return rows, nil
+		}
+	}
 	return append(rows, pluginreg.EmbeddedQuackPlugin()), nil
 }
 
@@ -196,19 +204,19 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error), not the response
-	if rerr := h.plugins.rebuild(); rerr != nil {
-		respondRebuildRefused(w, h.plugins, r.Context(), fetched, rerr)
+	refusals, rerr := h.plugins.rebuild()
+	if rerr != nil {
+		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+		return
+	}
+	if refused, ok := refusals[fetched.Name]; ok {
+		// admitPlugins already persisted refused's message onto THIS row -
+		// mirror it here rather than re-deriving or stamping the wrong row.
+		fetched.Error = refused.Error()
+		errMsg(w, http.StatusUnprocessableEntity, refused.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, pluginWire(h.plugins.root, fetched))
-}
-
-// respondRebuildRefused stores rerr on p's row (best-effort, fetch already
-// committed) and answers 422 - a bad plugin is refused like at boot (#1430).
-func respondRebuildRefused(w http.ResponseWriter, plugins *Plugins, ctx context.Context, p pluginreg.Plugin, rerr error) {
-	p.Error = rerr.Error()
-	_ = plugins.reg.Put(ctx, p)
-	errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
 }
 
 // DeletePlugin removes a row and its clone. "quack" is reserved outright,
@@ -290,8 +298,14 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 		return
 	}
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error)
-	if rerr := h.plugins.rebuild(); rerr != nil {
-		respondRebuildRefused(w, h.plugins, r.Context(), fetched, rerr)
+	refusals, rerr := h.plugins.rebuild()
+	if rerr != nil {
+		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+		return
+	}
+	if refused, ok := refusals[fetched.Name]; ok {
+		fetched.Error = refused.Error()
+		errMsg(w, http.StatusUnprocessableEntity, refused.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, pluginWire(h.plugins.root, fetched))
@@ -323,13 +337,19 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 		fetched, _ := h.plugins.reg.Fetch(ctx, p) // fetch failure lands on the row (Error)
 		return fetched
 	})
-	wire := make([]schema.Plugin, len(results))
-	for i, p := range results {
-		wire[i] = pluginWire(h.plugins.root, p)
-	}
-	if rerr := h.plugins.rebuild(); rerr != nil {
+	refusals, rerr := h.plugins.rebuild()
+	if rerr != nil {
 		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
 		return
+	}
+	wire := make([]schema.Plugin, len(results))
+	for i, p := range results {
+		// A refusal is reported per-row (epic: never fail the whole
+		// response) - it doesn't override a check/fetch error already set.
+		if refused, ok := refusals[p.Name]; ok && p.Error == "" {
+			p.Error = refused.Error()
+		}
+		wire[i] = pluginWire(h.plugins.root, p)
 	}
 	writeJSON(w, http.StatusOK, schema.PluginList{Plugins: wire})
 }

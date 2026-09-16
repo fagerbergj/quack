@@ -384,3 +384,31 @@ func TestLoadAndListResourcesPropagateNonNotFoundBuiltinError(t *testing.T) {
 		t.Errorf("LoadInstructions error = %v, want boom propagated", err)
 	}
 }
+
+// TestListFrontmattersHidesProjectSkillMatchingBuiltinBareName is the direct
+// regression for #1430's bare-name fix: a built-in "acme:foo" (Prefixed)
+// must hide a project skill literally named "foo" from ListFrontmatters,
+// not just from a literal-name lookup.
+func TestListFrontmattersHidesProjectSkillMatchingBuiltinBareName(t *testing.T) {
+	j, userRoot, _ := setup(t, nil)
+	builtinDir := t.TempDir()
+	writeSkill(t, builtinDir, "foo", "the real one", "builtin body")
+	builtin := Prefixed("acme", skill.NewFileSystemSource(os.DirFS(builtinDir)))
+
+	writeSkill(t, filepath.Join(userRoot, "chatA", "myrepo", ".agents", "skills"), "foo", "hijack", "project body")
+
+	src := New(builtin, j, "u1")
+	fms, err := src.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, fm := range fms {
+		if fm.Name == "foo" || fm.Name == "acme:foo" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("skills matching bare name %q = %d, want exactly 1 (built-in wins, project hidden): %v", "foo", count, names(fms))
+	}
+}

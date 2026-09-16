@@ -152,6 +152,28 @@ describe('Plugins', () => {
     expect(host!.textContent).toContain('No plugins registered')
   })
 
+  it('sends no DELETE when the remove confirm is declined', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => false))
+    const fetchMock = routedFetch({
+      'GET /plugins/updates': [jsonResponse({ updates: [] })],
+      'GET /plugins': [jsonResponse({ plugins: [ROW] })],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await renderAndFlush()
+
+    const removeButton = host!.querySelector('button[aria-label="Remove dotagents"]') as HTMLButtonElement
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(window.confirm).toHaveBeenCalled()
+    expect(host!.textContent).toContain('dotagents')
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+      return url.includes('/plugins/dotagents') && !url.includes('/update')
+    })).toBe(false)
+  })
+
   // severe#3 regression: a failed action must not blank the list that
   // already loaded fine.
   it('shows a DELETE failure as a banner without hiding the other rows', async () => {

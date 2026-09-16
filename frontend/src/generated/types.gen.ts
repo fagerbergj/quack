@@ -640,7 +640,7 @@ export type PluginSource = 'github' | 'local' | 'embedded';
 
 export type Plugin = {
     /**
-     * Registry row name (plugin.json's name, else the repo/path base).
+     * Registry row name - the repo base for a github entry, the path base for a local one. Never plugin.json's own name.
      */
     name: string;
     /**
