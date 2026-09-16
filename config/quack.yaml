@@ -408,6 +408,9 @@ artifacts: {}
 #
 # skills.plugins: is the deprecated spelling of plugins.seed and is still read.
 plugins:
+  # dotagents floats: it's quack's own library, main is the intended baseline,
+  # and the Plugins page shows when it moves. ponytail is third-party, pinned,
+  # and moves only by editing the ref below.
   seed:
     - github:fagerbergj/dotagents           # general-purpose skills
     - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline

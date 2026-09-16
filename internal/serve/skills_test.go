@@ -299,6 +299,7 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 
 	ptRoot := t.TempDir()
 	writePluginManifest(t, ptRoot, "ponytail")
+	// ponytail isn't tracked anywhere in-repo, so these names are a fixed stand-in, not read from a real tree.
 	for _, name := range []string{"ponytail", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help", "ponytail-review"} {
 		writeVendorSkill(t, filepath.Join(ptRoot, "skills"), name, "fixture")
 	}

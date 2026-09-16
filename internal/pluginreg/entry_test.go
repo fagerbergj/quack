@@ -31,8 +31,8 @@ func TestParseEntry(t *testing.T) {
 		{"redundant #. path means the repo root", "github:fagerbergj/dotagents#.", Entry{
 			Raw: "github:fagerbergj/dotagents#.", Source: SourceGitHub, Owner: "fagerbergj", Repo: "dotagents",
 		}},
-		{"local path", ".agents/vendor/dotagents", Entry{
-			Raw: ".agents/vendor/dotagents", Source: SourceLocal, Root: ".agents/vendor/dotagents",
+		{"local path", ".agents/local/dotagents", Entry{
+			Raw: ".agents/local/dotagents", Source: SourceLocal, Root: ".agents/local/dotagents",
 		}},
 		{"local manifest-only plugin", ".agents/plugins/usage", Entry{
 			Raw: ".agents/plugins/usage", Source: SourceLocal, Root: ".agents/plugins/usage",
@@ -94,7 +94,7 @@ func TestEntryName(t *testing.T) {
 	if e.Name() != "dotagents" {
 		t.Fatalf("Name() = %q, want dotagents", e.Name())
 	}
-	local, err := ParseEntry(".agents/vendor/dotagents")
+	local, err := ParseEntry(".agents/local/dotagents")
 	if err != nil {
 		t.Fatal(err)
 	}

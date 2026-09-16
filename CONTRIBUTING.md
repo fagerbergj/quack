@@ -28,7 +28,7 @@ The per-step craft lives in loadable skills - `plan-work`, `develop-feature`, `f
 Run what CI enforces (see AGENTS.md for the full never/always list):
 
 ```bash
-make test                     # not bare go test ./... - needed for the untracked embedded skill trees
+make test
 npm --prefix scripts ci       # first, or mermaid validation coverage skips
 make vet && make fmt
 cd frontend && npm test && npx tsc --noEmit && npx eslint src/

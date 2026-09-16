@@ -612,7 +612,7 @@ func TestFetchDoesNotEscapeToOuterRepo(t *testing.T) {
 func TestLocalEntryFetchIsNoClone(t *testing.T) {
 	root := t.TempDir()
 	reg := NewFSRegistry(root)
-	e, err := ParseEntry(".agents/vendor/dotagents")
+	e, err := ParseEntry(".agents/local/dotagents")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +624,7 @@ func TestLocalEntryFetchIsNoClone(t *testing.T) {
 	if got.SHA != "" {
 		t.Fatalf("local entry recorded a sha: %q", got.SHA)
 	}
-	if got.Root(root) != ".agents/vendor/dotagents" {
+	if got.Root(root) != ".agents/local/dotagents" {
 		t.Fatalf("local Root() = %q, want the path itself", got.Root(root))
 	}
 }

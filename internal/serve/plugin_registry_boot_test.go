@@ -68,7 +68,7 @@ func TestBootPluginRegistrySeedsFetchesAndSkipsEmbedded(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	ctx := context.Background()
-	seed := []string{"github:acme/widgets", "github:acme/unreachable", ".agents/vendor/dotagents"}
+	seed := []string{"github:acme/widgets", "github:acme/unreachable", ".agents/local/dotagents"}
 	if err := seedRegistry(ctx, reg, seed); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestAcpRegistryPluginRefs(t *testing.T) {
 		t.Fatalf("acpRegistryPluginRefs() with an empty registry = %+v, want exactly [{quack, \"\"}]", empty)
 	}
 
-	if err := reg.Put(ctx, pluginreg.Plugin{Name: "dotagents", Source: pluginreg.SourceLocal, Entry: ".agents/vendor/dotagents"}); err != nil {
+	if err := reg.Put(ctx, pluginreg.Plugin{Name: "dotagents", Source: pluginreg.SourceLocal, Entry: ".agents/local/dotagents"}); err != nil {
 		t.Fatal(err)
 	}
 	got := acpRegistryPluginRefs(cfg, reg)()

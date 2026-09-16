@@ -286,9 +286,9 @@ func workflowNodesAcyclic(nodes []WorkflowNode) bool {
 	return placed == len(nodes)
 }
 
-// defaultSkillPlugins are the plugin roots a stock quack loads: two
-// registry-fetched skill libraries, plus the first-party manifest declaring
-// the usage extension. .agents/plugins/ holds quack's own manifests.
+// defaultSkillPlugins are the plugin roots a stock quack loads: dotagents floats
+// (quack's own library; main is the intended baseline, and the Plugins page shows
+// when it moves) while ponytail, third-party, is pinned and moves only by editing the pin.
 var defaultSkillPlugins = []string{"github:fagerbergj/dotagents", "github:DietrichGebert/ponytail@v4.9.0", ".agents/plugins/usage"}
 
 type ObservabilityConfig struct {

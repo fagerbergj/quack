@@ -71,9 +71,8 @@ import (
 const localUserID = "local"
 
 // dotagentsEmbeddedSkills: the one plugin's skills/ subtree baked in via quack's go:embed
-// (embed.go), a tracked snapshot (see its SOURCE.md). buildFromConfig hard-requires
-// format-markdown and plan-work at startup, so a standalone install must find them
-// even though plugin discovery is otherwise disk-only.
+// (embed.go), a tracked snapshot (SOURCE.md names its pin). buildFromConfig hard-requires
+// format-markdown and plan-work at startup, so a standalone install must find them even though plugin discovery is otherwise disk-only.
 const dotagentsEmbeddedSkills = ".agents/embedded/dotagents/skills"
 
 // resolvedSkillSource: quack's shipped skills/ + each configured plugin root's skills/ (internal/plugin
@@ -187,8 +186,8 @@ func resolvedSkillSource(plugins []plugin.Plugin) skill.Source {
 	return skill.NewMergedSource(sources...)
 }
 
-// embeddedQuackSkillSource is quack's shipped skills/ plus the vendored
-// dotagents copy, go:embedded - the plugin "quack", source embedded (#1427
+// embeddedQuackSkillSource is quack's shipped skills/ plus the embedded
+// dotagents snapshot, go:embedded - the plugin "quack", source embedded (#1427
 // S2), the offline baseline every install ships with regardless of disk access.
 func embeddedQuackSkillSource() skill.Source {
 	bundleFS := bundledir.SubFS("skills")
@@ -2384,7 +2383,7 @@ var extractDotagentsSkillsMu sync.Mutex
 
 // embeddedExtractSources: the two trees embeddedQuackSkillSource merges,
 // tried in the same order for extraction - quack's own skills/ first, the
-// vendored dotagents copy second.
+// embedded dotagents snapshot second.
 func embeddedExtractSources() []fs.FS {
 	return []fs.FS{bundledir.SubFS("skills"), bundledir.SubFS(dotagentsEmbeddedSkills)}
 }
@@ -2464,7 +2463,7 @@ func acpSkillPaths(plugins []plugin.Plugin) []string {
 	out = append(out, plugin.SkillDirs(plugins)...)
 
 	// The raw local skills/ dir just added already covers quack's own
-	// half on disk - only the vendored-dotagents half can still be missing.
+	// half on disk - only the embedded-dotagents half can still be missing.
 	var missing []string
 	if !localSkillsDirAdded {
 		missing = missingQuackOwnSkillNames(plugins)
