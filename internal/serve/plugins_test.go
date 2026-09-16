@@ -161,6 +161,39 @@ func TestPersistPluginRefusalLogsOnWriteFailure(t *testing.T) {
 	}
 }
 
+// TestAdmitPlugins_PersistRefusalsGatesTheRegistryWrite: a replay boot passes
+// persistRefusals=false, so a refused row's error is never written to the registry.
+func TestAdmitPlugins_PersistRefusalsGatesTheRegistryWrite(t *testing.T) {
+	root := t.TempDir()
+	reg := pluginreg.NewFSRegistry(root)
+	row := pluginreg.Plugin{Name: "ghost", Source: pluginreg.SourceLocal, Entry: "ghost"}
+	if err := reg.Put(context.Background(), row); err != nil {
+		t.Fatal(err)
+	}
+	rows := []pluginreg.Plugin{row}
+	ghost := plugin.Plugin{Name: "ghost", Modules: []plugin.Module{{Name: "ghost", Path: "github.com/fagerbergj/quack-extensions/ghost"}}}
+
+	admitted, refusals, err := admitPlugins(context.Background(), reg, rows, []plugin.Plugin{ghost}, nil, nil, false)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	if len(admitted) != 0 || refusals["ghost"] == nil {
+		t.Fatalf("admitted=%v refusals=%v, want ghost dropped and refused either way", admitted, refusals)
+	}
+	got, err := reg.List(context.Background())
+	if err != nil || got[0].Error != "" {
+		t.Fatalf("row after persistRefusals=false: %+v, err %v, want Error unwritten", got, err)
+	}
+
+	if _, _, err := admitPlugins(context.Background(), reg, rows, []plugin.Plugin{ghost}, nil, nil, true); err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	got, err = reg.List(context.Background())
+	if err != nil || got[0].Error == "" {
+		t.Fatalf("row after persistRefusals=true: %+v, err %v, want the refusal persisted", got, err)
+	}
+}
+
 // mcpJSONBody is a minimal, schema-valid mcp.json declaring one stdio server.
 const mcpJSONBody = `{"$schema":"https://agent-plugins.org/schemas/1.1.0/mcp.schema.json","mcpServers":{"foo":{"type":"stdio","command":"echo"}}}`
 

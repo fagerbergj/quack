@@ -124,22 +124,29 @@ func (b *boot) openPluginRegistry(st *store.Store) (pluginreg.FetchRegistry, err
 	return pluginreg.NewDBRegistry(db, cfg.Plugins.Root)
 }
 
-// bootPluginRegistry seeds and fetches the plugin registry, returning every
-// row (github fetched, local as-is), ordered per plugins.seed (#1427 F2),
-// plus the in-memory embedded quack row appended last.
+// bootPluginRegistry seeds and fetches the plugin registry; a replay config
+// skips both, so a replay makes no network calls and writes no rows.
 func (b *boot) bootPluginRegistry(ctx context.Context, st *store.Store) (pluginreg.FetchRegistry, []pluginreg.Plugin, error) {
 	reg, err := b.openPluginRegistry(st)
 	if err != nil {
 		return nil, nil, fmt.Errorf("plugin registry open: %w", err)
 	}
-	if err := seedRegistry(ctx, reg, b.cfg.Plugins.Seed); err != nil {
-		return nil, nil, fmt.Errorf("plugin registry seed: %w", err)
+	replayBundle, err := replayBundlePath(b.cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("plugin registry: %w", err)
+	}
+	if replayBundle == "" {
+		if err := seedRegistry(ctx, reg, b.cfg.Plugins.Seed); err != nil {
+			return nil, nil, fmt.Errorf("plugin registry seed: %w", err)
+		}
 	}
 	rows, err := reg.List(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("plugin registry list: %w", err)
 	}
-	rows = fetchRegistryPlugins(ctx, reg, rows)
+	if replayBundle == "" {
+		rows = fetchRegistryPlugins(ctx, reg, rows)
+	}
 	rows = pluginreg.OrderBySeed(b.cfg.Plugins.Seed, rows)
 	rows = append(rows, pluginreg.EmbeddedQuackPlugin())
 	return reg, rows, nil
@@ -273,10 +280,9 @@ func seedPluginNames(seed []string) map[string]bool {
 	return names
 }
 
-// admitPlugins: a plugins.seed (config) plugin's refusal is fatal, named, as
-// always; a REST-added row's refusal only drops THAT plugin (warned, stored
-// on its row, named in refusals) - shared by boot and rebuildSkills (#1430).
-func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, map[string]error, error) {
+// admitPlugins: a plugins.seed (config) plugin's refusal is fatal, named; a
+// REST-added row's refusal just drops that plugin, warned and named in refusals.
+func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node, persistRefusals bool) ([]plugin.Plugin, map[string]error, error) {
 	seedNames := seedPluginNames(seed)
 	refusals := make(map[string]error)
 	out := make([]plugin.Plugin, 0, len(plugins))
@@ -287,7 +293,9 @@ func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []plugi
 			}
 			slog.Warn("plugin refused; dropped from the roster, other plugins still load",
 				"component", "startup", "plugin", p.Name, "err", err)
-			persistPluginRefusal(ctx, reg, rows, p.Name, err)
+			if persistRefusals {
+				persistPluginRefusal(ctx, reg, rows, p.Name, err)
+			}
 			refusals[p.Name] = err
 			continue
 		}

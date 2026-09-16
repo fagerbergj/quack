@@ -20,7 +20,7 @@ plugins:
   root: ${QUACK_WORKSPACE_ROOT}/.quack/plugins
   seed:
     - github:fagerbergj/dotagents
-    - github:fagerbergj/ponytail@v1.4
+    - github:DietrichGebert/ponytail@v4.9.0
     - .agents/plugins/usage
 ```
 
@@ -104,9 +104,11 @@ Every `agent.invoke` ledger entry for an ACP round records `plugins: [{name, sha
 
 ### Replay
 
-A replay reads the `plugins` provenance recorded on the run's `agent.invoke` entries and pins each plugin's skill text to its recorded sha, served via `git show <sha>:<path>` against the clone - not whatever the live clone currently holds. A plugin recorded with no sha (embedded/local) is served from the live source, scoped to just that plugin's skills, since it carries no sha to pin.
+A replay reads the `plugins` provenance recorded on the run's `agent.invoke` entries and pins each plugin's skill text to its recorded sha, served via `git show <sha>:<path>` against the clone's own history - not whatever the live clone currently holds, and never whether that plugin was admitted live. A plugin recorded with no sha (embedded/local) is served from the live source, scoped to just that plugin's skills, since it carries no sha to pin.
 
 - A **missing clone or unknown sha** refuses at load, naming the plugin and the sha it cannot find.
+- A plugin whose tree at the recorded sha carries no `plugin.json` or `.codex-plugin/plugin.json` is skipped, not refused, mirroring live [Admission](#admission) - decided from the sha's own tree, not from whether the plugin admitted live.
+- Booting into a replay skips seeding, each row's `git fetch`, and persisting an admission refusal onto a row - so a replay makes no network calls and adds or rewrites no registry row, even on a shared sqlite/postgres registry. `git show`/`git ls-tree` against clones already on disk still run locally to serve each recorded sha.
 - While a replay bundle has the roster pinned, every mutating plugin route (`POST /api/v1/plugins`, delete, update, update-all) returns **409**, naming the bundle - a replay in progress cannot have its pinned plugins moved out from under it.
 - **ACP fork mode** is different: once a round diverges, the shim spawns a real subprocess against the *live* clone, not the recorded sha. Construction refuses up front if any recorded plugin's installed sha differs from what the registry currently has, or if the plugin is no longer registered at all - a live fork spawn cannot silently serve different skill text than the recording did. Pure (non-fork) replay never spawns a subprocess, so this check doesn't apply to it. To fork-replay against the plugin state as recorded, re-pin the plugin to that sha before starting the replay: `POST /api/v1/plugins` with `github:owner/repo@<sha>`, which checks the clone out at that sha and records it as the installed sha. Through config alone: `DELETE /api/v1/plugins/{name}`, then set the seed entry to `@<sha>` and restart (an existing row is never re-pinned by a seed edit).
 

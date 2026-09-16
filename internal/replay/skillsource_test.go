@@ -11,7 +11,6 @@ import (
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
-	iplugin "github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/pluginreg/pluginregtest"
 	"github.com/fagerbergj/quack/internal/skillsource"
@@ -54,10 +53,15 @@ func buildLiveSource(t *testing.T, skillsByPlugin map[string]map[string]string) 
 	return skill.NewMergedSource(sources...)
 }
 
-func fixtureCloneWithSkill(t *testing.T, body string) (root string, sha1, sha2 string) {
+func fixtureCloneWithSkill(t *testing.T, body string, withManifest bool) (root string, sha1, sha2 string) {
 	t.Helper()
 	bare, work := pluginregtest.NewFixtureRepo(t)
 	run(t, work, "rm", "--quiet", "SKILL.md")
+	if withManifest {
+		if err := os.WriteFile(filepath.Join(work, "plugin.json"), []byte(`{"name":"widgets"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	dir := filepath.Join(work, "skills", "dothing")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -105,13 +109,8 @@ func run(t *testing.T, dir string, args ...string) string {
 	return pluginregtest.RunGit(t, dir, args...)
 }
 
-// widgetsAdmitted is the []plugin.Plugin admitPlugins would have produced
-// for a "widgets" row with a valid plugin.json (F4: NewSkillSource only
-// serves a github row's recorded sha if admission would have allowed it).
-func widgetsAdmitted() []iplugin.Plugin { return []iplugin.Plugin{{Name: "widgets"}} }
-
 func TestNewSkillSource_ServesRecordedSHA(t *testing.T) {
-	root, sha1, sha2 := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1")
+	root, sha1, sha2 := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1", true)
 	if sha1 == sha2 {
 		t.Fatal("fixture setup: sha1 == sha2")
 	}
@@ -125,7 +124,7 @@ func TestNewSkillSource_ServesRecordedSHA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := NewSkillSource(context.Background(), sess, root, rows, widgetsAdmitted(), nil)
+	src, err := NewSkillSource(context.Background(), sess, root, rows, nil)
 	if err != nil {
 		t.Fatalf("NewSkillSource: %v", err)
 	}
@@ -154,7 +153,7 @@ func TestNewSkillSource_ServesRecordedSHA(t *testing.T) {
 }
 
 func TestNewSkillSource_DeletedCloneRefuses(t *testing.T) {
-	root, sha1, _ := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1")
+	root, sha1, _ := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1", true)
 	if err := os.RemoveAll(pluginreg.CloneDir(root, "widgets")); err != nil {
 		t.Fatal(err)
 	}
@@ -167,33 +166,19 @@ func TestNewSkillSource_DeletedCloneRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewSkillSource(context.Background(), sess, root, rows, widgetsAdmitted(), nil)
+	_, err = NewSkillSource(context.Background(), sess, root, rows, nil)
 	if err == nil || !strings.Contains(err.Error(), "widgets") {
 		t.Fatalf("err = %v, want a refusal naming widgets", err)
 	}
 }
 
-func TestNewSkillSource_UnknownSHARefuses(t *testing.T) {
-	root, _, _ := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1")
-	bundle := writeAgentInvokeJSONL(t, `[{"name":"widgets","sha":"`+strings.Repeat("f", 40)+`"}]`)
-	sess, err := Load(bundle)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	rows, err := pluginreg.NewFSRegistry(root).List(context.Background())
-	if err != nil {
+// TestNewSkillSource_DeletedCloneAndUnadmittedRefuses: a missing clone must
+// refuse even when the row was never admitted live.
+func TestNewSkillSource_DeletedCloneAndUnadmittedRefuses(t *testing.T) {
+	root, sha1, _ := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1", false)
+	if err := os.RemoveAll(pluginreg.CloneDir(root, "widgets")); err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewSkillSource(context.Background(), sess, root, rows, widgetsAdmitted(), nil)
-	if err == nil || !strings.Contains(err.Error(), "widgets") {
-		t.Fatalf("err = %v, want a refusal naming widgets", err)
-	}
-}
-
-func TestNewSkillSource_UnadmittedGithubRowIsSkippedNotServed(t *testing.T) {
-	// F4: a row admitPlugins never admitted (no plugin.json) must not be
-	// served by replay either, even though the bundle recorded a sha for it.
-	root, sha1, _ := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1")
 	bundle := writeAgentInvokeJSONL(t, `[{"name":"widgets","sha":"`+sha1+`"}]`)
 	sess, err := Load(bundle)
 	if err != nil {
@@ -203,18 +188,133 @@ func TestNewSkillSource_UnadmittedGithubRowIsSkippedNotServed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := NewSkillSource(context.Background(), sess, root, rows, nil /* not admitted */, buildLiveSource(t, nil))
+	_, err = NewSkillSource(context.Background(), sess, root, rows, buildLiveSource(t, nil))
+	if err == nil || !strings.Contains(err.Error(), "widgets") || !strings.Contains(err.Error(), sha1) {
+		t.Fatalf("err = %v, want a refusal naming widgets and %s", err, sha1)
+	}
+}
+
+func TestNewSkillSource_UnknownSHARefuses(t *testing.T) {
+	root, _, _ := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1", true)
+	bundle := writeAgentInvokeJSONL(t, `[{"name":"widgets","sha":"`+strings.Repeat("f", 40)+`"}]`)
+	sess, err := Load(bundle)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	rows, err := pluginreg.NewFSRegistry(root).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewSkillSource(context.Background(), sess, root, rows, nil)
+	if err == nil || !strings.Contains(err.Error(), "widgets") {
+		t.Fatalf("err = %v, want a refusal naming widgets", err)
+	}
+}
+
+func TestNewSkillSource_UnadmittedGithubRowIsSkippedNotServed(t *testing.T) {
+	// A recorded sha whose tree has no plugin.json must not be served by
+	// replay - decided from the sha's tree, not live admission.
+	root, sha1, _ := fixtureCloneWithSkill(t, "---\nname: dothing\ndescription: v1\n---\nbody v1", false)
+	bundle := writeAgentInvokeJSONL(t, `[{"name":"widgets","sha":"`+sha1+`"}]`)
+	sess, err := Load(bundle)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	rows, err := pluginreg.NewFSRegistry(root).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := NewSkillSource(context.Background(), sess, root, rows, buildLiveSource(t, nil))
 	if err != nil {
 		t.Fatalf("NewSkillSource: %v", err)
 	}
 	if _, err := src.LoadFrontmatter(context.Background(), "widgets:dothing"); err == nil {
-		t.Fatal("LoadFrontmatter(unadmitted plugin's skill) = nil error, want ErrSkillNotFound")
+		t.Fatal("LoadFrontmatter(no-manifest plugin's skill) = nil error, want ErrSkillNotFound")
+	}
+}
+
+// TestNewSkillSource_CodexManifestSkillsPath: a codex manifest's own
+// "skills" field, not a hardcoded "skills/", names the served directory.
+func TestNewSkillSource_CodexManifestSkillsPath(t *testing.T) {
+	cases := []struct {
+		name       string
+		skills     string
+		wantServed bool
+	}{
+		{"custom directory is served", "resources/skills", true},
+		{"escaping path is skipped, not served from the clone root", "../../etc/skills", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			bare, work := pluginregtest.NewFixtureRepo(t)
+			run(t, work, "rm", "--quiet", "SKILL.md")
+			if err := os.MkdirAll(filepath.Join(work, ".codex-plugin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			manifest := `{"name":"widgets","skills":"` + c.skills + `"}`
+			if err := os.WriteFile(filepath.Join(work, ".codex-plugin", "plugin.json"), []byte(manifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(work, "resources", "skills", "dothing")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			body := "---\nname: dothing\ndescription: v1\n---\nbody v1"
+			if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			run(t, work, "add", ".")
+			run(t, work, "commit", "--quiet", "-m", "codex v1")
+			run(t, work, "push", "--quiet", "origin", "main")
+
+			prevURL := pluginreg.RemoteURL
+			pluginreg.RemoteURL = func(owner, repo string) string { return bare }
+			t.Cleanup(func() { pluginreg.RemoteURL = prevURL })
+
+			root := t.TempDir()
+			reg := pluginreg.NewFSRegistry(root)
+			e, err := pluginreg.ParseEntry("github:acme/widgets")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := reg.Fetch(context.Background(), pluginreg.FromEntry(e))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			bundle := writeAgentInvokeJSONL(t, `[{"name":"widgets","sha":"`+got.SHA+`"}]`)
+			sess, err := Load(bundle)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			rows, err := reg.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			src, err := NewSkillSource(context.Background(), sess, root, rows, nil)
+			if err != nil {
+				t.Fatalf("NewSkillSource: %v", err)
+			}
+			fm, err := src.LoadFrontmatter(context.Background(), "widgets:dothing")
+			if !c.wantServed {
+				if err == nil {
+					t.Fatal("LoadFrontmatter(escaping skills path) = nil error, want ErrSkillNotFound")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadFrontmatter: %v", err)
+			}
+			if fm.Description != "v1" {
+				t.Fatalf("description = %q, want v1", fm.Description)
+			}
+		})
 	}
 }
 
 func TestNewSkillSource_NoPluginsRecordedIsNoOp(t *testing.T) {
 	sess := sessionFromEntries(t, nil)
-	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), nil, nil, nil)
+	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("NewSkillSource: %v", err)
 	}
@@ -233,7 +333,7 @@ func TestNewSkillSource_LocalPluginFallsThroughToLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), rows, nil, live)
+	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), rows, live)
 	if err != nil {
 		t.Fatalf("NewSkillSource: %v", err)
 	}
@@ -264,7 +364,7 @@ func TestNewSkillSource_ShaLessNonQuackWithNoLiveSkillsSkipsNotRefuses(t *testin
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), rows, nil, live)
+	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), rows, live)
 	if err != nil {
 		t.Fatalf("NewSkillSource: %v, want no error (mcp-only skipped, not refused)", err)
 	}
@@ -284,7 +384,7 @@ func TestNewSkillSource_ShaLessQuackWithNoLiveSkillsRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	_, err = NewSkillSource(context.Background(), sess, t.TempDir(), rows, nil, live)
+	_, err = NewSkillSource(context.Background(), sess, t.TempDir(), rows, live)
 	if err == nil || !strings.Contains(err.Error(), "quack") {
 		t.Fatalf("NewSkillSource err = %v, want a refusal naming quack", err)
 	}
@@ -317,7 +417,7 @@ func TestNewSkillSource_EmbeddedQuackServesFullLiveRoster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), rows, nil, live)
+	src, err := NewSkillSource(context.Background(), sess, t.TempDir(), rows, live)
 	if err != nil {
 		t.Fatalf("NewSkillSource: %v", err)
 	}
@@ -336,7 +436,7 @@ func TestNewSkillSource_EmbeddedQuackServesFullLiveRoster(t *testing.T) {
 // go through skillsource.NewFileSystemSource's filter like live does.
 func TestNewSkillSource_ArgumentHintFrontmatterField(t *testing.T) {
 	body := "---\nname: dothing\ndescription: v1\nargument-hint: <foo>\n---\nbody v1"
-	root, sha1, _ := fixtureCloneWithSkill(t, body)
+	root, sha1, _ := fixtureCloneWithSkill(t, body, true)
 
 	// Live (clone tip, moved to v2 by fixtureCloneWithSkill): the same
 	// skillsource.NewFileSystemSource wrapping resolvedSkillSource uses.
@@ -358,7 +458,7 @@ func TestNewSkillSource_ArgumentHintFrontmatterField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := NewSkillSource(context.Background(), sess, root, rows, widgetsAdmitted(), nil)
+	src, err := NewSkillSource(context.Background(), sess, root, rows, nil)
 	if err != nil {
 		t.Fatalf("NewSkillSource: %v", err)
 	}
