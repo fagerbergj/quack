@@ -81,3 +81,19 @@ tools:
 ```
 
 The store supplies the adapter and connection; the tool may override `collection` / `schema` / `top_k` / `min_score` for its own namespace. See [agents.md](agents.md) for which agents bind `stage_memory` (task memory) and the orchestrator's `commit_memory` (user memory). `recall_memory` (on-demand recall, epic #1255 P2) has no `tools:` entry of its own - it reads `stage_memory`'s store/collection/`top_k`/`min_score`, just on demand instead of at prefill time.
+
+## Plugin registry
+
+`plugins.store` (see [tools.md](tools.md#skills) and [agent-plugins.md](../agent-plugins.md#registry-stores)) names a `stores:` entry to hold the dynamic plugin registry's rows instead of the default filesystem backend:
+
+```yaml
+stores:
+  default_postgres:
+    kind: postgres
+    url: ${QUACK_DATABASE_URL}
+
+plugins:
+  store: default_postgres
+```
+
+The named store must be `kind: postgres` or `kind: sqlite` with a non-empty `url` - any other kind, or an empty url, is a config error. Rows land in a `plugin_rows` table (auto-migrated); clones themselves still live on disk under `plugins.root` regardless of which store holds the rows.

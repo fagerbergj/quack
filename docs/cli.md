@@ -78,6 +78,8 @@ Runs can be recorded to a replay ledger and re-driven later - the basis for regr
 | `quack replay [--from-server <url>]` | Replay a recorded run offline (strict) or live from a changed node (fork). `--from-server` names where to fetch the recording when the argument is a chat id - distinct from the global `--server` (which this command doesn't otherwise use; the replay itself always runs from your local `quack.yaml`). |
 | `quack eval [--from-server <url>]` | Re-run a recorded conversation live with a swapped model and compare judge scores. Same `--from-server` meaning as `replay`. |
 
+An ACP-agent fork replay refuses to spawn its live subprocess when a recorded plugin's sha differs from the one currently installed, or the plugin is no longer registered - a live fork spawn always reads the current clone, so it cannot reproduce the recorded skill text once the plugin has moved. To fork-replay against the plugin state as recorded, check out a detached worktree at the recorded sha (`git worktree add --detach <path> <sha>`) inside the plugin's clone and point the registry root at it for that run.
+
 ## Datasets and experiments
 
 Export recorded runs to a Langfuse dataset, then re-run an agent against that dataset outside any live GitHub event - the basis for comparing prompt versions in Langfuse's evaluation/comparison views.

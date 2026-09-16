@@ -8,7 +8,27 @@ quack loads plugins packaged per the [Agent Plugins](https://agent-plugins.org/)
 | MCP servers | `mcp.json` | Yes (spec §7.2) |
 | quack extension declarations | `plugin.json` → `extensions["io.github.fagerbergj.quack"]` | No (spec §8) |
 
-Roots are listed under the top-level `plugins:` key in quack.yaml. The old `skills.plugins:` key still works and is read as a deprecated alias, but a root contributes more than skills now, so the name no longer fits.
+Skills are pulled from a dynamic **plugin registry** at run time (epic #1427): each plugin is a registry row, cloned to disk, fetched at boot and refreshable from the UI or REST without a rebuild. MCP servers and compiled quack extension modules stay as described below.
+
+## The registry
+
+The top-level `plugins:` key in quack.yaml configures the registry:
+
+```yaml
+plugins:
+  store: default_postgres      # omit for filesystem (default); or a stores[] entry of kind sqlite|postgres
+  root: ${QUACK_WORKSPACE_ROOT}/.quack/plugins
+  seed:
+    - github:fagerbergj/dotagents
+    - github:fagerbergj/ponytail@v1.4
+    - .agents/plugins/usage
+```
+
+- `store` - which registry backend holds the rows. Omitted or `""` uses the built-in filesystem backend (`<root>/<name>/entry.json`). Any other value must name a `stores:` entry of kind `sqlite` or `postgres`; that store's URL must not be empty. A database-backed store holds rows in a `plugin_rows` table - the clones themselves still live on disk under `root`, exactly as the filesystem backend lays them out.
+- `root` - where clones live. Defaults to `<workspace.root>/.quack/plugins` (a dot-dir so it never collides with repo checkouts on the same volume).
+- `seed` - entries inserted into the registry if their name is absent at boot. After that, the UI and REST own the list; a config restart does not re-add a row someone removed, and does not remove a row someone added.
+
+`plugins:` as a bare YAML list (today's local-root form) is treated as `seed:` with the filesystem backend:
 
 ```yaml
 plugins:
@@ -16,6 +36,83 @@ plugins:
   - .agents/vendor/ponytail
   - .agents/plugins/usage
 ```
+
+The old `skills.plugins:` key still works and is read as a deprecated alias for `plugins.seed` (a warning is logged); `plugins:` wins if both are set.
+
+### Entry syntax
+
+A seed entry, or an entry POSTed to `/api/v1/plugins`, is one of:
+
+- **`github:owner/repo[@ref][#path]`** - a git-hosted plugin, cloned under `root`.
+  - No `@ref`: **tracked** - follows the repo's default branch; `GET /api/v1/plugins/updates` and the Update button move it forward.
+  - `@ref` (a tag, branch, or commit sha): **pinned** - only moves if the entry itself is edited (config) or re-POSTed at a different ref (REST); a 40-hex sha is always reported as not behind.
+  - `#path`: the plugin root is a subdirectory of the repo instead of its root. Relative, and rejected if it escapes the repo.
+  - A trailing `.git` on the repo name is stripped.
+  - Private repos: set `GITHUB_TOKEN` in the environment quack runs under; the token is passed to git via `GIT_CONFIG_*`, never written to argv or persisted in the row.
+  - REST's `POST /api/v1/plugins` only accepts `github:` entries - a local root is config-only, added under `seed:`.
+- **A local root** (anything not starting with `github:`) - a directory path, read in place with no clone and no fetch. This is today's `plugins:` list form; it is config-only, seeded at boot, and cannot be added, updated, or removed over REST.
+
+### Naming
+
+Every registry row has a **name**, which prefixes its skills as `<name>:<skill>`:
+
+- A `github:` entry's name is the repo's base name (`github:fagerbergj/dotagents` -> `dotagents`), never `plugin.json`'s own `name` field.
+- A local entry's name is the base name of its path (`/opt/checkouts/my-checkout` -> `my-checkout:<skill>`), also never the manifest's name.
+- `quack`, `update`, and `updates` are reserved: `quack` names the embedded baseline (see below); `update`/`updates` collide with the fixed REST path segments `/api/v1/plugins/update` and `/api/v1/plugins/updates`.
+
+A bare skill name (no `plugin:` prefix) - in an agent's `skills:` scope, or a boot-time lookup - resolves to the first plugin providing that name in seed order; rows added later over REST sort after the seed. An explicit `other:skill` outside an agent's scope is not-found, never silently substituted for an in-scope plugin's copy.
+
+### The bundled baseline and shadowing
+
+quack's shipped `skills/` tree, plus the vendored dotagents copy, are `go:embed`ded into the binary and registered as the plugin `quack`, source `embedded` - no entry, no clone, always present, and the offline fallback if the registry has nothing else.
+
+- A registry row also named `quack` (e.g. `github:fagerbergj/quack`) **shadows the embedded copy by qualified name**: `quack:plan-work` resolves to the fetched clone's copy, not the embedded one.
+- Independently, an on-disk `dotagents` plugin under **any** registry name suppresses the embedded dotagents copy **by bare name** - a bare `format-markdown` resolves to the on-disk copy instead of the embedded one, even though the two live under different qualified names.
+
+### Registry stores
+
+Three backends implement the same `{List, Put, Delete}` registry interface:
+
+| Backend | Selected by | Rows live in |
+| --- | --- | --- |
+| Filesystem (default) | `plugins.store` omitted | `<root>/<name>/entry.json`, one file per row |
+| sqlite | `plugins.store: <name>`, that store's `kind: sqlite` | a `plugin_rows` table in the sqlite file |
+| postgres | `plugins.store: <name>`, that store's `kind: postgres` | a `plugin_rows` table in that database |
+
+All three keep clones on disk under `plugins.root` regardless of which one holds the rows - only the row bookkeeping (entry, resolved owner/repo/ref/path, installed sha, fetched-at, last error) moves.
+
+### The update flow
+
+`GET /api/v1/plugins/updates` compares each `github:`-sourced row's installed sha against its tracked ref (default-branch HEAD) or pinned ref, and reports which rows are behind; the UI calls this on page load. **Nothing changes without a click**: `POST /api/v1/plugins/{name}/update` re-fetches one row regardless of whether it was reported behind; `POST /api/v1/plugins/update` fetches only the rows the check reported behind.
+
+A fetch failure - unreachable remote, moved/deleted ref, etc. - is stored on the row's `error` field and surfaced in the UI. It never fails boot or a run: the last good clone keeps serving until a later fetch succeeds. A refused row (declares a module that is not linked into this binary, or similar) does not block any other row from loading.
+
+After a fetch or update, the skill roster is rebuilt without a restart: native agents' skill toolsets re-list on their next round, and an ACP-agent spawn rebuilds `skill_paths` from the registry every round instead of once at boot.
+
+### Admission
+
+A newly fetched or re-fetched plugin still runs the same checks as any other (linked module, `config: "required"`; see [Failure philosophy](#failure-philosophy)), but what a failure does depends on where the row came from:
+
+- A **seed row** (`plugins.seed` / config) failing admission is a **boot error**, named - the same "boot error" treatment every config-driven refusal has always had.
+- A **REST-added row** failing admission is **dropped**, not fatal: `POST /api/v1/plugins` or an update returns `422` with the refusal, the row's `error` is persisted, and the rest of the roster (every other plugin) still loads. The plugin stays registered - visible with its error - just not contributing skills until fixed.
+
+A refused row never blocks any other row from admitting.
+
+### Provenance
+
+Every `agent.invoke` ledger entry for an ACP round records `plugins: [{name, sha}]` - the plugins in scope of that round and the sha each was serving from (omitted for the embedded `quack` row and local roots, which have no sha). Native (non-ACP) rounds do not yet record this ([#1445](https://github.com/fagerbergj/quack/issues/1445)).
+
+### Replay
+
+A replay reads the `plugins` provenance recorded on the run's `agent.invoke` entries and pins each plugin's skill text to its recorded sha, served via `git show <sha>:<path>` against the clone - not whatever the live clone currently holds. A plugin recorded with no sha (embedded/local) is served from the live source, scoped to just that plugin's skills, since it carries no sha to pin.
+
+- A **missing clone or unknown sha** refuses at load, naming the plugin and the sha it cannot find.
+- While a replay bundle has the roster pinned, every mutating plugin route (`POST /api/v1/plugins`, delete, update, update-all) returns **409**, naming the bundle - a replay in progress cannot have its pinned plugins moved out from under it.
+- **ACP fork mode** is different: once a round diverges, the shim spawns a real subprocess against the *live* clone, not the recorded sha. Construction refuses up front if any recorded plugin's installed sha differs from what the registry currently has, or if the plugin is no longer registered at all - a live fork spawn cannot silently serve different skill text than the recording did. Pure (non-fork) replay never spawns a subprocess, so this check doesn't apply to it. See [`docs/cli.md`](cli.md#recording-replay-and-eval) for the upgrade path when a fork replay needs to run against the plugin state as it stood when the run was recorded.
+
+### Security
+
+A registry plugin's clone is authored by pushing to its git remote; quack never writes into a clone itself. Sandboxed children (ACP subprocesses, plugin MCP servers) get read-only access to `plugins.root`, same as any other plugin root. Inside the pi ACP shim, skills are loaded by directory name on disk, so pi sees bare directory names (e.g. `dotagents`), not the `plugin:skill` qualifier native `list_skills` shows.
 
 ## The namespace
 

@@ -15,6 +15,7 @@ Everything the [CLI](cli.md) can, graphically:
 - Watch a run stream in - tokens, thinking, tool calls/results - grouped by node and by stage (worker / judge / revise), via `DagView`/`DagNode`.
 - Attach files (image/audio) to a message.
 - Answer a paused question inline, and drive per-node control (pause, resume, retry, edit, queue) the same way `quack chat node ...` does.
+- Manage the dynamic plugin registry on the Plugins page: name, source, ref, installed sha, fetched-at, and any error per row; per-row and all-behind Update buttons; add a `github:` entry or remove a row (see [`agent-plugins.md`](agent-plugins.md#the-registry)).
 
 ## Auth
 
