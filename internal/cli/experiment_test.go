@@ -190,6 +190,44 @@ func TestRunExperiment_RecordRunItemError(t *testing.T) {
 	}
 }
 
+// TestRunExperiment_HardErrorReportsCompletedItems: a hard error on item 2
+// must still print item 1's completed row to errOut (PR #1444 round-2
+// finding - experiment.go:64's partial-summary print had no test covering it).
+func TestRunExperiment_HardErrorReportsCompletedItems(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/public/dataset-items":
+			writeJSON(w, map[string]any{"data": []map[string]any{
+				{"id": "item1", "input": map[string]any{"task": "a"}},
+				{"id": "item2", "input": map[string]any{"task": "b"}},
+			}, "meta": map[string]any{"page": 1, "limit": 2, "totalItems": 2, "totalPages": 1}})
+		case r.URL.Path == "/api/public/dataset-run-items":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["datasetItemId"] == "item2" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]any{"id": "ri1", "datasetRunId": "run1", "datasetItemId": body["datasetItemId"],
+				"createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	lf := newTestGenClient(t, srv)
+
+	var errOut bytes.Buffer
+	_, err := RunExperiment(context.Background(), &errOut, &stubRunner{traceID: "t1"}, lf,
+		ExperimentOpts{Dataset: "my-dataset", RunName: "run1"})
+	if err == nil {
+		t.Fatal("want an error when creating item 2's run item fails")
+	}
+	if !bytes.Contains(errOut.Bytes(), []byte("item1")) {
+		t.Fatalf("completed item 1 must reach the partial summary on errOut, got %q", errOut.String())
+	}
+}
+
 // recordingBody builds a FetchRecording response body: one node run for chatID/node/agent
 // with the given answer, assembled the same way the real ledger does.
 func recordingBody(t *testing.T, chatID, node, agent, task, answer string) []byte {
