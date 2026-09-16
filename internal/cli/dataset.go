@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
+
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -37,13 +41,11 @@ type ExportItem struct {
 	Agent  string
 }
 
-// datasetItemInput is a dataset item's `input` field: the node's task plus a
-// reference to the reviewed diff, never the diff itself (issue #1424).
+// datasetItemInput is a dataset item's `input` field: the node's task plus
+// DiffRef, a link to the reviewed diff rather than its content (issue #1424).
 type datasetItemInput struct {
-	Task            string   `json:"task"`
-	Question        string   `json:"question"`
-	UpstreamAnswers []string `json:"upstream_answers,omitempty"`
-	DiffRef         string   `json:"diff_ref,omitempty"`
+	Task    string `json:"task"`
+	DiffRef string `json:"diff_ref,omitempty"`
 }
 
 type datasetItemMetadata struct {
@@ -61,15 +63,13 @@ type datasetItemMetadata struct {
 // upserts one Langfuse dataset item per run, keyed deterministically on (chat, node) so a
 // re-export updates in place instead of duplicating (issue #1424).
 func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Store, lf *langfusegen.ClientWithResponses, opts ExportOpts) ([]ExportItem, error) {
-	if err := ensureDataset(ctx, lf, opts.Dataset); err != nil {
-		return nil, err
-	}
 	chats, err := exportChats(ctx, st, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	var items []ExportItem
+	ensured := false
 	for _, chat := range chats {
 		sess, err := replay.FromStore(ctx, ls, chat.ID)
 		if err != nil {
@@ -78,11 +78,18 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 			}
 			return items, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
 		}
-		for key, run := range sess.NodeRuns(datasetAgents) {
+		runs := sess.NodeRuns(datasetAgents)
+		for _, key := range sortedStreamKeys(runs) {
 			if opts.Limit > 0 && len(items) >= opts.Limit {
 				return items, nil
 			}
-			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, run)
+			if !ensured {
+				if err := ensureDataset(ctx, lf, opts.Dataset); err != nil {
+					return items, err
+				}
+				ensured = true
+			}
+			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, runs[key])
 			if err != nil {
 				return items, err
 			}
@@ -90,6 +97,17 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 		}
 	}
 	return items, nil
+}
+
+// sortedStreamKeys orders NodeRuns' keys deterministically (its map iteration
+// order isn't), so a re-export or a --limit subset always picks the same runs.
+func sortedStreamKeys(runs map[replay.StreamKey]replay.NodeRun) []replay.StreamKey {
+	keys := make([]replay.StreamKey, 0, len(runs))
+	for k := range runs {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+	return keys
 }
 
 // exportChats resolves opts to the chats to scan: one (--chat) or every chat in --repo
@@ -113,7 +131,7 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) ([]store
 			return nil, fmt.Errorf("dataset export: list chats: %w", err)
 		}
 		for _, c := range page {
-			if opts.Repo != "" && c.GithubRepo != opts.Repo {
+			if opts.Repo != "" && chatRepo(c) != opts.Repo {
 				continue
 			}
 			if !opts.Since.IsZero() && c.UpdatedAt.Before(opts.Since) {
@@ -132,25 +150,65 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) ([]store
 	}
 }
 
-// exportItemID derives a stable, ≤255-char Langfuse dataset item id from (chat, node) -
-// re-exporting the same node run upserts the same item instead of duplicating it.
-func exportItemID(chatID, nodeID string) string {
-	sum := sha256.Sum256([]byte(chatID + "/" + nodeID))
+// exportItemID derives a stable, ≤255-char Langfuse dataset item id from
+// (dataset, chat, node): item ids are project-scoped and cannot be reused
+// across datasets (openapi.yml:11249), so the dataset name must be in the hash.
+func exportItemID(dataset, chatID, nodeID string) string {
+	sum := sha256.Sum256([]byte(dataset + "/" + chatID + "/" + nodeID))
 	return "quack-" + hex.EncodeToString(sum[:])[:32]
 }
 
+// chatOriginDecoded unmarshals Chat.Origin (an extension-stamped sdk.ChatOrigin,
+// see the github extension's refreshChatOrigin), reporting ok=false when absent/unset.
+func chatOriginDecoded(c store.Chat) (extsdk.ChatOrigin, bool) {
+	if c.Origin == "" {
+		return extsdk.ChatOrigin{}, false
+	}
+	var o extsdk.ChatOrigin
+	if err := json.Unmarshal([]byte(c.Origin), &o); err != nil {
+		return extsdk.ChatOrigin{}, false
+	}
+	return o, true
+}
+
+// chatRepo/chatMerged/chatHref read the extension-set Origin (the only field
+// production writes - SetChatOrigin), falling back to the github_repo/state/url
+// columns (no production writer today, kept for older or hand-seeded rows).
+func chatRepo(c store.Chat) string {
+	if o, ok := chatOriginDecoded(c); ok {
+		if vals := o.Labels["repo"]; len(vals) > 0 && vals[0].Value != "" {
+			return vals[0].Value
+		}
+	}
+	return c.GithubRepo
+}
+
+func chatMerged(c store.Chat) bool {
+	if o, ok := chatOriginDecoded(c); ok {
+		return o.Badge == "merged"
+	}
+	return c.GithubState == "merged"
+}
+
+func chatHref(c store.Chat) string {
+	if o, ok := chatOriginDecoded(c); ok && o.Href != "" {
+		return o.Href
+	}
+	return c.GithubURL
+}
+
 func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, dataset string, chat store.Chat, key replay.StreamKey, run replay.NodeRun) (ExportItem, error) {
-	input := datasetItemInput{Task: run.Task, Question: run.Task, DiffRef: chat.GithubURL}
+	input := datasetItemInput{Task: run.Task, DiffRef: chatHref(chat)}
 	var expected any
-	if chat.GithubState == "merged" && run.Answer != "" {
+	if chatMerged(chat) && run.Answer != "" {
 		expected = run.Answer
 	}
 	meta := datasetItemMetadata{
-		Repo: chat.GithubRepo, Agent: key.Agent, ChatID: chat.ID, NodeID: key.Node,
+		Repo: chatRepo(chat), Agent: key.Agent, ChatID: chat.ID, NodeID: key.Node,
 		PromptArtifact: "system/" + key.Agent, PromptSource: run.PromptSource,
 		PromptVersionID: run.PromptVersionID, QuackVersion: run.QuackVersion,
 	}
-	id := exportItemID(chat.ID, key.Node)
+	id := exportItemID(dataset, chat.ID, key.Node)
 	req := langfusegen.CreateDatasetItemRequest{
 		DatasetName: dataset, Id: &id, Input: input, ExpectedOutput: expected, Metadata: meta,
 	}
@@ -164,14 +222,20 @@ func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, datase
 	return ExportItem{ItemID: id, ChatID: chat.ID, NodeID: key.Node, Agent: key.Agent}, nil
 }
 
-// ensureDataset creates the named Langfuse dataset if it doesn't already exist.
+// ensureDataset creates the named Langfuse dataset if it doesn't already exist -
+// called only once at least one item is ready to export, never speculatively.
 func ensureDataset(ctx context.Context, lf *langfusegen.ClientWithResponses, name string) error {
 	get, err := lf.DatasetsGetWithResponse(ctx, name)
 	if err != nil {
 		return fmt.Errorf("dataset export: get dataset %q: %w", name, err)
 	}
-	if get.HTTPResponse.StatusCode == http.StatusOK {
+	switch get.HTTPResponse.StatusCode {
+	case http.StatusOK:
 		return nil
+	case http.StatusNotFound:
+		// falls through to create
+	default:
+		return fmt.Errorf("dataset export: get dataset %q: %s", name, get.Status())
 	}
 	create, err := lf.DatasetsCreateWithResponse(ctx, langfusegen.CreateDatasetRequest{Name: name})
 	if err != nil {
