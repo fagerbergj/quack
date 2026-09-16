@@ -158,42 +158,117 @@ func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plu
 // server gets at boot. Per-call contexts govern everything after.
 var mcpEnumerateTimeout = 20 * time.Second // var so tests can shrink it
 
-// checkPluginModules matches every module a plugin declares under quack's
-// namespace against the modules actually linked into this binary. Go has no
-// safe dynamic loading, so the manifest is documentation the compiler is
-// checked against: a declared-but-unlinked module is a boot error naming the
-// import to add, never a silently missing capability.
-func checkPluginModules(plugins []plugin.Plugin) error {
+// checkModuleLinked matches p's declared modules under quack's namespace
+// against the modules actually linked into this binary. Go has no safe
+// dynamic loading, so a declared-but-unlinked module names the import to add.
+func checkModuleLinked(p plugin.Plugin) error {
 	linked := extsdk.Registered()
-	for _, p := range plugins {
-		for _, m := range p.Modules {
-			if _, ok := linked[m.Name]; !ok {
-				return fmt.Errorf("plugin %q declares module %q (%s), which is not linked into this binary; add its blank import to internal/serve/extensions_registry.go", p.Name, m.Name, m.Path)
-			}
+	for _, m := range p.Modules {
+		if _, ok := linked[m.Name]; !ok {
+			return fmt.Errorf("plugin %q declares module %q (%s), which is not linked into this binary; add its blank import to internal/serve/extensions_registry.go", p.Name, m.Name, m.Path)
 		}
 	}
 	return nil
 }
 
-// checkPluginConfig enforces the namespace block's config: "required". A module that is not
-// configured at all stays dormant, exactly as before; one whose extensions: block is present but
-// empty fails the boot here with the plugin named, rather than deeper inside its own factory.
-func checkPluginConfig(plugins []plugin.Plugin, modules map[string]yaml.Node) error {
+// checkPluginModules runs checkModuleLinked over every plugin, fatal on the
+// first failure - boot's original whole-list gate.
+func checkPluginModules(plugins []plugin.Plugin) error {
 	for _, p := range plugins {
-		if !p.ConfigRequired {
-			continue
-		}
-		for _, m := range p.Modules {
-			node, ok := modules[m.Name]
-			if !ok {
-				continue
-			}
-			if node.IsZero() || len(node.Content) == 0 {
-				return fmt.Errorf("config: extensions.%s is empty, but plugin %q declares config: \"required\"", m.Name, p.Name)
-			}
+		if err := checkModuleLinked(p); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// checkConfigRequired enforces the namespace block's config: "required" for
+// p. A module not configured at all stays dormant; one whose extensions:
+// block is present but empty fails, named, rather than deeper in its factory.
+func checkConfigRequired(p plugin.Plugin, modules map[string]yaml.Node) error {
+	if !p.ConfigRequired {
+		return nil
+	}
+	for _, m := range p.Modules {
+		node, ok := modules[m.Name]
+		if !ok {
+			continue
+		}
+		if node.IsZero() || len(node.Content) == 0 {
+			return fmt.Errorf("config: extensions.%s is empty, but plugin %q declares config: \"required\"", m.Name, p.Name)
+		}
+	}
+	return nil
+}
+
+// checkPluginConfig runs checkConfigRequired over every plugin, fatal on the
+// first failure - boot's original whole-list gate.
+func checkPluginConfig(plugins []plugin.Plugin, modules map[string]yaml.Node) error {
+	for _, p := range plugins {
+		if err := checkConfigRequired(p, modules); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkPlugin runs both refusal checks against ONE plugin - the shared unit
+// initSkills' boot admission and rebuildSkills' whole-list gate both check
+// against (#1430 severe).
+func checkPlugin(p plugin.Plugin, modules map[string]yaml.Node) error {
+	if err := checkModuleLinked(p); err != nil {
+		return err
+	}
+	return checkConfigRequired(p, modules)
+}
+
+// seedPluginNames is the set of registry-row names plugins.seed configures -
+// admitBootPlugins' fatal-vs-drop boundary.
+func seedPluginNames(seed []string) map[string]bool {
+	names := make(map[string]bool, len(seed))
+	for _, s := range seed {
+		if e, err := pluginreg.ParseEntry(s); err == nil {
+			names[e.Name()] = true
+		}
+	}
+	return names
+}
+
+// admitBootPlugins checks every resolved plugin: one plugins.seed lists is
+// config, so a refusal is fatal, named, exactly as always. One added over
+// REST is operator data - a refusal there only drops that plugin (named in
+// a warning, stored on its row) and boot proceeds (#1430 severe: a
+// rebuildSkills 422 must not brick the next boot for the row it refused).
+func admitBootPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, error) {
+	seedNames := seedPluginNames(seed)
+	out := make([]plugin.Plugin, 0, len(plugins))
+	for _, p := range plugins {
+		if err := checkPlugin(p, modules); err != nil {
+			if seedNames[p.Name] {
+				return nil, err
+			}
+			slog.Warn("plugin refused at boot; dropped from the roster, other plugins still load",
+				"component", "startup", "plugin", p.Name, "err", err)
+			persistPluginRefusal(ctx, reg, rows, p.Name, err)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// persistPluginRefusal stores cause on name's registry row so GET /plugins
+// shows why boot dropped it - best-effort; a write failure only logs.
+func persistPluginRefusal(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, name string, cause error) {
+	for _, row := range rows {
+		if row.Name == name {
+			row.Error = cause.Error()
+			if err := reg.Put(ctx, row); err != nil {
+				slog.Warn("failed to persist plugin refusal on its row", "component", "startup", "plugin", name, "err", err)
+			}
+			return
+		}
+	}
 }
 
 // pluginSpawnCaps is the sandbox bound an MCP server subprocess runs under -

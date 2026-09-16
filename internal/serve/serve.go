@@ -599,21 +599,19 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 	if len(pluginRevs) > 0 {
 		slog.Info("skill plugins resolved", "component", "startup", "revisions", plugin.Summary(pluginRevs))
 	}
-	_, rows, err := b.bootPluginRegistry(ctx)
+	reg, rows, err := b.bootPluginRegistry(ctx)
 	if err != nil {
 		return skillsInit{}, err
 	}
 	// One resolution of the registry roots drives all three component types.
-	// The module and config checks run before anything is constructed, so a
-	// manifest promising code this binary doesn't carry fails here, named.
+	// admitBootPlugins fails boot only on a plugins.seed (config) refusal -
+	// a REST-added row's refusal just drops that plugin (#1430 severe).
 	plugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
 	if err != nil {
 		return skillsInit{}, err
 	}
-	if err := checkPluginModules(plugins); err != nil {
-		return skillsInit{}, err
-	}
-	if err := checkPluginConfig(plugins, b.cfg.Extensions.Modules); err != nil {
+	plugins, err = admitBootPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
+	if err != nil {
 		return skillsInit{}, err
 	}
 	// swappable is builtinSkillSrc's registry-derived half; every consumer
@@ -645,13 +643,13 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit
 		if err != nil {
 			return err
 		}
-		// Same refusals boot enforces (#1430 SF9) - a bad plugin never
-		// reaches the roster; swap only runs once both pass.
-		if err := checkPluginModules(freshPlugins); err != nil {
-			return err
-		}
-		if err := checkPluginConfig(freshPlugins, b.cfg.Extensions.Modules); err != nil {
-			return err
+		// Same refusals boot enforces (#1430 SF9), fatal on the first one -
+		// the REST caller 422s and the previous roster stays; swap only
+		// runs once every row passes (unlike admitBootPlugins, no per-row drop).
+		for _, p := range freshPlugins {
+			if err := checkPlugin(p, b.cfg.Extensions.Modules); err != nil {
+				return err
+			}
 		}
 		swappable.Swap(newSkillSource(freshPlugins))
 		return nil

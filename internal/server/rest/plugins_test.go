@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/pluginreg"
@@ -36,15 +37,17 @@ func withFixedRemote(t *testing.T, url string) {
 
 // newPluginsTestHandler builds a Handler wired to a real FSRegistry rooted
 // under t.TempDir(), with a rebuild-count hook so tests can assert the
-// native skill roster is rebuilt on every row/sha change.
-func newPluginsTestHandler(t *testing.T) (*Handler, *int) {
+// native skill roster is rebuilt on every row/sha change. atomic.Int64, not
+// a bare counter - mapConcurrently means CheckUpdate/Fetch (and so a test's
+// concurrent requests) can call this from more than one goroutine.
+func newPluginsTestHandler(t *testing.T) (*Handler, *atomic.Int64) {
 	t.Helper()
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
-	rebuilds := 0
+	var rebuilds atomic.Int64
 	h := &Handler{}
 	h.SetPlugins(NewPlugins(reg, root, nil, func() error {
-		rebuilds++
+		rebuilds.Add(1)
 		return nil
 	}))
 	return h, &rebuilds
@@ -88,7 +91,7 @@ func TestCreatePluginRoundTrip(t *testing.T) {
 	if p.InstalledSha == nil || *p.InstalledSha == "" {
 		t.Fatalf("expected installed_sha to be set, got %+v", p)
 	}
-	if *rebuilds == 0 {
+	if rebuilds.Load() == 0 {
 		t.Fatal("expected the skill roster rebuild hook to fire on create")
 	}
 
@@ -122,7 +125,7 @@ func TestDeletePlugin(t *testing.T) {
 	withFixedRemote(t, bare)
 	h, rebuilds := newPluginsTestHandler(t)
 	doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
-	*rebuilds = 0
+	rebuilds.Store(0)
 
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	w := httptest.NewRecorder()
@@ -130,7 +133,7 @@ func TestDeletePlugin(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
-	if *rebuilds == 0 {
+	if rebuilds.Load() == 0 {
 		t.Fatal("expected the skill roster rebuild hook to fire on delete")
 	}
 
@@ -180,7 +183,7 @@ func TestUpdatePluginInstallsNewShaAndServesNewText(t *testing.T) {
 	doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
 
 	newSHA := commitAndPush(t, work, "v2")
-	*rebuilds = 0
+	rebuilds.Store(0)
 
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
@@ -192,7 +195,7 @@ func TestUpdatePluginInstallsNewShaAndServesNewText(t *testing.T) {
 	if p.InstalledSha == nil || *p.InstalledSha != newSHA {
 		t.Fatalf("installed_sha = %v, want %s", p.InstalledSha, newSHA)
 	}
-	if *rebuilds == 0 {
+	if rebuilds.Load() == 0 {
 		t.Fatal("expected the skill roster rebuild hook to fire on update")
 	}
 
