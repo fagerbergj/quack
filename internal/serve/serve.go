@@ -284,6 +284,41 @@ func newSkillSource(plugins []plugin.Plugin) skill.Source {
 	return skill.NewMergedSource(resolved, skillsource.Scoped(embedded, backfill))
 }
 
+// swappableSkillSource is a skill.Source whose backing source swaps
+// atomically - lets a REST plugin change reach an already-built native
+// SkillToolset's next round with no restart (#1430 P2).
+type swappableSkillSource struct {
+	cur atomic.Pointer[skill.Source]
+}
+
+func newSwappableSkillSource(initial skill.Source) *swappableSkillSource {
+	s := &swappableSkillSource{}
+	s.cur.Store(&initial)
+	return s
+}
+
+func (s *swappableSkillSource) Swap(src skill.Source) { s.cur.Store(&src) }
+
+func (s *swappableSkillSource) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {
+	return (*s.cur.Load()).ListFrontmatters(ctx)
+}
+
+func (s *swappableSkillSource) LoadFrontmatter(ctx context.Context, name string) (*skill.Frontmatter, error) {
+	return (*s.cur.Load()).LoadFrontmatter(ctx, name)
+}
+
+func (s *swappableSkillSource) LoadInstructions(ctx context.Context, name string) (string, error) {
+	return (*s.cur.Load()).LoadInstructions(ctx, name)
+}
+
+func (s *swappableSkillSource) LoadResource(ctx context.Context, name, resourcePath string) (io.ReadCloser, error) {
+	return (*s.cur.Load()).LoadResource(ctx, name, resourcePath)
+}
+
+func (s *swappableSkillSource) ListResources(ctx context.Context, name, subpath string) ([]string, error) {
+	return (*s.cur.Load()).ListResources(ctx, name, subpath)
+}
+
 // LedgerStoreFromConfig resolves the ledger (WAL) backend from stores; config
 // validation already guarantees a named store is Postgres.
 func LedgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
@@ -560,8 +595,23 @@ func (b *boot) initOrchestratorModel(artifacts artifact.Service) (model.LLM, err
 	return llm, nil
 }
 
-// resolves the plugin registry and builds the skill sources and toolsets
-func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) ([]plugin.Plugin, skill.Source, skill.Source, *skilltoolset.SkillToolset, func(names []string) (*skilltoolset.SkillToolset, error), error) {
+// skillsInit is initSkills' result: the resolved plugins, both skill
+// sources, the native toolset, a scoped-toolset builder, and the
+// roster-rebuild hook a REST plugin add/remove/fetch calls (#1430).
+type skillsInit struct {
+	plugins          []plugin.Plugin
+	builtinSkillSrc  skill.Source
+	skillSrc         skill.Source
+	skillTS          *skilltoolset.SkillToolset
+	newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error)
+	// rebuildSkills swaps in a freshly-admitted roster and returns which
+	// (if any) non-seed rows were refused this pass - review#2: rebuild uses
+	// the SAME per-row admission as boot, not an all-or-nothing gate.
+	rebuildSkills func() (refusals map[string]error, err error)
+}
+
+// resolves the plugin registry and builds the skill sources and toolsets.
+func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) (skillsInit, error) {
 	// Bring the vendored trees under .agents/vendor to their pinned refs before
 	// anything reads them - the local seed entries a dev checkout resolves
 	// against (#1427 P5 removes this once the registry owns fetching).
@@ -569,35 +619,63 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) ([]plugin.P
 	if len(pluginRevs) > 0 {
 		slog.Info("skill plugins resolved", "component", "startup", "revisions", plugin.Summary(pluginRevs))
 	}
-	_, rows, err := b.bootPluginRegistry(ctx)
+	reg, rows, err := b.bootPluginRegistry(ctx)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return skillsInit{}, err
 	}
 	// One resolution of the registry roots drives all three component types.
-	// The module and config checks run before anything is constructed, so a
-	// manifest promising code this binary doesn't carry fails here, named.
+	// admitPlugins fails boot only on a plugins.seed (config) refusal -
+	// a REST-added row's refusal just drops that plugin (#1430 severe).
 	plugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return skillsInit{}, err
 	}
-	if err := checkPluginModules(plugins); err != nil {
-		return nil, nil, nil, nil, nil, err
+	plugins, _, err = admitPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
+	if err != nil {
+		return skillsInit{}, err
 	}
-	if err := checkPluginConfig(plugins, b.cfg.Extensions.Modules); err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-	builtinSkillSrc := newSkillSource(plugins)
-	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
+	// swappable is builtinSkillSrc's registry-derived half; every consumer
+	// below holds this SAME instance, so rebuildSkills' Swap reaches native
+	// agents' next round with no rebuild plumbing beyond this one pointer.
+	swappable := newSwappableSkillSource(newSkillSource(plugins))
+	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("skills toolset init failed: %w", err)
+		return skillsInit{}, fmt.Errorf("skills toolset init failed: %w", err)
 	}
 	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
-	return plugins, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, nil
+	var rebuildMu sync.Mutex
+	rebuildSkills := func() (map[string]error, error) {
+		rebuildMu.Lock()
+		defer rebuildMu.Unlock()
+		reg := pluginreg.NewFSRegistry(b.cfg.Plugins.Root)
+		rows, err := reg.List(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		rows = pluginreg.OrderBySeed(b.cfg.Plugins.Seed, rows)
+		rows = append(rows, pluginreg.EmbeddedQuackPlugin())
+		freshPlugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
+		if err != nil {
+			return nil, err
+		}
+		// Same admission as boot (#1430 review#2) - a refused non-seed row
+		// only drops itself; everything else still swaps in.
+		admitted, refusals, err := admitPlugins(context.Background(), reg, rows, freshPlugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
+		if err != nil {
+			return nil, err
+		}
+		swappable.Swap(newSkillSource(admitted))
+		return refusals, nil
+	}
+	return skillsInit{
+		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
+		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
+	}, nil
 }
 
 // opens the task/user memory stores and the shared boot event log
@@ -741,8 +819,8 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 }
 
 // mounts the HTTP handler and starts the workspace GC
-func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth) (http.Handler, error) {
-	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW)
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error)) (http.Handler, error) {
+	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills)
 	if err != nil {
 		return nil, err
 	}
@@ -840,7 +918,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
-	plugins, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, err := b.initSkills(ctx, jail)
+	skills, err := b.initSkills(ctx, jail)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -848,19 +926,19 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, plugins)
+	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef)
+	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skills.skillTS, skills.builtinSkillSrc, skills.newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
+	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW)
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1301,6 +1379,7 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 	env := piACPEnv(prov, ac, nil)
 	env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 	skillPathsFn := acpRegistrySkillPaths(cfg)
+	extraROFn := acpRegistryExtraRO(cfg)
 	pluginsFn := acpRegistryPluginRefs(cfg)
 	var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 	if safetyJudge != nil {
@@ -1322,6 +1401,7 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		Replay:               acpReplay,
 		Caps:                 workspaceCaps,
 		SkillPaths:           skillPathsFn,
+		ExtraRO:              extraROFn,
 		Plugins:              pluginsFn,
 		Home:                 workspaceCaps.HomeDir,
 		Preamble:             preamble,
@@ -1956,7 +2036,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	return orch, nil
 }
 
-func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth) (http.Handler, error) {
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error)) (http.Handler, error) {
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
@@ -1979,6 +2059,7 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 	}
 
 	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
+	restHandler.SetPlugins(rest.NewPlugins(pluginreg.NewFSRegistry(cfg.Plugins.Root), cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills))
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
 
 	return server.New(server.Options{
@@ -2323,9 +2404,9 @@ func hasQuackRow(plugins []plugin.Plugin) bool {
 	return false
 }
 
-// registrySignature is acpRegistrySkillPaths' cache key: names+shas, so an
-// add/remove/fetch invalidates it - re-resolving every spawn otherwise costs
-// ~10ms, serialized behind extractDotagentsSkillsMu (#1427 F5).
+// registrySignature is acpRegistrySkillPaths' cache key: names+shas. A local
+// row's sha is always "" so it only invalidates on a row-set change - its
+// content is still read live off disk on every call regardless (#1430).
 func registrySignature(rows []pluginreg.Plugin) string {
 	parts := make([]string, len(rows))
 	for i, p := range rows {
@@ -2335,8 +2416,8 @@ func registrySignature(rows []pluginreg.Plugin) string {
 }
 
 // acpRegistrySkillPaths is acp.Options.SkillPaths: acpSkillPaths over a
-// fresh registry read, plus plugins.root itself (a sandboxed child can then
-// read a plugin's whole clone) - cached by registrySignature (#1427 F5).
+// fresh registry read, cached by registrySignature. plugins.root itself is
+// NOT here - see acpRegistryExtraRO - this also feeds skill_paths (#1430).
 func acpRegistrySkillPaths(cfg *config.Config) func() []string {
 	var mu sync.Mutex
 	var cachedKey string
@@ -2348,7 +2429,7 @@ func acpRegistrySkillPaths(cfg *config.Config) func() []string {
 			slog.Warn("acp: plugin registry list failed; skill paths may be stale", "component", "acp", "err", err)
 			rows = nil
 		}
-		rows = orderBySeed(cfg.Plugins.Seed, rows)
+		rows = pluginreg.OrderBySeed(cfg.Plugins.Seed, rows)
 		key := registrySignature(rows)
 
 		mu.Lock()
@@ -2362,11 +2443,20 @@ func acpRegistrySkillPaths(cfg *config.Config) func() []string {
 			plugins = nil
 		}
 		paths := acpSkillPaths(plugins)
-		if st, err := os.Stat(cfg.Plugins.Root); err == nil && st.IsDir() {
-			paths = append(paths, cfg.Plugins.Root)
-		}
 		cachedKey, cachedPaths = key, paths
 		return paths
+	}
+}
+
+// acpRegistryExtraRO is acp.Options.ExtraRO: grants plugins.root itself to
+// the sandbox (replay and the pi shim's own file reads need it) WITHOUT
+// feeding it into skill_paths (#1430 carry-over).
+func acpRegistryExtraRO(cfg *config.Config) func() []string {
+	return func() []string {
+		if st, err := os.Stat(cfg.Plugins.Root); err == nil && st.IsDir() {
+			return []string{cfg.Plugins.Root}
+		}
+		return nil
 	}
 }
 

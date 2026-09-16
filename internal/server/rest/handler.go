@@ -74,10 +74,18 @@ type Handler struct {
 	// via GET /api/v1/config so the frontend can render a trace_id deep link
 	// without the URL ever being baked into a wire event (see WithTrace).
 	traceURLTemplate string
+	// plugins is boot-owned registry access for the /api/v1/plugins routes
+	// (epic #1427 P2); nil in tests that never call them.
+	plugins *Plugins
 }
 
 // SetTraceURLTemplate wires otel.trace_url_template for GET /api/v1/config.
 func (h *Handler) SetTraceURLTemplate(t string) { h.traceURLTemplate = t }
+
+// SetPlugins wires the boot-owned plugin registry access (same pattern as
+// SetTraceURLTemplate) - split from NewHandler so every existing call site
+// (tests included) keeps compiling unchanged.
+func (h *Handler) SetPlugins(p *Plugins) { h.plugins = p }
 
 // GetConfig serves read-only, client-visible server config.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {

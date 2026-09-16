@@ -1,12 +1,18 @@
 package serve
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fagerbergj/quack/internal/plugin"
+	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/workspace"
 	"gopkg.in/yaml.v3"
 )
@@ -93,5 +99,64 @@ func TestPluginMCPTools_HangingServerCostsOnlyItsTools(t *testing.T) {
 	// Transport teardown adds a few seconds of kill-grace on top of the deadline.
 	if e := time.Since(start); e > 15*time.Second {
 		t.Fatalf("enumeration took %v; the deadline did not fire", e)
+	}
+}
+
+// TestSeedRegistryWarnsOnIdentityCollisionKeepsDiskRow: a seed entry sharing
+// a name with an on-disk row under a DIFFERENT identity is warned about, not
+// fatal, and the on-disk row is left untouched (#1430 carry-over).
+func TestSeedRegistryWarnsOnIdentityCollisionKeepsDiskRow(t *testing.T) {
+	root := t.TempDir()
+	reg := pluginreg.NewFSRegistry(root)
+	if err := reg.Put(context.Background(), pluginreg.Plugin{
+		Name: "widgets", Source: pluginreg.SourceGitHub, Entry: "github:acme/widgets", Owner: "acme", Repo: "widgets",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedRegistry(context.Background(), reg, []string{"github:other/widgets"}); err != nil {
+		t.Fatalf("seedRegistry should warn, not fail, on an identity collision: %v", err)
+	}
+	rows, err := reg.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Owner != "acme" {
+		t.Fatalf("rows = %+v, want the on-disk row (acme/widgets) untouched", rows)
+	}
+}
+
+// TestSeedRegistryPropagatesPutFailureOnNewInsert: a new seed name whose
+// Put fails (here: blocked by a same-path file, a real on-disk collision)
+// surfaces the error rather than being swallowed.
+func TestSeedRegistryPropagatesPutFailureOnNewInsert(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "widgets"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := pluginreg.NewFSRegistry(root)
+	if err := seedRegistry(context.Background(), reg, []string{"github:acme/widgets"}); err == nil {
+		t.Fatal("seedRegistry = nil, want the blocked Put's error to propagate")
+	}
+}
+
+// TestPersistPluginRefusalLogsOnWriteFailure: a Put failure while
+// persisting a boot refusal is logged, not returned or panicked on -
+// there is nothing left for the caller to do about it.
+func TestPersistPluginRefusalLogsOnWriteFailure(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "bad"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := pluginreg.NewFSRegistry(root)
+	rows := []pluginreg.Plugin{{Name: "bad", Source: pluginreg.SourceLocal, Entry: "bad"}}
+	persistPluginRefusal(context.Background(), reg, rows, "bad", errors.New("boom"))
+
+	if !strings.Contains(buf.String(), "failed to persist plugin refusal") {
+		t.Fatalf("log output = %q, want the persist-failure warning", buf.String())
 	}
 }

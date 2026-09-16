@@ -24,24 +24,18 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// embeddedQuackPlugin is quack's go:embedded skill bundle's registry row
-// (#1427 P1): in-memory only, never Put to disk - it has no clone.
-func embeddedQuackPlugin() pluginreg.Plugin {
-	return pluginreg.Plugin{Name: "quack", Source: pluginreg.SourceEmbedded}
-}
-
 // seedRegistry inserts each seed entry into reg if its name is absent - Put
 // only when List lacks it, so the UI/REST (P2) own the list after boot. A
-// stale on-disk row (no longer in seed) is left alone but named in a warning (#1427 F6).
+// stale or identity-colliding on-disk row is warned about, not silent.
 func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string) error {
 	existing, err := reg.List(ctx)
 	if err != nil {
 		return err
 	}
-	have := make(map[string]bool, len(existing))
+	byName := make(map[string]pluginreg.Plugin, len(existing))
 	stale := make(map[string]bool, len(existing))
 	for _, p := range existing {
-		have[p.Name] = true
+		byName[p.Name] = p
 		stale[p.Name] = true
 	}
 	seenInSeed := make(map[string]string, len(seed)) // name -> raw entry
@@ -59,13 +53,20 @@ func seedRegistry(ctx context.Context, reg *pluginreg.FSRegistry, seed []string)
 		}
 		seenInSeed[name] = e.Raw
 		delete(stale, name)
-		if have[name] {
+		row := pluginreg.FromEntry(e)
+		if existingRow, ok := byName[name]; ok {
+			// Put would only ever error here (SameIdentity is exactly its
+			// own collision check) - warn directly instead of re-deriving it.
+			if !pluginreg.SameIdentity(existingRow, row) {
+				slog.Warn("plugin seed entry collides with a different plugin already registered under this name; keeping the on-disk row",
+					"component", "startup", "name", name, "entry", e.Raw)
+			}
 			continue
 		}
-		if err := reg.Put(ctx, pluginreg.FromEntry(e)); err != nil {
+		if err := reg.Put(ctx, row); err != nil {
 			return err
 		}
-		have[name] = true
+		byName[name] = row
 	}
 	if len(stale) > 0 {
 		names := make([]string, 0, len(stale))
@@ -109,37 +110,9 @@ func (b *boot) bootPluginRegistry(ctx context.Context) (*pluginreg.FSRegistry, [
 		return nil, nil, fmt.Errorf("plugin registry list: %w", err)
 	}
 	rows = fetchRegistryPlugins(ctx, reg, rows)
-	rows = orderBySeed(b.cfg.Plugins.Seed, rows)
-	rows = append(rows, embeddedQuackPlugin())
+	rows = pluginreg.OrderBySeed(b.cfg.Plugins.Seed, rows)
+	rows = append(rows, pluginreg.EmbeddedQuackPlugin())
 	return reg, rows, nil
-}
-
-// orderBySeed reorders rows to match plugins.seed's listed order (bare-name
-// resolution is "first in merge order wins", #1427 F2) - a row not in seed
-// (added via the UI/REST, P2) sorts after, in List's name order.
-func orderBySeed(seed []string, rows []pluginreg.Plugin) []pluginreg.Plugin {
-	byName := make(map[string]pluginreg.Plugin, len(rows))
-	for _, p := range rows {
-		byName[p.Name] = p
-	}
-	out := make([]pluginreg.Plugin, 0, len(rows))
-	seen := make(map[string]bool, len(rows))
-	for _, s := range seed {
-		e, err := pluginreg.ParseEntry(s) // config.validatePlugins already checked every entry parses
-		if err != nil {
-			continue
-		}
-		if p, ok := byName[e.Name()]; ok && !seen[e.Name()] {
-			out = append(out, p)
-			seen[e.Name()] = true
-		}
-	}
-	for _, p := range rows {
-		if !seen[p.Name] {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // registryPluginRoots is every non-embedded row's resolved Root() - what
@@ -185,42 +158,117 @@ func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plu
 // server gets at boot. Per-call contexts govern everything after.
 var mcpEnumerateTimeout = 20 * time.Second // var so tests can shrink it
 
-// checkPluginModules matches every module a plugin declares under quack's
-// namespace against the modules actually linked into this binary. Go has no
-// safe dynamic loading, so the manifest is documentation the compiler is
-// checked against: a declared-but-unlinked module is a boot error naming the
-// import to add, never a silently missing capability.
-func checkPluginModules(plugins []plugin.Plugin) error {
+// checkModuleLinked matches p's declared modules under quack's namespace
+// against the modules actually linked into this binary. Go has no safe
+// dynamic loading, so a declared-but-unlinked module names the import to add.
+func checkModuleLinked(p plugin.Plugin) error {
 	linked := extsdk.Registered()
-	for _, p := range plugins {
-		for _, m := range p.Modules {
-			if _, ok := linked[m.Name]; !ok {
-				return fmt.Errorf("plugin %q declares module %q (%s), which is not linked into this binary; add its blank import to internal/serve/extensions_registry.go", p.Name, m.Name, m.Path)
-			}
+	for _, m := range p.Modules {
+		if _, ok := linked[m.Name]; !ok {
+			return fmt.Errorf("plugin %q declares module %q (%s), which is not linked into this binary; add its blank import to internal/serve/extensions_registry.go", p.Name, m.Name, m.Path)
 		}
 	}
 	return nil
 }
 
-// checkPluginConfig enforces the namespace block's config: "required". A module that is not
-// configured at all stays dormant, exactly as before; one whose extensions: block is present but
-// empty fails the boot here with the plugin named, rather than deeper inside its own factory.
-func checkPluginConfig(plugins []plugin.Plugin, modules map[string]yaml.Node) error {
+// checkPluginModules runs checkModuleLinked over every plugin, fatal on the
+// first failure - boot's original whole-list gate.
+func checkPluginModules(plugins []plugin.Plugin) error {
 	for _, p := range plugins {
-		if !p.ConfigRequired {
-			continue
-		}
-		for _, m := range p.Modules {
-			node, ok := modules[m.Name]
-			if !ok {
-				continue
-			}
-			if node.IsZero() || len(node.Content) == 0 {
-				return fmt.Errorf("config: extensions.%s is empty, but plugin %q declares config: \"required\"", m.Name, p.Name)
-			}
+		if err := checkModuleLinked(p); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// checkConfigRequired enforces the namespace block's config: "required" for
+// p. A module not configured at all stays dormant; one whose extensions:
+// block is present but empty fails, named, rather than deeper in its factory.
+func checkConfigRequired(p plugin.Plugin, modules map[string]yaml.Node) error {
+	if !p.ConfigRequired {
+		return nil
+	}
+	for _, m := range p.Modules {
+		node, ok := modules[m.Name]
+		if !ok {
+			continue
+		}
+		if node.IsZero() || len(node.Content) == 0 {
+			return fmt.Errorf("config: extensions.%s is empty, but plugin %q declares config: \"required\"", m.Name, p.Name)
+		}
+	}
+	return nil
+}
+
+// checkPluginConfig runs checkConfigRequired over every plugin, fatal on the
+// first failure - boot's original whole-list gate.
+func checkPluginConfig(plugins []plugin.Plugin, modules map[string]yaml.Node) error {
+	for _, p := range plugins {
+		if err := checkConfigRequired(p, modules); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkPlugin runs both refusal checks against ONE plugin - the shared unit
+// initSkills' boot admission and rebuildSkills' whole-list gate both check
+// against (#1430 severe).
+func checkPlugin(p plugin.Plugin, modules map[string]yaml.Node) error {
+	if err := checkModuleLinked(p); err != nil {
+		return err
+	}
+	return checkConfigRequired(p, modules)
+}
+
+// seedPluginNames is the set of registry-row names plugins.seed configures -
+// admitPlugins' fatal-vs-drop boundary.
+func seedPluginNames(seed []string) map[string]bool {
+	names := make(map[string]bool, len(seed))
+	for _, s := range seed {
+		if e, err := pluginreg.ParseEntry(s); err == nil {
+			names[e.Name()] = true
+		}
+	}
+	return names
+}
+
+// admitPlugins: a plugins.seed (config) plugin's refusal is fatal, named, as
+// always; a REST-added row's refusal only drops THAT plugin (warned, stored
+// on its row, named in refusals) - shared by boot and rebuildSkills (#1430).
+func admitPlugins(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, plugins []plugin.Plugin, seed []string, modules map[string]yaml.Node) ([]plugin.Plugin, map[string]error, error) {
+	seedNames := seedPluginNames(seed)
+	refusals := make(map[string]error)
+	out := make([]plugin.Plugin, 0, len(plugins))
+	for _, p := range plugins {
+		if err := checkPlugin(p, modules); err != nil {
+			if seedNames[p.Name] {
+				return nil, nil, err
+			}
+			slog.Warn("plugin refused; dropped from the roster, other plugins still load",
+				"component", "startup", "plugin", p.Name, "err", err)
+			persistPluginRefusal(ctx, reg, rows, p.Name, err)
+			refusals[p.Name] = err
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, refusals, nil
+}
+
+// persistPluginRefusal stores cause on name's registry row so GET /plugins
+// shows why boot dropped it - best-effort; a write failure only logs.
+func persistPluginRefusal(ctx context.Context, reg *pluginreg.FSRegistry, rows []pluginreg.Plugin, name string, cause error) {
+	for _, row := range rows {
+		if row.Name == name {
+			row.Error = cause.Error()
+			if err := reg.Put(ctx, row); err != nil {
+				slog.Warn("failed to persist plugin refusal on its row", "component", "startup", "plugin", name, "err", err)
+			}
+			return
+		}
+	}
 }
 
 // pluginSpawnCaps is the sandbox bound an MCP server subprocess runs under -

@@ -156,15 +156,17 @@ type projectAware struct {
 	userID  string
 }
 
-// ListFrontmatters: built-in plus non-colliding project skills; malformed skills are skipped, not fatal.
+// ListFrontmatters: built-in plus non-colliding project skills. A project
+// skill's BARE name is hidden by a built-in providing the same bare name
+// ("plugin:x"), not just an identical literal name (#1430).
 func (p *projectAware) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {
 	builtin, err := p.builtin.ListFrontmatters(ctx)
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]bool, len(builtin))
+	seenBare := make(map[string]bool, len(builtin))
 	for _, fm := range builtin {
-		seen[fm.Name] = true
+		seenBare[BareName(fm.Name)] = true
 	}
 	out := builtin
 	for _, src := range p.sources() {
@@ -175,46 +177,52 @@ func (p *projectAware) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatt
 			continue
 		}
 		for _, fm := range proj {
-			if seen[fm.Name] {
-				continue // first listing wins the collision; hide the duplicate
+			if seenBare[fm.Name] { // project names are already bare
+				continue // built-in wins the bare-name collision; hide the duplicate
 			}
-			seen[fm.Name] = true
+			seenBare[fm.Name] = true
 			out = append(out, fm)
 		}
 	}
 	return out, nil
 }
 
-// All Load* try built-in first, falling back to project on ErrSkillNotFound.
+// All Load* try built-in first (by bare name, via ResolveName - the same
+// "built-in wins by bare name" rule ListFrontmatters enforces), falling back
+// to project only when built-in has no match at all (#1430 carry-over).
 
 func (p *projectAware) LoadFrontmatter(ctx context.Context, name string) (*skill.Frontmatter, error) {
-	fm, err := p.builtin.LoadFrontmatter(ctx, name)
-	if err == nil || !errors.Is(err, skill.ErrSkillNotFound) {
-		return fm, err
+	if qualified, err := ResolveName(ctx, p.builtin, name); err == nil {
+		return p.builtin.LoadFrontmatter(ctx, qualified)
+	} else if !errors.Is(err, skill.ErrSkillNotFound) {
+		return nil, err
 	}
 	return p.project().LoadFrontmatter(ctx, name)
 }
 
 func (p *projectAware) LoadInstructions(ctx context.Context, name string) (string, error) {
-	ins, err := p.builtin.LoadInstructions(ctx, name)
-	if err == nil || !errors.Is(err, skill.ErrSkillNotFound) {
-		return ins, err
+	if qualified, err := ResolveName(ctx, p.builtin, name); err == nil {
+		return p.builtin.LoadInstructions(ctx, qualified)
+	} else if !errors.Is(err, skill.ErrSkillNotFound) {
+		return "", err
 	}
 	return p.project().LoadInstructions(ctx, name)
 }
 
 func (p *projectAware) LoadResource(ctx context.Context, name, resourcePath string) (io.ReadCloser, error) {
-	rc, err := p.builtin.LoadResource(ctx, name, resourcePath)
-	if err == nil || !errors.Is(err, skill.ErrSkillNotFound) {
-		return rc, err
+	if qualified, err := ResolveName(ctx, p.builtin, name); err == nil {
+		return p.builtin.LoadResource(ctx, qualified, resourcePath)
+	} else if !errors.Is(err, skill.ErrSkillNotFound) {
+		return nil, err
 	}
 	return p.project().LoadResource(ctx, name, resourcePath)
 }
 
 func (p *projectAware) ListResources(ctx context.Context, name, subpath string) ([]string, error) {
-	res, err := p.builtin.ListResources(ctx, name, subpath)
-	if err == nil || !errors.Is(err, skill.ErrSkillNotFound) {
-		return res, err
+	if qualified, err := ResolveName(ctx, p.builtin, name); err == nil {
+		return p.builtin.ListResources(ctx, qualified, subpath)
+	} else if !errors.Is(err, skill.ErrSkillNotFound) {
+		return nil, err
 	}
 	return p.project().ListResources(ctx, name, subpath)
 }

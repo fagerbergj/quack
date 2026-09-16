@@ -634,6 +634,81 @@ export type ErrorResponse = {
 };
 
 /**
+ * github = a git clone under plugins.root, tracked or pinned; local = a bare root path (today's plugins: list form); embedded = quack's go:embedded baseline, the "quack" row - never created or removed via this API.
+ */
+export type PluginSource = 'github' | 'local' | 'embedded';
+
+export type Plugin = {
+    /**
+     * Registry row name - the repo base for a github entry, the path base for a local one. Never plugin.json's own name.
+     */
+    name: string;
+    /**
+     * The raw entry string this row was created from. Empty for the embedded row.
+     */
+    entry: string;
+    source: PluginSource;
+    /**
+     * Present for a github row.
+     */
+    owner?: string;
+    /**
+     * Present for a github row.
+     */
+    repo?: string;
+    /**
+     * Pinned tag/branch/sha. Absent = tracks the remote default branch.
+     */
+    ref?: string;
+    /**
+     * Subdirectory holding the plugin root, relative to the repo. Absent = the repo root.
+     */
+    path?: string;
+    /**
+     * The sha currently checked out. Absent if never fetched.
+     */
+    installed_sha?: string;
+    /**
+     * When installed_sha was last fetched. Absent if never fetched.
+     */
+    fetched_at?: string;
+    /**
+     * The last fetch/check failure, if any. The row (and its last good clone) still serves.
+     */
+    error?: string;
+    /**
+     * Resolved on-disk plugin root this row currently serves from.
+     */
+    root?: string;
+};
+
+export type PluginList = {
+    plugins: Array<Plugin>;
+};
+
+export type CreatePluginBody = {
+    /**
+     * github:owner/repo[@ref][#path] - REST manages github: entries only.
+     */
+    entry: string;
+};
+
+export type PluginUpdate = {
+    name: string;
+    installed_sha?: string;
+    remote_sha?: string;
+    behind: boolean;
+    /**
+     * This row's update check failed; behind is false and remote_sha absent.
+     */
+    error?: string;
+};
+
+export type PluginUpdateList = {
+    updates: Array<PluginUpdate>;
+};
+
+/**
  * An illegal node-status transition - ErrorResponse refined with the node's current status and its legal targets.
  */
 export type TransitionError = ErrorResponse & {
@@ -803,6 +878,8 @@ export type ResponseId = string;
 export type MemoryId = string;
 
 export type ArtifactName = string;
+
+export type PluginName = string;
 
 export type HealthCheckData = {
     body?: never;
@@ -1752,3 +1829,155 @@ export type GetMemoryStatsResponses = {
 };
 
 export type GetMemoryStatsResponse = GetMemoryStatsResponses[keyof GetMemoryStatsResponses];
+
+export type ListPluginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/plugins';
+};
+
+export type ListPluginsResponses = {
+    /**
+     * Every registered plugin
+     */
+    200: PluginList;
+};
+
+export type ListPluginsResponse = ListPluginsResponses[keyof ListPluginsResponses];
+
+export type CreatePluginData = {
+    body: CreatePluginBody;
+    path?: never;
+    query?: never;
+    url: '/api/v1/plugins';
+};
+
+export type CreatePluginErrors = {
+    /**
+     * entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, quack)
+     */
+    400: ErrorResponse;
+    /**
+     * name is already registered from a different entry
+     */
+    409: ErrorResponse;
+    /**
+     * fetched, but the plugin's own content is refused (e.g. declares an unlinked module) - the row is stored with the refusal in `error`
+     */
+    422: ErrorResponse;
+};
+
+export type CreatePluginError = CreatePluginErrors[keyof CreatePluginErrors];
+
+export type CreatePluginResponses = {
+    /**
+     * The registered (and fetch-attempted) row
+     */
+    201: Plugin;
+};
+
+export type CreatePluginResponse = CreatePluginResponses[keyof CreatePluginResponses];
+
+export type ListPluginUpdatesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/plugins/updates';
+};
+
+export type ListPluginUpdatesResponses = {
+    /**
+     * Update status per github-sourced plugin
+     */
+    200: PluginUpdateList;
+};
+
+export type ListPluginUpdatesResponse = ListPluginUpdatesResponses[keyof ListPluginUpdatesResponses];
+
+export type UpdateAllPluginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/plugins/update';
+};
+
+export type UpdateAllPluginsErrors = {
+    /**
+     * fetched, but the roster rebuild that followed was refused (e.g. a fetched plugin declares an unlinked module)
+     */
+    422: ErrorResponse;
+};
+
+export type UpdateAllPluginsError = UpdateAllPluginsErrors[keyof UpdateAllPluginsErrors];
+
+export type UpdateAllPluginsResponses = {
+    /**
+     * Every github-sourced row's resulting state
+     */
+    200: PluginList;
+};
+
+export type UpdateAllPluginsResponse = UpdateAllPluginsResponses[keyof UpdateAllPluginsResponses];
+
+export type DeletePluginData = {
+    body?: never;
+    path: {
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/plugins/{name}';
+};
+
+export type DeletePluginErrors = {
+    /**
+     * name is invalid, or is the reserved embedded "quack" plugin
+     */
+    400: ErrorResponse;
+    /**
+     * No such plugin
+     */
+    404: ErrorResponse;
+};
+
+export type DeletePluginError = DeletePluginErrors[keyof DeletePluginErrors];
+
+export type DeletePluginResponses = {
+    /**
+     * Removed
+     */
+    204: void;
+};
+
+export type DeletePluginResponse = DeletePluginResponses[keyof DeletePluginResponses];
+
+export type UpdatePluginData = {
+    body?: never;
+    path: {
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/plugins/{name}/update';
+};
+
+export type UpdatePluginErrors = {
+    /**
+     * No such plugin
+     */
+    404: ErrorResponse;
+    /**
+     * fetched, but the roster rebuild that followed was refused (e.g. the plugin declares an unlinked module)
+     */
+    422: ErrorResponse;
+};
+
+export type UpdatePluginError = UpdatePluginErrors[keyof UpdatePluginErrors];
+
+export type UpdatePluginResponses = {
+    /**
+     * The fetched row
+     */
+    200: Plugin;
+};
+
+export type UpdatePluginResponse = UpdatePluginResponses[keyof UpdatePluginResponses];

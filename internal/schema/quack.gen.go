@@ -395,6 +395,27 @@ func (e PauseReason) Valid() bool {
 	}
 }
 
+// Defines values for PluginSource.
+const (
+	Embedded PluginSource = "embedded"
+	Github   PluginSource = "github"
+	Local    PluginSource = "local"
+)
+
+// Valid indicates whether the value is a known member of the PluginSource enum.
+func (e PluginSource) Valid() bool {
+	switch e {
+	case Embedded:
+		return true
+	case Github:
+		return true
+	case Local:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for QueuedMessageStatus.
 const (
 	Drained   QueuedMessageStatus = "drained"
@@ -777,6 +798,12 @@ type CreateChatBody struct {
 	SystemPrompt *string `json:"system_prompt,omitempty"`
 }
 
+// CreatePluginBody defines model for CreatePluginBody.
+type CreatePluginBody struct {
+	// Entry github:owner/repo[@ref][#path] - REST manages github: entries only.
+	Entry string `json:"entry"`
+}
+
 // DagEdge defines model for DagEdge.
 type DagEdge struct {
 	From string `json:"from"`
@@ -1110,6 +1137,66 @@ type OutputTextPartType string
 // PauseReason Why a node sits in the `paused` status.
 type PauseReason string
 
+// Plugin defines model for Plugin.
+type Plugin struct {
+	// Entry The raw entry string this row was created from. Empty for the embedded row.
+	Entry string `json:"entry"`
+
+	// Error The last fetch/check failure, if any. The row (and its last good clone) still serves.
+	Error *string `json:"error,omitempty"`
+
+	// FetchedAt When installed_sha was last fetched. Absent if never fetched.
+	FetchedAt *time.Time `json:"fetched_at,omitempty"`
+
+	// InstalledSha The sha currently checked out. Absent if never fetched.
+	InstalledSha *string `json:"installed_sha,omitempty"`
+
+	// Name Registry row name - the repo base for a github entry, the path base for a local one. Never plugin.json's own name.
+	Name string `json:"name"`
+
+	// Owner Present for a github row.
+	Owner *string `json:"owner,omitempty"`
+
+	// Path Subdirectory holding the plugin root, relative to the repo. Absent = the repo root.
+	Path *string `json:"path,omitempty"`
+
+	// Ref Pinned tag/branch/sha. Absent = tracks the remote default branch.
+	Ref *string `json:"ref,omitempty"`
+
+	// Repo Present for a github row.
+	Repo *string `json:"repo,omitempty"`
+
+	// Root Resolved on-disk plugin root this row currently serves from.
+	Root *string `json:"root,omitempty"`
+
+	// Source github = a git clone under plugins.root, tracked or pinned; local = a bare root path (today's plugins: list form); embedded = quack's go:embedded baseline, the "quack" row - never created or removed via this API.
+	Source PluginSource `json:"source"`
+}
+
+// PluginList defines model for PluginList.
+type PluginList struct {
+	Plugins []Plugin `json:"plugins"`
+}
+
+// PluginSource github = a git clone under plugins.root, tracked or pinned; local = a bare root path (today's plugins: list form); embedded = quack's go:embedded baseline, the "quack" row - never created or removed via this API.
+type PluginSource string
+
+// PluginUpdate defines model for PluginUpdate.
+type PluginUpdate struct {
+	Behind bool `json:"behind"`
+
+	// Error This row's update check failed; behind is false and remote_sha absent.
+	Error        *string `json:"error,omitempty"`
+	InstalledSha *string `json:"installed_sha,omitempty"`
+	Name         string  `json:"name"`
+	RemoteSha    *string `json:"remote_sha,omitempty"`
+}
+
+// PluginUpdateList defines model for PluginUpdateList.
+type PluginUpdateList struct {
+	Updates []PluginUpdate `json:"updates"`
+}
+
 // QueueMessageBody defines model for QueueMessageBody.
 type QueueMessageBody struct {
 	Message string `json:"message"`
@@ -1395,6 +1482,9 @@ type MessageID = string
 // NodeID defines model for NodeID.
 type NodeID = string
 
+// PluginName defines model for PluginName.
+type PluginName = string
+
 // ResponseID defines model for ResponseID.
 type ResponseID = string
 
@@ -1514,6 +1604,9 @@ type DeleteMemoryJSONRequestBody = DeleteMemoryBody
 
 // VoteMemoryJSONRequestBody defines body for VoteMemory for application/json ContentType.
 type VoteMemoryJSONRequestBody = VoteMemoryBody
+
+// CreatePluginJSONRequestBody defines body for CreatePlugin for application/json ContentType.
+type CreatePluginJSONRequestBody = CreatePluginBody
 
 // AsOutputTextPart returns the union data inside the ContentPart as a OutputTextPart
 func (t ContentPart) AsOutputTextPart() (OutputTextPart, error) {
@@ -1818,6 +1911,24 @@ type ServerInterface interface {
 	// Cast (or clear) the human's own vote on one memory
 	// (POST /api/v1/memories/{memory_id}/vote)
 	VoteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
+	// List every registered plugin (epic #1427 P2)
+	// (GET /api/v1/plugins)
+	ListPlugins(w http.ResponseWriter, r *http.Request)
+	// Register and fetch a plugin
+	// (POST /api/v1/plugins)
+	CreatePlugin(w http.ResponseWriter, r *http.Request)
+	// Fetch every github-sourced plugin that is behind
+	// (POST /api/v1/plugins/update)
+	UpdateAllPlugins(w http.ResponseWriter, r *http.Request)
+	// Check every github-sourced plugin for a newer remote sha
+	// (GET /api/v1/plugins/updates)
+	ListPluginUpdates(w http.ResponseWriter, r *http.Request)
+	// Remove a plugin's row and clone
+	// (DELETE /api/v1/plugins/{name})
+	DeletePlugin(w http.ResponseWriter, r *http.Request, name PluginName)
+	// Fetch one plugin against its tracked/pinned ref
+	// (POST /api/v1/plugins/{name}/update)
+	UpdatePlugin(w http.ResponseWriter, r *http.Request, name PluginName)
 	// List recorded chat sessions
 	// (GET /api/v1/recordings)
 	ListRecordings(w http.ResponseWriter, r *http.Request)
@@ -2013,6 +2124,42 @@ func (_ Unimplemented) GetMemory(w http.ResponseWriter, r *http.Request, memoryI
 // Cast (or clear) the human's own vote on one memory
 // (POST /api/v1/memories/{memory_id}/vote)
 func (_ Unimplemented) VoteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List every registered plugin (epic #1427 P2)
+// (GET /api/v1/plugins)
+func (_ Unimplemented) ListPlugins(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Register and fetch a plugin
+// (POST /api/v1/plugins)
+func (_ Unimplemented) CreatePlugin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Fetch every github-sourced plugin that is behind
+// (POST /api/v1/plugins/update)
+func (_ Unimplemented) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Check every github-sourced plugin for a newer remote sha
+// (GET /api/v1/plugins/updates)
+func (_ Unimplemented) ListPluginUpdates(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Remove a plugin's row and clone
+// (DELETE /api/v1/plugins/{name})
+func (_ Unimplemented) DeletePlugin(w http.ResponseWriter, r *http.Request, name PluginName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Fetch one plugin against its tracked/pinned ref
+// (POST /api/v1/plugins/{name}/update)
+func (_ Unimplemented) UpdatePlugin(w http.ResponseWriter, r *http.Request, name PluginName) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3370,6 +3517,162 @@ func (siw *ServerInterfaceWrapper) VoteMemory(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListPlugins operation middleware
+func (siw *ServerInterfaceWrapper) ListPlugins(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPlugins(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePlugin operation middleware
+func (siw *ServerInterfaceWrapper) CreatePlugin(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePlugin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateAllPlugins operation middleware
+func (siw *ServerInterfaceWrapper) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateAllPlugins(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPluginUpdates operation middleware
+func (siw *ServerInterfaceWrapper) ListPluginUpdates(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPluginUpdates(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePlugin operation middleware
+func (siw *ServerInterfaceWrapper) DeletePlugin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name PluginName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePlugin(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdatePlugin operation middleware
+func (siw *ServerInterfaceWrapper) UpdatePlugin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name PluginName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdatePlugin(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRecordings operation middleware
 func (siw *ServerInterfaceWrapper) ListRecordings(w http.ResponseWriter, r *http.Request) {
 
@@ -3611,6 +3914,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/memories/{memory_id}/vote", wrapper.VoteMemory)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/plugins", wrapper.ListPlugins)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/plugins", wrapper.CreatePlugin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/plugins/update", wrapper.UpdateAllPlugins)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/plugins/updates", wrapper.ListPluginUpdates)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/plugins/{name}", wrapper.DeletePlugin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/plugins/{name}/update", wrapper.UpdatePlugin)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/recordings", wrapper.ListRecordings)

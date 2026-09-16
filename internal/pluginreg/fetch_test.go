@@ -4,64 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/pluginreg/pluginregtest"
 )
 
-// run runs a git command against dir, failing the test on error.
+// run/newFixtureRepo/commitAndPush wrap pluginregtest, the implementation
+// shared with internal/server/rest's plugin handler tests (#1430).
 func run(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return string(out)
+	return pluginregtest.RunGit(t, dir, args...)
 }
 
-// newFixtureRepo makes a bare repo (the "remote") plus a work tree that
-// pushes to it, both under t.TempDir(). Returns the bare repo path, used as
-// the fetch target in place of github.com.
 func newFixtureRepo(t *testing.T) string {
-	t.Helper()
-	bare := filepath.Join(t.TempDir(), "remote.git")
-	run(t, "", "init", "--quiet", "--bare", "--initial-branch=main", bare)
-
-	work := t.TempDir()
-	run(t, work, "init", "--quiet", "--initial-branch=main")
-	run(t, work, "config", "user.email", "test@example.com")
-	run(t, work, "config", "user.name", "test")
-	if err := os.WriteFile(filepath.Join(work, "skills"), []byte("v1"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run(t, work, "add", ".")
-	run(t, work, "commit", "--quiet", "-m", "v1")
-	run(t, work, "remote", "add", "origin", bare)
-	run(t, work, "push", "--quiet", "origin", "main")
-	run(t, work, "tag", "v1")
-	run(t, work, "push", "--quiet", "origin", "v1")
-
+	bare, _ := pluginregtest.NewFixtureRepo(t)
 	return bare
 }
 
-// commitAndPush adds one more commit on top of the work tree used by
-// newFixtureRepo and pushes it, returning the new sha.
 func commitAndPush(t *testing.T, work, msg string) string {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(work, "skills"), []byte(msg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run(t, work, "add", ".")
-	run(t, work, "commit", "--quiet", "-m", msg)
-	run(t, work, "push", "--quiet", "origin", "main")
-	return strings.TrimSpace(run(t, work, "rev-parse", "HEAD"))
+	return pluginregtest.CommitAndPush(t, work, msg)
 }
 
-// withFixedRemote overrides RemoteURL to resolve owner/repo to a fixed local
-// path (the bare fixture repo), restored on cleanup.
+// withFixedRemote overrides RemoteURL directly (same package - pluginregtest
+// can't import pluginreg, or an internal test file importing it would cycle).
 func withFixedRemote(t *testing.T, url string) {
 	t.Helper()
 	prev := RemoteURL

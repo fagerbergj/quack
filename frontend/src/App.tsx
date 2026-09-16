@@ -3,9 +3,10 @@ import Chat from './pages/Chat'
 import { NavRail } from './components/NavRail'
 import { LazyLoadBoundary } from './components/LazyLoadBoundary'
 
-// Chat is the default route and loads eagerly; Memory and the extension
-// iframe host are route-split out of the entry chunk (~19.7 kB gzip).
+// Chat is the default route and loads eagerly; Memory, Plugins, and the
+// extension iframe host are route-split out of the entry chunk (~19.7 kB gzip).
 const Memory = lazy(() => import('./pages/Memory'))
+const Plugins = lazy(() => import('./pages/Plugins'))
 const ExtensionHost = lazy(() => import('./pages/ExtensionHost'))
 
 // A null Suspense fallback leaves a blank slot while a route chunk loads, and
@@ -62,9 +63,11 @@ export default function App() {
             keep showing its error screen on the other, unrelated route. */}
         {route === 'memory'
           ? <LazyLoadBoundary key={route}><Suspense fallback={routeFallback}><Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
-          : route === 'ext'
-            ? <LazyLoadBoundary key={route}><Suspense fallback={routeFallback}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
-            : <Chat navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />}
+          : route === 'plugins'
+            ? <LazyLoadBoundary key={route}><Suspense fallback={routeFallback}><Plugins navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
+            : route === 'ext'
+              ? <LazyLoadBoundary key={route}><Suspense fallback={routeFallback}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
+              : <Chat navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />}
       </div>
     </div>
   )

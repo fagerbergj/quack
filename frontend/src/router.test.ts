@@ -19,6 +19,15 @@ describe('routeFor', () => {
     expect(routeFor('/memory-foo')).toBe('chat')
   })
 
+  it('matches /plugins and /plugins/... (epic #1427 P2)', () => {
+    expect(routeFor('/plugins')).toBe('plugins')
+    expect(routeFor('/plugins/')).toBe('plugins')
+  })
+
+  it('does not match /plugins-x or other same-prefix paths', () => {
+    expect(routeFor('/plugins-x')).toBe('chat')
+  })
+
   it('matches /ext/:name (#870 extension host)', () => {
     expect(routeFor('/ext/usage')).toBe('ext')
     expect(routeFor('/ext/usage/')).toBe('ext')

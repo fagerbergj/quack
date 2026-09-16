@@ -114,10 +114,10 @@ func cleanSubPath(raw string) (string, error) {
 // registry root, so ".", "..", "" and separators are refused.
 func validName(name string) error {
 	if name == "" || name == "." || name == ".." {
-		return fmt.Errorf("invalid name %q", name)
+		return fmt.Errorf("%w: %q", ErrInvalidName, name)
 	}
 	if strings.ContainsAny(name, "/\\") {
-		return fmt.Errorf("invalid name %q: contains a path separator", name)
+		return fmt.Errorf("%w: %q contains a path separator", ErrInvalidName, name)
 	}
 	return nil
 }

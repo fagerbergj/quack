@@ -18,11 +18,17 @@ import {
   listChatArtifacts as sdkListChatArtifacts,
   listArtifactRevisions as sdkListArtifactRevisions,
   diffArtifactRevisions as sdkDiffArtifactRevisions,
+  listPlugins as sdkListPlugins,
+  createPlugin as sdkCreatePlugin,
+  deletePlugin as sdkDeletePlugin,
+  listPluginUpdates as sdkListPluginUpdates,
+  updatePlugin as sdkUpdatePlugin,
+  updateAllPlugins as sdkUpdateAllPlugins,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo, NodeMemory, NodeMemoryList, MemoryStats, MemoryWeekStats, MemoryScopeStats } from './generated'
+export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo, NodeMemory, NodeMemoryList, MemoryStats, MemoryWeekStats, MemoryScopeStats, Plugin, PluginUpdate } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList, MemoryStats } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList, MemoryStats, Plugin, PluginList, PluginUpdateList } from './generated'
 
 // VoteDirection is the UI-facing shape of a manual vote - "none" clears the
 // caller's own prior vote (the Reddit-style toggle-off), matching the
@@ -141,6 +147,24 @@ export const api = {
     if (!res.ok) throw new Error(`Fetch artifact failed (${res.status})`)
     return res.text()
   },
+
+  listPlugins: async (): Promise<PluginList> => unwrap(await sdkListPlugins()),
+
+  // 400/409 bodies carry the message the page shows inline (bad entry syntax
+  // / name collision) - unwrap already surfaces error.error verbatim.
+  createPlugin: async (entry: string): Promise<Plugin> =>
+    unwrap(await sdkCreatePlugin({ body: { entry } })),
+
+  deletePlugin: async (name: string): Promise<void> => {
+    unwrap(await sdkDeletePlugin({ path: { name } }))
+  },
+
+  listPluginUpdates: async (): Promise<PluginUpdateList> => unwrap(await sdkListPluginUpdates()),
+
+  updatePlugin: async (name: string): Promise<Plugin> =>
+    unwrap(await sdkUpdatePlugin({ path: { name } })),
+
+  updateAllPlugins: async (): Promise<PluginList> => unwrap(await sdkUpdateAllPlugins()),
 }
 
 // The REST path of one artifact revision (base '/'), for the panel's

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -391,6 +392,41 @@ func TestSkillPathsQueriedFreshEachSpawn(t *testing.T) {
 	}
 }
 
+// TestExtraROGrantsSandboxButNotSkillPathsEnv is #1430's carry-over: ExtraRO
+// (e.g. plugins.root) must widen the sandbox RO grant so replay/the pi shim's
+// own file reads work, but must NOT reach PI_ACP_CONFIG's skill_paths - that
+// would hand pi's recursive skill scan every SKILL.md in the whole registry.
+func TestExtraROGrantsSandboxButNotSkillPathsEnv(t *testing.T) {
+	a := &Agent{opts: Options{
+		Command:    []string{"pi-acp", "run"},
+		Env:        []string{`PI_ACP_CONFIG={"model":"m1"}`},
+		Caps:       workspace.Caps{Sandbox: workspace.SandboxLandlock},
+		SkillPaths: func() []string { return []string{"/plugins/dotagents/skills"} },
+		ExtraRO:    func() []string { return []string{"/plugins"} },
+	}}
+	joined := strings.Join(a.wrappedArgv(t.TempDir(), a.opts.Caps), " ")
+	if !strings.Contains(joined, "/plugins") {
+		t.Fatalf("wrappedArgv = %q, want /plugins (ExtraRO) granted", joined)
+	}
+
+	env := a.spawnEnv(a.opts.Caps)
+	var cfg string
+	for _, kv := range env {
+		if rest, ok := strings.CutPrefix(kv, "PI_ACP_CONFIG="); ok {
+			cfg = rest
+		}
+	}
+	if cfg == "" {
+		t.Fatal("PI_ACP_CONFIG missing from spawnEnv")
+	}
+	if strings.Contains(cfg, `"/plugins"`) {
+		t.Errorf("PI_ACP_CONFIG skill_paths leaked ExtraRO's bare registry root: %s", cfg)
+	}
+	if !strings.Contains(cfg, "/plugins/dotagents/skills") {
+		t.Errorf("PI_ACP_CONFIG skill_paths missing SkillPaths' entry: %s", cfg)
+	}
+}
+
 // TestMergeSkillPathsRewritesPIAcpConfig proves spawnEnv folds a fresh
 // SkillPaths result into PI_ACP_CONFIG's skill_paths field (the pi-acp shim
 // reads it into settings.json per spawn), leaving other env entries alone.
@@ -421,5 +457,32 @@ func TestTraceparentEnv(t *testing.T) {
 	want := "TRACEPARENT=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("traceparentEnv = %v, want [%s]", got, want)
+	}
+}
+
+// TestWrappedArgvDoesNotMutateSkillPathsCache is the #1430 review-2 race
+// fix: SkillPaths() can return a cached slice with spare capacity
+// (acpRegistrySkillPaths) - concurrent spawns appending ExtraRO onto it in
+// place would race and corrupt the cache's backing array under -race.
+func TestWrappedArgvDoesNotMutateSkillPathsCache(t *testing.T) {
+	cached := make([]string, 1, 4) // cap > len, like the real cache
+	cached[0] = "/plugins/dotagents/skills"
+	a := &Agent{opts: Options{
+		Command:    []string{"pi-acp", "run"},
+		Caps:       workspace.Caps{Sandbox: workspace.SandboxNone},
+		SkillPaths: func() []string { return cached },
+		ExtraRO:    func() []string { return []string{"/plugins"} },
+	}}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = a.wrappedArgv(t.TempDir(), a.opts.Caps)
+		}()
+	}
+	wg.Wait()
+	if len(cached) != 1 || cached[0] != "/plugins/dotagents/skills" {
+		t.Fatalf("cached SkillPaths slice was mutated: %v", cached)
 	}
 }

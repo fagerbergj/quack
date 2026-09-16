@@ -103,7 +103,7 @@ func TestBootPluginRegistrySeedsFetchesAndSkipsEmbedded(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "quack")); err == nil {
 		t.Error("the embedded quack row must never be written to disk")
 	}
-	roots := registryPluginRoots(root, append(fetched, embeddedQuackPlugin()))
+	roots := registryPluginRoots(root, append(fetched, pluginreg.EmbeddedQuackPlugin()))
 	if len(roots) != 3 {
 		t.Fatalf("registryPluginRoots = %v, want 3 (the embedded row excluded)", roots)
 	}
