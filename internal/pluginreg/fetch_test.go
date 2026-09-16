@@ -60,13 +60,13 @@ func commitAndPush(t *testing.T, work, msg string) string {
 	return strings.TrimSpace(run(t, work, "rev-parse", "HEAD"))
 }
 
-// withFixedRemote overrides remoteURL to resolve owner/repo to a fixed local
+// withFixedRemote overrides RemoteURL to resolve owner/repo to a fixed local
 // path (the bare fixture repo), restored on cleanup.
 func withFixedRemote(t *testing.T, url string) {
 	t.Helper()
-	prev := remoteURL
-	remoteURL = func(owner, repo string) string { return url }
-	t.Cleanup(func() { remoteURL = prev })
+	prev := RemoteURL
+	RemoteURL = func(owner, repo string) string { return url }
+	t.Cleanup(func() { RemoteURL = prev })
 }
 
 func TestFetchClonesAndRecordsSHA(t *testing.T) {
@@ -202,8 +202,8 @@ func TestFetchRemoteUnreachableKeepsOldSHA(t *testing.T) {
 	oldSHA := good.SHA
 
 	// Existing clones fetch from the origin remote already recorded in .git,
-	// not from remoteURL(), so simulate "unreachable" by removing the bare
-	// repo itself rather than re-pointing remoteURL.
+	// not from RemoteURL(), so simulate "unreachable" by removing the bare
+	// repo itself rather than re-pointing RemoteURL.
 	if err := os.RemoveAll(bare); err != nil {
 		t.Fatal(err)
 	}

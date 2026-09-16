@@ -137,9 +137,22 @@ func (r *FSRegistry) readRow(name string) (Plugin, error) {
 	return p, nil
 }
 
-// Put writes p's row, replacing any row with the same name and entry. Two
-// different entries sharing a name (e.g. two repos both named "widgets") is
-// a collision, rejected rather than silently overwritten.
+// samePlugin is Put's collision identity: source+owner/repo for github (so
+// moving a pin, e.g. @v1 -> @v2 on the same repo, is a legal update, not a
+// collision - #1429 carry-over), the raw entry for local.
+func samePlugin(a, b Plugin) bool {
+	if a.Source != b.Source {
+		return false
+	}
+	if a.Source == SourceGitHub {
+		return a.Owner == b.Owner && a.Repo == b.Repo
+	}
+	return a.Entry == b.Entry
+}
+
+// Put writes p's row, replacing any row identifying the SAME plugin
+// (samePlugin). A different plugin under an already-registered name (e.g.
+// two repos both named "widgets") is a collision, rejected outright.
 func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 	if err := validName(p.Name); err != nil {
 		return err
@@ -150,7 +163,7 @@ func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if existing, err := r.readRow(p.Name); err == nil && existing.Entry != p.Entry {
+	if existing, err := r.readRow(p.Name); err == nil && !samePlugin(existing, p) {
 		return fmt.Errorf("plugin %q is already registered from %q, not %q", p.Name, existing.Entry, p.Entry)
 	}
 	dir := filepath.Join(r.root, p.Name)

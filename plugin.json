@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
+  "name": "quack",
+  "version": "0.1.0",
+  "description": "quack's own shipped skills - the offline baseline every install ships with."
+}

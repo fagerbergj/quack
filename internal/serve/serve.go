@@ -48,6 +48,7 @@ import (
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/plugin"
+	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/replay"
@@ -176,34 +177,69 @@ func judgeSpec(cfg *config.Config) dag.AdmissionSpec {
 	return modelSpec(mc, cfg.Gates.Judge.Model, cfg.Gates.Judge.ContextWindow)
 }
 
-// resolvedSkillSource wraps every source in Tolerant: a plugin's SKILL.md is third-party
-// content, and one unknown frontmatter field must never fail startup for skills that DID parse (#1080).
-func resolvedSkillSource(skillDirs []string) skill.Source {
-	bundleFS := bundledir.SubFS("skills")
-	sources := []skill.Source{skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills")}
-	for _, dir := range skillDirs {
-		dirFS := os.DirFS(dir)
-		sources = append(sources, skillsource.Tolerant(skillsource.NewFileSystemSource(dirFS), dirFS, dir))
+// resolvedSkillSource wraps every registered plugin's skills/ in Tolerant
+// (#1080) and Prefixed on the plugin's REGISTRY ROW NAME (#1427 S3, not
+// plugin.json's). The embedded "quack" plugin is not included - see below.
+func resolvedSkillSource(plugins []plugin.Plugin) skill.Source {
+	var sources []skill.Source
+	for _, p := range plugins {
+		if p.SkillsDir == "" {
+			continue
+		}
+		dirFS := os.DirFS(p.SkillsDir)
+		src := skillsource.Tolerant(skillsource.NewFileSystemSource(dirFS), dirFS, p.SkillsDir)
+		sources = append(sources, skillsource.Prefixed(p.Name, src))
 	}
 	return skill.NewMergedSource(sources...)
 }
 
-// missingDotagentsSkillNames: dotagentsEmbeddedSkills names NOT already resolved on disk via
-// resolvedSkillSource(pluginRoots) - the backfill rule both callers apply: add by NAME, never
-// unconditionally (MergedSource errors on a skill defined by two sources at once).
-func missingDotagentsSkillNames(skillDirs []string) []string {
-	have := map[string]bool{}
-	if fms, err := resolvedSkillSource(skillDirs).ListFrontmatters(context.Background()); err == nil {
-		for _, fm := range fms {
-			have[fm.Name] = true
-		}
-	}
+// embeddedQuackSkillSource is quack's shipped skills/ plus the vendored
+// dotagents copy, go:embedded - the plugin "quack", source embedded (#1427
+// S2), the offline baseline every install ships with regardless of disk access.
+func embeddedQuackSkillSource() skill.Source {
+	bundleFS := bundledir.SubFS("skills")
 	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
-	fallback := skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
+	return skill.NewMergedSource(
+		skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills"),
+		skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills"),
+	)
+}
+
+// quackOwnSkillSource and dotagentsEmbeddedSkillSource are
+// embeddedQuackSkillSource's two halves, prefixed "quack:" - split because
+// missingQuackSkillNames shadows them by two DIFFERENT rules (#1427 R1).
+func quackOwnSkillSource() skill.Source {
+	bundleFS := bundledir.SubFS("skills")
+	return skillsource.Prefixed("quack", skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills"))
+}
+
+func dotagentsEmbeddedSkillSource() skill.Source {
+	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
+	return skillsource.Prefixed("quack", skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills"))
+}
+
+// resolvedHaveSets: qualified and bare names already served by every
+// registered (non-embedded) plugin - the two "have" sets missingQuackOwn/
+// DotagentsSkillNames each check against.
+func resolvedHaveSets(plugins []plugin.Plugin) (qualified, bare map[string]bool) {
+	fms, _ := resolvedSkillSource(plugins).ListFrontmatters(context.Background())
+	qualified = make(map[string]bool, len(fms))
+	bare = make(map[string]bool, len(fms))
+	for _, fm := range fms {
+		qualified[fm.Name] = true
+		bare[skillsource.BareName(fm.Name)] = true
+	}
+	return qualified, bare
+}
+
+// missingQuackOwnSkillNames: quack's own skills/ names not shadowed by EXACT
+// qualified name - a registry row literally named "quack" (#1427 S2).
+func missingQuackOwnSkillNames(plugins []plugin.Plugin) []string {
+	haveQualified, _ := resolvedHaveSets(plugins)
 	var missing []string
-	if fms, err := fallback.ListFrontmatters(context.Background()); err == nil {
-		for _, fm := range fms {
-			if !have[fm.Name] {
+	if own, err := quackOwnSkillSource().ListFrontmatters(context.Background()); err == nil {
+		for _, fm := range own {
+			if !haveQualified[fm.Name] {
 				missing = append(missing, fm.Name)
 			}
 		}
@@ -211,18 +247,40 @@ func missingDotagentsSkillNames(skillDirs []string) []string {
 	return missing
 }
 
-// newSkillSource builds the skill toolset Source: resolvedSkillSource, then
-// dotagentsEmbeddedSkills backfills any names discovery didn't resolve from
-// disk, so a standalone install with no repo checkout still gets it.
-func newSkillSource(skillDirs []string) skill.Source {
-	resolved := resolvedSkillSource(skillDirs)
-	backfill := missingDotagentsSkillNames(skillDirs)
+// missingDotagentsEmbeddedSkillNames: embedded dotagents names not provided by
+// BARE name by any resolved plugin (#943): an on-disk dotagents under any
+// registry name must suppress the embedded copy of itself.
+func missingDotagentsEmbeddedSkillNames(plugins []plugin.Plugin) []string {
+	_, haveBare := resolvedHaveSets(plugins)
+	var missing []string
+	if da, err := dotagentsEmbeddedSkillSource().ListFrontmatters(context.Background()); err == nil {
+		for _, fm := range da {
+			if !haveBare[skillsource.BareName(fm.Name)] {
+				missing = append(missing, fm.Name)
+			}
+		}
+	}
+	return missing
+}
+
+// missingQuackSkillNames is the full embedded-quack backfill list (both
+// halves) - what newSkillSource needs; acpSkillPaths consults the two halves
+// separately since it can also satisfy the "own" half via a raw on-disk dir.
+func missingQuackSkillNames(plugins []plugin.Plugin) []string {
+	return append(missingQuackOwnSkillNames(plugins), missingDotagentsEmbeddedSkillNames(plugins)...)
+}
+
+// newSkillSource builds the skill toolset Source: every registered plugin's
+// skills, then the embedded quack plugin backfills any "quack:" name a
+// registered plugin doesn't already shadow (missingQuackSkillNames).
+func newSkillSource(plugins []plugin.Plugin) skill.Source {
+	resolved := resolvedSkillSource(plugins)
+	backfill := missingQuackSkillNames(plugins)
 	if len(backfill) == 0 {
 		return resolved
 	}
-	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
-	fallback := skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
-	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
+	embedded := skillsource.Prefixed("quack", embeddedQuackSkillSource())
+	return skill.NewMergedSource(resolved, skillsource.Scoped(embedded, backfill))
 }
 
 // LedgerStoreFromConfig resolves the ledger (WAL) backend from stores; config
@@ -485,41 +543,44 @@ func (b *boot) initOrchestratorModel(artifacts artifact.Service) (model.LLM, err
 	return llm, nil
 }
 
-// resolves the plugin trees and builds the skill sources and toolsets
-func (b *boot) initSkills(jail *workspace.Jail) ([]plugin.Plugin, []string, skill.Source, skill.Source, *skilltoolset.SkillToolset, func(names []string) (*skilltoolset.SkillToolset, error), error) {
-	// Bring the plugin trees to their pinned refs before anything reads them,
-	// and log what we actually got - skills change how every agent plans, so
-	// the revision belongs in the startup record.
+// resolves the plugin registry and builds the skill sources and toolsets
+func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail) ([]plugin.Plugin, skill.Source, skill.Source, *skilltoolset.SkillToolset, func(names []string) (*skilltoolset.SkillToolset, error), error) {
+	// Bring the vendored trees under .agents/vendor to their pinned refs before
+	// anything reads them - the local seed entries a dev checkout resolves
+	// against (#1427 P5 removes this once the registry owns fetching).
 	pluginRevs := plugin.Refresh(pluginManifestPath, pluginFetchScript)
 	if len(pluginRevs) > 0 {
 		slog.Info("skill plugins resolved", "component", "startup", "revisions", plugin.Summary(pluginRevs))
 	}
-	// One resolution of the plugin roots drives all three component types.
+	_, rows, err := b.bootPluginRegistry(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	// One resolution of the registry roots drives all three component types.
 	// The module and config checks run before anything is constructed, so a
 	// manifest promising code this binary doesn't carry fails here, named.
-	plugins, err := plugin.Resolve(b.cfg.PluginRoots())
+	plugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	if err := checkPluginModules(plugins); err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	if err := checkPluginConfig(plugins, b.cfg.Extensions.Modules); err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	pluginSkillDirs := plugin.SkillDirs(plugins)
-	builtinSkillSrc := newSkillSource(pluginSkillDirs)
+	builtinSkillSrc := newSkillSource(plugins)
 	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("skills toolset init failed: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("skills toolset init failed: %w", err)
 	}
 	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
-	return plugins, pluginSkillDirs, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, nil
+	return plugins, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, nil
 }
 
 // opens the task/user memory stores and the shared boot event log
@@ -579,7 +640,7 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 }
 
 // builds the configured agents (and their gate config, executor lookups, and classify model)
-func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM]) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
+func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM]) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
 	advisorAgent := buildAdvisorAgent(context.Background(), b.cfg, b.res, artifacts)
 	var executorRef atomic.Pointer[dag.Executor]
 	nodeCancelled := func(chatID, nodeID string) bool {
@@ -611,7 +672,7 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 		}
 	}
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("agent build failed: %w", err)
 	}
@@ -733,7 +794,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
-	plugins, pluginSkillDirs, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, err := b.initSkills(jail)
+	plugins, builtinSkillSrc, skillSrc, skillTS, newScopedSkillTS, err := b.initSkills(ctx, jail)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -745,7 +806,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, artifacts, ledgerStore, &judgeModelRef)
+	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -860,7 +921,7 @@ func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
+func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := newNodeScope(jail)
@@ -937,7 +998,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 		}
 
 		if ac.Acp != nil {
-			ag, err := buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, pluginSkillDirs, gateCfg, gateCfgs, safetyJudge, acpPricing, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort)
+			ag, err := buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, acpPricing, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort)
 			if err != nil {
 				return nil, nil, nodeServers, nil, nil, nil, nil, err
 			}
@@ -1034,7 +1095,7 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 
 // buildACPNode builds one ACP-harness agent (external CLI child), registering
 // its gate config in gateCfgs when the agent is gated.
-func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, taskStore *memory.Store, builtinSkillSrc skill.Source, pluginSkillDirs []string, gateCfg vetting.Config, gateCfgs *gateConfigs, safetyJudge tools.SafetyJudge, acpPricing *config.ModelPricing, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string)) (adkagent.Agent, error) {
+func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, taskStore *memory.Store, builtinSkillSrc skill.Source, gateCfg vetting.Config, gateCfgs *gateConfigs, safetyJudge tools.SafetyJudge, acpPricing *config.ModelPricing, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string)) (adkagent.Agent, error) {
 	ctx := context.Background()
 	bundle, err := agent.LoadBundle(ctx, res, ac.Bundle)
 	if err != nil {
@@ -1063,8 +1124,12 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 			behaviour := agent.BehaviourLayer(strings.TrimSpace(bundle.ResolvePrompt(ctx, res).Body), memGuidance)
 			return promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, true, behaviour, grading, wsBlock)
 		})
-	env := piACPEnv(prov, ac, acpSkillPaths(pluginSkillDirs))
+	// skill_paths is filled in per spawn (proc.go's mergeSkillPaths), not
+	// baked in here - see skillPathsFn below.
+	env := piACPEnv(prov, ac, nil)
 	env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
+	skillPathsFn := acpRegistrySkillPaths(cfg)
+	pluginsFn := acpRegistryPluginRefs(cfg)
 	var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 	if safetyJudge != nil {
 		permJudge = acpPermJudge(safetyJudge, name)
@@ -1084,7 +1149,8 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		Env:                  env,
 		Replay:               acpReplay,
 		Caps:                 workspaceCaps,
-		ExtraRO:              acpSkillPaths(pluginSkillDirs),
+		SkillPaths:           skillPathsFn,
+		Plugins:              pluginsFn,
 		Home:                 workspaceCaps.HomeDir,
 		Preamble:             preamble,
 		Prompts:              res,
@@ -1577,11 +1643,13 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator bundle load failed: %w", err)
 	}
-	fmFm, err := skillSrc.LoadFrontmatter(context.Background(), "format-markdown")
+	// Bare names: dotagents on disk shadows the embedded quack:format-markdown
+	// (missingQuackSkillNames), so this must resolve bare -> qualified (#1427 S1).
+	fmFm, err := skillsource.Resolve(context.Background(), skillSrc, "format-markdown")
 	if err != nil {
 		return nil, fmt.Errorf("format-markdown skill load failed: %w", err)
 	}
-	planWorkFm, err := skillSrc.LoadFrontmatter(context.Background(), "plan-work")
+	planWorkFm, err := skillsource.Resolve(context.Background(), skillSrc, "plan-work")
 	if err != nil {
 		return nil, fmt.Errorf("plan-work skill load failed: %w", err)
 	}
@@ -1904,27 +1972,23 @@ func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []st
 	return []string{"PI_ACP_CONFIG=" + string(content)}
 }
 
-// extractedDotagentsSkillsDir is where the embedded dotagents skills are
-// materialised on disk for the sandboxed ACP child (the pi-acp shim reads
-// skills.paths off disk; it has no access to the binary's embedded FS,
-// unlike the in-process skill toolset newSkillSource feeds). Under
-// os.TempDir(), not caps.HomeDir: extraction happens once at startup, before
-// any agent's per-round Caps exist, and both sandbox backends (bwrap's
-// extraROArgs, landlock's landlockGrants) ro-bind/grant Caps.ExtraRO entries
-// by absolute path with no same-device requirement - unlike TMPDIR (#939),
-// this needs no device care.
+// extractedDotagentsSkillsDir materialises the embedded quack plugin's
+// skills on disk for the sandboxed ACP child (pi-acp reads skill_paths by
+// directory name, no embedded-FS access) - os.TempDir(), not caps.HomeDir.
 var extractedDotagentsSkillsDir = filepath.Join(os.TempDir(), "quack-acp-dotagents-skills")
 
 var extractDotagentsSkillsMu sync.Mutex
 
-// ensureExtractedDotagentsSkillNames materialises exactly the named
-// dotagentsEmbeddedSkills subdirectories under extractedDotagentsSkillsDir -
-// per-skill, so a name that resolves from disk after having once been
-// missing (a config change) doesn't leave a stale extracted duplicate
-// alongside it. Idempotent: a name already extracted (checked by presence)
-// is left alone, so restarts don't re-copy the whole tree. Extraction
-// failure logs and degrades - a name that fails to extract is simply absent
-// from the dir, same as a plugin-root skills dir that doesn't resolve.
+// embeddedExtractSources: the two trees embeddedQuackSkillSource merges,
+// tried in the same order for extraction - quack's own skills/ first, the
+// vendored dotagents copy second.
+func embeddedExtractSources() []fs.FS {
+	return []fs.FS{bundledir.SubFS("skills"), bundledir.SubFS(dotagentsEmbeddedSkills)}
+}
+
+// ensureExtractedDotagentsSkillNames materialises the named (bare) embedded
+// skills under extractedDotagentsSkillsDir, idempotently - already-extracted
+// names are left alone, a failed one is simply absent from the dir.
 func ensureExtractedDotagentsSkillNames(missing []string) {
 	extractDotagentsSkillsMu.Lock()
 	defer extractDotagentsSkillsMu.Unlock()
@@ -1934,7 +1998,7 @@ func ensureExtractedDotagentsSkillNames(missing []string) {
 		want[n] = true
 	}
 	if err := os.MkdirAll(extractedDotagentsSkillsDir, 0o755); err != nil {
-		slog.Warn("acp skill extraction: could not create dir; ACP agents may miss dotagents skills",
+		slog.Warn("acp skill extraction: could not create dir; ACP agents may miss embedded skills",
 			"component", "serve", "dir", extractedDotagentsSkillsDir, "err", err)
 		return
 	}
@@ -1947,16 +2011,27 @@ func ensureExtractedDotagentsSkillNames(missing []string) {
 			}
 		}
 	}
-	src := bundledir.SubFS(dotagentsEmbeddedSkills)
+	sources := embeddedExtractSources()
 	for name := range want {
 		dest := filepath.Join(extractedDotagentsSkillsDir, name)
 		if _, err := os.Stat(dest); err == nil {
 			continue // already extracted
 		}
+		if !extractEmbeddedSkill(sources, name, dest) {
+			slog.Warn("acp skill extraction: skill not found in embedded FS", "component", "serve", "skill", name)
+		}
+	}
+}
+
+// extractEmbeddedSkill copies name's SKILL.md tree from the first of
+// sources that has it. ok=false only when no source has the skill at all.
+func extractEmbeddedSkill(sources []fs.FS, name, dest string) bool {
+	for _, src := range sources {
 		sub, err := fs.Sub(src, name)
 		if err != nil {
-			slog.Warn("acp skill extraction: skill not found in embedded FS",
-				"component", "serve", "skill", name, "err", err)
+			continue
+		}
+		if _, err := fs.Stat(sub, "SKILL.md"); err != nil {
 			continue
 		}
 		if err := os.CopyFS(dest, sub); err != nil {
@@ -1964,28 +2039,127 @@ func ensureExtractedDotagentsSkillNames(missing []string) {
 				"component", "serve", "skill", name, "err", err)
 			_ = os.RemoveAll(dest)
 		}
+		return true
+	}
+	return false
+}
+
+// acpSkillPaths: the local skills/ dir (skipped if a row is literally
+// "quack", #1427 R5), each plugin's skills/, then the extracted embedded
+// backfill for whatever neither already shadows (same rule as newSkillSource).
+func acpSkillPaths(plugins []plugin.Plugin) []string {
+	var out []string
+	localSkillsDirAdded := false
+	if !hasQuackRow(plugins) {
+		if abs, err := filepath.Abs("skills"); err == nil {
+			if st, err := os.Stat(abs); err == nil && st.IsDir() {
+				out = append(out, abs)
+				localSkillsDirAdded = true
+			}
+		}
+	}
+	out = append(out, plugin.SkillDirs(plugins)...)
+
+	// The raw local skills/ dir just added already covers quack's own
+	// half on disk - only the vendored-dotagents half can still be missing.
+	var missing []string
+	if !localSkillsDirAdded {
+		missing = missingQuackOwnSkillNames(plugins)
+	}
+	missing = append(missing, missingDotagentsEmbeddedSkillNames(plugins)...)
+	if len(missing) == 0 {
+		return out
+	}
+	bare := make([]string, len(missing))
+	for i, m := range missing {
+		bare[i] = skillsource.BareName(m)
+	}
+	ensureExtractedDotagentsSkillNames(bare)
+	if st, err := os.Stat(extractedDotagentsSkillsDir); err == nil && st.IsDir() {
+		out = append(out, extractedDotagentsSkillsDir)
+	}
+	return out
+}
+
+// hasQuackRow reports whether a resolved plugin is registered under the
+// exact name "quack" - the #1427 S2 shadow condition, reused by R5.
+func hasQuackRow(plugins []plugin.Plugin) bool {
+	for _, p := range plugins {
+		if p.Name == "quack" {
+			return true
+		}
+	}
+	return false
+}
+
+// registrySignature is acpRegistrySkillPaths' cache key: names+shas, so an
+// add/remove/fetch invalidates it - re-resolving every spawn otherwise costs
+// ~10ms, serialized behind extractDotagentsSkillsMu (#1427 F5).
+func registrySignature(rows []pluginreg.Plugin) string {
+	parts := make([]string, len(rows))
+	for i, p := range rows {
+		parts[i] = p.Name + "@" + p.SHA
+	}
+	return strings.Join(parts, ",")
+}
+
+// acpRegistrySkillPaths is acp.Options.SkillPaths: acpSkillPaths over a
+// fresh registry read, plus plugins.root itself (a sandboxed child can then
+// read a plugin's whole clone) - cached by registrySignature (#1427 F5).
+func acpRegistrySkillPaths(cfg *config.Config) func() []string {
+	var mu sync.Mutex
+	var cachedKey string
+	var cachedPaths []string
+	return func() []string {
+		reg := pluginreg.NewFSRegistry(cfg.Plugins.Root)
+		rows, err := reg.List(context.Background())
+		if err != nil {
+			slog.Warn("acp: plugin registry list failed; skill paths may be stale", "component", "acp", "err", err)
+			rows = nil
+		}
+		rows = orderBySeed(cfg.Plugins.Seed, rows)
+		key := registrySignature(rows)
+
+		mu.Lock()
+		defer mu.Unlock()
+		if key == cachedKey && cachedPaths != nil {
+			return cachedPaths
+		}
+		plugins, err := resolveRegistryPlugins(cfg.Plugins.Root, rows)
+		if err != nil {
+			slog.Warn("acp: plugin resolve failed; skill paths may be stale", "component", "acp", "err", err)
+			plugins = nil
+		}
+		paths := acpSkillPaths(plugins)
+		if st, err := os.Stat(cfg.Plugins.Root); err == nil && st.IsDir() {
+			paths = append(paths, cfg.Plugins.Root)
+		}
+		cachedKey, cachedPaths = key, paths
+		return paths
 	}
 }
 
-// acpSkillPaths: quack's own skills/, then each configured plugin's skills/ (internal/plugin), then -
-// only for names not found on disk - the extracted dotagentsEmbeddedSkills dir. Same by-NAME backfill as
-// newSkillSource: a dev checkout must not also get the extracted copy (pi's skill loader may error or shadow).
-func acpSkillPaths(skillDirs []string) []string {
-	var out []string
-	if abs, err := filepath.Abs("skills"); err == nil {
-		if st, err := os.Stat(abs); err == nil && st.IsDir() {
-			out = append(out, abs)
+// acpRegistryPluginRefs: the round's ledger provenance = every registered row
+// plus the always-in-scope embedded quack bundle (P1 scope); a row named
+// "quack" wins over the synthetic embedded ref it shadows.
+func acpRegistryPluginRefs(cfg *config.Config) func() []ledger.PluginRef {
+	return func() []ledger.PluginRef {
+		reg := pluginreg.NewFSRegistry(cfg.Plugins.Root)
+		rows, err := reg.List(context.Background())
+		if err != nil {
+			rows = nil
 		}
-	}
-	out = append(out, skillDirs...)
-
-	if missing := missingDotagentsSkillNames(skillDirs); len(missing) > 0 {
-		ensureExtractedDotagentsSkillNames(missing)
-		if st, err := os.Stat(extractedDotagentsSkillsDir); err == nil && st.IsDir() {
-			out = append(out, extractedDotagentsSkillsDir)
+		have := make(map[string]bool, len(rows))
+		refs := make([]ledger.PluginRef, len(rows))
+		for i, p := range rows {
+			refs[i] = ledger.PluginRef{Name: p.Name, SHA: p.SHA}
+			have[p.Name] = true
 		}
+		if !have["quack"] {
+			refs = append(refs, ledger.PluginRef{Name: "quack"})
+		}
+		return refs
 	}
-	return out
 }
 
 // acpSkillFrontmatters scopes an ACP agent's roster to its declared skills;

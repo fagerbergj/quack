@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
@@ -60,7 +61,7 @@ func TestEmitInvokeAgent_ProducesWellFormedEvent(t *testing.T) {
 	received := &teeBuffer{}
 	received.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}` + "\n"))
 
-	emitInvokeAgent(context.Background(), "code-implementer", sent, received, nil)
+	emitInvokeAgent(context.Background(), "code-implementer", sent, received, nil, nil)
 
 	if len(capExp.records) != 1 {
 		t.Fatalf("got %d records, want 1", len(capExp.records))
@@ -89,13 +90,35 @@ func TestEmitInvokeAgent_ProducesWellFormedEvent(t *testing.T) {
 	}
 }
 
+// TestEmitInvokeAgent_RecordsPlugins: the quack.plugins attribute carries
+// the round's plugin provenance as a JSON array exporter.go maps into
+// AgentInvokePayload.Plugins (#1427 P1).
+func TestEmitInvokeAgent_RecordsPlugins(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	emitInvokeAgent(context.Background(), "code-implementer", &teeBuffer{}, &teeBuffer{}, nil,
+		[]ledger.PluginRef{{Name: "dotagents", SHA: "abc123"}})
+
+	attrs := map[string]attribute.Value{}
+	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
+		attrs[string(kv.Key)] = kv.Value
+		return true
+	})
+	if got := attrs["quack.plugins"].AsString(); got != `[{"name":"dotagents","sha":"abc123"}]` {
+		t.Errorf("quack.plugins = %q, want the literal wire shape", got)
+	}
+}
+
 func TestEmitInvokeAgent_RecordsErrorType(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 	defer restore()
 
-	emitInvokeAgent(context.Background(), "code-reviewer", &teeBuffer{}, &teeBuffer{}, errors.New("acp: prompt: boom"))
+	emitInvokeAgent(context.Background(), "code-reviewer", &teeBuffer{}, &teeBuffer{}, errors.New("acp: prompt: boom"), nil)
 
 	attrs := map[string]attribute.Value{}
 	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {

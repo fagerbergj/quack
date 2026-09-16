@@ -91,6 +91,29 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	}
 }
 
+// TestExporterMapsPluginsAttribute: quack.plugins (a JSON array attribute,
+// emit.go) becomes AgentInvokePayload.Plugins - asserted on the literal wire
+// shape (#1427 P1), since that's the contract a replay reader depends on.
+func TestExporterMapsPluginsAttribute(t *testing.T) {
+	store := ledgertest.NewMemStore()
+	emitVia(t, store,
+		attribute.String("gen_ai.conversation.id", "chat-1"),
+		attribute.String("gen_ai.operation.name", "invoke_agent"),
+		attribute.String("gen_ai.agent.name", "acp"),
+		attribute.String("quack.plugins", `[{"name":"dotagents","sha":"abc123"}]`),
+	)
+	entries, err := store.ReadEntries(context.Background(), "chat-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if got := string(entries[0].Payload); got != `{"plugins":[{"name":"dotagents","sha":"abc123"}]}` {
+		t.Errorf("payload = %s, want the literal wire shape", got)
+	}
+}
+
 // TestExporterCostUSD_NilVsZero: #1096 - an unpriced model must not report
 // cost_usd:0 (that reads as "confirmed free"); a priced model with a
 // genuine $0 call must still report the explicit 0, not omit the field.

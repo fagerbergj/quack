@@ -36,7 +36,13 @@ type Options struct {
 	Command []string // argv to spawn, e.g. the pi-acp shim: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
 	Env     []string
 	Caps    workspace.Caps
-	ExtraRO []string
+	// SkillPaths is consulted at every spawn (proc.go), for both the sandbox's
+	// ExtraRO grant and PI_ACP_CONFIG's skill_paths - #1427 P1's per-round
+	// registry pickup, since a pinned process only re-spawns between nodes.
+	SkillPaths func() []string
+	// Plugins, if set, is consulted per round for the agent.invoke ledger
+	// entry's plugin provenance (#1427 P1).
+	Plugins func() []ledger.PluginRef
 	Home    string
 	// Preamble is re-assembled at the start of each round that sends one -
 	// round.go prepends it only on a FRESH session, so on a pinned process an
@@ -355,7 +361,11 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	// round's invoke_agent event too, and toward maxTeeBytes per node.
 	h.sent.reset()
 	h.received.reset()
-	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err) }()
+	var plugins []ledger.PluginRef
+	if a.opts.Plugins != nil {
+		plugins = a.opts.Plugins()
+	}
+	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err, plugins) }()
 
 	if !fromPinned {
 		sessID, toolNames, resumed, err = a.handshake(ctx, cwd, memSecret, advisorToken, priorSessionID, h)

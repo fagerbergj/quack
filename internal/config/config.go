@@ -70,29 +70,6 @@ type SkillsConfig struct {
 	Plugins []string `yaml:"plugins"`
 }
 
-// PluginRoots: local (non-github:) seed entries, else deprecated skills.plugins,
-// else defaults; order kept, never deduped. Seed == nil means seed: was omitted
-// (unlike seed: []), which falls through like an absent plugins: block.
-func (c *Config) PluginRoots() []string {
-	if c.Plugins != nil && c.Plugins.Seed != nil {
-		return localSeedEntries(c.Plugins.Seed)
-	}
-	if c.Skills.Plugins != nil {
-		return c.Skills.Plugins
-	}
-	return append([]string{}, defaultSkillPlugins...)
-}
-
-func localSeedEntries(seed []string) []string {
-	out := make([]string, 0, len(seed))
-	for _, s := range seed {
-		if !strings.HasPrefix(s, "github:") {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 // PluginsConfig is the plugins: block (#1427): store picks the registry
 // backend ("" = filesystem until P3), root holds clones and rows. seed, like
 // today's bare list, replaces the defaults entirely rather than adding to them.

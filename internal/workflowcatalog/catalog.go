@@ -13,6 +13,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/skillsource"
 )
 
 // planWorkSkill is the only skill this package augments.
@@ -107,7 +108,9 @@ type augmented struct {
 
 func (a *augmented) LoadInstructions(ctx context.Context, name string) (string, error) {
 	instructions, err := a.Source.LoadInstructions(ctx, name)
-	if err != nil || name != planWorkSkill {
+	// plan-work is now plugin-qualified ("quack:plan-work", #1427 S2) - match
+	// by bare name so composition survives the prefix.
+	if err != nil || skillsource.BareName(name) != planWorkSkill {
 		return instructions, err
 	}
 	return compose(instructions, a.shapes), nil
