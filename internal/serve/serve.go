@@ -996,13 +996,15 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	return handler, b.runCleanups, addr, nil
 }
 
-// promptSourceFor: the live store Source (P2, #1421), unless a caller-supplied
-// override (an experiment's pins) or a replay's pinned Source (P3, #1422) takes its place.
+// promptSourceFor: the live store Source (P2, #1421), chained behind a caller-supplied
+// override (an experiment's pins), or a replay's pinned Source (P3, #1422) in its place.
 func promptSourceFor(ctx context.Context, cfg *config.Config, override artifactsrc.Source) (artifactsrc.Source, string, error) {
-	if override != nil {
-		return override, cfg.Prompts.Store, nil
-	}
 	src, name := buildPromptSource(cfg)
+	if override != nil {
+		// Chained, not swapped: a name the override doesn't pin (e.g. an experiment
+		// pinning only its own agent) still resolves off the configured store.
+		return artifactsrc.Chain(override, src), name, nil
+	}
 	replaySrc, err := replayPromptSource(ctx, cfg)
 	if err != nil {
 		return nil, "", err

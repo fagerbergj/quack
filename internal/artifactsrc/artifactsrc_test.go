@@ -215,6 +215,46 @@ func TestTemplateCacheReparsesOnNewVersion(t *testing.T) {
 	}
 }
 
+// mapSource answers Get by exact name from a fixed map; a miss is (_, false, nil).
+type mapSource map[string]Artifact
+
+func (m mapSource) Get(_ context.Context, name string) (Artifact, bool, error) {
+	art, ok := m[name]
+	return art, ok, nil
+}
+func (mapSource) Seed(context.Context, string, Artifact) error { return nil }
+
+// TestChainSource_PinnedThenStore covers serve's promptSourceFor chain (#1424 item 6):
+// a pinned override wins for the name it pins; any other name falls through to the store.
+func TestChainSource_PinnedThenStore(t *testing.T) {
+	pin := mapSource{"system/code-reviewer": {Name: "system/code-reviewer", Body: "pinned"}}
+	store := mapSource{
+		"system/code-reviewer": {Name: "system/code-reviewer", Body: "store version"},
+		"system/synthesizer":   {Name: "system/synthesizer", Body: "unpinned"},
+	}
+	chain := Chain(pin, store)
+
+	art, ok, err := chain.Get(context.Background(), "system/code-reviewer")
+	if err != nil || !ok || art.Body != "pinned" {
+		t.Fatalf("pinned name = %+v ok=%v err=%v, want the pin's body", art, ok, err)
+	}
+	art, ok, err = chain.Get(context.Background(), "system/synthesizer")
+	if err != nil || !ok || art.Body != "unpinned" {
+		t.Fatalf("unpinned name = %+v ok=%v err=%v, want the store's body", art, ok, err)
+	}
+	if _, ok, err := chain.Get(context.Background(), "system/nowhere"); err != nil || ok {
+		t.Fatalf("name in neither source: ok=%v err=%v, want false,nil", ok, err)
+	}
+}
+
+func TestChainSource_SeedDelegatesToLast(t *testing.T) {
+	last := &stubSource{}
+	chain := Chain(&stubSource{}, last)
+	if err := chain.Seed(context.Background(), "x", Artifact{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBundleName(t *testing.T) {
 	for _, c := range []struct{ kind, dir, want string }{
 		{"system", "agents/code-reviewer", "system/code-reviewer"},
