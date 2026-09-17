@@ -197,9 +197,17 @@ func TestPromptBlockAndroidSdkRootFallback(t *testing.T) {
 	}
 }
 
+// withFakeExecEnvPath points execEnvPath (the child's fixed system dirs) at an
+// empty fixture - the real system dirs may hold gh/curl, and ChildPath, unlike LookPath, cannot be steered away from those via $PATH.
+func withFakeExecEnvPath(t *testing.T) {
+	t.Helper()
+	old := execEnvPath
+	execEnvPath = t.TempDir()
+	t.Cleanup(func() { execEnvPath = old })
+}
+
 func TestPromptBlockNotableAbsentSandboxedOnly(t *testing.T) {
-	dir := t.TempDir() // no gh here
-	t.Setenv("PATH", dir)
+	withFakeExecEnvPath(t)
 
 	native := PromptBlock(Caps{Sandbox: SandboxNone}, nil)
 	if strings.Contains(native, "Not on PATH") {
@@ -207,19 +215,24 @@ func TestPromptBlockNotableAbsentSandboxedOnly(t *testing.T) {
 	}
 
 	sandboxed := PromptBlock(Caps{Sandbox: SandboxBwrap}, nil)
-	if !strings.Contains(sandboxed, "Not on PATH: gh.") {
-		t.Errorf("sandboxed with no gh on PATH got %q, want a line naming gh absent", sandboxed)
+	if !strings.Contains(sandboxed, "Not on PATH: curl, gh.") {
+		t.Errorf("sandboxed with no curl/gh on the child's PATH got %q, want both named absent", sandboxed)
 	}
 }
 
-func TestPromptBlockNotableAbsentOmittedWhenPresent(t *testing.T) {
-	dir := t.TempDir()
-	writeFakeBinary(t, dir, "gh", "gh version 2.0.0")
-	t.Setenv("PATH", dir)
+// TestPromptBlockNotableAbsentChecksChildPathNotServerPATH proves the probe follows a
+// binary supplied via workspace.extra_path (the child's PATH), never the server's own.
+func TestPromptBlockNotableAbsentChecksChildPathNotServerPATH(t *testing.T) {
+	withFakeExecEnvPath(t)
+	extraDir := t.TempDir()
+	writeFakeBinary(t, extraDir, "gh", "gh version 2.0.0")
 
-	got := PromptBlock(Caps{Sandbox: SandboxBwrap}, nil)
-	if strings.Contains(got, "Not on PATH") {
-		t.Errorf("with gh on PATH, want no absent-CLI line, got %q", got)
+	got := PromptBlock(Caps{Sandbox: SandboxBwrap, ExtraPath: []string{extraDir}}, nil)
+	if strings.Contains(got, "Not on PATH: gh") {
+		t.Errorf("gh supplied via extra_path got %q, want gh not named absent", got)
+	}
+	if !strings.Contains(got, "Not on PATH: curl.") {
+		t.Errorf("curl still missing got %q, want curl alone named absent", got)
 	}
 }
 

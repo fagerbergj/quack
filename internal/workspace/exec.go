@@ -153,8 +153,9 @@ type ExecResult struct {
 	TimedOut bool
 }
 
-// execEnvPath is the hermetic PATH every RunArgv child sees.
-const execEnvPath = "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+// execEnvPath is the hermetic PATH every RunArgv child sees - a var, not a const, so
+// tests can point it at a fixture dir instead of these real (host-dependent) system paths.
+var execEnvPath = "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
 
 // childPath prepends Caps.ExtraPath to execEnvPath so configured toolchains win.
 func childPath(caps Caps) string {
