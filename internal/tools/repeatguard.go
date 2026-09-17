@@ -425,17 +425,15 @@ type repeatGuardedToolset struct {
 }
 
 // RepeatWrapToolset wraps every tool ts exposes with states/tripped - the SAME instances
-// a caller's other repeat-guarded tools use, so ts's calls share that one budget. Nil ts passes through.
+// a caller's other repeat-guarded tools use, so ts's calls share that one budget.
 func RepeatWrapToolset(ts tool.Toolset, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) tool.Toolset {
-	if ts == nil {
-		return nil
-	}
 	return &repeatGuardedToolset{inner: ts, states: states, tripped: tripped}
 }
 
 func (w *repeatGuardedToolset) Name() string { return w.inner.Name() }
 
 // Tools wraps each inner tool with repeatGuard; a non-runnable one passes through unwrapped.
+// ponytail: load_skill isn't in crossCallTools, so an alternating load_skill/list_skills loop evades adjacency - add it there if that shape shows up.
 func (w *repeatGuardedToolset) Tools(ctx agent.ReadonlyContext) ([]tool.Tool, error) {
 	inner, err := w.inner.Tools(ctx)
 	if err != nil {

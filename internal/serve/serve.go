@@ -1193,23 +1193,23 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			}
 			judgeModel = judge
 			gateCfg.JudgeModel = judge
-			// Shared with judgeSkillsets below so load_skill counts against the same budget as the read tools.
-			judgeRepeats := tools.NewRepeatStates()
 			var judgeReadTools []tool.Tool
 			if jail != nil {
 				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{
 					Workspace:       jail,
 					WorkspaceUserID: localUserID,
 					WorkspaceCaps:   workspaceCaps,
-					Repeats:         judgeRepeats,
 				})
 				if err != nil {
 					return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
 				}
 			}
+			// Unwrapped: judgeSessionID is per chat, not per round, so a shared repeatStates
+			// would falsely refuse a chat's 3rd load_skill(rubric) round - the judge already
+			// breaks in-round loops itself via repeatsLastToolCall/forcedVerdictCallback.
 			var judgeSkillsets []tool.Toolset
 			if skillTS != nil {
-				judgeSkillsets = []tool.Toolset{tools.RepeatWrapToolset(skillTS, judgeRepeats, nil)}
+				judgeSkillsets = []tool.Toolset{skillTS}
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
 			// #1421 P2: each round gets its own bound-in factory+model, never one shared
