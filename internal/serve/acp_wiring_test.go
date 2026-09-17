@@ -40,8 +40,8 @@ func TestResolveGateCfg_SetsMemoryArtifactAndPlugins(t *testing.T) {
 	if c.MemoryArtifact.Name != memArt.Name || c.MemoryArtifact.Source != memArt.Source || c.MemoryArtifact.VersionID != memArt.VersionID {
 		t.Errorf("MemoryArtifact = %+v, want %+v", c.MemoryArtifact, memArt)
 	}
-	if len(c.Plugins) == 0 {
-		t.Error("Plugins is empty, want at least the always-in-scope embedded quack ref")
+	if len(c.Plugins) != 1 || c.Plugins[0].Name != "quack" || c.Plugins[0].SHA != "" {
+		t.Errorf("Plugins = %+v, want exactly [{quack \"\"}] (an empty registry - only the embedded fallback)", c.Plugins)
 	}
 }
 

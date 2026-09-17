@@ -312,14 +312,14 @@ func closePinnedProc(pp *pinnedProc) {
 }
 
 // roundArtifacts: this round's resolved-artifact provenance - the environment
-// block always, the preamble only when this round actually sent one (a fresh
-// session; steerHooks skips it on a reused pinned process).
-func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact, fromPinned bool) []ledger.ArtifactRef {
+// block always, the preamble (and its folded-in memory.md) only when
+// sentPreamble - steerHooks' own report of whether one actually went out.
+func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact, sentPreamble bool) []ledger.ArtifactRef {
 	var artifacts []ledger.ArtifactRef
 	if envArt.Name != "" {
 		artifacts = append(artifacts, ledger.ArtifactRef{Name: envArt.Name, Source: envArt.Source, VersionID: envArt.VersionID})
 	}
-	if !fromPinned {
+	if sentPreamble {
 		if a.opts.PreambleArtifact != nil {
 			if art := a.opts.PreambleArtifact(ctx); art.Name != "" {
 				artifacts = append(artifacts, ledger.ArtifactRef{Name: art.Name, Source: art.Source, VersionID: art.VersionID})
@@ -423,9 +423,9 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		a.log.Info("acp round reusing pinned session", "cwd", cwd, "session", sessID)
 	}
 
-	outbound, unregSteer := a.steerHooks(ctx, h, outbound, steerChatID, steerNodeID, fromPinned)
+	outbound, sentPreamble, unregSteer := a.steerHooks(ctx, h, outbound, steerChatID, steerNodeID, fromPinned)
 	defer unregSteer()
-	artifacts = a.roundArtifacts(ctx, envArt, fromPinned)
+	artifacts = a.roundArtifacts(ctx, envArt, sentPreamble)
 
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 
