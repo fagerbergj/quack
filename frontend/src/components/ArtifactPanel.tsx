@@ -1079,7 +1079,7 @@ function severityChip(word: string | undefined) {
 
 // hideHeader skips the chip/path/title row: TitleHeading already shows all
 // three when this finding is the focused primary, not inline in a review.
-export function FindingView({ data, hideHeader }: { data: FindingBody; hideHeader?: boolean }) {
+function FindingView({ data, hideHeader }: { data: FindingBody; hideHeader?: boolean }) {
   const loc = findingLoc(data)
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-1.5 text-sm leading-6">
@@ -1099,7 +1099,7 @@ export function FindingView({ data, hideHeader }: { data: FindingBody; hideHeade
 // findingSeverityCounts turns a review's rendered findings into "3
 // suggestions · 1 nit" - counts exactly what's on screen, so it agrees with the server's own verdict line and the cards below it.
 const SEVERITY_RANK = ['blocking', 'request_changes', 'suggestion', 'nit']
-export function findingSeverityCounts(findings: { body: FindingBody | undefined }[]): string {
+function findingSeverityCounts(findings: { body: FindingBody | undefined }[]): string {
   const counts = new Map<string, number>()
   for (const f of findings) {
     const sev = f.body?.severity ?? 'finding'
