@@ -167,6 +167,9 @@ func notableAbsentLine(caps Caps) string {
 // server's ambient one, since an absence claim must be true of what the spawned agent actually sees.
 func childPathHasExecutable(caps Caps, bin string) bool {
 	for _, dir := range strings.Split(ChildPath(caps), ":") {
+		if dir == "" {
+			continue
+		}
 		if info, err := os.Stat(filepath.Join(dir, bin)); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
 			return true
 		}

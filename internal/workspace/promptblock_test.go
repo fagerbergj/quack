@@ -236,6 +236,32 @@ func TestPromptBlockNotableAbsentChecksChildPathNotServerPATH(t *testing.T) {
 	}
 }
 
+// TestChildPathHasExecutableSkipsEmptySegments: an empty ExtraPath entry (e.g. a leading/trailing
+// one) must never resolve relative to the server's own cwd - filepath.Join("", bin) is just bin.
+func TestChildPathHasExecutableSkipsEmptySegments(t *testing.T) {
+	withFakeExecEnvPath(t)
+	dir := t.TempDir()
+	writeFakeBinary(t, dir, "gh", "gh version 2.0.0")
+
+	cases := []struct {
+		name      string
+		extraPath []string
+		want      bool
+	}{
+		{"empty segment before the real dir", []string{"", dir}, true},
+		{"empty segment after the real dir", []string{dir, ""}, true},
+		{"only empty segments", []string{"", ""}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := childPathHasExecutable(Caps{ExtraPath: c.extraPath}, "gh")
+			if got != c.want {
+				t.Errorf("childPathHasExecutable(ExtraPath=%v, gh) = %v, want %v", c.extraPath, got, c.want)
+			}
+		})
+	}
+}
+
 func TestPromptBlockOSAndArch(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	got := PromptBlock(Caps{}, nil)
