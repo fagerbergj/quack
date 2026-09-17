@@ -14,75 +14,178 @@ func daysAgo(n int) string {
 	return time.Now().UTC().Add(-time.Duration(n) * 24 * time.Hour).Format(time.RFC3339)
 }
 
-// TestForgetSweep_DefaultRules seeds the three scenarios the epic's P3 verification names
-// directly: a verified memory kept despite no recent recall, an old unverified memory
-// invalidated for lack of an upvote, and a net-score -2 memory invalidated regardless of tier.
+// TestForgetSweep_DefaultRules seeds one memory per default rule (epic #1456 P2's usage-based
+// set) plus one that matches none, and proves a dry run reports without mutating while a real
+// sweep applies the same matches - invalidate, demote, and keep all included.
 func TestForgetSweep_DefaultRules(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
 		s := newStore("task", nil)
 
-		verifiedOldID, unverifiedStaleID := testID("verified-old"), testID("unverified-stale")
-		badScoreID, freshUnverifiedID := testID("bad-score"), testID("fresh-unverified")
-		seedMemory(t, s, point{ID: verifiedOldID, Content: "verified, no recalls in a year", Scope: "repo:r",
-			Author: "a", Timestamp: "t", MintedAt: daysAgo(400), ValidFrom: "t",
-			Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 1, VoteScore: 1, LastUpvotedAt: daysAgo(400)})
-		seedMemory(t, s, point{ID: unverifiedStaleID, Content: "unverified, never upvoted, 91 days old", Scope: "repo:r",
-			Author: "a", Timestamp: "t", MintedAt: daysAgo(91), ValidFrom: "t",
-			Status: string(StatusUnverified), Tier: TierUnverified})
+		neverRecalledID := testID("never-recalled")
+		recalledNoSupportID := testID("recalled-no-support")
+		badScoreID := testID("bad-score")
+		supportDecayedID := testID("support-decayed")
+		keptVerifiedID := testID("kept-verified")
+		untouchedID := testID("untouched")
+
+		seedMemory(t, s, point{ID: neverRecalledID, Content: "never recalled, minted a month ago", Scope: "repo:r",
+			Author: "a", Timestamp: "t", MintedAt: daysAgo(31), ValidFrom: "t",
+			Status: string(StatusUnverified), Tier: TierUnverified, Recalls: 0})
+		seedMemory(t, s, point{ID: recalledNoSupportID, Content: "recalled 3 times, never supported", Scope: "repo:r",
+			Author: "a", Timestamp: "t", MintedAt: daysAgo(5), ValidFrom: "t",
+			Status: string(StatusUnverified), Tier: TierUnverified, Recalls: 3, Supported: 0})
 		seedMemory(t, s, point{ID: badScoreID, Content: "downvoted into oblivion", Scope: "repo:r",
 			Author: "a", Timestamp: "t", MintedAt: daysAgo(5), ValidFrom: "t",
-			Status: string(StatusUnverified), Tier: TierUnverified, Downvotes: 2, VoteScore: -2})
-		seedMemory(t, s, point{ID: freshUnverifiedID, Content: "unverified but only 3 days old", Scope: "repo:r",
-			Author: "a", Timestamp: "t", MintedAt: daysAgo(3), ValidFrom: "t",
-			Status: string(StatusUnverified), Tier: TierUnverified})
+			Status: string(StatusUnverified), Tier: TierUnverified, Recalls: 1, Downvotes: 3, VoteScore: -3})
+		seedMemory(t, s, point{ID: supportDecayedID, Content: "verified, no upvote in a year", Scope: "repo:r",
+			Author: "a", Timestamp: "t", MintedAt: daysAgo(400), ValidFrom: "t",
+			Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 1, Supported: 1, Recalls: 5, VoteScore: 1, LastUpvotedAt: daysAgo(400)})
+		seedMemory(t, s, point{ID: keptVerifiedID, Content: "verified, upvoted last week", Scope: "repo:r",
+			Author: "a", Timestamp: "t", MintedAt: daysAgo(400), ValidFrom: "t",
+			Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 1, Supported: 1, VoteScore: 1, LastUpvotedAt: daysAgo(7)})
+		seedMemory(t, s, point{ID: untouchedID, Content: "unverified, recalled once, too young to age out", Scope: "repo:r",
+			Author: "a", Timestamp: "t", MintedAt: daysAgo(5), ValidFrom: "t",
+			Status: string(StatusUnverified), Tier: TierUnverified, Recalls: 1})
 
 		report, err := s.ForgetSweep(ctx, true)
 		if err != nil {
 			t.Fatalf("dry run: %v", err)
 		}
-		if report.Evaluated != 4 {
-			t.Fatalf("evaluated = %d, want 4", report.Evaluated)
+		if report.Evaluated != 6 {
+			t.Fatalf("evaluated = %d, want 6", report.Evaluated)
 		}
-		if report.Kept != 1 { // fresh-unverified: no rule matches
+		if report.Kept != 1 { // untouched: no rule matches
 			t.Errorf("kept = %d, want 1", report.Kept)
 		}
-		wantMatched := map[int]int{0: 1, 1: 1, 2: 1} // rule0=unverified-stale, rule1=bad-score, rule2=verified-old
+		wantMatched := map[int]int{0: 1, 1: 1, 2: 1, 3: 1, 4: 1}
 		for _, r := range report.Rules {
 			if r.Matched != wantMatched[r.Index] {
 				t.Errorf("rule %d matched = %d, want %d", r.Index, r.Matched, wantMatched[r.Index])
 			}
 		}
+		if report.Rules[3].Then != ThenDemote {
+			t.Errorf("rule 3 then = %q, want %q", report.Rules[3].Then, ThenDemote)
+		}
 
 		// Dry run must not mutate anything.
-		assertStatus(t, s, verifiedOldID, string(StatusReinforced))
-		assertStatus(t, s, unverifiedStaleID, string(StatusUnverified))
-		assertStatus(t, s, badScoreID, string(StatusUnverified))
+		assertStatus(t, s, neverRecalledID, string(StatusUnverified))
+		assertStatus(t, s, supportDecayedID, string(StatusReinforced))
+		assertTier(t, s, supportDecayedID, TierVerified)
 
 		// Real sweep applies the same matches.
 		if _, err := s.ForgetSweep(ctx, false); err != nil {
 			t.Fatalf("real sweep: %v", err)
 		}
-		assertStatus(t, s, verifiedOldID, string(StatusReinforced)) // kept
-		assertStatus(t, s, unverifiedStaleID, string(StatusInvalidated))
+		assertStatus(t, s, neverRecalledID, string(StatusInvalidated))
+		assertReason(t, s, neverRecalledID, ReasonNeverRecalled)
+		assertStatus(t, s, recalledNoSupportID, string(StatusInvalidated))
+		assertReason(t, s, recalledNoSupportID, ReasonRecalledWithoutSupport)
 		assertStatus(t, s, badScoreID, string(StatusInvalidated))
-		assertStatus(t, s, freshUnverifiedID, string(StatusUnverified)) // untouched
+		assertStatus(t, s, supportDecayedID, string(StatusReinforced)) // demote never invalidates
+		assertTier(t, s, supportDecayedID, TierUnverified)
+		assertStatus(t, s, keptVerifiedID, string(StatusReinforced))
+		assertTier(t, s, keptVerifiedID, TierVerified)
+		assertStatus(t, s, untouchedID, string(StatusUnverified)) // untouched
 
-		// Idempotent: invalidated points are excluded from the next sweep's
-		// currently-valid page, so a second run invalidates nothing new.
+		// Idempotent: invalidated points are excluded from the next sweep's currently-valid
+		// page, and the demoted point no longer matches its own rule (tier is now unverified),
+		// so a second run changes nothing.
 		report2, err := s.ForgetSweep(ctx, false)
 		if err != nil {
 			t.Fatalf("second sweep: %v", err)
 		}
-		if report2.Evaluated != 2 { // verified-old + fresh-unverified only
-			t.Errorf("second sweep evaluated = %d, want 2", report2.Evaluated)
-		}
 		for _, r := range report2.Rules {
-			if r.Matched != 0 && r.Then == ThenInvalidate {
+			if r.Matched != 0 && r.Then != ThenKeep {
 				t.Errorf("second sweep rule %d matched %d, want 0 (idempotent)", r.Index, r.Matched)
 			}
 		}
 	})
+}
+
+// TestForgetSweep_Demote covers the demote action end to end on both backends: a verified
+// memory with stale support is demoted (tier flips, status/score untouched, one memory_ops
+// row), and demoting an already-unverified memory is a no-op that writes no ops row.
+func TestForgetSweep_Demote(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		ops := &fakeOpsLog{}
+		s.SetOpsLog(ops)
+
+		// Recalls/Supported stay nonzero across the demote so the second sweep's now-unverified
+		// point doesn't also trip rule 0/1 (never recalled / recalled without support) -
+		// isolating this test to demote's own idempotency, not a different rule's.
+		staleID := testID("stale-verified")
+		seedMemory(t, s, point{ID: staleID, Content: "c", Scope: "repo:r", Author: "a", Timestamp: "t",
+			MintedAt: daysAgo(200), ValidFrom: "t", Status: string(StatusReinforced),
+			Tier: TierVerified, Upvotes: 1, Supported: 1, Recalls: 5, VoteScore: 1, LastUpvotedAt: daysAgo(200)})
+
+		if _, err := s.ForgetSweep(ctx, false); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		assertTier(t, s, staleID, TierUnverified)
+		assertStatus(t, s, staleID, string(StatusReinforced)) // demote never touches status
+
+		ops.mu.Lock()
+		if len(ops.rows) != 1 {
+			t.Fatalf("memory_ops rows = %d, want 1", len(ops.rows))
+		}
+		row := ops.rows[0]
+		ops.mu.Unlock()
+		if row.memoryID != staleID || row.op != OpDemote || row.actor != ActorConsolidator || row.reason != ReasonSupportDecayed {
+			t.Errorf("op row = %+v, want id=%s op=demote actor=consolidator reason=%q", row, staleID, ReasonSupportDecayed)
+		}
+
+		// A second sweep finds the point already unverified - no rule 3 match, no-op.
+		if _, err := s.ForgetSweep(ctx, false); err != nil {
+			t.Fatalf("second sweep: %v", err)
+		}
+		ops.mu.Lock()
+		gotRows := len(ops.rows)
+		ops.mu.Unlock()
+		if gotRows != 1 {
+			t.Errorf("memory_ops rows after second sweep = %d, want 1 (no-op writes no row)", gotRows)
+		}
+	})
+}
+
+func assertTier(t *testing.T, s *Store, id, want string) {
+	t.Helper()
+	mems, _, err := s.List(context.Background(), nil, 0, 100, true, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, m := range mems {
+		if m.ID == id {
+			tier := m.Tier
+			if tier == "" {
+				tier = TierUnverified
+			}
+			if tier != want {
+				t.Errorf("%s tier = %q, want %q", id, tier, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("memory %s not found", id)
+}
+
+func assertReason(t *testing.T, s *Store, id, want string) {
+	t.Helper()
+	mems, _, err := s.List(context.Background(), nil, 0, 100, true, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, m := range mems {
+		if m.ID == id {
+			if m.InvalidationReason != want {
+				t.Errorf("%s invalidation_reason = %q, want %q", id, m.InvalidationReason, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("memory %s not found", id)
 }
 
 // TestForgetSweep_EmptyScope proves a sweep over a store with no memories at
@@ -120,7 +223,7 @@ func TestForgetSweep_OpsLog(t *testing.T) {
 	if row.memoryID != "m1" || row.op != OpInvalidate || row.actor != ActorSweep {
 		t.Errorf("op row = %+v, want id=m1 op=invalidate actor=sweep", row)
 	}
-	if row.reason != "rule 1: score <= -2" {
+	if row.reason != "rule 2: score <= -2" {
 		t.Errorf("reason = %q, want the score rule's index+expression", row.reason)
 	}
 }

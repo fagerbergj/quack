@@ -10,7 +10,11 @@ type Fields = memoryrules.Fields
 
 const (
 	ThenInvalidate = memoryrules.ThenInvalidate
+	ThenDemote     = memoryrules.ThenDemote
 	ThenKeep       = memoryrules.ThenKeep
+
+	ReasonNeverRecalled          = memoryrules.ReasonNeverRecalled
+	ReasonRecalledWithoutSupport = memoryrules.ReasonRecalledWithoutSupport
 )
 
 var (

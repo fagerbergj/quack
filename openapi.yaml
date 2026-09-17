@@ -1806,7 +1806,7 @@ components:
           description: The rule's expression, verbatim.
         then:
           type: string
-          enum: [invalidate, keep]
+          enum: [invalidate, demote, keep]
         matched:
           type: integer
           description: How many memories this rule matched (and, when not a dry run, acted on).

@@ -297,7 +297,7 @@ export type SweepRuleResult = {
      * The rule's expression, verbatim.
      */
     when: string;
-    then: 'invalidate' | 'keep';
+    then: 'invalidate' | 'demote' | 'keep';
     /**
      * How many memories this rule matched (and, when not a dry run, acted on).
      */

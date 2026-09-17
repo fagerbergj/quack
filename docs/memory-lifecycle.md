@@ -142,14 +142,17 @@ recalled/last upvoted. `Memory`/`MemoryList` (openapi.yaml) expose the new field
 
 ## 8c. Epic #1255 P3: criteria builder, age-out, retention
 
-`stores.<name>.consolidation.forgetting.rules` is an ordered list of `{when: <expr>, then: invalidate | keep}`, evaluated by `Store.forgetOnce`
-in the existing nightly sweep, right before `retentionOnce`. First match wins; no match keeps the memory. `when` is a tiny hand-written expression language (`internal/memory/forgetting.go`, `Evaluate`) - no external dependency, no reflection:
+`stores.<name>.consolidation.forgetting.rules` is an ordered list of `{when: <expr>, then: invalidate | demote | keep, reason: <text>}`, evaluated by `Store.forgetOnce`
+in the existing nightly sweep, right before `retentionOnce`. First match wins; no match keeps the memory. `when` is a tiny hand-written expression language (`internal/memoryrules`, `Evaluate`) - no external dependency, no reflection:
 
-- fields: `upvotes`, `downvotes`, `score` (`vote_score`), `recalls` (all
-  int), `age_days`, `days_since_upvote`, `days_since_recall` (int, days
-  since `minted_at`/`last_upvoted_at`/`last_recalled_at`; a memory never
-  upvoted/recalled reads `days_since_upvote`/`days_since_recall` as
-  `age_days` - "never" is not zero), `tier` / `scope` (string).
+- fields: `upvotes`, `downvotes`, `supported`, `not_relevant`, `score`
+  (`vote_score`), `recalls` (all int), `age_days`, `days_since_upvote`,
+  `days_since_recall`, `days_since_minted` (int, days since
+  `minted_at`/`last_upvoted_at`/`last_recalled_at`/`minted_at`; a memory
+  never upvoted/recalled reads `days_since_upvote`/`days_since_recall` as
+  `age_days` - "never" is not zero; `days_since_minted` falls back to the
+  legacy `timestamp` column for a row minted before `minted_at` existed),
+  `tier` / `scope` (string).
 - operators: `== != < <= > >=`, `&&`, `||`, `!`, `(...)`, integer and
   double-quoted string literals. `<`/`<=`/`>`/`>=` require both sides
   numeric; `==`/`!=` also compare strings. Precedence, low to high: `||`,
@@ -157,19 +160,24 @@ in the existing nightly sweep, right before `retentionOnce`. First match wins; n
   equality (`scope == "repo:foo"` is how a caller expresses a prefix-shaped
   match - there is no dedicated prefix operator).
 
-Default (unset `forgetting` key), in order:
+Default (unset `forgetting` key), in order (epic #1456 P2, usage-based - supersedes the epic #1255 P3 age-only set):
 
 ```text
-tier == "unverified" && days_since_upvote > 90 -> invalidate
-score <= -2                                    -> invalidate
-tier == "verified"                             -> keep
+tier == "unverified" && recalls == 0 && days_since_minted > 30 -> invalidate (never recalled)
+tier == "unverified" && recalls >= 3 && supported == 0         -> invalidate (recalled without support)
+score <= -2                                                    -> invalidate
+tier == "verified" && days_since_upvote > 90                   -> demote
+tier == "verified"                                             -> keep
 ```
 
 **Validation.** `config.Validate()` fully parses and validates each rule's
 expression via `internal/memoryrules` (a leaf package with no quack imports, so `internal/config` can use it directly) - a bad rule fails `quack server validate`/config load with the rule index and the bad token's position, before the server ever starts.
 
 **Sweep.** `Store.ForgetSweep(ctx, dryRun)` is the one code path both the
-nightly job and `quack memory sweep [--dry-run]` (`POST /api/v1/memories/sweep`) call. It pages every currently-valid memory (`forEachSweepPage`, same pagination the consolidator already uses), evaluates the rules in order, and for a `then: invalidate` match calls the same sticky `idx.invalidateByID` every other invalidation path uses, with reason `"rule <index>: <expr>"` and `memory_ops` actor `sweep` (a new actor, distinct from `consolidator` and `outcome-feedback`). `dryRun` skips the write and returns a report per rule (matched count + up to 5 example id/content pairs) plus a `kept` count for no-match - never lists more than that per rule.
+nightly job and `quack memory sweep [--dry-run]` (`POST /api/v1/memories/sweep`) call. It pages every currently-valid memory (`forEachSweepPage`, same pagination the consolidator already uses), evaluates the rules in order, and for a `then: invalidate` match calls the same sticky `idx.invalidateByID` every other invalidation path uses, with reason `rule.Reason` if the rule sets one, else `"rule <index>: <expr>"`, and `memory_ops` actor `sweep` (a new actor, distinct from `consolidator` and `outcome-feedback`). `dryRun` skips the write and returns a report per rule (matched count + up to 5 example id/content pairs) plus a `kept` count for no-match - never lists more than that per rule.
+
+**Demote (epic #1456 P2).** A `then: demote` match sets `tier` back to
+`unverified` (a later supported vote re-promotes it, same as any other memory) and writes one `memory_ops` row, actor `consolidator`, reason always `"support decayed"` regardless of which rule matched. A demote on a row already `unverified` is a no-op - no write, no `memory_ops` row.
 
 **Concurrency.** A memory's votes can change between `ForgetSweep`'s read
 and its invalidate write; accepted as eventual consistency (last write wins), same as every other `invalidateByID` caller - no new locking.

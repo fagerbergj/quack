@@ -400,6 +400,33 @@ func (x *sqliteIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 	return touched, nil
 }
 
+// demoteTier sets tier=unverified for ids currently at tier verified - an
+// already-unverified row matches no WHERE clause here, so it's a true no-op.
+func (x *sqliteIndex) demoteTier(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []memoryRow
+	if err := x.db.WithContext(ctx).
+		Where("collection = ? AND id IN ? AND tier = ?", x.coll, ids, TierVerified).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("memory: sqlite demote query: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	touched := make([]string, len(rows))
+	for i, r := range rows {
+		touched[i] = r.ID
+	}
+	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND id IN ?", x.coll, touched).
+		Update("tier", TierUnverified).Error; err != nil {
+		return nil, fmt.Errorf("memory: sqlite demote: %w", err)
+	}
+	return touched, nil
+}
+
 // applyVotes applies each vote to its memory row, skipping an
 // already-invalidated one (sticky). A net score at or below
 // invalidateThreshold also invalidates. Returns the ids touched.

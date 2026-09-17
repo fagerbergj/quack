@@ -80,6 +80,10 @@ type index interface {
 	// stampConsolidateFP records fp as ids' consolidate fingerprint (payload
 	// only) - the sweep's skip check reads it back next tick.
 	stampConsolidateFP(ctx context.Context, ids []string, fp string) error
+	// demoteTier sets tier=unverified for every id in ids currently at tier verified - a
+	// payload/column-only mutation, no re-embed. An already-unverified id is excluded from the
+	// returned touched ids, so the caller writes no memory_ops row for it.
+	demoteTier(ctx context.Context, ids []string) ([]string, error)
 }
 
 // scored is one ranked memory.
