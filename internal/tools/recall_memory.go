@@ -112,6 +112,12 @@ func newRecallMemoryNamed(d Deps, name string) (tool.Tool, error) {
 			return recallMemoryResult{Hits: hits, Truncated: truncated}, nil
 		},
 	)
+	return wrapRunnable(name, box, inner, err)
+}
+
+// wrapRunnable finishes newRecallMemoryNamed: propagate a functiontool build error, then
+// assert the built tool is runnable - split out so both failure paths are directly testable.
+func wrapRunnable(name string, box *coordsBox, inner tool.Tool, err error) (tool.Tool, error) {
 	if err != nil {
 		return nil, err
 	}

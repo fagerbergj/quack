@@ -150,6 +150,9 @@ func changedFiles(diff string) map[string]map[int]bool {
 	for _, l := range strings.Split(diff, "\n") {
 		if strings.HasPrefix(l, "+++ b/") {
 			p := strings.TrimPrefix(l, "+++ b/")
+			// cur must clear here too: otherwise this skipped file's hunks
+			// keep landing in the PREVIOUS accepted file's bucket below.
+			cur = ""
 			if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 				continue
 			}

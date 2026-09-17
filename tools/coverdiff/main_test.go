@@ -45,6 +45,33 @@ diff --git a/internal/cli/ledger_test.go b/internal/cli/ledger_test.go
 	}
 }
 
+// TestChangedFiles_SkippedFileDoesNotBleedIntoPrevious: a _test.go file's hunks must
+// never land in the real file that preceded it - cur has to clear on every skip, not just accept.
+func TestChangedFiles_SkippedFileDoesNotBleedIntoPrevious(t *testing.T) {
+	diff := `diff --git a/internal/cli/ledger.go b/internal/cli/ledger.go
+--- a/internal/cli/ledger.go
++++ b/internal/cli/ledger.go
+@@ -604,0 +605,2 @@
++// probe
++func Probe(x int) string { return "" }
+diff --git a/internal/cli/ledger_test.go b/internal/cli/ledger_test.go
+--- a/internal/cli/ledger_test.go
++++ b/internal/cli/ledger_test.go
+@@ -1,0 +2,3 @@
++func TestProbe(t *testing.T) {
++	_ = Probe(1)
++}
+`
+	changed := changedFiles(diff)
+	rs := changed["internal/cli/ledger"]
+	if rs[2] || rs[3] || rs[4] {
+		t.Fatalf("ledger_test.go's lines 2-4 bled into ledger.go: %v", rs)
+	}
+	if !rs[605] || !rs[606] {
+		t.Fatalf("ledger.go's own hunk went missing: %v", rs)
+	}
+}
+
 // TestIsGenerated_HeaderDetection: a generated-code marker anywhere in the file (not just
 // the hardcoded internal/schema/frontend prefixes) takes a file out of the gate, so a new
 // generated dir (e.g. internal/langfuse/langfusegen) doesn't need this list updated.

@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -161,6 +163,36 @@ func TestNewLoadMemory_LogsLedgerEntryAndBumpsRecalls(t *testing.T) {
 	}
 	if mem.Recalls != 1 {
 		t.Fatalf("recalls = %d, want 1", mem.Recalls)
+	}
+}
+
+// stubTool implements only tool.Tool (no Declaration/Run), so it can never
+// satisfy runnableTool - wrapRunnable's own assertion failure case below.
+type stubTool struct{}
+
+func (stubTool) Name() string        { return "stub" }
+func (stubTool) Description() string { return "" }
+func (stubTool) IsLongRunning() bool { return false }
+
+// TestWrapRunnable_ErrorPaths: a build error propagates, and a built tool that
+// isn't runnable is rejected - both otherwise-unreachable via newRecallMemoryNamed.
+func TestWrapRunnable_ErrorPaths(t *testing.T) {
+	cases := []struct {
+		name    string
+		inner   tool.Tool
+		err     error
+		wantErr string
+	}{
+		{name: "build error propagates", err: errors.New("boom"), wantErr: "boom"},
+		{name: "non-runnable tool rejected", inner: stubTool{}, wantErr: "does not implement runnableTool"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := wrapRunnable("load_memory", &coordsBox{}, tc.inner, tc.err)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 

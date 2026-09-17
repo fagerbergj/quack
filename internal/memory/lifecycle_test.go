@@ -13,6 +13,9 @@ import (
 	_ "github.com/glebarez/go-sqlite"
 
 	"google.golang.org/adk/v2/model"
+
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 // fakeOpsLog records every memory_ops write for assertion, mirroring how a
@@ -395,6 +398,79 @@ func TestLogRecall_BumpsRecallsWithoutLedger(t *testing.T) {
 		}
 		if len(pts) != 1 || pts[0].Recalls != 1 {
 			t.Fatalf("point = %+v, want recalls=1 even with no ledger configured", pts[0])
+		}
+	})
+}
+
+// TestLogRecall_EmptyHitsIsNoOp guards the early return: no hits means no
+// ledger write and no recalls bump, on either backend.
+func TestLogRecall_EmptyHitsIsNoOp(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		s := newStore("task", nil)
+		lgr := ledgertest.NewMemStore()
+		s.LogRecall(context.Background(), lgr, "chat1", "node1", "tool", nil)
+		entries, err := lgr.ReadEntries(context.Background(), "chat1", 0)
+		if err != nil {
+			t.Fatalf("ReadEntries: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("entries = %+v, want none for an empty hit set", entries)
+		}
+	})
+}
+
+// failingAppendLedger always fails AppendIntent, proving the ledger append is
+// best-effort: RecordRecall must still run after it fails.
+type failingAppendLedger struct{ *ledgertest.MemStore }
+
+func (f *failingAppendLedger) AppendIntent(context.Context, ledger.Entry) (int64, error) {
+	return 0, errors.New("simulated append failure")
+}
+
+// TestLogRecall_RecordsRecallEvenWhenLedgerAppendFails: a successful append
+// logs one entry; a failing one still bumps recalls, on both backends.
+func TestLogRecall_RecordsRecallEvenWhenLedgerAppendFails(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		m1ID, m2ID := testID("m1"), testID("m2")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "a", Scope: "repo:r"},
+			{ID: m2ID, Vector: []float32{1, 0, 0, 0}, Content: "b", Scope: "repo:r"},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+		get := func(id string) scored {
+			pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			for _, p := range pts {
+				if p.ID == id {
+					return p
+				}
+			}
+			t.Fatalf("id %s not found in %+v", id, pts)
+			return scored{}
+		}
+
+		lgr := ledgertest.NewMemStore()
+		s.LogRecall(ctx, lgr, "chat1", "node1", "tool", []Delivered{{ID: m1ID, Score: 0.5}})
+		entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+		if err != nil {
+			t.Fatalf("ReadEntries: %v", err)
+		}
+		if len(entries) != 1 || entries[0].Kind != ledger.KindMemoryRecall {
+			t.Fatalf("entries = %+v, want one memory.recall on append success", entries)
+		}
+		if get(m1ID).Recalls != 1 {
+			t.Fatalf("m1 recalls = %d, want 1", get(m1ID).Recalls)
+		}
+
+		failing := &failingAppendLedger{MemStore: ledgertest.NewMemStore()}
+		s.LogRecall(ctx, failing, "chat1", "node1", "tool", []Delivered{{ID: m2ID, Score: 0.5}})
+		if get(m2ID).Recalls != 1 {
+			t.Fatalf("m2 recalls = %d, want 1 even though the ledger append failed", get(m2ID).Recalls)
 		}
 	})
 }
