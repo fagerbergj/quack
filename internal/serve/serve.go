@@ -2428,15 +2428,22 @@ func fmtErr(agentName, format string, args ...any) error {
 	return fmt.Errorf("agent %q: "+format, append([]any{agentName}, args...)...)
 }
 
-// resolveToolNames drops runtime-conditional builtins whose dependency is off.
+// resolveToolNames drops runtime-conditional builtins whose dependency is off, and
+// collapses recall_memory/load_memory (the same tool under two names) to whichever is listed first.
 func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string) {
 	names = make([]string, 0, len(configured))
+	sawMemoryRecall := false
 	for _, t := range configured {
 		switch t {
-		case "stage_memory", "recall_memory", "load_memory":
+		case "stage_memory":
 			if !taskMemAvailable {
 				continue
 			}
+		case "recall_memory", "load_memory":
+			if !taskMemAvailable || sawMemoryRecall {
+				continue
+			}
+			sawMemoryRecall = true
 		case "ask_advisor":
 			if !advisorAvailable {
 				continue

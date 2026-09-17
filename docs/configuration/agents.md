@@ -27,7 +27,7 @@ agents:
     context_window: 65536
     memory:
       bucket: research
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, recall_memory, ask_user, ask_advisor]
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor]
 ```
 
 `tools:` is explicit and independent of the card's `skills` — a skill can come from the model, the prompt, or a tool, so listing tools here is a separate, honest declaration of what the agent can actually reach. `skills:` (a different list — built-in skill names, not the card's A2A skills) names which of quack's own skill library entries this agent may `load_skill`.
@@ -80,20 +80,19 @@ The orchestrator stays light on tools — it needs only:
 | `edit_plan` | Yes | Upserts/removes assignments on the chat's current plan by `node_id`, and/or updates `setup`/`delivery`. |
 | `execute` | Yes | Runs the plan judge against the current plan record and, if accepted, executes it - a rejection is a tool error naming what to fix. |
 | [`agenttool`](https://pkg.go.dev/google.golang.org/adk/tool/agenttool) | No (ADK) | ADK's `AgentTool`, one per discovered agent, to hand a node off to a specialist. |
-| [`loadmemorytool`](https://pkg.go.dev/google.golang.org/adk/tool/loadmemorytool) | No (ADK) | The model calls it on demand; routes through quack's `memory.Store` (it implements ADK's `MemoryService`). |
 | [`preloadmemorytool`](https://pkg.go.dev/google.golang.org/adk/tool/preloadmemorytool) | No (ADK) | Auto-injects relevant memory into the prompt at the start of each turn. |
 | `commit_memory` | Yes | Writes a durable fact to quack's own `memory.Store`; the orchestrator calls it directly for user facts, the gate calls it on a judge pass for task findings. |
 | `recall_memory` | Yes | On-demand query into task memory (repo/role/user), scoped to the current chat's user bucket - see [P2's own section below](#recall_memory) for the shape shared with worker nodes and the ACP loopback MCP. |
 
 `commit_memory` relies on the orchestrator model choosing to call it, which doesn't hold up reliably in practice. `orchestrator.user_memory_hook` (#262) is the fix: an end-of-turn hook that, after a cheap keyword pre-filter, hands the message to a dedicated `agents/memory-agent` bundle and commits whatever it extracts - fire-and-forget, so it never affects the response. Off by default (costs a model call per qualifying turn); enable with `orchestrator.user_memory_hook.enabled: true` plus a `provider`/`model`. Its guidance comes from `agents/orchestrator/memory.md` (what's worth remembering) and `agents/memory-agent/rubric.yaml` (the candidate-quality bar) - not duplicated into its own prompt.
 
-This is the orchestrator's own fixed list, not the full builtin tool registry (`internal/tools/` has 13 tools — web search/fetch, memory, filesystem reads, ask/advisor — no git or write tools, since code agents are ACP subprocesses) that individual agents pull from by name in their own `tools:` list above. See [tools.md](tools.md) for the full registry and the `tools:` backends.
+This is the orchestrator's own fixed list, not the full builtin tool registry (`internal/tools/` has 14 tools — web search/fetch, memory, filesystem reads, ask/advisor — no git or write tools, since code agents are ACP subprocesses) that individual agents pull from by name in their own `tools:` list above. See [tools.md](tools.md) for the full registry and the `tools:` backends.
 
 ### `recall_memory`
 
 `recall_memory(query, k?)` (epic #1255 P2) is the on-demand twin of the prefill recall every memory-bucketed agent already gets. It's available three ways, all sharing the same contract:
 
-- Native workers and the orchestrator: add `recall_memory` to the agent's `tools:` list (only takes effect when a task-memory store is configured; otherwise it's silently dropped, same as `stage_memory`).
+- Native workers and the orchestrator: add `recall_memory` to the agent's `tools:` list (only takes effect when a task-memory store is configured; otherwise it's silently dropped, same as `stage_memory`). `load_memory` is the same tool under a different declared name - listing both collapses to whichever comes first in `tools:`, so a native worker never gets it twice.
 - ACP workers: automatic whenever the run is a memory participant (`memory.bucket` set) - no `tools:` entry, since ACP agents have none; see the ACP section above.
 
 Scope is the caller's own buckets - the same `repo`/`role`/`user` combination the node's prefill recall already uses for a DAG worker, and the user bucket for the orchestrator (repo/role need a resolved workspace, which doesn't exist before a plan runs). `k` narrows the request but never widens it past the store's configured `top_k`; `min_score` applies identically to prefill and this tool, since both read through the same `Store.recall`. A call whose formatted content would exceed the shared injection byte budget returns fewer hits and says so in its own output, rather than silently truncating.

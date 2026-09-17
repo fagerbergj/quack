@@ -1,13 +1,22 @@
 package serve
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool/toolconfirmation"
+	"google.golang.org/genai"
+
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -59,6 +68,18 @@ func TestResolveToolNames(t *testing.T) {
 			wantNames:        []string{"web_search"},
 		},
 		{
+			name:             "load_memory then recall_memory collapses to the first",
+			configured:       []string{"load_memory", "recall_memory", "web_search"},
+			taskMemAvailable: true,
+			wantNames:        []string{"load_memory", "web_search"},
+		},
+		{
+			name:             "recall_memory then load_memory collapses to the first",
+			configured:       []string{"recall_memory", "load_memory", "web_search"},
+			taskMemAvailable: true,
+			wantNames:        []string{"recall_memory", "web_search"},
+		},
+		{
 			name:       "unrelated tools always pass through",
 			configured: []string{"web_search", "web_fetch", "summarize", "current_date", "ask_user"},
 			wantNames:  []string{"web_search", "web_fetch", "summarize", "current_date", "ask_user"},
@@ -81,6 +102,69 @@ func TestResolveToolNames(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigListingBothMemoryToolsBuildsOne: a config naming both load_memory and
+// recall_memory must build exactly one tool, so one call appends exactly one ledger entry.
+func TestConfigListingBothMemoryToolsBuildsOne(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newMemStoreForTest(t, "task")
+	if _, err := store.Commit(ctx, memory.Scope{Role: "task"}, "explorer", memory.Provenance{}, []memory.Candidate{{Content: "the build uses bazel"}}, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	names := resolveToolNames([]string{"load_memory", "recall_memory"}, true, false)
+	lgr := ledgertest.NewMemStore()
+	built, err := tools.Build(names, tools.Deps{Memory: store, Ledger: lgr, MemoryRole: "task"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(built) != 1 {
+		t.Fatalf("built %d tools for %v, want exactly 1", len(built), names)
+	}
+
+	cs, ok := built[0].(ledger.CoordSetter)
+	if !ok {
+		t.Fatal("built tool does not implement ledger.CoordSetter")
+	}
+	cs.SetLedgerCoords(ledger.Coords{ChatID: "chat1", Node: "node1"})
+	rt, ok := built[0].(interface {
+		Run(ctx adkagent.Context, args any) (map[string]any, error)
+	})
+	if !ok {
+		t.Fatal("built tool is not runnable")
+	}
+	if _, err := rt.Run(newFakeToolCtx(), map[string]any{"query": "build system"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Kind != ledger.KindMemoryRecall {
+		t.Fatalf("entries = %+v, want exactly one memory.recall", entries)
+	}
+}
+
+// fakeToolCtx supplies a real Ctx (StrictContextMock panics without one) plus the
+// identity fields the repeatGuard/emit wrapper chain reads to Run a built tool.
+type fakeToolCtx struct {
+	adkagent.StrictContextMock
+}
+
+func newFakeToolCtx() *fakeToolCtx {
+	return &fakeToolCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: context.Background()}}
+}
+
+func (c *fakeToolCtx) UserContent() *genai.Content                          { return nil }
+func (c *fakeToolCtx) InvocationID() string                                 { return "inv" }
+func (c *fakeToolCtx) AgentName() string                                    { return "test" }
+func (c *fakeToolCtx) UserID() string                                       { return "u" }
+func (c *fakeToolCtx) AppName() string                                      { return "app" }
+func (c *fakeToolCtx) SessionID() string                                    { return "sess" }
+func (c *fakeToolCtx) Session() session.Session                             { return nil }
+func (c *fakeToolCtx) Branch() string                                       { return "" }
+func (c *fakeToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
 
 // TestEmitServerConfigToolsBuild runs the `quack init` wizard's own output through the
 // server's startup tool resolution (resolveToolNames + tools.Build): the wizard kept

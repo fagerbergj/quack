@@ -164,7 +164,7 @@ agents:
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # one served slot of the researcher model (one node = one slot)
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, recall_memory, ask_user, ask_advisor,
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor,
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
     # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
   code-implementer:
