@@ -410,8 +410,7 @@ func memoryMCPHandler() http.Handler {
 				Description: "Recall relevant notes from shared memory about this repository/task family.",
 			}, func(ctx context.Context, _ *mcp.CallToolRequest, args loadMemoryInput) (*mcp.CallToolResult, any, error) {
 				text, hits := sess.Memory.RecallWithHits(ctx, sess.Scope, args.Query)
-				// Recorded and voted exactly like recall_memory (#1470) - this tool used to
-				// return prose via Recall and record nothing, invisible to both the ledger and the judge.
+				// Recorded and voted exactly like recall_memory (#1470).
 				sess.Memory.LogRecallLedgerOnly(ctx, sess.Ledger, sess.ChatID, sess.NodeID, "tool", hits)
 				if sess.Recalled != nil {
 					sess.Recalled.Add(hits...)

@@ -676,6 +676,9 @@ func (g *gateRun) boundaryCheck() (int, string) {
 // memory commit, the judge-less node's one episodic round, then delivery.
 func (g *gateRun) commitFinal(answer string, res GateResult, episodicRoundsWritten int) string {
 	act := g.actFor(answer)
+	// Judge-less/aborted dispatches never called prepareJudge; a completed judge path
+	// already counted everything act.recalled has, so this merge finds nothing new (#1471).
+	g.receivedMemories = mergeAndCountRecalledMemories(g.nodeCtx, g.cfg, g.advisorToken, g.receivedMemories, act.recalled)
 	// Fold in ACP memory MCP stage_memory from all rounds; unregister after drain (straggler calls fail).
 	if g.advisorToken != "" {
 		if t, ok := LookupAdvisorThread(g.advisorToken); ok && t.MemSecret != "" {
@@ -786,6 +789,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 		// Judge/revise loop: judge, fold deterministic criteria, revise on fail.
 		outcome := runJudgeRounds(g, question, answer, sfx)
+		// commitFinal (a judge-less node, or one that never reached the judge) resumes
+		// counting recalls from exactly what this loop already bumped (#1471).
+		g.receivedMemories = outcome.receivedMemories
 		if outcome.err != nil {
 			return "", GateResult{}, outcome.err
 		}
@@ -841,8 +847,10 @@ type judgeRounds struct {
 }
 
 // runJudgeRounds: the judge/revise loop - judge, fold deterministic criteria, revise on fail.
-func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) judgeRoundOutcome {
+func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (outcome judgeRoundOutcome) {
 	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, markerLine: g.markerLine, advisorToken: g.advisorToken, turnID: g.turnID, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log}
+	// receivedMemories rides every return path so commitFinal resumes counting from here (#1471).
+	defer func() { outcome.receivedMemories = j.receivedMemories }()
 	// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
 	for round := 1; j.judge != nil && j.cfg.JudgeRounds > 0 && round <= j.cfg.JudgeRounds+1; round++ {
 		if !j.roundGate(round) {
@@ -926,17 +934,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	act = j.actFor(j.answer)
 	// recall_memory hits merge in fresh every round (#1255 P2); recalls only bumps for ids
 	// new to the dispatch-lifetime received set, so a round's repeat calls count once (#1470).
-	var added []memory.Delivered
-	j.receivedMemories, added = mergeMemoryHits(j.receivedMemories, act.recalled)
-	j.cfg.Memory.RecordRecall(j.nodeCtx, memoryIDs(added))
-	if j.advisorToken != "" {
-		if t, ok := LookupAdvisorThread(j.advisorToken); ok && t.MemSecret != "" {
-			if ms, ok := LookupMemSession(t.MemSecret); ok && ms.Recalled != nil {
-				j.receivedMemories, added = mergeMemoryHits(j.receivedMemories, ms.Recalled.Snapshot())
-				j.cfg.Memory.RecordRecall(j.nodeCtx, memoryIDs(added))
-			}
-		}
-	}
+	j.receivedMemories = mergeAndCountRecalledMemories(j.nodeCtx, j.cfg, j.advisorToken, j.receivedMemories, act.recalled)
 	// Every judge round writes a revision, gate-passed or not - only delivery stays
 	// gate-passed-only (#1090 P2), and every gated node writes one (#1095).
 	j.episodicState = saveEpisodicRound(j.nodeCtx, j.cfg, j.nodeID, j.turnID, round, j.answer, act.stagedDelivery["review"], j.episodicState)
@@ -1165,6 +1163,9 @@ type judgeRoundOutcome struct {
 	err                   error
 	checksSkipReason      string
 	episodicRoundsWritten int
+	// receivedMemories: the round loop's final merged/counted set, on every exit path -
+	// commitFinal resumes from it so its own merge only counts ids the loop never saw (#1471).
+	receivedMemories []memory.Delivered
 }
 
 // pauseIfWorkerRaisedHITL: parks node on new ask_user/guard confirmation. Runs after every worker run.

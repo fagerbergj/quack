@@ -153,13 +153,11 @@ func TestRecallForTool_CapsToTopKAndScopeIsolation(t *testing.T) {
 	}
 }
 
-// TestLogRecallLedgerOnly_RoundDedupedCount covers #1470's split: every call still
-// appends its own ledger.recall entry (LogRecallLedgerOnly, the audit trail), while the
-// counter bump (RecordRecall) is left to a caller-side per-round id dedup - the shape
-// vetting's mergeMemoryHits gives the native tool/ACP loopback callers. Three calls in
-// one simulated round bump recalls once and write three ledger entries; a second round
-// (fresh dedup state) bumps again.
-func TestLogRecallLedgerOnly_RoundDedupedCount(t *testing.T) {
+// TestLogRecallLedgerOnly_LogsButNeverBumps covers the primitive itself: N calls append N
+// ledger entries and never touch recalls - the round-scoped dedup that decides WHEN to
+// call RecordRecall is vetting's job (this package can't import vetting to prove it end
+// to end; see vetting's TestRunGatedRefine_NativeRecalledMemory_CountsOnceOnJudgePass).
+func TestLogRecallLedgerOnly_LogsButNeverBumps(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
 		s := newStore("task", nil)
@@ -171,43 +169,22 @@ func TestLogRecallLedgerOnly_RoundDedupedCount(t *testing.T) {
 		}
 		lgr := ledgertest.NewMemStore()
 		hits := []Delivered{{ID: m1ID, Content: "recalled repeatedly"}}
-		get := func() scored {
-			pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
-			if err != nil {
-				t.Fatalf("list: %v", err)
-			}
-			return pts[0]
-		}
-
-		// Round 1: the worker calls recall three times for the same memory.
-		roundSeen := map[string]bool{}
 		for i := 0; i < 3; i++ {
 			s.LogRecallLedgerOnly(ctx, lgr, "chat1", "node1", "tool", hits)
-			if !roundSeen[m1ID] {
-				roundSeen[m1ID] = true
-				s.RecordRecall(ctx, []string{m1ID})
-			}
 		}
 		entries, err := lgr.ReadEntries(ctx, "chat1", 0)
 		if err != nil {
 			t.Fatalf("ReadEntries: %v", err)
 		}
 		if len(entries) != 3 {
-			t.Fatalf("ledger entries after round 1 = %d, want 3 (every call is its own audit entry)", len(entries))
+			t.Fatalf("ledger entries = %d, want 3 (every call is its own audit entry)", len(entries))
 		}
-		if g := get(); g.Recalls != 1 {
-			t.Fatalf("recalls after round 1 = %d, want 1 (deduped within the round)", g.Recalls)
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+		if err != nil {
+			t.Fatalf("list: %v", err)
 		}
-
-		// Round 2 (fresh dedup state, e.g. a later turn's dispatch) counts again.
-		roundSeen = map[string]bool{}
-		s.LogRecallLedgerOnly(ctx, lgr, "chat1", "node1", "tool", hits)
-		if !roundSeen[m1ID] {
-			roundSeen[m1ID] = true
-			s.RecordRecall(ctx, []string{m1ID})
-		}
-		if g := get(); g.Recalls != 2 {
-			t.Fatalf("recalls after round 2 = %d, want 2", g.Recalls)
+		if pts[0].Recalls != 0 {
+			t.Fatalf("recalls = %d, want 0 (LogRecallLedgerOnly never bumps the counter)", pts[0].Recalls)
 		}
 	})
 }

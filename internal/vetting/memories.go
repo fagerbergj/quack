@@ -127,6 +127,28 @@ func mergeMemoryHits(base, add []memory.Delivered) (merged, added []memory.Deliv
 	return base, added
 }
 
+// mergeAndCountRecalledMemories merges add plus a live ACP session's Recalled snapshot into
+// received, bumping recalls only for new ids - shared by prepareJudge and commitFinal so a judge-less dispatch still counts and neither double-counts (#1471).
+func mergeAndCountRecalledMemories(ctx context.Context, cfg Config, advisorToken string, received, add []memory.Delivered) []memory.Delivered {
+	var addedIDs []memory.Delivered
+	received, addedIDs = mergeMemoryHits(received, add)
+	cfg.Memory.RecordRecall(ctx, memoryIDs(addedIDs))
+	if advisorToken == "" {
+		return received
+	}
+	t, ok := LookupAdvisorThread(advisorToken)
+	if !ok || t.MemSecret == "" {
+		return received
+	}
+	ms, ok := LookupMemSession(t.MemSecret)
+	if !ok || ms.Recalled == nil {
+		return received
+	}
+	received, addedIDs = mergeMemoryHits(received, ms.Recalled.Snapshot())
+	cfg.Memory.RecordRecall(ctx, memoryIDs(addedIDs))
+	return received
+}
+
 // recallLedgerEntry appends a best-effort memory.recall ledger entry for one
 // injection (design decision #1255 P1: the ledger is the source of truth for
 // what a chat retrieved). Best-effort, unlike memory.vote below: it records a delivery that already happened, and nothing is projected from it in the hot path (recalls/last_recalled_at are bumped directly by the caller, independent of this entry) - same observational pattern as appendNodeEvent.

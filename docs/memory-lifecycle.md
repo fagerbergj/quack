@@ -138,16 +138,7 @@ vote, a recall never writes a `memory_ops` row; the audit trail lives entirely i
 (`internal/ledger`'s `KindMemoryRecall`), and `internal/ledger/fold` folds it into per-id recall counts so
 `quack ledger rebuild` can re-derive the same projection from scratch.
 
-The point's own `recalls`/`last_recalled_at` counters are a different, coarser projection (epic #1470):
-they move at most once per node round per memory id, deduped against whichever set already merges that
-round's hits for the judge - `vetting.mergeMemoryHits` for a native worker's prefill+tool-call activity, or
-the ACP loopback's `MemSession.Recalled` snapshot it folds in. A worker that calls
-`recall_memory`/`load_memory` many times before the judge ever votes bumps the counter once, not once per
-call, so the recalls-based forgetting rule below can't be crossed by a single unvoted round's repeats. The
-orchestrator's `recall_memory` has no gated round to dedupe against; it counts once per turn instead, since
-`buildMemoryArtifactTools` already rebuilds that tool fresh every turn. `LogRecall` itself still bumps the
-counter unconditionally on every call (a missing ledger only skips the ledger append) - it is used only by
-the plan judge, whose single injection has no round to dedupe against.
+The point's own `recalls`/`last_recalled_at` counters are a different, coarser projection (epic #1470): they move at most once per node round per memory id, deduped against whichever set already merges that round's hits for the judge - `vetting.mergeMemoryHits` for a native worker's prefill+tool-call activity, or the ACP loopback's `MemSession.Recalled` snapshot it folds in. `vetting.mergeAndCountRecalledMemories` drives this dedup from two places so a judge-less node (`gates.judge.model == ""`, or a per-agent `judge: false`) still counts: `prepareJudge` on the judge path, and `commitFinal` - which runs on every dispatch, judge-less, judge-failed, or judge-passed alike - picking up whatever the judge path (if any) left uncounted. A worker that calls `recall_memory`/`load_memory` many times before the judge ever votes bumps the counter once, not once per call, so the recalls-based forgetting rule below can't be crossed by a single unvoted round's repeats. The orchestrator's `recall_memory` has no gated round to dedupe against; it counts once per turn instead, since `buildMemoryArtifactTools` already rebuilds that tool fresh every turn. `LogRecall` itself still bumps the counter unconditionally on every call (a missing ledger only skips the ledger append) - it is used only by the plan judge, whose single injection has no round to dedupe against.
 
 **Judge votes.** The judge's prompt lists the worker's received memory set
 (id + content); `submit_verdict` gains an optional `memories: [{id, vote, reason}]` (`supported` | `contradicted` | `not_relevant`),

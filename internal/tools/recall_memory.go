@@ -104,12 +104,11 @@ func newRecallMemory(d Deps) (tool.Tool, error) { return newRecallMemoryNamed(d,
 // it is logged, counted, and scanned into the judge's received set the same way.
 func newLoadMemory(d Deps) (tool.Tool, error) { return newRecallMemoryNamed(d, "load_memory") }
 
-// newRecallMemoryNamed builds recall_memory (or its load_memory alias) for native DAG workers.
-// Only the ledger entry lands here; the counter bump is deferred to vetting's round merge (#1470).
+// newRecallMemoryNamed builds recall_memory/load_memory; scope re-derives per call from coordsBox so internal/tools never imports internal/vetting.
+// Only the ledger entry lands here - the counter bump is deferred to vetting's round merge (#1470).
 func newRecallMemoryNamed(d Deps, name string) (tool.Tool, error) {
-	// No Memory-nil guard: Store's own methods (RecallForTool/LogRecall) are
-	// nil-receiver safe, same leniency as stage_memory - a caller resolving
-	// tools ahead of the real per-agent Deps (e.g. a grant-check test) gets a buildable tool that recalls nothing until wired.
+	// No Memory-nil guard: Store's own methods (RecallForTool/LogRecallLedgerOnly) are nil-receiver
+	// safe, same leniency as stage_memory - a caller resolving tools early gets a buildable no-op tool.
 	box := &coordsBox{}
 	inner, err := functiontool.New[recallMemoryArgs, recallMemoryResult](
 		functiontool.Config{Name: name, Description: recallMemoryDescription},
