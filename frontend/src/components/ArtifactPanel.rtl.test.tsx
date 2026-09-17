@@ -407,6 +407,45 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(screen.getByText('Second line of the answer.')).toBeTruthy()
   })
 
+  // (b/4) No artifact, but judge rounds: the chips are otherwise dead ends -
+  // the same rounds are also secondary-list rows, and tapping one opens JudgeRoundView.
+  it('opens JudgeRoundView from a judge-round row when the node wrote no artifact', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+      // Focusing a judge_round makes it primary, so it needs revisions +
+      // content routes too, not just the bare body the timeline fetches.
+      if (url.includes('/artifacts/judge_round:t1-planner-1-1/revisions')) {
+        return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: round1.length, kind: 'judge_round', class: 'structured', lineage: { node_id: 'planner-1', author: 'judge' } }] })
+      }
+      if (url.includes('/artifacts/judge_round:t1-planner-1-2/revisions')) {
+        return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: round2.length, kind: 'judge_round', class: 'structured', lineage: { node_id: 'planner-1', author: 'judge' } }] })
+      }
+      if (url.includes('/artifacts/judge_round:t1-planner-1-1')) return textResponse(round1)
+      if (url.includes('/artifacts/judge_round:t1-planner-1-2')) return textResponse(round2)
+      if (url.endsWith('/artifacts')) {
+        return jsonResponse({
+          data: [
+            { name: 'judge_round:t1-planner-1-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] },
+            { name: 'judge_round:t1-planner-1-2', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] },
+          ],
+        })
+      }
+      return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+    }))
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" onClose={() => {}} />)
+
+    expect(await screen.findByText("This node hasn't produced anything yet.")).toBeTruthy()
+    const row = await screen.findByRole('button', { name: 'Judge round 1 · 0.42 · failed' })
+    await user.click(row)
+
+    // The score is unique to JudgeRoundView (the chip shows "42%", not "0.42").
+    expect(await screen.findByText('0.42')).toBeTruthy()
+    expect(screen.getAllByText('failed').length).toBeGreaterThanOrEqual(1)
+    // The other round stays reachable, as the way back.
+    expect(await screen.findByRole('button', { name: 'Judge round 2 · 0.81 · passed' })).toBeTruthy()
+  })
+
   // (c) No artifact-id string (kind + ":" + instance) appears anywhere
   // outside the collapsed Details disclosure - in BOTH themes, at the narrow
   // (390x844 sheet) and desktop (1280 card) widths. jsdom can't size a viewport and the panel no longer reads matchMedia (one tree at every width) - the stub below exists for the acceptance line, not for any component branch.
@@ -647,6 +686,16 @@ describe('typed views render every documented field', () => {
     await user.click(screen.getByText('Full review'))
     expect(await screen.findByRole('heading', { level: 2, name: 'Scope' })).toBeTruthy()
     expect(screen.getByText('Reviewed the diff end to end.')).toBeTruthy()
+  })
+
+  it('ReviewView falls back to summary for a pre-migration record with no takeaway', () => {
+    rtlRender(<ReviewView data={{ verdict: 'approve', summary: 'Looks fine overall, nothing blocking.' }} findings={[]} />)
+    expect(screen.getByText('Looks fine overall, nothing blocking.')).toBeTruthy()
+  })
+
+  it('ReviewView names an unresolved finding id instead of an empty box', () => {
+    rtlRender(<ReviewView data={{ verdict: 'approve' }} findings={[{ id: 'finding:moved-to-reviser', body: undefined }]} />)
+    expect(screen.getByText('finding:moved-to-reviser (not available on this node)')).toBeTruthy()
   })
 
   it('JudgeRoundView renders pass/fail, score, the criteria table, and probes', () => {

@@ -30,6 +30,13 @@ const codeReviewNew = {
   finding_ids: [],
 }
 const codeReviewSparse = { verdict: 'approve' }
+// Pre-migration shape (records written before takeaway/rendered existed) -
+// only `summary`, which ReviewView must fall back to.
+const codeReviewLegacy = {
+  verdict: 'approve',
+  summary: 'Looks fine overall, nothing blocking, a couple of minor style nits worth a follow-up.',
+  finding_ids: [],
+}
 const reviewMd = '# Review summary\n\nMostly solid, but the apple pie recipe needs a citation.\n\n- item one\n- item two\n\n```go\nfunc f() {}\n```\n'
 const reviewMdV1 = '# Review draft\n\nThe apple pie recipe paragraph has no source at all.\n'
 const reviewJudge = JSON.stringify({
@@ -88,6 +95,37 @@ function chatReviewSparseRoute(url: string): Response | null {
   if (url.includes('/artifacts/code_review:pr:sparse')) {
     if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] })
     return textResponse(JSON.stringify(codeReviewSparse))
+  }
+  return jsonResponse({ data: [] })
+}
+
+// A node with no artifact at all, but two judge rounds - the rounds must
+// stay reachable (as secondary rows) rather than becoming dead chips.
+function chatJudgeOnlyRoute(url: string): Response | null {
+  if (!url.includes('/chats/chat-judge-only/')) return null
+  if (url.includes('/artifacts/judge_round:t1-judge-only-1')) return textResponse(reviewJudge)
+  if (url.includes('/artifacts/judge_round:t1-judge-only-2')) return textResponse(reviewJudge2)
+  if (url.endsWith('/artifacts')) {
+    return jsonResponse({
+      data: [
+        { name: 'judge_round:t1-judge-only-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'judge' }, revisions: [] },
+        { name: 'judge_round:t1-judge-only-2', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'judge' }, revisions: [] },
+      ],
+    })
+  }
+  return jsonResponse({ data: [] })
+}
+
+function chatReviewLegacyRoute(url: string): Response | null {
+  if (!url.includes('/chats/chat-review-legacy/')) return null
+  if (url.endsWith('/artifacts')) {
+    return jsonResponse({
+      data: [{ name: 'code_review:pr:legacy', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', author: 'gate' }, revisions: [] }],
+    })
+  }
+  if (url.includes('/artifacts/code_review:pr:legacy')) {
+    if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] })
+    return textResponse(JSON.stringify(codeReviewLegacy))
   }
   return jsonResponse({ data: [] })
 }
@@ -262,6 +300,8 @@ window.fetch = async (input: RequestInfo | URL) => {
   return (
     chatFailedRoute(url) ??
     chatReviewSparseRoute(url) ??
+    chatReviewLegacyRoute(url) ??
+    chatJudgeOnlyRoute(url) ??
     chatReviewer1466Route(url) ??
     chatMoreRoute(url) ??
     chatOneRoute(url) ??
@@ -396,6 +436,19 @@ export const SparseCodeReview: Story = {
   },
 }
 
+// A pre-migration review record (`summary`, no `takeaway`/`rendered`) -
+// ReviewView falls back to `summary` instead of an empty card.
+export const LegacyCodeReview: Story = {
+  args: {
+    chatId: 'chat-review-legacy',
+    nodeId: 'reviewer-1',
+    nodeAgent: 'Code Reviewer',
+    nodeTask: 'Review PR #1170',
+    nodeArtifactKind: 'code_review',
+    onClose: () => {},
+  },
+}
+
 // A code-reviewer node with all five kinds plus the run's own bookkeeping -
 // the panel opens on the review, never dag_node/dag_plan.
 export const CodeReviewerAllKinds: Story = {
@@ -430,6 +483,18 @@ export const ImplementerDeliveredNoArtifact: Story = {
     nodeAnswer: 'Opened PR #1464 with the sandboxed-git skip and the EnforcesBoundary reuse.\n\n' +
       '- Added a `ResolveSandbox` probe before the git golden fixture, skipping loudly where bwrap is unusable\n' +
       '- Replaced the inline `Sandboxed` predicate with `workspace.EnforcesBoundary`',
+    onClose: () => {},
+  },
+}
+
+// No artifact and no answer either - just two judge rounds. Tapping either
+// row opens JudgeRoundView; the chips alone would otherwise be dead ends.
+export const NoArtifactWithJudgeRounds: Story = {
+  args: {
+    chatId: 'chat-judge-only',
+    nodeId: 'writer-1',
+    nodeAgent: 'Writer',
+    nodeTask: 'Write the spec',
     onClose: () => {},
   },
 }

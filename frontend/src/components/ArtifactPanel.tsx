@@ -50,10 +50,12 @@ interface JudgeRoundContent {
 export interface CodeReviewBody {
   verdict?: string
   takeaway?: string
+  // Pre-migration free-text summary (records written before takeaway/rendered
+  // existed) - ReviewView falls back to this when takeaway is absent.
+  summary?: string
   verified?: string[]
   notes?: string[]
   finding_ids?: string[]
-  dismissed?: string[]
   // The server's own rendered overview (internal/vetting/reviewoverview.go)
   // - shown under "Full review" so the panel never shows less than the GitHub comment.
   rendered?: string
@@ -582,8 +584,6 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       seenSeqRef.current = ev.seq
       const rev = ev.revision
       if (rev && rev.nodeId === nodeId) {
-        // Only the list and the primary's revisions refetch here; a
-        // secondary's title goes stale until the next manual Refresh - deliberate, not a bug.
         withScrollPreserved(load)
         if (rev.id === primaryIdRef.current) {
           const toLatest = atLatestRef.current
@@ -739,12 +739,6 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                 reviewFindings={reviewFindings}
               />
 
-              <ActiveNoteCallout note={activeNote} />
-
-              <UnanchoredNotes notes={unanchored} />
-
-              <SecondaryList items={secondaryItems} bodies={secondaryBodies} excludeNames={reviewFindingNames} onSelect={setFocusedOverride} />
-
               <DetailsSection
                 curInfo={curInfo}
                 open={detailsOpen}
@@ -757,6 +751,13 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
               />
             </>
           )}
+
+          {/* Judge rounds (and everything else this node wrote) stay reachable
+              even with no deliverable - a vetted no-artifact node's rounds
+              are otherwise chips that do nothing. */}
+          <ActiveNoteCallout note={activeNote} />
+          <UnanchoredNotes notes={unanchored} />
+          <SecondaryList items={secondaryItems} bodies={secondaryBodies} excludeNames={reviewFindingNames} onSelect={setFocusedOverride} />
         </div>
       </div>
     </dialog>
@@ -1118,7 +1119,7 @@ export function ReviewView({ data, findings }: { data: CodeReviewBody; findings:
   const emptyByLine = useMemo(() => new Map<number, JudgeNote[]>(), [])
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-3 text-sm leading-6">
-      {data.takeaway && <p className="text-gray-700 dark:text-gray-200">{data.takeaway}</p>}
+      {(data.takeaway ?? data.summary) && <p className="text-gray-700 dark:text-gray-200">{data.takeaway ?? data.summary}</p>}
       <MetaList label="Verified" items={data.verified} />
       <MetaList label="Notes" items={data.notes} />
       {findings.length > 0 && (
@@ -1126,7 +1127,11 @@ export function ReviewView({ data, findings }: { data: CodeReviewBody; findings:
           <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
             Findings ({findingSeverityCounts(findings)})
           </span>
-          {findings.map(f => <FindingView key={f.id} data={f.body ?? {}} />)}
+          {findings.map(f => f.body
+            ? <FindingView key={f.id} data={f.body} />
+            // A finding whose latest revision moved to another node's panel
+            // (see the lineage note above) - name it rather than an empty box.
+            : <p key={f.id} className="text-xs text-gray-500 dark:text-gray-400 italic">{f.id} (not available on this node)</p>)}
         </div>
       )}
       {data.rendered && (
