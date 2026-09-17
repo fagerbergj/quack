@@ -191,11 +191,14 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 	if text == "" {
 		return "", nil
 	}
-	// scoredHits is the same order/length as resp.Memories (recall's own
-	// invariant) - zip them so the real cosine score reaches the ledger's
-	// memory.recall entry instead of always recording 0 (#1257 review).
-	hits = make([]Delivered, 0, len(resp.Memories))
-	for i, m := range resp.Memories {
+	return fmt.Sprintf(recallInstructions, text), deliveredFrom(resp.Memories, scoredHits)
+}
+
+// deliveredFrom zips recall's parallel entries/scored slices (same order/length) into
+// the ledger/tool-facing Delivered shape - shared by RecallWithHits and View.SearchMemory.
+func deliveredFrom(entries []adkmemory.Entry, scoredHits []scored) []Delivered {
+	hits := make([]Delivered, 0, len(entries))
+	for i, m := range entries {
 		d := Delivered{ID: m.ID, Content: extractText(m), Tier: TierUnverified}
 		if i < len(scoredHits) {
 			d.Score = scoredHits[i].Score
@@ -205,7 +208,7 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 		}
 		hits = append(hits, d)
 	}
-	return fmt.Sprintf(recallInstructions, text), hits
+	return hits
 }
 
 // TopK is the store's configured recall size - the ceiling recall_memory's own k argument

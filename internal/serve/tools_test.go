@@ -1,13 +1,19 @@
 package serve
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
+	adkmemory "google.golang.org/adk/v2/memory"
+
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -81,6 +87,40 @@ func TestResolveToolNames(t *testing.T) {
 				t.Errorf("wantLoadMemory = %v, want %v", gotWantLoadMem, tc.wantWantLoadMem)
 			}
 		})
+	}
+}
+
+// TestWrapMemSvcForRecall_GatesOnWantLoadMemory: only a node whose agent lists
+// load_memory gets its memory View wrapped for recall logging.
+func TestWrapMemSvcForRecall_GatesOnWantLoadMemory(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newMemStoreForTest(t, "task")
+	if _, err := s.Commit(ctx, memory.Scope{Role: "task"}, "explorer", memory.Provenance{},
+		[]memory.Candidate{{Content: "the build uses bazel"}}, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	view := s.View(memory.Scope{Role: "task"}, nil)
+	lgr := ledgertest.NewMemStore()
+	search := func(svc adkmemory.Service) {
+		if _, err := svc.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "build system"}); err != nil {
+			t.Fatalf("SearchMemory: %v", err)
+		}
+	}
+
+	search(wrapMemSvcForRecall(view, false, lgr, "chat1", "node1"))
+	if entries, err := lgr.ReadEntries(ctx, "chat1", 0); err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	} else if len(entries) != 0 {
+		t.Fatalf("entries = %d with wantLoadMemory=false, want 0 (unwrapped)", len(entries))
+	}
+
+	search(wrapMemSvcForRecall(view, true, lgr, "chat1", "node1"))
+	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Kind != ledger.KindMemoryRecall {
+		t.Fatalf("entries = %+v, want exactly one memory.recall", entries)
 	}
 }
 

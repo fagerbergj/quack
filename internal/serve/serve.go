@@ -1461,6 +1461,16 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	return wag, wm, builtins, nil
 }
 
+// wrapMemSvcForRecall arms per-dispatch recall logging when this node's agent has
+// load_memory. ADK gives load_memory and preload the same SearchMemory hook, so this also logs preload's own search - each is its own delivery, so that's correct.
+func wrapMemSvcForRecall(memSvc adkmemory.Service, wantLoadMemory bool, led ledger.LedgerStore, chatID, nodeID string) adkmemory.Service {
+	v, ok := memSvc.(*memory.View)
+	if !ok || !wantLoadMemory {
+		return memSvc
+	}
+	return v.WithRecall(led, chatID, nodeID)
+}
+
 func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
 	// One holder per dispatch: two nodes of this agent run concurrently, and a
 	// shared one would let either move the other's prompt mid-round.
@@ -1487,7 +1497,8 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	srv, err := agent.Serve(wag, b.sessions, b.memSvc, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
+	memSvc := wrapMemSvcForRecall(b.memSvc, b.wantLoadMemory, b.ledgerStore, chatID, nodeID)
+	srv, err := agent.Serve(wag, b.sessions, memSvc, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 	}

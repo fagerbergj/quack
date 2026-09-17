@@ -124,8 +124,8 @@ Supersedes this doc's §5 `ApplyOutcome`/reinforcement description with the foll
 `not_relevant`, `vote_score` (upvotes - downvotes), `tier` (`unverified` |
 `verified`, verified while `supported >= 1`, recomputed on every vote - not sticky, epic #1456 P1), `last_upvoted_at`, `recalls`, `last_recalled_at`. `supported` is the judge- or human-supported subset of `upvotes` (a human `up` vote, epic #1255 P4, counts as support exactly like a judge `supported` vote); `reinforcement_count`/`status=reinforced` are unchanged and kept as a mirror - reinforcement still bumps both, but never `supported` or `tier`.
 
-**Usage tracking.** Every recall delivery (today: the prefill injection in
-`vetting/node.go`) appends a `memory.recall` ledger entry (chat, node, round, source, delivered ids+scores) and directly bumps `recalls`/ `last_recalled_at` on the point (one batched write). The ledger is the source of truth for what a chat retrieved - unlike a vote, a recall never writes a `memory_ops` row; the audit trail for retrieval lives entirely in the ledger (`internal/ledger`'s `KindMemoryRecall`), and `internal/ledger/fold` folds it into per-id recall counts so `quack ledger rebuild` can re-derive the same projection from scratch.
+**Usage tracking.** Every recall delivery - the prefill injection in
+`vetting/node.go`, `recall_memory`, and a native agent's `load_memory` - appends a `memory.recall` ledger entry (chat, node, round, source, delivered ids+scores) and directly bumps `recalls`/ `last_recalled_at` on the point (one batched write). The ledger is the source of truth for what a chat retrieved - unlike a vote, a recall never writes a `memory_ops` row; the audit trail for retrieval lives entirely in the ledger (`internal/ledger`'s `KindMemoryRecall`), and `internal/ledger/fold` folds it into per-id recall counts so `quack ledger rebuild` can re-derive the same projection from scratch.
 
 **Judge votes.** The judge's prompt lists the worker's received memory set
 (id + content); `submit_verdict` gains an optional `memories: [{id, vote, reason}]` (`supported` | `contradicted` | `not_relevant`),

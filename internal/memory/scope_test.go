@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"strings"
 	"testing"
@@ -10,6 +11,9 @@ import (
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 // The bucket model (shared, subject-keyed memory): a memory belongs to a bucket
@@ -282,6 +286,79 @@ func (c *preloadCtx) SearchMemory(_ context.Context, query string) (*adkmemory.S
 	// ADK hands the invocation context through; ContextMock's has no deadline support,
 	// so route the search on a plain one - the View is what's under test here.
 	return c.view.SearchMemory(context.Background(), &adkmemory.SearchRequest{Query: query})
+}
+
+// TestLoadMemorySearchRecordsRecall: a View wired with WithRecall must log a
+// memory.recall ledger entry and bump recalls on every SearchMemory call.
+func TestLoadMemorySearchRecordsRecall(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		const fact = "the release train ships every Tuesday"
+		s := newStore("task", addOp(fact))
+
+		explorer := Scope{Repo: repoA, Role: RoleCoding, User: "u1", Legacy: "code-explorer"}
+		if _, err := s.Commit(ctx, explorer, "code-explorer", Provenance{},
+			[]Candidate{{Content: fact, Metadata: map[string]string{"bucket": "repo"}}}, ""); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+
+		lgr := ledgertest.NewMemStore()
+		v := codingView(s, "code-implementer", repoA, "u1").WithRecall(lgr, "chat1", "node1")
+
+		resp, err := v.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "release schedule"})
+		if err != nil {
+			t.Fatalf("SearchMemory: %v", err)
+		}
+		if len(resp.Memories) != 1 {
+			t.Fatalf("SearchMemory returned %d memories, want 1", len(resp.Memories))
+		}
+		recalledID := resp.Memories[0].ID
+
+		entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+		if err != nil {
+			t.Fatalf("ReadEntries: %v", err)
+		}
+		if len(entries) != 1 || entries[0].Kind != ledger.KindMemoryRecall {
+			t.Fatalf("entries = %+v, want exactly one memory.recall", entries)
+		}
+		if entries[0].NodeID != "node1" {
+			t.Fatalf("NodeID = %q, want %q", entries[0].NodeID, "node1")
+		}
+		var payload ledger.MemoryRecallPayload
+		if err := json.Unmarshal(entries[0].Payload, &payload); err != nil {
+			t.Fatalf("unmarshal payload: %v", err)
+		}
+		if payload.Source != "tool" || len(payload.Entries) != 1 || payload.Entries[0].ID != recalledID {
+			t.Fatalf("payload = %+v, want source=tool with the delivered id", payload)
+		}
+
+		get := func() scored {
+			pts, err := s.idx.list(ctx, []string{"repo:" + repoA}, 0, 10, true, "", false)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			return pts[0]
+		}
+		if g := get(); g.Recalls != 1 {
+			t.Fatalf("recalls = %d after one load_memory search, want 1", g.Recalls)
+		}
+
+		// A second search in the same round (e.g. preload's own automatic search
+		// hitting the same point) is its own delivery, not merged into the first.
+		if _, err := v.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "release schedule"}); err != nil {
+			t.Fatalf("SearchMemory (2nd): %v", err)
+		}
+		entries2, err := lgr.ReadEntries(ctx, "chat1", 0)
+		if err != nil {
+			t.Fatalf("ReadEntries: %v", err)
+		}
+		if len(entries2) != 2 {
+			t.Fatalf("entries after 2nd search = %d, want 2 (each delivery is its own entry)", len(entries2))
+		}
+		if g := get(); g.Recalls != 2 {
+			t.Fatalf("recalls = %d after two searches, want 2 (RecordRecall accumulates)", g.Recalls)
+		}
+	})
 }
 
 // TestPreloadInjectsBucketedMemory covers the PRELOAD path end to end: the
