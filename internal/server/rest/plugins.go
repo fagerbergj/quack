@@ -33,12 +33,23 @@ type Plugins struct {
 	// rebuildSkills swaps in a fresh roster; refusals names non-seed rows
 	// dropped this pass - the same per-row admission boot uses (#1430).
 	rebuildSkills func() (refusals map[string]error, err error)
+	// mcpDeclared reports, by row name, which plugins currently declare an
+	// mcp.json server - the note on the wire row.
+	mcpDeclared func() map[string]bool
 }
 
-// NewPlugins builds the handler's registry access. rebuildSkills may be nil
-// (no-op) for a caller that doesn't need the roster kept live, e.g. a test.
-func NewPlugins(reg pluginreg.FetchRegistry, root string, seed []string, rebuildSkills func() (map[string]error, error)) *Plugins {
-	return &Plugins{reg: reg, root: root, seed: seed, rebuildSkills: rebuildSkills}
+// NewPlugins builds the handler's registry access. rebuildSkills and
+// mcpDeclared may be nil (no-op) for a caller not keeping the roster live.
+func NewPlugins(reg pluginreg.FetchRegistry, root string, seed []string, rebuildSkills func() (map[string]error, error), mcpDeclared func() map[string]bool) *Plugins {
+	return &Plugins{reg: reg, root: root, seed: seed, rebuildSkills: rebuildSkills, mcpDeclared: mcpDeclared}
+}
+
+// declaresMCP reports whether name currently declares an mcp.json server.
+func (p *Plugins) declaresMCP(name string) bool {
+	if p == nil || p.mcpDeclared == nil {
+		return false
+	}
+	return p.mcpDeclared()[name]
 }
 
 // rebuild re-resolves the native skill roster. A non-nil err is fatal (a
@@ -78,11 +89,14 @@ func (p *Plugins) allRows(ctx context.Context) ([]pluginreg.Plugin, error) {
 	return append(rows, pluginreg.EmbeddedQuackPlugin()), nil
 }
 
-func pluginWire(root string, p pluginreg.Plugin) schema.Plugin {
+func pluginWire(root string, p pluginreg.Plugin, declaresMCP bool) schema.Plugin {
 	w := schema.Plugin{
 		Name:   p.Name,
 		Entry:  p.Entry,
 		Source: schema.PluginSource(p.Source),
+	}
+	if declaresMCP {
+		w.DeclaresMcpServers = &declaresMCP
 	}
 	if p.Owner != "" {
 		w.Owner = &p.Owner
@@ -147,7 +161,7 @@ func (h *Handler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	}
 	wire := make([]schema.Plugin, len(rows))
 	for i, p := range rows {
-		wire[i] = pluginWire(h.plugins.root, p)
+		wire[i] = pluginWire(h.plugins.root, p, h.plugins.declaresMCP(p.Name))
 	}
 	writeJSON(w, http.StatusOK, schema.PluginList{Plugins: wire})
 }
@@ -207,7 +221,7 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 		errMsg(w, http.StatusUnprocessableEntity, refused.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, pluginWire(h.plugins.root, fetched))
+	writeJSON(w, http.StatusCreated, pluginWire(h.plugins.root, fetched, h.plugins.declaresMCP(fetched.Name)))
 }
 
 // DeletePlugin removes a row and its clone. "quack" is reserved outright,
@@ -299,7 +313,7 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 		errMsg(w, http.StatusUnprocessableEntity, refused.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, pluginWire(h.plugins.root, fetched))
+	writeJSON(w, http.StatusOK, pluginWire(h.plugins.root, fetched, h.plugins.declaresMCP(fetched.Name)))
 }
 
 // UpdateAllPlugins fetches only the rows CheckUpdate reports behind (epic:
@@ -340,7 +354,7 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 		if refused, ok := refusals[p.Name]; ok && p.Error == "" {
 			p.Error = refused.Error()
 		}
-		wire[i] = pluginWire(h.plugins.root, p)
+		wire[i] = pluginWire(h.plugins.root, p, h.plugins.declaresMCP(p.Name))
 	}
 	writeJSON(w, http.StatusOK, schema.PluginList{Plugins: wire})
 }

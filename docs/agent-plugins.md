@@ -8,7 +8,7 @@ quack loads plugins packaged per the [Agent Plugins](https://agent-plugins.org/)
 | MCP servers | `mcp.json` | Yes (spec §7.2) |
 | quack extension declarations | `plugin.json` → `extensions["io.github.fagerbergj.quack"]` | No (spec §8) |
 
-Skills are pulled from a dynamic **plugin registry** at run time (epic #1427): each plugin is a registry row, cloned to disk, fetched at boot and refreshable from the UI or REST with no rebuild. A fetched plugin contributes its `skills/` tree only. Its `mcp.json` is ignored with a warning ([#1434](https://github.com/fagerbergj/quack/issues/1434)); MCP servers and compiled extension modules come from local roots and the binary, as described below.
+Skills are pulled from a dynamic **plugin registry** at run time (epic #1427): each plugin is a registry row, cloned to disk, fetched at boot and refreshable from the UI or REST with no rebuild. A fetched plugin's `mcp.json` loads exactly like a local root's - adding the row is the trust boundary, not a separate MCP approval step (see [Security](#security)). Compiled extension modules still come only from the binary, as described below.
 
 ## The registry
 
@@ -88,6 +88,8 @@ A fetch failure - unreachable remote, moved/deleted ref, etc. - is stored on the
 
 A fetch or update rebuilds the skill roster with no server restart: native agents' skill toolsets re-list on their next round, and an ACP-agent spawn rebuilds `skill_paths` from the registry on every round.
 
+MCP servers are different: they're enumerated once at boot and their tools baked into each native agent's toolset for that process's whole life, the same way local-root MCP servers always worked. A fetch or update that changes a plugin's `mcp.json` does **not** spawn or re-enumerate anything live - the new servers start at the next restart. The wire row's `declares_mcp_servers` flags whether the plugin *currently* ships a server, so this is visible without checking the logs; the tools an agent can call this session are still whatever booted.
+
 ### Admission
 
 A newly fetched or re-fetched plugin still runs the same checks as any other (linked module, `config: "required"`; see [Failure philosophy](#failure-philosophy)), but what a failure does depends on where the row came from:
@@ -103,7 +105,9 @@ Every `agent.invoke` ledger entry for an ACP round records `plugins: [{name, sha
 
 ### Security
 
-A registry plugin's clone is authored by pushing to its git remote; quack never edits a clone's contents, it only checks it out at a ref. Sandboxed children (ACP subprocesses, plugin MCP servers from local roots) get read-only access to `plugins.root`, same as any other plugin root; a fetched plugin's `mcp.json` is ignored, so no MCP server is ever spawned against a registry clone. Inside the pi ACP shim, skills are loaded by directory name on disk, so pi sees bare skill directory names (e.g. `format-markdown`), not plugin names and not the `plugin:skill` qualifier native `list_skills` shows.
+Adding a plugin - a `plugins.seed` entry, or `POST /api/v1/plugins` from the Plugins page - is the trust boundary. Once a plugin is registered, its `mcp.json` loads exactly like a local root's: quack does not ask for a second approval before spawning a server it declares. A registry plugin's clone is authored by pushing to its git remote, and quack never edits a clone's contents, only checks it out at a ref - so **a tracked (unpinned) `github:` entry can start running a different server the next time it's fetched, with no further click from the operator**. Pin any plugin that ships MCP servers (`github:owner/repo@ref`) so a push to its remote can't change what runs without an operator editing the row.
+
+Every MCP server subprocess, fetched plugin or local root alike, gets read-only access to its own plugin root and a writable `PLUGIN_DATA` under the workspace root (`${workspace.root}/plugins/<name>`, outside the clone and outside `plugins.root`), through the same sandbox seam ACP subprocesses use (`workspace.WrapArgv`). Inside the pi ACP shim, skills are loaded by directory name on disk, so pi sees bare skill directory names (e.g. `format-markdown`), not plugin names and not the `plugin:skill` qualifier native `list_skills` shows.
 
 ## The namespace
 

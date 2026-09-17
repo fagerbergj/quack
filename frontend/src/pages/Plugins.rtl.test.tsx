@@ -51,6 +51,18 @@ describe('Plugins touch targets', () => {
   })
 })
 
+describe('Plugins row MCP restart note', () => {
+  it('shows the restart note only when the row declares MCP servers', () => {
+    renderRow({ name: 'dotagents', entry: 'github:fagerbergj/dotagents', source: 'github', declares_mcp_servers: true })
+    expect(screen.getByText('MCP servers: apply at restart')).toBeTruthy()
+  })
+
+  it('omits the note for a row with no mcp.json', () => {
+    renderRow({ name: 'dotagents', entry: 'github:fagerbergj/dotagents', source: 'github' })
+    expect(screen.queryByText('MCP servers: apply at restart')).toBeNull()
+  })
+})
+
 describe('Plugins row error rendering', () => {
   const longError = 'git clone: fatal: unable to access \'https://github.com/acme/broken.git/\': Could not resolve host: github.com\nfatal: clone of \'https://github.com/acme/broken.git\' into submodule path \'plugins/broken/repo\' failed\nretry 3/3 failed after 12.4s, giving up'
 

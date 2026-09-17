@@ -604,6 +604,9 @@ type skillsInit struct {
 	// (if any) non-seed rows were refused this pass - review#2: rebuild uses
 	// the SAME per-row admission as boot, not an all-or-nothing gate.
 	rebuildSkills func() (refusals map[string]error, err error)
+	// mcpDeclared reports, by row name, which plugins' mcp.json declares a
+	// server - REST's note; agent tool wiring itself stays boot-fixed.
+	mcpDeclared func() map[string]bool
 	// reg is the SAME registry bootPluginRegistry opened - initHTTP/mountHTTP
 	// reuse it instead of opening a second connection to a DB-backed store.
 	reg pluginreg.FetchRegistry
@@ -628,6 +631,8 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	if err != nil {
 		return skillsInit{}, err
 	}
+	var mcpDeclaredPtr atomic.Pointer[map[string]bool]
+	mcpDeclaredPtr.Store(mcpDeclaredNames(plugins))
 	// swappable is builtinSkillSrc's registry-derived half; every consumer
 	// below holds this SAME instance, so rebuildSkills' Swap reaches native
 	// agents' next round with no rebuild plumbing beyond this one pointer.
@@ -664,12 +669,14 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 			return nil, err
 		}
 		swappable.Swap(newSkillSource(admitted))
+		mcpDeclaredPtr.Store(mcpDeclaredNames(admitted))
 		return refusals, nil
 	}
 	return skillsInit{
 		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
 		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
-		reg: reg,
+		mcpDeclared: func() map[string]bool { return *mcpDeclaredPtr.Load() },
+		reg:         reg,
 	}, nil
 }
 
@@ -814,8 +821,8 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 }
 
 // mounts the HTTP handler and starts the workspace GC
-func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
-	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills, pluginReg)
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), mcpDeclared func() map[string]bool, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills, mcpDeclared, pluginReg)
 	if err != nil {
 		return nil, err
 	}
@@ -899,7 +906,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills, skills.reg)
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills, skills.mcpDeclared, skills.reg)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1955,7 +1962,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	return orch, nil
 }
 
-func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), mcpDeclared func() map[string]bool, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
@@ -1978,7 +1985,7 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 	}
 
 	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
-	restPlugins := rest.NewPlugins(pluginReg, cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills)
+	restPlugins := rest.NewPlugins(pluginReg, cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills, mcpDeclared)
 	restHandler.SetPlugins(restPlugins)
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
 

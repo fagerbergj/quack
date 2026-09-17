@@ -190,16 +190,9 @@ func TestAdmitPlugins_PersistsRefusalOnTheRegistryRow(t *testing.T) {
 // mcpJSONBody is a minimal, schema-valid mcp.json declaring one stdio server.
 const mcpJSONBody = `{"$schema":"https://agent-plugins.org/schemas/1.1.0/mcp.schema.json","mcpServers":{"foo":{"type":"stdio","command":"echo"}}}`
 
-// TestResolveRegistryPlugins_GithubRowMCPIsClearedWithWarning is the epic's
-// documented scope (#1427: "mcp.json in a fetched plugin is ignored with a
-// warning, follow-up #1434") - a github: row's mcp.json must not spawn
-// stdio servers, unlike a local root's.
-func TestResolveRegistryPlugins_GithubRowMCPIsClearedWithWarning(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	defer slog.SetDefault(prev)
-
+// TestResolveRegistryPlugins_GithubRowKeepsMCPServers: a fetched plugin's
+// mcp.json loads exactly like a local root's, same PLUGIN_ROOT.
+func TestResolveRegistryPlugins_GithubRowKeepsMCPServers(t *testing.T) {
 	registryRoot := t.TempDir()
 	clone := pluginreg.CloneDir(registryRoot, "ghrepo")
 	if err := os.MkdirAll(clone, 0o755); err != nil {
@@ -218,11 +211,63 @@ func TestResolveRegistryPlugins_GithubRowMCPIsClearedWithWarning(t *testing.T) {
 	if len(plugins) != 1 {
 		t.Fatalf("resolveRegistryPlugins = %d plugins, want 1", len(plugins))
 	}
-	if len(plugins[0].MCPServers) != 0 {
-		t.Fatalf("github row MCPServers = %v, want cleared (epic scope: fetched plugins ignore mcp.json)", plugins[0].MCPServers)
+	if len(plugins[0].MCPServers) != 1 {
+		t.Fatalf("github row MCPServers = %v, want the one declared server kept", plugins[0].MCPServers)
 	}
-	if !strings.Contains(buf.String(), "mcp.json ignored") || !strings.Contains(buf.String(), "ghrepo") || !strings.Contains(buf.String(), "#1434") {
-		t.Fatalf("log output = %q, want a warning naming ghrepo and #1434", buf.String())
+	if plugins[0].Root != clone {
+		t.Fatalf("github row Root = %q, want the clone dir %q (PLUGIN_ROOT must be the clone root)", plugins[0].Root, clone)
+	}
+}
+
+// TestResolveRegistryPlugins_GithubRowBrokenMCPWarnsAndDropsOnlyItsTools: a
+// broken mcp.json degrades only that plugin's MCP tools, warned.
+func TestResolveRegistryPlugins_GithubRowBrokenMCPWarnsAndDropsOnlyItsTools(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	registryRoot := t.TempDir()
+	broken := pluginreg.CloneDir(registryRoot, "broken")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePluginManifest(t, broken, "broken")
+	if err := os.WriteFile(filepath.Join(broken, "mcp.json"), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := pluginreg.CloneDir(registryRoot, "other")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePluginManifest(t, other, "other")
+	if err := os.WriteFile(filepath.Join(other, "mcp.json"), []byte(mcpJSONBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows := []pluginreg.Plugin{
+		{Name: "broken", Source: pluginreg.SourceGitHub, Entry: "github:acme/broken", Owner: "acme", Repo: "broken"},
+		{Name: "other", Source: pluginreg.SourceGitHub, Entry: "github:acme/other", Owner: "acme", Repo: "other"},
+	}
+
+	plugins, err := resolveRegistryPlugins(registryRoot, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plugins) != 2 {
+		t.Fatalf("resolveRegistryPlugins = %d plugins, want 2 (broken mcp.json must not drop the plugin itself)", len(plugins))
+	}
+	byName := map[string]plugin.Plugin{}
+	for _, p := range plugins {
+		byName[p.Name] = p
+	}
+	if len(byName["broken"].MCPServers) != 0 {
+		t.Fatalf("broken row MCPServers = %v, want none", byName["broken"].MCPServers)
+	}
+	if len(byName["other"].MCPServers) != 1 {
+		t.Fatalf("other row MCPServers = %v, want the one declared server kept", byName["other"].MCPServers)
+	}
+	if !strings.Contains(buf.String(), "mcp.json invalid") || !strings.Contains(buf.String(), "broken") {
+		t.Fatalf("log output = %q, want a warning naming broken", buf.String())
 	}
 }
 

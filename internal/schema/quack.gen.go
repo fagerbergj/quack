@@ -1154,6 +1154,9 @@ type PauseReason string
 
 // Plugin defines model for Plugin.
 type Plugin struct {
+	// DeclaresMcpServers This row's mcp.json declares at least one server. MCP servers are enumerated once at boot; adding or updating this row over the API takes effect only after a restart.
+	DeclaresMcpServers *bool `json:"declares_mcp_servers,omitempty"`
+
 	// Entry The raw entry string this row was created from. Empty for the embedded row.
 	Entry string `json:"entry"`
 
