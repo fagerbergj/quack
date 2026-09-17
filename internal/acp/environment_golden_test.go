@@ -58,6 +58,6 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 	ctx := context.Background()
 	checkEnvGolden(t, "environment.txt", norm(populated, environmentBlock(ctx, nil, populated, workspace.Caps{})))
 	checkEnvGolden(t, "environment.empty.txt", norm(empty, environmentBlock(ctx, nil, empty, workspace.Caps{})))
-	ro := workspace.Caps{ReadOnly: true, HomeDir: "/home/agent"}
+	ro := workspace.Caps{ReadOnly: true, HomeDir: "/home/agent", Env: map[string]string{"GOMODCACHE": "/usr/local/go/pkg/mod"}}
 	checkEnvGolden(t, "environment.readonly.txt", norm(populated, environmentBlock(ctx, nil, populated, ro)))
 }

@@ -22,7 +22,7 @@ const maxEnvironmentEntries = 200
 // grounding the round's prompt: absolute cwd, whether it's a git repo (branch
 // + short HEAD sha when so), and the top-level entries. Observation, not instruction - this is what replaces the old "do not clone the repo, it's already here" prose (agents/code-explorer/prompt.md): prose asserting where the repo is competes with a task naming one and loses; a plain fact about the actual filesystem does not compete with anything. Deterministic given (cwd, repo state), so it costs nothing to include on every round.
 func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string, caps workspace.Caps) string {
-	f := envFacts{Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly}
+	f := envFacts{Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly, GoModCache: caps.Env["GOMODCACHE"]}
 	f.Branch, f.Sha, f.Git = gitInfo(ctx, cwd, caps)
 	entries, truncated := topLevelEntries(cwd)
 	f.Entries, f.Truncated = strings.Join(entries, ", "), truncated
@@ -57,6 +57,7 @@ type envFacts struct {
 	MaxEntries int
 	ReadOnly   bool
 	Writable   string
+	GoModCache string
 }
 
 // envTemplates caches the parsed system/acp.environment per version.
