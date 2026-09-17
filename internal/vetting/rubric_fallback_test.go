@@ -83,8 +83,9 @@ func TestLoadConstitutionFallsBackWhenPathMissing(t *testing.T) {
 	}
 }
 
-// TestReadWithFallbackReadsCustomPathFromDisk: a custom path that DOES
-// resolve on disk never goes through artifactsrc - zero Artifact.
+// TestReadWithFallbackReadsCustomPathFromDisk: a custom path that DOES resolve
+// on disk never goes through artifactsrc, but still gets a real, content-hashed
+// Artifact (FileArtifact) - never an unattributed one.
 func TestReadWithFallbackReadsCustomPathFromDisk(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "custom.md")
 	if err := os.WriteFile(p, []byte("custom content"), 0o644); err != nil {
@@ -97,8 +98,8 @@ func TestReadWithFallbackReadsCustomPathFromDisk(t *testing.T) {
 	if string(raw) != "custom content" {
 		t.Errorf("raw = %q, want custom content", raw)
 	}
-	if art.Name != "" {
-		t.Errorf("art = %+v, want zero (a disk read never resolves through artifactsrc)", art)
+	if art.Name != p || art.Source != artifactsrc.StaticSource || art.VersionID == "" {
+		t.Errorf("art = %+v, want name %q, source static, a non-empty version id", art, p)
 	}
 }
 
@@ -128,8 +129,8 @@ func TestLoadRubricFileCustomYAMLPath(t *testing.T) {
 	if err := os.WriteFile(valid, []byte("criteria: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, art, err := loadRubricFile(context.Background(), nil, valid); err != nil || art.Name != "" {
-		t.Errorf("loadRubricFile(valid custom yaml) = art %+v err %v, want zero art, no error", art, err)
+	if _, _, _, art, err := loadRubricFile(context.Background(), nil, valid); err != nil || art.Name != valid || art.VersionID == "" {
+		t.Errorf("loadRubricFile(valid custom yaml) = art %+v err %v, want a content-hashed FileArtifact named %q, no error", art, err, valid)
 	}
 
 	broken := filepath.Join(dir, "broken.yaml")

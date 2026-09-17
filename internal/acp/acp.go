@@ -51,9 +51,13 @@ type Options struct {
 	// round.go prepends it only on a FRESH session, so on a pinned process an
 	// edited prompt lands on the next node dispatch, not the next round.
 	Preamble func(ctx context.Context) string
-	// PreambleArtifact mirrors Preamble's resolution as ledger provenance -
+	// PreambleArtifact reads back the exact artifact the last Preamble build used -
 	// called under the same !fromPinned condition, never on a reused session.
 	PreambleArtifact func(ctx context.Context) artifactsrc.Artifact
+	// MemoryArtifact is the bundle's memory.md, whose body Preamble folds into the
+	// same behaviour text as the system prompt - static for this agent's lifetime,
+	// like memGuidance itself (was recorded for native rounds, not ACP - #1455 B1).
+	MemoryArtifact artifactsrc.Artifact
 	// Prompts resolves system/acp.environment for the round's environment block.
 	Prompts         *artifactsrc.Resolver
 	Jail            *workspace.Jail
@@ -141,6 +145,10 @@ func New(name, description string, opts Options) (*Agent, error) {
 	a.Agent = inner
 	return a, nil
 }
+
+// OptionsForTesting exposes a's constructed Options - a boot-wiring caller
+// (serve's buildACPNode) has no other way to assert what it actually passed in.
+func OptionsForTesting(a *Agent) Options { return a.opts }
 
 // run is the plain-agent path for Run outside a workflow node.
 func (a *Agent) run(ic adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
@@ -311,9 +319,14 @@ func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact,
 	if envArt.Name != "" {
 		artifacts = append(artifacts, ledger.ArtifactRef{Name: envArt.Name, Source: envArt.Source, VersionID: envArt.VersionID})
 	}
-	if !fromPinned && a.opts.PreambleArtifact != nil {
-		if art := a.opts.PreambleArtifact(ctx); art.Name != "" {
-			artifacts = append(artifacts, ledger.ArtifactRef{Name: art.Name, Source: art.Source, VersionID: art.VersionID})
+	if !fromPinned {
+		if a.opts.PreambleArtifact != nil {
+			if art := a.opts.PreambleArtifact(ctx); art.Name != "" {
+				artifacts = append(artifacts, ledger.ArtifactRef{Name: art.Name, Source: art.Source, VersionID: art.VersionID})
+			}
+		}
+		if mem := a.opts.MemoryArtifact; mem.Name != "" {
+			artifacts = append(artifacts, ledger.ArtifactRef{Name: mem.Name, Source: mem.Source, VersionID: mem.VersionID})
 		}
 	}
 	return artifacts
@@ -387,7 +400,9 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	if a.opts.Plugins != nil {
 		plugins = a.opts.Plugins()
 	}
-	artifacts := a.roundArtifacts(ctx, envArt, fromPinned)
+	// artifacts is filled in below, AFTER steerHooks - Preamble's build (called
+	// from steerHooks) is what stashes PreambleArtifact's value for this round.
+	var artifacts []ledger.ArtifactRef
 	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err, plugins, artifacts) }()
 
 	if !fromPinned {
@@ -410,6 +425,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 
 	outbound, unregSteer := a.steerHooks(ctx, h, outbound, steerChatID, steerNodeID, fromPinned)
 	defer unregSteer()
+	artifacts = a.roundArtifacts(ctx, envArt, fromPinned)
 
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 

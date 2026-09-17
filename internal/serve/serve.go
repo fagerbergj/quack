@@ -1333,14 +1333,26 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		return nil, fmtErr(name, "skills: %v", err)
 	}
 	wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
-	// Resolved once at the one point the preamble is composed and immediately
-	// consumed (acp/round.go's steerHooks), so nothing swaps it mid-round.
+	// Resolved once at the one point the preamble is composed and consumed (steerHooks),
+	// so nothing swaps it mid-round; promptArt stashes that artifact for PreambleArtifact
+	// below - a second independent resolve could fall back differently and disagree.
+	var promptArtMu sync.Mutex
+	var promptArt artifactsrc.Artifact
 	preamble := promptbuilder.CacheByDay(
 		func(ctx context.Context) string { return bundle.ResolvePrompt(ctx, res).VersionID },
 		func(ctx context.Context) string {
-			behaviour := agent.BehaviourLayer(strings.TrimSpace(bundle.ResolvePrompt(ctx, res).Body), memGuidance)
+			art := bundle.ResolvePrompt(ctx, res)
+			promptArtMu.Lock()
+			promptArt = art
+			promptArtMu.Unlock()
+			behaviour := agent.BehaviourLayer(strings.TrimSpace(art.Body), memGuidance)
 			return promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, true, behaviour, grading, wsBlock)
 		})
+	preambleArtifact := func(context.Context) artifactsrc.Artifact {
+		promptArtMu.Lock()
+		defer promptArtMu.Unlock()
+		return promptArt
+	}
 	// skill_paths is filled in per spawn (proc.go's mergeSkillPaths), not
 	// baked in here - see skillPathsFn below.
 	env := piACPEnv(prov, ac, nil)
@@ -1361,7 +1373,8 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		Plugins:              pluginsFn,
 		Home:                 workspaceCaps.HomeDir,
 		Preamble:             preamble,
-		PreambleArtifact:     func(ctx context.Context) artifactsrc.Artifact { return bundle.ResolvePrompt(ctx, res) },
+		PreambleArtifact:     preambleArtifact,
+		MemoryArtifact:       memArt,
 		Prompts:              res,
 		Jail:                 jail,
 		UserID:               localUserID,
@@ -2394,9 +2407,9 @@ func acpRegistryExtraRO(cfg *config.Config) func() []string {
 	}
 }
 
-// acpRegistryPluginRefs: the round's ledger provenance = every registered row
-// plus the always-in-scope embedded quack bundle (P1 scope); a row named
-// "quack" wins over the synthetic embedded ref it shadows.
+// acpRegistryPluginRefs: the round's ledger provenance = every registered row that
+// actually admitted (a refusal keeps its Error-tagged row rather than disappearing,
+// per persistPluginRefusal) plus the always-in-scope embedded quack bundle (P1 scope).
 func acpRegistryPluginRefs(cfg *config.Config, reg pluginreg.FetchRegistry) func() []ledger.PluginRef {
 	return func() []ledger.PluginRef {
 		rows, err := reg.List(context.Background())
@@ -2404,9 +2417,12 @@ func acpRegistryPluginRefs(cfg *config.Config, reg pluginreg.FetchRegistry) func
 			rows = nil
 		}
 		have := make(map[string]bool, len(rows))
-		refs := make([]ledger.PluginRef, len(rows))
-		for i, p := range rows {
-			refs[i] = ledger.PluginRef{Name: p.Name, SHA: p.SHA}
+		var refs []ledger.PluginRef
+		for _, p := range rows {
+			if p.Error != "" {
+				continue
+			}
+			refs = append(refs, ledger.PluginRef{Name: p.Name, SHA: p.SHA})
 			have[p.Name] = true
 		}
 		if !have["quack"] {

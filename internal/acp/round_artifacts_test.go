@@ -39,6 +39,7 @@ func TestRound_EmitsArtifactsAndPlugins(t *testing.T) {
 		PreambleArtifact: func(context.Context) artifactsrc.Artifact {
 			return artifactsrc.Artifact{Name: "system/code-implementer", Source: "static", VersionID: "p1"}
 		},
+		MemoryArtifact: artifactsrc.Artifact{Name: "memory/code-implementer", Source: "static", VersionID: "m1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,8 +65,9 @@ func TestRound_EmitsArtifactsAndPlugins(t *testing.T) {
 	want := []ledger.ArtifactRef{
 		{Name: "system/acp.environment", Source: "static", VersionID: "e1"},
 		{Name: "system/code-implementer", Source: "static", VersionID: "p1"},
+		{Name: "memory/code-implementer", Source: "static", VersionID: "m1"},
 	}
-	if len(artifacts) != 2 || artifacts[0] != want[0] || artifacts[1] != want[1] {
+	if len(artifacts) != 3 || artifacts[0] != want[0] || artifacts[1] != want[1] || artifacts[2] != want[2] {
 		t.Errorf("quack.artifacts = %+v, want %+v", artifacts, want)
 	}
 	if got := attrs["quack.plugins"].AsString(); got != `[{"name":"dotagents","sha":"abc123"}]` {

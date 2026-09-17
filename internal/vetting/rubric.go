@@ -20,12 +20,12 @@ var defaultArtifact = map[string]string{
 }
 
 // readWithFallback: a path that resolves nowhere falls back to defaultPath's
-// artifact instead of hard-failing. The returned Artifact is zero for a custom
-// path read straight off disk - that value never came through artifactsrc.
+// artifact instead of hard-failing. A custom path read straight off disk still
+// gets a real Artifact (FileArtifact's content hash), like ResolveBundleFile.
 func readWithFallback(ctx context.Context, res *artifactsrc.Resolver, path, defaultPath string) ([]byte, artifactsrc.Artifact, error) {
 	if path != defaultPath {
 		if raw, err := bundledir.ReadFile(path); err == nil {
-			return raw, artifactsrc.Artifact{}, nil
+			return raw, artifactsrc.FileArtifact(path, raw), nil
 		}
 	}
 	art, err := res.Resolve(ctx, defaultArtifact[defaultPath])
