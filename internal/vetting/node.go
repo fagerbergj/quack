@@ -677,7 +677,7 @@ func (g *gateRun) boundaryCheck() (int, string) {
 func (g *gateRun) commitFinal(answer string, res GateResult, episodicRoundsWritten int) string {
 	act := g.actFor(answer)
 	// Judge-less/aborted dispatches never called prepareJudge; a completed judge path
-	// already counted everything act.recalled has, so this merge finds nothing new (#1471).
+	// already counted everything act.recalled has, so this merge finds nothing new.
 	g.receivedMemories = mergeAndCountRecalledMemories(g.nodeCtx, g.cfg, g.advisorToken, g.receivedMemories, act.recalled)
 	// Fold in ACP memory MCP stage_memory from all rounds; unregister after drain (straggler calls fail).
 	if g.advisorToken != "" {
@@ -790,7 +790,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// Judge/revise loop: judge, fold deterministic criteria, revise on fail.
 		outcome := runJudgeRounds(g, question, answer, sfx)
 		// commitFinal (a judge-less node, or one that never reached the judge) resumes
-		// counting recalls from exactly what this loop already bumped (#1471).
+		// counting recalls from exactly what this loop already bumped.
 		g.receivedMemories = outcome.receivedMemories
 		if outcome.err != nil {
 			return "", GateResult{}, outcome.err
@@ -849,7 +849,7 @@ type judgeRounds struct {
 // runJudgeRounds: the judge/revise loop - judge, fold deterministic criteria, revise on fail.
 func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (outcome judgeRoundOutcome) {
 	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, markerLine: g.markerLine, advisorToken: g.advisorToken, turnID: g.turnID, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log}
-	// receivedMemories rides every return path so commitFinal resumes counting from here (#1471).
+	// receivedMemories rides every return path so commitFinal resumes counting from here.
 	defer func() { outcome.receivedMemories = j.receivedMemories }()
 	// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
 	for round := 1; j.judge != nil && j.cfg.JudgeRounds > 0 && round <= j.cfg.JudgeRounds+1; round++ {
@@ -1164,7 +1164,7 @@ type judgeRoundOutcome struct {
 	checksSkipReason      string
 	episodicRoundsWritten int
 	// receivedMemories: the round loop's final merged/counted set, on every exit path -
-	// commitFinal resumes from it so its own merge only counts ids the loop never saw (#1471).
+	// commitFinal resumes from it so its own merge only counts ids the loop never saw.
 	receivedMemories []memory.Delivered
 }
 

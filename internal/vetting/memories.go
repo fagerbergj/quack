@@ -128,7 +128,7 @@ func mergeMemoryHits(base, add []memory.Delivered) (merged, added []memory.Deliv
 }
 
 // mergeAndCountRecalledMemories merges add plus a live ACP session's Recalled snapshot into
-// received, bumping recalls only for new ids - shared by prepareJudge and commitFinal so a judge-less dispatch still counts and neither double-counts (#1471).
+// received, bumping recalls only for new ids - shared by prepareJudge and commitFinal so a judge-less dispatch still counts and neither double-counts.
 func mergeAndCountRecalledMemories(ctx context.Context, cfg Config, advisorToken string, received, add []memory.Delivered) []memory.Delivered {
 	var addedIDs []memory.Delivered
 	received, addedIDs = mergeMemoryHits(received, add)

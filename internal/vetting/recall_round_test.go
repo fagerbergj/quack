@@ -1,6 +1,5 @@
-// recall_round_test.go: #1470/#1471 - drives a real gated dispatch (not a
-// hand-rolled dedup) to prove the native recall_memory bump happens once per
-// round, on the judge path and the judge-less/judge-failed commitFinal path.
+// recall_round_test.go drives a real gated dispatch (not a hand-rolled dedup) to prove the
+// native recall_memory bump happens once per round, on both the judge and commitFinal paths.
 package vetting
 
 import (
