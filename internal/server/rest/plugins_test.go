@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/pluginreg/pluginregtest"
 	"github.com/fagerbergj/quack/internal/schema"
@@ -49,7 +50,7 @@ func newPluginsTestHandler(t *testing.T) (*Handler, *atomic.Int64) {
 	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) {
 		rebuilds.Add(1)
 		return nil, nil
-	}))
+	}, nil))
 	return h, &rebuilds
 }
 
@@ -106,6 +107,61 @@ func TestCreatePluginRoundTrip(t *testing.T) {
 	}
 	if !slices.Contains(names, "widgets") || !slices.Contains(names, "quack") {
 		t.Fatalf("ListPlugins = %v, want widgets and the embedded quack row", names)
+	}
+}
+
+// mcpJSONBody is a minimal, schema-valid mcp.json declaring one stdio server.
+const mcpJSONBody = `{"$schema":"https://agent-plugins.org/schemas/1.1.0/mcp.schema.json","mcpServers":{"foo":{"type":"stdio","command":"echo"}}}`
+
+// TestPluginNoteFlagsDeclaredMCPServersAcrossUpdate: declares_mcp_servers
+// tracks the row's CURRENT clone on every Create/Update call.
+func TestPluginNoteFlagsDeclaredMCPServersAcrossUpdate(t *testing.T) {
+	bare, work := newFixtureRepo(t)
+	if err := os.WriteFile(filepath.Join(work, "plugin.json"), []byte(`{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"widgets"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pluginregtest.RunGit(t, work, "add", ".")
+	pluginregtest.RunGit(t, work, "commit", "--quiet", "-m", "add plugin.json")
+	pluginregtest.RunGit(t, work, "push", "--quiet", "origin", "main")
+	withFixedRemote(t, bare)
+
+	root := t.TempDir()
+	reg := pluginreg.NewFSRegistry(root)
+	h := &Handler{}
+	// mcpDeclared mirrors what internal/serve wires at boot: resolve the
+	// row's CURRENT clone and report whether its mcp.json declares a server.
+	mcpDeclared := func() map[string]bool {
+		ps, _ := plugin.Resolve([]string{filepath.Join(root, "widgets", "repo")})
+		m := map[string]bool{}
+		if len(ps) == 1 && len(ps[0].MCPServers) > 0 {
+			m["widgets"] = true
+		}
+		return m
+	}
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, nil }, mcpDeclared))
+
+	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
+	p := decodePlugin(t, w)
+	if p.DeclaresMcpServers != nil {
+		t.Fatalf("DeclaresMcpServers = %v before mcp.json exists, want unset", p.DeclaresMcpServers)
+	}
+
+	if err := os.WriteFile(filepath.Join(work, "mcp.json"), []byte(mcpJSONBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pluginregtest.RunGit(t, work, "add", ".")
+	pluginregtest.RunGit(t, work, "commit", "--quiet", "-m", "add mcp.json")
+	pluginregtest.RunGit(t, work, "push", "--quiet", "origin", "main")
+
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	w = httptest.NewRecorder()
+	h.UpdatePlugin(w, r, "widgets")
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdatePlugin status = %d, body %s", w.Code, w.Body.String())
+	}
+	p = decodePlugin(t, w)
+	if p.DeclaresMcpServers == nil || !*p.DeclaresMcpServers {
+		t.Fatalf("DeclaresMcpServers = %v after mcp.json is added and fetched, want true", p.DeclaresMcpServers)
 	}
 }
 
@@ -398,7 +454,7 @@ func TestRebuildRefusalIs422AndStoresError(t *testing.T) {
 	refusal := errors.New(`plugin "widgets" declares module "x", which is not linked`)
 	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) {
 		return map[string]error{"widgets": refusal}, nil
-	}))
+	}, nil))
 
 	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
 	if w.Code != http.StatusUnprocessableEntity {

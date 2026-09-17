@@ -157,21 +157,28 @@ func registryPluginRoots(registryRoot string, rows []pluginreg.Plugin) []string 
 	return out
 }
 
-// resolveRegistryPlugins resolves each row's root, stamps the REGISTRY ROW
-// NAME onto each result (#1427 S3, never plugin.json's), and clears a
-// github-sourced row's mcp.json (ignored with a warning until #1434).
+// mcpDeclaredNames names every plugin whose mcp.json declared a server -
+// REST's live note; the agents' actual tool wiring stays boot-fixed.
+func mcpDeclaredNames(plugins []plugin.Plugin) *map[string]bool {
+	m := make(map[string]bool, len(plugins))
+	for _, p := range plugins {
+		if len(p.MCPServers) > 0 {
+			m[p.Name] = true
+		}
+	}
+	return &m
+}
+
+// resolveRegistryPlugins resolves each row's root and stamps the registry row
+// name onto each result, never plugin.json's own name.
 func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plugin.Plugin, error) {
 	nameByAbsRoot := make(map[string]string, len(rows))
-	githubAbsRoot := make(map[string]bool, len(rows))
 	for _, p := range rows {
 		if p.Source == pluginreg.SourceEmbedded {
 			continue
 		}
 		if abs, err := filepath.Abs(p.Root(registryRoot)); err == nil {
 			nameByAbsRoot[abs] = p.Name
-			if p.Source == pluginreg.SourceGitHub {
-				githubAbsRoot[abs] = true
-			}
 		}
 	}
 	plugins, err := plugin.Resolve(registryPluginRoots(registryRoot, rows))
@@ -181,11 +188,6 @@ func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plu
 	for i := range plugins {
 		if name, ok := nameByAbsRoot[plugins[i].Root]; ok {
 			plugins[i].Name = name
-		}
-		if githubAbsRoot[plugins[i].Root] && len(plugins[i].MCPServers) > 0 {
-			slog.Warn("plugin mcp.json ignored: fetched (github:) plugins don't run MCP servers yet",
-				"component", "startup", "plugin", plugins[i].Name, "issue", "#1434")
-			plugins[i].MCPServers = nil
 		}
 	}
 	return plugins, nil

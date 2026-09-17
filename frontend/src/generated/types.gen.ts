@@ -696,6 +696,10 @@ export type Plugin = {
      * Resolved on-disk plugin root this row currently serves from.
      */
     root?: string;
+    /**
+     * This row's mcp.json declares at least one server. MCP servers are enumerated once at boot; adding or updating this row over the API takes effect only after a restart.
+     */
+    declares_mcp_servers?: boolean;
 };
 
 export type PluginList = {

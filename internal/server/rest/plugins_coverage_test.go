@@ -42,7 +42,7 @@ func (f *failingRegistry) CheckUpdate(ctx context.Context, p pluginreg.Plugin) (
 
 func handlerWith(reg pluginreg.FetchRegistry) *Handler {
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, "/root", nil, nil))
+	h.SetPlugins(NewPlugins(reg, "/root", nil, nil, nil))
 	return h
 }
 
@@ -113,7 +113,7 @@ func TestDeletePluginRebuildFailureIsWarnOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }))
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	w := httptest.NewRecorder()
 	h.DeletePlugin(w, r, "widgets")
@@ -161,7 +161,7 @@ func TestUpdatePluginRebuildRefusalIs422(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }))
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
 	doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`) // already 422s, row still stored
 
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -197,7 +197,7 @@ func TestUpdateAllPluginsRebuildRefusalIs422(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }))
+	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
 	w := doJSON(t, h.UpdateAllPlugins, http.MethodPost, "")
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body %s, want 422", w.Code, w.Body.String())
@@ -212,17 +212,30 @@ func TestRebuildNilReceiverIsNoop(t *testing.T) {
 	if refusals, err := p.rebuild(); err != nil || refusals != nil {
 		t.Fatalf("rebuild() on a nil *Plugins = (%v, %v), want (nil, nil)", refusals, err)
 	}
+	if p.declaresMCP("widgets") {
+		t.Fatal("declaresMCP() on a nil *Plugins = true, want false")
+	}
 }
 
 func TestPluginWireIncludesRefAndPath(t *testing.T) {
 	w := pluginWire("/root", pluginreg.Plugin{
 		Name: "widgets", Source: pluginreg.SourceGitHub, Ref: "main", Path: "skills",
-	})
+	}, false)
 	if w.Ref == nil || *w.Ref != "main" {
 		t.Errorf("Ref = %v, want main", w.Ref)
 	}
 	if w.Path == nil || *w.Path != "skills" {
 		t.Errorf("Path = %v, want skills", w.Path)
+	}
+	if w.DeclaresMcpServers != nil {
+		t.Errorf("DeclaresMcpServers = %v, want nil (unset)", w.DeclaresMcpServers)
+	}
+}
+
+func TestPluginWireDeclaresMCPServers(t *testing.T) {
+	w := pluginWire("/root", pluginreg.Plugin{Name: "widgets", Source: pluginreg.SourceGitHub}, true)
+	if w.DeclaresMcpServers == nil || !*w.DeclaresMcpServers {
+		t.Errorf("DeclaresMcpServers = %v, want true", w.DeclaresMcpServers)
 	}
 }
 

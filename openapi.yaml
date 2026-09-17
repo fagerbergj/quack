@@ -2332,6 +2332,12 @@ components:
         root:
           type: string
           description: Resolved on-disk plugin root this row currently serves from.
+        declares_mcp_servers:
+          type: boolean
+          description: >-
+            This row's mcp.json declares at least one server. MCP servers are
+            enumerated once at boot; adding or updating this row over the API
+            takes effect only after a restart.
 
     PluginList:
       type: object
