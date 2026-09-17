@@ -28,7 +28,6 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/loadmemorytool"
 	"google.golang.org/adk/v2/tool/skilltoolset"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 	"google.golang.org/genai"
@@ -1397,7 +1396,6 @@ type nativeNodeBuilder struct {
 	extToolsByName     map[string]tool.Tool
 	taskStore          *memory.Store
 	memSvc             adkmemory.Service
-	wantLoadMemory     bool
 	workspaceCaps      workspace.Caps
 	memGuidance        string
 	bundle             *agent.Bundle
@@ -1447,9 +1445,6 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	}
 	if b.memSvc != nil {
 		builtins = append(builtins, memory.NewPreload())
-		if b.wantLoadMemory {
-			builtins = append(builtins, loadmemorytool.New())
-		}
 	}
 	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
@@ -1612,7 +1607,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
 func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, advisorAgent adkagent.Agent, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers) (adkagent.Agent, error) {
-	toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
+	toolNames := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
 	if err != nil {
@@ -1660,7 +1655,6 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		extToolsByName:     extToolsByName,
 		taskStore:          taskStore,
 		memSvc:             memSvc,
-		wantLoadMemory:     wantLoadMemory,
 		workspaceCaps:      workspaceCaps,
 		memGuidance:        memGuidance,
 		bundle:             bundle,
@@ -2434,18 +2428,22 @@ func fmtErr(agentName, format string, args ...any) error {
 	return fmt.Errorf("agent %q: "+format, append([]any{agentName}, args...)...)
 }
 
-// resolveToolNames splits configured tool names into builtins and whether load_memory was requested.
-func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string, wantLoadMemory bool) {
+// resolveToolNames drops runtime-conditional builtins whose dependency is off, and
+// collapses recall_memory/load_memory (the same tool under two names) to whichever is listed first.
+func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string) {
 	names = make([]string, 0, len(configured))
+	sawMemoryRecall := false
 	for _, t := range configured {
 		switch t {
-		case "load_memory":
-			wantLoadMemory = true
-			continue
-		case "stage_memory", "recall_memory":
+		case "stage_memory":
 			if !taskMemAvailable {
 				continue
 			}
+		case "recall_memory", "load_memory":
+			if !taskMemAvailable || sawMemoryRecall {
+				continue
+			}
+			sawMemoryRecall = true
 		case "ask_advisor":
 			if !advisorAvailable {
 				continue
@@ -2453,5 +2451,5 @@ func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bo
 		}
 		names = append(names, t)
 	}
-	return names, wantLoadMemory
+	return names
 }

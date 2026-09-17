@@ -85,19 +85,25 @@ func recallScope(d Deps, ctx agent.Context, coords ledger.Coords) memory.Scope {
 	return sc
 }
 
-// newRecallMemory builds the registry's recall_memory for native DAG
-// workers. Scope mirrors vetting.MemoryScope (role from the agent bundle,
-// repo from the workspace, user from the session) but is re-derived on every call from the mutable coords box instead of vetting.Config, so internal/tools never has to import internal/vetting.
-func newRecallMemory(d Deps) (tool.Tool, error) {
+// newRecallMemory builds the registry's recall_memory for native DAG workers.
+func newRecallMemory(d Deps) (tool.Tool, error) { return newRecallMemoryNamed(d, "recall_memory") }
+
+// newLoadMemory aliases load_memory onto recall_memory's implementation, so
+// it is logged, counted, and scanned into the judge's received set the same way.
+func newLoadMemory(d Deps) (tool.Tool, error) { return newRecallMemoryNamed(d, "load_memory") }
+
+// newRecallMemoryNamed builds recall_memory (or its load_memory alias) for native DAG workers.
+// Scope is re-derived per call from the mutable coords box, so internal/tools never imports internal/vetting.
+func newRecallMemoryNamed(d Deps, name string) (tool.Tool, error) {
 	// No Memory-nil guard: Store's own methods (RecallForTool/LogRecall) are
 	// nil-receiver safe, same leniency as stage_memory - a caller resolving
 	// tools ahead of the real per-agent Deps (e.g. a grant-check test) gets a buildable tool that recalls nothing until wired.
 	box := &coordsBox{}
 	inner, err := functiontool.New[recallMemoryArgs, recallMemoryResult](
-		functiontool.Config{Name: "recall_memory", Description: recallMemoryDescription},
+		functiontool.Config{Name: name, Description: recallMemoryDescription},
 		func(ctx agent.Context, a recallMemoryArgs) (recallMemoryResult, error) {
 			if strings.TrimSpace(a.Query) == "" {
-				return recallMemoryResult{}, fmt.Errorf("recall_memory: query is empty")
+				return recallMemoryResult{}, fmt.Errorf("%s: query is empty", name)
 			}
 			coords := box.get()
 			sc := recallScope(d, ctx, coords)
@@ -106,12 +112,18 @@ func newRecallMemory(d Deps) (tool.Tool, error) {
 			return recallMemoryResult{Hits: hits, Truncated: truncated}, nil
 		},
 	)
+	return wrapRunnable(name, box, inner, err)
+}
+
+// wrapRunnable finishes newRecallMemoryNamed: propagate a functiontool build error, then
+// assert the built tool is runnable - split out so both failure paths are directly testable.
+func wrapRunnable(name string, box *coordsBox, inner tool.Tool, err error) (tool.Tool, error) {
 	if err != nil {
 		return nil, err
 	}
 	rt, ok := inner.(runnableTool)
 	if !ok {
-		return nil, fmt.Errorf("tools: recall_memory: functiontool does not implement runnableTool")
+		return nil, fmt.Errorf("tools: %s: functiontool does not implement runnableTool", name)
 	}
 	return &recallMemoryTool{runnableTool: rt, box: box}, nil
 }

@@ -1,6 +1,6 @@
 # Built-in tools
 
-The `tools:` config section configures quack's builtin tool registry; each agent's `tools:` list in `agents:` binds names from it (ACP agents bind none - they bring their own tools; see [agents.md](agents.md)). `internal/tools/registry.go` is the authoritative list - 13 tools:
+The `tools:` config section configures quack's builtin tool registry; each agent's `tools:` list in `agents:` binds names from it (ACP agents bind none - they bring their own tools; see [agents.md](agents.md)). `internal/tools/registry.go` is the authoritative list - 14 tools:
 
 | Tool | What it does |
 | --- | --- |
@@ -15,6 +15,7 @@ The `tools:` config section configures quack's builtin tool registry; each agent
 | `check_mermaid` | Validate a mermaid diagram's syntax before it ships in an answer. |
 | `stage_memory` | Stage a task memory (store-backed - needs `store:` bound, see [stores.md](stores.md#referencing-a-store-from-a-tool)). |
 | `recall_memory` | On-demand recall from the same store `stage_memory` reads (epic #1255 P2) - no `tools:` entry of its own; it takes effect wherever `stage_memory` is bound, plus explicitly in `tools:` lists (see [agents.md](agents.md#recall_memory)). |
+| `load_memory` | Same implementation as `recall_memory`, registered under this name too - listing both in one `tools:` collapses to whichever is listed first (see [agents.md](agents.md#recall_memory)). |
 | `ask_user` | Pause the node and ask the user a question (answered via `quack chat send` or the UI). |
 | `ask_advisor` | Call the advisor agent (reuses the judge's model) mid-run - only wired when the judge is enabled, see [trust-gate.md](trust-gate.md#the-advisor-is-not-a-gate-stage). |
 

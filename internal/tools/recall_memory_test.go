@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -98,6 +100,99 @@ func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	}
 	if entries[0].NodeID != "node1" {
 		t.Fatalf("NodeID = %q, want %q (the coords SetLedgerCoords restamped)", entries[0].NodeID, "node1")
+	}
+}
+
+// TestNewLoadMemory_LogsLedgerEntryAndBumpsRecalls: load_memory logs and bumps
+// recalls like recall_memory, and its hit carries a score/tier for the judge.
+func TestNewLoadMemory_LogsLedgerEntryAndBumpsRecalls(t *testing.T) {
+	ctx := context.Background()
+	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "the build uses bazel"}, "test_load_tool", "task", 5, 0)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	if _, err := store.Commit(ctx, memory.Scope{Role: "task"}, "explorer", memory.Provenance{}, []memory.Candidate{{Content: "the build uses bazel"}}, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	lgr := ledgertest.NewMemStore()
+	tl, err := newLoadMemory(Deps{Memory: store, Ledger: lgr, MemoryRole: "task"})
+	if err != nil {
+		t.Fatalf("newLoadMemory: %v", err)
+	}
+	if tl.Name() != "load_memory" {
+		t.Fatalf("Name() = %q, want load_memory", tl.Name())
+	}
+	cs, ok := tl.(ledger.CoordSetter)
+	if !ok {
+		t.Fatal("load_memory tool does not implement ledger.CoordSetter")
+	}
+	cs.SetLedgerCoords(ledger.Coords{ChatID: "chat1", Node: "node1"})
+
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("load_memory tool does not implement runnableTool")
+	}
+	out, err := rt.Run(newFakeCtx(), map[string]any{"query": "build system"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal Run result: %v", err)
+	}
+	var result recallMemoryResult
+	if err := json.Unmarshal(b, &result); err != nil {
+		t.Fatalf("unmarshal Run result: %v", err)
+	}
+	if len(result.Hits) != 1 || result.Hits[0].Score == 0 || result.Hits[0].Tier == "" {
+		t.Fatalf("Run result = %+v, want one hit with a nonzero score and a tier", out)
+	}
+
+	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Kind != ledger.KindMemoryRecall {
+		t.Fatalf("entries = %+v, want exactly one memory.recall", entries)
+	}
+
+	mem, err := store.GetByID(ctx, result.Hits[0].ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if mem.Recalls != 1 {
+		t.Fatalf("recalls = %d, want 1", mem.Recalls)
+	}
+}
+
+// stubTool implements only tool.Tool (no Declaration/Run), so it can never
+// satisfy runnableTool - wrapRunnable's own assertion failure case below.
+type stubTool struct{}
+
+func (stubTool) Name() string        { return "stub" }
+func (stubTool) Description() string { return "" }
+func (stubTool) IsLongRunning() bool { return false }
+
+// TestWrapRunnable_ErrorPaths: a build error propagates, and a built tool that
+// isn't runnable is rejected - both otherwise-unreachable via newRecallMemoryNamed.
+func TestWrapRunnable_ErrorPaths(t *testing.T) {
+	cases := []struct {
+		name    string
+		inner   tool.Tool
+		err     error
+		wantErr string
+	}{
+		{name: "build error propagates", err: errors.New("boom"), wantErr: "boom"},
+		{name: "non-runnable tool rejected", inner: stubTool{}, wantErr: "does not implement runnableTool"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := wrapRunnable("load_memory", &coordsBox{}, tc.inner, tc.err)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 
