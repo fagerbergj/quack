@@ -696,6 +696,37 @@ func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason s
 	return len(existing), nil
 }
 
+// demoteTier sets tier=unverified for every id in ids currently at tier verified - a bulk
+// payload-only SetPayload, same shape as invalidateByID, skipping any id already unverified.
+func (x *qdrantIndex) demoteTier(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	existing, err := x.getExisting(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("memory: get for demote: %w", err)
+	}
+	var touched []string
+	for id, payload := range existing {
+		if payloadString(payload, payloadTier) == TierVerified {
+			touched = append(touched, id)
+		}
+	}
+	if len(touched) == 0 {
+		return nil, nil
+	}
+	wait := true
+	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll,
+		Wait:           &wait,
+		Payload:        qdrant.NewValueMap(map[string]any{payloadTier: TierUnverified}),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs(touched)}}},
+	}); err != nil {
+		return nil, fmt.Errorf("memory: demote: %w", err)
+	}
+	return touched, nil
+}
+
 // getByID fetches one point by id regardless of status - the caller decides
 // what an invalidated point means for its purpose.
 func (x *qdrantIndex) getByID(ctx context.Context, id string) (scored, bool, error) {

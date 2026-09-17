@@ -82,12 +82,16 @@ stores:
       # schedule: "0 2 * * *"  # standard 5-field cron, local time; never runs at boot
                                # (issue #961). Unset ⇒ this default; "" disables.
       # retention_days: 30  # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
-      # forgetting:            # epic #1255 P3; optional - omitted means the built-in defaults below
+      # forgetting:            # epic #1456 P2; optional - omitted means the built-in defaults below
       #   rules:
-      #     - when: 'tier == "unverified" && days_since_upvote > 90'
+      #     - when: 'tier == "unverified" && supported == 0 && recalls == 0 && days_since_minted > 30'
+      #       then: invalidate
+      #     - when: 'tier == "unverified" && recalls >= 3 && supported == 0'
       #       then: invalidate
       #     - when: "score <= -2"
       #       then: invalidate
+      #     - when: 'tier == "verified" && days_since_upvote > 90'
+      #       then: demote
       #     - when: 'tier == "verified"'
       #       then: keep
     top_k: 5

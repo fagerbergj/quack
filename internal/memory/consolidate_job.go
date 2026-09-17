@@ -303,6 +303,7 @@ func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport,
 	}
 
 	var toInvalidate []sweepHit
+	var toDemote []string
 	now := time.Now().UTC()
 	err := s.forEachSweepPage(ctx, false, false, func(page []scored) { // currently-valid only
 		for _, p := range page {
@@ -312,18 +313,26 @@ func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport,
 				report.Kept++
 				continue
 			}
-			if rules[matched].Then == ThenInvalidate {
+			switch rules[matched].Then {
+			case ThenInvalidate:
 				toInvalidate = append(toInvalidate, sweepHit{id: p.ID, rule: matched})
+			case ThenDemote:
+				toDemote = append(toDemote, p.ID)
 			}
 		}
 	})
 	if err != nil {
 		return report, fmt.Errorf("memory: forgetting sweep: list: %w", err)
 	}
-	if dryRun || len(toInvalidate) == 0 {
+	if dryRun {
 		return report, nil
 	}
-	s.invalidateByRule(ctx, toInvalidate, rules)
+	if len(toInvalidate) > 0 {
+		s.invalidateByRule(ctx, toInvalidate, rules)
+	}
+	if len(toDemote) > 0 {
+		s.demoteByRule(ctx, toDemote)
+	}
 	return report, nil
 }
 
@@ -365,7 +374,10 @@ func (s *Store) invalidateByRule(ctx context.Context, toInvalidate []sweepHit, r
 		byRule[h.rule] = append(byRule[h.rule], h.id)
 	}
 	for rule, ids := range byRule {
-		reason := fmt.Sprintf("rule %d: %s", rule, rules[rule].When)
+		reason := rules[rule].Reason
+		if reason == "" {
+			reason = fmt.Sprintf("rule %d: %s", rule, rules[rule].When)
+		}
 		if _, err := s.idx.invalidateByID(ctx, ids, reason); err != nil {
 			s.log.Warn("forgetting sweep: invalidate failed", "rule", rule, "err", err)
 			continue
@@ -373,6 +385,20 @@ func (s *Store) invalidateByRule(ctx context.Context, toInvalidate []sweepHit, r
 		for _, id := range ids {
 			s.logOp(ctx, id, OpInvalidate, ActorSweep, reason)
 		}
+	}
+}
+
+// demoteByRule tier-demotes the sweep's demote-hit ids to unverified, one memory_ops row per
+// id actually touched (an already-unverified id is a no-op - see index.demoteTier). Reason is
+// always ReasonSupportDecayed regardless of which demote rule matched.
+func (s *Store) demoteByRule(ctx context.Context, ids []string) {
+	touched, err := s.idx.demoteTier(ctx, ids)
+	if err != nil {
+		s.log.Warn("forgetting sweep: demote failed", "err", err)
+		return
+	}
+	for _, id := range touched {
+		s.logOp(ctx, id, OpDemote, ActorConsolidator, ReasonSupportDecayed)
 	}
 }
 
@@ -389,14 +415,23 @@ func fieldsFor(p scored, now time.Time) Fields {
 	if p.LastRecalledAt != "" {
 		daysSinceRecall = ageInDays(p.LastRecalledAt, now)
 	}
+	// Legacy row predating MintedAt: ValidFrom is preserved across an UPDATE (unlike Timestamp,
+	// which a consolidator reword re-stamps to now), so it's the safer fallback.
+	mintedAt := p.MintedAt
+	if mintedAt == "" {
+		mintedAt = p.ValidFrom
+	}
+	if mintedAt == "" {
+		mintedAt = p.Timestamp
+	}
 	tier := p.Tier
 	if tier == "" {
 		tier = TierUnverified
 	}
 	return Fields{
-		Upvotes: p.Upvotes, Downvotes: p.Downvotes, Score: p.VoteScore,
-		AgeDays: ageDays, DaysSinceUpvote: daysSinceUpvote, DaysSinceRecall: daysSinceRecall,
-		Recalls: p.Recalls, Tier: tier, Scope: p.Scope,
+		Upvotes: p.Upvotes, Downvotes: p.Downvotes, Supported: p.Supported, NotRelevant: p.NotRelevant,
+		Score: p.VoteScore, AgeDays: ageDays, DaysSinceUpvote: daysSinceUpvote, DaysSinceRecall: daysSinceRecall,
+		DaysSinceMinted: ageInDays(mintedAt, now), Recalls: p.Recalls, Tier: tier, Scope: p.Scope,
 	}
 }
 

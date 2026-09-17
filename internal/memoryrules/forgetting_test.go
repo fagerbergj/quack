@@ -27,9 +27,13 @@ func TestEvaluate(t *testing.T) {
 		{"not false", `!(score < 0)`, Fields{Score: 5}, true},
 		{"parens override", `(score < 0 || recalls > 0) && tier == "verified"`, Fields{Score: -1, Recalls: 0, Tier: "verified"}, true},
 		{"never upvoted equals age", "days_since_upvote > 90", Fields{AgeDays: 100, DaysSinceUpvote: 100}, true},
-		{"default rule 1", `tier == "unverified" && days_since_upvote > 90`, Fields{Tier: "unverified", DaysSinceUpvote: 91}, true},
-		{"default rule 2", "score <= -2", Fields{Score: -3}, true},
-		{"default rule 3", `tier == "verified"`, Fields{Tier: "verified"}, true},
+		{"default rule 0 never recalled", `tier == "unverified" && supported == 0 && recalls == 0 && days_since_minted > 30`, Fields{Tier: "unverified", Supported: 0, Recalls: 0, DaysSinceMinted: 31}, true},
+		{"default rule 0 guarded by supported", `tier == "unverified" && supported == 0 && recalls == 0 && days_since_minted > 30`, Fields{Tier: "unverified", Supported: 1, Recalls: 0, DaysSinceMinted: 31}, false},
+		{"default rule 1 recalled without support", `tier == "unverified" && recalls >= 3 && supported == 0`, Fields{Tier: "unverified", Recalls: 3, Supported: 0}, true},
+		{"default rule 2 bad score", "score <= -2", Fields{Score: -3}, true},
+		{"default rule 3 support decayed", `tier == "verified" && days_since_upvote > 90`, Fields{Tier: "verified", DaysSinceUpvote: 91}, true},
+		{"default rule 4 keep verified", `tier == "verified"`, Fields{Tier: "verified"}, true},
+		{"not_relevant field", "not_relevant >= 2", Fields{NotRelevant: 2}, true},
 	}
 	for _, c := range cases {
 		c := c
@@ -88,6 +92,9 @@ func TestValidateRules(t *testing.T) {
 		t.Fatal("expected error for unknown then")
 	} else if !strings.Contains(err.Error(), "rule 0") {
 		t.Errorf("error should name rule index: %v", err)
+	}
+	if err := ValidateRules([]Rule{{When: "score <= -2", Then: ThenDemote}}); err != nil {
+		t.Errorf("demote must be a valid then: %v", err)
 	}
 	if err := ValidateRules([]Rule{{When: "bogus == 1", Then: ThenKeep}}); err == nil {
 		t.Fatal("expected error for bad expression")

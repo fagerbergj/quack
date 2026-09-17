@@ -18,7 +18,14 @@ const (
 	// NOT logged here - the ledger's memory.recall entry is the source of truth
 	// for what a chat retrieved (see internal/ledger and internal/ledger/fold).
 	OpVote OpsLogOp = "vote"
+	// OpDemote: a forgetting-rule tier demotion, verified -> unverified (epic #1456 P2).
+	// Distinct from invalidate - the memory stays live and a later supported vote re-promotes it.
+	OpDemote OpsLogOp = "demote"
 )
+
+// ReasonSupportDecayed is the fixed memory_ops reason every demote writes,
+// regardless of which rule triggered it (epic #1456 P2).
+const ReasonSupportDecayed = "support decayed"
 
 // OpsLogActor names who caused a memory_ops transition.
 type OpsLogActor string

@@ -6,16 +6,18 @@ import (
 	"strings"
 )
 
-// Rule is one forgetting rule (epic #1255 P3): When is a boolean expression
-// over Fields, Then is "invalidate" or "keep". Rules are evaluated in order,
-// first match wins; no match keeps the memory.
+// Rule is one forgetting rule: When is a boolean expression over Fields, Then is "invalidate",
+// "demote", or "keep" (first match wins, no match keeps the memory). Reason overrides the
+// stamped invalidation_reason for invalidate (falls back to "rule N: expr"); demote's is fixed.
 type Rule struct {
-	When string
-	Then string
+	When   string
+	Then   string
+	Reason string
 }
 
 const (
 	ThenInvalidate = "invalidate"
+	ThenDemote     = "demote"
 	ThenKeep       = "keep"
 )
 
@@ -25,23 +27,34 @@ const (
 type Fields struct {
 	Upvotes         int
 	Downvotes       int
+	Supported       int
+	NotRelevant     int
 	Score           int
 	AgeDays         int64
 	DaysSinceUpvote int64
 	DaysSinceRecall int64
+	DaysSinceMinted int64
 	Recalls         int
 	Tier            string
 	Scope           string
 }
 
-// DefaultRules are applied when config carries no memory.forgetting.rules
-// (epic #1255 decision): unverified memories age out after 90 days without
-// an upvote, any memory whose net score drops to -2 or below is invalidated,
-// and a verified memory is otherwise kept.
+// ReasonNeverRecalled/ReasonRecalledWithoutSupport: the fixed invalidation_reason DefaultRules'
+// usage-based rules stamp (epic #1456 P2).
+const (
+	ReasonNeverRecalled          = "never recalled"
+	ReasonRecalledWithoutSupport = "recalled without support"
+)
+
+// DefaultRules are applied when config carries no memory.forgetting.rules - first match wins.
+// Demote only resets tier; supported is left untouched, so the row re-promotes on its own next
+// vote or consolidator write (tier is always recomputed from supported), not just a fresh vote.
 func DefaultRules() []Rule {
 	return []Rule{
-		{When: `tier == "unverified" && days_since_upvote > 90`, Then: ThenInvalidate},
+		{When: `tier == "unverified" && supported == 0 && recalls == 0 && days_since_minted > 30`, Then: ThenInvalidate, Reason: ReasonNeverRecalled},
+		{When: `tier == "unverified" && recalls >= 3 && supported == 0`, Then: ThenInvalidate, Reason: ReasonRecalledWithoutSupport},
 		{When: `score <= -2`, Then: ThenInvalidate},
+		{When: `tier == "verified" && days_since_upvote > 90`, Then: ThenDemote},
 		{When: `tier == "verified"`, Then: ThenKeep},
 	}
 }
@@ -51,8 +64,8 @@ func DefaultRules() []Rule {
 // rather than crashing or silently no-op'ing a bad rule inside the nightly sweep.
 func ValidateRules(rules []Rule) error {
 	for i, r := range rules {
-		if r.Then != ThenInvalidate && r.Then != ThenKeep {
-			return fmt.Errorf("forgetting rule %d: then must be %q or %q, got %q", i, ThenInvalidate, ThenKeep, r.Then)
+		if r.Then != ThenInvalidate && r.Then != ThenDemote && r.Then != ThenKeep {
+			return fmt.Errorf("forgetting rule %d: then must be %q, %q, or %q, got %q", i, ThenInvalidate, ThenDemote, ThenKeep, r.Then)
 		}
 		if _, err := Evaluate(r.When, Fields{}); err != nil {
 			return fmt.Errorf("forgetting rule %d: %w", i, err)
@@ -414,6 +427,10 @@ func lookupField(t token, f Fields) (value, error) {
 		return value{kind: valInt, n: int64(f.Upvotes)}, nil
 	case "downvotes":
 		return value{kind: valInt, n: int64(f.Downvotes)}, nil
+	case "supported":
+		return value{kind: valInt, n: int64(f.Supported)}, nil
+	case "not_relevant":
+		return value{kind: valInt, n: int64(f.NotRelevant)}, nil
 	case "score":
 		return value{kind: valInt, n: int64(f.Score)}, nil
 	case "age_days":
@@ -422,6 +439,8 @@ func lookupField(t token, f Fields) (value, error) {
 		return value{kind: valInt, n: f.DaysSinceUpvote}, nil
 	case "days_since_recall":
 		return value{kind: valInt, n: f.DaysSinceRecall}, nil
+	case "days_since_minted":
+		return value{kind: valInt, n: f.DaysSinceMinted}, nil
 	case "recalls":
 		return value{kind: valInt, n: int64(f.Recalls)}, nil
 	case "tier":

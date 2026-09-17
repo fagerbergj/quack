@@ -469,6 +469,7 @@ func (e ResponseStatus) Valid() bool {
 
 // Defines values for SweepRuleResultThen.
 const (
+	Demote     SweepRuleResultThen = "demote"
 	Invalidate SweepRuleResultThen = "invalidate"
 	Keep       SweepRuleResultThen = "keep"
 )
@@ -476,6 +477,8 @@ const (
 // Valid indicates whether the value is a known member of the SweepRuleResultThen enum.
 func (e SweepRuleResultThen) Valid() bool {
 	switch e {
+	case Demote:
+		return true
 	case Invalidate:
 		return true
 	case Keep:
