@@ -197,6 +197,32 @@ func TestPromptBlockAndroidSdkRootFallback(t *testing.T) {
 	}
 }
 
+func TestPromptBlockNotableAbsentSandboxedOnly(t *testing.T) {
+	dir := t.TempDir() // no gh here
+	t.Setenv("PATH", dir)
+
+	native := PromptBlock(Caps{Sandbox: SandboxNone}, nil)
+	if strings.Contains(native, "Not on PATH") {
+		t.Errorf("native (unsandboxed) got %q, want no absent-CLI line", native)
+	}
+
+	sandboxed := PromptBlock(Caps{Sandbox: SandboxBwrap}, nil)
+	if !strings.Contains(sandboxed, "Not on PATH: gh.") {
+		t.Errorf("sandboxed with no gh on PATH got %q, want a line naming gh absent", sandboxed)
+	}
+}
+
+func TestPromptBlockNotableAbsentOmittedWhenPresent(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeBinary(t, dir, "gh", "gh version 2.0.0")
+	t.Setenv("PATH", dir)
+
+	got := PromptBlock(Caps{Sandbox: SandboxBwrap}, nil)
+	if strings.Contains(got, "Not on PATH") {
+		t.Errorf("with gh on PATH, want no absent-CLI line, got %q", got)
+	}
+}
+
 func TestPromptBlockOSAndArch(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	got := PromptBlock(Caps{}, nil)

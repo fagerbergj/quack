@@ -495,8 +495,10 @@ var consolidatePrompts = map[string]string{
 		"Produce a set of operations. First VET. Prefer keeping: a library or API behaviour that surprised " +
 		"the agent, an idiom or contract the codebase relies on, or an approach verified to work for a " +
 		"class of task - this experiential knowledge is the point of the store. Reject and NOOP facts " +
-		"about the sandbox this agent runs in: its filesystem permissions, its module cache, the " +
-		"toolchains installed on PATH, where CI results are delivered - already covered by the " +
+		"about the sandbox this agent runs in: its filesystem permissions (e.g. the read-only checkout " +
+		"and the $TMPDIR copy), its module cache (e.g. GOFLAGS=-mod=mod), the toolchains installed on " +
+		"PATH (e.g. gh missing from the sandbox), where CI results are delivered, or an ACP shim's env " +
+		"leaking into a subprocess (e.g. PI_ACP_STATE_DIR) - already covered by the " +
 		"environment prompt, not memory. A fact about the repository under study - its Makefile, its " +
 		"CI config, its own commands - is NOT a runtime fact; keep it. Reject CHANGE-LOG candidates that only describe the diff under review - " +
 		"phrasing like \"X was added/changed/renamed in this PR/commit\" or \"now does Y as of <sha>\" - " +

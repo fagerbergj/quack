@@ -266,6 +266,30 @@ func TestConsolidatePrompt_RejectsChangeLog(t *testing.T) {
 	})
 }
 
+// TestConsolidatePrompt_RejectsRuntimeGhCandidate mirrors RejectsChangeLog: proves Commit applies
+// a scripted NOOP+ADD, not that a real model would choose it.
+func TestConsolidatePrompt_RejectsRuntimeGhCandidate(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		reply := `{"ops":[
+			{"action":"NOOP"},
+			{"action":"ADD","content":"vetting runs golangci-lint with --new-from-rev=origin/main","kind":"convention"}
+		]}`
+		s := newStore("task", fakeModel{reply: reply})
+		staged := []Candidate{
+			{Content: "the gh CLI is not installed in the sandbox"},
+			{Content: "vetting runs golangci-lint with --new-from-rev=origin/main"},
+		}
+		n, err := s.Commit(ctx, Scope{Role: RoleCoding}, "reviewer", Provenance{}, staged, "")
+		if err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("Commit wrote %d, want 1 (gh restatement NOOPed, repo convention ADDed)", n)
+		}
+	})
+}
+
 // TestConsolidatePromptTask_MentionsChangeLog pins the prompt text itself (issue
 // #1269 item 2) against a future edit silently dropping the change-log rejection
 // instruction - a fake-model test can't otherwise catch a regression in prompt wording.
@@ -281,6 +305,7 @@ func TestConsolidatePromptTask_MentionsRuntimeAndRoleClasses(t *testing.T) {
 	p := consolidatePrompts["task"]
 	for _, want := range []string{
 		"sandbox this agent runs in", "is NOT a runtime fact", "library or API behaviour", `"role:"`,
+		"gh missing from the sandbox", "$TMPDIR copy", "GOFLAGS=-mod=mod", "PI_ACP_STATE_DIR",
 	} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("consolidatePrompts[%q] missing %q", "task", want)
