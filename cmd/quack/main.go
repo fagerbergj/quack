@@ -503,13 +503,12 @@ func newMemoryRescopeCmd() *cobra.Command {
 	return c
 }
 
-// newMemoryStatsCmd: `memory stats [--weeks N]` (epic #1255 P5) - weekly
-// recall precision/support-share/vote/recall counts plus a live/invalidated
-// snapshot per scope.
+// newMemoryStatsCmd: `memory stats [--weeks N]` - weekly recall precision/vote
+// counts plus a live/invalidated/never-recalled/no-votes/unsupported-verified snapshot per scope.
 func newMemoryStatsCmd() *cobra.Command {
 	var asJSON bool
 	var weeks int
-	c := targetCmd("stats", "Weekly recall precision, vote counts, and live/invalidated points per scope", cobra.NoArgs, &asJSON,
+	c := targetCmd("stats", "Weekly recall precision, vote counts, and per-scope live/invalidated/never-recalled/no-votes/unsupported-verified points", cobra.NoArgs, &asJSON,
 		func(ctx context.Context, out io.Writer, t string, _ []string) error {
 			return cli.RunMemoryStats(ctx, out, t, weeks, asJSON)
 		})
