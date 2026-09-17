@@ -1,14 +1,13 @@
 package memory
 
 import (
-	"math"
+	"context"
 	"testing"
 	"time"
 )
 
-// TestComputeStats_WeeklyPrecision seeds two ISO weeks (UTC) of votes and checks precision/
-// support-share and week-boundary attribution: a vote at 23:59:59 Saturday UTC
-// (mid ISO week) and one 24h later (the next ISO week, Sunday->Monday crossing) land in different buckets.
+// TestComputeStats_WeeklyPrecision checks precision (not_relevant counts in the denominator) and
+// week-boundary attribution: a vote at 23:59:59 Saturday UTC and one 24h later land in different weeks.
 func TestComputeStats_WeeklyPrecision(t *testing.T) {
 	// 2026-01-05 is a Monday (ISO week 2026-W02).
 	week1Mon := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
@@ -43,9 +42,8 @@ func TestComputeStats_WeeklyPrecision(t *testing.T) {
 		t.Fatalf("W02 votes = %+v, want supported=2 contradicted=1 not_relevant=1", w1)
 	}
 	// precision = supported / (supported+contradicted+not_relevant) = 2/4 = 0.5
-	// 2 supported of 3 ruled on (not_relevant excluded); 2 supported of 4 delivered.
-	if math.Abs(w1.Precision-2.0/3.0) > 1e-9 || w1.SupportShare != 0.5 {
-		t.Fatalf("W02 precision=%v support_share=%v, want 0.667/0.5", w1.Precision, w1.SupportShare)
+	if w1.Precision != 0.5 {
+		t.Fatalf("W02 precision = %v, want 0.5", w1.Precision)
 	}
 	if w1.Recalls != 4 {
 		t.Fatalf("W02 recalls = %d, want 4", w1.Recalls)
@@ -74,5 +72,47 @@ func TestComputeStats_EmptyWeekIsZeroed(t *testing.T) {
 		if w.Recalls != 0 || w.Supported != 0 || w.Precision != 0 {
 			t.Fatalf("empty week %+v should be all-zero", w)
 		}
+	}
+}
+
+// TestSnapshot_PerScopeDiagnosticCounts plants one invalidated and three live points in the
+// same scope - never-recalled/no-votes, judge-supported verified, and reinforcement-only
+// verified - and checks Snapshot tallies each of the three new counts independently.
+func TestSnapshot_PerScopeDiagnosticCounts(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", fakeModel{})
+	pts := []point{
+		{ID: "never-recalled", Vector: []float32{1, 0, 0, 0}, Scope: "repo:test"},
+		{
+			ID: "judge-verified", Vector: []float32{1, 0, 0, 0}, Scope: "repo:test",
+			Recalls: 2, Upvotes: 1, Tier: TierVerified, ReinforcementCount: 0,
+		},
+		{
+			ID: "reinforced-only", Vector: []float32{1, 0, 0, 0}, Scope: "repo:test",
+			Recalls: 2, Upvotes: 1, Tier: TierVerified, ReinforcementCount: 1,
+		},
+		{
+			ID: "invalidated", Vector: []float32{1, 0, 0, 0}, Scope: "repo:test",
+			Status: string(StatusInvalidated),
+		},
+	}
+	if err := s.idx.upsert(ctx, pts); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	scopes, _, err := s.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(scopes) != 1 {
+		t.Fatalf("scopes = %+v, want exactly repo:test", scopes)
+	}
+	got := scopes[0]
+	want := ScopeStats{
+		Scope: "repo:test", Live: 3, Invalidated: 1,
+		NeverRecalled: 1, NoVotes: 1, UnsupportedVerified: 1,
+	}
+	if got != want {
+		t.Fatalf("Snapshot scope stats = %+v, want %+v", got, want)
 	}
 }

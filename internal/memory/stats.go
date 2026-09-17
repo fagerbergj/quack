@@ -7,17 +7,23 @@ import (
 	"time"
 )
 
-// ScopeStats is one bucket's live/invalidated point counts (epic #1255 P5) -
-// the memory-page header's "live points per scope over time" secondary
-// metric, snapshotted at call time (not itself a weekly series).
+// ScopeStats is one bucket's live/invalidated counts plus three live-only
+// diagnostics: never recalled, no votes cast, and verified with no real support.
 type ScopeStats struct {
-	Scope       string
-	Live        int
-	Invalidated int
+	Scope         string
+	Live          int
+	Invalidated   int
+	NeverRecalled int
+	// NoVotes: no upvote or downvote recorded. Includes a point recalled only
+	// into not_relevant votes until the per-point not_relevant counter lands.
+	NoVotes int
+	// UnsupportedVerified: verified only via outcome-reinforcement (Upvotes == ReinforcementCount), never an actual judge/human vote.
+	// Undercounts after a dedupe absorb: the merge sums Upvotes across survivor+absorbed but neither backend carries ReinforcementCount along.
+	UnsupportedVerified int
 }
 
 // Snapshot walks every point once (paged, includeInvalidated=true) and returns per-scope
-// live/invalidated tallies plus absorbedBy: every absorbed id currently listed in some
+// tallies (see ScopeStats) plus absorbedBy: every absorbed id currently listed in some
 // memory's AbsorbedIDs, mapped to that memory's id - the input FoldAbsorption and stats weekly folding need to attribute a since-merged memory's history to its survivor.
 func (s *Store) Snapshot(ctx context.Context) ([]ScopeStats, map[string]string, error) {
 	byScope := map[string]*ScopeStats{}
@@ -29,11 +35,7 @@ func (s *Store) Snapshot(ctx context.Context) ([]ScopeStats, map[string]string, 
 				st = &ScopeStats{Scope: p.Scope}
 				byScope[p.Scope] = st
 			}
-			if p.Status == string(StatusInvalidated) {
-				st.Invalidated++
-			} else {
-				st.Live++
-			}
+			tallyScopePoint(st, p)
 			for _, absorbed := range p.AbsorbedIDs {
 				absorbedBy[absorbed] = p.ID
 			}
@@ -48,6 +50,24 @@ func (s *Store) Snapshot(ctx context.Context) ([]ScopeStats, map[string]string, 
 	}
 	sort.Slice(scopes, func(i, j int) bool { return scopes[i].Scope < scopes[j].Scope })
 	return scopes, absorbedBy, nil
+}
+
+// tallyScopePoint credits one point to its scope's live/invalidated and diagnostic counts.
+func tallyScopePoint(st *ScopeStats, p scored) {
+	if p.Status == string(StatusInvalidated) {
+		st.Invalidated++
+		return
+	}
+	st.Live++
+	if p.Recalls == 0 {
+		st.NeverRecalled++
+	}
+	if p.Upvotes == 0 && p.Downvotes == 0 {
+		st.NoVotes++
+	}
+	if p.Tier == TierVerified && p.Upvotes == p.ReinforcementCount {
+		st.UnsupportedVerified++
+	}
 }
 
 // VoteEvent/RecallEvent/OpEvent are the minimal ledger/memory_ops facts
@@ -78,15 +98,11 @@ type WeekStats struct {
 	Supported    int
 	Contradicted int
 	NotRelevant  int
-	// Precision = Supported / (Supported+Contradicted): of the recalls the judge
-	// ruled on, how often the memory was right. NotRelevant is noise, not a
-	// wrong memory, so it is excluded. 0 if no such votes.
-	Precision float64
-	// SupportShare = Supported / Recalls: how much of what was delivered actually
-	// helped; unvoted and not-relevant recalls count as no help. 0 if no recalls.
-	SupportShare float64
-	Minted       int
-	Invalidated  int
+	// Precision = Supported / (Supported+Contradicted+NotRelevant): share of every judged
+	// recall that actually helped - not_relevant is a real miss, not noise, on prod it's the majority vote.
+	Precision   float64
+	Minted      int
+	Invalidated int
 }
 
 func isoWeekKey(t time.Time) string {
@@ -128,11 +144,8 @@ func ComputeStats(now time.Time, weeks int, votes []VoteEvent, recalls []RecallE
 		tallyOneOp(out, inRange, o)
 	}
 	for i := range out {
-		if ruled := out[i].Supported + out[i].Contradicted; ruled > 0 {
-			out[i].Precision = float64(out[i].Supported) / float64(ruled)
-		}
-		if out[i].Recalls > 0 {
-			out[i].SupportShare = float64(out[i].Supported) / float64(out[i].Recalls)
+		if judged := out[i].Supported + out[i].Contradicted + out[i].NotRelevant; judged > 0 {
+			out[i].Precision = float64(out[i].Supported) / float64(judged)
 		}
 	}
 	return out

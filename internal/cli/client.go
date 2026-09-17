@@ -256,8 +256,7 @@ func (c *Client) RescopeMemories(ctx context.Context, apply bool) (schema.Rescop
 	return out, err
 }
 
-// GetMemoryStats fetches weekly recall precision/support-share/vote/recall
-// counts plus a live/invalidated snapshot per scope (epic #1255 P5).
+// GetMemoryStats fetches weekly recall precision/vote/recall counts plus a per-scope snapshot.
 func (c *Client) GetMemoryStats(ctx context.Context, weeks int) (schema.MemoryStats, error) {
 	var out schema.MemoryStats
 	path := "/api/v1/memories/stats"

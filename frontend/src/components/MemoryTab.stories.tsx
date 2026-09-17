@@ -43,9 +43,9 @@ const MEMORIES: Memory[] = [
 ]
 
 const WEEK_STATS: MemoryWeekStats[] = [
-  { week: '2026-W34', recalls: 55, supported: 30, contradicted: 5, not_relevant: 5, precision: 0.75, support_share: 0.75, minted: 8, invalidated: 2 },
-  { week: '2026-W35', recalls: 38, supported: 18, contradicted: 8, not_relevant: 4, precision: 0.6, support_share: 0.47, minted: 3, invalidated: 4 },
-  { week: '2026-W36', recalls: 61, supported: 40, contradicted: 3, not_relevant: 3, precision: 0.87, support_share: 0.87, minted: 9, invalidated: 0 },
+  { week: '2026-W34', recalls: 55, supported: 30, contradicted: 5, not_relevant: 5, precision: 0.75, minted: 8, invalidated: 2 },
+  { week: '2026-W35', recalls: 38, supported: 18, contradicted: 8, not_relevant: 4, precision: 0.6, minted: 3, invalidated: 4 },
+  { week: '2026-W36', recalls: 61, supported: 40, contradicted: 3, not_relevant: 3, precision: 0.87, minted: 9, invalidated: 0 },
 ]
 
 export const Populated: Story = {
@@ -54,8 +54,8 @@ export const Populated: Story = {
     initialStats: {
       weeks: WEEK_STATS,
       scopes: [
-        { scope: 'repo:quack', live: 42, invalidated: 5 },
-        { scope: 'user:jason', live: 8, invalidated: 0 },
+        { scope: 'repo:quack', live: 42, invalidated: 5, never_recalled: 20, no_votes: 15, unsupported_verified: 3 },
+        { scope: 'user:jason', live: 8, invalidated: 0, never_recalled: 1, no_votes: 2, unsupported_verified: 1 },
       ],
     },
   },

@@ -112,11 +112,21 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
               <div className="px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 Live / invalidated
               </div>
-              <ul className="max-h-32 overflow-y-auto">
+              <ul className="max-h-40 overflow-y-auto">
                 {scopes.map(s => (
-                  <li key={s.scope} className="flex items-center justify-between gap-2 px-1 py-0.5 text-gray-600 dark:text-gray-300">
-                    <span className="truncate">{s.scope}</span>
-                    <span className="flex-shrink-0 tabular-nums text-gray-500 dark:text-gray-400">{s.live} / {s.invalidated}</span>
+                  <li key={s.scope} className="px-1 py-0.5 text-gray-600 dark:text-gray-300">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate">{s.scope}</span>
+                      <span className="flex-shrink-0 tabular-nums text-gray-500 dark:text-gray-400">{s.live} / {s.invalidated}</span>
+                    </div>
+                    <div
+                      className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] tabular-nums text-gray-500 dark:text-gray-400"
+                      title="Of the live points: never recalled, no up/down votes cast, verified with no real judge/human support"
+                    >
+                      <span>{s.never_recalled} never recalled</span>
+                      <span>{s.no_votes} no up/down votes</span>
+                      <span>{s.unsupported_verified} unsupported verified</span>
+                    </div>
                   </li>
                 ))}
               </ul>

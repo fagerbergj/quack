@@ -10,15 +10,15 @@ afterEach(cleanup)
 // #1267: the header numbers come from GET /memories/stats via api.getMemoryStats
 // - stub that call (not initialStats) so this exercises the real fetch wiring.
 const WEEKS: MemoryWeekStats[] = [
-  { week: '2026-W35', recalls: 38, supported: 18, contradicted: 8, not_relevant: 4, precision: 0.69, support_share: 0.47, minted: 3, invalidated: 4 },
-  { week: '2026-W36', recalls: 61, supported: 40, contradicted: 3, not_relevant: 3, precision: 0.87, support_share: 0.87, minted: 9, invalidated: 0 },
+  { week: '2026-W35', recalls: 38, supported: 18, contradicted: 8, not_relevant: 4, precision: 0.69, minted: 3, invalidated: 4 },
+  { week: '2026-W36', recalls: 61, supported: 40, contradicted: 3, not_relevant: 3, precision: 0.87, minted: 9, invalidated: 0 },
 ]
 
 describe('MemoryStatsHeader via MemoryTab (#1267)', () => {
-  it('renders this-week precision and support share from a stubbed stats response', async () => {
+  it('renders this-week precision from a stubbed stats response', async () => {
     vi.spyOn(api, 'getMemoryStats').mockResolvedValue({
       weeks: WEEKS,
-      scopes: [{ scope: 'repo:quack', live: 42, invalidated: 5 }],
+      scopes: [{ scope: 'repo:quack', live: 42, invalidated: 5, never_recalled: 10, no_votes: 8, unsupported_verified: 2 }],
     })
     render(<MemoryTab initialState={{ memories: [], total: 0 }} />)
     expect((await screen.findAllByText('87%')).length).toBeGreaterThan(0)
@@ -27,7 +27,7 @@ describe('MemoryStatsHeader via MemoryTab (#1267)', () => {
 
   it('shows a dash, not NaN or 0%, when no votes were cast this week', async () => {
     vi.spyOn(api, 'getMemoryStats').mockResolvedValue({
-      weeks: [{ week: '2026-W36', recalls: 0, supported: 0, contradicted: 0, not_relevant: 0, precision: 0, support_share: 0, minted: 0, invalidated: 0 }],
+      weeks: [{ week: '2026-W36', recalls: 0, supported: 0, contradicted: 0, not_relevant: 0, precision: 0, minted: 0, invalidated: 0 }],
       scopes: [],
     })
     render(<MemoryTab initialState={{ memories: [], total: 0 }} />)
@@ -35,5 +35,14 @@ describe('MemoryStatsHeader via MemoryTab (#1267)', () => {
     expect(dashes.length).toBeGreaterThanOrEqual(2)
     expect(screen.queryByText('NaN%')).toBeNull()
     expect(screen.queryByText('0%')).toBeNull()
+  })
+
+  it('reads a real 0%, not a dash, when every judged recall was not_relevant', async () => {
+    vi.spyOn(api, 'getMemoryStats').mockResolvedValue({
+      weeks: [{ week: '2026-W36', recalls: 5, supported: 0, contradicted: 0, not_relevant: 5, precision: 0, minted: 0, invalidated: 0 }],
+      scopes: [],
+    })
+    render(<MemoryTab initialState={{ memories: [], total: 0 }} />)
+    expect((await screen.findAllByText('0%')).length).toBeGreaterThan(0)
   })
 })

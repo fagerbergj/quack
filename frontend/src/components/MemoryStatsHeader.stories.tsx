@@ -13,10 +13,10 @@ export default meta
 type Story = StoryObj<typeof MemoryStatsHeader>
 
 const WEEKS: MemoryWeekStats[] = [
-  { week: '2026-W33', recalls: 40, supported: 20, contradicted: 4, not_relevant: 6, precision: 0.83, support_share: 0.5, minted: 5, invalidated: 1 },
-  { week: '2026-W34', recalls: 55, supported: 30, contradicted: 5, not_relevant: 5, precision: 0.86, support_share: 0.55, minted: 8, invalidated: 2 },
-  { week: '2026-W35', recalls: 38, supported: 18, contradicted: 8, not_relevant: 4, precision: 0.69, support_share: 0.47, minted: 3, invalidated: 4 },
-  { week: '2026-W36', recalls: 61, supported: 40, contradicted: 3, not_relevant: 3, precision: 0.93, support_share: 0.66, minted: 9, invalidated: 0 },
+  { week: '2026-W33', recalls: 40, supported: 20, contradicted: 4, not_relevant: 6, precision: 0.83, minted: 5, invalidated: 1 },
+  { week: '2026-W34', recalls: 55, supported: 30, contradicted: 5, not_relevant: 5, precision: 0.86, minted: 8, invalidated: 2 },
+  { week: '2026-W35', recalls: 38, supported: 18, contradicted: 8, not_relevant: 4, precision: 0.69, minted: 3, invalidated: 4 },
+  { week: '2026-W36', recalls: 61, supported: 40, contradicted: 3, not_relevant: 3, precision: 0.93, minted: 9, invalidated: 0 },
 ]
 
 export const Populated: Story = {
@@ -34,7 +34,7 @@ export const Expanded: Story = {
 // No votes yet this week - a dash, never 0% or NaN.
 export const NoVotesYet: Story = {
   args: {
-    weeks: [{ week: '2026-W36', recalls: 0, supported: 0, contradicted: 0, not_relevant: 0, precision: 0, support_share: 0, minted: 0, invalidated: 0 }],
+    weeks: [{ week: '2026-W36', recalls: 0, supported: 0, contradicted: 0, not_relevant: 0, precision: 0, minted: 0, invalidated: 0 }],
     loading: false,
     error: null,
   },
