@@ -279,7 +279,9 @@ func TestConsolidatePromptTask_MentionsChangeLog(t *testing.T) {
 // runtime-rejection, library-learning, and role-scope rules against a silent regression.
 func TestConsolidatePromptTask_MentionsRuntimeAndRoleClasses(t *testing.T) {
 	p := consolidatePrompts["task"]
-	for _, want := range []string{"OWN sandbox", "library or API behaviour", `"role:"`} {
+	for _, want := range []string{
+		"sandbox this agent runs in", "is NOT a runtime fact", "library or API behaviour", `"role:"`,
+	} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("consolidatePrompts[%q] missing %q", "task", want)
 		}
@@ -287,10 +289,14 @@ func TestConsolidatePromptTask_MentionsRuntimeAndRoleClasses(t *testing.T) {
 }
 
 // TestConsolidateDedupePromptTask_MentionsRuntimeReason pins the sweep's runtime-purge
-// rule and its exact invalidation reason against a silent regression.
+// rule, its exact invalidation reason, and the closing line that must not contradict it.
 func TestConsolidateDedupePromptTask_MentionsRuntimeReason(t *testing.T) {
-	if !strings.Contains(consolidateDedupePrompts["task"], "runtime fact, moved to environment prompt") {
+	p := consolidateDedupePrompts["task"]
+	if !strings.Contains(p, "runtime fact, moved to environment prompt") {
 		t.Fatal(`consolidateDedupePrompts["task"] no longer mentions the runtime-purge reason`)
+	}
+	if !strings.Contains(p, "Empty ops list if nothing in the burst duplicates or states a runtime fact.") {
+		t.Fatal(`consolidateDedupePrompts["task"]'s closing line no longer covers the runtime-purge case - a model that reads only the last line would drop it`)
 	}
 }
 

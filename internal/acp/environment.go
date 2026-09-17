@@ -18,11 +18,14 @@ import (
 // its root) must never blow the round's context window just to say "here's your cwd".
 const maxEnvironmentEntries = 200
 
-// environmentBlock renders a FACTUAL, Codex-CLI-style <environment_context>
-// grounding the round's prompt: absolute cwd, whether it's a git repo (branch
-// + short HEAD sha when so), and the top-level entries. Observation, not instruction - this is what replaces the old "do not clone the repo, it's already here" prose (agents/code-explorer/prompt.md): prose asserting where the repo is competes with a task naming one and loses; a plain fact about the actual filesystem does not compete with anything. Deterministic given (cwd, repo state), so it costs nothing to include on every round.
+// environmentBlock renders the round's <environment_context>: cwd, git state, top-level entries, and the sandbox/runtime facts every agent otherwise re-discovers per round (filesystem grants, the module cache, a clean-tree copy, where CI's verdict lives).
+// Deterministic given (cwd, repo state, caps), so it costs nothing to include on every round.
 func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string, caps workspace.Caps) string {
-	f := envFacts{Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly, GoModCache: caps.Env["GOMODCACHE"]}
+	f := envFacts{
+		Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly,
+		GoModCache: caps.Env["GOMODCACHE"],
+		Sandboxed:  caps.Sandbox == workspace.SandboxBwrap || caps.Sandbox == workspace.SandboxLandlock,
+	}
 	f.Branch, f.Sha, f.Git = gitInfo(ctx, cwd, caps)
 	entries, truncated := topLevelEntries(cwd)
 	f.Entries, f.Truncated = strings.Join(entries, ", "), truncated
@@ -58,6 +61,7 @@ type envFacts struct {
 	ReadOnly   bool
 	Writable   string
 	GoModCache string
+	Sandboxed  bool
 }
 
 // envTemplates caches the parsed system/acp.environment per version.

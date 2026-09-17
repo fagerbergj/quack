@@ -494,10 +494,11 @@ var consolidatePrompts = map[string]string{
 		"candidates, the agent's FINAL ANSWER, and the most similar EXISTING MEMORIES about this same subject.\n\n" +
 		"Produce a set of operations. First VET. Prefer keeping: a library or API behaviour that surprised " +
 		"the agent, an idiom or contract the codebase relies on, or an approach verified to work for a " +
-		"class of task - this experiential knowledge is the point of the store. Reject and NOOP: facts " +
-		"about quack's OWN sandbox, CI gates, toolchain, or tooling - the runtime the agent happens to run " +
-		"in, not the repository under study, and already covered by the environment prompt, not memory. " +
-		"Reject CHANGE-LOG candidates that only describe the diff under review - " +
+		"class of task - this experiential knowledge is the point of the store. Reject and NOOP facts " +
+		"about the sandbox this agent runs in: its filesystem permissions, its module cache, the " +
+		"toolchains installed on PATH, where CI results are delivered - already covered by the " +
+		"environment prompt, not memory. A fact about the repository under study - its Makefile, its " +
+		"CI config, its own commands - is NOT a runtime fact; keep it. Reject CHANGE-LOG candidates that only describe the diff under review - " +
 		"phrasing like \"X was added/changed/renamed in this PR/commit\" or \"now does Y as of <sha>\" - " +
 		"NOOP those; they describe a moment, not a fact that holds once the code moves on. Drop anything " +
 		"else volatile, request-specific, speculative, or not clearly supported. When SCOPE starts with " +
@@ -542,12 +543,13 @@ var consolidateDedupePrompts = map[string]string{
 		"- ADD only if none of them is worth keeping as-is but the group together implies a genuinely new " +
 		"synthesis - provide content and a kind (convention|command|layout|source|search|fetch|deadend) - and " +
 		"still DELETE the originals it replaces.\n" +
-		"- Any memory that states a fact about quack's OWN sandbox, CI gates, toolchain, or tooling - the " +
-		"runtime, not the repository, now covered by the environment prompt instead - gets DELETE, reason " +
-		"\"runtime fact, moved to environment prompt\", even with no duplicate in this burst.\n" +
+		"- Any memory that states a fact about the sandbox this agent runs in (its filesystem permissions, " +
+		"its module cache, the toolchains on PATH, where CI results are delivered - never a fact about the " +
+		"repository under study itself, e.g. its Makefile, CI config, or its own commands) gets DELETE, " +
+		"reason \"runtime fact, moved to environment prompt\", even with no duplicate in this burst.\n" +
 		"Memories in the burst that describe genuinely different facts: NOOP both, they are not duplicates.\n\n" +
 		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\",\"reason\":\"\"}]}. " +
-		"Empty ops list if nothing in the burst duplicates.",
+		"Empty ops list if nothing in the burst duplicates or states a runtime fact.",
 
 	"user": "You maintain durable facts ABOUT THE USER. Below is a BURST of unverified facts minted within " +
 		"minutes of each other - they may restate the same fact more than once.\n\n" +

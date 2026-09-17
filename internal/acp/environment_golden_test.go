@@ -4,7 +4,9 @@ import (
 	"context"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -36,8 +38,8 @@ func checkEnvGolden(t *testing.T, name, got string) {
 	}
 }
 
-// TestGoldenEnvironmentBlock pins the ACP environment block for each branch it
-// renders: a non-git tree, an empty tree, and the read-only filesystem facts.
+// TestGoldenEnvironmentBlock pins four fixtures (plain, empty, read-only+sandboxed, sandboxed
+// git repo) so each new line renders only where its condition actually holds.
 func TestGoldenEnvironmentBlock(t *testing.T) {
 	populated := t.TempDir()
 	for _, n := range []string{"go.mod", "README.md"} {
@@ -58,6 +60,22 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 	ctx := context.Background()
 	checkEnvGolden(t, "environment.txt", norm(populated, environmentBlock(ctx, nil, populated, workspace.Caps{})))
 	checkEnvGolden(t, "environment.empty.txt", norm(empty, environmentBlock(ctx, nil, empty, workspace.Caps{})))
-	ro := workspace.Caps{ReadOnly: true, HomeDir: "/home/agent", Env: map[string]string{"GOMODCACHE": "/usr/local/go/pkg/mod"}}
+	ro := workspace.Caps{ReadOnly: true, HomeDir: "/home/agent", Sandbox: workspace.SandboxBwrap, Env: map[string]string{"GOMODCACHE": "/usr/local/go/pkg/mod"}}
 	checkEnvGolden(t, "environment.readonly.txt", norm(populated, environmentBlock(ctx, nil, populated, ro)))
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q", "-b", "quack/work")
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init")
+	// HomeDir set (and distinct from repo): childEnv farms a writable GOMODCACHE under HOME
+	// (EnsureWritableGoModCache), which would otherwise land inside repo and pollute its own entries.
+	sandboxed := workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: t.TempDir(), Env: map[string]string{"GOMODCACHE": "/usr/local/go/pkg/mod"}}
+	got := norm(repo, environmentBlock(ctx, nil, repo, sandboxed))
+	got = normHexSha.ReplaceAllString(got, "<SHA>")
+	checkEnvGolden(t, "environment.sandboxed-git.txt", got)
 }
+
+var normHexSha = regexp.MustCompile(`HEAD [0-9a-f]{7,40}`)
