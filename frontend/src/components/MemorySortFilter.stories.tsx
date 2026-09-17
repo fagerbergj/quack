@@ -77,7 +77,7 @@ export const WithScopes: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Sort and filter memories' }))
     await canvas.findByText('Live / invalidated')
     await expect(canvas.getByText('20 never recalled')).toBeInTheDocument()
-    await expect(canvas.getByText('15 no votes')).toBeInTheDocument()
+    await expect(canvas.getByText('15 no up/down votes')).toBeInTheDocument()
     await expect(canvas.getByText('3 unsupported verified')).toBeInTheDocument()
   },
 }

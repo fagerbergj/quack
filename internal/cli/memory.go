@@ -237,7 +237,7 @@ func RunMemoryStats(ctx context.Context, out io.Writer, server string, weeks int
 	if len(stats.Scopes) > 0 {
 		fmt.Fprintln(out)
 		tw2 := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw2, "SCOPE\tLIVE\tINVALIDATED\tNEVER_RECALLED\tNO_VOTES\tUNSUPPORTED_VERIFIED")
+		fmt.Fprintln(tw2, "SCOPE\tLIVE\tINVALIDATED\tNEVER_RECALLED\tNO_UP_DOWN_VOTES\tUNSUPPORTED_VERIFIED")
 		for _, s := range stats.Scopes {
 			fmt.Fprintf(tw2, "%s\t%d\t%d\t%d\t%d\t%d\n",
 				s.Scope, s.Live, s.Invalidated, s.NeverRecalled, s.NoVotes, s.UnsupportedVerified)

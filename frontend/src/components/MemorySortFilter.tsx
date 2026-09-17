@@ -121,10 +121,10 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
                     </div>
                     <div
                       className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] tabular-nums text-gray-500 dark:text-gray-400"
-                      title="Of the live points: never recalled, no votes cast, verified with no real judge/human support"
+                      title="Of the live points: never recalled, no up/down votes cast, verified with no real judge/human support"
                     >
                       <span>{s.never_recalled} never recalled</span>
-                      <span>{s.no_votes} no votes</span>
+                      <span>{s.no_votes} no up/down votes</span>
                       <span>{s.unsupported_verified} unsupported verified</span>
                     </div>
                   </li>

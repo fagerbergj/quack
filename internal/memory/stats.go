@@ -14,7 +14,9 @@ type ScopeStats struct {
 	Live          int
 	Invalidated   int
 	NeverRecalled int
-	NoVotes       int
+	// NoVotes: no upvote or downvote recorded. Includes a point recalled only
+	// into not_relevant votes until the per-point not_relevant counter lands.
+	NoVotes int
 	// UnsupportedVerified: verified only via outcome-reinforcement (Upvotes == ReinforcementCount), never an actual judge/human vote.
 	// Undercounts after a dedupe absorb: the merge sums Upvotes across survivor+absorbed but neither backend carries ReinforcementCount along.
 	UnsupportedVerified int

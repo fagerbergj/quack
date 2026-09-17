@@ -427,7 +427,7 @@ func TestRunMemoryStats(t *testing.T) {
 	for _, want := range []string{
 		"WEEK", "PRECISION", "MINTED", "INVALIDATED",
 		"2026-W36", "0.50",
-		"SCOPE", "NEVER_RECALLED", "NO_VOTES", "UNSUPPORTED_VERIFIED",
+		"SCOPE", "NEVER_RECALLED", "NO_UP_DOWN_VOTES", "UNSUPPORTED_VERIFIED",
 		"repo:quack", "10", "3", "4", "1",
 	} {
 		if !strings.Contains(s, want) {
