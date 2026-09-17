@@ -415,3 +415,55 @@ func SupportsRepeatGuard(t tool.Tool) bool {
 	_, ok := t.(runnableTool)
 	return ok
 }
+
+// repeatGuardedToolset applies repeatGuard to every tool a Toolset exposes -
+// covers a toolset attached directly to the agent, which Build's per-tool wrapper chain never sees.
+type repeatGuardedToolset struct {
+	inner   tool.Toolset
+	states  *repeatStates
+	tripped func(chatID, nodeID, msg string) bool
+}
+
+// RepeatWrapToolset wraps every tool ts exposes with states/tripped - the SAME instances
+// a caller's other repeat-guarded tools use, so ts's calls share that one budget. Nil ts passes through.
+func RepeatWrapToolset(ts tool.Toolset, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) tool.Toolset {
+	if ts == nil {
+		return nil
+	}
+	return &repeatGuardedToolset{inner: ts, states: states, tripped: tripped}
+}
+
+func (w *repeatGuardedToolset) Name() string { return w.inner.Name() }
+
+// Tools wraps each inner tool with repeatGuard; a non-runnable one passes through unwrapped.
+func (w *repeatGuardedToolset) Tools(ctx agent.ReadonlyContext) ([]tool.Tool, error) {
+	inner, err := w.inner.Tools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tool.Tool, len(inner))
+	for i, t := range inner {
+		if !SupportsRepeatGuard(t) {
+			out[i] = t
+			continue
+		}
+		if out[i], err = repeatWrap(t, w.states, w.tripped); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// toolsetRequestProcessor structurally mirrors ADK's unexported toolinternal.RequestProcessor,
+// which SkillToolset implements to inject its skill list into the system instruction.
+type toolsetRequestProcessor interface {
+	ProcessRequest(ctx agent.Context, req *model.LLMRequest) error
+}
+
+// ProcessRequest forwards to the inner toolset if it processes requests itself; a no-op otherwise.
+func (w *repeatGuardedToolset) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
+	if rp, ok := w.inner.(toolsetRequestProcessor); ok {
+		return rp.ProcessRequest(ctx, req)
+	}
+	return nil
+}

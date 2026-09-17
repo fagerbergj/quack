@@ -1193,12 +1193,15 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			}
 			judgeModel = judge
 			gateCfg.JudgeModel = judge
+			// Shared with judgeSkillsets below so load_skill counts against the same budget as the read tools.
+			judgeRepeats := tools.NewRepeatStates()
 			var judgeReadTools []tool.Tool
 			if jail != nil {
 				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{
 					Workspace:       jail,
 					WorkspaceUserID: localUserID,
 					WorkspaceCaps:   workspaceCaps,
+					Repeats:         judgeRepeats,
 				})
 				if err != nil {
 					return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
@@ -1206,7 +1209,7 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			}
 			var judgeSkillsets []tool.Toolset
 			if skillTS != nil {
-				judgeSkillsets = []tool.Toolset{skillTS}
+				judgeSkillsets = []tool.Toolset{tools.RepeatWrapToolset(skillTS, judgeRepeats, nil)}
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
 			// #1421 P2: each round gets its own bound-in factory+model, never one shared
@@ -1424,6 +1427,8 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	// wrapping in Overridable lets the round-start refresh swap targets without
 	// rebuilding the ADK agent, which holds this LLM for its whole lifetime.
 	wm := inference.NewOverridable(base)
+	// Shared with the skill toolset below so load_skill counts against this node's registry-tool budget.
+	repeats := tools.NewRepeatStates()
 	var builtins []tool.Tool
 	if len(b.toolNames) > 0 {
 		if builtins, err = tools.Build(b.toolNames, tools.Deps{
@@ -1446,6 +1451,7 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			Memory:             b.taskStore,
 			MemoryRole:         b.ac.Memory.Bucket,
 			Ledger:             b.ledgerStore,
+			Repeats:            repeats,
 		}); err != nil {
 			return nil, nil, nil, fmt.Errorf("tools: %w", err)
 		}
@@ -1456,7 +1462,8 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
 	builtins = append(builtins, extraTools...)
-	wag, err := agent.Build(b.bundle, prompts, wm, builtins, []tool.Toolset{b.agentSkillTS}, b.memGuidance, b.skillFms, b.grading, drain)
+	skillTS := tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped)
+	wag, err := agent.Build(b.bundle, prompts, wm, builtins, []tool.Toolset{skillTS}, b.memGuidance, b.skillFms, b.grading, drain)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
