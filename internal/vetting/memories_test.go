@@ -233,6 +233,18 @@ func TestRecallMemoryHits_ParsesFunctionResponse(t *testing.T) {
 	}
 }
 
+// TestActivityScanner_LoadMemoryReachesReceivedSet: load_memory must scan into
+// act.recalled like recall_memory - prepareJudge merges that into the received set.
+func TestActivityScanner_LoadMemoryReachesReceivedSet(t *testing.T) {
+	resp := map[string]any{"hits": []any{
+		map[string]any{"id": "m1", "tier": "unverified", "score": 0.9, "content": "a fact"},
+	}}
+	act := activityFromSessionAt(newTestSession(t, fnResp("1", "load_memory", resp)), "")
+	if len(act.recalled) != 1 || act.recalled[0].ID != "m1" || act.recalled[0].Score != 0.9 {
+		t.Fatalf("recalled = %+v, want one hit for m1 with its score", act.recalled)
+	}
+}
+
 // fakeOpsLogRecorder records every memory_ops write, mirroring
 // internal/memory's own lifecycle_test.go fixture (unexported there).
 type fakeOpsLogRecorder struct {

@@ -2256,7 +2256,7 @@ func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 		}
 	case fr.Name == "web_search":
 		recordSearchResults(s.act.seen, fr.Response)
-	case fr.Name == "recall_memory":
+	case fr.Name == "recall_memory", fr.Name == "load_memory":
 		s.act.recalled = append(s.act.recalled, recallMemoryHits(fr.Response)...)
 	case fr.Name == "cd":
 		if s.pendingCd[fr.ID] {

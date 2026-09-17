@@ -41,9 +41,9 @@ type Deps struct {
 	RepeatGuardTripped func(chatID, nodeID, msg string) bool
 	ExtTools           map[string]tool.Tool
 	LedgerCoords       ledger.Coords
-	Memory             *memory.Store      // recall_memory (nil = not offered - see resolveToolNames)
-	MemoryRole         string             // recall_memory's role bucket; empty falls back to repo then user
-	Ledger             ledger.LedgerStore // recall_memory's memory.recall ledger entries
+	Memory             *memory.Store      // recall_memory/load_memory (nil = not offered - see resolveToolNames)
+	MemoryRole         string             // recall_memory/load_memory's role bucket; empty falls back to repo then user
+	Ledger             ledger.LedgerStore // recall_memory/load_memory's memory.recall ledger entries
 }
 
 type constructor func(Deps) (tool.Tool, error)
@@ -55,6 +55,7 @@ var registry = map[string]constructor{
 	"current_date":  newCurrentDate,
 	"stage_memory":  newStageMemory,
 	"recall_memory": newRecallMemory,
+	"load_memory":   newLoadMemory,
 	"ask_user":      func(Deps) (tool.Tool, error) { return NewAskUserTool() },
 	"ask_advisor":   func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
 	"read_file":     newReadFile,

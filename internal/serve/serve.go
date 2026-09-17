@@ -28,7 +28,6 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/loadmemorytool"
 	"google.golang.org/adk/v2/tool/skilltoolset"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 	"google.golang.org/genai"
@@ -1397,7 +1396,6 @@ type nativeNodeBuilder struct {
 	extToolsByName     map[string]tool.Tool
 	taskStore          *memory.Store
 	memSvc             adkmemory.Service
-	wantLoadMemory     bool
 	workspaceCaps      workspace.Caps
 	memGuidance        string
 	bundle             *agent.Bundle
@@ -1447,9 +1445,6 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	}
 	if b.memSvc != nil {
 		builtins = append(builtins, memory.NewPreload())
-		if b.wantLoadMemory {
-			builtins = append(builtins, loadmemorytool.New())
-		}
 	}
 	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
@@ -1459,16 +1454,6 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 		return nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
 	return wag, wm, builtins, nil
-}
-
-// wrapMemSvcForRecall arms per-dispatch recall logging when this node's agent has
-// load_memory. ADK gives load_memory and preload the same SearchMemory hook, so this also logs preload's own search - each is its own delivery, so that's correct.
-func wrapMemSvcForRecall(memSvc adkmemory.Service, wantLoadMemory bool, led ledger.LedgerStore, chatID, nodeID string) adkmemory.Service {
-	v, ok := memSvc.(*memory.View)
-	if !ok || !wantLoadMemory {
-		return memSvc
-	}
-	return v.WithRecall(led, chatID, nodeID)
 }
 
 func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
@@ -1497,8 +1482,7 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	memSvc := wrapMemSvcForRecall(b.memSvc, b.wantLoadMemory, b.ledgerStore, chatID, nodeID)
-	srv, err := agent.Serve(wag, b.sessions, memSvc, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
+	srv, err := agent.Serve(wag, b.sessions, b.memSvc, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 	}
@@ -1623,7 +1607,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
 func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, advisorAgent adkagent.Agent, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers) (adkagent.Agent, error) {
-	toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
+	toolNames := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
 	if err != nil {
@@ -1671,7 +1655,6 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		extToolsByName:     extToolsByName,
 		taskStore:          taskStore,
 		memSvc:             memSvc,
-		wantLoadMemory:     wantLoadMemory,
 		workspaceCaps:      workspaceCaps,
 		memGuidance:        memGuidance,
 		bundle:             bundle,
@@ -2445,15 +2428,12 @@ func fmtErr(agentName, format string, args ...any) error {
 	return fmt.Errorf("agent %q: "+format, append([]any{agentName}, args...)...)
 }
 
-// resolveToolNames splits configured tool names into builtins and whether load_memory was requested.
-func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string, wantLoadMemory bool) {
+// resolveToolNames drops runtime-conditional builtins whose dependency is off.
+func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string) {
 	names = make([]string, 0, len(configured))
 	for _, t := range configured {
 		switch t {
-		case "load_memory":
-			wantLoadMemory = true
-			continue
-		case "stage_memory", "recall_memory":
+		case "stage_memory", "recall_memory", "load_memory":
 			if !taskMemAvailable {
 				continue
 			}
@@ -2464,5 +2444,5 @@ func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bo
 		}
 		names = append(names, t)
 	}
-	return names, wantLoadMemory
+	return names
 }

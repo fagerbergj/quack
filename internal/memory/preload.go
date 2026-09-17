@@ -191,14 +191,11 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 	if text == "" {
 		return "", nil
 	}
-	return fmt.Sprintf(recallInstructions, text), deliveredFrom(resp.Memories, scoredHits)
-}
-
-// deliveredFrom zips recall's parallel entries/scored slices (same order/length) into
-// the ledger/tool-facing Delivered shape - shared by RecallWithHits and View.SearchMemory.
-func deliveredFrom(entries []adkmemory.Entry, scoredHits []scored) []Delivered {
-	hits := make([]Delivered, 0, len(entries))
-	for i, m := range entries {
+	// scoredHits is the same order/length as resp.Memories (recall's own
+	// invariant) - zip them so the real cosine score reaches the ledger's
+	// memory.recall entry instead of always recording 0 (#1257 review).
+	hits = make([]Delivered, 0, len(resp.Memories))
+	for i, m := range resp.Memories {
 		d := Delivered{ID: m.ID, Content: extractText(m), Tier: TierUnverified}
 		if i < len(scoredHits) {
 			d.Score = scoredHits[i].Score
@@ -208,7 +205,7 @@ func deliveredFrom(entries []adkmemory.Entry, scoredHits []scored) []Delivered {
 		}
 		hits = append(hits, d)
 	}
-	return hits
+	return fmt.Sprintf(recallInstructions, text), hits
 }
 
 // TopK is the store's configured recall size - the ceiling recall_memory's own k argument
@@ -278,26 +275,38 @@ func FormatForModel(hits []Delivered, truncated bool) string {
 // and bumps recalls/last_recalled_at - the tool-call twin of vetting's
 // recallLedgerEntry+RecordRecall pair for prefill, shared here so both the native tool and the ACP loopback MCP write identically shaped entries without either depending on package vetting. round is always 0: a tool call has no round of its own to stamp (mirrors prefill's call, which is also always round 0).
 func (s *Store) LogRecall(ctx context.Context, led ledger.LedgerStore, chatID, nodeID, source string, hits []Delivered) {
-	if s == nil || led == nil || len(hits) == 0 {
+	if s == nil || len(hits) == 0 {
 		return
 	}
-	entries := make([]ledger.MemoryRecallEntry, len(hits))
 	ids := make([]string, len(hits))
 	for i, h := range hits {
-		entries[i] = ledger.MemoryRecallEntry{ID: h.ID, Score: h.Score}
 		ids[i] = h.ID
+	}
+	// The ledger append is best-effort and skipped entirely without a configured
+	// ledger; usage tracking (below) must still happen on a ledger-less deployment.
+	if led != nil {
+		s.appendRecallEntry(ctx, led, chatID, nodeID, source, hits)
+	}
+	s.RecordRecall(ctx, ids)
+}
+
+// appendRecallEntry writes LogRecall's ledger side; failures are logged, never
+// returned, since the ledger append is observational (see LogRecall).
+func (s *Store) appendRecallEntry(ctx context.Context, led ledger.LedgerStore, chatID, nodeID, source string, hits []Delivered) {
+	entries := make([]ledger.MemoryRecallEntry, len(hits))
+	for i, h := range hits {
+		entries[i] = ledger.MemoryRecallEntry{ID: h.ID, Score: h.Score}
 	}
 	payload, err := json.Marshal(ledger.MemoryRecallPayload{Source: source, Entries: entries})
 	if err != nil {
+		s.log.Warn("ledger memory.recall payload marshal failed (observational; call unaffected)", "chat_id", chatID, "node_id", nodeID, "err", err)
 		return
 	}
 	if _, err := led.AppendIntent(ctx, ledger.Entry{
 		ChatID: chatID, NodeID: nodeID, Kind: ledger.KindMemoryRecall, At: time.Now().UTC(), Payload: payload,
 	}); err != nil {
 		s.log.Warn("ledger memory.recall append failed (observational; call unaffected)", "chat_id", chatID, "node_id", nodeID, "err", err)
-		return
 	}
-	s.RecordRecall(ctx, ids)
 }
 
 // RecordRecall bumps recalls and last_recalled_at for every id in one batched write -

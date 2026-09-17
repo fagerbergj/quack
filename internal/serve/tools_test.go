@@ -1,29 +1,19 @@
 package serve
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
-	adkmemory "google.golang.org/adk/v2/memory"
-
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
-	"github.com/fagerbergj/quack/internal/ledger"
-	"github.com/fagerbergj/quack/internal/ledgertest"
-	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestResolveToolNames guards the config-driven gating of runtime-conditional
-// builtins: stage_memory needs a task-memory store, ask_advisor needs a built
-// advisor agent (itself gated on gates.judge being enabled - see build's
-// advisorAgent). Both are silently dropped rather than erroring when their
-// dependency is off, and load_memory is split out (ADK-native, added by the
-// caller) regardless.
+// TestResolveToolNames guards the config-driven gating of runtime-conditional builtins,
+// dropped silently rather than erroring - load_memory is gated exactly like recall_memory.
 func TestResolveToolNames(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -31,7 +21,6 @@ func TestResolveToolNames(t *testing.T) {
 		taskMemAvailable bool
 		advisorAvailable bool
 		wantNames        []string
-		wantWantLoadMem  bool
 	}{
 		{
 			name:             "ask_advisor present when advisor available",
@@ -58,10 +47,16 @@ func TestResolveToolNames(t *testing.T) {
 			wantNames:        []string{},
 		},
 		{
-			name:            "load_memory split out regardless of tool availability",
-			configured:      []string{"load_memory", "web_search"},
-			wantNames:       []string{"web_search"},
-			wantWantLoadMem: true,
+			name:             "load_memory present when task memory available",
+			configured:       []string{"load_memory", "web_search"},
+			taskMemAvailable: true,
+			wantNames:        []string{"load_memory", "web_search"},
+		},
+		{
+			name:             "load_memory absent when task memory unavailable",
+			configured:       []string{"load_memory", "web_search"},
+			taskMemAvailable: false,
+			wantNames:        []string{"web_search"},
 		},
 		{
 			name:       "unrelated tools always pass through",
@@ -79,48 +74,11 @@ func TestResolveToolNames(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotNames, gotWantLoadMem := resolveToolNames(tc.configured, tc.taskMemAvailable, tc.advisorAvailable)
+			gotNames := resolveToolNames(tc.configured, tc.taskMemAvailable, tc.advisorAvailable)
 			if !reflect.DeepEqual(gotNames, tc.wantNames) {
 				t.Errorf("names = %v, want %v", gotNames, tc.wantNames)
 			}
-			if gotWantLoadMem != tc.wantWantLoadMem {
-				t.Errorf("wantLoadMemory = %v, want %v", gotWantLoadMem, tc.wantWantLoadMem)
-			}
 		})
-	}
-}
-
-// TestWrapMemSvcForRecall_GatesOnWantLoadMemory: only a node whose agent lists
-// load_memory gets its memory View wrapped for recall logging.
-func TestWrapMemSvcForRecall_GatesOnWantLoadMemory(t *testing.T) {
-	ctx := context.Background()
-	s, _ := newMemStoreForTest(t, "task")
-	if _, err := s.Commit(ctx, memory.Scope{Role: "task"}, "explorer", memory.Provenance{},
-		[]memory.Candidate{{Content: "the build uses bazel"}}, ""); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-	view := s.View(memory.Scope{Role: "task"}, nil)
-	lgr := ledgertest.NewMemStore()
-	search := func(svc adkmemory.Service) {
-		if _, err := svc.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "build system"}); err != nil {
-			t.Fatalf("SearchMemory: %v", err)
-		}
-	}
-
-	search(wrapMemSvcForRecall(view, false, lgr, "chat1", "node1"))
-	if entries, err := lgr.ReadEntries(ctx, "chat1", 0); err != nil {
-		t.Fatalf("ReadEntries: %v", err)
-	} else if len(entries) != 0 {
-		t.Fatalf("entries = %d with wantLoadMemory=false, want 0 (unwrapped)", len(entries))
-	}
-
-	search(wrapMemSvcForRecall(view, true, lgr, "chat1", "node1"))
-	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
-	if err != nil {
-		t.Fatalf("ReadEntries: %v", err)
-	}
-	if len(entries) != 1 || entries[0].Kind != ledger.KindMemoryRecall {
-		t.Fatalf("entries = %+v, want exactly one memory.recall", entries)
 	}
 }
 
@@ -159,7 +117,7 @@ func TestEmitServerConfigToolsBuild(t *testing.T) {
 		if ac.Acp != nil {
 			continue // external worker: brings its own tools, quack builds none
 		}
-		names, _ := resolveToolNames(ac.Tools, true, false)
+		names := resolveToolNames(ac.Tools, true, false)
 		if _, err := tools.Build(names, deps); err != nil {
 			t.Errorf("agent %q tools %v: %v", name, ac.Tools, err)
 		}

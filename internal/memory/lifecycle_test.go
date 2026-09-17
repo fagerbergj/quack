@@ -374,6 +374,31 @@ func TestRecordRecall_BumpsCountAndTimestamp(t *testing.T) {
 	})
 }
 
+// TestLogRecall_BumpsRecallsWithoutLedger: a ledger-less deployment (led=nil)
+// must still record usage - only the ledger append itself is best-effort.
+func TestLogRecall_BumpsRecallsWithoutLedger(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		m1ID := testID("m1")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "recalled with no ledger", Scope: "repo:r"},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+
+		s.LogRecall(ctx, nil, "chat1", "node1", "tool", []Delivered{{ID: m1ID, Score: 0.9}})
+
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(pts) != 1 || pts[0].Recalls != 1 {
+			t.Fatalf("point = %+v, want recalls=1 even with no ledger configured", pts[0])
+		}
+	})
+}
+
 // TestApplyVotes_NetScoreInvalidates covers the net-score invalidation rule:
 // a second contradicted vote drops the score to the threshold and the
 // memory is soft-invalidated with the fixed reason.
