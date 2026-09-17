@@ -106,12 +106,11 @@ func judgeMemoriesNudgeText(owedIDs []string) string {
 	return fmt.Sprintf("You did not vote on all the recalled memories. Vote on memories %s via submit_verdict's `memories` array before finishing.", strings.Join(owedIDs, ", "))
 }
 
-// mergeMemoryHits appends new into base, deduping by id (first occurrence
-// wins) so a memory recalled by both prefill and a recall_memory tool call
-// is voted on once, not twice (epic #1255 P2 adversarial review finding).
-func mergeMemoryHits(base, add []memory.Delivered) []memory.Delivered {
+// mergeMemoryHits appends new into base, deduping by id so a memory is voted on once
+// (#1255 P2); added is the newly-added subset, the caller's cue to bump recalls once (#1470).
+func mergeMemoryHits(base, add []memory.Delivered) (merged, added []memory.Delivered) {
 	if len(add) == 0 {
-		return base
+		return base, nil
 	}
 	seen := make(map[string]bool, len(base))
 	for _, m := range base {
@@ -123,8 +122,31 @@ func mergeMemoryHits(base, add []memory.Delivered) []memory.Delivered {
 		}
 		seen[m.ID] = true
 		base = append(base, m)
+		added = append(added, m)
 	}
-	return base
+	return base, added
+}
+
+// mergeAndCountRecalledMemories merges add plus a live ACP session's Recalled snapshot into
+// received, bumping recalls only for new ids - shared by prepareJudge and commitFinal so a judge-less dispatch still counts and neither double-counts.
+func mergeAndCountRecalledMemories(ctx context.Context, cfg Config, advisorToken string, received, add []memory.Delivered) []memory.Delivered {
+	var addedIDs []memory.Delivered
+	received, addedIDs = mergeMemoryHits(received, add)
+	cfg.Memory.RecordRecall(ctx, memoryIDs(addedIDs))
+	if advisorToken == "" {
+		return received
+	}
+	t, ok := LookupAdvisorThread(advisorToken)
+	if !ok || t.MemSecret == "" {
+		return received
+	}
+	ms, ok := LookupMemSession(t.MemSecret)
+	if !ok || ms.Recalled == nil {
+		return received
+	}
+	received, addedIDs = mergeMemoryHits(received, ms.Recalled.Snapshot())
+	cfg.Memory.RecordRecall(ctx, memoryIDs(addedIDs))
+	return received
 }
 
 // recallLedgerEntry appends a best-effort memory.recall ledger entry for one

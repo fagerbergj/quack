@@ -185,3 +185,54 @@ func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 		}
 	})
 }
+
+// TestRunGatedRefine_ACPRecalledMemory_CountsOnceDespiteRepeatCalls covers #1470's ACP
+// half: MemSession.Recalled accumulates one raw entry per recall_memory/load_memory call
+// (not deduped by itself - see the ACP loopback's own handlers), but the round merge in
+// prepareJudge (mergeMemoryHits) only bumps recalls for ids new to the round's received
+// set, so three identical-id adds from one round's repeat calls count once.
+func TestRunGatedRefine_ACPRecalledMemory_CountsOnceDespiteRepeatCalls(t *testing.T) {
+	ctx := context.Background()
+	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMemEmbedder{}, echoConsolidator{}, "test_acp_recall_count", "task", 5, 0)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	scope := memory.Scope{Role: "coding", User: "u"}
+	if _, err := store.Commit(ctx, scope, "author", memory.Provenance{}, []memory.Candidate{{Content: "run go vet before committing"}}, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	mems, _, err := store.List(ctx, []string{"role:coding"}, 0, 10, true, "")
+	if err != nil || len(mems) != 1 {
+		t.Fatalf("List: %v mems=%+v", err, mems)
+	}
+	wantID := mems[0].ID
+
+	token := "plan1/acp-recall-node"
+	secret, err := NewMemSecret()
+	if err != nil {
+		t.Fatalf("NewMemSecret: %v", err)
+	}
+	recalled := &RecallStage{}
+	// Three loopback recall_memory/load_memory calls for the same memory in one round.
+	for i := 0; i < 3; i++ {
+		recalled.Add(memory.Delivered{ID: wantID, Content: "run go vet before committing"})
+	}
+	RegisterAdvisorThread(token, AdvisorTask{NodeID: "acp-recall-node", MemSecret: secret})
+	defer UnregisterAdvisorThread(token)
+	RegisterMemSession(secret, MemSession{Memory: store, Scope: scope, Recalled: recalled})
+	defer UnregisterMemSession(secret)
+
+	cfg := Config{ChatID: "chat-acp-recall", JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", Memory: store}
+	res := runStagedMemoryNode(t, "acp-recall-node", token, cfg, 0.95)
+	if !res.Passed {
+		t.Fatalf("expected the gate to pass with a fixed high score, got Passed=false")
+	}
+
+	mem, err := store.GetByID(ctx, wantID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if mem.Recalls != 1 {
+		t.Fatalf("recalls = %d, want 1 (deduped within the round despite 3 Recalled.Add calls)", mem.Recalls)
+	}
+}

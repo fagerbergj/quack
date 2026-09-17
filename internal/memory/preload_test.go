@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 func TestFirstStep(t *testing.T) {
@@ -147,5 +150,64 @@ func TestRecallForTool_CapsToTopKAndScopeIsolation(t *testing.T) {
 		if strings.Contains(h.Content, "repo-a") {
 			t.Fatalf("scope isolation violated: repo-b's recall returned repo-a's memory: %+v", h)
 		}
+	}
+}
+
+// TestLogRecallLedgerOnly_LogsButNeverBumps covers the primitive itself: N calls append N
+// ledger entries and never touch recalls - the round-scoped dedup that decides WHEN to
+// call RecordRecall is vetting's job (this package can't import vetting to prove it end
+// to end; see vetting's TestRunGatedRefine_NativeRecalledMemory_CountsOnceOnJudgePass).
+func TestLogRecallLedgerOnly_LogsButNeverBumps(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		m1ID := testID("m1")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "recalled repeatedly", Scope: "repo:r", Status: string(StatusUnverified)},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+		lgr := ledgertest.NewMemStore()
+		hits := []Delivered{{ID: m1ID, Content: "recalled repeatedly"}}
+		for i := 0; i < 3; i++ {
+			s.LogRecallLedgerOnly(ctx, lgr, "chat1", "node1", "tool", hits)
+		}
+		entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+		if err != nil {
+			t.Fatalf("ReadEntries: %v", err)
+		}
+		if len(entries) != 3 {
+			t.Fatalf("ledger entries = %d, want 3 (every call is its own audit entry)", len(entries))
+		}
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if pts[0].Recalls != 0 {
+			t.Fatalf("recalls = %d, want 0 (LogRecallLedgerOnly never bumps the counter)", pts[0].Recalls)
+		}
+	})
+}
+
+// TestLogRecallLedgerOnly_NilSafe covers the early-return guard: a nil store, a nil
+// ledger, or an empty hit set must all be safe no-ops, same leniency as LogRecall.
+func TestLogRecallLedgerOnly_NilSafe(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	hits := []Delivered{{ID: "m1"}}
+
+	var nilStore *Store
+	nilStore.LogRecallLedgerOnly(ctx, ledgertest.NewMemStore(), "chat1", "node1", "tool", hits) // must not panic
+
+	lgr := ledgertest.NewMemStore()
+	s.LogRecallLedgerOnly(ctx, nil, "chat1", "node1", "tool", hits) // nil ledger: no-op
+	s.LogRecallLedgerOnly(ctx, lgr, "chat1", "node1", "tool", nil)  // empty hits: no-op
+
+	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries = %+v, want none (both calls were no-ops)", entries)
 	}
 }

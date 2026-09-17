@@ -271,9 +271,8 @@ func FormatForModel(hits []Delivered, truncated bool) string {
 	return b.String()
 }
 
-// LogRecall appends a best-effort memory.recall ledger entry for a recall_memory call
-// and bumps recalls/last_recalled_at - the tool-call twin of vetting's
-// recallLedgerEntry+RecordRecall pair for prefill, shared here so both the native tool and the ACP loopback MCP write identically shaped entries without either depending on package vetting. round is always 0: a tool call has no round of its own to stamp (mirrors prefill's call, which is also always round 0).
+// LogRecall appends a memory.recall ledger entry and bumps recalls/last_recalled_at -
+// used only where there's no round-scoped set to dedupe against (plan_judge; #1470).
 func (s *Store) LogRecall(ctx context.Context, led ledger.LedgerStore, chatID, nodeID, source string, hits []Delivered) {
 	if s == nil || len(hits) == 0 {
 		return
@@ -282,16 +281,23 @@ func (s *Store) LogRecall(ctx context.Context, led ledger.LedgerStore, chatID, n
 	for i, h := range hits {
 		ids[i] = h.ID
 	}
-	// The ledger append is best-effort and skipped entirely without a configured
-	// ledger; usage tracking (below) must still happen on a ledger-less deployment.
 	if led != nil {
 		s.appendRecallEntry(ctx, led, chatID, nodeID, source, hits)
 	}
 	s.RecordRecall(ctx, ids)
 }
 
-// appendRecallEntry writes LogRecall's ledger side; failures are logged, never
-// returned, since the ledger append is observational (see LogRecall).
+// LogRecallLedgerOnly logs every call for the audit trail but never bumps the counter -
+// callers dedupe recalls/last_recalled_at against their own round's received set (#1470).
+func (s *Store) LogRecallLedgerOnly(ctx context.Context, led ledger.LedgerStore, chatID, nodeID, source string, hits []Delivered) {
+	if s == nil || led == nil || len(hits) == 0 {
+		return
+	}
+	s.appendRecallEntry(ctx, led, chatID, nodeID, source, hits)
+}
+
+// appendRecallEntry writes LogRecall/LogRecallLedgerOnly's shared ledger side; failures
+// are logged, never returned, since the append is observational.
 func (s *Store) appendRecallEntry(ctx context.Context, led ledger.LedgerStore, chatID, nodeID, source string, hits []Delivered) {
 	entries := make([]ledger.MemoryRecallEntry, len(hits))
 	for i, h := range hits {

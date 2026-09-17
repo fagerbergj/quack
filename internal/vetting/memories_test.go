@@ -200,17 +200,23 @@ func TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation(t *testing.T) {
 func TestMergeMemoryHits_DedupesByID(t *testing.T) {
 	base := []memory.Delivered{{ID: "m1", Content: "from prefill"}}
 	add := []memory.Delivered{{ID: "m1", Content: "from tool call"}, {ID: "m2", Content: "new"}}
-	got := mergeMemoryHits(base, add)
+	got, added := mergeMemoryHits(base, add)
 	if len(got) != 2 {
 		t.Fatalf("merged = %+v, want 2 (m1 deduped, m2 added)", got)
 	}
 	if got[0].ID != "m1" || got[0].Content != "from prefill" {
 		t.Fatalf("m1 = %+v, want the FIRST occurrence kept (prefill's), not overwritten by the tool's", got[0])
 	}
-	// Merging again with the same add must not grow the set further.
-	got2 := mergeMemoryHits(got, add)
+	if len(added) != 1 || added[0].ID != "m2" {
+		t.Fatalf("added = %+v, want only m2 (m1 already in base)", added)
+	}
+	// Merging again with the same add must not grow the set further, and nothing new is added.
+	got2, added2 := mergeMemoryHits(got, add)
 	if len(got2) != 2 {
 		t.Fatalf("re-merge grew the set: %+v", got2)
+	}
+	if len(added2) != 0 {
+		t.Fatalf("re-merge added = %+v, want none (both ids already received)", added2)
 	}
 }
 

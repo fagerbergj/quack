@@ -33,10 +33,11 @@ const recallMemoryDescription = "Recall up to k durable facts from shared memory
 	"own buckets (repo/role/user). Returns a compact list of {id, tier, score, content} - cite an id in your answer " +
 	"when you rely on it. Every call is logged and the delivered memories may be voted on by the judge."
 
-// NewRecallMemoryTool builds recall_memory over a FIXED scope - the
-// orchestrator's own use, which has no per-node coords to restamp (unlike
-// newRecallMemory below, built once per agent and re-scoped per dispatch).
+// NewRecallMemoryTool builds recall_memory over a FIXED scope - the orchestrator's own use,
+// rebuilt fresh every turn (buildMemoryArtifactTools), so counted dedupes per turn (#1470).
 func NewRecallMemoryTool(store *memory.Store, sc memory.Scope, led ledger.LedgerStore, chatID string) (tool.Tool, error) {
+	var mu sync.Mutex
+	counted := map[string]bool{}
 	return functiontool.New[recallMemoryArgs, recallMemoryResult](
 		functiontool.Config{Name: "recall_memory", Description: recallMemoryDescription},
 		func(ctx agent.Context, a recallMemoryArgs) (recallMemoryResult, error) {
@@ -44,7 +45,18 @@ func NewRecallMemoryTool(store *memory.Store, sc memory.Scope, led ledger.Ledger
 				return recallMemoryResult{}, fmt.Errorf("recall_memory: query is empty")
 			}
 			hits, truncated := store.RecallForTool(ctx, sc, a.Query, a.K)
-			store.LogRecall(ctx, led, chatID, "", "tool", hits)
+			store.LogRecallLedgerOnly(ctx, led, chatID, "", "tool", hits)
+			mu.Lock()
+			newIDs := make([]string, 0, len(hits))
+			for _, h := range hits {
+				if counted[h.ID] {
+					continue
+				}
+				counted[h.ID] = true
+				newIDs = append(newIDs, h.ID)
+			}
+			mu.Unlock()
+			store.RecordRecall(ctx, newIDs)
 			return recallMemoryResult{Hits: hits, Truncated: truncated}, nil
 		},
 	)
@@ -92,12 +104,11 @@ func newRecallMemory(d Deps) (tool.Tool, error) { return newRecallMemoryNamed(d,
 // it is logged, counted, and scanned into the judge's received set the same way.
 func newLoadMemory(d Deps) (tool.Tool, error) { return newRecallMemoryNamed(d, "load_memory") }
 
-// newRecallMemoryNamed builds recall_memory (or its load_memory alias) for native DAG workers.
-// Scope is re-derived per call from the mutable coords box, so internal/tools never imports internal/vetting.
+// newRecallMemoryNamed builds recall_memory/load_memory; scope re-derives per call from coordsBox so internal/tools never imports internal/vetting.
+// Only the ledger entry lands here - the counter bump is deferred to vetting's round merge (#1470).
 func newRecallMemoryNamed(d Deps, name string) (tool.Tool, error) {
-	// No Memory-nil guard: Store's own methods (RecallForTool/LogRecall) are
-	// nil-receiver safe, same leniency as stage_memory - a caller resolving
-	// tools ahead of the real per-agent Deps (e.g. a grant-check test) gets a buildable tool that recalls nothing until wired.
+	// No Memory-nil guard: Store's own methods (RecallForTool/LogRecallLedgerOnly) are nil-receiver
+	// safe, same leniency as stage_memory - a caller resolving tools early gets a buildable no-op tool.
 	box := &coordsBox{}
 	inner, err := functiontool.New[recallMemoryArgs, recallMemoryResult](
 		functiontool.Config{Name: name, Description: recallMemoryDescription},
@@ -108,7 +119,7 @@ func newRecallMemoryNamed(d Deps, name string) (tool.Tool, error) {
 			coords := box.get()
 			sc := recallScope(d, ctx, coords)
 			hits, truncated := d.Memory.RecallForTool(ctx, sc, a.Query, a.K)
-			d.Memory.LogRecall(ctx, d.Ledger, coords.ChatID, coords.Node, "tool", hits)
+			d.Memory.LogRecallLedgerOnly(ctx, d.Ledger, coords.ChatID, coords.Node, "tool", hits)
 			return recallMemoryResult{Hits: hits, Truncated: truncated}, nil
 		},
 	)
