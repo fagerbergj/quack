@@ -20,9 +20,8 @@ type Story = StoryObj<typeof ArtifactPanel>
 
 const findingV1 = JSON.stringify({ path: 'a.go', title: 'missing nil check', rationale: 'x may be nil here', severity: 'high' })
 const findingV2 = JSON.stringify({ path: 'a.go', title: 'missing nil check (fixed)', rationale: 'x may be nil here', severity: 'high' })
-// ReviewView renders verdict/takeaway/verified/notes/finding_ids -
-// codeReviewNew covers all of them, codeReviewSparse (just a verdict, no
-// takeaway/lists/findings) covers a minimal record rendering without blanks.
+// codeReviewNew covers every ReviewView field; codeReviewSparse (verdict
+// only) covers a minimal record rendering without blanks.
 const codeReviewNew = {
   verdict: 'request_changes',
   takeaway: 'Two blocking issues remain in the fallback path.',
@@ -168,10 +167,8 @@ function chatOneRoute(url: string): Response | null {
   return null
 }
 
-// Real shapes captured off a code-reviewer node reviewing PR #1464 -
-// trimmed of fields no view reads (rendered/dismissed/clean) and long
-// strings shortened. finding_ids is adapted to reference all four captured
-// findings (the real record's ids only partly overlap - two were already-resolved, superseded ones).
+// Real shapes captured off a code-reviewer node reviewing PR #1464, long
+// strings shortened; finding_ids adapted to the four findings captured here.
 const reviewFindingIds = ['finding:89f3e6d1', 'finding:e11c2106', 'finding:c1a68ddf', 'finding:76f9df59']
 const codeReview1464 = {
   verdict: 'approve',
@@ -183,6 +180,11 @@ const codeReview1464 = {
   ],
   notes: ['internal/workspace/sandbox.go (+10, GoModCachePreseeded) is omitted from the PR description but coherent.'],
   finding_ids: reviewFindingIds,
+  rendered: '**Verdict: approve** · 3 suggestions · 1 nit\n\n' +
+    'Prompt facts and the re-aimed vet match the code they describe; findings are a bwrap-dependent golden test, the sweep purge\'s unreachable singletons, and minor duplication - none blocking.\n\n' +
+    '### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n' +
+    '| suggestion | internal/memory/commit.go:548 | Only clusters of >=2 are returned |\n\n' +
+    '### Dismissed\n\nNone.',
 }
 const finding89f3e6d1 = {
   line_hint: 86, path: 'internal/acp/environment_golden_test.go', severity: 'suggestion', state: 'new',
@@ -223,12 +225,8 @@ const dagPlan1464 = {
   assignments: [{ node_id: 'code-reviewer-1', task: 'Review PR #1464 (quack repo, fagerbergj/quack): memory: move runtime facts to environment prompt, re-aim vet.' }],
 }
 
-// chat-reviewer-1466: the CodeReviewerAllKinds AND OrchestratorNode stories
-// share one chat - a code_review, four findings and a judge_round on
-// code-reviewer-1, plus the run's own dag_node (code-reviewer-1) and
-// dag_plan (orchestrator, its real lineage - B2). dag_node never appears on
-// either node's panel; dag_plan is excluded from code-reviewer-1's (wrong
-// node_id) but IS the orchestrator's own primary output (PlanView, reachable).
+// CodeReviewerAllKinds and OrchestratorNode share one chat: dag_node and
+// dag_plan use their real lineage (code-reviewer-1, orchestrator), so each panel opens on its own deliverable only.
 function chatReviewer1466Route(url: string): Response | null {
   if (!url.includes('/chats/chat-reviewer-1466/')) return null
   if (url.endsWith('/artifacts')) {
@@ -240,10 +238,7 @@ function chatReviewer1466Route(url: string): Response | null {
         { name: 'finding:c1a68ddf', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
         { name: 'finding:76f9df59', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
         { name: 'judge_round:e-f957a075-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'code-reviewer-1', author: 'judge' }, revisions: [] },
-        // Bookkeeping (dag_node) - same node_id as the reviewer, never
-        // selectable/listed there. dag_plan belongs to the ORCHESTRATOR,
-        // not the reviewer - it never appears on code-reviewer-1's own
-        // panel because the node_id doesn't match, not because of its kind.
+        // dag_node is bookkeeping, never selectable; dag_plan belongs to the orchestrator, so it never appears here either.
         { name: 'dag_node:code-reviewer-1', kind: 'dag_node', class: 'structured', latest_revision: 4, lineage: { node_id: 'code-reviewer-1', author: 'system' }, revisions: [] },
         { name: 'dag_plan:main', kind: 'dag_plan', class: 'structured', latest_revision: 2, lineage: { node_id: 'orchestrator', author: 'system' }, revisions: [] },
       ],
@@ -375,10 +370,8 @@ export const FailedNode: Story = {
   },
 }
 
-// A node whose own declared kind ('document') loses to a code_review on the
-// same node (a code_review always outranks the declared kind) - the
-// secondary list titles findings/PR description/text from their own
-// bodies; bytes:logo never appears there at all (dispatch bookkeeping, excluded outright).
+// A code_review always outranks the node's declared kind ('document' here);
+// bytes:logo (dispatch bookkeeping) never appears in the secondary list at all.
 export const SecondaryHeavyNode: Story = {
   args: {
     chatId: 'chat-more',
@@ -403,10 +396,8 @@ export const SparseCodeReview: Story = {
   },
 }
 
-// A code-reviewer node: a code_review, four findings, a judge_round, AND
-// the run's own dag_node/dag_plan bookkeeping for the same node id -
-// proving the panel opens on the review, never the bookkeeping, with
-// findings inline and the judge round as a timeline chip, not a secondary row.
+// A code-reviewer node with all five kinds plus the run's own bookkeeping -
+// the panel opens on the review, never dag_node/dag_plan.
 export const CodeReviewerAllKinds: Story = {
   args: {
     chatId: 'chat-reviewer-1466',
@@ -417,9 +408,7 @@ export const CodeReviewerAllKinds: Story = {
   },
 }
 
-// B2: the orchestrator's own panel - dag_plan:main is ITS only artifact
-// (same chat as CodeReviewerAllKinds above), opening on PlanView's
-// assignment list instead of the old "hasn't produced anything yet".
+// The orchestrator's own panel (same chat as CodeReviewerAllKinds) - opens on PlanView's assignment list.
 export const OrchestratorNode: Story = {
   args: {
     chatId: 'chat-reviewer-1466',
@@ -431,15 +420,16 @@ export const OrchestratorNode: Story = {
 }
 
 // An ACP implementer that delivers through git and writes no artifact at
-// all - the empty state names the delivery (the node's own answer)
-// instead of "hasn't produced anything yet".
+// all - the empty state renders the FULL vetted answer as markdown (a one-line caption names the "no artifact" fact, not the content).
 export const ImplementerDeliveredNoArtifact: Story = {
   args: {
     chatId: 'chat-failed',
     nodeId: 'implementer-1',
     nodeAgent: 'Code Implementer',
     nodeTask: 'Implement the fix and open a PR',
-    nodeAnswer: 'Opened PR #1464 with the sandboxed-git skip and the EnforcesBoundary reuse.',
+    nodeAnswer: 'Opened PR #1464 with the sandboxed-git skip and the EnforcesBoundary reuse.\n\n' +
+      '- Added a `ResolveSandbox` probe before the git golden fixture, skipping loudly where bwrap is unusable\n' +
+      '- Replaced the inline `Sandboxed` predicate with `workspace.EnforcesBoundary`',
     onClose: () => {},
   },
 }

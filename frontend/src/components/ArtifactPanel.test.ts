@@ -125,10 +125,8 @@ describe('selectPrimaryOutput', () => {
     expect(selectPrimaryOutput([a, b], undefined, 'text:not-on-this-node')?.name).toBe('text:a')
   })
 
-  // dag_node/bytes:* are never the primary, however new their revision - a
-  // review always outranks everything else. dag_plan is NOT excluded by
-  // kind (B2): it only ever reaches this node's candidates when it's the
-  // ORCHESTRATOR's own plan, at which point it's ranked like anything else.
+  // dag_node/bytes:* never win, however new; dag_plan isn't excluded by
+  // kind - it only reaches candidates as the orchestrator's own plan.
   it('never picks dag_node or bytes:*, however new; dag_plan is a normal (low-rank) candidate', () => {
     const dagNode = summary({ name: 'dag_node:n1', kind: 'dag_node', latest_revision: 9 })
     const dagPlan = summary({ name: 'dag_plan:main', kind: 'dag_plan', class: 'structured', latest_revision: 9 })
@@ -189,7 +187,7 @@ describe('isBookkeeping', () => {
     expect(isBookkeeping({ kind: 'bytes', name: 'bytes:issue' })).toBe(true)
   })
 
-  // B2: dag_plan is NOT bookkeeping by kind - the per-node lineage filter
+  // dag_plan is NOT bookkeeping by kind - the per-node lineage filter
   // upstream already scopes it to the orchestrator's own panel.
   it('keeps everything else, including dag_plan and an unlisted kind like delivery_record', () => {
     expect(isBookkeeping({ kind: 'finding', name: 'finding:a' })).toBe(false)
@@ -200,10 +198,11 @@ describe('isBookkeeping', () => {
 
 // Titles, never raw ids, everywhere an artifact is named.
 describe('artifactTitle', () => {
-  it('titles a review as verdict + finding count', () => {
+  // No count here - the card/secondary-list callers have no finding bodies
+  // to derive one from; TitleHeading shows the severity-derived count separately.
+  it('titles a review as verdict only', () => {
     const s = summary({ name: 'code_review:pr:1464', kind: 'code_review', class: 'structured' })
-    expect(artifactTitle(s, { verdict: 'approve', finding_ids: ['a', 'b', 'c', 'd'] })).toBe('Review · approve · 4 findings')
-    expect(artifactTitle(s, { verdict: 'approve', finding_ids: ['a'] })).toBe('Review · approve · 1 finding')
+    expect(artifactTitle(s, { verdict: 'approve', finding_ids: ['a', 'b', 'c', 'd'] })).toBe('Review · approve')
   })
 
   it('titles a finding as severity + path:line', () => {

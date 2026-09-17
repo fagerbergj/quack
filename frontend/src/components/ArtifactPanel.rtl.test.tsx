@@ -351,9 +351,8 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(container.textContent ?? '').not.toContain('262144')
   })
 
-  // (a/7) Secondary artifacts are a plain titled list - no
-  // groups, no per-item bars. Tapping one opens it IN PLACE: it becomes the
-  // focused/primary view, reusing the one shared revision bar/raw/copy.
+  // (a/7) Secondary artifacts are a plain titled list, no per-item bars -
+  // tapping one becomes the focused view, reusing the shared revision bar/raw/copy.
   it('titles secondary artifacts and opens a tapped one in place as the focused view', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
@@ -366,9 +365,9 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(screen.queryByText(/finding:692b00ee/)).toBeNull()
 
     await user.click(row)
-    // Now focused: the title heading AND the typed FindingView both name
-    // it, exactly as the default primary would. A single revision hides the revision bar (D3).
-    expect(await screen.findAllByText(/missing nil check/)).toHaveLength(2)
+    // Now focused: the title heading names it (FindingView drops its own
+    // duplicate header) and the rationale renders. A single revision hides the bar.
+    expect(await screen.findByText(/missing nil check/)).toBeTruthy()
     expect(await screen.findByText(/x may be nil here/)).toBeTruthy()
     expect(screen.queryByText(/^Revision \d/)).toBeNull()
     // The plan (former primary) now shows in the secondary list instead.
@@ -395,6 +394,17 @@ describe('ArtifactPanel as a result view (#1178)', () => {
 
     expect(await screen.findByText("This node hasn't produced anything yet.")).toBeTruthy()
     expect(screen.queryByRole('group', { name: 'Judge rounds' })).toBeNull()
+  })
+
+  // (b/3) No artifacts, but an answer: renders the FULL answer as markdown
+  // (a heading, here) behind a one-line caption - not just its first line.
+  it('renders the full answer as markdown when the node wrote no artifact', async () => {
+    stubEmptyList()
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeAnswer={'# Opened PR #1464\n\nSecond line of the answer.'} onClose={() => {}} />)
+
+    expect(await screen.findByText('This node wrote no artifact - its answer:')).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Opened PR #1464' })).toBeTruthy()
+    expect(screen.getByText('Second line of the answer.')).toBeTruthy()
   })
 
   // (c) No artifact-id string (kind + ":" + instance) appears anywhere
@@ -607,15 +617,13 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
   })
 })
 
-// A dropped field here is invisible to any test that only renders the full
-// panel with one fixture - these render each typed view directly and check
-// every field the issue's shape lists, so a regression fails immediately.
+// Renders each typed view directly and checks every field it lists, so a
+// dropped field fails here instead of only being invisible in a full-panel fixture.
 describe('typed views render every documented field', () => {
-  it('ReviewView renders verdict, takeaway, verified, notes, and findings in finding_ids order', () => {
+  it('ReviewView renders takeaway, verified, notes, and findings in finding_ids order (verdict lives in TitleHeading, not here)', () => {
     rtlRender(
       <ReviewView
         data={{
-          verdict: 'approve',
           takeaway: 'Solid change overall.',
           verified: ['Ran the test suite'],
           notes: ['Consider a changelog entry'],
@@ -627,11 +635,18 @@ describe('typed views render every documented field', () => {
         ]}
       />,
     )
-    expect(screen.getByText('approve')).toBeTruthy()
     expect(screen.getByText('Solid change overall.')).toBeTruthy()
     expect(screen.getByText('Ran the test suite')).toBeTruthy()
     expect(screen.getByText('Consider a changelog entry')).toBeTruthy()
     expect(screen.getAllByText(/finding$/).map(el => el.textContent)).toEqual(['second finding', 'first finding'])
+  })
+
+  it('ReviewView opens the server\'s rendered overview under "Full review"', async () => {
+    const user = userEvent.setup()
+    rtlRender(<ReviewView data={{ verdict: 'approve', rendered: '## Scope\n\nReviewed the diff end to end.' }} findings={[]} />)
+    await user.click(screen.getByText('Full review'))
+    expect(await screen.findByRole('heading', { level: 2, name: 'Scope' })).toBeTruthy()
+    expect(screen.getByText('Reviewed the diff end to end.')).toBeTruthy()
   })
 
   it('JudgeRoundView renders pass/fail, score, the criteria table, and probes', () => {
@@ -661,7 +676,7 @@ describe('typed views render every documented field', () => {
   })
 })
 
-// B4: a screen reader must never announce two rows by the same name.
+// A screen reader must never announce two rows by the same name.
 describe('SecondaryList gives every row a distinct accessible name', () => {
   it('appends an ordinal when two different findings title identically', async () => {
     stubGlobalArtifactsFixtureWithDuplicateFindings()

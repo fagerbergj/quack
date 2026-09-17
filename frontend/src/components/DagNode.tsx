@@ -395,9 +395,8 @@ function NodeAnswer({ answer }: { answer: string }) {
   )
 }
 
-// bodyFor parses a fetched artifact revision the same way the panel does:
-// JSON for a structured kind, raw text for a blob - artifactTitle needs the
-// parsed shape only for the former.
+// Parses a fetched revision the same way the panel does: JSON for a
+// structured kind, raw text for a blob.
 function bodyFor(text: string, klass: string | undefined): unknown {
   if (klass !== 'structured') return text
   try { return JSON.parse(text) } catch { return text }

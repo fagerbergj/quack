@@ -574,13 +574,8 @@ export const DoneWithRetryAndSteered: Story = {
   },
 }
 
-// Three node-card scenarios: a code-reviewer node whose
-// summary line needs a real artifact fetch (verdict + finding count), an
-// ACP implementer that writes no artifact at all, and a plan-writing node
-// whose deliverable is a markdown blob. A scoped fetch stub (own chat ids,
-// 404-graceful fallback) mirrors ArtifactPanel.stories.tsx's own convention -
-// each file's window.fetch stomp is isolated in normal Storybook use; only
-// the render-check harness's eager glob races them, an accepted, pre-existing limit (see render-check.browser.test.tsx's own comment).
+// Three node-card scenarios, each with its own scoped fetch stub (own chat
+// ids, 404-graceful fallback) - isolated in normal Storybook use, though not under render-check's eager glob.
 const reviewerNode: DagNodeDef = { id: 'code-reviewer-1', agent: 'code-reviewer', task: 'Review PR #1464', depends_on: [] }
 const implementerNode: DagNodeDef = { id: 'implementer-1', agent: 'code-implementer', task: 'Implement the fix and open a PR', depends_on: [] }
 const plannerNode: DagNodeDef = { id: 'planner-1', agent: 'planner', task: 'Draft the plan', depends_on: [], artifact: 'text' }
@@ -619,8 +614,7 @@ function cardDemoRoute(url: string): Response {
 window.fetch = async (input: RequestInfo | URL) => cardDemoRoute(decodeURIComponent(input instanceof Request ? input.url : String(input)))
 
 // (1/3) A code-reviewer node: the card's outcome row fetches the node's own
-// review and shows "Review · approve · 4 findings" WITHOUT opening the
-// panel - additively (B1): the node's own answer still renders below it, never replaced.
+// review and shows "Review · approve" without opening the panel, additively - the answer still renders below it.
 export const CodeReviewerNodeCard: Story = {
   args: {
     node: reviewerNode,
@@ -632,9 +626,7 @@ export const CodeReviewerNodeCard: Story = {
   },
 }
 
-// (2/3) An ACP implementer that delivers through git and writes no
-// artifact at all - the card falls back to the node's own answer text
-// instead of showing nothing.
+// (2/3) An ACP implementer with no artifact - the card falls back to the answer text instead of showing nothing.
 export const ImplementerNodeCard: Story = {
   args: {
     node: implementerNode,

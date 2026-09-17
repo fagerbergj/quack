@@ -71,10 +71,9 @@ describe('DagNode artifacts menu item (#1114)', () => {
   })
 })
 
-// B1 regression: the artifact summary is ADDITIVE. A finished, chatId-bearing
-// node with BOTH a real artifact and its own answer text must show both -
-// the summary never substitutes for (or hides) the vetted answer row.
-describe('DagNode outcome row (B1: answer + artifact summary both render)', () => {
+// The artifact summary is additive: a node with both a real artifact and
+// its own answer text must show both, never one substituting for the other.
+describe('DagNode outcome row (answer + artifact summary both render)', () => {
   it('shows the artifact summary above the unchanged answer row and popup', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -92,7 +91,7 @@ describe('DagNode outcome row (B1: answer + artifact summary both render)', () =
     render(<DagNode node={node} state={{ status: 'done' }} runs={[]} answer="Reviewed and approved the change." isFinal={false} chatId="chat-1" />)
 
     // The artifact summary...
-    expect(await screen.findByText('Review · approve · 0 findings')).toBeTruthy()
+    expect(await screen.findByText('Review · approve')).toBeTruthy()
     // ...and the answer row, unchanged - same preview text, same popup.
     const answerButton = screen.getByRole('button', { name: /Reviewed and approved the change\./ })
     expect(answerButton).toBeTruthy()
