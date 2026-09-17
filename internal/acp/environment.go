@@ -18,11 +18,15 @@ import (
 // its root) must never blow the round's context window just to say "here's your cwd".
 const maxEnvironmentEntries = 200
 
-// environmentBlock renders a FACTUAL, Codex-CLI-style <environment_context>
-// grounding the round's prompt: absolute cwd, whether it's a git repo (branch
-// + short HEAD sha when so), and the top-level entries. Observation, not instruction - this is what replaces the old "do not clone the repo, it's already here" prose (agents/code-explorer/prompt.md): prose asserting where the repo is competes with a task naming one and loses; a plain fact about the actual filesystem does not compete with anything. Deterministic given (cwd, repo state), so it costs nothing to include on every round.
+// environmentBlock renders the round's <environment_context>: cwd, git state, top-level entries, and the sandbox/runtime facts every agent otherwise re-discovers per round (filesystem grants, the module cache, a clean-tree copy, where CI's verdict lives).
+// Deterministic given (cwd, repo state, caps), so it costs nothing to include on every round.
 func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string, caps workspace.Caps) string {
-	f := envFacts{Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly}
+	f := envFacts{
+		Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly,
+		GoModCache:          caps.Env["GOMODCACHE"],
+		GoModCachePreseeded: workspace.GoModCachePreseeded(caps.Env["GOMODCACHE"]),
+		Sandboxed:           caps.Sandbox == workspace.SandboxBwrap || caps.Sandbox == workspace.SandboxLandlock,
+	}
 	f.Branch, f.Sha, f.Git = gitInfo(ctx, cwd, caps)
 	entries, truncated := topLevelEntries(cwd)
 	f.Entries, f.Truncated = strings.Join(entries, ", "), truncated
@@ -48,15 +52,18 @@ func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string
 
 // envFacts is system/acp.environment's template data.
 type envFacts struct {
-	Cwd        string
-	Git        bool
-	Branch     string
-	Sha        string
-	Entries    string
-	Truncated  bool
-	MaxEntries int
-	ReadOnly   bool
-	Writable   string
+	Cwd                 string
+	Git                 bool
+	Branch              string
+	Sha                 string
+	Entries             string
+	Truncated           bool
+	MaxEntries          int
+	ReadOnly            bool
+	Writable            string
+	GoModCache          string
+	GoModCachePreseeded bool
+	Sandboxed           bool
 }
 
 // envTemplates caches the parsed system/acp.environment per version.
@@ -75,19 +82,20 @@ func renderEnvironment(ctx context.Context, res *artifactsrc.Resolver, f envFact
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-// gitInfo reports cwd's current branch and short HEAD sha via the SAME
-// sandboxed git path every other repo read uses (workspace.RunArgv) - so a
-// linked worktree gets the same landlock/bwrap grants as any other git command run there. ok=false for a non-repo cwd (the common case for a non-code node) or any git failure - the block degrades to "git: no" rather than failing the round over a cosmetic line.
+// gitInfo reports cwd's current branch and short HEAD sha via workspace.RunArgv, forced to
+// SandboxNone: this read-only query runs in the server process, not the round's sandbox, so a host with no working bwrap/landlock (no unprivileged userns, e.g. many CI runners) must still see a real repo rather than degrading to "git: no". ok=false for a non-repo cwd (the common case for a non-code node) or any git failure - the block degrades to "git: no" rather than failing the round over a cosmetic line.
 func gitInfo(ctx context.Context, cwd string, caps workspace.Caps) (branch, sha string, ok bool) {
 	if _, err := os.Stat(filepath.Join(cwd, ".git")); err != nil {
 		return "", "", false
 	}
-	res, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--abbrev-ref", "HEAD"}, caps)
+	probeCaps := caps
+	probeCaps.Sandbox = workspace.SandboxNone
+	res, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--abbrev-ref", "HEAD"}, probeCaps)
 	if err != nil || res.ExitCode != 0 {
 		return "", "", false
 	}
 	branch = strings.TrimSpace(res.Output)
-	if res2, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--short", "HEAD"}, caps); err == nil && res2.ExitCode == 0 {
+	if res2, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--short", "HEAD"}, probeCaps); err == nil && res2.ExitCode == 0 {
 		sha = strings.TrimSpace(res2.Output)
 	}
 	return branch, sha, true

@@ -104,7 +104,7 @@ func (s *Store) commitTo(ctx context.Context, bucket, author string, prov Proven
 		return 0, err
 	}
 
-	ops, err := s.decide(ctx, staged, sourceText, neighbours)
+	ops, err := s.decide(ctx, bucket, staged, sourceText, neighbours)
 	if err != nil {
 		return 0, err
 	}
@@ -233,9 +233,11 @@ func (s *Store) neighbours(ctx context.Context, bucket, sourceText string, stage
 	return out, nil
 }
 
-// decide runs the single consolidation pass and returns the operations to apply.
-func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText string, neighbours []neighbour) ([]op, error) {
+// decide runs the single consolidation pass and returns the operations to apply. bucket is
+// stated up front - the "task" prompt's role:* rule otherwise has no way to know which bucket it's vetting.
+func (s *Store) decide(ctx context.Context, bucket string, staged []Candidate, sourceText string, neighbours []neighbour) ([]op, error) {
 	var user strings.Builder
+	fmt.Fprintf(&user, "SCOPE: %s\n\n", bucket)
 	if len(staged) > 0 {
 		user.WriteString("STAGED CANDIDATES:\n")
 		for _, c := range staged {
@@ -488,15 +490,21 @@ var consolidatePrompts = map[string]string{
 	"task": "You maintain a team of agents' SHARED long-term memory about one subject - either a " +
 		"repository (its conventions, build/test/lint commands, layout, where things are registered, " +
 		"pre-existing failures) or a role's durable tradecraft (which sources proved authoritative and " +
-		"for what, which were junk, tactics that worked, dead-ends). You are given STAGED candidates, the " +
-		"agent's FINAL ANSWER, and the most similar EXISTING MEMORIES about this same subject.\n\n" +
-		"Produce a set of operations. First VET: keep only durable knowledge worth recalling in future " +
-		"unrelated tasks on this subject; drop anything volatile, request-specific, speculative, or not " +
-		"clearly supported. Reject CHANGE-LOG candidates that only describe the diff under review - " +
+		"for what, which were junk, tactics that worked, dead-ends). You are given a SCOPE, STAGED " +
+		"candidates, the agent's FINAL ANSWER, and the most similar EXISTING MEMORIES about this same subject.\n\n" +
+		"Produce a set of operations. First VET. Prefer keeping: a library or API behaviour that surprised " +
+		"the agent, an idiom or contract the codebase relies on, or an approach verified to work for a " +
+		"class of task - this experiential knowledge is the point of the store. Reject and NOOP facts " +
+		"about the sandbox this agent runs in: its filesystem permissions, its module cache, the " +
+		"toolchains installed on PATH, where CI results are delivered - already covered by the " +
+		"environment prompt, not memory. A fact about the repository under study - its Makefile, its " +
+		"CI config, its own commands - is NOT a runtime fact; keep it. Reject CHANGE-LOG candidates that only describe the diff under review - " +
 		"phrasing like \"X was added/changed/renamed in this PR/commit\" or \"now does Y as of <sha>\" - " +
-		"NOOP those; they describe a moment, not a fact that holds once the code moves on. Keep only " +
-		"conventions, commands, layout, and dead-ends that hold independent of the change. Then RECONCILE " +
-		"each kept memory against the existing ones:\n" +
+		"NOOP those; they describe a moment, not a fact that holds once the code moves on. Drop anything " +
+		"else volatile, request-specific, speculative, or not clearly supported. When SCOPE starts with " +
+		"\"role:\", keep only lessons general enough to apply across repositories; NOOP anything naming one " +
+		"project's specific file path, command, or service. Then RECONCILE each kept memory against the " +
+		"existing ones:\n" +
 		"- ADD: genuinely new - provide content (one atomic sentence) and a kind (e.g. convention|command|layout|source|search|fetch|deadend).\n" +
 		"- UPDATE: refines/supersedes an existing memory - provide its id plus the new content and kind.\n" +
 		"- DELETE: an existing memory is now contradicted, obsolete, or a duplicate - provide its id and a short reason " +
@@ -535,9 +543,14 @@ var consolidateDedupePrompts = map[string]string{
 		"- ADD only if none of them is worth keeping as-is but the group together implies a genuinely new " +
 		"synthesis - provide content and a kind (convention|command|layout|source|search|fetch|deadend) - and " +
 		"still DELETE the originals it replaces.\n" +
+		"- Any memory that states a fact about the sandbox this agent runs in (its filesystem permissions, " +
+		"its module cache, the toolchains on PATH, where CI results are delivered) gets DELETE, reason " +
+		"\"runtime fact, moved to environment prompt\", even with no duplicate in this burst. A fact about " +
+		"the repository under study - its Makefile, its CI config, its own commands - is NOT a runtime " +
+		"fact; leave it to the normal duplicate-grouping rules above.\n" +
 		"Memories in the burst that describe genuinely different facts: NOOP both, they are not duplicates.\n\n" +
 		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\",\"reason\":\"\"}]}. " +
-		"Empty ops list if nothing in the burst duplicates.",
+		"Empty ops list if nothing in the burst duplicates or states a runtime fact.",
 
 	"user": "You maintain durable facts ABOUT THE USER. Below is a BURST of unverified facts minted within " +
 		"minutes of each other - they may restate the same fact more than once.\n\n" +

@@ -274,3 +274,57 @@ func TestConsolidatePromptTask_MentionsChangeLog(t *testing.T) {
 		t.Fatal(`consolidatePrompts["task"] no longer mentions rejecting CHANGE-LOG candidates`)
 	}
 }
+
+// TestConsolidatePromptTask_MentionsRuntimeAndRoleClasses pins the write-time vet's
+// runtime-rejection, library-learning, and role-scope rules against a silent regression.
+func TestConsolidatePromptTask_MentionsRuntimeAndRoleClasses(t *testing.T) {
+	p := consolidatePrompts["task"]
+	for _, want := range []string{
+		"sandbox this agent runs in", "is NOT a runtime fact", "library or API behaviour", `"role:"`,
+	} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("consolidatePrompts[%q] missing %q", "task", want)
+		}
+	}
+}
+
+// TestConsolidateDedupePromptTask_MentionsRuntimeReason pins the sweep's runtime-purge
+// rule, its exact invalidation reason, and the closing line that must not contradict it.
+func TestConsolidateDedupePromptTask_MentionsRuntimeReason(t *testing.T) {
+	p := consolidateDedupePrompts["task"]
+	if !strings.Contains(p, "runtime fact, moved to environment prompt") {
+		t.Fatal(`consolidateDedupePrompts["task"] no longer mentions the runtime-purge reason`)
+	}
+	if !strings.Contains(p, "Empty ops list if nothing in the burst duplicates or states a runtime fact.") {
+		t.Fatal(`consolidateDedupePrompts["task"]'s closing line no longer covers the runtime-purge case - a model that reads only the last line would drop it`)
+	}
+}
+
+// TestDecide_ScopeLineNamesTheBucket proves the bucket reaches the model: the role:*
+// vet rule is inert unless the model is told which bucket it's vetting.
+func TestDecide_ScopeLineNamesTheBucket(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		var got string
+		s := newStore("task", capturingModel{lastUser: &got})
+		if _, err := s.Commit(ctx, Scope{Role: RoleCoding}, "reviewer", Provenance{}, []Candidate{{Content: "x"}}, ""); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+		if !strings.Contains(got, "SCOPE: role:coding") {
+			t.Fatalf("consolidation prompt missing bucket scope, got: %q", got)
+		}
+	})
+}
+
+// capturingModel records the last consolidation request's user text (via promptText,
+// scope_test.go) and NOOPs everything - a probe, not a scripted consolidator.
+type capturingModel struct{ lastUser *string }
+
+func (capturingModel) Name() string { return "capturing-consolidator" }
+
+func (m capturingModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	*m.lastUser = promptText(req)
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{{Text: `{"ops":[]}`}}}}, nil)
+	}
+}

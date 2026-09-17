@@ -749,6 +749,16 @@ func EnsureWritableGoModCache(home string) string {
 	return dir
 }
 
+// GoModCachePreseeded reports whether path (a configured GOMODCACHE) exists on disk - true
+// inside the Dockerfile image, false on a native/landlock install with no preseed to farm.
+func GoModCachePreseeded(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 // JAVA_TOOL_OPTIONS a sandboxed child needs. JAVA_TOOL_OPTIONS replaces not merges; java.io.tmpdir is hardcoded to /tmp.
 func SandboxJavaToolOptions(caps Caps) string {
 	var parts []string

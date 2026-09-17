@@ -125,6 +125,30 @@ func TestEnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	}
 }
 
+// TestGitInfoBypassesRoundSandbox: a real repo must still be detected when the round's named
+// sandbox binary is unreachable (e.g. no unprivileged userns) - the probe runs unsandboxed.
+func TestGitInfoBypassesRoundSandbox(t *testing.T) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "quack/work")
+	runGit(t, dir, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init")
+
+	// A PATH with nothing but a git symlink - bwrap (and everything else) unresolvable.
+	fakePath := t.TempDir()
+	if err := os.Symlink(git, filepath.Join(fakePath, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakePath)
+
+	branch, sha, ok := gitInfo(context.Background(), dir, workspace.Caps{Sandbox: workspace.SandboxBwrap})
+	if !ok || branch != "quack/work" || sha == "" {
+		t.Fatalf("gitInfo(%q) = (%q, %q, %v), want (\"quack/work\", <sha>, true) even with bwrap unreachable", dir, branch, sha, ok)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

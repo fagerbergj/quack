@@ -2,4 +2,5 @@
 cwd: <CWD>
 git: no
 entries: README.md, go.mod, internal/
+CI's result, when your task has one, already arrives in the task's envelope - read it there; do not re-run CI's suite just to confirm its verdict.
 </environment_context>

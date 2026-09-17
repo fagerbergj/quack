@@ -2,9 +2,6 @@
 cwd: <CWD>
 git: no
 entries: README.md, go.mod, internal/
-filesystem: read-only (OS-enforced, EACCES on write): <CWD>
-filesystem: writable: <TMP>, /home/agent
-reads and execution work anywhere; in-tree writes (npm install, go build artifacts, file edits) fail. To run code against this tree, copy it into a writable path first (`cp -a "$PWD" "$TMPDIR/probe"`) - the copy carries go.mod, so language-level rules like Go's internal/ visibility still resolve.
 GOMODCACHE/GOCACHE are already redirected to a writable path under $HOME for you, so `go build`/`go test` need no cache setup of your own.
 Toolchains are installed read-only under /usr - you cannot upgrade one in place; per-project dependencies (pip/npm installs) still go under $HOME.
 CI's result, when your task has one, already arrives in the task's envelope - read it there; do not re-run CI's suite just to confirm its verdict.
