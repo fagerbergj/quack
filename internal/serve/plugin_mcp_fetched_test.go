@@ -179,4 +179,29 @@ func TestMCPDeclaredReflectsRosterAfterUpdate(t *testing.T) {
 	if !skills.mcpDeclared()[entry.Name()] {
 		t.Fatalf("mcpDeclared() = %v, want %q flagged after rebuild", skills.mcpDeclared(), entry.Name())
 	}
+
+	// A refused row starts no server on restart either, so it must not
+	// flip the flag true and tell an operator to restart for nothing.
+	refusedRoot := t.TempDir()
+	writeGhostPluginManifest(t, refusedRoot, "refused")
+	if err := os.WriteFile(filepath.Join(refusedRoot, "mcp.json"), []byte(mcpJSONBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refusedEntry, err := pluginreg.ParseEntry(refusedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Put(context.Background(), pluginreg.FromEntry(refusedEntry)); err != nil {
+		t.Fatal(err)
+	}
+	refusals, err := skills.rebuildSkills()
+	if err != nil {
+		t.Fatalf("rebuildSkills: %v", err)
+	}
+	if refusals[refusedEntry.Name()] == nil {
+		t.Fatalf("refusals = %v, want %q refused (unlinked module)", refusals, refusedEntry.Name())
+	}
+	if skills.mcpDeclared()[refusedEntry.Name()] {
+		t.Fatalf("mcpDeclared()[%q] = true for a refused row, want false", refusedEntry.Name())
+	}
 }

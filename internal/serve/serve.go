@@ -669,7 +669,7 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 			return nil, err
 		}
 		swappable.Swap(newSkillSource(admitted))
-		mcpDeclaredPtr.Store(mcpDeclaredNames(freshPlugins))
+		mcpDeclaredPtr.Store(mcpDeclaredNames(admitted))
 		return refusals, nil
 	}
 	return skillsInit{

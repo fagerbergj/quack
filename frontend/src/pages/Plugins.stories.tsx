@@ -27,6 +27,7 @@ const samplePlugins: Plugin[] = [
     installed_sha: '0a4dd63ad4541f4f655c4108a295916f3c1d8fd',
     fetched_at: new Date(Date.now() - 26 * 3600_000).toISOString(),
     root: '/data/.quack/plugins/ponytail/repo',
+    declares_mcp_servers: true,
   },
   {
     name: 'broken', entry: 'github:acme/broken', source: 'github',

@@ -128,8 +128,8 @@ func TestPluginNoteFlagsDeclaredMCPServersAcrossUpdate(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	// mcpDeclared mirrors what internal/serve wires at boot: resolve the
-	// row's CURRENT clone and report whether its mcp.json declares a server.
+	// A live-resolving stand-in, not the real serve-side swap: proves the
+	// wire plumbing only, since it re-resolves every call instead of caching.
 	mcpDeclared := func() map[string]bool {
 		ps, _ := plugin.Resolve([]string{filepath.Join(root, "widgets", "repo")})
 		m := map[string]bool{}
