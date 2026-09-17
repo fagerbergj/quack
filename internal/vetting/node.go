@@ -924,13 +924,16 @@ func (j *judgeRounds) roundGate(round int) bool {
 // revision, the judge span, and the ledger coords.
 func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Context, jspan *stageSpan, ledgerCtx context.Context, act workerActivity) {
 	act = j.actFor(j.answer)
-	// recall_memory hits merge in fresh every round, from wherever this round's answer
-	// came from - native full-session re-scan, or a live ACP MemSession snapshot (#1255 P2).
-	j.receivedMemories = mergeMemoryHits(j.receivedMemories, act.recalled)
+	// recall_memory hits merge in fresh every round (#1255 P2); recalls only bumps for ids
+	// new to the dispatch-lifetime received set, so a round's repeat calls count once (#1470).
+	var added []memory.Delivered
+	j.receivedMemories, added = mergeMemoryHits(j.receivedMemories, act.recalled)
+	j.cfg.Memory.RecordRecall(j.nodeCtx, memoryIDs(added))
 	if j.advisorToken != "" {
 		if t, ok := LookupAdvisorThread(j.advisorToken); ok && t.MemSecret != "" {
 			if ms, ok := LookupMemSession(t.MemSecret); ok && ms.Recalled != nil {
-				j.receivedMemories = mergeMemoryHits(j.receivedMemories, ms.Recalled.Snapshot())
+				j.receivedMemories, added = mergeMemoryHits(j.receivedMemories, ms.Recalled.Snapshot())
+				j.cfg.Memory.RecordRecall(j.nodeCtx, memoryIDs(added))
 			}
 		}
 	}

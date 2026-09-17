@@ -103,9 +103,72 @@ func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	}
 }
 
-// TestNewLoadMemory_LogsLedgerEntryAndBumpsRecalls: load_memory logs and bumps
-// recalls like recall_memory, and its hit carries a score/tier for the judge.
-func TestNewLoadMemory_LogsLedgerEntryAndBumpsRecalls(t *testing.T) {
+// TestNewRecallMemoryTool_OrchestratorCountsOncePerInstance covers the orchestrator's
+// recall_memory (#1470): it has no vetting-gated round to dedupe against, so it counts
+// each id once per built tool instance instead - every call still logs its own ledger
+// entry, but calling twice for the same memory only bumps recalls once.
+func TestNewRecallMemoryTool_OrchestratorCountsOncePerInstance(t *testing.T) {
+	ctx := context.Background()
+	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "the build uses bazel"}, "test_orch_recall", "task", 5, 0)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	if _, err := store.Commit(ctx, memory.Scope{Role: "task"}, "explorer", memory.Provenance{}, []memory.Candidate{{Content: "the build uses bazel"}}, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	lgr := ledgertest.NewMemStore()
+	tl, err := NewRecallMemoryTool(store, memory.Scope{Role: "task"}, lgr, "chat1")
+	if err != nil {
+		t.Fatalf("NewRecallMemoryTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("recall_memory tool does not implement runnableTool")
+	}
+
+	var wantID string
+	for i := 0; i < 2; i++ {
+		out, err := rt.Run(newFakeCtx(), map[string]any{"query": "build system"})
+		if err != nil {
+			t.Fatalf("Run (%d): %v", i, err)
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			t.Fatalf("marshal Run result (%d): %v", i, err)
+		}
+		var result recallMemoryResult
+		if err := json.Unmarshal(b, &result); err != nil {
+			t.Fatalf("unmarshal Run result (%d): %v", i, err)
+		}
+		if len(result.Hits) != 1 {
+			t.Fatalf("Run (%d) result = %+v, want one hit", i, out)
+		}
+		wantID = result.Hits[0].ID
+	}
+
+	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("ledger entries = %d, want 2 (both calls logged)", len(entries))
+	}
+
+	mem, err := store.GetByID(ctx, wantID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if mem.Recalls != 1 {
+		t.Fatalf("recalls = %d, want 1 (deduped within this tool instance)", mem.Recalls)
+	}
+}
+
+// TestNewLoadMemory_LogsLedgerEntryDeferringRecallsCount: load_memory logs like
+// recall_memory (source "tool", one entry per call, hit carries a score/tier for the
+// judge) but does not bump recalls itself (#1470) - that bump is deferred to vetting's
+// per-round received-set merge, the only place that knows which ids this round is new.
+func TestNewLoadMemory_LogsLedgerEntryDeferringRecallsCount(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "the build uses bazel"}, "test_load_tool", "task", 5, 0)
 	if err != nil {
@@ -161,8 +224,8 @@ func TestNewLoadMemory_LogsLedgerEntryAndBumpsRecalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if mem.Recalls != 1 {
-		t.Fatalf("recalls = %d, want 1", mem.Recalls)
+	if mem.Recalls != 0 {
+		t.Fatalf("recalls = %d, want 0 (bumped by vetting's round merge, not the tool call)", mem.Recalls)
 	}
 }
 

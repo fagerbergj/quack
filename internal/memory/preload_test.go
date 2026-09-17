@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 func TestFirstStep(t *testing.T) {
@@ -147,5 +150,87 @@ func TestRecallForTool_CapsToTopKAndScopeIsolation(t *testing.T) {
 		if strings.Contains(h.Content, "repo-a") {
 			t.Fatalf("scope isolation violated: repo-b's recall returned repo-a's memory: %+v", h)
 		}
+	}
+}
+
+// TestLogRecallLedgerOnly_RoundDedupedCount covers #1470's split: every call still
+// appends its own ledger.recall entry (LogRecallLedgerOnly, the audit trail), while the
+// counter bump (RecordRecall) is left to a caller-side per-round id dedup - the shape
+// vetting's mergeMemoryHits gives the native tool/ACP loopback callers. Three calls in
+// one simulated round bump recalls once and write three ledger entries; a second round
+// (fresh dedup state) bumps again.
+func TestLogRecallLedgerOnly_RoundDedupedCount(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		m1ID := testID("m1")
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "recalled repeatedly", Scope: "repo:r", Status: string(StatusUnverified)},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+		lgr := ledgertest.NewMemStore()
+		hits := []Delivered{{ID: m1ID, Content: "recalled repeatedly"}}
+		get := func() scored {
+			pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			return pts[0]
+		}
+
+		// Round 1: the worker calls recall three times for the same memory.
+		roundSeen := map[string]bool{}
+		for i := 0; i < 3; i++ {
+			s.LogRecallLedgerOnly(ctx, lgr, "chat1", "node1", "tool", hits)
+			if !roundSeen[m1ID] {
+				roundSeen[m1ID] = true
+				s.RecordRecall(ctx, []string{m1ID})
+			}
+		}
+		entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+		if err != nil {
+			t.Fatalf("ReadEntries: %v", err)
+		}
+		if len(entries) != 3 {
+			t.Fatalf("ledger entries after round 1 = %d, want 3 (every call is its own audit entry)", len(entries))
+		}
+		if g := get(); g.Recalls != 1 {
+			t.Fatalf("recalls after round 1 = %d, want 1 (deduped within the round)", g.Recalls)
+		}
+
+		// Round 2 (fresh dedup state, e.g. a later turn's dispatch) counts again.
+		roundSeen = map[string]bool{}
+		s.LogRecallLedgerOnly(ctx, lgr, "chat1", "node1", "tool", hits)
+		if !roundSeen[m1ID] {
+			roundSeen[m1ID] = true
+			s.RecordRecall(ctx, []string{m1ID})
+		}
+		if g := get(); g.Recalls != 2 {
+			t.Fatalf("recalls after round 2 = %d, want 2", g.Recalls)
+		}
+	})
+}
+
+// TestLogRecallLedgerOnly_NilSafe covers the early-return guard: a nil store, a nil
+// ledger, or an empty hit set must all be safe no-ops, same leniency as LogRecall.
+func TestLogRecallLedgerOnly_NilSafe(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	hits := []Delivered{{ID: "m1"}}
+
+	var nilStore *Store
+	nilStore.LogRecallLedgerOnly(ctx, ledgertest.NewMemStore(), "chat1", "node1", "tool", hits) // must not panic
+
+	lgr := ledgertest.NewMemStore()
+	s.LogRecallLedgerOnly(ctx, nil, "chat1", "node1", "tool", hits) // nil ledger: no-op
+	s.LogRecallLedgerOnly(ctx, lgr, "chat1", "node1", "tool", nil)  // empty hits: no-op
+
+	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries = %+v, want none (both calls were no-ops)", entries)
 	}
 }

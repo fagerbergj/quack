@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"google.golang.org/adk/v2/model"
+
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 // daysAgo formats an RFC3339 UTC timestamp n days before now, matching
@@ -111,6 +113,42 @@ func TestForgetSweep_DefaultRules(t *testing.T) {
 				t.Errorf("second sweep rule %d matched %d, want 0 (idempotent)", r.Index, r.Matched)
 			}
 		}
+	})
+}
+
+// TestForgetSweep_RepeatedRoundRecallDoesNotTripRule1 covers #1470: rule 1
+// (`unverified && recalls >= 3 && supported == 0` -> invalidate) must not fire from a
+// single unvoted round's repeat calls - only the round-deduped counter feeds it.
+func TestForgetSweep_RepeatedRoundRecallDoesNotTripRule1(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		id := testID("recalled-thrice-one-round")
+		seedMemory(t, s, point{ID: id, Content: "c", Scope: "repo:r", Author: "a", Timestamp: "t",
+			MintedAt: daysAgo(5), ValidFrom: "t", Status: string(StatusUnverified), Tier: TierUnverified})
+
+		// One unvoted round: a worker calls recall_memory three times for this memory
+		// before the judge ever votes - the caller-side round dedup (vetting's
+		// mergeMemoryHits) lets only the first call's id through to RecordRecall.
+		lgr := ledgertest.NewMemStore()
+		hits := []Delivered{{ID: id, Content: "c"}}
+		roundSeen := map[string]bool{}
+		for i := 0; i < 3; i++ {
+			s.LogRecallLedgerOnly(ctx, lgr, "chat1", "node1", "tool", hits)
+			if !roundSeen[id] {
+				roundSeen[id] = true
+				s.RecordRecall(ctx, []string{id})
+			}
+		}
+
+		report, err := s.ForgetSweep(ctx, false)
+		if err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if report.Rules[1].Matched != 0 {
+			t.Fatalf("rule 1 matched = %d, want 0 (recalls stayed at 1, not 3, for one round's repeats)", report.Rules[1].Matched)
+		}
+		assertStatus(t, s, id, string(StatusUnverified))
 	})
 }
 

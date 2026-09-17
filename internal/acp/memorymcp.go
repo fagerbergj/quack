@@ -409,7 +409,13 @@ func memoryMCPHandler() http.Handler {
 				Name:        toolLoadMemory,
 				Description: "Recall relevant notes from shared memory about this repository/task family.",
 			}, func(ctx context.Context, _ *mcp.CallToolRequest, args loadMemoryInput) (*mcp.CallToolResult, any, error) {
-				text := sess.Memory.Recall(ctx, sess.Scope, args.Query)
+				text, hits := sess.Memory.RecallWithHits(ctx, sess.Scope, args.Query)
+				// Recorded and voted exactly like recall_memory (#1470) - this tool used to
+				// return prose via Recall and record nothing, invisible to both the ledger and the judge.
+				sess.Memory.LogRecallLedgerOnly(ctx, sess.Ledger, sess.ChatID, sess.NodeID, "tool", hits)
+				if sess.Recalled != nil {
+					sess.Recalled.Add(hits...)
+				}
 				if text == "" {
 					text = "(no relevant memory found)"
 				}
@@ -430,7 +436,7 @@ func memoryMCPHandler() http.Handler {
 				Description: "Recall up to k durable facts from shared memory relevant to `query`. Returns a compact id/tier/score/content list - cite an id in your answer when you rely on it. Every call is logged and may be voted on.",
 			}, func(ctx context.Context, _ *mcp.CallToolRequest, args recallMemoryInput) (*mcp.CallToolResult, any, error) {
 				hits, truncated := sess.Memory.RecallForTool(ctx, sess.Scope, args.Query, args.K)
-				sess.Memory.LogRecall(ctx, sess.Ledger, sess.ChatID, sess.NodeID, "tool", hits)
+				sess.Memory.LogRecallLedgerOnly(ctx, sess.Ledger, sess.ChatID, sess.NodeID, "tool", hits)
 				if sess.Recalled != nil {
 					sess.Recalled.Add(hits...)
 				}
