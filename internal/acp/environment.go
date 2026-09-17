@@ -82,19 +82,20 @@ func renderEnvironment(ctx context.Context, res *artifactsrc.Resolver, f envFact
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-// gitInfo reports cwd's current branch and short HEAD sha via the SAME
-// sandboxed git path every other repo read uses (workspace.RunArgv) - so a
-// linked worktree gets the same landlock/bwrap grants as any other git command run there. ok=false for a non-repo cwd (the common case for a non-code node) or any git failure - the block degrades to "git: no" rather than failing the round over a cosmetic line.
+// gitInfo reports cwd's current branch and short HEAD sha via workspace.RunArgv, forced to
+// SandboxNone: this read-only query runs in the server process, not the round's sandbox, so a host with no working bwrap/landlock (no unprivileged userns, e.g. many CI runners) must still see a real repo rather than degrading to "git: no". ok=false for a non-repo cwd (the common case for a non-code node) or any git failure - the block degrades to "git: no" rather than failing the round over a cosmetic line.
 func gitInfo(ctx context.Context, cwd string, caps workspace.Caps) (branch, sha string, ok bool) {
 	if _, err := os.Stat(filepath.Join(cwd, ".git")); err != nil {
 		return "", "", false
 	}
-	res, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--abbrev-ref", "HEAD"}, caps)
+	probeCaps := caps
+	probeCaps.Sandbox = workspace.SandboxNone
+	res, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--abbrev-ref", "HEAD"}, probeCaps)
 	if err != nil || res.ExitCode != 0 {
 		return "", "", false
 	}
 	branch = strings.TrimSpace(res.Output)
-	if res2, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--short", "HEAD"}, caps); err == nil && res2.ExitCode == 0 {
+	if res2, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--short", "HEAD"}, probeCaps); err == nil && res2.ExitCode == 0 {
 		sha = strings.TrimSpace(res2.Output)
 	}
 	return branch, sha, true
