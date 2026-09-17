@@ -71,9 +71,12 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 		t.Skip("git not on PATH")
 	}
 	repo := t.TempDir()
-	runGit(t, repo, "init", "-q", "-b", "quack/work")
-	runGit(t, repo, "add", "-A")
-	runGit(t, repo, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init")
+	runGitIsolated(t, repo, "init", "-q")
+	// symbolic-ref, not `git init -b` (needs git 2.28+) or a later `checkout -b` (fails on an
+	// unborn HEAD on some git versions): sets the initial branch name on every git version.
+	runGitIsolated(t, repo, "symbolic-ref", "HEAD", "refs/heads/quack/work")
+	runGitIsolated(t, repo, "add", "-A")
+	runGitIsolated(t, repo, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init")
 	// A real, existing (with-preseed) dir at a fixed name under os.TempDir() - not t.TempDir(),
 	// whose random per-run root would make the rendered path (and the golden) non-deterministic.
 	presentModCache := filepath.Join(os.TempDir(), "quack-golden-test-gomodcache-preseed")
@@ -84,9 +87,30 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 	// HomeDir distinct from repo: childEnv farms a writable GOMODCACHE under HOME, which would
 	// otherwise pollute repo's own entries.
 	sandboxed := workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: t.TempDir(), Env: map[string]string{"GOMODCACHE": presentModCache}}
-	got := norm(repo, environmentBlock(ctx, nil, repo, sandboxed))
+	block := environmentBlock(ctx, nil, repo, sandboxed)
+	if !strings.Contains(block, "git: yes (branch quack/work") {
+		// The fixture repo, not the golden, is what failed - gitInfo degrades to "git: no" on
+		// ANY probe failure (environment.go), so dump the repo's own state instead of guessing.
+		status, _ := exec.Command("git", "-C", repo, "status").CombinedOutput()
+		branch, _ := exec.Command("git", "-C", repo, "branch", "--show-current").CombinedOutput()
+		t.Fatalf("environmentBlock did not detect the fixture git repo; block=%q\ngit status:\n%s\ngit branch:\n%s", block, status, branch)
+	}
+	got := norm(repo, block)
 	got = normHexSha.ReplaceAllString(got, "<SHA>")
 	checkEnvGolden(t, "environment.sandboxed-git.txt", got)
 }
 
 var normHexSha = regexp.MustCompile(`HEAD [0-9a-f]{7,40}`)
+
+// runGitIsolated runs git isolated from the runner's own global/system config (a missing
+// user.name/email, an unexpected safe.directory or hooksPath entry) so fixture setup is
+// self-contained; unlike runGit, no config from outside this call can make it flaky.
+func runGitIsolated(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+}
