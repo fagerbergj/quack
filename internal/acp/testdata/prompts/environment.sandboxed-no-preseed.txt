@@ -2,7 +2,7 @@
 cwd: <CWD>
 git: no
 entries: README.md, go.mod, internal/
-GOMODCACHE/GOCACHE are already redirected to a writable path under $HOME for you, so `go build`/`go test` need no cache setup of your own.
-Toolchains are installed read-only under /usr - you cannot upgrade one in place; per-project dependencies (pip/npm installs) still go under $HOME.
+GOMODCACHE/GOCACHE are already redirected to a writable path under $HOME for you, so `go build`/`go test` need no cache setup of your own. GOFLAGS=-mod=mod is also set, so a plain `go build`/`go test` can rewrite go.mod/go.sum as it runs.
+Toolchains are installed read-only under /usr - you cannot upgrade one in place; per-project dependencies (pip/npm installs) still go under $HOME. PI_ACP_STATE_DIR is set for you; a tool that derives its own state dir instead of reading that var needs `env -u PI_ACP_STATE_DIR` first.
 CI's result, when your task has one, already arrives in the task's envelope - read it there; do not re-run CI's suite just to confirm its verdict.
 </environment_context>

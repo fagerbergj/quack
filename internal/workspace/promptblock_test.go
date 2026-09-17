@@ -197,6 +197,71 @@ func TestPromptBlockAndroidSdkRootFallback(t *testing.T) {
 	}
 }
 
+// withFakeExecEnvPath points execEnvPath (the child's fixed system dirs) at an
+// empty fixture - the real system dirs may hold gh/curl, and ChildPath, unlike LookPath, cannot be steered away from those via $PATH.
+func withFakeExecEnvPath(t *testing.T) {
+	t.Helper()
+	old := execEnvPath
+	execEnvPath = t.TempDir()
+	t.Cleanup(func() { execEnvPath = old })
+}
+
+func TestPromptBlockNotableAbsentSandboxedOnly(t *testing.T) {
+	withFakeExecEnvPath(t)
+
+	native := PromptBlock(Caps{Sandbox: SandboxNone}, nil)
+	if strings.Contains(native, "Not on PATH") {
+		t.Errorf("native (unsandboxed) got %q, want no absent-CLI line", native)
+	}
+
+	sandboxed := PromptBlock(Caps{Sandbox: SandboxBwrap}, nil)
+	if !strings.Contains(sandboxed, "Not on PATH: curl, gh.") {
+		t.Errorf("sandboxed with no curl/gh on the child's PATH got %q, want both named absent", sandboxed)
+	}
+}
+
+// TestPromptBlockNotableAbsentChecksChildPathNotServerPATH proves the probe follows a
+// binary supplied via workspace.extra_path (the child's PATH), never the server's own.
+func TestPromptBlockNotableAbsentChecksChildPathNotServerPATH(t *testing.T) {
+	withFakeExecEnvPath(t)
+	extraDir := t.TempDir()
+	writeFakeBinary(t, extraDir, "gh", "gh version 2.0.0")
+
+	got := PromptBlock(Caps{Sandbox: SandboxBwrap, ExtraPath: []string{extraDir}}, nil)
+	if strings.Contains(got, "Not on PATH: gh") {
+		t.Errorf("gh supplied via extra_path got %q, want gh not named absent", got)
+	}
+	if !strings.Contains(got, "Not on PATH: curl.") {
+		t.Errorf("curl still missing got %q, want curl alone named absent", got)
+	}
+}
+
+// TestChildPathHasExecutableSkipsEmptySegments: an empty ExtraPath entry (e.g. a leading/trailing
+// one) must never resolve relative to the server's own cwd - filepath.Join("", bin) is just bin.
+func TestChildPathHasExecutableSkipsEmptySegments(t *testing.T) {
+	withFakeExecEnvPath(t)
+	dir := t.TempDir()
+	writeFakeBinary(t, dir, "gh", "gh version 2.0.0")
+
+	cases := []struct {
+		name      string
+		extraPath []string
+		want      bool
+	}{
+		{"empty segment before the real dir", []string{"", dir}, true},
+		{"empty segment after the real dir", []string{dir, ""}, true},
+		{"only empty segments", []string{"", ""}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := childPathHasExecutable(Caps{ExtraPath: c.extraPath}, "gh")
+			if got != c.want {
+				t.Errorf("childPathHasExecutable(ExtraPath=%v, gh) = %v, want %v", c.extraPath, got, c.want)
+			}
+		})
+	}
+}
+
 func TestPromptBlockOSAndArch(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	got := PromptBlock(Caps{}, nil)

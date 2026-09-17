@@ -727,9 +727,8 @@ func SandboxTmpDir(caps Caps) string {
 // #940) - mounted RO under /usr, outside every RW grant.
 const preseededGoModCache = "/usr/local/go/pkg/mod"
 
-// EnsureWritableGoModCache returns a writable GOMODCACHE under home, farmed
-// with one symlink per top-level entry of preseededGoModCache the first time
-// it's called for this home dir. GOMODCACHE itself must be writable - Go writes cache/lock (and any module the preseed lacks) even when `go test` downloads nothing - so pointing GOMODCACHE straight at the RO preseed fails; a real writable dir with the preseed farmed in gives both: writes land as real files, reads of already-cached modules hit the real content through the symlinks. Best-effort: no preseed (dev machine) or an already-populated dir is not an error, just fewer/no symlinks added.
+// EnsureWritableGoModCache returns a writable GOMODCACHE under home, symlinking each top-level preseededGoModCache entry into it on first call for this home dir - cache/lock still EACCESes through that symlink, but fetch/modload both ignore a failed SideLock, so only a module the preseed lacks (writing through that same read-only symlinked parent) fails for real.
+// Best-effort: no preseed (dev machine) or an already-populated dir is not an error, just fewer/no symlinks added.
 func EnsureWritableGoModCache(home string) string {
 	dir := filepath.Join(home, "go", "pkg", "mod")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

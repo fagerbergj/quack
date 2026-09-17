@@ -21,6 +21,9 @@ func PromptBlock(caps Caps, checkCommands []string) string {
 	if tc := toolchainLine(caps); tc != "" {
 		lines = append(lines, tc)
 	}
+	if line := notableAbsentLine(caps); line != "" {
+		lines = append(lines, line)
+	}
 	if len(checkCommands) > 0 {
 		lines = append(lines, "Check commands allowed: "+strings.Join(checkCommands, ", ")+".")
 	}
@@ -138,6 +141,40 @@ func toolchainLine(caps Caps) string {
 		return ""
 	}
 	return "Toolchains on PATH: " + strings.Join(items, ", ") + "."
+}
+
+// notableCLIs are commands agents reach for that the sandboxed runtime image (Dockerfile) omits.
+var notableCLIs = []string{"curl", "gh"}
+
+// notableAbsentLine names missing notableCLIs, sandboxed only - a dev host's ad-hoc gaps aren't a deployment fact.
+func notableAbsentLine(caps Caps) string {
+	if !EnforcesBoundary(caps.Sandbox) {
+		return ""
+	}
+	var absent []string
+	for _, bin := range notableCLIs {
+		if !childPathHasExecutable(caps, bin) {
+			absent = append(absent, bin)
+		}
+	}
+	if len(absent) == 0 {
+		return ""
+	}
+	return "Not on PATH: " + strings.Join(absent, ", ") + "."
+}
+
+// childPathHasExecutable checks ChildPath(caps), the agent child's own PATH - never the
+// server's ambient one, since an absence claim must be true of what the spawned agent actually sees.
+func childPathHasExecutable(caps Caps, bin string) bool {
+	for _, dir := range strings.Split(ChildPath(caps), ":") {
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(dir, bin)); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 var javaReleaseVersionRe = regexp.MustCompile(`JAVA_VERSION="?(\d+)`)

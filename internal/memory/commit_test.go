@@ -281,6 +281,7 @@ func TestConsolidatePromptTask_MentionsRuntimeAndRoleClasses(t *testing.T) {
 	p := consolidatePrompts["task"]
 	for _, want := range []string{
 		"sandbox this agent runs in", "is NOT a runtime fact", "library or API behaviour", `"role:"`,
+		"gh missing from the sandbox", "$TMPDIR copy", "GOFLAGS=-mod=mod", "PI_ACP_STATE_DIR",
 	} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("consolidatePrompts[%q] missing %q", "task", want)
