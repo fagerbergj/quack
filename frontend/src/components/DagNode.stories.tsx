@@ -573,3 +573,87 @@ export const DoneWithRetryAndSteered: Story = {
     onRetry: () => {},
   },
 }
+
+// Three node-card scenarios: a code-reviewer node whose
+// summary line needs a real artifact fetch (verdict + finding count), an
+// ACP implementer that writes no artifact at all, and a plan-writing node
+// whose deliverable is a markdown blob. A scoped fetch stub (own chat ids,
+// 404-graceful fallback) mirrors ArtifactPanel.stories.tsx's own convention -
+// each file's window.fetch stomp is isolated in normal Storybook use; only
+// the render-check harness's eager glob races them, an accepted, pre-existing limit (see render-check.browser.test.tsx's own comment).
+const reviewerNode: DagNodeDef = { id: 'code-reviewer-1', agent: 'code-reviewer', task: 'Review PR #1464', depends_on: [] }
+const implementerNode: DagNodeDef = { id: 'implementer-1', agent: 'code-implementer', task: 'Implement the fix and open a PR', depends_on: [] }
+const plannerNode: DagNodeDef = { id: 'planner-1', agent: 'planner', task: 'Draft the plan', depends_on: [], artifact: 'text' }
+
+function jsonRes(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+}
+function textRes(body: string): Response {
+  return new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } })
+}
+function cardDemoRoute(url: string): Response {
+  if (url.includes('/chats/chat-1466-reviewer-card/')) {
+    if (url.endsWith('/artifacts')) {
+      return jsonRes({ data: [{ name: 'code_review:pr:1464', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'code-reviewer-1', author: 'gate' }, revisions: [] }] })
+    }
+    if (url.includes('/artifacts/code_review:pr:1464')) {
+      return url.includes('/revisions')
+        ? jsonRes({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'gate' } }] })
+        : textRes(JSON.stringify({ verdict: 'approve', finding_ids: ['a', 'b', 'c', 'd'] }))
+    }
+    return jsonRes({ data: [] })
+  }
+  if (url.includes('/chats/chat-1466-plan-card/')) {
+    if (url.endsWith('/artifacts')) {
+      return jsonRes({ data: [{ name: 'text:plan', kind: 'text', class: 'blob', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'worker' }, revisions: [] }] })
+    }
+    if (url.includes('/artifacts/text:plan')) {
+      return url.includes('/revisions')
+        ? jsonRes({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', author: 'worker' } }] })
+        : textRes('# Fix the sandboxed-git skip\n\nAdd a ResolveSandbox probe before the golden fixture.')
+    }
+    return jsonRes({ data: [] })
+  }
+  return jsonRes({ data: [] })
+}
+window.fetch = async (input: RequestInfo | URL) => cardDemoRoute(decodeURIComponent(input instanceof Request ? input.url : String(input)))
+
+// (1/3) A code-reviewer node: the card's outcome row fetches the node's own
+// review and shows "Review · approve · 4 findings" without opening the panel.
+export const CodeReviewerNodeCard: Story = {
+  args: {
+    node: reviewerNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 45_000, totalTokens: 12_400, model: 'qwen3-30b-a3b' },
+    runs: [workerDone([{ kind: 'thinking', text: 'Staging the review.' }])],
+    answer: '',
+    isFinal: false,
+    chatId: 'chat-1466-reviewer-card',
+  },
+}
+
+// (2/3) An ACP implementer that delivers through git and writes no
+// artifact at all - the card falls back to the node's own answer text
+// instead of showing nothing.
+export const ImplementerNodeCard: Story = {
+  args: {
+    node: implementerNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 61_000, totalTokens: 8_900, model: 'qwen3-30b-a3b' },
+    runs: [workerDone([{ kind: 'thinking', text: 'Opening the PR.' }])],
+    answer: 'Opened PR #1464 with the sandboxed-git skip and the EnforcesBoundary reuse.',
+    isFinal: false,
+    chatId: 'chat-1466-implementer-card',
+  },
+}
+
+// (3/3) A plan-writing node whose deliverable is a markdown blob - the card
+// shows the blob's own first line via the same artifactTitle helper.
+export const MarkdownBlobNodeCard: Story = {
+  args: {
+    node: plannerNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 18_000, totalTokens: 3_100, model: 'qwen3-30b-a3b' },
+    runs: [workerDone([{ kind: 'thinking', text: 'Drafting the plan.' }])],
+    answer: '',
+    isFinal: false,
+    chatId: 'chat-1466-plan-card',
+  },
+}

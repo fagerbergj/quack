@@ -30,6 +30,7 @@ interface JudgeNote {
   criterion?: string
 }
 interface JudgeRoundContent {
+  turn?: string
   round?: number
   passed?: boolean
   score?: number
@@ -38,6 +39,36 @@ interface JudgeRoundContent {
   // timeline uses the ref that points at the node's primary output.
   scored?: { artifact_id: string; revision: number }[]
   notes?: JudgeNote[]
+  // criteria/evidence: only JudgeRoundView reads these; the timeline chip
+  // and note-anchoring above use round/passed/score/notes only.
+  criteria?: { name?: string; score?: number; feedback?: string }[]
+  evidence?: { probes?: { name?: string; result?: string }[] }
+}
+
+// The other three typed-view shapes - only their own view component reads these.
+export interface CodeReviewBody {
+  verdict?: string
+  takeaway?: string
+  verified?: string[]
+  notes?: string[]
+  finding_ids?: string[]
+  dismissed?: string[]
+}
+export interface FindingBody {
+  path?: string
+  line_hint?: number
+  snippet?: string
+  title?: string
+  rationale?: string
+  severity?: string
+  state?: string
+}
+export interface PlanBody {
+  plan_id?: string
+  assignments?: { node_id?: string; task?: string }[]
+  setup?: { repo?: string; base_ref?: string; work_branch?: string }
+  delivery?: { kind?: string }
+  status?: string
 }
 
 interface AnchorResult {
@@ -75,33 +106,89 @@ export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
   return { byLine, unanchored }
 }
 
-// The node's RESULT (#1178 - there is no picker): the non-judge artifact
-// the panel opens onto, computed. The declared output kind (DagNodeDef.artifact)
-// wins when the node has an artifact of that kind; otherwise the newest output - highest latest_revision, then lineage saved_at, then name.
-export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKind?: string, focusArtifactId?: string): ArtifactSummary | null {
-  const nonJudge = artifacts.filter(a => a.kind !== 'judge_round')
-  if (nonJudge.length === 0) return null
-  // The focus hint wins outright when it names one of THIS node's artifacts -
-  // it's "show what was tapped," a stronger signal than the node's declared
-  // kind or newest-wins default (#1250).
-  const focused = focusArtifactId ? nonJudge.find(a => a.name === focusArtifactId) : undefined
-  if (focused) return focused
-  const declared = nodeArtifactKind ? nonJudge.find(a => a.kind === nodeArtifactKind) : undefined
-  if (declared) return declared
-  return nonJudge.reduce((best, a) => (compareOutput(a, best) > 0 ? a : best))
+// Run bookkeeping, never a node's own deliverable: dag_node is rewritten by
+// the system at node start/end, dag_plan belongs to the orchestrator, and a
+// dispatch-authored bytes:* blob is the run's own input staging, not anything this node produced.
+export function isBookkeeping(a: { kind?: string; name: string }): boolean {
+  return a.kind === 'dag_node' || a.kind === 'dag_plan' || a.name.startsWith('bytes:')
 }
 
-function compareOutput(a: ArtifactSummary, b: ArtifactSummary): number {
-  // Positive when `a` beats `b`: newer output first (latest_revision), then
-  // later-saved lineage, then the alphabetically EARLIER name as the final
-  // deterministic tiebreak.
-  const ar = a.latest_revision ?? 0
-  const br = b.latest_revision ?? 0
-  if (ar !== br) return ar - br
+// kindRank tiers a candidate: review, then the node's declared kind, then a
+// blob deliverable, then a finding; anything else is a last resort.
+function kindRank(a: ArtifactSummary, nodeArtifactKind?: string): number {
+  if (a.kind === 'code_review') return 0
+  if (nodeArtifactKind && a.kind === nodeArtifactKind) return 1
+  if (a.class !== 'structured') return 2
+  if (a.kind === 'finding') return 3
+  return 4
+}
+
+// The node's RESULT (#1178 - there is no picker): computed via kindRank,
+// with revision/saved_at/name breaking a tie within one tier.
+export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKind?: string, focusArtifactId?: string): ArtifactSummary | null {
+  const candidates = artifacts.filter(a => a.kind !== 'judge_round' && !isBookkeeping(a))
+  if (candidates.length === 0) return null
+  // The focus hint wins outright when it names one of THIS node's artifacts -
+  // it's "show what was tapped," a stronger signal than kind rank or the
+  // newest-wins default (#1250) - a secondary tap inside the panel reuses this same mechanism.
+  const focused = focusArtifactId ? candidates.find(a => a.name === focusArtifactId) : undefined
+  if (focused) return focused
+  return candidates.reduce((best, a) => (compareOutput(a, best, nodeArtifactKind) > 0 ? a : best))
+}
+
+function compareOutput(a: ArtifactSummary, b: ArtifactSummary, nodeArtifactKind?: string): number {
+  // Positive when `a` beats `b`: lower kindRank first, then newer output
+  // (latest_revision), then later-saved lineage, then the alphabetically
+  // EARLIER name as the final deterministic tiebreak.
+  const ar = kindRank(a, nodeArtifactKind)
+  const br = kindRank(b, nodeArtifactKind)
+  if (ar !== br) return br - ar
+  const rr = (a.latest_revision ?? 0) - (b.latest_revision ?? 0)
+  if (rr !== 0) return rr
   const as = a.lineage?.saved_at ?? ''
   const bs = b.lineage?.saved_at ?? ''
   if (as !== bs) return as > bs ? 1 : -1
   return a.name > b.name ? -1 : a.name < b.name ? 1 : 0
+}
+
+// firstLine is a blob's title fallback: its first non-blank line, heading
+// markup stripped - also the empty state's "name the delivery" text when there is no artifact at all.
+export function firstLine(text: string): string | null {
+  const line = text.split('\n').find(l => l.trim() !== '')
+  return line ? line.trim().replace(/^#+\s*/, '') : null
+}
+
+// severityLabel/findingLoc are shared between the finding title and FindingView.
+function findingLoc(f: FindingBody): string | undefined {
+  return f.path ? (f.line_hint != null ? `${f.path}:${f.line_hint}` : f.path) : undefined
+}
+
+// artifactTitle names an artifact for a human, never its raw id. `body` is
+// the parsed JSON for a structured kind, or the raw text for a blob.
+function reviewTitle(body: unknown): string {
+  const r = (body ?? {}) as CodeReviewBody
+  const n = r.finding_ids?.length ?? 0
+  return `Review · ${r.verdict ?? '?'} · ${n} finding${n === 1 ? '' : 's'}`
+}
+function findingTitle(summary: ArtifactSummary, body: unknown): string {
+  const f = (body ?? {}) as FindingBody
+  return [f.severity, findingLoc(f)].filter(Boolean).join(' · ') || summary.name
+}
+function judgeRoundTitle(body: unknown): string {
+  const j = (body ?? {}) as JudgeRoundContent
+  const parts = [`Judge round ${j.round ?? '?'}`]
+  if (j.score != null) parts.push(j.score.toFixed(2))
+  parts.push(j.passed ? 'passed' : 'failed')
+  return parts.join(' · ')
+}
+
+export function artifactTitle(summary: ArtifactSummary, body: unknown): string {
+  switch (summary.kind) {
+    case 'code_review': return reviewTitle(body)
+    case 'finding': return findingTitle(summary, body)
+    case 'judge_round': return judgeRoundTitle(body)
+    default: return typeof body === 'string' ? (firstLine(body) ?? summary.name) : summary.name
+  }
 }
 
 // The revision a judge round judged for the given artifact - from the
@@ -136,50 +223,6 @@ export function toAscending(revs: ArtifactRevisionInfo[]): ArtifactRevisionInfo[
 // say why it's disabled BEFORE the request instead of after the error.
 function isDiffableMime(mime: string): boolean {
   return mime === 'application/json' || mime.startsWith('text/')
-}
-
-// humanKindLabel is the "More" section's display name for a kind - the
-// panel never shows raw ids/kinds outside the Details disclosure (#1178),
-// so a kind the mapping doesn't name is at least capitalized.
-export function humanKindLabel(kind?: string): string {
-  switch (kind) {
-    case 'finding': return 'Findings'
-    case 'code_review': return 'Review'
-    case 'pr_body': return 'PR description'
-    case 'document': return 'Document'
-    case 'text':
-    case 'bytes': return 'Files'
-    default: return kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : 'Other'
-  }
-}
-
-export interface SecondaryGroup {
-  label: string
-  items: ArtifactSummary[]
-}
-
-// groupSecondary buckets the node's secondary artifacts (everything but
-// the primary output and the judge rounds) into the "More" section's
-// labelled groups; first-seen order, one group per display label.
-export function groupSecondary(items: ArtifactSummary[]): SecondaryGroup[] {
-  const groups = new Map<string, ArtifactSummary[]>()
-  for (const a of items) {
-    const label = humanKindLabel(a.kind)
-    const g = groups.get(label) ?? []
-    g.push(a)
-    groups.set(label, g)
-  }
-  return [...groups.entries()].map(([label, items]) => ({ label, items }))
-}
-
-// moreItemLabel is a "More" row's label: the instance half of the id (its
-// hint - human for text/bytes/…), never the full kind:instance id. A
-// finding's instance is a content hash, so it gets an ordinal instead.
-function moreItemLabel(a: ArtifactSummary, ordinal: number): string {
-  const i = a.name.indexOf(':')
-  const instance = i >= 0 ? a.name.slice(i + 1) : a.name
-  if (a.kind === 'finding' || instance === '') return `#${ordinal}`
-  return instance
 }
 
 // cursorFor derives the primary's revision cursor values (cursor + previous
@@ -231,6 +274,9 @@ interface Props {
   // The node's error text (NodeState.error). Drives the failure empty state
   // when the node has no non-judge artifact.
   nodeError?: string
+  // The node's own vetted answer text - the empty state's "name the
+  // delivery" fallback when the node wrote no artifact at all, e.g. an ACP implementer that delivers through git.
+  nodeAnswer?: string
   // The node's declared output kind (DagNodeDef.artifact) - makes the
   // primary-output selection exact. Absent when the node declares none.
   nodeArtifactKind?: string
@@ -243,8 +289,8 @@ interface Props {
 
 // A result view, not a picker (#1178): opening shows the node's primary
 // output under the node's own name, judge rounds as a chip timeline above it,
-// a Revision N-of-M prev/next bar with a single diff toggle, secondary artifacts behind "More", and everything provenance-shaped (id, kind, class, lineage, timestamps, the REST link) in a collapsed "Details" disclosure at the bottom. Both native <select>s and the picker-era desktop sidebar are gone - nothing left to pick.
-export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeArtifactKind, focusArtifactId, onClose }: Props) {
+// a Revision N-of-M prev/next bar with a single diff toggle, a titled secondary list, and everything provenance-shaped (id, kind, class, lineage, timestamps, the REST link) in a collapsed "Details" disclosure at the bottom. Both native <select>s and the picker-era desktop sidebar are gone - nothing left to pick.
+export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeAnswer, nodeArtifactKind, focusArtifactId, onClose }: Props) {
   const [summaries, setSummaries] = useState<ArtifactSummary[]>([])
   const [error, setError] = useState<string | null>(null)
   // rawView: the monospace line-list is the FALLBACK view (also what a
@@ -255,6 +301,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // round's matching notes anchor). Declared up here with the other state;
   // the activation effect below is what it drives.
   const [activeRoundId, setActiveRoundId] = useState<string | null>(null)
+  // focusedOverride: an in-panel secondary tap opens the tapped item IN
+  // PLACE, with no per-item bars of its own. Reuses selectPrimaryOutput's
+  // own focus-hint mechanism (#1250), so the tapped item becomes THE view -
+  // same revision bar, diff, raw, copy - instead of a second set of controls.
+  const [focusedOverride, setFocusedOverride] = useState<string | null>(null)
 
   const load = useCallback(() => {
     // Returns the promise (not fire-and-forget) - withScrollPreserved below
@@ -266,15 +317,20 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
   // only carries that revision's lineage - see toArtifactSummary in
   // internal/server/rest/artifacts.go), not "any revision this node wrote": if a later node revises an artifact (e.g. a judge writes revision 2 of a worker's `finding`) it moves to the reviser's panel and disappears from the original author's - a real gap against a "everything this node wrote is an output" reading of design V4, open as a question on #1094's review pending a spec answer. Fixing it needs per-revision lineage (GET .../revisions) up front for every artifact in the chat, which doesn't scale to "one click opens a panel" - documented here rather than silently wrong.
+  // isBookkeeping excludes dag_node/dag_plan/bytes:* entirely - they belong to the run, never to this node's own panel.
   const nodeArtifacts = useMemo(
-    () => summaries.filter(s => s.lineage?.node_id === nodeId),
+    () => summaries.filter(s => s.lineage?.node_id === nodeId && !isBookkeeping(s)),
     [summaries, nodeId],
   )
 
-  // The panel's one and only artifact: computed, not chosen. Judge rounds
-  // are not candidates - they are the timeline above the output, not
-  // pickable content.
-  const primary = useMemo(() => selectPrimaryOutput(nodeArtifacts, nodeArtifactKind, focusArtifactId), [nodeArtifacts, nodeArtifactKind, focusArtifactId])
+  // The panel's one and only shown artifact: computed, not chosen. Judge
+  // rounds are not candidates - they are the timeline above the output, not
+  // pickable content. focusedOverride (an in-panel secondary tap) wins over
+  // the caller's own focusArtifactId, same as a fresh tap always beats a stale hint.
+  const primary = useMemo(
+    () => selectPrimaryOutput(nodeArtifacts, nodeArtifactKind, focusedOverride ?? focusArtifactId),
+    [nodeArtifacts, nodeArtifactKind, focusedOverride, focusArtifactId],
+  )
   const primaryId = primary?.name ?? null
 
   // A different primary (list reloaded and the computed choice changed)
@@ -327,6 +383,37 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     entries.sort((x, y) => (x.b.round ?? 0) - (y.b.round ?? 0))
     return entries
   }, [judgeBodies])
+
+  // Secondary artifacts: everything but the primary and the judge rounds
+  // (the timeline above handles those). A plain list, opened in place - no per-item groups/bars.
+  const secondaryItems = useMemo(
+    () => nodeArtifacts.filter(a => a.kind !== 'judge_round' && a.name !== primaryId),
+    [nodeArtifacts, primaryId],
+  )
+  // Secondary bodies: every secondary artifact's OWN latest_revision body
+  // (explicit, not an implicit "no revision" fetch - matches exactly what
+  // the summary already reports as latest), parsed per its own class. Titles
+  // the secondary list (artifactTitle needs the body, not just the kind) and
+  // resolves a review's finding_ids inline - both need every candidate's content up front, not lazily per tap.
+  const [secondaryBodies, setSecondaryBodies] = useState<Record<string, unknown>>({})
+  const secondaryBodiesToken = useRef(0)
+  const loadSecondaryBodies = useCallback(() => {
+    if (secondaryItems.length === 0) { setSecondaryBodies({}); return }
+    const token = ++secondaryBodiesToken.current
+    return Promise.all(
+      secondaryItems.map(a =>
+        api.getArtifactText(chatId, a.name, a.latest_revision)
+          .then(t => tryParseJSON(t) ?? t)
+          .catch(() => undefined),
+      ),
+    ).then(bodies => {
+      if (token !== secondaryBodiesToken.current) return
+      const map: Record<string, unknown> = {}
+      secondaryItems.forEach((a, i) => { if (bodies[i] !== undefined) map[a.name] = bodies[i] })
+      setSecondaryBodies(map)
+    })
+  }, [chatId, secondaryItems])
+  useEffect(() => { void loadSecondaryBodies() }, [loadSecondaryBodies])
 
   // Revisions of the primary, ascending (the endpoint returns
   // newest-first) - the cursor indexes this list.
@@ -442,10 +529,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const refresh = useCallback(() => {
     void load()
     void loadJudgeBodies()
+    void loadSecondaryBodies()
     void loadRevisions()
     void loadContent()
     void loadDiff()
-  }, [load, loadJudgeBodies, loadRevisions, loadContent, loadDiff])
+  }, [load, loadJudgeBodies, loadSecondaryBodies, loadRevisions, loadContent, loadDiff])
 
   // Live SSE follow (#1114): chatStore.subscribe already fans out to any
   // listener while mounted (same seam DagNode/NodePopup use) - no new pub/sub.
@@ -480,9 +568,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       seenSeqRef.current = ev.seq
       const rev = ev.revision
       if (rev && rev.nodeId === nodeId) {
-        // Only the list and the primary's own revisions refetch here; an
-        // expanded MoreItem for a non-primary artifact keeps its own revision
-        // list (fetched once on expand) and goes stale until collapsed/re-expanded - a deliberate scope boundary, not a bug.
+        // Only the list and the primary's own revisions refetch here; a
+        // secondary's title (secondaryBodies) goes stale until the next
+        // manual Refresh - a deliberate scope boundary, not a bug.
         withScrollPreserved(load)
         if (rev.id === primaryIdRef.current) {
           const toLatest = atLatestRef.current
@@ -527,13 +615,13 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const { byLine, unanchored } = useMemo(() => anchorNotes(lines, notes), [lines, notes])
   const parsedJson = useMemo(() => (isStructured && content != null ? tryParseJSON(content) : undefined), [isStructured, content])
 
-  // "More": every secondary artifact (inputs the node read - dispatch-
-  // authored - findings, files, …) as labelled groups behind bottom
-  // disclosures; each item expands inline into the same renderer stack.
-  const moreGroups = useMemo(
-    () => groupSecondary(nodeArtifacts.filter(a => a.kind !== 'judge_round' && a.name !== primaryId)),
-    [nodeArtifacts, primaryId],
-  )
+  // A review's finding_ids, resolved to their titles/bodies in the order
+  // the review itself lists them. Only computed when the primary IS a review; harmless (and cheap) otherwise.
+  const reviewFindings = useMemo(() => {
+    if (primary?.kind !== 'code_review' || parsedJson == null) return []
+    const ids = (parsedJson as CodeReviewBody).finding_ids ?? []
+    return ids.map(id => ({ id, body: secondaryBodies[id] as FindingBody | undefined }))
+  }, [primary?.kind, parsedJson, secondaryBodies])
 
   // Details: the one place a raw id may appear. onTrigger jumps to the
   // round that produced this revision - but only when that round is one of
@@ -602,8 +690,15 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 medium:px-5 py-3 space-y-3">
           <ErrorLine error={error} />
 
-          {empty ? <EmptyState nodeError={nodeError} /> : (
+          {empty ? <EmptyState nodeError={nodeError} deliveryText={nodeAnswer ? firstLine(nodeAnswer) : null} /> : (
             <>
+              {/* The focused artifact's title - a human name, not its
+                  raw id; the raw id stays inside
+                  Details. Loading (parsedJson/content still null) falls back to the artifact's own name via artifactTitle. */}
+              <p className="text-xs font-medium text-gray-700 dark:text-gray-200 break-words">
+                {artifactTitle(primary, isStructured ? parsedJson : content)}
+              </p>
+
               <RevisionBar
                 currentRev={currentRev}
                 count={revisions.length}
@@ -631,13 +726,14 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                 byLine={byLine}
                 activeNote={activeNote}
                 onSelectNote={setActiveNote}
+                reviewFindings={reviewFindings}
               />
 
               <ActiveNoteCallout note={activeNote} />
 
               <UnanchoredNotes notes={unanchored} />
 
-              <MoreSection chatId={chatId} groups={moreGroups} />
+              <SecondaryList items={secondaryItems} bodies={secondaryBodies} onSelect={setFocusedOverride} />
 
               <DetailsSection
                 curInfo={curInfo}
@@ -680,101 +776,27 @@ function tryParseJSON(raw: string): unknown {
   }
 }
 
-// One secondary artifact expanded inline inside "More": the same renderer
-// stack as the primary output, its own Revision N-of-M prev/next, no selects
-// at any level (#1178). Revisions are fetched lazily on first expand.
-function MoreItem({ chatId, artifact, ordinal }: { chatId: string; artifact: ArtifactSummary; ordinal: number }) {
-  const [open, setOpen] = useState(false)
-  const [revisions, setRevisions] = useState<ArtifactRevisionInfo[] | null>(null)
-  const [idx, setIdx] = useState<number | null>(null)
-  const [content, setContent] = useState<string | null>(null)
-  const [rawView, setRawView] = useState(false)
-  const revisionsToken = useRef(0)
-  const contentToken = useRef(0)
-
-  useEffect(() => {
-    if (!open || revisions !== null) return
-    const token = ++revisionsToken.current
-    api.listArtifactRevisions(chatId, artifact.name)
-      .then(r => {
-        if (token !== revisionsToken.current) return
-        const asc = toAscending(r.data ?? [])
-        setRevisions(asc)
-        setIdx(prev => prev ?? (asc.length > 0 ? asc.length - 1 : null))
-      })
-      .catch(() => { /* a failed fetch leaves the row to retry on re-expand */ })
-  }, [open, chatId, artifact.name, revisions])
-
-  const currentRev = idx != null && revisions != null ? revisions[idx]?.revision ?? null : null
-  useEffect(() => {
-    if (!open || currentRev == null) { setContent(null); return }
-    const token = ++contentToken.current
-    api.getArtifactText(chatId, artifact.name, currentRev)
-      .then(t => { if (token === contentToken.current) setContent(t) })
-      .catch(() => { if (token === contentToken.current) setContent(null) })
-  }, [open, chatId, artifact.name, currentRev])
-
-  const displayText = content != null ? prettyText(content, artifact.class) : null
-  const lines = useMemo(() => (displayText != null ? displayText.split('\n') : []), [displayText])
-  const isStructured = artifact.class === 'structured'
-  const parsedJson = useMemo(() => (isStructured && content != null ? tryParseJSON(content) : undefined), [isStructured, content])
-  const emptyByLine = useMemo(() => new Map<number, JudgeNote[]>(), [])
-
+// SecondaryList: every non-primary artifact as one plain, titled row - no
+// per-item revision bar, Raw toggle, or copy button. Tapping a row makes IT
+// the focused/primary view (the shared RevisionBar, Raw and Copy above apply to whatever is focused), rather than expanding a second set of controls.
+function SecondaryList({ items, bodies, onSelect }: {
+  items: ArtifactSummary[]
+  bodies: Record<string, unknown>
+  onSelect: (name: string) => void
+}) {
+  if (items.length === 0) return null
   return (
-    <div className="border-t border-gray-100 dark:border-gray-700 first:border-t-0 pt-1">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        aria-expanded={open}
-        className="w-full text-left rounded px-1.5 py-2 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50"
-      >
-        {moreItemLabel(artifact, ordinal)}
-      </button>
-      {open && (
-        <div className="mt-1 space-y-2">
-          <div className="flex items-center gap-1.5 flex-wrap text-xs">
-            <span aria-live="polite" className="text-gray-600 dark:text-gray-300 tabular-nums">
-              Revision {currentRev ?? '–'} of {revisions?.length ?? 0}
-            </span>
-            <button
-              onClick={() => setIdx(i => (i != null && i > 0 ? i - 1 : i))}
-              aria-label="Previous revision"
-              disabled={idx == null || idx <= 0}
-              className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-            >
-              ← Prev
-            </button>
-            <button
-              onClick={() => setIdx(i => (i != null && revisions != null && i < revisions.length - 1 ? i + 1 : i))}
-              aria-label="Next revision"
-              disabled={idx == null || revisions == null || idx >= revisions.length - 1}
-              className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-            >
-              Next →
-            </button>
-            <button
-              onClick={() => setRawView(r => !r)}
-              aria-pressed={rawView}
-              className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300"
-            >
-              Raw
-            </button>
-            {displayText != null && <CopyButton text={displayText} label="Copy artifact text" />}
-          </div>
-          <ArtifactView
-            content={content}
-            displayText={displayText}
-            lines={lines}
-            rawView={rawView}
-            isStructured={isStructured}
-            parsedJson={parsedJson}
-            kind={artifact.kind}
-            byLine={emptyByLine}
-            activeNote={null}
-            onSelectNote={() => {}}
-          />
-        </div>
-      )}
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700">
+      {items.map(a => (
+        <button
+          key={a.name}
+          type="button"
+          onClick={() => onSelect(a.name)}
+          className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+        >
+          {artifactTitle(a, bodies[a.name])}
+        </button>
+      ))}
     </div>
   )
 }
@@ -1000,63 +1022,149 @@ function JsonNode({ k, v }: { k?: string; v: unknown }) {
   )
 }
 
-// The small passed/score + per-criterion chip header for a judge_round body
-// rendered through JsonView (e.g. from a "More" entry on a node whose judge
-// rounds survive as artifacts) - the one structured kind worth a glance without expanding anything (#1114 owner request). The panel's own timeline uses the chip row instead.
-function judgeRoundSummary(data: unknown) {
-  if (data == null || typeof data !== 'object') return null
-  const d = data as { passed?: boolean; score?: number; criteria?: { name?: string; score?: number }[] }
-  if (d.passed == null && d.score == null && !d.criteria) return null
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 mb-2 text-xs">
-      {d.passed != null && (
-        <span className={`inline-flex items-center gap-1 font-medium ${d.passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-          <Icon name={d.passed ? 'check' : 'close'} className="w-3.5 h-3.5" /> {d.passed ? 'passed' : 'failed'}
-        </span>
-      )}
-      {/* d.score (JudgeRoundRecord.Score) is a real 0-1 fraction - shown
-          as-is, matching the timeline chips. Per-criterion scores are NOT:
-          judge criteria are 0-3 by design (#941 scaleSpec,
-          internal/vetting/envelope.go) while a deterministic check like
-          cites_sources keeps its own native 0-1 scale, and
-          buildJudgeRoundRecord copies criteria[].score through un-normalized
-          with no scale field to convert by - a raw number (e.g. "evidence
-          2.5") is the only display that isn't a guess. */}
-      {d.score != null && <span className="text-gray-500 dark:text-gray-400 tabular-nums">{d.score}</span>}
-      {d.criteria?.map((c, i) => (
-        <span key={i} title={c.name} className="rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5">
-          {c.name}{c.score != null ? ` ${c.score}` : ''}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-// Extracts a code_review record's server-rendered overview markdown
-// (internal/vetting/reviewoverview.go writes it as `rendered` at save time) -
-// the ONE renderer for both the GitHub delivery body and this panel, so the frontend never re-implements verdict/highlights/cap formatting. undefined when absent (a pre-field record, or a native write_code_review call not yet backfilled) - the caller falls back to the generic JSON tree.
-function codeReviewRendered(kind: string | undefined, data: unknown): string | undefined {
-  if (kind !== 'code_review' || data == null || typeof data !== 'object') return undefined
-  const r = (data as { rendered?: unknown }).rendered
-  return typeof r === 'string' && r.trim() !== '' ? r : undefined
-}
-
-// JsonView is the collapsible key/value tree default view for a structured
-// artifact (#1114 owner request) - the pretty-printed code block moved to
-// the "Raw" toggle (ArtifactLines).
-function JsonView({ data, kind }: { data: unknown; kind?: string }) {
+// JsonView is the collapsible key/value tree default view - for an unknown
+// structured kind only now that the known kinds have their own typed view
+// below; the pretty-printed code block stays behind the "Raw" toggle, ArtifactLines.
+function JsonView({ data }: { data: unknown }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 overflow-x-auto">
-      {kind === 'judge_round' && judgeRoundSummary(data)}
       <JsonNode v={data} />
     </div>
   )
 }
 
-// The primary output and a More item share ONE renderer stack - the Raw
-// line list, the structured tree (with the code_review overview shortcut),
+// severityChip colors a finding/review severity word the same way across
+// FindingView, ReviewView's inline findings, and the review's own verdict.
+const SEVERITY_COLOR: Record<string, string> = {
+  blocking: 'text-red-600 dark:text-red-400',
+  request_changes: 'text-red-600 dark:text-red-400',
+  suggestion: 'text-amber-600 dark:text-amber-400',
+  nit: 'text-gray-500 dark:text-gray-400',
+  approve: 'text-green-700 dark:text-green-400',
+}
+function severityChip(word: string | undefined) {
+  if (!word) return null
+  return <span className={`font-medium ${SEVERITY_COLOR[word] ?? 'text-gray-600 dark:text-gray-300'}`}>{word}</span>
+}
+
+// FindingView: severity chip, path:line, title, rationale, snippet as code.
+function FindingView({ data }: { data: FindingBody }) {
+  const loc = findingLoc(data)
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 space-y-1.5 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {severityChip(data.severity)}
+        {loc && <span className="font-mono text-gray-500 dark:text-gray-400">{loc}</span>}
+      </div>
+      {data.title && <p className="font-medium text-gray-800 dark:text-gray-100">{data.title}</p>}
+      {data.rationale && <p className="text-gray-600 dark:text-gray-300">{data.rationale}</p>}
+      {data.snippet && <pre className="font-mono text-[11px] bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-words">{data.snippet}</pre>}
+    </div>
+  )
+}
+
+// ReviewView: verdict chip, takeaway, the verified/notes lists, and its
+// findings inline in finding_ids order (resolved by the caller from
+// secondaryBodies - a review doesn't carry finding bodies itself, only their ids).
+function ReviewView({ data, findings }: { data: CodeReviewBody; findings: { id: string; body: FindingBody | undefined }[] }) {
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {severityChip(data.verdict)}
+        {data.takeaway && <span className="text-gray-700 dark:text-gray-200">{data.takeaway}</span>}
+      </div>
+      <MetaList label="Verified" items={data.verified} />
+      <MetaList label="Notes" items={data.notes} />
+      {findings.length > 0 && (
+        <div className="space-y-1.5">
+          <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Findings</span>
+          {findings.map(f => <FindingView key={f.id} data={f.body ?? {}} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MetaList({ label, items }: { label: string; items: string[] | undefined }) {
+  if (!items || items.length === 0) return null
+  return (
+    <div>
+      <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</span>
+      <ul className="mt-0.5 list-disc list-inside space-y-0.5 text-gray-600 dark:text-gray-300">
+        {items.map((it, i) => <li key={i}>{it}</li>)}
+      </ul>
+    </div>
+  )
+}
+
+// JudgeRoundView: score, pass/fail, the criteria table, probes.
+// Per-criterion scores are a raw 0-3 number, not a fraction (#941 scaleSpec) - shown as-is, same as the old JsonView summary did.
+function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className={`inline-flex items-center gap-1 font-medium ${data.passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+          <Icon name={data.passed ? 'check' : 'close'} className="w-3.5 h-3.5" /> {data.passed ? 'passed' : 'failed'}
+        </span>
+        {data.score != null && <span className="text-gray-500 dark:text-gray-400 tabular-nums">{data.score.toFixed(2)}</span>}
+      </div>
+      {data.criteria && data.criteria.length > 0 && (
+        <table className="w-full text-left">
+          <tbody>
+            {data.criteria.map((c, i) => (
+              <tr key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0">
+                <td className="py-1 pr-2 font-medium text-gray-700 dark:text-gray-200 align-top whitespace-nowrap">{c.name}</td>
+                <td className="py-1 pr-2 text-gray-500 dark:text-gray-400 align-top tabular-nums">{c.score}</td>
+                <td className="py-1 text-gray-600 dark:text-gray-300 align-top">{c.feedback}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {data.evidence?.probes && data.evidence.probes.length > 0 && (
+        <div>
+          <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Probes</span>
+          <ul className="mt-0.5 space-y-0.5 text-gray-600 dark:text-gray-300">
+            {data.evidence.probes.map((p, i) => <li key={i}>{p.name}: {p.result}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// PlanView: the assignment list. dag_plan is bookkeeping excluded from a
+// node's own panel, so this renders only via a direct fixture/test, not a reachable node-panel state today.
+export function PlanView({ data }: { data: PlanBody }) {
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 space-y-1.5 text-xs">
+      {data.status && <p className="text-gray-500 dark:text-gray-400">status: {data.status}</p>}
+      {(data.assignments ?? []).map((a, i) => (
+        <div key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0 pt-1.5">
+          <p className="font-medium text-gray-800 dark:text-gray-100">{a.node_id}</p>
+          {a.task && <p className="text-gray-600 dark:text-gray-300 line-clamp-3 whitespace-pre-wrap">{a.task}</p>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// typedView dispatches a structured artifact's known kind to its own view;
+// undefined for anything else, so the caller falls back to the generic JSON tree - unknown kinds keep the tree.
+function typedView(kind: string | undefined, data: unknown, reviewFindings: { id: string; body: FindingBody | undefined }[]): ReactNode | undefined {
+  switch (kind) {
+    case 'code_review': return <ReviewView data={data as CodeReviewBody} findings={reviewFindings} />
+    case 'finding': return <FindingView data={data as FindingBody} />
+    case 'judge_round': return <JudgeRoundView data={data as JudgeRoundContent} />
+    case 'dag_plan': return <PlanView data={data as PlanBody} />
+    default: return undefined
+  }
+}
+
+// The primary output and a focused secondary share ONE renderer stack - the
+// Raw line list, a typed view per known kind (JSON tree for anything else),
 // and rendered markdown - so both surfaces can't drift as kinds grow.
-function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote }: {
+function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote, reviewFindings }: {
   content: string | null
   displayText: string | null
   lines: string[]
@@ -1067,15 +1175,14 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   byLine: Map<number, JudgeNote[]>
   activeNote: JudgeNote | null
   onSelectNote: (n: JudgeNote) => void
+  reviewFindings?: { id: string; body: FindingBody | undefined }[]
 }) {
   if (displayText == null) return <p className="text-xs text-gray-500 dark:text-gray-400">Loading…</p>
   if (rawView) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (!isStructured) return <ArtifactMarkdown text={content ?? ''} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (parsedJson === undefined) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
-  const rendered = codeReviewRendered(kind, parsedJson)
-  return rendered !== undefined
-    ? <ArtifactMarkdown text={rendered} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
-    : <JsonView data={parsedJson} kind={kind} />
+  const typed = typedView(kind, parsedJson, reviewFindings ?? [])
+  return typed ?? <JsonView data={parsedJson} />
 }
 
 // One tapped judge note's callout under the rendered output.
@@ -1159,7 +1266,7 @@ function ErrorLine({ error }: { error: string | null }) {
 
 // The primary output's view slot: the diff (when active with a loaded body)
 // or the shared renderer stack.
-function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote }: {
+function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote, reviewFindings }: {
   diffActive: boolean
   diffText: string | null
   content: string | null
@@ -1172,6 +1279,7 @@ function PrimaryView({ diffActive, diffText, content, displayText, lines, rawVie
   byLine: Map<number, JudgeNote[]>
   activeNote: JudgeNote | null
   onSelectNote: (n: JudgeNote) => void
+  reviewFindings: { id: string; body: FindingBody | undefined }[]
 }) {
   if (diffActive && diffText != null) return <DiffView text={diffText} />
   return (
@@ -1186,6 +1294,7 @@ function PrimaryView({ diffActive, diffText, content, displayText, lines, rawVie
       byLine={byLine}
       activeNote={activeNote}
       onSelectNote={onSelectNote}
+      reviewFindings={reviewFindings}
     />
   )
 }
@@ -1207,29 +1316,6 @@ function UnanchoredNotes({ notes }: { notes: JudgeNote[] }) {
           </li>
         ))}
       </ul>
-    </div>
-  )
-}
-
-// "More": every secondary artifact (inputs the node read - dispatch-
-// authored - findings, files, …) as labelled groups behind bottom
-// disclosures; each item expands inline into the same renderer stack.
-function MoreSection({ chatId, groups }: { chatId: string; groups: SecondaryGroup[] }) {
-  if (groups.length === 0) return null
-  return (
-    <div className="space-y-2">
-      {groups.map(g => (
-        <details key={g.label} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
-          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300">
-            {g.label} ({g.items.length})
-          </summary>
-          <div className="px-3 pb-2 space-y-1">
-            {g.items.map((a, i) => (
-              <MoreItem key={a.name} chatId={chatId} artifact={a} ordinal={i + 1} />
-            ))}
-          </div>
-        </details>
-      ))}
     </div>
   )
 }
@@ -1338,8 +1424,9 @@ function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason
 }
 
 // The panel's empty state: the failure message when the node errored before
-// writing a non-judge artifact, "nothing yet" otherwise.
-function EmptyState({ nodeError }: { nodeError?: string }) {
+// writing a non-judge artifact; otherwise names the delivery (e.g. an ACP
+// implementer's own answer text, "Opened PR #1464…") instead of the old generic "hasn't produced anything yet".
+function EmptyState({ nodeError, deliveryText }: { nodeError?: string; deliveryText: string | null }) {
   return (
     <div className="flex flex-col items-center justify-center gap-1 min-h-[14rem] text-center px-6">
       {nodeError ? (
@@ -1347,6 +1434,8 @@ function EmptyState({ nodeError }: { nodeError?: string }) {
           <p className="text-sm font-medium text-gray-700 dark:text-gray-200">This node failed before writing its result.</p>
           <p className="text-xs text-red-600 dark:text-red-400 break-words">{nodeError}</p>
         </>
+      ) : deliveryText ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400 break-words">{deliveryText}</p>
       ) : (
         <p className="text-sm text-gray-500 dark:text-gray-400">This node hasn't produced anything yet.</p>
       )}

@@ -92,7 +92,6 @@ function stubPlanFixture() {
         data: [
           { name: 'text:plan', kind: 'text', class: 'blob', latest_revision: 2, lineage: { node_id: 'planner-1', round: 2, author: 'worker', saved_at: '2026-09-04T10:00:00Z' }, revisions: [] },
           { name: 'finding:692b00ee', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', round: 1, author: 'worker' }, revisions: [] },
-          { name: 'code_review:pr:1', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', round: 1, author: 'dispatch' }, revisions: [] },
           { name: 'judge_round:t1-planner-1-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] },
           { name: 'judge_round:t1-planner-1-2', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] },
           // A different node's artifact - never part of this panel.
@@ -352,27 +351,28 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(container.textContent ?? '').not.toContain('262144')
   })
 
-  // (a/7) More: secondary artifacts live behind labelled bottom disclosures
-  // with human names and counts; each item expands INLINE into the same
-  // renderer stack with its own Revision N of M prev/next - no selects at any level.
-  it('groups secondary artifacts under human labels and expands them inline', async () => {
+  // (a/7) Secondary artifacts are a plain titled list - no
+  // groups, no per-item bars. Tapping one opens it IN PLACE: it becomes the
+  // focused/primary view, reusing the one shared revision bar/raw/copy.
+  it('titles secondary artifacts and opens a tapped one in place as the focused view', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
 
-    // Grouped, counted, human-labelled (the dispatch-authored code_review
-    // reads as "Review", the finding as "Findings").
-    expect(await screen.findByText('Findings (1)')).toBeTruthy()
-    expect(screen.getByText('Review (1)')).toBeTruthy()
+    // The finding's row is titled from its own body (path, no severity in
+    // this fixture) - never its content-hash id.
+    const row = await screen.findByRole('button', { name: 'a.go' })
+    expect(screen.queryByText(/finding:692b00ee/)).toBeNull()
 
-    // The finding's row is its ordinal, not its content-hash id...
-    await user.click(screen.getByText('Findings (1)'))
-    expect(await screen.findByRole('button', { name: '#1' })).toBeTruthy()
-    // ...and it expands inline with its own revision bar and renderer.
-    await user.click(screen.getByRole('button', { name: '#1' }))
+    await user.click(row)
+    // Now focused: the shared revision bar and typed FindingView render it,
+    // exactly as they would the default primary.
     expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
     expect(await screen.findByText(/missing nil check/)).toBeTruthy()
+    expect(await screen.findByText(/x may be nil here/)).toBeTruthy()
+    // The plan (former primary) now shows in the secondary list instead.
+    expect(await screen.findByRole('button', { name: 'Plan v2' })).toBeTruthy()
   })
 
   // (b) Failed node, no artifacts: the panel says what happened - no

@@ -79,8 +79,11 @@ describe('DagNode artifact panel props (#1178)', () => {
     const user = userEvent.setup()
     render(<DagNode node={node} state={{ status: 'done' }} runs={[]} answer="the answer" isFinal={false} chatId="chat-1" />)
     await openArtifacts(user)
-    expect(await screen.findByRole('heading', { level: 2, name: 'Web researcher' })).toBeTruthy()
-    expect(screen.getByText("This node hasn't produced anything yet.")).toBeTruthy()
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Web researcher' })
+    expect(heading).toBeTruthy()
+    // No artifact at all - the empty state names the
+    // delivery (the node's own answer text), same as the card's own summary row below it.
+    expect(screen.getAllByText('the answer').length).toBe(2)
   })
 
   it('passes the declared output kind: the panel opens on the matching artifact, not the newest', async () => {

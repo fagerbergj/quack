@@ -4,8 +4,9 @@ import {
   selectPrimaryOutput,
   resolveScoredRevision,
   toAscending,
-  humanKindLabel,
-  groupSecondary,
+  isBookkeeping,
+  artifactTitle,
+  firstLine,
 } from './ArtifactPanel'
 import type { ArtifactSummary, ArtifactRevisionInfo } from '../api'
 
@@ -123,6 +124,30 @@ describe('selectPrimaryOutput', () => {
     const b = summary({ name: 'text:b', kind: 'text', latest_revision: 1 })
     expect(selectPrimaryOutput([a, b], undefined, 'text:not-on-this-node')?.name).toBe('text:a')
   })
+
+  // dag_node/dag_plan/bytes:* are never the primary, however
+  // new their revision - a review always outranks everything else.
+  it('never picks bookkeeping (dag_node, dag_plan, bytes:*), however new', () => {
+    const dagNode = summary({ name: 'dag_node:n1', kind: 'dag_node', latest_revision: 9 })
+    const dagPlan = summary({ name: 'dag_plan:main', kind: 'dag_plan', latest_revision: 9 })
+    const bytes = summary({ name: 'bytes:issue', kind: 'bytes', latest_revision: 9 })
+    const finding = summary({ name: 'finding:a', kind: 'finding', latest_revision: 1 })
+    expect(selectPrimaryOutput([dagNode, dagPlan, bytes, finding])?.name).toBe('finding:a')
+    expect(selectPrimaryOutput([dagNode, dagPlan, bytes])).toBeNull()
+  })
+
+  it('ranks code_review above the declared kind, a blob, and a finding, regardless of revision', () => {
+    const review = summary({ name: 'code_review:pr:1', kind: 'code_review', class: 'structured', latest_revision: 1 })
+    const declared = summary({ name: 'text:plan', kind: 'text', class: 'blob', latest_revision: 9 })
+    const finding = summary({ name: 'finding:a', kind: 'finding', class: 'structured', latest_revision: 9 })
+    expect(selectPrimaryOutput([declared, finding, review], 'text')?.name).toBe('code_review:pr:1')
+  })
+
+  it('ranks an answer/markdown blob above a finding when neither is the declared kind', () => {
+    const answer = summary({ name: 'text:answer', kind: 'answer', class: 'blob', latest_revision: 1 })
+    const finding = summary({ name: 'finding:a', kind: 'finding', class: 'structured', latest_revision: 9 })
+    expect(selectPrimaryOutput([finding, answer])?.name).toBe('text:answer')
+  })
 })
 
 describe('resolveScoredRevision', () => {
@@ -155,36 +180,52 @@ describe('toAscending', () => {
   })
 })
 
-describe('humanKindLabel', () => {
-  it('maps the known kinds to their human labels', () => {
-    expect(humanKindLabel('finding')).toBe('Findings')
-    expect(humanKindLabel('code_review')).toBe('Review')
-    expect(humanKindLabel('pr_body')).toBe('PR description')
-    expect(humanKindLabel('document')).toBe('Document')
-    expect(humanKindLabel('text')).toBe('Files')
-    expect(humanKindLabel('bytes')).toBe('Files')
+describe('isBookkeeping', () => {
+  it('excludes dag_node, dag_plan, and any bytes:* name', () => {
+    expect(isBookkeeping({ kind: 'dag_node', name: 'dag_node:n1' })).toBe(true)
+    expect(isBookkeeping({ kind: 'dag_plan', name: 'dag_plan:main' })).toBe(true)
+    expect(isBookkeeping({ kind: 'bytes', name: 'bytes:issue' })).toBe(true)
   })
 
-  it('capitalizes an unknown kind and names nothing for an absent one', () => {
-    expect(humanKindLabel('workflow_step')).toBe('Workflow_step')
-    expect(humanKindLabel(undefined)).toBe('Other')
+  it('keeps everything else, including an unlisted kind like delivery_record', () => {
+    expect(isBookkeeping({ kind: 'finding', name: 'finding:a' })).toBe(false)
+    expect(isBookkeeping({ kind: 'delivery_record', name: 'delivery_record:pr:1' })).toBe(false)
   })
 })
 
-describe('groupSecondary', () => {
-  it('groups by display label with first-seen order and per-group counts', () => {
-    const groups = groupSecondary([
-      summary({ name: 'finding:aa11', kind: 'finding' }),
-      summary({ name: 'code_review:pr:1', kind: 'code_review' }),
-      summary({ name: 'finding:bb22', kind: 'finding' }),
-      summary({ name: 'text:notes-1', kind: 'text' }),
-    ])
-    expect(groups.map(g => g.label)).toEqual(['Findings', 'Review', 'Files'])
-    expect(groups.map(g => g.items.length)).toEqual([2, 1, 1])
-    expect(groups[0].items.map(a => a.name)).toEqual(['finding:aa11', 'finding:bb22'])
+// Titles, never raw ids, everywhere an artifact is named.
+describe('artifactTitle', () => {
+  it('titles a review as verdict + finding count', () => {
+    const s = summary({ name: 'code_review:pr:1464', kind: 'code_review', class: 'structured' })
+    expect(artifactTitle(s, { verdict: 'approve', finding_ids: ['a', 'b', 'c', 'd'] })).toBe('Review · approve · 4 findings')
+    expect(artifactTitle(s, { verdict: 'approve', finding_ids: ['a'] })).toBe('Review · approve · 1 finding')
   })
 
-  it('returns no groups for an empty input', () => {
-    expect(groupSecondary([])).toEqual([])
+  it('titles a finding as severity + path:line', () => {
+    const s = summary({ name: 'finding:76f9df59', kind: 'finding', class: 'structured' })
+    expect(artifactTitle(s, { severity: 'nit', path: 'internal/acp/environment_golden_test.go', line_hint: 84 }))
+      .toBe('nit · internal/acp/environment_golden_test.go:84')
+  })
+
+  it('titles a judge round as round + score + verdict', () => {
+    const s = summary({ name: 'judge_round:t1-n1-1', kind: 'judge_round', class: 'structured' })
+    expect(artifactTitle(s, { round: 1, score: 0.92, passed: true })).toBe('Judge round 1 · 0.92 · passed')
+  })
+
+  it('falls back to a blob\'s first line, and to the artifact name otherwise', () => {
+    const blob = summary({ name: 'text:answer', kind: 'answer', class: 'blob' })
+    expect(artifactTitle(blob, '# Opened PR #1464\n\nmore text')).toBe('Opened PR #1464')
+    const unknown = summary({ name: 'delivery_record:pr:1', kind: 'delivery_record', class: 'structured' })
+    expect(artifactTitle(unknown, { outcome: 'delivered' })).toBe('delivery_record:pr:1')
+  })
+})
+
+describe('firstLine', () => {
+  it('strips heading markup and skips leading blank lines', () => {
+    expect(firstLine('\n\n# Opened PR #1464\n\nmore text')).toBe('Opened PR #1464')
+  })
+
+  it('returns null for text with no non-blank line', () => {
+    expect(firstLine('\n  \n')).toBeNull()
   })
 })

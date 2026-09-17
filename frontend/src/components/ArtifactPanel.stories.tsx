@@ -7,7 +7,9 @@ import { ChatStore } from '../state/chatStore'
 const meta: Meta<typeof ArtifactPanel> = {
   title: 'Chat/ArtifactPanel',
   component: ArtifactPanel,
-  parameters: { layout: 'fullscreen' },
+  // Every story renders at 390px too: the dialog is a bottom sheet below
+  // `medium`, and a typed view (table, snippet block) is exactly what overflows a narrow width first.
+  parameters: { layout: 'fullscreen', renderCheck: { viewports: ['mobile', 'desktop'] } },
   // The panel reads chatStore for live SSE follow (#1114) - every story
   // needs the provider, same as the real app's tree under Chat.tsx.
   decorators: [Story => <ChatStoreProvider><Story /></ChatStoreProvider>],
@@ -18,29 +20,17 @@ type Story = StoryObj<typeof ArtifactPanel>
 
 const findingV1 = JSON.stringify({ path: 'a.go', title: 'missing nil check', rationale: 'x may be nil here', severity: 'high' })
 const findingV2 = JSON.stringify({ path: 'a.go', title: 'missing nil check (fixed)', rationale: 'x may be nil here', severity: 'high' })
-// One fixed review format (internal/vetting/reviewoverview.go): the panel
-// renders `rendered` (server-computed) as markdown rather than reimplement
-// the renderer in TSX - codeReviewNew covers the new fields, codeReviewLegacy is pre-migration (only `summary`, no `rendered`) so the panel falls back to the generic JSON tree (LegacyCodeReview story).
+// ReviewView renders verdict/takeaway/verified/notes/finding_ids -
+// codeReviewNew covers all of them, codeReviewSparse (just a verdict, no
+// takeaway/lists/findings) covers a minimal record rendering without blanks.
 const codeReviewNew = {
   verdict: 'request_changes',
   takeaway: 'Two blocking issues remain in the fallback path.',
   verified: ['Ran the auth test suite locally'],
   notes: ['Consider a changelog entry for the new endpoint'],
   finding_ids: [],
-  dismissed: [],
-  clean: [],
-  rendered: '**Verdict: request changes** · 1 blocking\n\n' +
-    'Two blocking issues remain in the fallback path.\n\n' +
-    '### Verified\n\n- Ran the auth test suite locally\n\n' +
-    '### Notes\n\n- Consider a changelog entry for the new endpoint',
 }
-const codeReviewLegacy = {
-  verdict: 'approve',
-  summary: 'Pre-migration free-text summary: looks fine overall, nothing blocking, a couple of minor style nits worth a follow-up but not gating the merge.',
-  finding_ids: [],
-  dismissed: [],
-  clean: [],
-}
+const codeReviewSparse = { verdict: 'approve' }
 const reviewMd = '# Review summary\n\nMostly solid, but the apple pie recipe needs a citation.\n\n- item one\n- item two\n\n```go\nfunc f() {}\n```\n'
 const reviewMdV1 = '# Review draft\n\nThe apple pie recipe paragraph has no source at all.\n'
 const reviewJudge = JSON.stringify({
@@ -89,16 +79,16 @@ function chatFailedRoute(url: string): Response | null {
   return null
 }
 
-function chatReviewLegacyRoute(url: string): Response | null {
-  if (!url.includes('/chats/chat-review-legacy/')) return null
+function chatReviewSparseRoute(url: string): Response | null {
+  if (!url.includes('/chats/chat-review-sparse/')) return null
   if (url.endsWith('/artifacts')) {
     return jsonResponse({
-      data: [{ name: 'code_review:pr:legacy', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', author: 'gate' }, revisions: [] }],
+      data: [{ name: 'code_review:pr:sparse', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', author: 'gate' }, revisions: [] }],
     })
   }
-  if (url.includes('/artifacts/code_review:pr:legacy')) {
+  if (url.includes('/artifacts/code_review:pr:sparse')) {
     if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] })
-    return textResponse(JSON.stringify(codeReviewLegacy))
+    return textResponse(JSON.stringify(codeReviewSparse))
   }
   return jsonResponse({ data: [] })
 }
@@ -129,7 +119,7 @@ function chatMoreRoute(url: string): Response | null {
     artifactRoute(url, 'document:spec', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 20, kind: 'document', class: 'structured', lineage: { node_id: 'writer-1', author: 'worker' } }] }), textResponse(JSON.stringify({ title: 'The spec', body: 'Spec body.' }))) ??
     (finding != null ? artifactRoute(url, finding, findingRevisions(), textResponse(JSON.stringify({ path: 'a.go', title: `finding ${finding.slice(-4)}`, rationale: 'demo' }))) : null) ??
     artifactRoute(url, 'code_review:pr:1', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'writer-1', author: 'dispatch' } }] }), textResponse(JSON.stringify(codeReviewNew))) ??
-    artifactRoute(url, 'code_review:pr:legacy', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] }), textResponse(JSON.stringify(codeReviewLegacy))) ??
+    artifactRoute(url, 'code_review:pr:sparse', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] }), textResponse(JSON.stringify(codeReviewSparse))) ??
     artifactRoute(url, 'pr_body:1', jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'pr_body', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] }), textResponse('# PR description\n\nWhat and why, briefly.')) ??
     artifactRoute(url, 'bytes:logo', jsonResponse({ data: [{ revision: 1, mime_type: 'image/png', size: 10, kind: 'bytes', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] }), textResponse('<binary png>')) ??
     artifactRoute(url, 'text:notes', jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'text', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] }), textResponse('# Notes\n\nWorking notes here.')) ??
@@ -170,7 +160,6 @@ function chatOneRoute(url: string): Response | null {
       data: [
         { name: 'text:review-1', kind: 'text', class: 'blob', latest_revision: 2, lineage: { node_id: 'reviewer-1', round: 2, author: 'worker' }, revisions: [] },
         { name: 'finding:abc123', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' }, revisions: [] },
-        { name: 'code_review:pr:1', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', round: 1, author: 'dispatch' }, revisions: [] },
         { name: 'judge_round:t1-1-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', author: 'judge' }, revisions: [] },
         { name: 'judge_round:t1-1-2', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', author: 'judge' }, revisions: [] },
       ],
@@ -179,11 +168,100 @@ function chatOneRoute(url: string): Response | null {
   return null
 }
 
+// Real shapes captured off a code-reviewer node reviewing PR #1464 -
+// trimmed of fields no view reads (rendered/dismissed/clean) and long
+// strings shortened. finding_ids is adapted to reference all four captured
+// findings (the real record's ids only partly overlap - two were already-resolved, superseded ones).
+const reviewFindingIds = ['finding:89f3e6d1', 'finding:e11c2106', 'finding:c1a68ddf', 'finding:76f9df59']
+const codeReview1464 = {
+  verdict: 'approve',
+  takeaway: 'Prompt facts and the re-aimed vet match the code they describe; findings are a bwrap-dependent golden test, the sweep purge\'s unreachable singletons, and minor duplication - none blocking.',
+  verified: [
+    'Ran go test on acp/memory/agent/vetting: memory, agent, vetting green; acp git golden failed locally (environment, see notes)',
+    'Traced both sweep passes (burstClusters, cosineClusters) - only size>=2 clusters reach the model',
+    'CI: 7 checks passing, 4 pending (go-test, render-check, docker-build, go-slop) at review time',
+  ],
+  notes: ['internal/workspace/sandbox.go (+10, GoModCachePreseeded) is omitted from the PR description but coherent.'],
+  finding_ids: reviewFindingIds,
+}
+const finding89f3e6d1 = {
+  line_hint: 86, path: 'internal/acp/environment_golden_test.go', severity: 'suggestion', state: 'new',
+  title: 'New git golden fixture hard-depends on a working bwrap and fails instead of skipping where userns is unavailable',
+  rationale: 'gitInfo runs workspace.RunArgv under SandboxBwrap; where bwrap cannot create a namespace, RunArgv returns non-zero and the golden test fails with a confusing diff instead of skipping.',
+  snippet: 'sandboxed := workspace.Caps{Sandbox: workspace.SandboxBwrap, ...}',
+}
+const findingE11c2106 = {
+  line_hint: 28, path: 'internal/acp/environment.go', severity: 'suggestion', state: 'new',
+  title: 'Sandboxed computation re-states workspace.EnforcesBoundary',
+  rationale: 'Identical predicate to workspace.EnforcesBoundary (sandbox.go:814). Using the helper keeps the environment block in sync if the set of boundary-enforcing modes changes.',
+  snippet: 'Sandboxed: caps.Sandbox == workspace.SandboxBwrap || caps.Sandbox == workspace.SandboxLandlock,',
+}
+const findingC1a68ddf = {
+  path: 'internal/memory/commit.go', line_hint: 548, severity: 'suggestion', state: 'resolved',
+  title: 'Dedupe sweep\'s runtime-fact DELETE rule is unreachable for singleton memories',
+  rationale: 'Both sweep passes feed the model only clusters of size >= 2, so the nightly purge covers only clustered memories.',
+  snippet: '"runtime fact, moved to environment prompt", even with no duplicate in this burst.',
+}
+const finding76f9df59 = {
+  path: 'internal/acp/environment_golden_test.go', line_hint: 84, severity: 'nit', state: 'resolved',
+  title: 'Comment cites childEnv\'s GOMODCACHE farming, which environmentBlock never does',
+  rationale: 'environmentBlock performs no mod-cache farming and does not read HomeDir for this fixture, so the stated rationale points at a code path the test never exercises.',
+  snippet: '// HomeDir distinct from repo: childEnv farms a writable GOMODCACHE under HOME, which would',
+}
+const judgeRound1464 = {
+  turn: 'e-f957a075-1', round: 1, passed: false, score: 0.3333333333333333,
+  criteria: [
+    { name: 'catches_real_issues', score: 1, feedback: 'The review surfaces the substantive issues and does not gate the merge on partially-pending CI.' },
+    { name: 'constructive_actionable', score: 0.3333333333333333, feedback: 'Two findings propose a code change in prose without a fenced block.' },
+    { name: 'severity_grounded', score: 1, feedback: 'The bwrap finding is correctly a suggestion, not a defect.' },
+  ],
+  evidence: { probes: [{ name: 'behaviour_verified', result: 'pass' }, { name: 'review_posted', result: 'pass' }] },
+}
+const dagNode1464 = { node_id: 'code-reviewer-1', agent: 'code-reviewer', status: 'done', context_id: 'pi-0t94bitnsxhp', started: true }
+const dagPlan1464 = {
+  plan_id: '2ce25073', status: 'done',
+  assignments: [{ node_id: 'code-reviewer-1', task: 'Review PR #1464 (quack repo, fagerbergj/quack): memory: move runtime facts to environment prompt, re-aim vet.' }],
+}
+
+// chat-reviewer-1466: the CodeReviewerAllKinds story - a code_review, four
+// findings, a judge_round, PLUS the run's own dag_node/dag_plan for the same
+// node id, proving those two are excluded from selection AND the secondary list.
+function chatReviewer1466Route(url: string): Response | null {
+  if (!url.includes('/chats/chat-reviewer-1466/')) return null
+  if (url.endsWith('/artifacts')) {
+    return jsonResponse({
+      data: [
+        { name: 'code_review:pr:1464', kind: 'code_review', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'gate' }, revisions: [] },
+        { name: 'finding:89f3e6d1', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
+        { name: 'finding:e11c2106', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
+        { name: 'finding:c1a68ddf', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
+        { name: 'finding:76f9df59', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
+        { name: 'judge_round:e-f957a075-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'code-reviewer-1', author: 'judge' }, revisions: [] },
+        // Bookkeeping - same node_id, never selectable, never listed.
+        { name: 'dag_node:code-reviewer-1', kind: 'dag_node', class: 'structured', latest_revision: 4, lineage: { node_id: 'code-reviewer-1', author: 'system' }, revisions: [] },
+        { name: 'dag_plan:main', kind: 'dag_plan', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'system' }, revisions: [] },
+      ],
+    })
+  }
+  return (
+    artifactRoute(url, 'code_review:pr:1464', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'gate' } }] }), textResponse(JSON.stringify(codeReview1464))) ??
+    artifactRoute(url, 'finding:89f3e6d1', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'finding', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'worker' } }] }), textResponse(JSON.stringify(finding89f3e6d1))) ??
+    artifactRoute(url, 'finding:e11c2106', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'finding', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'worker' } }] }), textResponse(JSON.stringify(findingE11c2106))) ??
+    artifactRoute(url, 'finding:c1a68ddf', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'finding', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'worker' } }] }), textResponse(JSON.stringify(findingC1a68ddf))) ??
+    artifactRoute(url, 'finding:76f9df59', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'finding', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'worker' } }] }), textResponse(JSON.stringify(finding76f9df59))) ??
+    artifactRoute(url, 'judge_round:e-f957a075-1', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'judge_round', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'judge' } }] }), textResponse(JSON.stringify(judgeRound1464))) ??
+    artifactRoute(url, 'dag_node:code-reviewer-1', jsonResponse({ data: [{ revision: 4, mime_type: 'application/json', size: 10, kind: 'dag_node', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'system' } }] }), textResponse(JSON.stringify(dagNode1464))) ??
+    artifactRoute(url, 'dag_plan:main', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'dag_plan', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'system' } }] }), textResponse(JSON.stringify(dagPlan1464))) ??
+    null
+  )
+}
+
 window.fetch = async (input: RequestInfo | URL) => {
   const url = urlOf(input)
   return (
     chatFailedRoute(url) ??
-    chatReviewLegacyRoute(url) ??
+    chatReviewSparseRoute(url) ??
+    chatReviewer1466Route(url) ??
     chatMoreRoute(url) ??
     chatOneRoute(url) ??
     jsonResponse({ data: [] })
@@ -291,10 +369,11 @@ export const FailedNode: Story = {
   },
 }
 
-// A node with lots of secondary artifacts: the "More" section's labelled
-// groups (Findings, Review, PR description, Document, Files) each expand
-// inline with their own Revision N of M prev/next - no selects at any level.
-export const MoreHeavyNode: Story = {
+// A node whose own declared kind ('document') loses to a code_review on the
+// same node (a code_review always outranks the declared kind) - the
+// secondary list titles findings/PR description/text from their own
+// bodies; bytes:logo never appears there at all (dispatch bookkeeping, excluded outright).
+export const SecondaryHeavyNode: Story = {
   args: {
     chatId: 'chat-more',
     nodeId: 'writer-1',
@@ -305,16 +384,43 @@ export const MoreHeavyNode: Story = {
   },
 }
 
-// A pre-migration code_review record: `summary` but no `rendered` field at
-// all (old history, never backfilled), so the panel falls back to the
-// generic JSON tree; the codeReviewNew fixture covers the new shape.
-export const LegacyCodeReview: Story = {
+// A minimal review record - verdict only, no takeaway/verified/notes/
+// findings - renders via ReviewView with those sections simply absent, never a blank generic tree.
+export const SparseCodeReview: Story = {
   args: {
-    chatId: 'chat-review-legacy',
+    chatId: 'chat-review-sparse',
     nodeId: 'reviewer-1',
     nodeAgent: 'Code Reviewer',
     nodeTask: 'Review PR #1170',
     nodeArtifactKind: 'code_review',
+    onClose: () => {},
+  },
+}
+
+// A code-reviewer node: a code_review, four findings, a judge_round, AND
+// the run's own dag_node/dag_plan bookkeeping for the same node id -
+// proving the panel opens on the review, never the bookkeeping, with
+// findings inline and the judge round as a timeline chip, not a secondary row.
+export const CodeReviewerAllKinds: Story = {
+  args: {
+    chatId: 'chat-reviewer-1466',
+    nodeId: 'code-reviewer-1',
+    nodeAgent: 'Code Reviewer',
+    nodeTask: 'Review PR #1464 (quack repo, fagerbergj/quack)',
+    onClose: () => {},
+  },
+}
+
+// An ACP implementer that delivers through git and writes no artifact at
+// all - the empty state names the delivery (the node's own answer)
+// instead of "hasn't produced anything yet".
+export const ImplementerDeliveredNoArtifact: Story = {
+  args: {
+    chatId: 'chat-failed',
+    nodeId: 'implementer-1',
+    nodeAgent: 'Code Implementer',
+    nodeTask: 'Implement the fix and open a PR',
+    nodeAnswer: 'Opened PR #1464 with the sandboxed-git skip and the EnforcesBoundary reuse.',
     onClose: () => {},
   },
 }
