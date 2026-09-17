@@ -943,6 +943,9 @@ type Memory struct {
 	// LastUpvotedAt When this memory was last marked `supported`. Absent if never upvoted.
 	LastUpvotedAt *time.Time `json:"last_upvoted_at,omitempty"`
 
+	// NotRelevant Judge votes marking this memory `not_relevant`. Reaching 3 with zero `supported` votes invalidates the memory (epic
+	NotRelevant *int `json:"not_relevant,omitempty"`
+
 	// OwnVote The human caller's own current vote on this memory (epic
 	OwnVote *MemoryOwnVote `json:"own_vote,omitempty"`
 
@@ -958,7 +961,10 @@ type Memory struct {
 	// Status Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
 	Status *MemoryStatus `json:"status,omitempty"`
 
-	// Tier Vote-based tier - `verified` once upvotes >= 1. Independent of `status`; a verified memory is never aged out, only invalidated by net score or a human.
+	// Supported The judge- or human-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic
+	Supported *int `json:"supported,omitempty"`
+
+	// Tier Vote-based tier - `verified` only while `supported` >= 1, recomputed on every vote (epic
 	Tier      *MemoryTier `json:"tier,omitempty"`
 	Timestamp time.Time   `json:"timestamp"`
 
@@ -975,7 +981,7 @@ type MemoryOwnVote string
 // MemoryStatus Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
 type MemoryStatus string
 
-// MemoryTier Vote-based tier - `verified` once upvotes >= 1. Independent of `status`; a verified memory is never aged out, only invalidated by net score or a human.
+// MemoryTier Vote-based tier - `verified` only while `supported` >= 1, recomputed on every vote (epic
 type MemoryTier string
 
 // MemoryList defines model for MemoryList.

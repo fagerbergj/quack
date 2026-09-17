@@ -29,29 +29,25 @@ func absorbedByReason(survivorID string) string { return "absorbed by " + surviv
 // absorbFields is the subset of a memory's state computeAbsorbDelta merges -
 // both backends read/write this shape.
 type absorbFields struct {
-	Upvotes, Downvotes            int
-	LastUpvotedAt, LastRecalledAt string
-	AbsorbedIDs                   []string
+	Upvotes, Downvotes, Supported, NotRelevant int
+	LastUpvotedAt, LastRecalledAt              string
+	AbsorbedIDs                                []string
 }
 
 type absorbDelta struct {
-	Upvotes, Downvotes, VoteScore int
-	Tier                          string
-	LastUpvotedAt, LastRecalledAt string
-	AbsorbedIDs                   []string
+	Upvotes, Downvotes, Supported, NotRelevant, VoteScore int
+	Tier                                                  string
+	LastUpvotedAt, LastRecalledAt                         string
+	AbsorbedIDs                                           []string
 }
 
-// computeAbsorbDelta sums survivor+absorbed votes, recomputes tier from the new total
-// (verified once upvotes >= 1 - same rule as a supported vote), takes the later of the two
-// last_upvoted_at/last_recalled_at, and flattens lineage: absorbedID plus anything IT had already absorbed (an absorption chain, A absorbed by B absorbed by C, lands all of A/B on C) join survivor's own absorbed_ids.
+// computeAbsorbDelta sums survivor+absorbed votes (upvotes/downvotes/supported/not_relevant, epic #1456 P1), recomputes tier from the merged supported count via tierFromSupported, takes the later of the two last_upvoted_at/last_recalled_at, and flattens lineage: absorbedID plus anything IT had already absorbed (an absorption chain, A absorbed by B absorbed by C, lands all of A/B on C) join survivor's own absorbed_ids.
 func computeAbsorbDelta(survivor, absorbed absorbFields, absorbedID string) absorbDelta {
 	up, down := survivor.Upvotes+absorbed.Upvotes, survivor.Downvotes+absorbed.Downvotes
-	tier := TierUnverified
-	if up >= 1 {
-		tier = TierVerified
-	}
+	supported, notRelevant := survivor.Supported+absorbed.Supported, survivor.NotRelevant+absorbed.NotRelevant
 	return absorbDelta{
-		Upvotes: up, Downvotes: down, VoteScore: up - down, Tier: tier,
+		Upvotes: up, Downvotes: down, Supported: supported, NotRelevant: notRelevant,
+		VoteScore: up - down, Tier: tierFromSupported(supported),
 		LastUpvotedAt:  maxRFC3339(survivor.LastUpvotedAt, absorbed.LastUpvotedAt),
 		LastRecalledAt: maxRFC3339(survivor.LastRecalledAt, absorbed.LastRecalledAt),
 		AbsorbedIDs:    mergeAbsorbedIDs(survivor.AbsorbedIDs, absorbed.AbsorbedIDs, absorbedID),

@@ -150,15 +150,15 @@ type neighbour struct {
 	ValidFrom          string
 	ReinforcementCount int
 
-	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s UPDATE path so a
-	// consolidation merge never wipes accumulated votes (they used to be dropped on every
-	// UPDATE - a latent bug this phase fixes as a prerequisite for absorption inheriting anything real).
-	Upvotes, Downvotes, VoteScore int
-	Tier                          string
-	LastUpvotedAt                 string
-	Recalls                       int
-	LastRecalledAt                string
-	AbsorbedIDs                   []string
+	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s UPDATE path so a consolidation
+	// merge never wipes accumulated votes (a latent bug this phase fixed). Supported/NotRelevant (epic
+	// #1456 P1) must travel too - Tier is derived from Supported and would desync otherwise.
+	Upvotes, Downvotes, Supported, NotRelevant, VoteScore int
+	Tier                                                  string
+	LastUpvotedAt                                         string
+	Recalls                                               int
+	LastRecalledAt                                        string
+	AbsorbedIDs                                           []string
 }
 
 // toNeighbour narrows a scored point to the fields a consolidation decision reads.
@@ -167,7 +167,7 @@ func (p scored) toNeighbour() neighbour {
 		ID: p.ID, Content: p.Content,
 		ChatID: p.ChatID, NodeID: p.NodeID, Source: p.Source, MintedAt: p.MintedAt,
 		Status: p.Status, ValidFrom: p.ValidFrom, ReinforcementCount: p.ReinforcementCount,
-		Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
+		Upvotes: p.Upvotes, Downvotes: p.Downvotes, Supported: p.Supported, NotRelevant: p.NotRelevant, VoteScore: p.VoteScore, Tier: p.Tier,
 		LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
 		AbsorbedIDs: p.AbsorbedIDs,
 	}
@@ -386,7 +386,7 @@ func (s *Store) applyWrites(ctx context.Context, bucket, author string, prov Pro
 		fresh := strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == ""
 		mintedAt, chatID, nodeID, source := ts, prov.ChatID, prov.NodeID, prov.Source
 		status, reinforcementCount, validFrom := string(StatusUnverified), 0, ts
-		var upvotes, downvotes, voteScore, recalls int
+		var upvotes, downvotes, supported, notRelevant, voteScore, recalls int
 		var tier, lastUpvotedAt, lastRecalledAt string
 		var absorbedIDs []string
 		if !fresh {
@@ -400,7 +400,8 @@ func (s *Store) applyWrites(ctx context.Context, bucket, author string, prov Pro
 					validFrom = n.ValidFrom
 				}
 				upvotes, downvotes, voteScore = n.Upvotes, n.Downvotes, n.VoteScore
-				tier, lastUpvotedAt = n.Tier, n.LastUpvotedAt
+				supported, notRelevant = n.Supported, n.NotRelevant
+				tier, lastUpvotedAt = tierFromSupported(supported), n.LastUpvotedAt
 				recalls, lastRecalledAt = n.Recalls, n.LastRecalledAt
 				absorbedIDs = n.AbsorbedIDs
 			}
@@ -424,6 +425,8 @@ func (s *Store) applyWrites(ctx context.Context, bucket, author string, prov Pro
 			ReinforcementCount: reinforcementCount,
 			Upvotes:            upvotes,
 			Downvotes:          downvotes,
+			Supported:          supported,
+			NotRelevant:        notRelevant,
 			VoteScore:          voteScore,
 			Tier:               tier,
 			LastUpvotedAt:      lastUpvotedAt,

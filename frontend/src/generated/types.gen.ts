@@ -141,11 +141,19 @@ export type Memory = {
      */
     downvotes?: number;
     /**
+     * The judge- or human-supported subset of `upvotes` - reinforcement upvotes don't count. Tier is `verified` only while this is >= 1 (epic
+     */
+    supported?: number;
+    /**
+     * Judge votes marking this memory `not_relevant`. Reaching 3 with zero `supported` votes invalidates the memory (epic
+     */
+    not_relevant?: number;
+    /**
      * upvotes - downvotes. A memory at or below the configured invalidation threshold (default -2) is invalidated.
      */
     vote_score?: number;
     /**
-     * Vote-based tier - `verified` once upvotes >= 1. Independent of `status`; a verified memory is never aged out, only invalidated by net score or a human.
+     * Vote-based tier - `verified` only while `supported` >= 1, recomputed on every vote (epic
      */
     tier?: 'unverified' | 'verified';
     /**

@@ -283,7 +283,7 @@ func TestRunMemoryShow(t *testing.T) {
 		t.Errorf("server calls = %d, want exactly 1 (a direct per-id GET, not a page scan)", calls)
 	}
 	s := out.String()
-	for _, want := range []string{"m1", "verified", "+2 / -1", "score 1", "recalls:  3", "a fact worth showing"} {
+	for _, want := range []string{"m1", "verified", "+2 / -1", "score 1", "recalls:      3", "a fact worth showing"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("show output missing %q:\n%s", want, s)
 		}

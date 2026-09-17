@@ -45,6 +45,8 @@ const (
 
 	payloadUpvotes        = "upvotes"
 	payloadDownvotes      = "downvotes"
+	payloadSupported      = "supported"
+	payloadNotRelevant    = "not_relevant"
 	payloadVoteScore      = "vote_score"
 	payloadTier           = "tier"
 	payloadLastUpvotedAt  = "last_upvoted_at"
@@ -167,6 +169,8 @@ func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, scor
 		ReinforcementCount: payloadInt(payload, payloadReinforcementCount),
 		Upvotes:            payloadInt(payload, payloadUpvotes),
 		Downvotes:          payloadInt(payload, payloadDownvotes),
+		Supported:          payloadInt(payload, payloadSupported),
+		NotRelevant:        payloadInt(payload, payloadNotRelevant),
 		VoteScore:          payloadInt(payload, payloadVoteScore),
 		Tier:               payloadString(payload, payloadTier),
 		LastUpvotedAt:      payloadString(payload, payloadLastUpvotedAt),
@@ -575,6 +579,8 @@ func (x *qdrantIndex) upsert(ctx context.Context, pts []point) error {
 			payloadReinforcementCount: p.ReinforcementCount,
 			payloadUpvotes:            p.Upvotes,
 			payloadDownvotes:          p.Downvotes,
+			payloadSupported:          p.Supported,
+			payloadNotRelevant:        p.NotRelevant,
 			payloadVoteScore:          p.VoteScore,
 			payloadRecalls:            p.Recalls,
 		}
@@ -775,6 +781,8 @@ func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 			return nil, fmt.Errorf("memory: set payload invalidate: %w", err)
 		}
 	case OutcomeReinforced:
+		// Audit trail only - epic #1456 P1: tier is judge/human-support only, so this never
+		// writes payloadTier (an existing verified/unverified value is left untouched).
 		ts := nowRFC3339()
 		for _, c := range candidates {
 			if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
@@ -785,7 +793,6 @@ func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 					payloadReinforcementCount: c.count + 1,
 					payloadUpvotes:            c.upvotes + 1,
 					payloadVoteScore:          reinforcedVoteScore(c.upvotes, c.downvotes),
-					payloadTier:               TierVerified,
 					payloadLastUpvotedAt:      ts,
 				}),
 				PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{c.id})}}},
@@ -820,15 +827,19 @@ func (x *qdrantIndex) applyVotes(ctx context.Context, votes []Vote, invalidateTh
 		if !ok || payloadString(payload, payloadStatus) == string(StatusInvalidated) {
 			continue
 		}
-		d := computeVoteDelta(payloadInt(payload, payloadUpvotes), payloadInt(payload, payloadDownvotes), payloadString(payload, payloadTier), ts, v, invalidateThreshold)
-		set := map[string]any{payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadVoteScore: d.VoteScore, payloadTier: d.Tier}
+		d := computeVoteDelta(payloadInt(payload, payloadUpvotes), payloadInt(payload, payloadDownvotes),
+			payloadInt(payload, payloadSupported), payloadInt(payload, payloadNotRelevant), ts, v, invalidateThreshold)
+		set := map[string]any{
+			payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadSupported: d.Supported, payloadNotRelevant: d.NotRelevant,
+			payloadVoteScore: d.VoteScore, payloadTier: d.Tier,
+		}
 		if d.LastUpvotedAt != "" {
 			set[payloadLastUpvotedAt] = d.LastUpvotedAt
 		}
 		if d.Invalidate {
 			set[payloadStatus] = string(StatusInvalidated)
 			set[payloadInvalidatedAt] = ts
-			set[payloadInvalidationReason] = OutcomeReasonNetScore
+			set[payloadInvalidationReason] = d.InvalidateReason
 		}
 		if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
 			CollectionName: x.coll,
@@ -857,8 +868,11 @@ func (x *qdrantIndex) setHumanVote(ctx context.Context, id, vote string, invalid
 	}
 	ts := nowRFC3339()
 	d := computeHumanVoteDelta(payloadInt(payload, payloadUpvotes), payloadInt(payload, payloadDownvotes),
-		payloadString(payload, payloadTier), payloadString(payload, payloadHumanVote), vote, ts, invalidateThreshold)
-	set := map[string]any{payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadVoteScore: d.VoteScore, payloadTier: d.Tier}
+		payloadInt(payload, payloadSupported), payloadString(payload, payloadHumanVote), vote, ts, invalidateThreshold)
+	set := map[string]any{
+		payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadSupported: d.Supported,
+		payloadVoteScore: d.VoteScore, payloadTier: d.Tier,
+	}
 	if vote == HumanVoteNone {
 		set[payloadHumanVote] = ""
 	} else {
@@ -958,6 +972,49 @@ func (x *qdrantIndex) backfillTiers(ctx context.Context) (int, error) {
 	return touched, nil
 }
 
+// backfillJudgeSupport is the one-time migration (epic #1456 P1) for every currently-verified point
+// still at supported=0: upvotes-reinforcement_count is the historical non-reinforcement upvote count, so a
+// positive value backfills supported (keeping tier verified) while zero demotes to unverified. Idempotent both ways: a backfilled supported is skipped, and a demoted point drops out of the server-side tier filter.
+func (x *qdrantIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
+	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{
+		CollectionName: x.coll,
+		WithPayload:    qdrant.NewWithPayload(true),
+		Filter:         &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword(payloadTier, TierVerified)}},
+	})
+	wait := true
+	touched := 0
+	for {
+		pts, err := it.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return touched, fmt.Errorf("memory: scroll for judge-support backfill: %w", err)
+		}
+		for _, p := range pts {
+			payload := p.GetPayload()
+			if payloadInt(payload, payloadSupported) > 0 {
+				continue
+			}
+			supported := payloadInt(payload, payloadUpvotes) - payloadInt(payload, payloadReinforcementCount)
+			set := map[string]any{payloadSupported: 0, payloadTier: TierUnverified}
+			if supported > 0 {
+				set[payloadSupported], set[payloadTier] = supported, TierVerified
+			}
+			if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+				CollectionName: x.coll,
+				Wait:           &wait,
+				Payload:        qdrant.NewValueMap(set),
+				PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: []*qdrant.PointId{p.GetId()}}}},
+			}); err != nil {
+				return touched, fmt.Errorf("memory: judge-support backfill set payload: %w", err)
+			}
+			touched++
+		}
+	}
+	return touched, nil
+}
+
 // updateBucket moves a point to a new bucket (payload user_id), unconditionally.
 func (x *qdrantIndex) updateBucket(ctx context.Context, id, bucket string) error {
 	wait := true
@@ -1007,19 +1064,21 @@ func (x *qdrantIndex) absorb(ctx context.Context, survivorID, absorbedID, reason
 	d := computeAbsorbDelta(
 		absorbFields{
 			Upvotes: payloadInt(svP, payloadUpvotes), Downvotes: payloadInt(svP, payloadDownvotes),
+			Supported: payloadInt(svP, payloadSupported), NotRelevant: payloadInt(svP, payloadNotRelevant),
 			LastUpvotedAt: payloadString(svP, payloadLastUpvotedAt), LastRecalledAt: payloadString(svP, payloadLastRecalledAt),
 			AbsorbedIDs: splitIDs(payloadString(svP, payloadAbsorbedIDs)),
 		},
 		absorbFields{
 			Upvotes: payloadInt(abP, payloadUpvotes), Downvotes: payloadInt(abP, payloadDownvotes),
+			Supported: payloadInt(abP, payloadSupported), NotRelevant: payloadInt(abP, payloadNotRelevant),
 			LastUpvotedAt: payloadString(abP, payloadLastUpvotedAt), LastRecalledAt: payloadString(abP, payloadLastRecalledAt),
 			AbsorbedIDs: splitIDs(payloadString(abP, payloadAbsorbedIDs)),
 		},
 		absorbedID,
 	)
 	set := map[string]any{
-		payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadVoteScore: d.VoteScore, payloadTier: d.Tier,
-		payloadAbsorbedIDs: joinIDs(d.AbsorbedIDs),
+		payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadSupported: d.Supported, payloadNotRelevant: d.NotRelevant,
+		payloadVoteScore: d.VoteScore, payloadTier: d.Tier, payloadAbsorbedIDs: joinIDs(d.AbsorbedIDs),
 	}
 	if d.LastUpvotedAt != "" {
 		set[payloadLastUpvotedAt] = d.LastUpvotedAt
