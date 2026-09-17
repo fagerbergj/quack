@@ -7,7 +7,7 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlightSubset from '../lib/rehypeHighlightSubset'
 import 'highlight.js/styles/github-dark.css'
 import type { Element } from 'hast'
-import { api, artifactUrl } from '../api'
+import { api, artifactUrl, listChatArtifactsShared } from '../api'
 import type { ArtifactSummary, ArtifactRevisionInfo } from '../api'
 import { CopyButton } from './CopyButton'
 import { CopyablePre } from './CopyablePre'
@@ -53,6 +53,10 @@ export interface CodeReviewBody {
   notes?: string[]
   finding_ids?: string[]
   dismissed?: string[]
+  // The server's own rendered overview (Scope/Highlights/Dismissed etc,
+  // internal/vetting/reviewoverview.go) - shown under "Full review" so the
+  // panel never carries less than the GitHub comment.
+  rendered?: string
 }
 export interface FindingBody {
   path?: string
@@ -106,11 +110,11 @@ export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
   return { byLine, unanchored }
 }
 
-// Run bookkeeping, never a node's own deliverable: dag_node is rewritten by
-// the system at node start/end, dag_plan belongs to the orchestrator, and a
-// dispatch-authored bytes:* blob is the run's own input staging, not anything this node produced.
+// Run bookkeeping, never a deliverable: dag_node is rewritten by the system
+// at node start/end; a dispatch-authored bytes:* blob is input staging. Not
+// dag_plan - the per-node lineage filter upstream already scopes that to the orchestrator.
 export function isBookkeeping(a: { kind?: string; name: string }): boolean {
-  return a.kind === 'dag_node' || a.kind === 'dag_plan' || a.name.startsWith('bytes:')
+  return a.kind === 'dag_node' || a.name.startsWith('bytes:')
 }
 
 // kindRank tiers a candidate: review, then the node's declared kind, then a
@@ -123,16 +127,17 @@ function kindRank(a: ArtifactSummary, nodeArtifactKind?: string): number {
   return 4
 }
 
-// The node's RESULT (#1178 - there is no picker): computed via kindRank,
-// with revision/saved_at/name breaking a tie within one tier.
+// The node's RESULT (#1178 - there is no picker): computed via kindRank.
+// judge_round is excluded from ranked candidates, but an explicit focus (a secondary-list tap) can still land on one.
 export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKind?: string, focusArtifactId?: string): ArtifactSummary | null {
-  const candidates = artifacts.filter(a => a.kind !== 'judge_round' && !isBookkeeping(a))
-  if (candidates.length === 0) return null
+  const eligible = artifacts.filter(a => !isBookkeeping(a))
   // The focus hint wins outright when it names one of THIS node's artifacts -
   // it's "show what was tapped," a stronger signal than kind rank or the
   // newest-wins default (#1250) - a secondary tap inside the panel reuses this same mechanism.
-  const focused = focusArtifactId ? candidates.find(a => a.name === focusArtifactId) : undefined
+  const focused = focusArtifactId ? eligible.find(a => a.name === focusArtifactId) : undefined
   if (focused) return focused
+  const candidates = eligible.filter(a => a.kind !== 'judge_round')
+  if (candidates.length === 0) return null
   return candidates.reduce((best, a) => (compareOutput(a, best, nodeArtifactKind) > 0 ? a : best))
 }
 
@@ -163,6 +168,17 @@ function findingLoc(f: FindingBody): string | undefined {
   return f.path ? (f.line_hint != null ? `${f.path}:${f.line_hint}` : f.path) : undefined
 }
 
+// humanKindWord/instanceOf back the default branch below: a kind the
+// switch doesn't name still reads as a label, never the bare id.
+function humanKindWord(kind: string | undefined): string {
+  if (!kind) return 'Item'
+  return kind.charAt(0).toUpperCase() + kind.slice(1).replace(/_/g, ' ')
+}
+function instanceOf(name: string): string {
+  const i = name.indexOf(':')
+  return i >= 0 ? name.slice(i + 1) : name
+}
+
 // artifactTitle names an artifact for a human, never its raw id. `body` is
 // the parsed JSON for a structured kind, or the raw text for a blob.
 function reviewTitle(body: unknown): string {
@@ -172,7 +188,7 @@ function reviewTitle(body: unknown): string {
 }
 function findingTitle(summary: ArtifactSummary, body: unknown): string {
   const f = (body ?? {}) as FindingBody
-  return [f.severity, findingLoc(f)].filter(Boolean).join(' · ') || summary.name
+  return [f.severity, findingLoc(f), f.title].filter(Boolean).join(' · ') || summary.name
 }
 function judgeRoundTitle(body: unknown): string {
   const j = (body ?? {}) as JudgeRoundContent
@@ -187,7 +203,13 @@ export function artifactTitle(summary: ArtifactSummary, body: unknown): string {
     case 'code_review': return reviewTitle(body)
     case 'finding': return findingTitle(summary, body)
     case 'judge_round': return judgeRoundTitle(body)
-    default: return typeof body === 'string' ? (firstLine(body) ?? summary.name) : summary.name
+    default: {
+      if (typeof body === 'string') {
+        const line = firstLine(body)
+        if (line) return line
+      }
+      return `${humanKindWord(summary.kind)} · ${instanceOf(summary.name)}`
+    }
   }
 }
 
@@ -310,14 +332,14 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const load = useCallback(() => {
     // Returns the promise (not fire-and-forget) - withScrollPreserved below
     // awaits it to restore scroll only after the refetch actually lands.
-    return api.listChatArtifacts(chatId).then(l => setSummaries(l.data ?? [])).catch(e => setError(String(e)))
+    return listChatArtifactsShared(chatId).then(l => setSummaries(l.data ?? [])).catch(e => setError(String(e)))
   }, [chatId])
   useEffect(() => { void load() }, [load])
 
   // Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
   // only carries that revision's lineage - see toArtifactSummary in
   // internal/server/rest/artifacts.go), not "any revision this node wrote": if a later node revises an artifact (e.g. a judge writes revision 2 of a worker's `finding`) it moves to the reviser's panel and disappears from the original author's - a real gap against a "everything this node wrote is an output" reading of design V4, open as a question on #1094's review pending a spec answer. Fixing it needs per-revision lineage (GET .../revisions) up front for every artifact in the chat, which doesn't scale to "one click opens a panel" - documented here rather than silently wrong.
-  // isBookkeeping excludes dag_node/dag_plan/bytes:* entirely - they belong to the run, never to this node's own panel.
+  // isBookkeeping excludes dag_node/bytes:* entirely - they belong to the run, never to this node's own panel.
   const nodeArtifacts = useMemo(
     () => summaries.filter(s => s.lineage?.node_id === nodeId && !isBookkeeping(s)),
     [summaries, nodeId],
@@ -384,10 +406,12 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     return entries
   }, [judgeBodies])
 
-  // Secondary artifacts: everything but the primary and the judge rounds
-  // (the timeline above handles those). A plain list, opened in place - no per-item groups/bars.
+  // Secondary artifacts: everything but the primary. A judge round IS
+  // listed here (its chip only jumps/highlights - this is how its own
+  // criteria/probes become reachable, via the same focus-and-swap tap every
+  // other secondary row already uses). A plain list, opened in place - no per-item groups/bars.
   const secondaryItems = useMemo(
-    () => nodeArtifacts.filter(a => a.kind !== 'judge_round' && a.name !== primaryId),
+    () => nodeArtifacts.filter(a => a.name !== primaryId),
     [nodeArtifacts, primaryId],
   )
   // Secondary bodies: every secondary artifact's OWN latest_revision body
@@ -622,6 +646,8 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     const ids = (parsedJson as CodeReviewBody).finding_ids ?? []
     return ids.map(id => ({ id, body: secondaryBodies[id] as FindingBody | undefined }))
   }, [primary?.kind, parsedJson, secondaryBodies])
+  // Dropped from the secondary list below - the review already rendered them inline.
+  const reviewFindingNames = useMemo(() => new Set(reviewFindings.map(f => f.id)), [reviewFindings])
 
   // Details: the one place a raw id may appear. onTrigger jumps to the
   // round that produced this revision - but only when that round is one of
@@ -650,14 +676,16 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
       // Below `medium`: the same bottom-sheet shell as Sheet/NodePopup (docked
       // to the bottom edge via mt-auto, rounded top, scrim, safe-area padding);
-      // a centred card at medium+. dvh, not vh, so it clears mobile browser chrome (#1177). One component tree at every width - the only width-conditional code is this class.
-      className="m-0 mt-auto w-screen max-w-[100vw] h-[90dvh] medium:m-auto medium:w-full medium:max-w-4xl medium:h-[min(32rem,85vh)] max-h-[100vh] medium:max-h-[85dvh] p-0 border-0 rounded-t-2xl medium:rounded-2xl bg-transparent backdrop:bg-black/40"
+      // a centred card at medium+, sized to the viewport rather than a small
+      // fixed box - a review with several findings is not a "small dialog" payload.
+      className="m-0 mt-auto w-screen max-w-[100vw] h-[90dvh] medium:m-auto medium:w-full medium:max-w-5xl medium:h-[88vh] max-h-[100vh] medium:max-h-[88vh] p-0 border-0 rounded-t-2xl medium:rounded-2xl bg-transparent backdrop:bg-black/40"
     >
       <div
         className="relative flex flex-col w-full h-full overflow-hidden rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl pb-[calc(0.75rem+var(--composer-gap))] medium:pb-0"
       >
         {/* Header: the node's own name (never an artifact id or its raw
-            prompt - #1216), refresh, close - non-scrolling; >=44px targets
+            prompt - #1216), Raw/Copy (apply to whatever is focused, not
+            per-revision), refresh, close - non-scrolling; >=44px targets
             (#1135). line-clamp-2 is a hard ceiling: even a future caller
             that passes a long label can't blow the header past 2 lines. */}
         <header className="shrink-0 flex items-start gap-1 px-4 py-1.5 border-b border-gray-200 dark:border-gray-700">
@@ -665,6 +693,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
             {nodeAgent}
           </h2>
           <div className="flex items-center gap-1 shrink-0 py-1.5">
+            {!empty && <HeaderToggles rawView={rawView} onToggleRaw={() => setRawView(r => !r)} diffActive={diffActive} displayText={displayText} />}
             <button
               onClick={refresh}
               aria-label="Refresh artifacts"
@@ -692,12 +721,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
           {empty ? <EmptyState nodeError={nodeError} deliveryText={nodeAnswer ? firstLine(nodeAnswer) : null} /> : (
             <>
-              {/* The focused artifact's title - a human name, not its
-                  raw id; the raw id stays inside
-                  Details. Loading (parsedJson/content still null) falls back to the artifact's own name via artifactTitle. */}
-              <p className="text-xs font-medium text-gray-700 dark:text-gray-200 break-words">
-                {artifactTitle(primary, isStructured ? parsedJson : content)}
-              </p>
+              <TitleHeading primary={primary} body={isStructured ? parsedJson : content} reviewFindings={reviewFindings} />
 
               <RevisionBar
                 currentRev={currentRev}
@@ -708,9 +732,6 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                 onPrev={() => move(-1)}
                 onNext={() => move(1)}
                 onToggleDiff={() => setDiffOn(d => !d)}
-                rawView={rawView}
-                onToggleRaw={() => setRawView(r => !r)}
-                displayText={displayText}
               />
 
               <PrimaryView
@@ -733,7 +754,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
               <UnanchoredNotes notes={unanchored} />
 
-              <SecondaryList items={secondaryItems} bodies={secondaryBodies} onSelect={setFocusedOverride} />
+              <SecondaryList items={secondaryItems} bodies={secondaryBodies} excludeNames={reviewFindingNames} onSelect={setFocusedOverride} />
 
               <DetailsSection
                 curInfo={curInfo}
@@ -776,27 +797,47 @@ function tryParseJSON(raw: string): unknown {
   }
 }
 
-// SecondaryList: every non-primary artifact as one plain, titled row - no
-// per-item revision bar, Raw toggle, or copy button. Tapping a row makes IT
-// the focused/primary view (the shared RevisionBar, Raw and Copy above apply to whatever is focused), rather than expanding a second set of controls.
-function SecondaryList({ items, bodies, onSelect }: {
+// Gives every row a DISTINCT accessible name: two artifacts that title
+// identically get an ordinal appended (not the revision - colliding titles usually share one too).
+function dedupedTitles(items: ArtifactSummary[], bodies: Record<string, unknown>): string[] {
+  const titles = items.map(a => artifactTitle(a, bodies[a.name]))
+  const counts = new Map<string, number>()
+  for (const t of titles) counts.set(t, (counts.get(t) ?? 0) + 1)
+  const seen = new Map<string, number>()
+  return titles.map(t => {
+    if ((counts.get(t) ?? 0) <= 1) return t
+    const n = (seen.get(t) ?? 0) + 1
+    seen.set(t, n)
+    return `${t} (#${n})`
+  })
+}
+
+// Everything else on this node, titled and reversible: a tap focuses a row,
+// and the row it replaces reappears here. excludeNames drops what the primary already rendered inline.
+function SecondaryList({ items, bodies, excludeNames, onSelect }: {
   items: ArtifactSummary[]
   bodies: Record<string, unknown>
+  excludeNames: Set<string>
   onSelect: (name: string) => void
 }) {
-  if (items.length === 0) return null
+  const shown = items.filter(a => !excludeNames.has(a.name))
+  if (shown.length === 0) return null
+  const titles = dedupedTitles(shown, bodies)
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700">
-      {items.map(a => (
-        <button
-          key={a.name}
-          type="button"
-          onClick={() => onSelect(a.name)}
-          className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
-        >
-          {artifactTitle(a, bodies[a.name])}
-        </button>
-      ))}
+    <div>
+      <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Also on this node</span>
+      <div role="list" className="mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700">
+        {shown.map((a, i) => (
+          <button
+            key={a.name}
+            type="button"
+            onClick={() => onSelect(a.name)}
+            className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+          >
+            {titles[i]}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1035,40 +1076,63 @@ function JsonView({ data }: { data: unknown }) {
 
 // severityChip colors a finding/review severity word the same way across
 // FindingView, ReviewView's inline findings, and the review's own verdict.
-const SEVERITY_COLOR: Record<string, string> = {
-  blocking: 'text-red-600 dark:text-red-400',
-  request_changes: 'text-red-600 dark:text-red-400',
-  suggestion: 'text-amber-600 dark:text-amber-400',
-  nit: 'text-gray-500 dark:text-gray-400',
-  approve: 'text-green-700 dark:text-green-400',
+// bg+text pairs, never a bare color-600 on white (amber-600 alone is
+// ~3.2:1, under the 4.5:1 AA floor here); dark pairs mirror this file's own amber-100/900 note highlight.
+const SEVERITY_CHIP: Record<string, string> = {
+  blocking: 'bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  request_changes: 'bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  suggestion: 'bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  nit: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200',
+  approve: 'bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-300',
 }
 function severityChip(word: string | undefined) {
   if (!word) return null
-  return <span className={`font-medium ${SEVERITY_COLOR[word] ?? 'text-gray-600 dark:text-gray-300'}`}>{word}</span>
+  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[13px] font-medium ${SEVERITY_CHIP[word] ?? 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{word}</span>
 }
 
 // FindingView: severity chip, path:line, title, rationale, snippet as code.
-function FindingView({ data }: { data: FindingBody }) {
+// Body prose matches the panel's own markdown scale (14px/24px, not the
+// 12px metadata scale) - only the location/labels stay small.
+export function FindingView({ data }: { data: FindingBody }) {
   const loc = findingLoc(data)
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 space-y-1.5 text-xs">
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-1.5 text-sm leading-6">
       <div className="flex flex-wrap items-center gap-1.5">
         {severityChip(data.severity)}
-        {loc && <span className="font-mono text-gray-500 dark:text-gray-400">{loc}</span>}
+        {loc && <span className="font-mono text-[13px] text-gray-500 dark:text-gray-400">{loc}</span>}
       </div>
       {data.title && <p className="font-medium text-gray-800 dark:text-gray-100">{data.title}</p>}
       {data.rationale && <p className="text-gray-600 dark:text-gray-300">{data.rationale}</p>}
-      {data.snippet && <pre className="font-mono text-[11px] bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-words">{data.snippet}</pre>}
+      {data.snippet && <pre className="font-mono text-[13px] leading-5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-words">{data.snippet}</pre>}
     </div>
   )
 }
 
-// ReviewView: verdict chip, takeaway, the verified/notes lists, and its
-// findings inline in finding_ids order (resolved by the caller from
-// secondaryBodies - a review doesn't carry finding bodies itself, only their ids).
-function ReviewView({ data, findings }: { data: CodeReviewBody; findings: { id: string; body: FindingBody | undefined }[] }) {
+// severityRank/findingSeverityCounts turn a review's resolved finding
+// bodies into "3 suggestions · 1 nit" - what the delivered review actually
+// says, not a raw finding_ids count (which includes already-resolved ones).
+const SEVERITY_RANK = ['blocking', 'request_changes', 'suggestion', 'nit']
+export function findingSeverityCounts(findings: { body: FindingBody | undefined }[]): string {
+  const counts = new Map<string, number>()
+  for (const f of findings) {
+    if (f.body?.state === 'resolved') continue
+    const sev = f.body?.severity ?? 'finding'
+    counts.set(sev, (counts.get(sev) ?? 0) + 1)
+  }
+  if (counts.size === 0) return '0 findings'
+  const order = [...SEVERITY_RANK, ...[...counts.keys()].filter(k => !SEVERITY_RANK.includes(k))]
+  return order.filter(k => counts.has(k)).map(k => {
+    const n = counts.get(k)!
+    return `${n} ${k}${n === 1 ? '' : 's'}`
+  }).join(' · ')
+}
+
+// ReviewView: verdict, takeaway, verified/notes, findings inline in
+// finding_ids order (resolved by the caller from secondaryBodies), and the server's own `rendered` overview under "Full review".
+export function ReviewView({ data, findings }: { data: CodeReviewBody; findings: { id: string; body: FindingBody | undefined }[] }) {
+  const emptyByLine = useMemo(() => new Map<number, JudgeNote[]>(), [])
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 space-y-2 text-xs">
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-3 text-sm leading-6">
       <div className="flex flex-wrap items-center gap-1.5">
         {severityChip(data.verdict)}
         {data.takeaway && <span className="text-gray-700 dark:text-gray-200">{data.takeaway}</span>}
@@ -1077,9 +1141,21 @@ function ReviewView({ data, findings }: { data: CodeReviewBody; findings: { id: 
       <MetaList label="Notes" items={data.notes} />
       {findings.length > 0 && (
         <div className="space-y-1.5">
-          <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Findings</span>
+          <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+            Findings ({findingSeverityCounts(findings)})
+          </span>
           {findings.map(f => <FindingView key={f.id} data={f.body ?? {}} />)}
         </div>
+      )}
+      {data.rendered && (
+        <details className="border-t border-gray-100 dark:border-gray-700 pt-2">
+          <summary className="cursor-pointer select-none text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+            Full review
+          </summary>
+          <div className="mt-2 -mx-3">
+            <ArtifactMarkdown text={data.rendered} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
+          </div>
+        </details>
       )}
     </div>
   )
@@ -1089,7 +1165,7 @@ function MetaList({ label, items }: { label: string; items: string[] | undefined
   if (!items || items.length === 0) return null
   return (
     <div>
-      <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</span>
+      <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</span>
       <ul className="mt-0.5 list-disc list-inside space-y-0.5 text-gray-600 dark:text-gray-300">
         {items.map((it, i) => <li key={i}>{it}</li>)}
       </ul>
@@ -1097,25 +1173,25 @@ function MetaList({ label, items }: { label: string; items: string[] | undefined
   )
 }
 
-// JudgeRoundView: score, pass/fail, the criteria table, probes.
-// Per-criterion scores are a raw 0-3 number, not a fraction (#941 scaleSpec) - shown as-is, same as the old JsonView summary did.
-function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
+// JudgeRoundView: score, pass/fail, the criteria table, probes. Reachable
+// via the round's own secondary-list row (the chip keeps its jump-and-highlight job); per-criterion scores are a raw 0-3, not a fraction (#941).
+export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 space-y-2 text-xs">
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-2 text-sm leading-6">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className={`inline-flex items-center gap-1 font-medium ${data.passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+        <span className={`inline-flex items-center gap-1 font-medium ${data.passed ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
           <Icon name={data.passed ? 'check' : 'close'} className="w-3.5 h-3.5" /> {data.passed ? 'passed' : 'failed'}
         </span>
-        {data.score != null && <span className="text-gray-500 dark:text-gray-400 tabular-nums">{data.score.toFixed(2)}</span>}
+        {data.score != null && <span className="text-gray-500 dark:text-gray-400 tabular-nums text-[13px]">{data.score.toFixed(2)}</span>}
       </div>
       {data.criteria && data.criteria.length > 0 && (
         <table className="w-full text-left">
           <tbody>
             {data.criteria.map((c, i) => (
               <tr key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0">
-                <td className="py-1 pr-2 font-medium text-gray-700 dark:text-gray-200 align-top whitespace-nowrap">{c.name}</td>
-                <td className="py-1 pr-2 text-gray-500 dark:text-gray-400 align-top tabular-nums">{c.score}</td>
-                <td className="py-1 text-gray-600 dark:text-gray-300 align-top">{c.feedback}</td>
+                <td className="py-1.5 pr-2 font-medium text-gray-700 dark:text-gray-200 align-top whitespace-nowrap">{c.name}</td>
+                <td className="py-1.5 pr-2 text-gray-500 dark:text-gray-400 align-top tabular-nums">{c.score}</td>
+                <td className="py-1.5 text-gray-600 dark:text-gray-300 align-top">{c.feedback}</td>
               </tr>
             ))}
           </tbody>
@@ -1123,7 +1199,7 @@ function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
       )}
       {data.evidence?.probes && data.evidence.probes.length > 0 && (
         <div>
-          <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Probes</span>
+          <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Probes</span>
           <ul className="mt-0.5 space-y-0.5 text-gray-600 dark:text-gray-300">
             {data.evidence.probes.map((p, i) => <li key={i}>{p.name}: {p.result}</li>)}
           </ul>
@@ -1133,12 +1209,12 @@ function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
   )
 }
 
-// PlanView: the assignment list. dag_plan is bookkeeping excluded from a
-// node's own panel, so this renders only via a direct fixture/test, not a reachable node-panel state today.
+// PlanView: the assignment list - the orchestrator's own panel (the only
+// node dag_plan's lineage ever names) opens on this.
 export function PlanView({ data }: { data: PlanBody }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 space-y-1.5 text-xs">
-      {data.status && <p className="text-gray-500 dark:text-gray-400">status: {data.status}</p>}
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-1.5 text-sm leading-6">
+      {data.status && <p className="text-[13px] text-gray-500 dark:text-gray-400">status: {data.status}</p>}
       {(data.assignments ?? []).map((a, i) => (
         <div key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0 pt-1.5">
           <p className="font-medium text-gray-800 dark:text-gray-100">{a.node_id}</p>
@@ -1264,6 +1340,36 @@ function ErrorLine({ error }: { error: string | null }) {
   return <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
 }
 
+// The focused artifact's title: the panel's own content heading, same
+// weight as the h2 above it, with the verdict/severity as an AA-safe chip -
+// never a raw id (that stays inside Details).
+function TitleHeading({ primary, body, reviewFindings }: {
+  primary: ArtifactSummary
+  body: unknown
+  reviewFindings: { id: string; body: FindingBody | undefined }[]
+}) {
+  const headingClass = 'flex flex-wrap items-baseline gap-1.5 text-sm font-semibold text-gray-800 dark:text-gray-100 break-words'
+  if (primary.kind === 'code_review') {
+    const r = (body ?? {}) as CodeReviewBody
+    return (
+      <p className={headingClass}>
+        {severityChip(r.verdict)}
+        <span>Review · {findingSeverityCounts(reviewFindings)}</span>
+      </p>
+    )
+  }
+  if (primary.kind === 'finding') {
+    const f = (body ?? {}) as FindingBody
+    return (
+      <p className={headingClass}>
+        {severityChip(f.severity)}
+        <span>{[findingLoc(f), f.title].filter(Boolean).join(' · ') || primary.name}</span>
+      </p>
+    )
+  }
+  return <p className={headingClass}>{artifactTitle(primary, body)}</p>
+}
+
 // The primary output's view slot: the diff (when active with a loaded body)
 // or the shared renderer stack.
 function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote, reviewFindings }: {
@@ -1363,7 +1469,10 @@ function DetailsSection({ curInfo, open, onOpenChange, nodeTask, primary, revisi
 // The primary output's Revision N-of-M bar: prev/next cursor, the single
 // Diff toggle (disabled with its visible reason), the Raw fallback toggle,
 // and copy.
-function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason, onPrev, onNext, onToggleDiff, rawView, onToggleRaw, displayText }: {
+// A single revision carries nothing to browse - Prev/Next/Diff would all be
+// permanently disabled chrome above the deliverable, so the bar (Raw/Copy
+// now live in the header, always available) only earns its place at 2+.
+function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason, onPrev, onNext, onToggleDiff }: {
   currentRev: number | null
   count: number
   revIdx: number | null
@@ -1372,11 +1481,8 @@ function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason
   onPrev: () => void
   onNext: () => void
   onToggleDiff: () => void
-  rawView: boolean
-  onToggleRaw: () => void
-  displayText: string | null
 }) {
-  if (count === 0) return null
+  if (count <= 1) return null
   return (
     <div className="flex items-center gap-1.5 flex-wrap text-xs">
       <span aria-live="polite" className="text-gray-600 dark:text-gray-300 tabular-nums">
@@ -1410,16 +1516,30 @@ function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason
       {diffDisabledReason != null && (
         <span className="text-gray-500 dark:text-gray-400">{diffDisabledReason}</span>
       )}
+    </div>
+  )
+}
+
+// HeaderToggles: Raw + Copy, in the dialog's own header row (not per-item,
+// not per-revision) - they apply to whatever is currently focused.
+function HeaderToggles({ rawView, onToggleRaw, diffActive, displayText }: {
+  rawView: boolean
+  onToggleRaw: () => void
+  diffActive: boolean
+  displayText: string | null
+}) {
+  return (
+    <>
       <button
         onClick={onToggleRaw}
         aria-pressed={rawView && !diffActive}
         disabled={diffActive}
-        className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+        className="inline-flex h-11 px-3 items-center rounded-lg text-xs text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 disabled:opacity-40 disabled:cursor-default transition-colors"
       >
         Raw
       </button>
       {displayText != null && <CopyButton text={displayText} label="Copy artifact text" />}
-    </div>
+    </>
   )
 }
 

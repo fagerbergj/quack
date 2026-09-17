@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { act, cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
-import { ArtifactPanel } from './ArtifactPanel'
+import { ArtifactPanel, ReviewView, JudgeRoundView, PlanView } from './ArtifactPanel'
 import { client } from '../generated/client.gen'
 import { ChatStoreProvider } from '../state/ChatStoreProvider'
 import { ChatStore } from '../state/chatStore'
@@ -360,17 +360,17 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
 
-    // The finding's row is titled from its own body (path, no severity in
-    // this fixture) - never its content-hash id.
-    const row = await screen.findByRole('button', { name: 'a.go' })
+    // The finding's row is titled from its own body (path + title) - never
+    // its content-hash id.
+    const row = await screen.findByRole('button', { name: 'a.go · missing nil check' })
     expect(screen.queryByText(/finding:692b00ee/)).toBeNull()
 
     await user.click(row)
-    // Now focused: the shared revision bar and typed FindingView render it,
-    // exactly as they would the default primary.
-    expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
-    expect(await screen.findByText(/missing nil check/)).toBeTruthy()
+    // Now focused: the title heading AND the typed FindingView both name
+    // it, exactly as the default primary would. A single revision hides the revision bar (D3).
+    expect(await screen.findAllByText(/missing nil check/)).toHaveLength(2)
     expect(await screen.findByText(/x may be nil here/)).toBeTruthy()
+    expect(screen.queryByText(/^Revision \d/)).toBeNull()
     // The plan (former primary) now shows in the secondary list instead.
     expect(await screen.findByRole('button', { name: 'Plan v2' })).toBeTruthy()
   })
@@ -486,7 +486,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Plan v1' })).toBeTruthy()
 
     // The server writes revision 2 - grow the fixture, then fire the event
     // the panel is subscribed to, exactly as the real SSE stream would.
@@ -504,7 +504,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Plan v1' })).toBeTruthy()
 
     planRevisions.push({ revision: 2, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 2, author: 'worker' } })
 
@@ -563,7 +563,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    await screen.findByText('Revision 1 of 1')
+    await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
 
     const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement
     Object.defineProperty(scrollEl, 'scrollTop', { value: 42, writable: true })
@@ -579,7 +579,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    await screen.findByText('Revision 1 of 1')
+    await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
     expect(screen.queryByRole('button', { name: /Round 1/ })).toBeNull()
 
     judgeRoundsPresent = true
@@ -595,10 +595,8 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    // "Revision 1 of 1" is set as soon as the revisions list resolves, but
     // loadContent's own GET fires from a LATER effect - clearing the mock
     // before that dispatch attributes the trailing initial-load call to the event fired below (flaky: #1300 review). Waiting for the rendered content confirms the fetch landed.
-    await screen.findByText('Revision 1 of 1')
     await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockClear()
@@ -608,3 +606,100 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+// A dropped field here is invisible to any test that only renders the full
+// panel with one fixture - these render each typed view directly and check
+// every field the issue's shape lists, so a regression fails immediately.
+describe('typed views render every documented field', () => {
+  it('ReviewView renders verdict, takeaway, verified, notes, and findings in finding_ids order', () => {
+    rtlRender(
+      <ReviewView
+        data={{
+          verdict: 'approve',
+          takeaway: 'Solid change overall.',
+          verified: ['Ran the test suite'],
+          notes: ['Consider a changelog entry'],
+          finding_ids: ['finding:b', 'finding:a'],
+        }}
+        findings={[
+          { id: 'finding:b', body: { path: 'b.go', title: 'second finding', severity: 'nit' } },
+          { id: 'finding:a', body: { path: 'a.go', title: 'first finding', severity: 'suggestion' } },
+        ]}
+      />,
+    )
+    expect(screen.getByText('approve')).toBeTruthy()
+    expect(screen.getByText('Solid change overall.')).toBeTruthy()
+    expect(screen.getByText('Ran the test suite')).toBeTruthy()
+    expect(screen.getByText('Consider a changelog entry')).toBeTruthy()
+    expect(screen.getAllByText(/finding$/).map(el => el.textContent)).toEqual(['second finding', 'first finding'])
+  })
+
+  it('JudgeRoundView renders pass/fail, score, the criteria table, and probes', () => {
+    rtlRender(
+      <JudgeRoundView
+        data={{
+          round: 1,
+          passed: false,
+          score: 0.33,
+          criteria: [{ name: 'catches_real_issues', score: 1, feedback: 'Found the real bug.' }],
+          evidence: { probes: [{ name: 'review_posted', result: 'pass' }] },
+        }}
+      />,
+    )
+    expect(screen.getByText('failed')).toBeTruthy()
+    expect(screen.getByText('0.33')).toBeTruthy()
+    expect(screen.getByText('catches_real_issues')).toBeTruthy()
+    expect(screen.getByText('Found the real bug.')).toBeTruthy()
+    expect(screen.getByText(/review_posted: pass/)).toBeTruthy()
+  })
+
+  it("PlanView renders the status and each assignment's node_id and task", () => {
+    rtlRender(<PlanView data={{ status: 'done', assignments: [{ node_id: 'code-reviewer-1', task: 'Review PR #1464' }] }} />)
+    expect(screen.getByText(/status: done/)).toBeTruthy()
+    expect(screen.getByText('code-reviewer-1')).toBeTruthy()
+    expect(screen.getByText('Review PR #1464')).toBeTruthy()
+  })
+})
+
+// B4: a screen reader must never announce two rows by the same name.
+describe('SecondaryList gives every row a distinct accessible name', () => {
+  it('appends an ordinal when two different findings title identically', async () => {
+    stubGlobalArtifactsFixtureWithDuplicateFindings()
+    render(<ArtifactPanel chatId="chat-dup" nodeId="writer-1" nodeAgent="Writer" nodeTask="Write" onClose={() => {}} />)
+    await screen.findByRole('heading', { level: 1, name: 'Notes' })
+
+    // Both findings share the same severity/path/title - identical UNLESS
+    // deduped - so the ordinal suffix is the only thing telling them apart.
+    expect(await screen.findByRole('button', { name: 'nit · a.go · fix formatting (#1)' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'nit · a.go · fix formatting (#2)' })).toBeTruthy()
+  })
+})
+
+function stubGlobalArtifactsFixtureWithDuplicateFindings() {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+    if (url.includes('/artifacts/text:notes/revisions')) {
+      return jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 5, kind: 'text', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] })
+    }
+    if (url.includes('/artifacts/text:notes?revision=1')) return textResponse('# Notes\n')
+    const dupFinding = JSON.stringify({ severity: 'nit', path: 'a.go', title: 'fix formatting' })
+    for (const name of ['finding:a', 'finding:b']) {
+      if (url.includes(`/artifacts/${name}/revisions`)) {
+        return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 5, kind: 'finding', class: 'structured', lineage: { node_id: 'writer-1', author: 'worker' } }] })
+      }
+      // Two DIFFERENT finding artifacts, identical body - two real findings
+      // can share a location/title (e.g. a lint rule flagged twice).
+      if (url.includes(`/artifacts/${name}?revision=1`)) return textResponse(dupFinding)
+    }
+    if (url.endsWith('/artifacts')) {
+      return jsonResponse({
+        data: [
+          { name: 'text:notes', kind: 'text', class: 'blob', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+          { name: 'finding:a', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+          { name: 'finding:b', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+        ],
+      })
+    }
+    return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+  }))
+}

@@ -125,15 +125,18 @@ describe('selectPrimaryOutput', () => {
     expect(selectPrimaryOutput([a, b], undefined, 'text:not-on-this-node')?.name).toBe('text:a')
   })
 
-  // dag_node/dag_plan/bytes:* are never the primary, however
-  // new their revision - a review always outranks everything else.
-  it('never picks bookkeeping (dag_node, dag_plan, bytes:*), however new', () => {
+  // dag_node/bytes:* are never the primary, however new their revision - a
+  // review always outranks everything else. dag_plan is NOT excluded by
+  // kind (B2): it only ever reaches this node's candidates when it's the
+  // ORCHESTRATOR's own plan, at which point it's ranked like anything else.
+  it('never picks dag_node or bytes:*, however new; dag_plan is a normal (low-rank) candidate', () => {
     const dagNode = summary({ name: 'dag_node:n1', kind: 'dag_node', latest_revision: 9 })
-    const dagPlan = summary({ name: 'dag_plan:main', kind: 'dag_plan', latest_revision: 9 })
+    const dagPlan = summary({ name: 'dag_plan:main', kind: 'dag_plan', class: 'structured', latest_revision: 9 })
     const bytes = summary({ name: 'bytes:issue', kind: 'bytes', latest_revision: 9 })
-    const finding = summary({ name: 'finding:a', kind: 'finding', latest_revision: 1 })
+    const finding = summary({ name: 'finding:a', kind: 'finding', class: 'structured', latest_revision: 1 })
     expect(selectPrimaryOutput([dagNode, dagPlan, bytes, finding])?.name).toBe('finding:a')
-    expect(selectPrimaryOutput([dagNode, dagPlan, bytes])).toBeNull()
+    expect(selectPrimaryOutput([dagNode, bytes])).toBeNull()
+    expect(selectPrimaryOutput([dagNode, dagPlan, bytes])?.name).toBe('dag_plan:main')
   })
 
   it('ranks code_review above the declared kind, a blob, and a finding, regardless of revision', () => {
@@ -181,14 +184,16 @@ describe('toAscending', () => {
 })
 
 describe('isBookkeeping', () => {
-  it('excludes dag_node, dag_plan, and any bytes:* name', () => {
+  it('excludes dag_node and any bytes:* name', () => {
     expect(isBookkeeping({ kind: 'dag_node', name: 'dag_node:n1' })).toBe(true)
-    expect(isBookkeeping({ kind: 'dag_plan', name: 'dag_plan:main' })).toBe(true)
     expect(isBookkeeping({ kind: 'bytes', name: 'bytes:issue' })).toBe(true)
   })
 
-  it('keeps everything else, including an unlisted kind like delivery_record', () => {
+  // B2: dag_plan is NOT bookkeeping by kind - the per-node lineage filter
+  // upstream already scopes it to the orchestrator's own panel.
+  it('keeps everything else, including dag_plan and an unlisted kind like delivery_record', () => {
     expect(isBookkeeping({ kind: 'finding', name: 'finding:a' })).toBe(false)
+    expect(isBookkeeping({ kind: 'dag_plan', name: 'dag_plan:main' })).toBe(false)
     expect(isBookkeeping({ kind: 'delivery_record', name: 'delivery_record:pr:1' })).toBe(false)
   })
 })
@@ -216,7 +221,7 @@ describe('artifactTitle', () => {
     const blob = summary({ name: 'text:answer', kind: 'answer', class: 'blob' })
     expect(artifactTitle(blob, '# Opened PR #1464\n\nmore text')).toBe('Opened PR #1464')
     const unknown = summary({ name: 'delivery_record:pr:1', kind: 'delivery_record', class: 'structured' })
-    expect(artifactTitle(unknown, { outcome: 'delivered' })).toBe('delivery_record:pr:1')
+    expect(artifactTitle(unknown, { outcome: 'delivered' })).toBe('Delivery record · pr:1')
   })
 })
 

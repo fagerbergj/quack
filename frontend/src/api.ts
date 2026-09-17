@@ -172,3 +172,17 @@ export const api = {
 export function artifactUrl(chatId: string, artifactName: string, revision?: number): string {
   return `/api/v1/chats/${encodeURIComponent(chatId)}/artifacts/${encodeURIComponent(artifactName)}${revision != null ? `?revision=${revision}` : ''}`
 }
+
+// Coalesces concurrent listChatArtifacts(chatId) calls into one request -
+// every finished node's card fires this on the same render pass, and
+// without sharing the in-flight promise an N-node DAG makes N identical
+// GETs. Cleared once settled, so a later (e.g. SSE-triggered) call still refetches.
+const inFlightArtifactLists = new Map<string, Promise<ArtifactList>>()
+export function listChatArtifactsShared(chatId: string): Promise<ArtifactList> {
+  let p = inFlightArtifactLists.get(chatId)
+  if (!p) {
+    p = api.listChatArtifacts(chatId).finally(() => inFlightArtifactLists.delete(chatId))
+    inFlightArtifactLists.set(chatId, p)
+  }
+  return p
+}

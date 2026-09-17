@@ -223,9 +223,12 @@ const dagPlan1464 = {
   assignments: [{ node_id: 'code-reviewer-1', task: 'Review PR #1464 (quack repo, fagerbergj/quack): memory: move runtime facts to environment prompt, re-aim vet.' }],
 }
 
-// chat-reviewer-1466: the CodeReviewerAllKinds story - a code_review, four
-// findings, a judge_round, PLUS the run's own dag_node/dag_plan for the same
-// node id, proving those two are excluded from selection AND the secondary list.
+// chat-reviewer-1466: the CodeReviewerAllKinds AND OrchestratorNode stories
+// share one chat - a code_review, four findings and a judge_round on
+// code-reviewer-1, plus the run's own dag_node (code-reviewer-1) and
+// dag_plan (orchestrator, its real lineage - B2). dag_node never appears on
+// either node's panel; dag_plan is excluded from code-reviewer-1's (wrong
+// node_id) but IS the orchestrator's own primary output (PlanView, reachable).
 function chatReviewer1466Route(url: string): Response | null {
   if (!url.includes('/chats/chat-reviewer-1466/')) return null
   if (url.endsWith('/artifacts')) {
@@ -237,9 +240,12 @@ function chatReviewer1466Route(url: string): Response | null {
         { name: 'finding:c1a68ddf', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
         { name: 'finding:76f9df59', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
         { name: 'judge_round:e-f957a075-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'code-reviewer-1', author: 'judge' }, revisions: [] },
-        // Bookkeeping - same node_id, never selectable, never listed.
+        // Bookkeeping (dag_node) - same node_id as the reviewer, never
+        // selectable/listed there. dag_plan belongs to the ORCHESTRATOR,
+        // not the reviewer - it never appears on code-reviewer-1's own
+        // panel because the node_id doesn't match, not because of its kind.
         { name: 'dag_node:code-reviewer-1', kind: 'dag_node', class: 'structured', latest_revision: 4, lineage: { node_id: 'code-reviewer-1', author: 'system' }, revisions: [] },
-        { name: 'dag_plan:main', kind: 'dag_plan', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'system' }, revisions: [] },
+        { name: 'dag_plan:main', kind: 'dag_plan', class: 'structured', latest_revision: 2, lineage: { node_id: 'orchestrator', author: 'system' }, revisions: [] },
       ],
     })
   }
@@ -251,7 +257,7 @@ function chatReviewer1466Route(url: string): Response | null {
     artifactRoute(url, 'finding:76f9df59', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'finding', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'worker' } }] }), textResponse(JSON.stringify(finding76f9df59))) ??
     artifactRoute(url, 'judge_round:e-f957a075-1', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'judge_round', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'judge' } }] }), textResponse(JSON.stringify(judgeRound1464))) ??
     artifactRoute(url, 'dag_node:code-reviewer-1', jsonResponse({ data: [{ revision: 4, mime_type: 'application/json', size: 10, kind: 'dag_node', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'system' } }] }), textResponse(JSON.stringify(dagNode1464))) ??
-    artifactRoute(url, 'dag_plan:main', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'dag_plan', class: 'structured', lineage: { node_id: 'code-reviewer-1', author: 'system' } }] }), textResponse(JSON.stringify(dagPlan1464))) ??
+    artifactRoute(url, 'dag_plan:main', jsonResponse({ data: [{ revision: 2, mime_type: 'application/json', size: 10, kind: 'dag_plan', class: 'structured', lineage: { node_id: 'orchestrator', author: 'system' } }] }), textResponse(JSON.stringify(dagPlan1464))) ??
     null
   )
 }
@@ -407,6 +413,19 @@ export const CodeReviewerAllKinds: Story = {
     nodeId: 'code-reviewer-1',
     nodeAgent: 'Code Reviewer',
     nodeTask: 'Review PR #1464 (quack repo, fagerbergj/quack)',
+    onClose: () => {},
+  },
+}
+
+// B2: the orchestrator's own panel - dag_plan:main is ITS only artifact
+// (same chat as CodeReviewerAllKinds above), opening on PlanView's
+// assignment list instead of the old "hasn't produced anything yet".
+export const OrchestratorNode: Story = {
+  args: {
+    chatId: 'chat-reviewer-1466',
+    nodeId: 'orchestrator',
+    nodeAgent: 'Orchestrator',
+    nodeTask: 'Plan and dispatch the run',
     onClose: () => {},
   },
 }

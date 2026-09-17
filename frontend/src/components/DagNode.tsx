@@ -1,11 +1,11 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { AssistantText, ActivityList, LiveStatusLine, AcpBadge, isAcpAgent } from './AgentParts'
-import { ArtifactPanel, isBookkeeping, selectPrimaryOutput, artifactTitle, firstLine } from './ArtifactPanel'
+import { ArtifactPanel, isBookkeeping, selectPrimaryOutput, artifactTitle } from './ArtifactPanel'
 import { NodeMemoriesPanel } from './NodeMemoriesPanel'
 import { CopyButton } from './CopyButton'
 import { NodePopup } from './NodePopup'
 import { StatusDot } from './StatusDot'
-import { api } from '../api'
+import { api, listChatArtifactsShared } from '../api'
 import type { ArtifactSummary } from '../api'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import { agentLabel, type Activity, type AgentRun } from './messageParts'
@@ -403,13 +403,12 @@ function bodyFor(text: string, klass: string | undefined): unknown {
   try { return JSON.parse(text) } catch { return text }
 }
 
-// The node's one-line outcome summary, via the same artifactTitle helper
-// the panel uses; falls back to the answer's first line when there's no artifact.
-function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, answer, finished, onOpen }: {
+// Additive only: the answer keeps rendering via NodeAnswer regardless -
+// this row shows ONLY when there's an artifact, never substituting for it.
+function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, finished, onOpen }: {
   chatId: string
   nodeId: string
   nodeArtifactKind?: string
-  answer: string
   finished: boolean
   onOpen: () => void
 }) {
@@ -419,7 +418,7 @@ function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, answer, finishe
   useEffect(() => {
     if (!finished) return
     let cancelled = false
-    api.listChatArtifacts(chatId).then(l => {
+    listChatArtifactsShared(chatId).then(l => {
       if (cancelled) return
       const nodeArtifacts = (l.data ?? []).filter(a => a.lineage?.node_id === nodeId && !isBookkeeping(a))
       setPrimary(selectPrimaryOutput(nodeArtifacts, nodeArtifactKind))
@@ -436,11 +435,7 @@ function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, answer, finishe
     return () => { cancelled = true }
   }, [chatId, primary])
 
-  const text = useMemo(
-    () => (primary ? artifactTitle(primary, body) : (answer ? firstLine(answer) : null)),
-    [primary, body, answer],
-  )
-  if (!text) return null
+  if (!primary) return null
   return (
     <button
       type="button"
@@ -448,7 +443,7 @@ function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, answer, finishe
       className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
     >
       <Icon name="archive" className="w-3.5 h-3.5 shrink-0" />
-      <span className="truncate">{text}</span>
+      <span className="truncate">{artifactTitle(primary, body)}</span>
     </button>
   )
 }
@@ -779,9 +774,8 @@ function RetryGate({ nodeId, finished, onRetry }: {
 }
 
 
-// OutcomeRow: a real chat gets the artifact-aware summary; everywhere else
-// (Storybook, tests with no chatId) keeps the plain vetted-answer row -
-// split out from DagNode's own body to keep its complexity down.
+// OutcomeRow: the vetted answer ALWAYS renders; a real chat additionally
+// gets the artifact summary above it. Split out to keep DagNode's own complexity down.
 function OutcomeRow({ chatId, node, answer, finished, onOpenArtifacts }: {
   chatId: string | undefined
   node: DagNodeDef
@@ -789,16 +783,19 @@ function OutcomeRow({ chatId, node, answer, finished, onOpenArtifacts }: {
   finished: boolean
   onOpenArtifacts: () => void
 }) {
-  if (!chatId) return <NodeAnswer answer={answer} />
   return (
-    <NodeArtifactSummary
-      chatId={chatId}
-      nodeId={node.id}
-      nodeArtifactKind={node.artifact ?? undefined}
-      answer={answer}
-      finished={finished}
-      onOpen={onOpenArtifacts}
-    />
+    <>
+      {chatId && (
+        <NodeArtifactSummary
+          chatId={chatId}
+          nodeId={node.id}
+          nodeArtifactKind={node.artifact ?? undefined}
+          finished={finished}
+          onOpen={onOpenArtifacts}
+        />
+      )}
+      <NodeAnswer answer={answer} />
+    </>
   )
 }
 

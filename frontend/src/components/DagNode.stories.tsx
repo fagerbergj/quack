@@ -619,13 +619,14 @@ function cardDemoRoute(url: string): Response {
 window.fetch = async (input: RequestInfo | URL) => cardDemoRoute(decodeURIComponent(input instanceof Request ? input.url : String(input)))
 
 // (1/3) A code-reviewer node: the card's outcome row fetches the node's own
-// review and shows "Review · approve · 4 findings" without opening the panel.
+// review and shows "Review · approve · 4 findings" WITHOUT opening the
+// panel - additively (B1): the node's own answer still renders below it, never replaced.
 export const CodeReviewerNodeCard: Story = {
   args: {
     node: reviewerNode,
     state: { status: 'done', startedAt: 0, finishedAt: 45_000, totalTokens: 12_400, model: 'qwen3-30b-a3b' },
     runs: [workerDone([{ kind: 'thinking', text: 'Staging the review.' }])],
-    answer: '',
+    answer: 'Reviewed PR #1464: approve, with two non-blocking suggestions.',
     isFinal: false,
     chatId: 'chat-1466-reviewer-card',
   },
