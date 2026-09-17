@@ -23,8 +23,9 @@ const maxEnvironmentEntries = 200
 func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string, caps workspace.Caps) string {
 	f := envFacts{
 		Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly,
-		GoModCache: caps.Env["GOMODCACHE"],
-		Sandboxed:  caps.Sandbox == workspace.SandboxBwrap || caps.Sandbox == workspace.SandboxLandlock,
+		GoModCache:          caps.Env["GOMODCACHE"],
+		GoModCachePreseeded: workspace.GoModCachePreseeded(caps.Env["GOMODCACHE"]),
+		Sandboxed:           caps.Sandbox == workspace.SandboxBwrap || caps.Sandbox == workspace.SandboxLandlock,
 	}
 	f.Branch, f.Sha, f.Git = gitInfo(ctx, cwd, caps)
 	entries, truncated := topLevelEntries(cwd)
@@ -51,17 +52,18 @@ func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string
 
 // envFacts is system/acp.environment's template data.
 type envFacts struct {
-	Cwd        string
-	Git        bool
-	Branch     string
-	Sha        string
-	Entries    string
-	Truncated  bool
-	MaxEntries int
-	ReadOnly   bool
-	Writable   string
-	GoModCache string
-	Sandboxed  bool
+	Cwd                 string
+	Git                 bool
+	Branch              string
+	Sha                 string
+	Entries             string
+	Truncated           bool
+	MaxEntries          int
+	ReadOnly            bool
+	Writable            string
+	GoModCache          string
+	GoModCachePreseeded bool
+	Sandboxed           bool
 }
 
 // envTemplates caches the parsed system/acp.environment per version.

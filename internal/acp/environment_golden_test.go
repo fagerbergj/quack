@@ -38,8 +38,8 @@ func checkEnvGolden(t *testing.T, name, got string) {
 	}
 }
 
-// TestGoldenEnvironmentBlock pins four fixtures (plain, empty, read-only+sandboxed, sandboxed
-// git repo) so each new line renders only where its condition actually holds.
+// TestGoldenEnvironmentBlock pins five fixtures so each new line renders only where its
+// condition holds; preseed presence is injected, not read from the real host - a native install has none.
 func TestGoldenEnvironmentBlock(t *testing.T) {
 	populated := t.TempDir()
 	for _, n := range []string{"go.mod", "README.md"} {
@@ -51,6 +51,7 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	empty := t.TempDir()
+	missingModCache := filepath.Join(t.TempDir(), "no-preseed-here")
 
 	// The cwd and TMPDIR are machine-specific; the block's shape is not.
 	norm := func(cwd, s string) string {
@@ -60,8 +61,11 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 	ctx := context.Background()
 	checkEnvGolden(t, "environment.txt", norm(populated, environmentBlock(ctx, nil, populated, workspace.Caps{})))
 	checkEnvGolden(t, "environment.empty.txt", norm(empty, environmentBlock(ctx, nil, empty, workspace.Caps{})))
-	ro := workspace.Caps{ReadOnly: true, HomeDir: "/home/agent", Sandbox: workspace.SandboxBwrap, Env: map[string]string{"GOMODCACHE": "/usr/local/go/pkg/mod"}}
+	ro := workspace.Caps{ReadOnly: true, HomeDir: "/home/agent", Sandbox: workspace.SandboxBwrap, Env: map[string]string{"GOMODCACHE": missingModCache}}
 	checkEnvGolden(t, "environment.readonly.txt", norm(populated, environmentBlock(ctx, nil, populated, ro)))
+
+	noPreseed := workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: t.TempDir(), Env: map[string]string{"GOMODCACHE": missingModCache}}
+	checkEnvGolden(t, "environment.sandboxed-no-preseed.txt", norm(populated, environmentBlock(ctx, nil, populated, noPreseed)))
 
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
@@ -70,9 +74,16 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 	runGit(t, repo, "init", "-q", "-b", "quack/work")
 	runGit(t, repo, "add", "-A")
 	runGit(t, repo, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init")
-	// HomeDir set (and distinct from repo): childEnv farms a writable GOMODCACHE under HOME
-	// (EnsureWritableGoModCache), which would otherwise land inside repo and pollute its own entries.
-	sandboxed := workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: t.TempDir(), Env: map[string]string{"GOMODCACHE": "/usr/local/go/pkg/mod"}}
+	// A real, existing (with-preseed) dir at a fixed name under os.TempDir() - not t.TempDir(),
+	// whose random per-run root would make the rendered path (and the golden) non-deterministic.
+	presentModCache := filepath.Join(os.TempDir(), "quack-golden-test-gomodcache-preseed")
+	if err := os.MkdirAll(presentModCache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(presentModCache) })
+	// HomeDir distinct from repo: childEnv farms a writable GOMODCACHE under HOME, which would
+	// otherwise pollute repo's own entries.
+	sandboxed := workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: t.TempDir(), Env: map[string]string{"GOMODCACHE": presentModCache}}
 	got := norm(repo, environmentBlock(ctx, nil, repo, sandboxed))
 	got = normHexSha.ReplaceAllString(got, "<SHA>")
 	checkEnvGolden(t, "environment.sandboxed-git.txt", got)

@@ -544,9 +544,10 @@ var consolidateDedupePrompts = map[string]string{
 		"synthesis - provide content and a kind (convention|command|layout|source|search|fetch|deadend) - and " +
 		"still DELETE the originals it replaces.\n" +
 		"- Any memory that states a fact about the sandbox this agent runs in (its filesystem permissions, " +
-		"its module cache, the toolchains on PATH, where CI results are delivered - never a fact about the " +
-		"repository under study itself, e.g. its Makefile, CI config, or its own commands) gets DELETE, " +
-		"reason \"runtime fact, moved to environment prompt\", even with no duplicate in this burst.\n" +
+		"its module cache, the toolchains on PATH, where CI results are delivered) gets DELETE, reason " +
+		"\"runtime fact, moved to environment prompt\", even with no duplicate in this burst. A fact about " +
+		"the repository under study - its Makefile, its CI config, its own commands - is NOT a runtime " +
+		"fact; leave it to the normal duplicate-grouping rules above.\n" +
 		"Memories in the burst that describe genuinely different facts: NOOP both, they are not duplicates.\n\n" +
 		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\",\"reason\":\"\"}]}. " +
 		"Empty ops list if nothing in the burst duplicates or states a runtime fact.",
