@@ -1,10 +1,12 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { AssistantText, ActivityList, LiveStatusLine, AcpBadge, isAcpAgent } from './AgentParts'
-import { ArtifactPanel } from './ArtifactPanel'
+import { ArtifactPanel, isBookkeeping, selectPrimaryOutput, artifactTitle } from './ArtifactPanel'
 import { NodeMemoriesPanel } from './NodeMemoriesPanel'
 import { CopyButton } from './CopyButton'
 import { NodePopup } from './NodePopup'
 import { StatusDot } from './StatusDot'
+import { api, listChatArtifactsShared } from '../api'
+import type { ArtifactSummary } from '../api'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import { agentLabel, type Activity, type AgentRun } from './messageParts'
 import { previewLine, fmtTokenCount } from './toolFormat'
@@ -393,6 +395,58 @@ function NodeAnswer({ answer }: { answer: string }) {
   )
 }
 
+// Parses a fetched revision the same way the panel does: JSON for a
+// structured kind, raw text for a blob.
+function bodyFor(text: string, klass: string | undefined): unknown {
+  if (klass !== 'structured') return text
+  try { return JSON.parse(text) } catch { return text }
+}
+
+// Additive only: the answer keeps rendering via NodeAnswer regardless -
+// this row shows ONLY when there's an artifact, never substituting for it.
+function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, finished, onOpen }: {
+  chatId: string
+  nodeId: string
+  nodeArtifactKind?: string
+  finished: boolean
+  onOpen: () => void
+}) {
+  const [primary, setPrimary] = useState<ArtifactSummary | null>(null)
+  const [body, setBody] = useState<unknown>(undefined)
+
+  useEffect(() => {
+    if (!finished) return
+    let cancelled = false
+    listChatArtifactsShared(chatId).then(l => {
+      if (cancelled) return
+      const nodeArtifacts = (l.data ?? []).filter(a => a.lineage?.node_id === nodeId && !isBookkeeping(a))
+      setPrimary(selectPrimaryOutput(nodeArtifacts, nodeArtifactKind))
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [chatId, nodeId, nodeArtifactKind, finished])
+
+  useEffect(() => {
+    if (!primary) { setBody(undefined); return }
+    let cancelled = false
+    api.getArtifactText(chatId, primary.name, primary.latest_revision)
+      .then(t => { if (!cancelled) setBody(bodyFor(t, primary.class)) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [chatId, primary])
+
+  if (!primary) return null
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
+    >
+      <Icon name="archive" className="w-3.5 h-3.5 shrink-0" />
+      <span className="truncate">{artifactTitle(primary, body)}</span>
+    </button>
+  )
+}
+
 // Names the two ways a judge round ends without a verdict (#779):
 // "unavailable" - the judge model itself couldn't be reached; "no_verdict"
 // - it ran (read files, spent its turns) but never committed one, which "unavailable" would misreport as an outage.
@@ -613,15 +667,16 @@ function NodeElapsed({ state }: { state: NodeState }) {
 }
 
 // SidePanels: the node's Artifacts and Memories panels (a real chat only).
-// Three narrow fields, not the whole NodeState: DagNode is memoized
+// Four narrow fields, not the whole NodeState: DagNode is memoized
 // and the panel shouldn't re-render on every SSE event for the node
 // (#1178). nodeError is the same value the red banner below renders
 // (failed status), so a transient non-failure error never reads as
 // "the node failed" in an empty panel.
-function SidePanels({ chatId, node, state, artifactsOpen, memoriesOpen, onCloseArtifacts, onCloseMemories }: {
+function SidePanels({ chatId, node, state, answer, artifactsOpen, memoriesOpen, onCloseArtifacts, onCloseMemories }: {
   chatId: string
   node: DagNodeDef
   state: NodeState
+  answer: string
   artifactsOpen: boolean
   memoriesOpen: boolean
   onCloseArtifacts: () => void
@@ -636,6 +691,7 @@ function SidePanels({ chatId, node, state, artifactsOpen, memoriesOpen, onCloseA
           nodeAgent={agentLabel(node.agent)}
           nodeTask={node.task}
           nodeError={state.status === 'failed' && state.error ? state.error : undefined}
+          nodeAnswer={answer}
           nodeArtifactKind={node.artifact ?? undefined}
           onClose={onCloseArtifacts}
         />
@@ -716,6 +772,31 @@ function RetryGate({ nodeId, finished, onRetry }: {
   return <RetryControl nodeId={nodeId} onRetry={onRetry} />
 }
 
+
+// OutcomeRow: the vetted answer ALWAYS renders; a real chat additionally
+// gets the artifact summary above it. Split out to keep DagNode's own complexity down.
+function OutcomeRow({ chatId, node, answer, finished, onOpenArtifacts }: {
+  chatId: string | undefined
+  node: DagNodeDef
+  answer: string
+  finished: boolean
+  onOpenArtifacts: () => void
+}) {
+  return (
+    <>
+      {chatId && (
+        <NodeArtifactSummary
+          chatId={chatId}
+          nodeId={node.id}
+          nodeArtifactKind={node.artifact ?? undefined}
+          finished={finished}
+          onOpen={onOpenArtifacts}
+        />
+      )}
+      <NodeAnswer answer={answer} />
+    </>
+  )
+}
 
 interface Props {
   node: DagNodeDef
@@ -825,6 +906,7 @@ export const DagNode = memo(function DagNode({
           chatId={chatId}
           node={node}
           state={state}
+          answer={answer}
           artifactsOpen={artifactsOpen}
           memoriesOpen={memoriesOpen}
           onCloseArtifacts={() => setArtifactsOpen(false)}
@@ -840,8 +922,10 @@ export const DagNode = memo(function DagNode({
           new boxed block; a judge-triggered revise keeps its own labeled card. */}
       <RunGroupList runs={runs} activeIdx={activeIdx} />
 
-      {/* Vetted answer (below the stage cards, for every node) */}
-      {!isFinal && <NodeAnswer answer={answer} />}
+      {/* The outcome summary (below the stage cards, for every node). */}
+      {!isFinal && (
+        <OutcomeRow chatId={chatId} node={node} answer={answer} finished={finished} onOpenArtifacts={() => setArtifactsOpen(true)} />
+      )}
 
       <StatusBanners state={state} />
     </div>

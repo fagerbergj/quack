@@ -71,6 +71,35 @@ describe('DagNode artifacts menu item (#1114)', () => {
   })
 })
 
+// The artifact summary is additive: a node with both a real artifact and
+// its own answer text must show both, never one substituting for the other.
+describe('DagNode outcome row (answer + artifact summary both render)', () => {
+  it('shows the artifact summary above the unchanged answer row and popup', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+      if (url.endsWith('/artifacts')) {
+        return new Response(JSON.stringify({
+          data: [{ name: 'code_review:pr:1', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'r1', author: 'gate' }, revisions: [] }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.includes('/artifacts/code_review:pr:1')) {
+        return new Response(JSON.stringify({ verdict: 'approve', finding_ids: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    render(<DagNode node={node} state={{ status: 'done' }} runs={[]} answer="Reviewed and approved the change." isFinal={false} chatId="chat-1" />)
+
+    // The artifact summary...
+    expect(await screen.findByText('Review · approve')).toBeTruthy()
+    // ...and the answer row, unchanged - same preview text, same popup.
+    const answerButton = screen.getByRole('button', { name: /Reviewed and approved the change\./ })
+    expect(answerButton).toBeTruthy()
+    await user.click(answerButton)
+    expect(await screen.findByText('Answer')).toBeTruthy()
+  })
+})
+
 // #1178/#1216: the panel reads four narrow fields from the node - its agent
 // label (nodeAgent, the panel heading), its raw task (nodeTask, Details
 // only), its error (nodeError, only on failed), and its declared output kind (nodeArtifactKind). These tests drive the panel through its only entry point to prove each field crosses the component boundary.
@@ -79,8 +108,11 @@ describe('DagNode artifact panel props (#1178)', () => {
     const user = userEvent.setup()
     render(<DagNode node={node} state={{ status: 'done' }} runs={[]} answer="the answer" isFinal={false} chatId="chat-1" />)
     await openArtifacts(user)
-    expect(await screen.findByRole('heading', { level: 2, name: 'Web researcher' })).toBeTruthy()
-    expect(screen.getByText("This node hasn't produced anything yet.")).toBeTruthy()
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Web researcher' })
+    expect(heading).toBeTruthy()
+    // No artifact at all - the empty state names the
+    // delivery (the node's own answer text), same as the card's own summary row below it.
+    expect(screen.getAllByText('the answer').length).toBe(2)
   })
 
   it('passes the declared output kind: the panel opens on the matching artifact, not the newest', async () => {

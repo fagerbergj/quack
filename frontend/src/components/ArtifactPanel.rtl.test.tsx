@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { act, cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
-import { ArtifactPanel } from './ArtifactPanel'
+import { ArtifactPanel, ReviewView, JudgeRoundView, PlanView } from './ArtifactPanel'
 import { client } from '../generated/client.gen'
 import { ChatStoreProvider } from '../state/ChatStoreProvider'
 import { ChatStore } from '../state/chatStore'
@@ -92,7 +92,6 @@ function stubPlanFixture() {
         data: [
           { name: 'text:plan', kind: 'text', class: 'blob', latest_revision: 2, lineage: { node_id: 'planner-1', round: 2, author: 'worker', saved_at: '2026-09-04T10:00:00Z' }, revisions: [] },
           { name: 'finding:692b00ee', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', round: 1, author: 'worker' }, revisions: [] },
-          { name: 'code_review:pr:1', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', round: 1, author: 'dispatch' }, revisions: [] },
           { name: 'judge_round:t1-planner-1-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] },
           { name: 'judge_round:t1-planner-1-2', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] },
           // A different node's artifact - never part of this panel.
@@ -352,27 +351,27 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(container.textContent ?? '').not.toContain('262144')
   })
 
-  // (a/7) More: secondary artifacts live behind labelled bottom disclosures
-  // with human names and counts; each item expands INLINE into the same
-  // renderer stack with its own Revision N of M prev/next - no selects at any level.
-  it('groups secondary artifacts under human labels and expands them inline', async () => {
+  // (a/7) Secondary artifacts are a plain titled list, no per-item bars -
+  // tapping one becomes the focused view, reusing the shared revision bar/raw/copy.
+  it('titles secondary artifacts and opens a tapped one in place as the focused view', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
 
-    // Grouped, counted, human-labelled (the dispatch-authored code_review
-    // reads as "Review", the finding as "Findings").
-    expect(await screen.findByText('Findings (1)')).toBeTruthy()
-    expect(screen.getByText('Review (1)')).toBeTruthy()
+    // The finding's row is titled from its own body (path + title) - never
+    // its content-hash id.
+    const row = await screen.findByRole('button', { name: 'a.go · missing nil check' })
+    expect(screen.queryByText(/finding:692b00ee/)).toBeNull()
 
-    // The finding's row is its ordinal, not its content-hash id...
-    await user.click(screen.getByText('Findings (1)'))
-    expect(await screen.findByRole('button', { name: '#1' })).toBeTruthy()
-    // ...and it expands inline with its own revision bar and renderer.
-    await user.click(screen.getByRole('button', { name: '#1' }))
-    expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
+    await user.click(row)
+    // Now focused: the title heading names it (FindingView drops its own
+    // duplicate header) and the rationale renders. A single revision hides the bar.
     expect(await screen.findByText(/missing nil check/)).toBeTruthy()
+    expect(await screen.findByText(/x may be nil here/)).toBeTruthy()
+    expect(screen.queryByText(/^Revision \d/)).toBeNull()
+    // The plan (former primary) now shows in the secondary list instead.
+    expect(await screen.findByRole('button', { name: 'Plan v2' })).toBeTruthy()
   })
 
   // (b) Failed node, no artifacts: the panel says what happened - no
@@ -395,6 +394,56 @@ describe('ArtifactPanel as a result view (#1178)', () => {
 
     expect(await screen.findByText("This node hasn't produced anything yet.")).toBeTruthy()
     expect(screen.queryByRole('group', { name: 'Judge rounds' })).toBeNull()
+  })
+
+  // (b/3) No artifacts, but an answer: renders the FULL answer as markdown
+  // (a heading, here) behind a one-line caption - not just its first line.
+  it('renders the full answer as markdown when the node wrote no artifact', async () => {
+    stubEmptyList()
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeAnswer={'# Opened PR #1464\n\nSecond line of the answer.'} onClose={() => {}} />)
+
+    expect(await screen.findByText('This node wrote no artifact - its answer:')).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Opened PR #1464' })).toBeTruthy()
+    expect(screen.getByText('Second line of the answer.')).toBeTruthy()
+  })
+
+  // (b/4) No artifact, but judge rounds: the chips are otherwise dead ends -
+  // the same rounds are also secondary-list rows, and tapping one opens JudgeRoundView.
+  it('opens JudgeRoundView from a judge-round row when the node wrote no artifact', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+      // Focusing a judge_round makes it primary, so it needs revisions +
+      // content routes too, not just the bare body the timeline fetches.
+      if (url.includes('/artifacts/judge_round:t1-planner-1-1/revisions')) {
+        return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: round1.length, kind: 'judge_round', class: 'structured', lineage: { node_id: 'planner-1', author: 'judge' } }] })
+      }
+      if (url.includes('/artifacts/judge_round:t1-planner-1-2/revisions')) {
+        return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: round2.length, kind: 'judge_round', class: 'structured', lineage: { node_id: 'planner-1', author: 'judge' } }] })
+      }
+      if (url.includes('/artifacts/judge_round:t1-planner-1-1')) return textResponse(round1)
+      if (url.includes('/artifacts/judge_round:t1-planner-1-2')) return textResponse(round2)
+      if (url.endsWith('/artifacts')) {
+        return jsonResponse({
+          data: [
+            { name: 'judge_round:t1-planner-1-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] },
+            { name: 'judge_round:t1-planner-1-2', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] },
+          ],
+        })
+      }
+      return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+    }))
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" onClose={() => {}} />)
+
+    expect(await screen.findByText("This node hasn't produced anything yet.")).toBeTruthy()
+    const row = await screen.findByRole('button', { name: 'Judge round 1 · 0.42 · failed' })
+    await user.click(row)
+
+    // The score is unique to JudgeRoundView (the chip shows "42%", not "0.42").
+    expect(await screen.findByText('0.42')).toBeTruthy()
+    expect(screen.getAllByText('failed').length).toBeGreaterThanOrEqual(1)
+    // The other round stays reachable, as the way back.
+    expect(await screen.findByRole('button', { name: 'Judge round 2 · 0.81 · passed' })).toBeTruthy()
   })
 
   // (c) No artifact-id string (kind + ":" + instance) appears anywhere
@@ -486,7 +535,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Plan v1' })).toBeTruthy()
 
     // The server writes revision 2 - grow the fixture, then fire the event
     // the panel is subscribed to, exactly as the real SSE stream would.
@@ -504,7 +553,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Plan v1' })).toBeTruthy()
 
     planRevisions.push({ revision: 2, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 2, author: 'worker' } })
 
@@ -563,7 +612,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    await screen.findByText('Revision 1 of 1')
+    await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
 
     const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement
     Object.defineProperty(scrollEl, 'scrollTop', { value: 42, writable: true })
@@ -579,7 +628,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    await screen.findByText('Revision 1 of 1')
+    await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
     expect(screen.queryByRole('button', { name: /Round 1/ })).toBeNull()
 
     judgeRoundsPresent = true
@@ -595,10 +644,8 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    // "Revision 1 of 1" is set as soon as the revisions list resolves, but
     // loadContent's own GET fires from a LATER effect - clearing the mock
     // before that dispatch attributes the trailing initial-load call to the event fired below (flaky: #1300 review). Waiting for the rendered content confirms the fetch landed.
-    await screen.findByText('Revision 1 of 1')
     await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockClear()
@@ -608,3 +655,115 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+// Renders each typed view directly and checks every field it lists, so a
+// dropped field fails here instead of only being invisible in a full-panel fixture.
+describe('typed views render every documented field', () => {
+  it('ReviewView renders takeaway, verified, notes, and findings in finding_ids order (verdict lives in TitleHeading, not here)', () => {
+    rtlRender(
+      <ReviewView
+        data={{
+          takeaway: 'Solid change overall.',
+          verified: ['Ran the test suite'],
+          notes: ['Consider a changelog entry'],
+          finding_ids: ['finding:b', 'finding:a'],
+        }}
+        findings={[
+          { id: 'finding:b', body: { path: 'b.go', title: 'second finding', severity: 'nit' } },
+          { id: 'finding:a', body: { path: 'a.go', title: 'first finding', severity: 'suggestion' } },
+        ]}
+      />,
+    )
+    expect(screen.getByText('Solid change overall.')).toBeTruthy()
+    expect(screen.getByText('Ran the test suite')).toBeTruthy()
+    expect(screen.getByText('Consider a changelog entry')).toBeTruthy()
+    expect(screen.getAllByText(/finding$/).map(el => el.textContent)).toEqual(['second finding', 'first finding'])
+  })
+
+  it('ReviewView opens the server\'s rendered overview under "Full review"', async () => {
+    const user = userEvent.setup()
+    rtlRender(<ReviewView data={{ verdict: 'approve', rendered: '## Scope\n\nReviewed the diff end to end.' }} findings={[]} />)
+    await user.click(screen.getByText('Full review'))
+    expect(await screen.findByRole('heading', { level: 2, name: 'Scope' })).toBeTruthy()
+    expect(screen.getByText('Reviewed the diff end to end.')).toBeTruthy()
+  })
+
+  it('ReviewView falls back to summary for a pre-migration record with no takeaway', () => {
+    rtlRender(<ReviewView data={{ verdict: 'approve', summary: 'Looks fine overall, nothing blocking.' }} findings={[]} />)
+    expect(screen.getByText('Looks fine overall, nothing blocking.')).toBeTruthy()
+  })
+
+  it('ReviewView names an unresolved finding id instead of an empty box', () => {
+    rtlRender(<ReviewView data={{ verdict: 'approve' }} findings={[{ id: 'finding:moved-to-reviser', body: undefined }]} />)
+    expect(screen.getByText('finding:moved-to-reviser (not available on this node)')).toBeTruthy()
+  })
+
+  it('JudgeRoundView renders pass/fail, score, the criteria table, and probes', () => {
+    rtlRender(
+      <JudgeRoundView
+        data={{
+          round: 1,
+          passed: false,
+          score: 0.33,
+          criteria: [{ name: 'catches_real_issues', score: 1, feedback: 'Found the real bug.' }],
+          evidence: { probes: [{ name: 'review_posted', result: 'pass' }] },
+        }}
+      />,
+    )
+    expect(screen.getByText('failed')).toBeTruthy()
+    expect(screen.getByText('0.33')).toBeTruthy()
+    expect(screen.getByText('catches_real_issues')).toBeTruthy()
+    expect(screen.getByText('Found the real bug.')).toBeTruthy()
+    expect(screen.getByText(/review_posted: pass/)).toBeTruthy()
+  })
+
+  it("PlanView renders the status and each assignment's node_id and task", () => {
+    rtlRender(<PlanView data={{ status: 'done', assignments: [{ node_id: 'code-reviewer-1', task: 'Review PR #1464' }] }} />)
+    expect(screen.getByText(/status: done/)).toBeTruthy()
+    expect(screen.getByText('code-reviewer-1')).toBeTruthy()
+    expect(screen.getByText('Review PR #1464')).toBeTruthy()
+  })
+})
+
+// A screen reader must never announce two rows by the same name.
+describe('SecondaryList gives every row a distinct accessible name', () => {
+  it('appends an ordinal when two different findings title identically', async () => {
+    stubGlobalArtifactsFixtureWithDuplicateFindings()
+    render(<ArtifactPanel chatId="chat-dup" nodeId="writer-1" nodeAgent="Writer" nodeTask="Write" onClose={() => {}} />)
+    await screen.findByRole('heading', { level: 1, name: 'Notes' })
+
+    // Both findings share the same severity/path/title - identical UNLESS
+    // deduped - so the ordinal suffix is the only thing telling them apart.
+    expect(await screen.findByRole('button', { name: 'nit · a.go · fix formatting (#1)' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'nit · a.go · fix formatting (#2)' })).toBeTruthy()
+  })
+})
+
+function stubGlobalArtifactsFixtureWithDuplicateFindings() {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+    if (url.includes('/artifacts/text:notes/revisions')) {
+      return jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 5, kind: 'text', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] })
+    }
+    if (url.includes('/artifacts/text:notes?revision=1')) return textResponse('# Notes\n')
+    const dupFinding = JSON.stringify({ severity: 'nit', path: 'a.go', title: 'fix formatting' })
+    for (const name of ['finding:a', 'finding:b']) {
+      if (url.includes(`/artifacts/${name}/revisions`)) {
+        return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 5, kind: 'finding', class: 'structured', lineage: { node_id: 'writer-1', author: 'worker' } }] })
+      }
+      // Two DIFFERENT finding artifacts, identical body - two real findings
+      // can share a location/title (e.g. a lint rule flagged twice).
+      if (url.includes(`/artifacts/${name}?revision=1`)) return textResponse(dupFinding)
+    }
+    if (url.endsWith('/artifacts')) {
+      return jsonResponse({
+        data: [
+          { name: 'text:notes', kind: 'text', class: 'blob', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+          { name: 'finding:a', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+          { name: 'finding:b', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'writer-1', author: 'worker' }, revisions: [] },
+        ],
+      })
+    }
+    return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+  }))
+}
