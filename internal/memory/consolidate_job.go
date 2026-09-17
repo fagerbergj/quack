@@ -415,8 +415,13 @@ func fieldsFor(p scored, now time.Time) Fields {
 	if p.LastRecalledAt != "" {
 		daysSinceRecall = ageInDays(p.LastRecalledAt, now)
 	}
+	// Legacy row predating MintedAt: ValidFrom is preserved across an UPDATE (unlike Timestamp,
+	// which a consolidator reword re-stamps to now), so it's the safer fallback.
 	mintedAt := p.MintedAt
-	if mintedAt == "" { // legacy row predating MintedAt (design doc §3 phase 2)
+	if mintedAt == "" {
+		mintedAt = p.ValidFrom
+	}
+	if mintedAt == "" {
 		mintedAt = p.Timestamp
 	}
 	tier := p.Tier

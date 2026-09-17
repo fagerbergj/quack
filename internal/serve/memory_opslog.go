@@ -42,7 +42,7 @@ func wireForgettingRules(s *memory.Store, rm config.ResolvedMemory) error {
 	}
 	rules := make([]memory.Rule, len(rm.Consolidation.Forgetting.Rules))
 	for i, r := range rm.Consolidation.Forgetting.Rules {
-		rules[i] = memory.Rule{When: r.When, Then: r.Then, Reason: r.Reason}
+		rules[i] = memory.Rule{When: r.When, Then: r.Then}
 	}
 	return s.SetForgettingRules(rules)
 }

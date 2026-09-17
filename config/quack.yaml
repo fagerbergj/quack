@@ -84,7 +84,7 @@ stores:
       # retention_days: 30  # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
       # forgetting:            # epic #1456 P2; optional - omitted means the built-in defaults below
       #   rules:
-      #     - when: 'tier == "unverified" && recalls == 0 && days_since_minted > 30'
+      #     - when: 'tier == "unverified" && supported == 0 && recalls == 0 && days_since_minted > 30'
       #       then: invalidate
       #     - when: 'tier == "unverified" && recalls >= 3 && supported == 0'
       #       then: invalidate

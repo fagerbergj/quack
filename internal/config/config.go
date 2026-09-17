@@ -804,9 +804,8 @@ type ForgettingConfig struct {
 // so config doesn't leak yaml tags into the parser package; converted to
 // memoryrules.Rule for validation in Validate() below.
 type ForgetRule struct {
-	When   string `yaml:"when"`
-	Then   string `yaml:"then"`
-	Reason string `yaml:"reason"`
+	When string `yaml:"when"`
+	Then string `yaml:"then"`
 }
 
 // defaultConsolidationSchedule: daily at 02:00, standard 5-field cron.
@@ -1301,7 +1300,7 @@ func (c *Config) validateStoreConsolidation() error {
 		if s.Consolidation.Forgetting != nil {
 			rules := make([]memoryrules.Rule, len(s.Consolidation.Forgetting.Rules))
 			for i, r := range s.Consolidation.Forgetting.Rules {
-				rules[i] = memoryrules.Rule{When: r.When, Then: r.Then, Reason: r.Reason}
+				rules[i] = memoryrules.Rule{When: r.When, Then: r.Then}
 			}
 			if err := memoryrules.ValidateRules(rules); err != nil {
 				return fmt.Errorf("config: store %q consolidation.forgetting.rules: %w", name, err)

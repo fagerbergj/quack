@@ -14,6 +14,17 @@ func daysAgo(n int) string {
 	return time.Now().UTC().Add(-time.Duration(n) * 24 * time.Hour).Format(time.RFC3339)
 }
 
+// TestFieldsFor_DaysSinceMintedFallback pins the legacy-row fallback chain (MintedAt -> ValidFrom
+// -> Timestamp): a consolidator reword re-stamps Timestamp to now on every UPDATE, so a legacy
+// row's age must come from ValidFrom (preserved across UPDATE) when both are present.
+func TestFieldsFor_DaysSinceMintedFallback(t *testing.T) {
+	p := scored{MintedAt: "", ValidFrom: daysAgo(300), Timestamp: daysAgo(0)}
+	f := fieldsFor(p, time.Now().UTC())
+	if f.DaysSinceMinted < 299 || f.DaysSinceMinted > 300 {
+		t.Errorf("days_since_minted = %d, want ~300 (from ValidFrom, not the fresh Timestamp)", f.DaysSinceMinted)
+	}
+}
+
 // TestForgetSweep_DefaultRules seeds one memory per default rule (epic #1456 P2's usage-based
 // set) plus one that matches none, and proves a dry run reports without mutating while a real
 // sweep applies the same matches - invalidate, demote, and keep all included.
@@ -40,7 +51,7 @@ func TestForgetSweep_DefaultRules(t *testing.T) {
 			Status: string(StatusUnverified), Tier: TierUnverified, Recalls: 1, Downvotes: 3, VoteScore: -3})
 		seedMemory(t, s, point{ID: supportDecayedID, Content: "verified, no upvote in a year", Scope: "repo:r",
 			Author: "a", Timestamp: "t", MintedAt: daysAgo(400), ValidFrom: "t",
-			Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 1, Supported: 1, Recalls: 5, VoteScore: 1, LastUpvotedAt: daysAgo(400)})
+			Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 1, Supported: 1, VoteScore: 1, LastUpvotedAt: daysAgo(400)})
 		seedMemory(t, s, point{ID: keptVerifiedID, Content: "verified, upvoted last week", Scope: "repo:r",
 			Author: "a", Timestamp: "t", MintedAt: daysAgo(400), ValidFrom: "t",
 			Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 1, Supported: 1, VoteScore: 1, LastUpvotedAt: daysAgo(7)})
@@ -103,9 +114,9 @@ func TestForgetSweep_DefaultRules(t *testing.T) {
 	})
 }
 
-// TestForgetSweep_Demote covers the demote action end to end on both backends: a verified
-// memory with stale support is demoted (tier flips, status/score untouched, one memory_ops
-// row), and demoting an already-unverified memory is a no-op that writes no ops row.
+// TestForgetSweep_Demote covers demote end to end on both backends: tier flips, status/score
+// stay untouched, one memory_ops row lands, and a second sweep neither re-demotes the now-
+// unverified point nor invalidates it as "never recalled" (rule 0's supported==0 guard).
 func TestForgetSweep_Demote(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -113,13 +124,10 @@ func TestForgetSweep_Demote(t *testing.T) {
 		ops := &fakeOpsLog{}
 		s.SetOpsLog(ops)
 
-		// Recalls/Supported stay nonzero across the demote so the second sweep's now-unverified
-		// point doesn't also trip rule 0/1 (never recalled / recalled without support) -
-		// isolating this test to demote's own idempotency, not a different rule's.
 		staleID := testID("stale-verified")
 		seedMemory(t, s, point{ID: staleID, Content: "c", Scope: "repo:r", Author: "a", Timestamp: "t",
-			MintedAt: daysAgo(200), ValidFrom: "t", Status: string(StatusReinforced),
-			Tier: TierVerified, Upvotes: 1, Supported: 1, Recalls: 5, VoteScore: 1, LastUpvotedAt: daysAgo(200)})
+			MintedAt: daysAgo(300), ValidFrom: "t", Status: string(StatusReinforced),
+			Tier: TierVerified, Upvotes: 1, Supported: 1, VoteScore: 1, LastUpvotedAt: daysAgo(200)})
 
 		if _, err := s.ForgetSweep(ctx, false); err != nil {
 			t.Fatalf("sweep: %v", err)
@@ -137,16 +145,52 @@ func TestForgetSweep_Demote(t *testing.T) {
 			t.Errorf("op row = %+v, want id=%s op=demote actor=consolidator reason=%q", row, staleID, ReasonSupportDecayed)
 		}
 
-		// A second sweep finds the point already unverified - no rule 3 match, no-op.
+		// A second sweep must neither re-demote (rule 3 needs tier verified) nor invalidate the
+		// now-unverified, never-recalled, 300-day-old row as "never recalled" (rule 0's guard).
 		if _, err := s.ForgetSweep(ctx, false); err != nil {
 			t.Fatalf("second sweep: %v", err)
 		}
+		assertStatus(t, s, staleID, string(StatusReinforced))
+		assertTier(t, s, staleID, TierUnverified)
 		ops.mu.Lock()
 		gotRows := len(ops.rows)
 		ops.mu.Unlock()
 		if gotRows != 1 {
-			t.Errorf("memory_ops rows after second sweep = %d, want 1 (no-op writes no row)", gotRows)
+			t.Errorf("memory_ops rows after second sweep = %d, want 1 (no re-demote, no invalidate)", gotRows)
 		}
+	})
+}
+
+// TestDemoteTier_NoOpOnUnverified drives the index's demoteTier and Store.demoteByRule directly
+// against an already-unverified point - the sweep's own rule shape never routes an unverified row
+// to demoteTier, so a rule-engine-driven test can't exercise this guard on both backends.
+func TestDemoteTier_NoOpOnUnverified(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		ops := &fakeOpsLog{}
+		s.SetOpsLog(ops)
+
+		id := testID("already-unverified")
+		seedMemory(t, s, point{ID: id, Content: "c", Scope: "repo:r", Author: "a", Timestamp: "t",
+			MintedAt: daysAgo(5), ValidFrom: "t", Status: string(StatusUnverified), Tier: TierUnverified})
+
+		touched, err := s.idx.demoteTier(ctx, []string{id})
+		if err != nil {
+			t.Fatalf("demoteTier: %v", err)
+		}
+		if len(touched) != 0 {
+			t.Errorf("touched = %v, want none", touched)
+		}
+
+		s.demoteByRule(ctx, []string{id})
+		ops.mu.Lock()
+		gotRows := len(ops.rows)
+		ops.mu.Unlock()
+		if gotRows != 0 {
+			t.Errorf("memory_ops rows = %d, want 0 (no-op writes no row)", gotRows)
+		}
+		assertTier(t, s, id, TierUnverified)
 	})
 }
 

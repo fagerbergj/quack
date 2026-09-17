@@ -46,12 +46,12 @@ const (
 	ReasonRecalledWithoutSupport = "recalled without support"
 )
 
-// DefaultRules are applied when config carries no memory.forgetting.rules (epic #1456 P2,
-// supersedes the epic #1255 P3 age-only set) - first match wins. A demoted memory's tier just
-// resets to unverified; a later supported vote re-promotes it like any other memory.
+// DefaultRules are applied when config carries no memory.forgetting.rules - first match wins.
+// Demote only resets tier; supported is left untouched, so the row re-promotes on its own next
+// vote or consolidator write (tier is always recomputed from supported), not just a fresh vote.
 func DefaultRules() []Rule {
 	return []Rule{
-		{When: `tier == "unverified" && recalls == 0 && days_since_minted > 30`, Then: ThenInvalidate, Reason: ReasonNeverRecalled},
+		{When: `tier == "unverified" && supported == 0 && recalls == 0 && days_since_minted > 30`, Then: ThenInvalidate, Reason: ReasonNeverRecalled},
 		{When: `tier == "unverified" && recalls >= 3 && supported == 0`, Then: ThenInvalidate, Reason: ReasonRecalledWithoutSupport},
 		{When: `score <= -2`, Then: ThenInvalidate},
 		{When: `tier == "verified" && days_since_upvote > 90`, Then: ThenDemote},
