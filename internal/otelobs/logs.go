@@ -95,6 +95,10 @@ const (
 	QuackPlugins = "quack.plugins"
 	// QuackPromptArtifact: the resolved artifact's name (#1422), not the agent name.
 	QuackPromptArtifact = "quack.prompt.artifact"
+	// QuackArtifacts: every artifact the round resolved through artifactsrc -
+	// a JSON array of {name,source,version_id}, superseding QuackPromptSource/
+	// QuackPromptVersionID/QuackPromptArtifact's single-artifact shape.
+	QuackArtifacts = "quack.artifacts"
 )
 
 // vars, not consts - attribute.Value has no constant form.

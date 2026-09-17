@@ -20,7 +20,7 @@ const maxEnvironmentEntries = 200
 
 // environmentBlock renders the round's <environment_context>: cwd, git state, top-level entries, and the sandbox/runtime facts every agent otherwise re-discovers per round (filesystem grants, the module cache, a clean-tree copy, where CI's verdict lives).
 // Deterministic given (cwd, repo state, caps), so it costs nothing to include on every round.
-func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string, caps workspace.Caps) string {
+func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string, caps workspace.Caps) (string, artifactsrc.Artifact) {
 	f := envFacts{
 		Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly,
 		GoModCache:          caps.Env["GOMODCACHE"],
@@ -40,14 +40,14 @@ func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string
 		}
 		f.Writable = strings.Join(writable, ", ")
 	}
-	out, err := renderEnvironment(ctx, res, f)
+	out, art, err := renderEnvironment(ctx, res, f)
 	if err != nil {
 		// Cosmetic grounding: degrade to no block rather than fail the round,
 		// same as gitInfo degrading to "git: no".
 		slog.Warn("acp: environment block unavailable", "component", "acp", "err", err)
-		return ""
+		return "", artifactsrc.Artifact{}
 	}
-	return out
+	return out, art
 }
 
 // envFacts is system/acp.environment's template data.
@@ -69,17 +69,18 @@ type envFacts struct {
 // envTemplates caches the parsed system/acp.environment per version.
 var envTemplates artifactsrc.TemplateCache
 
-func renderEnvironment(ctx context.Context, res *artifactsrc.Resolver, f envFacts) (string, error) {
+func renderEnvironment(ctx context.Context, res *artifactsrc.Resolver, f envFacts) (string, artifactsrc.Artifact, error) {
 	var b strings.Builder
 	// A stored version that will not render falls back to the shipped file
 	// (artifactsrc.Render) - a typo must not silently drop the whole block.
-	if _, err := artifactsrc.Render(ctx, res, &envTemplates, "system/acp.environment", func(t *template.Template) error {
+	art, err := artifactsrc.Render(ctx, res, &envTemplates, "system/acp.environment", func(t *template.Template) error {
 		b.Reset()
 		return t.Execute(&b, f)
-	}); err != nil {
-		return "", err
+	})
+	if err != nil {
+		return "", artifactsrc.Artifact{}, err
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return strings.TrimRight(b.String(), "\n"), art, nil
 }
 
 // gitInfo reports cwd's current branch and short HEAD sha via workspace.RunArgv, forced to

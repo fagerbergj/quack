@@ -2,9 +2,13 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 )
 
 func writeBundle(t *testing.T, card, prompt string) string {
@@ -127,20 +131,42 @@ func TestLoadBundleHash(t *testing.T) {
 func TestLoadBundleMemory(t *testing.T) {
 	dir := writeBundle(t, `{"name":"x","description":"d"}`, "prompt")
 
-	// Absent → "".
-	if got, err := LoadBundleMemory(context.Background(), nil, dir); err != nil || got != "" {
-		t.Fatalf("absent memory.md = (%q, %v), want (\"\", nil)", got, err)
+	// Absent → "", zero Artifact.
+	if got, art, err := LoadBundleMemory(context.Background(), nil, dir); err != nil || got != "" || art.Name != "" {
+		t.Fatalf("absent memory.md = (%q, %+v, %v), want (\"\", zero, nil)", got, art, err)
 	}
 
-	// Present → trimmed content.
+	// Present → trimmed content, plus a static-source Artifact for the ledger's memory/<agent> entry.
 	if err := os.WriteFile(filepath.Join(dir, memoryFile), []byte("  ## What to remember\nstuff\n  "), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := LoadBundleMemory(context.Background(), nil, dir)
+	got, art, err := LoadBundleMemory(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatalf("LoadBundleMemory: %v", err)
 	}
 	if got != "## What to remember\nstuff" {
 		t.Fatalf("memory.md content = %q", got)
+	}
+	if art.Source != "static" || art.VersionID == "" {
+		t.Fatalf("memory.md artifact = %+v, want a static source with a version id", art)
+	}
+}
+
+// hardErrSource always fails with artifactsrc.ErrHard, the one class of
+// resolver failure that propagates instead of falling back to the shipped file.
+type hardErrSource struct{}
+
+func (hardErrSource) Get(context.Context, string) (artifactsrc.Artifact, bool, error) {
+	return artifactsrc.Artifact{}, false, fmt.Errorf("pinned version gone: %w", artifactsrc.ErrHard)
+}
+func (hardErrSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
+
+// TestLoadBundleMemoryPropagatesHardResolverError: a genuine store failure on
+// a bundle that DOES have memory.md must surface as an error, not silently
+// read as "no memory.md" (fs.ErrNotExist is the only case that means that).
+func TestLoadBundleMemoryPropagatesHardResolverError(t *testing.T) {
+	res := artifactsrc.New("langfuse", hardErrSource{}, time.Minute)
+	if _, _, err := LoadBundleMemory(context.Background(), res, "agents/code-reviewer"); err == nil {
+		t.Fatal("want an error; got nil")
 	}
 }

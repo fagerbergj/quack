@@ -114,6 +114,62 @@ func TestExporterMapsPluginsAttribute(t *testing.T) {
 	}
 }
 
+// TestExporterMapsArtifactsAttribute_Chat: quack.artifacts becomes
+// LLMCallPayload.Artifacts on a native round's llm.call, alongside the
+// existing single-artifact PromptSource/PromptVersionID/PromptArtifact fields.
+func TestExporterMapsArtifactsAttribute_Chat(t *testing.T) {
+	store := ledgertest.NewMemStore()
+	emitVia(t, store,
+		attribute.String("gen_ai.conversation.id", "chat-1"),
+		attribute.String("gen_ai.operation.name", "chat"),
+		attribute.String("gen_ai.request.model", "m1"),
+		attribute.String("quack.artifacts", `[{"name":"system/code-reviewer","source":"static","version_id":"abc123"},{"name":"memory/code-reviewer","source":"static","version_id":"def456"}]`),
+		attribute.String("quack.plugins", `[{"name":"dotagents","sha":"abc123"}]`),
+	)
+	entries, err := store.ReadEntries(context.Background(), "chat-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p ledger.LLMCallPayload
+	if err := json.Unmarshal(entries[0].Payload, &p); err != nil {
+		t.Fatal(err)
+	}
+	want := []ledger.ArtifactRef{
+		{Name: "system/code-reviewer", Source: "static", VersionID: "abc123"},
+		{Name: "memory/code-reviewer", Source: "static", VersionID: "def456"},
+	}
+	if len(p.Artifacts) != 2 || p.Artifacts[0] != want[0] || p.Artifacts[1] != want[1] {
+		t.Errorf("artifacts = %+v, want %+v", p.Artifacts, want)
+	}
+	if len(p.Plugins) != 1 || p.Plugins[0].Name != "dotagents" || p.Plugins[0].SHA != "abc123" {
+		t.Errorf("plugins = %+v, want [{dotagents abc123}]", p.Plugins)
+	}
+}
+
+// TestExporterMapsArtifactsAttribute_InvokeAgent: quack.artifacts becomes
+// AgentInvokePayload.Artifacts on an ACP round's agent.invoke, alongside plugins.
+func TestExporterMapsArtifactsAttribute_InvokeAgent(t *testing.T) {
+	store := ledgertest.NewMemStore()
+	emitVia(t, store,
+		attribute.String("gen_ai.conversation.id", "chat-1"),
+		attribute.String("gen_ai.operation.name", "invoke_agent"),
+		attribute.String("gen_ai.agent.name", "acp"),
+		attribute.String("quack.artifacts", `[{"name":"system/acp.environment","source":"static","version_id":"env123"}]`),
+	)
+	entries, err := store.ReadEntries(context.Background(), "chat-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p ledger.AgentInvokePayload
+	if err := json.Unmarshal(entries[0].Payload, &p); err != nil {
+		t.Fatal(err)
+	}
+	want := ledger.ArtifactRef{Name: "system/acp.environment", Source: "static", VersionID: "env123"}
+	if len(p.Artifacts) != 1 || p.Artifacts[0] != want {
+		t.Errorf("artifacts = %+v, want [%+v]", p.Artifacts, want)
+	}
+}
+
 // TestExporterCostUSD_NilVsZero: #1096 - an unpriced model must not report
 // cost_usd:0 (that reads as "confirmed free"); a priced model with a
 // genuine $0 call must still report the explicit 0, not omit the field.

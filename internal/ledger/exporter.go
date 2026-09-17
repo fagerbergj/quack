@@ -97,6 +97,8 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 			QuackVersion: str("quack.version"), BundleHash: str("quack.bundle.hash"),
 			PromptSource: str("quack.prompt.source"), PromptVersionID: str("quack.prompt.version_id"),
 			PromptArtifact: str("quack.prompt.artifact")}
+		unmarshalIfPresent(attrs, "quack.artifacts", &p.Artifacts)
+		unmarshalIfPresent(attrs, "quack.plugins", &p.Plugins)
 		// Present-but-nil vs. present-with-zero: only set CostUSD when the
 		// emitter actually recorded a cost (pricing configured) - a plain
 		// num() lookup can't tell "unpriced" from a genuine $0 call.
@@ -115,9 +117,8 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 	case op == "invoke_agent":
 		entry.Kind = KindAgentInvoke
 		p := AgentInvokePayload{Sent: str("gen_ai.input.messages"), Received: str("gen_ai.output.messages"), Error: str("error.type")}
-		if raw := str("quack.plugins"); raw != "" {
-			_ = json.Unmarshal([]byte(raw), &p.Plugins)
-		}
+		unmarshalIfPresent(attrs, "quack.plugins", &p.Plugins)
+		unmarshalIfPresent(attrs, "quack.artifacts", &p.Artifacts)
 		payload = p
 	default:
 		return Entry{}, false
@@ -128,6 +129,15 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 	}
 	entry.Payload = b
 	return entry, true
+}
+
+// unmarshalIfPresent decodes attrs[key] into v when it's a non-empty string -
+// shared by every op branch that carries a JSON-array attribute onto its payload.
+func unmarshalIfPresent(attrs map[string]any, key string, v any) {
+	s, _ := attrs[key].(string)
+	if s != "" {
+		_ = json.Unmarshal([]byte(s), v)
+	}
 }
 
 // valueToAny converts an attribute.Value to the generic shape encoding/json

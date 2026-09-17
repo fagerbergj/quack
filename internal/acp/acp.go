@@ -51,6 +51,9 @@ type Options struct {
 	// round.go prepends it only on a FRESH session, so on a pinned process an
 	// edited prompt lands on the next node dispatch, not the next round.
 	Preamble func(ctx context.Context) string
+	// PreambleArtifact mirrors Preamble's resolution as ledger provenance -
+	// called under the same !fromPinned condition, never on a reused session.
+	PreambleArtifact func(ctx context.Context) artifactsrc.Artifact
 	// Prompts resolves system/acp.environment for the round's environment block.
 	Prompts         *artifactsrc.Resolver
 	Jail            *workspace.Jail
@@ -215,9 +218,10 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		// Environment block goes AFTER the task: it is regenerated every round
 		// (branch/HEAD/dir listing drift once a round commits anything), so
 		// leading with it broke the prompt-cache prefix from round 2 on.
-		outbound := prompt + "\n\n" + environmentBlock(ctx, a.opts.Prompts, cwd, caps)
+		envBlock, envArt := environmentBlock(ctx, a.opts.Prompts, cwd, caps)
+		outbound := prompt + "\n\n" + envBlock
 		stopped := false
-		err = a.round(ctx, cwd, memSecret, caps, outbound, steerChatID, steerNodeID, advisorToken, priorSessionID, func(spec eventSpec) bool {
+		err = a.round(ctx, cwd, memSecret, caps, outbound, envArt, steerChatID, steerNodeID, advisorToken, priorSessionID, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
 				stopped = true
 				return false
@@ -299,9 +303,25 @@ func closePinnedProc(pp *pinnedProc) {
 	pp.h.close(nil)
 }
 
+// roundArtifacts: this round's resolved-artifact provenance - the environment
+// block always, the preamble only when this round actually sent one (a fresh
+// session; steerHooks skips it on a reused pinned process).
+func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact, fromPinned bool) []ledger.ArtifactRef {
+	var artifacts []ledger.ArtifactRef
+	if envArt.Name != "" {
+		artifacts = append(artifacts, ledger.ArtifactRef{Name: envArt.Name, Source: envArt.Source, VersionID: envArt.VersionID})
+	}
+	if !fromPinned && a.opts.PreambleArtifact != nil {
+		if art := a.opts.PreambleArtifact(ctx); art.Name != "" {
+			artifacts = append(artifacts, ledger.ArtifactRef{Name: art.Name, Source: art.Source, VersionID: art.VersionID})
+		}
+	}
+	return artifacts
+}
+
 // round drives one subprocess round. Separated from runPrompt for testability.
 // caps is the node's EFFECTIVE caps (ReadOnly already resolved by the caller) - the one thing that can legitimately differ per round for an otherwise-static agent (#754). steerChatID/steerNodeID key the live-steer hook: the advisor thread's SessionID/NodeID (round()'s callers resolve these), NOT ledger.Coords - cfg.NodeID collapses to the shared workspace scope for a setup-chain's writer node, which would silently no-op the hook (#998 review).
-func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace.Caps, outbound string, steerChatID, steerNodeID, advisorToken, priorSessionID string, emit func(eventSpec) bool) (err error) {
+func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace.Caps, outbound string, envArt artifactsrc.Artifact, steerChatID, steerNodeID, advisorToken, priorSessionID string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
@@ -367,7 +387,8 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	if a.opts.Plugins != nil {
 		plugins = a.opts.Plugins()
 	}
-	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err, plugins) }()
+	artifacts := a.roundArtifacts(ctx, envArt, fromPinned)
+	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err, plugins, artifacts) }()
 
 	if !fromPinned {
 		sessID, toolNames, resumed, err = a.handshake(ctx, cwd, memSecret, advisorToken, priorSessionID, h)

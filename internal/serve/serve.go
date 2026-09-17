@@ -991,7 +991,7 @@ func buildUserMemoryHookAgent(ctx context.Context, h config.UserMemoryHookConfig
 	if err != nil {
 		return nil, fmt.Errorf("bundle: %w", err)
 	}
-	whatToRemember, err := agent.LoadBundleMemory(ctx, res, "agents/orchestrator")
+	whatToRemember, _, err := agent.LoadBundleMemory(ctx, res, "agents/orchestrator")
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator memory.md: %w", err)
 	}
@@ -1148,7 +1148,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 			continue
 		}
 
-		na, err := buildNativeNode(name, ac, prov, taskStore, advisorAgent, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers)
+		na, err := buildNativeNode(name, ac, prov, taskStore, advisorAgent, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg)
 		if err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, err
 		}
@@ -1318,12 +1318,13 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		return nil, fmtErr(name, "bundle: %v", err)
 	}
 	var memGuidance string
+	var memArt artifactsrc.Artifact
 	if taskStore != nil {
-		if memGuidance, err = agent.LoadBundleMemory(ctx, res, ac.Bundle); err != nil {
+		if memGuidance, memArt, err = agent.LoadBundleMemory(ctx, res, ac.Bundle); err != nil {
 			return nil, fmtErr(name, "memory.md: %v", err)
 		}
 	}
-	grading, err := resolveGateCfg(cfg, res, gateCfg, name, ac, taskStore != nil, memGuidance, bundle, gateCfgs)
+	grading, err := resolveGateCfg(cfg, res, gateCfg, name, ac, taskStore != nil, memGuidance, memArt, bundle, gateCfgs, reg)
 	if err != nil {
 		return nil, fmtErr(name, "rubric: %v", err)
 	}
@@ -1360,6 +1361,7 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		Plugins:              pluginsFn,
 		Home:                 workspaceCaps.HomeDir,
 		Preamble:             preamble,
+		PreambleArtifact:     func(ctx context.Context) artifactsrc.Artifact { return bundle.ResolvePrompt(ctx, res) },
 		Prompts:              res,
 		Jail:                 jail,
 		UserID:               localUserID,
@@ -1561,7 +1563,7 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 // resolveGateCfg resolves the per-agent trust-gate config (and prompt grading facts
 // for gated agents), recording gated configs in gateCfgs along with the closure
 // that re-resolves their artifacts at run start.
-func resolveGateCfg(cfg *config.Config, res *artifactsrc.Resolver, base vetting.Config, name string, ac config.AgentConfig, taskMemAvailable bool, memGuidance string, bundle *agent.Bundle, gateCfgs *gateConfigs) (string, error) {
+func resolveGateCfg(cfg *config.Config, res *artifactsrc.Resolver, base vetting.Config, name string, ac config.AgentConfig, taskMemAvailable bool, memGuidance string, memArt artifactsrc.Artifact, bundle *agent.Bundle, gateCfgs *gateConfigs, reg pluginreg.FetchRegistry) (string, error) {
 	if cfg.Gates.Enabled() && !ac.IsGated() {
 		slog.Info("trust gate skipped for agent (gated: false)", "component", "startup", "agent", name)
 	}
@@ -1570,10 +1572,12 @@ func resolveGateCfg(cfg *config.Config, res *artifactsrc.Resolver, base vetting.
 		if err != nil {
 			return "", err
 		}
+		c.MemoryArtifact = memArt
+		c.Plugins = acpRegistryPluginRefs(cfg, reg)()
 		c = stampBundle(c, bundle)
 		gateCfgs.boot[name] = c
 		gateCfgs.refresh[name] = func(ctx context.Context) (vetting.Config, error) {
-			return refreshGateCfg(ctx, res, cfg, ac, c)
+			return refreshGateCfg(ctx, res, cfg, ac, c, reg)
 		}
 		return promptbuilder.GradingFacts(c.Threshold, c.JudgeRounds, c.ReadOnly, c.RequireRetrieval), nil
 	}
@@ -1592,18 +1596,20 @@ func stampBundle(c vetting.Config, b *agent.Bundle) vetting.Config {
 // refreshGateCfg re-resolves only the artifact-backed parts of a gate config -
 // the global rubric and constitution, the agent's own rubric, and the bundle's
 // hash and prompt provenance. Every config-derived field stays as boot computed it.
-func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.Config, ac config.AgentConfig, boot vetting.Config) (vetting.Config, error) {
+func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.Config, ac config.AgentConfig, boot vetting.Config, reg pluginreg.FetchRegistry) (vetting.Config, error) {
 	base, err := vetting.FromConfig(ctx, res, cfg.Gates)
 	if err != nil {
 		return boot, err
 	}
 	c := boot
-	c.Constitution, c.Rubric, c.RubricSpecs, c.RubricFixes = base.Constitution, base.Rubric, base.RubricSpecs, base.RubricFixes
-	if override, specs, fixes, err := vetting.LoadBundleRubricSpecs(ctx, res, ac.Bundle); err != nil {
+	c.Constitution, c.ConstitutionArtifact = base.Constitution, base.ConstitutionArtifact
+	c.Rubric, c.RubricArtifact, c.RubricSpecs, c.RubricFixes = base.Rubric, base.RubricArtifact, base.RubricSpecs, base.RubricFixes
+	if override, specs, fixes, art, err := vetting.LoadBundleRubricSpecs(ctx, res, ac.Bundle); err != nil {
 		return boot, err
 	} else if override != "" {
-		c.Rubric, c.RubricSpecs, c.RubricFixes = override, specs, fixes
+		c.Rubric, c.RubricSpecs, c.RubricFixes, c.RubricArtifact = override, specs, fixes, art
 	}
+	c.Plugins = acpRegistryPluginRefs(cfg, reg)()
 	b, err := agent.LoadBundle(ctx, res, ac.Bundle)
 	if err != nil {
 		return boot, err
@@ -1613,7 +1619,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
-func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, advisorAgent adkagent.Agent, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers) (adkagent.Agent, error) {
+func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, advisorAgent adkagent.Agent, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry) (adkagent.Agent, error) {
 	toolNames := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
@@ -1621,8 +1627,9 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		return nil, fmtErr(name, "bundle: %v", err)
 	}
 	var memGuidance string
+	var memArt artifactsrc.Artifact
 	if taskStore != nil {
-		if memGuidance, err = agent.LoadBundleMemory(context.Background(), res, ac.Bundle); err != nil {
+		if memGuidance, memArt, err = agent.LoadBundleMemory(context.Background(), res, ac.Bundle); err != nil {
 			return nil, fmtErr(name, "memory.md: %v", err)
 		}
 	}
@@ -1639,7 +1646,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		return nil, fmtErr(name, "skills: %v", err)
 	}
 
-	grading, err := resolveGateCfg(cfg, res, gateCfg, name, ac, taskStore != nil, memGuidance, bundle, gateCfgs)
+	grading, err := resolveGateCfg(cfg, res, gateCfg, name, ac, taskStore != nil, memGuidance, memArt, bundle, gateCfgs, reg)
 	if err != nil {
 		return nil, fmtErr(name, "rubric: %v", err)
 	}
@@ -1891,7 +1898,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	}
 	orchBehaviour := orchBundle.Prompt
 	if userStore != nil {
-		mem, err := agent.LoadBundleMemory(ctx, res, "agents/orchestrator")
+		mem, _, err := agent.LoadBundleMemory(ctx, res, "agents/orchestrator")
 		if err != nil {
 			return nil, fmt.Errorf("orchestrator memory.md load failed: %w", err)
 		}
@@ -2132,12 +2139,13 @@ func perAgentGateCfg(ctx context.Context, res *artifactsrc.Resolver, base vettin
 		c.ReadOnly = ac.Acp.ReadOnly
 		c.ExternalWorker = true
 	}
-	if override, specs, fixes, err := vetting.LoadBundleRubricSpecs(ctx, res, ac.Bundle); err != nil {
+	if override, specs, fixes, art, err := vetting.LoadBundleRubricSpecs(ctx, res, ac.Bundle); err != nil {
 		return c, err
 	} else if override != "" {
 		c.Rubric = override
 		c.RubricSpecs = specs
 		c.RubricFixes = fixes
+		c.RubricArtifact = art
 		slog.Info("using per-agent rubric from bundle", "component", "startup", "agent", name)
 	}
 	return applyAgentJudgeOverrides(c, ac, name), nil

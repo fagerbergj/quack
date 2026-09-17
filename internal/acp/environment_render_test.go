@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -18,12 +19,32 @@ func (b badSource) Get(context.Context, string) (artifactsrc.Artifact, bool, err
 }
 func (badSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
 
+// hardErrSource always fails with artifactsrc.ErrHard - the one class of
+// failure Resolve propagates instead of falling back to the shipped file.
+type hardErrSource struct{}
+
+func (hardErrSource) Get(context.Context, string) (artifactsrc.Artifact, bool, error) {
+	return artifactsrc.Artifact{}, false, fmt.Errorf("pinned version gone: %w", artifactsrc.ErrHard)
+}
+func (hardErrSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
+
+// TestEnvironmentBlockDegradesOnHardResolverError: a resolver that can't even
+// fall back to the shipped file degrades the whole block to "", never panics
+// or propagates the error into the round's prompt.
+func TestEnvironmentBlockDegradesOnHardResolverError(t *testing.T) {
+	res := artifactsrc.New("langfuse", hardErrSource{}, time.Minute)
+	got, art := environmentBlock(context.Background(), res, t.TempDir(), workspace.Caps{})
+	if got != "" || art.Name != "" {
+		t.Errorf("environmentBlock = (%q, %+v), want (\"\", zero Artifact)", got, art)
+	}
+}
+
 // TestEnvironmentBlockSurvivesBadStoredTemplate: a typo in a stored
 // system/acp.environment falls back to the shipped file rather than silently
 // dropping the block the round is grounded on.
 func TestEnvironmentBlockSurvivesBadStoredTemplate(t *testing.T) {
 	res := artifactsrc.New("langfuse", badSource{body: "{{if .Git}}unclosed"}, time.Minute)
-	got := environmentBlock(context.Background(), res, t.TempDir(), workspace.Caps{})
+	got, _ := environmentBlock(context.Background(), res, t.TempDir(), workspace.Caps{})
 	if !strings.HasPrefix(got, "<environment_context>") || !strings.HasSuffix(got, "</environment_context>") {
 		t.Errorf("block = %q, want the shipped template's output", got)
 	}
@@ -55,7 +76,7 @@ func TestRenderEnvironmentBranches(t *testing.T) {
 			return f
 		}(), "entries (first 200): a, b"},
 	} {
-		got, err := renderEnvironment(context.Background(), nil, c.f)
+		got, _, err := renderEnvironment(context.Background(), nil, c.f)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}

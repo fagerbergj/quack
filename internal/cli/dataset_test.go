@@ -189,6 +189,11 @@ func TestRunDatasetExport_MetadataBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload.PromptSource, payload.PromptVersionID, payload.QuackVersion = "langfuse", "7", "v1.2.3"
+	payload.Artifacts = []ledger.ArtifactRef{
+		{Name: "system/code-reviewer", Source: "langfuse", VersionID: "7"},
+		{Name: "rubric/global", Source: "static", VersionID: "r1"},
+	}
+	payload.Plugins = []ledger.PluginRef{{Name: "dotagents", SHA: "abc123"}}
 	entry.Payload, _ = json.Marshal(payload)
 	if _, err := ls.AppendIntent(ctx, entry); err != nil {
 		t.Fatal(err)
@@ -232,6 +237,17 @@ func TestRunDatasetExport_MetadataBlock(t *testing.T) {
 		if meta[k] != v {
 			t.Errorf("metadata[%q] = %v, want %v (full metadata: %+v)", k, meta[k], v, meta)
 		}
+	}
+	// The full resolved-artifact/plugin lists ride alongside the
+	// single-artifact prompt_* fields, round-tripped through Langfuse's JSON metadata.
+	gotArtifacts, _ := json.Marshal(meta["artifacts"])
+	wantArtifacts := `[{"name":"system/code-reviewer","source":"langfuse","version_id":"7"},{"name":"rubric/global","source":"static","version_id":"r1"}]`
+	if string(gotArtifacts) != wantArtifacts {
+		t.Errorf("metadata[artifacts] = %s, want %s", gotArtifacts, wantArtifacts)
+	}
+	gotPlugins, _ := json.Marshal(meta["plugins"])
+	if wantPlugins := `[{"name":"dotagents","sha":"abc123"}]`; string(gotPlugins) != wantPlugins {
+		t.Errorf("metadata[plugins] = %s, want %s", gotPlugins, wantPlugins)
 	}
 }
 

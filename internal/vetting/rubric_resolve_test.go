@@ -31,6 +31,14 @@ func TestFromConfigResolvesArtifacts(t *testing.T) {
 	if c.JudgeRounds != 2 || c.Threshold != 0.7 {
 		t.Errorf("config knobs not carried through: %+v", c)
 	}
+	// With no prompts: store configured, both artifacts' provenance
+	// is the shipped file - "static", not blank.
+	if c.ConstitutionArtifact.Name != "rubric/constitution" || c.ConstitutionArtifact.Source != "static" || c.ConstitutionArtifact.VersionID == "" {
+		t.Errorf("ConstitutionArtifact = %+v, want {rubric/constitution static <hash>}", c.ConstitutionArtifact)
+	}
+	if c.RubricArtifact.Name != "rubric/global" || c.RubricArtifact.Source != "static" || c.RubricArtifact.VersionID == "" {
+		t.Errorf("RubricArtifact = %+v, want {rubric/global static <hash>}", c.RubricArtifact)
+	}
 }
 
 // TestFromConfigInlineOverridesWin: inline prose short-circuits resolution, so
@@ -74,6 +82,27 @@ func TestLoadBundleRubricResolvesAndAbsent(t *testing.T) {
 	got, err = LoadBundleRubric(ctx, nil, "agents/advisor")
 	if err != nil || got != "" {
 		t.Errorf("advisor has no rubric.yaml; got %q (%v)", got, err)
+	}
+}
+
+// TestLoadBundleRubricSpecsArtifactProvenance: the per-agent rubric.yaml
+// artifact is "static" and version-hashed when present, and zero when absent
+// (a bundle with no rubric.yaml records no rubric/<agent> entry at all).
+func TestLoadBundleRubricSpecsArtifactProvenance(t *testing.T) {
+	ctx := context.Background()
+	_, _, _, art, err := LoadBundleRubricSpecs(ctx, nil, "agents/code-reviewer")
+	if err != nil {
+		t.Fatalf("LoadBundleRubricSpecs: %v", err)
+	}
+	if art.Name != "rubric/code-reviewer" || art.Source != "static" || art.VersionID == "" {
+		t.Errorf("code-reviewer rubric artifact = %+v, want {rubric/code-reviewer static <hash>}", art)
+	}
+	_, _, _, art, err = LoadBundleRubricSpecs(ctx, nil, "agents/advisor")
+	if err != nil {
+		t.Fatalf("LoadBundleRubricSpecs: %v", err)
+	}
+	if art.Name != "" {
+		t.Errorf("advisor has no rubric.yaml; artifact = %+v, want zero", art)
 	}
 }
 

@@ -23,6 +23,10 @@ type Coords struct {
 	// derived from the bundle directory, not the agent name, so an out-of-tree
 	// or renamed bundle still gets the right name recorded (#1422).
 	PromptArtifact string
+	// Artifacts/Plugins: every artifact and plugin this round resolved through
+	// artifactsrc/the plugin registry - the llm.call/agent.invoke provenance list.
+	Artifacts []ArtifactRef
+	Plugins   []PluginRef
 	// User: the ADK session identity that owns this run (local user, GitHub
 	// commenter login, etc) - observability attribution only.
 	User string
@@ -76,6 +80,12 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 	}
 	if ctx.PromptArtifact == "" {
 		ctx.PromptArtifact = stamp.PromptArtifact
+	}
+	if len(ctx.Artifacts) == 0 {
+		ctx.Artifacts = stamp.Artifacts
+	}
+	if len(ctx.Plugins) == 0 {
+		ctx.Plugins = stamp.Plugins
 	}
 	if ctx.Round == "" {
 		ctx.Round = stamp.Round

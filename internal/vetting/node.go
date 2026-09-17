@@ -23,6 +23,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
@@ -963,7 +964,8 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	}
 	// Ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.
-	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: "judge", BundleHash: j.cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, PromptArtifact: promptArtifact, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
+	judgeArtifacts := gateArtifacts(promptArtifact, promptSource, promptVersion, j.cfg.ConstitutionArtifact, j.cfg.RubricArtifact)
+	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: "judge", BundleHash: j.cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, PromptArtifact: promptArtifact, Artifacts: judgeArtifacts, Plugins: j.cfg.Plugins, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
 	ledgerCtx = ledger.WithCoords(j.ctx, judgeCoords)
 	// Same belt-and-suspenders as runWorkerNodeTraced's workerModel stamp.
 	if cs, ok := j.cfg.JudgeModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
@@ -1876,6 +1878,21 @@ func modelName(m model.LLM) string {
 	return m.Name()
 }
 
+// gateArtifacts assembles one round's resolved-artifact provenance: its own prompt
+// plus extra - a zero Artifact (inline override, nothing to resolve) is omitted, not recorded blank.
+func gateArtifacts(promptName, promptSource, promptVersion string, extra ...artifactsrc.Artifact) []ledger.ArtifactRef {
+	var refs []ledger.ArtifactRef
+	if promptName != "" {
+		refs = append(refs, ledger.ArtifactRef{Name: promptName, Source: promptSource, VersionID: promptVersion})
+	}
+	for _, a := range extra {
+		if a.Name != "" {
+			refs = append(refs, ledger.ArtifactRef{Name: a.Name, Source: a.Source, VersionID: a.VersionID})
+		}
+	}
+	return refs
+}
+
 // runWorkerNodeTraced: wraps runWorkerNode with "quack.worker.round" span and ledger coords.
 func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Config, workerModel model.LLM, workerNode workflow.Node, input any, runID, stage string, emit func(*session.Event) error) (string, error) {
 	_, ts := otelobs.StartTimedSpan(spanCtx, "worker.round",
@@ -1898,7 +1915,8 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		// OverridableModel) - re-read quack.model now so the span agrees with RecordRoundDuration below.
 		ts.Span.SetAttributes(attribute.String(otelobs.QuackModel, modelName(workerModel)))
 	}
-	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, BundleHash: cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, PromptArtifact: promptArtifact, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
+	workerArtifacts := gateArtifacts(promptArtifact, promptSource, promptVersion, cfg.MemoryArtifact)
+	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, BundleHash: cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, PromptArtifact: promptArtifact, Artifacts: workerArtifacts, Plugins: cfg.Plugins, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
 	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))
 	// WithAgentContext stamp does not survive RunNode scheduling; inference models get stamped directly.
 	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {

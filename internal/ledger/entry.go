@@ -127,6 +127,12 @@ type LLMCallPayload struct {
 	// PromptArtifact: the resolved artifact's name (#1422), e.g. "system/code-reviewer" -
 	// derived from the bundle directory, not PromptName (the agent name).
 	PromptArtifact string `json:"prompt_artifact,omitempty"`
+	// Artifacts: every artifact this round resolved through artifactsrc -
+	// a superset of PromptSource/PromptVersionID/PromptArtifact, kept for compatibility.
+	Artifacts []ArtifactRef `json:"artifacts,omitempty"`
+	// Plugins: the plugin registry rows in scope for this round, native
+	// rounds included - ACP rounds already carried this on agent.invoke (#1427 P1).
+	Plugins []PluginRef `json:"plugins,omitempty"`
 }
 
 // ToolCallPayload is a KindToolCall entry's payload (one execute_tool call).
@@ -141,10 +147,20 @@ type ToolCallPayload struct {
 // AgentInvokePayload is a KindAgentInvoke entry's payload: one ACP round's
 // full protocol conversation, both directions as JSON arrays of frames.
 type AgentInvokePayload struct {
-	Sent     string      `json:"sent,omitempty"`
-	Received string      `json:"received,omitempty"`
-	Error    string      `json:"error,omitempty"`
-	Plugins  []PluginRef `json:"plugins,omitempty"`
+	Sent      string        `json:"sent,omitempty"`
+	Received  string        `json:"received,omitempty"`
+	Error     string        `json:"error,omitempty"`
+	Plugins   []PluginRef   `json:"plugins,omitempty"`
+	Artifacts []ArtifactRef `json:"artifacts,omitempty"`
+}
+
+// ArtifactRef is one artifact this round resolved through artifactsrc -
+// e.g. {"system/code-reviewer", "static", "a1b2c3..."}. VersionID is omitted only
+// for an artifact whose resolver couldn't be reached (kept the pinned value).
+type ArtifactRef struct {
+	Name      string `json:"name"`
+	Source    string `json:"source"`
+	VersionID string `json:"version_id,omitempty"`
 }
 
 // PluginRef is one plugin's provenance on an agent.invoke entry (#1427 P1):

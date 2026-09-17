@@ -21,6 +21,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -272,7 +273,7 @@ func testAgent(t *testing.T, mode string) *Agent {
 func TestRound_FullPromptRound(t *testing.T) {
 	a := testAgent(t, "happy")
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", artifactsrc.Artifact{}, "", "", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -312,7 +313,7 @@ func TestRound_ResumesPriorSessionViaLoadSession(t *testing.T) {
 	defer vetting.UnregisterAdvisorThread(token)
 
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "continue", "", "", token, "prior-s1", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "continue", artifactsrc.Artifact{}, "", "", token, "prior-s1", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -338,7 +339,7 @@ func TestRound_LoadSessionFailureFallsBackToNewSession(t *testing.T) {
 	defer vetting.UnregisterAdvisorThread(token)
 
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "continue", "", "", token, "prior-s1", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "continue", artifactsrc.Artifact{}, "", "", token, "prior-s1", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -363,7 +364,7 @@ func TestRound_PromptErrorAfterResumeClearsStoredSession(t *testing.T) {
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ACPSessionID: "prior-s1"})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "continue", "", "", token, "prior-s1", func(eventSpec) bool { return true })
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "continue", artifactsrc.Artifact{}, "", "", token, "prior-s1", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("round: want an error from the fake agent's failing prompt")
 	}
@@ -383,7 +384,7 @@ func TestRound_PinnedProcessReusedAcrossRounds(t *testing.T) {
 
 	round := func() string {
 		var specs []eventSpec
-		if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+		if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", artifactsrc.Artifact{}, "", "", token, "", func(s eventSpec) bool {
 			specs = append(specs, s)
 			return true
 		}); err != nil {
@@ -439,7 +440,7 @@ func TestRound_PreambleOnlyOnFreshSession(t *testing.T) {
 
 	round := func() string {
 		var specs []eventSpec
-		if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+		if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", artifactsrc.Artifact{}, "", "", token, "", func(s eventSpec) bool {
 			specs = append(specs, s)
 			return true
 		}); err != nil {
@@ -479,7 +480,7 @@ func TestRound_PreambleResentOnResumedSession(t *testing.T) {
 	defer vetting.UnregisterAdvisorThread(token)
 
 	var specs []eventSpec
-	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "prior-s1", func(s eventSpec) bool {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", artifactsrc.Artifact{}, "", "", token, "prior-s1", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	}); err != nil {
@@ -501,7 +502,7 @@ func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
 	defer vetting.UnregisterAdvisorThread(token)
 
 	var specs []eventSpec
-	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", artifactsrc.Artifact{}, "", "", token, "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	}); err != nil {
@@ -539,7 +540,7 @@ func TestClosePinnedSession_KeepsACPStateDir(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{ACPStateDir: stateDir}, "go", "", "", token, "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{ACPStateDir: stateDir}, "go", artifactsrc.Artifact{}, "", "", token, "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 	if _, ok := pinned.Load(token); !ok {
@@ -561,7 +562,7 @@ func TestUnregisterAdvisorThread_KillsPinnedProcess(t *testing.T) {
 	token := "tok-unregister-kills-pin"
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
 
-	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", artifactsrc.Artifact{}, "", "", token, "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 	if _, ok := pinned.Load(token); !ok {
@@ -608,7 +609,7 @@ func TestRound_AbortKillsPinnedProcess(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "loop forever", "chat1", "n1", token, "", func(eventSpec) bool { return true })
+		done <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "loop forever", artifactsrc.Artifact{}, "chat1", "n1", token, "", func(eventSpec) bool { return true })
 	}()
 	<-registered
 	mu.Lock()
@@ -640,7 +641,7 @@ func TestRound_FailedReuseFallsBackToFreshProcess(t *testing.T) {
 
 	roundOnce := func() (string, error) {
 		var specs []eventSpec
-		err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+		err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", artifactsrc.Artifact{}, "", "", token, "", func(s eventSpec) bool {
 			specs = append(specs, s)
 			return true
 		})
@@ -698,7 +699,7 @@ func TestRound_MCPToolsBlockLeadsThePrompt(t *testing.T) {
 	defer vetting.UnregisterMemSession(secret)
 
 	var specs []eventSpec
-	err = a.round(context.Background(), t.TempDir(), secret, workspace.Caps{}, "review this PR", "", "", "", "", func(s eventSpec) bool {
+	err = a.round(context.Background(), t.TempDir(), secret, workspace.Caps{}, "review this PR", artifactsrc.Artifact{}, "", "", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -796,7 +797,7 @@ func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
 func TestRound_MCPToolsBlockSaysNoneWhenNoSurface(t *testing.T) {
 	a := testAgent(t, "echo")
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", artifactsrc.Artifact{}, "", "", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -814,7 +815,7 @@ func TestRound_CancelGraceful(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "loop forever", "", "", "", "", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "loop forever", artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true })
 	if err == nil || !strings.Contains(err.Error(), "context canceled") {
 		t.Fatalf("want context cancellation, got %v", err)
 	}
@@ -834,7 +835,7 @@ func TestRound_StubbornAgentIsKilled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "loop forever", "", "", "", "", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "loop forever", artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("want an error from a cancelled round")
 	}
@@ -856,7 +857,7 @@ func TestRound_IdleTimeout(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		result <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "wedge forever", "", "", "", "", func(eventSpec) bool { return true })
+		result <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "wedge forever", artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true })
 	}()
 
 	select {
@@ -901,7 +902,7 @@ func TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence(t *testing.T) {
 	var specs []eventSpec
 	result := make(chan error, 1)
 	go func() {
-		result <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "stay alive", "chat1", "node1", "", "", func(s eventSpec) bool {
+		result <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "stay alive", artifactsrc.Artifact{}, "chat1", "node1", "", "", func(s eventSpec) bool {
 			specs = append(specs, s)
 			return true
 		})
@@ -1062,7 +1063,7 @@ func TestRound_ReapsChildThatStopsReadingStdin(t *testing.T) {
 	big := strings.Repeat("x", 512*1024) // > the 64KiB pipe buffer
 	result := make(chan error, 1)
 	go func() {
-		result <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, big, "", "", "", "", func(eventSpec) bool { return true })
+		result <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, big, artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true })
 	}()
 
 	select {
@@ -1083,7 +1084,7 @@ func TestRound_SlowConsumerNeverBlocksRound(t *testing.T) {
 	release := make(chan struct{})
 	time.AfterFunc(1500*time.Millisecond, func() { close(release) })
 	n := 0
-	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", "", "", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", artifactsrc.Artifact{}, "", "", "", "", func(s eventSpec) bool {
 		if n == 0 {
 			<-release
 		}
