@@ -127,33 +127,8 @@ func Bind(shape Shape, ask string) (nodes []dag.RawNode, ok bool) {
 	return out, true
 }
 
-// Wrap returns src unchanged when shapes is empty - no custom shapes means the exact same Source,
-// not a passthrough wrapper, so the composed catalog stays byte-identical to today's. Otherwise
-// it returns a Source that appends shapes to plan-work's table on every LoadInstructions call.
-func Wrap(src skill.Source, shapes []Shape) skill.Source {
-	if len(shapes) == 0 {
-		return src
-	}
-	return &augmented{Source: src, shapes: shapes}
-}
-
-type augmented struct {
-	skill.Source
-	shapes []Shape
-}
-
-func (a *augmented) LoadInstructions(ctx context.Context, name string) (string, error) {
-	instructions, err := a.Source.LoadInstructions(ctx, name)
-	// plan-work is now plugin-qualified ("quack:plan-work", #1427 S2) - match
-	// by bare name so composition survives the prefix.
-	if err != nil || skillsource.BareName(name) != planWorkSkill {
-		return instructions, err
-	}
-	return compose(instructions, a.shapes), nil
-}
-
-// WrapRef is Wrap for a shapes list that can still change after this Source
-// is built elsewhere: it re-reads shapesRef every LoadInstructions call.
+// WrapRef appends shapesRef's current value to plan-work's table on every
+// LoadInstructions call - re-read live, since shapesRef can still change.
 func WrapRef(src skill.Source, shapesRef *atomic.Pointer[[]Shape]) skill.Source {
 	return &augmentedRef{Source: src, shapesRef: shapesRef}
 }
@@ -164,13 +139,20 @@ type augmentedRef struct {
 }
 
 func (a *augmentedRef) LoadInstructions(ctx context.Context, name string) (string, error) {
-	instructions, err := a.Source.LoadInstructions(ctx, name)
-	if err != nil || skillsource.BareName(name) != planWorkSkill {
-		return instructions, err
-	}
 	var shapes []Shape
 	if p := a.shapesRef.Load(); p != nil {
 		shapes = *p
+	}
+	if len(shapes) == 0 {
+		// Skip compose entirely - otherwise a shapeless deployment logs its
+		// "no Common workflows table" warning on every single load.
+		return a.Source.LoadInstructions(ctx, name)
+	}
+	instructions, err := a.Source.LoadInstructions(ctx, name)
+	// plan-work is now plugin-qualified ("quack:plan-work", #1427 S2) - match
+	// by bare name so composition survives the prefix.
+	if err != nil || skillsource.BareName(name) != planWorkSkill {
+		return instructions, err
 	}
 	return compose(instructions, shapes), nil
 }
