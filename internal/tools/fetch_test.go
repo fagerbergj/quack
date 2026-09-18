@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/artifact"
@@ -406,6 +408,21 @@ func TestPageTitle(t *testing.T) {
 	}
 }
 
+// TestPageTitle_UTF8SafeTruncation: a multi-byte rune straddling the
+// maxTitleLen cut point must not produce invalid UTF-8.
+func TestPageTitle_UTF8SafeTruncation(t *testing.T) {
+	// "€" is 3 bytes; maxTitleLen (200) isn't a multiple of 3, so a plain
+	// byte slice at maxTitleLen lands mid-rune.
+	title := strings.Repeat("€", 100)
+	got := pageTitle(title)
+	if !utf8.ValidString(got) {
+		t.Fatalf("pageTitle truncated result is not valid UTF-8: %q", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("pageTitle(long) = %q, want the truncation ellipsis", got)
+	}
+}
+
 // TestFetchGrepReadOffsetAgreeOnLineNumbers: grep_artifacts, read_artifact
 // and web_fetch's offset must all agree on the same stored page's line numbers.
 func TestFetchGrepReadOffsetAgreeOnLineNumbers(t *testing.T) {
@@ -466,6 +483,37 @@ func TestFetchGrepReadOffsetAgreeOnLineNumbers(t *testing.T) {
 	}
 }
 
+// TestFetchThenReadArtifact_KeepsProvenance: a stored page's url survives a
+// web_fetch → read_artifact round trip via lineage, not the (pure) content.
+func TestFetchThenReadArtifact_KeepsProvenance(t *testing.T) {
+	full := strings.Repeat("word ", fetchArtifactThreshold/5+100)
+	rc := recordstore.New(newMetaAwareInMemory(), "quack", "u1", "chat-a") // plain InMemoryService drops lineage
+	d := Deps{RecordStore: rc, NodeID: "n1"}
+	ctx := newFakeCtx()
+	const target = "https://ex.com/provenance-roundtrip"
+	f := newFakeFetcher(map[string]fakeFetchResult{target: {body: full}})
+
+	fetchResults := fetchBatch(ctx, d, f, []string{target}, "", 0)
+	header := fetchResults[0].Text
+	if fetchResults[0].Error != "" || !strings.Contains(header, "artifact:") {
+		t.Fatalf("expected the page to be stored, got %+v", fetchResults[0])
+	}
+	id := headerField(t, header, "artifact")
+
+	readTool, err := NewReadArtifactTool(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := readTool.(runnableTool).Run(newArtifactsToolCtx(), map[string]any{"id": id, "offset": 1, "lines": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _ := out["result"].(string)
+	if !strings.Contains(result, "url: "+target) {
+		t.Fatalf("read_artifact after a fetch-and-store = %q, want the provenance url line", result)
+	}
+}
+
 // parseGrepHitLine extracts the line number from a grep_artifacts hit
 // formatted "<id>:<line>: <text>".
 func parseGrepHitLine(t *testing.T, output, id string) int {
@@ -485,4 +533,51 @@ func parseGrepHitLine(t *testing.T, output, id string) int {
 		t.Fatalf("grep_artifacts hit line %q not a number: %v", rest[:end], err)
 	}
 	return n
+}
+
+// concurrencyTrackingFetcher: a fetcher double that records the peak number
+// of concurrently in-flight fetch calls.
+type concurrencyTrackingFetcher struct {
+	mu      sync.Mutex
+	current int
+	peak    int
+}
+
+func (f *concurrencyTrackingFetcher) fetch(_ adkagent.Context, _ Deps, _ *url.URL, target string) (string, error) {
+	f.mu.Lock()
+	f.current++
+	if f.current > f.peak {
+		f.peak = f.current
+	}
+	f.mu.Unlock()
+
+	time.Sleep(20 * time.Millisecond) // let other goroutines pile up behind the semaphore
+
+	f.mu.Lock()
+	f.current--
+	f.mu.Unlock()
+	return "body for " + target, nil
+}
+
+// TestFetchBatch_ConcurrencyBoundedByMaxConcurrentFetches pins the
+// maxConcurrentFetches semaphore: peak in-flight fetches never exceeds it.
+func TestFetchBatch_ConcurrencyBoundedByMaxConcurrentFetches(t *testing.T) {
+	const n = maxConcurrentFetches * 3
+	f := &concurrencyTrackingFetcher{}
+	urls := make([]string, n)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("https://ex.com/c%d", i)
+	}
+
+	fetchBatch(newFakeCtx(), Deps{}, f, urls, "", 0)
+
+	f.mu.Lock()
+	peak := f.peak
+	f.mu.Unlock()
+	if peak > maxConcurrentFetches {
+		t.Fatalf("peak concurrent fetches = %d, want <= %d", peak, maxConcurrentFetches)
+	}
+	if peak < maxConcurrentFetches {
+		t.Errorf("peak concurrent fetches = %d, want exactly %d (the bound should be reached with %d urls, not just respected)", peak, maxConcurrentFetches, n)
+	}
 }

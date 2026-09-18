@@ -321,17 +321,18 @@ func recordSearchResults(seen map[string]string, resp map[string]any) {
 	if resp == nil {
 		return
 	}
-	queries, ok := resp["queries"].([]any)
-	if !ok {
+	if queries, ok := resp["queries"].([]any); ok {
+		for _, q := range queries {
+			qm, ok := q.(map[string]any)
+			if !ok {
+				continue
+			}
+			recordSearchResultItems(seen, qm["results"])
+		}
 		return
 	}
-	for _, q := range queries {
-		qm, ok := q.(map[string]any)
-		if !ok {
-			continue
-		}
-		recordSearchResultItems(seen, qm["results"])
-	}
+	// Legacy: a pre-batching response has "results" at the top level, no per-query grouping.
+	recordSearchResultItems(seen, resp["results"])
 }
 
 // recordSearchResultItems: one query group's {url: snippet} extraction.

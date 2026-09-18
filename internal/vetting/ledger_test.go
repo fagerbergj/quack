@@ -565,6 +565,30 @@ func TestRecordSearchBatch(t *testing.T) {
 	}
 }
 
+// TestActivityAcceptsLegacyScalarSearchAndFetch: a pre-batching session
+// (scalar query/url, resp["result"], top-level results) still earns credit.
+func TestActivityAcceptsLegacyScalarSearchAndFetch(t *testing.T) {
+	const url = "https://ex.com/legacy"
+	sess := newTestSession(t,
+		fnCall("s1", "web_search", map[string]any{"query": "legacy query"}),
+		fnResp("s1", "web_search", map[string]any{"results": []any{
+			map[string]any{"url": "https://ex.com/seen", "snippet": "s"},
+		}}),
+		fnCall("f1", "web_fetch", map[string]any{"url": url}),
+		fnResp("f1", "web_fetch", map[string]any{"result": "legacy page text"}),
+	)
+	act := activityFromSessionAt(sess, "")
+	if len(act.searches) != 1 || act.searches[0] != "legacy query" {
+		t.Fatalf("searches = %v, want [legacy query]", act.searches)
+	}
+	if _, ok := act.seen["https://ex.com/seen"]; !ok {
+		t.Errorf("seen missing the legacy top-level web_search result")
+	}
+	if _, ok := act.fetched[url]; !ok {
+		t.Errorf("fetched missing %q from a legacy scalar web_fetch call/response", url)
+	}
+}
+
 // TestActivityWrittenDefaultsToTheNodeDir: a worker that never cd's writes into
 // its node dir (the default cwd), so the captured path must carry it.
 func TestActivityWrittenDefaultsToTheNodeDir(t *testing.T) {

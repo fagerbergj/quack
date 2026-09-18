@@ -257,6 +257,35 @@ func TestWriteArtifact_RejectsSystemKind(t *testing.T) {
 	}
 }
 
+// TestEditArtifact_RejectsSystemKind: edit_artifact must refuse a System
+// kind too - write_artifact alone isn't the only forgery path.
+func TestEditArtifact_RejectsSystemKind(t *testing.T) {
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	id, rev, err := rc.SaveBlob(context.Background(), kindWebPage, []byte("original page text"), "text/markdown", "https://ex.com/x", recordstore.Lineage{NodeID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tl, err := NewEditArtifactTool(rc, "n1", &RoundCoords{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("edit_artifact tool is not runnable")
+	}
+	if _, err := rt.Run(newArtifactsToolCtx(), map[string]any{
+		"id": id, "base_revision": rev,
+		"edits": []editArtifactEdit{{Old: "original", New: "forged"}},
+	}); err == nil {
+		t.Fatal("edit_artifact on a System kind should be refused")
+	}
+	raw, _, ok, err := rc.Latest(context.Background(), id)
+	if err != nil || !ok || string(raw) != "original page text" {
+		t.Fatalf("Latest: raw=%q ok=%v err=%v, want the content unchanged", raw, ok, err)
+	}
+}
+
 // TestNewEditArtifactTool_ConflictIsStructuredSuccess: a real conflict is a
 // structured success, not a tool error; pins the JSON payload shape with the
 // same field names as the MCP surface's editConflictResult so the surfaces can't drift (#1108 finding 3).
@@ -534,7 +563,8 @@ func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
 // grep_artifacts/read_artifact window tests.
 func storeWebPageArtifact(t *testing.T, rc *recordstore.Client, url, content string) string {
 	t.Helper()
-	id, _, err := rc.SaveBlob(context.Background(), kindWebPage, []byte(content), "text/markdown", url, recordstore.Lineage{NodeID: "n1"})
+	id, _, err := rc.SaveBlob(context.Background(), kindWebPage, []byte(content), "text/markdown", url,
+		recordstore.Lineage{NodeID: "n1", SourceURL: url, SavedAt: time.Now().UTC()})
 	if err != nil {
 		t.Fatalf("SaveBlob(web_page): %v", err)
 	}
@@ -684,5 +714,65 @@ func TestReadArtifactTool_WindowBypassesInlineLimit(t *testing.T) {
 	windowedResult, _ := windowed["result"].(string)
 	if !strings.Contains(windowedResult, "first line") {
 		t.Fatalf("windowed read of an oversized artifact = %q, want the first line", windowedResult)
+	}
+}
+
+// TestReadArtifactTool_ProvenanceHeader: a stored web_page's url must never
+// be lost to a read, whole or windowed - it comes from lineage, not content.
+func TestReadArtifactTool_ProvenanceHeader(t *testing.T) {
+	rc := recordstore.New(newMetaAwareInMemory(), "quack", "u1", "chat-a") // plain InMemoryService drops lineage
+	const url = "https://ex.com/provenance"
+	id := storeWebPageArtifact(t, rc, url, "# My Page\nline two\nline three")
+
+	tl, err := NewReadArtifactTool(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := tl.(runnableTool)
+
+	whole, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wholeResult, _ := whole["result"].(string)
+	if !strings.Contains(wholeResult, "url: "+url) || !strings.Contains(wholeResult, "title: My Page") {
+		t.Fatalf("whole read = %q, want a provenance line with the url and title", wholeResult)
+	}
+
+	windowed, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id, "offset": 2, "lines": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowedResult, _ := windowed["result"].(string)
+	if !strings.Contains(windowedResult, "url: "+url) {
+		t.Fatalf("windowed read = %q, want the provenance line too", windowedResult)
+	}
+	if !strings.Contains(windowedResult, "line two") || strings.Contains(windowedResult, "line three") {
+		t.Fatalf("windowed read = %q, want exactly line 2, unaffected by the provenance line", windowedResult)
+	}
+}
+
+// TestGrepArtifactsTool_ProvenanceHeaderOncePerID: one provenance line per
+// matching artifact, and every hit's own line number stays exact.
+func TestGrepArtifactsTool_ProvenanceHeaderOncePerID(t *testing.T) {
+	rc := recordstore.New(newMetaAwareInMemory(), "quack", "u1", "chat-a") // plain InMemoryService drops lineage
+	const url = "https://ex.com/multi-hit"
+	id := storeWebPageArtifact(t, rc, url, "needle one\nno match\nneedle two")
+
+	tl, err := NewGrepArtifactsTool(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := tl.(runnableTool)
+	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{"pattern": "needle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _ := out["result"].(string)
+	if n := strings.Count(result, "url: "+url); n != 1 {
+		t.Fatalf("result = %q, provenance line appeared %d times, want exactly 1", result, n)
+	}
+	if !strings.Contains(result, id+":1: needle one") || !strings.Contains(result, id+":3: needle two") {
+		t.Fatalf("result = %q, want both hits with their exact line numbers", result)
 	}
 }

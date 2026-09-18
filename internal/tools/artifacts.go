@@ -258,18 +258,25 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 		func(ctx agent.Context, a readArtifactArgs) (string, error) {
 			var data []byte
 			var mime string
+			var lineage recordstore.Lineage
 			var ok bool
 			var err error
 			if a.Revision > 0 {
 				data, ok, err = c.LoadVersion(ctx, a.ID, a.Revision)
 			} else {
-				data, mime, _, _, ok, err = c.LatestWithMeta(ctx, a.ID)
+				data, mime, lineage, _, ok, err = c.LatestWithMeta(ctx, a.ID)
 			}
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
 			if !ok {
 				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
+			}
+			// prov (a stored page's url/title/fetched_at) sits outside whatever
+			// follows, never inside the counted lines an offset/grep hit indexes.
+			prov := provenanceHeader(lineage, data)
+			if prov != "" {
+				prov += "\n\n"
 			}
 			// LoadVersion carries no stored mime; a historical revision falls back
 			// to a UTF-8 sniff (ponytail: a binary kind with a valid-UTF-8-looking old
@@ -281,10 +288,10 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 				if start < 1 {
 					start = 1
 				}
-				return windowLines(strings.Split(string(data), "\n"), start, a.Lines, strings.Count(string(data), "\n")+1), nil
+				return prov + windowLines(strings.Split(string(data), "\n"), start, a.Lines, strings.Count(string(data), "\n")+1), nil
 			}
 			if len(data) > artifactref.InlineMaxBytes {
-				return fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; pass offset/lines to read a window.",
+				return prov + fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; pass offset/lines to read a window.",
 					len(data), artifactref.InlineMaxBytes), nil
 			}
 			text := string(data)
@@ -292,9 +299,9 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 				text = base64.StdEncoding.EncodeToString(data)
 			}
 			if mime == "" {
-				return text, nil
+				return prov + text, nil
 			}
-			return fmt.Sprintf("mime: %s\n\n%s", mime, text), nil
+			return prov + fmt.Sprintf("mime: %s\n\n%s", mime, text), nil
 		},
 	)
 }
@@ -348,30 +355,39 @@ func NewGrepArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 func grepArtifactIDs(ctx agent.Context, c *recordstore.Client, ids []string, pattern string) string {
 	matchLine := compileGrepMatcher(pattern)
 	var hits []string
+	matched := 0
 	capped := false
+outer:
 	for _, id := range ids {
-		data, _, _, _, ok, err := c.LatestWithMeta(ctx, id)
+		data, _, lineage, _, ok, err := c.LatestWithMeta(ctx, id)
 		if err != nil || !ok {
 			continue
 		}
+		firstForID := true
 		for i, ln := range strings.Split(string(data), "\n") {
 			if !matchLine(ln) {
 				continue
 			}
-			if len(hits) >= fetchGrepMaxLines {
+			if matched >= fetchGrepMaxLines {
 				capped = true
-				break
+				break outer
+			}
+			// One provenance line per id, before its first hit - outside the
+			// per-line count so a hit's own line number stays exact.
+			if firstForID {
+				if prov := provenanceHeader(lineage, data); prov != "" {
+					hits = append(hits, prov)
+				}
+				firstForID = false
 			}
 			hits = append(hits, fmt.Sprintf("%s:%d: %s", id, i+1, strings.TrimSpace(ln)))
-		}
-		if capped {
-			break
+			matched++
 		}
 	}
 	if len(hits) == 0 {
 		return fmt.Sprintf("[no lines match %q across %d artifact(s)]", pattern, len(ids))
 	}
-	footer := fmt.Sprintf("\n\n[%d matching line(s).]", len(hits))
+	footer := fmt.Sprintf("\n\n[%d matching line(s).]", matched)
 	if capped {
 		footer = fmt.Sprintf("\n\n[first %d matches shown (more exist) - narrow the pattern.]", fetchGrepMaxLines)
 	}

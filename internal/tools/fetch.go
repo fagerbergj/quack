@@ -315,7 +315,7 @@ func pageTitle(text string) string {
 		if len(title) > maxTitleLen {
 			// A page with no line breaks at all (e.g. minified) would otherwise
 			// make "title" as large as the whole page.
-			title = title[:maxTitleLen] + "…"
+			title = strings.ToValidUTF8(title[:maxTitleLen], "") + "…"
 		}
 		return title
 	}
@@ -333,7 +333,7 @@ func storeWebPage(tc agent.Context, d Deps, target, full string, cacheHit, inclu
 			return webPageHeader(title, target, id, full, truncated, includeHead)
 		}
 	}
-	lineage := recordstore.Lineage{Author: "worker", SavedAt: time.Now().UTC()}
+	lineage := recordstore.Lineage{Author: "worker", SavedAt: time.Now().UTC(), SourceURL: target}
 	if d.NodeID != "" {
 		lineage.NodeID = d.NodeID
 	}
@@ -376,6 +376,16 @@ func webPageHeader(title, target, id, content string, truncated, includeHead boo
 		return base
 	}
 	return base + "\n\n" + windowLines(ls, 1, fetchHeadLines, len(ls))
+}
+
+// provenanceHeader: a one-line "url: ... title: ... fetched_at: ..." for a
+// stored page, from its lineage - "" for a non-web_page (no SourceURL) kind.
+func provenanceHeader(lineage recordstore.Lineage, content []byte) string {
+	if lineage.SourceURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("url: %s  title: %s  fetched_at: %s",
+		lineage.SourceURL, pageTitle(string(content)), lineage.SavedAt.UTC().Format(time.RFC3339))
 }
 
 // shapeFetchResult: returns grep matches, offset window, or head of cached page.

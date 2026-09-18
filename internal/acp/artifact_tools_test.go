@@ -235,6 +235,48 @@ func TestEditArtifactMCP_DirectApply(t *testing.T) {
 	}
 }
 
+// TestEditArtifactMCP_RejectsSystemKind: edit_artifact must refuse a System
+// kind - the write-time refusal alone isn't the only forgery path.
+func TestEditArtifactMCP_RejectsSystemKind(t *testing.T) {
+	const kind = "acp_test_system_kind_edit"
+	recordstore.Register(kind, recordstore.KindSpec{
+		Class:    recordstore.Blob,
+		Identity: func(_ []byte, hint string) (string, error) { return "x", nil },
+		System:   true,
+	})
+
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	rc := recordstore.New(svc, "quack", "u1", "chat-a")
+	id, rev, err := rc.SaveBlob(ctx, kind, []byte("original"), "text/plain", "hint", recordstore.Lineage{NodeID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "edit_artifact", Arguments: map[string]any{
+		"id": id, "base_revision": float64(rev),
+		"edits": []map[string]any{{"old": "original", "new": "forged"}},
+	}})
+	if err != nil {
+		t.Fatalf("CallTool edit_artifact: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("edit_artifact on a System kind should be refused, got: %s", toolResultText(t, res))
+	}
+	raw, _, ok, err := rc.Latest(ctx, id)
+	if err != nil || !ok || string(raw) != "original" {
+		t.Fatalf("Latest: raw=%q ok=%v err=%v, want the content unchanged", raw, ok, err)
+	}
+}
+
 // TestEditArtifactMCP_OldTextNewTextAlias: an ACP worker primed on the MCP
 // filesystem-server's edit_file convention sends oldText/newText instead of
 // this tool's own old/new - both spellings must apply the edit, so a worker guessing the wrong one never burns a redundant round trip (#1278 enumeration).
