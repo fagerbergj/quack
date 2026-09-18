@@ -139,10 +139,9 @@ type Config struct {
 	// JudgeModel: the boot judge model, or (#1421 P2) whichever bound-in model
 	// prepareJudge picked for the round - stamped with per-round coords like workerModel.
 	JudgeModel model.LLM
-	// RefreshJudgeBinding resolves system/judge's Config into this round's JudgeFactory,
-	// model (for JudgeModel/coord stamping) and thinking_level - never a shared mutable
-	// swapped in place, which would leak one round's binding into a concurrent one.
-	RefreshJudgeBinding func(art artifactsrc.Artifact) (JudgeFactory, model.LLM, string)
+	// RefreshJudgeBinding picks this round's own JudgeFactory/model/thinking_level;
+	// hasReadTools is the node's own tool eligibility, kept through a rebind.
+	RefreshJudgeBinding func(art artifactsrc.Artifact, hasReadTools bool) (JudgeFactory, model.LLM, string)
 	// ResumedFrom: dag.Node.ResumedFrom passed through - "" for a fresh
 	// node. Seeds an ACP node's first-round session/load id and marks the
 	// node.started ledger entry/stream event as a continuation.
@@ -153,6 +152,13 @@ type Config struct {
 	ReleaseJudge  func()
 	AdmitWorker   func(ctx context.Context) bool
 	ReleaseWorker func()
+}
+
+// HasWorkspaceClone reports whether this node's worker actually has a repo
+// checkout to read - ExternalWorker (ACP) nodes clone one; native nodes never
+// do, regardless of agent name (#1485).
+func (c Config) HasWorkspaceClone() bool {
+	return c.ExternalWorker && c.Workspace != nil
 }
 
 // SetupBranch mirrors dag.Plan.Setup delivery fields.

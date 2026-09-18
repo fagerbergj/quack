@@ -35,6 +35,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 		attribute.Slice("gen_ai.response.finish_reasons", attribute.StringValue("stop")),
 		attribute.Int64("gen_ai.usage.input_tokens", 7),
 		attribute.Int64("gen_ai.usage.cached_tokens", 3),
+		attribute.Int64("gen_ai.usage.reasoning_tokens", 5),
 		attribute.String("gen_ai.input.messages", `[{"authorization":"Bearer secret"}]`),
 		attribute.String("quack.prompt.source", "static"),
 		attribute.String("quack.prompt.version_id", "0123456789ab"),
@@ -76,7 +77,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.RequestModel != "m1" || p.FinishReason != "stop" || p.InputTokens != 7 || p.CachedTokens != 3 {
+	if p.RequestModel != "m1" || p.FinishReason != "stop" || p.InputTokens != 7 || p.CachedTokens != 3 || p.ReasoningTokens != 5 {
 		t.Errorf("payload = %+v", p)
 	}
 	if p.PromptSource != "static" || p.PromptVersionID != "0123456789ab" {

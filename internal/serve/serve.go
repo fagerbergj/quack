@@ -1228,9 +1228,10 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
+			judgeFactoryNoTools := vetting.NewJudgeFactory(judge, nil, judgeSkillsets)
 			// #1421 P2: each round gets its own bound-in factory+model, never one shared
 			// instance swapped in place (H1 - that let concurrent rounds race each other).
-			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judge, judgeFactory, judgeReadTools, judgeSkillsets)
+			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judge, judgeFactory, judgeFactoryNoTools, judgeReadTools, judgeSkillsets)
 			// Own instances: gated nodes stamp per-round coords on `judge` (vetting/node.go);
 			// these callers are not nodes, so sharing would inherit the last node's stamp (#1049).
 			unstamped := func() (model.LLM, error) {
@@ -1290,29 +1291,35 @@ func (b *judgeBinding) warnOnce(last *string, msg string, artifactName string, e
 // bindJudgeRefresher returns prepareJudge's per-round binder: system/judge's Config
 // picks this round's OWN JudgeFactory+model+thinking_level; an invalid value falls
 // back to gates.judge's static factory/model and logs once per distinct bad value.
-func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, staticModel model.LLM, staticFactory vetting.JudgeFactory, readTools []tool.Tool, skillsets []tool.Toolset) func(art artifactsrc.Artifact) (vetting.JudgeFactory, model.LLM, string) {
+func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, staticModel model.LLM, staticFactory, staticFactoryNoTools vetting.JudgeFactory, readTools []tool.Tool, skillsets []tool.Toolset) func(art artifactsrc.Artifact, hasReadTools bool) (vetting.JudgeFactory, model.LLM, string) {
 	staticEffort := cfg.Gates.Judge.ThinkingLevel
 	b := &judgeBinding{cache: map[string]judgeBoundModel{}}
-	return func(art artifactsrc.Artifact) (vetting.JudgeFactory, model.LLM, string) {
+	return func(art artifactsrc.Artifact, hasReadTools bool) (vetting.JudgeFactory, model.LLM, string) {
+		staticForNode := staticFactory
+		if !hasReadTools {
+			staticForNode = staticFactoryNoTools
+		}
 		bound, err := cfg.ResolveBinding(jprov, cfg.Gates.Judge.Model, art.Config)
 		if err != nil {
 			b.warnOnce(&b.lastBad, "judge prompt binding invalid; using gates.judge's static binding", art.Name, err)
-			return staticFactory, staticModel, staticEffort
+			return staticForNode, staticModel, staticEffort
 		}
 		b.mu.Lock()
 		b.lastBad = ""
 		b.mu.Unlock()
 		if bound == nil {
-			return staticFactory, staticModel, staticEffort
+			return staticForNode, staticModel, staticEffort
 		}
 		effort := staticEffort
 		if e, ok := art.Config["effort"].(string); ok && e != "" {
 			effort = e
 		}
-		// M3: (provider, model) identifies the swap; effort rides per-call thinking_level
-		// (judge.go), so it never needs a distinct model/HTTP pool of its own. Sound only
-		// because ResolveBinding's M4 check already forces provider to agree with model.
+		// M3: (provider, model) identifies the swap; effort rides thinking_level, not the key.
+		// hasReadTools rides it too - two nodes sharing a bound model must not share a factory.
 		key := bound.ProviderName + "|" + bound.Provider.Endpoint + "|" + bound.Model
+		if hasReadTools {
+			key += "|tools"
+		}
 		b.mu.Lock()
 		cached, ok := b.cache[key]
 		b.mu.Unlock()
@@ -1322,9 +1329,13 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 		m, err := inference.NewModel(bound.Provider, bound.Model, artifacts, cfg.ModelCost(bound.Model))
 		if err != nil {
 			b.warnOnce(&b.lastBadBuild, "judge prompt binding model build failed; using gates.judge's static binding", art.Name, err)
-			return staticFactory, staticModel, staticEffort
+			return staticForNode, staticModel, staticEffort
 		}
-		f := vetting.NewJudgeFactory(m, readTools, skillsets)
+		nodeReadTools := readTools
+		if !hasReadTools {
+			nodeReadTools = nil
+		}
+		f := vetting.NewJudgeFactory(m, nodeReadTools, skillsets)
 		b.mu.Lock()
 		b.cache[key] = judgeBoundModel{factory: f, model: m}
 		b.mu.Unlock()

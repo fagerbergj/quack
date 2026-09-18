@@ -40,22 +40,22 @@ func TestBindJudgeRefresher(t *testing.T) {
 		t.Fatalf("static judge model: %v", err)
 	}
 	staticFactory := vetting.NewJudgeFactory(static, nil, nil)
-	refresh := bindJudgeRefresher(cfg, jprov, artifact.InMemoryService(), static, staticFactory, nil, nil)
+	refresh := bindJudgeRefresher(cfg, jprov, artifact.InMemoryService(), static, staticFactory, staticFactory, nil, nil)
 
 	// No override: static binding, static thinking_level.
-	_, m, effort := refresh(artifactsrc.Artifact{Name: "system/judge"})
+	_, m, effort := refresh(artifactsrc.Artifact{Name: "system/judge"}, true)
 	if effort != "low" || m.Name() != "judge-model" {
 		t.Errorf("m=%q effort=%q, want judge-model/low", m.Name(), effort)
 	}
 
 	// Valid override: model, provider and effort all rebind.
-	_, m, effort = refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "bound-judge", "effort": "high"}})
+	_, m, effort = refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "bound-judge", "effort": "high"}}, true)
 	if effort != "high" || m.Name() != "bound-judge" {
 		t.Errorf("m=%q effort=%q, want bound-judge/high", m.Name(), effort)
 	}
 
 	// Invalid override: falls back to the static binding, not a broken round.
-	_, m, effort = refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "no-such-model"}})
+	_, m, effort = refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "no-such-model"}}, true)
 	if effort != "low" || m.Name() != "judge-model" {
 		t.Errorf("m=%q effort=%q, want the static judge-model/low after an invalid override", m.Name(), effort)
 	}
@@ -89,17 +89,49 @@ func TestBindJudgeRefresherCacheKeyIncludesProviderName(t *testing.T) {
 		t.Fatalf("static judge model: %v", err)
 	}
 	staticFactory := vetting.NewJudgeFactory(static, nil, nil)
-	refresh := bindJudgeRefresher(cfg, jprov, artifact.InMemoryService(), static, staticFactory, nil, nil)
+	refresh := bindJudgeRefresher(cfg, jprov, artifact.InMemoryService(), static, staticFactory, staticFactory, nil, nil)
 
-	_, modelA, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-a"}})
-	_, modelB, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-b"}})
+	_, modelA, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-a"}}, true)
+	_, modelB, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-b"}}, true)
 	if modelA == modelB {
 		t.Fatalf("model-a and model-b (different providers, same endpoint) resolved to the same cached model")
 	}
 	// Re-requesting model-a must hit the cache and return the exact same instance.
-	_, modelAAgain, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-a"}})
+	_, modelAAgain, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "model-a"}}, true)
 	if modelAAgain != modelA {
 		t.Fatalf("model-a was rebuilt instead of served from cache")
+	}
+}
+
+// TestBindJudgeRefresherCacheKeySeparatesReadToolsEligibility is #1485's
+// regression test: two nodes bound to the SAME override model - one a code
+// node (hasReadTools true), one a research node (hasReadTools false) - must
+// not share a cached factory, or the research node would inherit the code
+// node's repo read tools (or vice versa). Each hasReadTools value gets its
+// own cache entry and its own built model; repeating a value hits that entry.
+func TestBindJudgeRefresherCacheKeySeparatesReadToolsEligibility(t *testing.T) {
+	cfg, jprov := testJudgeBindCfg(t)
+	static, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
+	if err != nil {
+		t.Fatalf("static judge model: %v", err)
+	}
+	staticFactory := vetting.NewJudgeFactory(static, nil, nil)
+	refresh := bindJudgeRefresher(cfg, jprov, artifact.InMemoryService(), static, staticFactory, staticFactory, nil, nil)
+	art := artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": "bound-judge"}}
+
+	_, withTools, _ := refresh(art, true)
+	_, withoutTools, _ := refresh(art, false)
+	if withTools == withoutTools {
+		t.Fatalf("hasReadTools=true and hasReadTools=false shared a cached model for the same override")
+	}
+
+	_, withToolsAgain, _ := refresh(art, true)
+	if withToolsAgain != withTools {
+		t.Fatalf("hasReadTools=true was rebuilt instead of served from its own cache entry")
+	}
+	_, withoutToolsAgain, _ := refresh(art, false)
+	if withoutToolsAgain != withoutTools {
+		t.Fatalf("hasReadTools=false was rebuilt instead of served from its own cache entry")
 	}
 }
 
@@ -114,12 +146,12 @@ func TestBindJudgeRefresherConcurrentNoCrossTalk(t *testing.T) {
 		t.Fatalf("static judge model: %v", err)
 	}
 	staticFactory := vetting.NewJudgeFactory(static, nil, nil)
-	refresh := bindJudgeRefresher(cfg, jprov, artifact.InMemoryService(), static, staticFactory, nil, nil)
+	refresh := bindJudgeRefresher(cfg, jprov, artifact.InMemoryService(), static, staticFactory, staticFactory, nil, nil)
 
 	const rounds = 500
 	run := func(modelName string, mismatches *int) {
 		for i := 0; i < rounds; i++ {
-			_, m, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": modelName}})
+			_, m, _ := refresh(artifactsrc.Artifact{Name: "system/judge", Config: map[string]any{"model": modelName}}, true)
 			if m.Name() != modelName {
 				*mismatches++
 			}

@@ -960,7 +960,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	// didn't resolve - jp.art is its zero value then, which RefreshJudgeBinding
 	// (Config.ResolveBinding on a nil Config map) treats as no override.
 	if j.cfg.RefreshJudgeBinding != nil {
-		j.judge, j.cfg.JudgeModel, j.cfg.JudgeThinkingLevel = j.cfg.RefreshJudgeBinding(jp.art)
+		j.judge, j.cfg.JudgeModel, j.cfg.JudgeThinkingLevel = j.cfg.RefreshJudgeBinding(jp.art, j.cfg.HasWorkspaceClone())
 	}
 	// Ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.

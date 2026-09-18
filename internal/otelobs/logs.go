@@ -85,6 +85,9 @@ const (
 	QuackBundleHash        = "quack.bundle.hash"
 	GenAIUsageCost         = "gen_ai.usage.cost"
 	GenAIUsageCachedTokens = "gen_ai.usage.cached_tokens"
+	// GenAIUsageReasoningTokens: thinking-token spend, split out from output
+	// tokens - no registered semconv attribute yet (v1.41.0).
+	GenAIUsageReasoningTokens = "gen_ai.usage.reasoning_tokens"
 
 	// QuackPromptSource/QuackPromptVersionID: which store the round's system
 	// prompt resolved from and its version there (#1420) - provenance.
