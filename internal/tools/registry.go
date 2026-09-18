@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
@@ -27,7 +26,6 @@ type Deps struct {
 	Fetch           Backend
 	Summarizer      model.LLM
 	Cache           *URLCache
-	Advisor         adkagent.Agent
 	Sessions        session.Service
 	Workspace       *workspace.Jail
 	WorkspaceUserID string
@@ -67,7 +65,6 @@ var registry = map[string]constructor{
 	"recall_memory":  newRecallMemory,
 	"load_memory":    newLoadMemory,
 	"ask_user":       func(Deps) (tool.Tool, error) { return NewAskUserTool() },
-	"ask_advisor":    func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
 	"read_file":      newReadFile,
 	"list_dir":       newListDir,
 	"glob":           newGlob,

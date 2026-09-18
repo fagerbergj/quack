@@ -4,7 +4,7 @@ Limited local models bluff, so nothing a node's worker produces is trusted by de
 
 ```yaml
 gates:
-  constitution_path: config/constitution.md   # global principles, shared by the advisor + judge
+  constitution_path: config/constitution.md   # global principles, used by the judge
   rubric_path: config/rubric.md               # default scoring guide (an agent's own rubric.yaml wins)
   deterministic_checks:
     max_rounds: 4   # free citation/length checks; up to 4 cheap worker revise cycles
@@ -59,10 +59,6 @@ node:
 ```
 
 Independence still holds: the planner writes the rubric, a different model does the work, and a third (the judge) scores it.
-
-## The advisor is not a gate stage
-
-`agents/advisor` isn't one of the stages above - it's the `ask_advisor` *tool*, which a worker calls at its own discretion mid-run. It reuses the judge's provider/model and is only wired onto a worker's tool list when the judge is enabled (leaving `gates.judge.model` empty turns off both the judge and `ask_advisor` together).
 
 ## Dependents read the artifact
 

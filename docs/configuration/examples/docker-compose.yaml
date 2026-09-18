@@ -72,7 +72,7 @@ agents:
     memory:
       bucket: research
     judge_rounds: 1
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor]
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
   code-implementer:
     bundle: agents/code-implementer
     provider: default

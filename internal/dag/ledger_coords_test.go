@@ -76,7 +76,7 @@ func (a lcScopedAgent) ForNode(string, func() string, artifact.Service, string, 
 
 // ledgerCoordsStub calls current_date once, answers, and passes the judge (verdict 0.9) -
 // the shortest path producing one chat AND one execute_tool event. Local duplicate of dag's
-// unexported gCall/gText/gHasTool stub helpers (see ask_advisor_test.go's identical note).
+// unexported gCall/gText/gHasTool stub helpers (see graphrun_test.go's identical note).
 type ledgerCoordsStub struct{}
 
 func (ledgerCoordsStub) Name() string { return "ledgerCoordsStub" }

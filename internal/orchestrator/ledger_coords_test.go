@@ -22,7 +22,7 @@ import (
 
 // ledgerCaptureExporter records every emitted log record - a local duplicate
 // of dag_test's identically-named helper (unexported there; see that
-// package's ask_advisor_test.go comment on why these can't be shared).
+// package's ledger_coords_test.go comment on why these can't be shared).
 type ledgerCaptureExporter struct{ records []sdklog.Record }
 
 func (c *ledgerCaptureExporter) Export(_ context.Context, records []sdklog.Record) error {

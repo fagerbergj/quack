@@ -391,9 +391,7 @@ describe('ChatStore - mid-node steering', () => {
       'event: dag_plan',
       'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
       '',
-      // Worker's first draft (an ask_advisor consult may have happened inside this
-      // same run as an ordinary tool call - not a separate stage) - this becomes
-      // the answer.
+      // Worker's first draft - this becomes the answer.
       'event: agent_start',
       'data: {"node_id":"a","run_id":"worker-r0","agent":"researcher","stage":"worker"}',
       '',

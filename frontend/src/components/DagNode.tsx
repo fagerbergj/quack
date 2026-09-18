@@ -333,8 +333,7 @@ function CollapsedPreview({ label, text, popupTitle }: { label: string; text: st
 }
 
 
-// Renders the worker stage's activity as ONE continuous feed - ask_advisor
-// consults show up as ordinary tool calls. `runs` is one or more consecutive
+// Renders the worker stage's activity as ONE continuous feed. `runs` is one or more consecutive
 // same-stage worker runs (groupWorkerRuns): a mechanical continuation round (e.g. a deterministic-check retry, #399 follow-up) hands the worker another tool-bearing turn as a NEW run, but that's not a stage boundary the way a judge-triggered revise is - so the activity is concatenated, not a second boxed block. The vetted answer renders separately at the foot (NodeAnswer); each group keeps its own labeled header (without one, its rows attach to the labeled card above); memoized so an event re-renders only that run's group (#379).
 const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[]; running: boolean }) {
   const activity: Activity[] = runs.length === 1 ? runs[0].activity : runs.flatMap(r => r.activity)

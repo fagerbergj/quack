@@ -171,12 +171,6 @@ export const Grep: Story = render({
   result: { matches: [{ path: 'internal/dag/plan.go', line: 42, text: '// TODO: validate cycles' }], truncated: false, cwd: '.' },
 })
 
-export const AskAdvisor: Story = render({
-  callId: 'c', name: 'ask_advisor', done: true,
-  args: { request: "I'm about to fix the debounce timer leak - should I clear it in a cleanup or add a guard flag?" },
-  result: { advice: 'A cleanup function is the idiomatic React pattern - a guard flag is easy to forget on every new effect.' },
-})
-
 export const StageMemory: Story = render({
   callId: 'c', name: 'stage_memory', done: true,
   args: { content: 'This repo runs `go test ./...` before every commit.', kind: 'convention', bucket: 'repo' },

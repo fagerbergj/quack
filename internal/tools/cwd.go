@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"google.golang.org/adk/v2/agent"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -28,6 +29,21 @@ func cwdFromState(ctx agent.Context) string {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+// contentText concatenates a content's plain-text parts.
+func contentText(c *genai.Content) string {
+	if c == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, p := range c.Parts {
+		if p != nil && !p.Thought && p.Text != "" {
+			sb.WriteString(p.Text)
+			sb.WriteByte('\n')
+		}
+	}
+	return sb.String()
 }
 
 // scopeFromContext: derives per-chat and per-node scopes from advisor-thread marker.

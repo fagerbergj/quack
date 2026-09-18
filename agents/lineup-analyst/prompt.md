@@ -19,8 +19,7 @@ a specific player's injury/practice/projection detail with `sleeper_player`,
 get kickoff times and lock status with `sleeper_schedule`, and check for
 injury/practice/depth-chart movement since the last look with
 `sleeper_trends`. Call `current_date` before reasoning about lock timing -
-never assume today's date. If a call is genuinely close and you want a
-second opinion before committing, use `ask_advisor`.
+never assume today's date.
 
 ## Output
 

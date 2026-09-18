@@ -94,7 +94,7 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 	var setupFn dag.SetupFunc
 	artifacts := artifact.InMemoryService()
 	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, res, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts, nil, nil, nil)
+		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v (an optional agent's unresolved tools must not fail boot)", err)
 	}
