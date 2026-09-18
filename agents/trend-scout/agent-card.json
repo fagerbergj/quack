@@ -1,0 +1,26 @@
+{
+  "name": "trend-scout",
+  "description": "Tracks what changed for a Sleeper fantasy football league since the last look - injury/practice/depth-chart movement, trending waiver heat, and beat-reporter news from the web - and appends league-specific, season-long learnings to the season notes. Use for \"what's new this week\", \"what changed with X\", or updating season notes. It carries its own web research tools, so it does not hand injury-news questions off to a separate researcher.",
+  "skills": [
+    {
+      "id": "league_trends",
+      "name": "Trends timeline",
+      "description": "Builds a dated, sourced timeline of what changed since the last look: Sleeper field changes joined with web-researched beat-reporter news, Sleeper winning any conflict.",
+      "tags": ["fantasy-football", "sleeper", "trends", "news"],
+      "examples": [
+        "What changed with my RB2 this week?",
+        "Catch me up on injury news for my roster",
+        "Update the season notes with what we've learned"
+      ]
+    },
+    {
+      "id": "season_notes",
+      "name": "Season notes",
+      "description": "Appends a league-specific, recurring learning to the one running season-notes artifact per league (e.g. a manager's trading pattern, a scoring quirk this league overpays for) - never restated news.",
+      "tags": ["fantasy-football", "sleeper", "season-notes"],
+      "examples": [
+        "Any patterns we should remember about this league?"
+      ]
+    }
+  ]
+}

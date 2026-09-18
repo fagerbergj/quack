@@ -1,0 +1,95 @@
+scale:
+  min: 0
+  max: 3
+  pass: 2
+notes: >
+  Every criterion here is drawn from `research-r5-injury-news.md` (R5) via
+  the `sleeper:injury-and-news` skill, and from the owner's settled design
+  (`sleeper-agents-and-research.md`, 2026-09-18): Sleeper fields win any
+  conflict with web news, and season notes are league-specific learnings,
+  never restated news. Web citations follow the same retrieval-backed
+  standard as `web-researcher`'s `cites_sources`/`grounded` criteria - a URL
+  not actually fetched or seen in search this session is not grounded.
+criteria:
+  every_change_dated_and_sourced:
+    definition: >
+      Every timeline item carries a specific time and a named source - a
+      Sleeper field, or a reporter/outlet with a URL actually retrieved this
+      session.
+    steps:
+    - Check each timeline item has a time (or a clear "since last look"
+      anchor) and a source.
+    - For a web-sourced item, check the URL was fetched or seen in search
+      this session, not merely recalled.
+    - Check aggregator-only claims name the original source per the skill's
+      source ranking, not just the aggregator.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every item is dated and sourced, web items retrieval-backed, aggregator claims trace to an original source.
+    - min: 2.0
+      max: 2.0
+      meaning: every item is dated and sourced, but one web item cites an aggregator with no original source named.
+    - min: 1.0
+      max: 1.0
+      meaning: one item lacks a date or a checkable source.
+    - min: 0.0
+      max: 0.0
+      meaning: multiple items lack a date/source, or a cited URL was never actually retrieved this session.
+    anchors:
+    - quote
+    - omission
+  sleeper_wins_on_conflict:
+    definition: >
+      When a Sleeper field and a web report disagree about the same fact,
+      the timeline follows Sleeper and states the conflict rather than
+      silently picking the web version or presenting both as equally true.
+    steps:
+    - Identify any place a Sleeper-sourced fact and a web-sourced fact
+      could conflict (e.g. injury status).
+    - Check the answer states which source it followed when they conflict.
+    - Check Sleeper's field is the one followed, not the web report.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: any real conflict is named, and Sleeper's field is followed.
+    - min: 2.0
+      max: 2.0
+      meaning: no conflicts arose this round, and nothing in the answer contradicts the rule.
+    - min: 1.0
+      max: 1.0
+      meaning: a conflict exists but isn't explicitly flagged, even though the final call happens to match Sleeper.
+    - min: 0.0
+      max: 0.0
+      meaning: a conflict is resolved in favor of the web report over Sleeper's own field.
+    anchors:
+    - quote
+    - omission
+  season_notes_are_league_specific:
+    definition: >
+      Any appended season note is a recurring, league-specific learning
+      (a manager pattern, a scoring/format quirk this league misjudges) -
+      never a restatement of this week's news or a generic fantasy-football
+      tip.
+    steps:
+    - For each appended note, check it names something specific to this
+      league (a manager, a recurring pattern, a league setting).
+    - Check the note is phrased as forward-looking guidance, not a
+      recap of what just happened.
+    - If no note was warranted this round, check none was force-added.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: any appended note is league-specific and forward-looking; nothing is force-added when no real pattern exists.
+    - min: 2.0
+      max: 2.0
+      meaning: the note is league-specific, but leans slightly toward recapping this week rather than a durable pattern.
+    - min: 1.0
+      max: 1.0
+      meaning: a note is added that is generic fantasy-football advice rather than specific to this league.
+    - min: 0.0
+      max: 0.0
+      meaning: the note is a restatement of this week's news, or a note is force-added with no real recurring pattern behind it.
+    anchors:
+    - quote
+    - omission

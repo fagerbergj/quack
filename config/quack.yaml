@@ -419,6 +419,7 @@ plugins:
     - github:fagerbergj/dotagents           # general-purpose skills
     - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline
     - .agents/plugins/usage                 # manifest for the compiled-in usage extension
+    - .agents/plugins/sleeper               # start-sit/waivers/injury-and-news skills; no extensions block (skill-only), safe before the extension module is linked
 
 # workflows: a top-level key (not nested under skills:) that either teaches
 # plan-work's "Common workflows" table a deployment-specific DAG shape, or -

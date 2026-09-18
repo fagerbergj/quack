@@ -335,3 +335,37 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 		t.Errorf("acpSkillPaths = %v (%d), want 3 (main's count)", paths, len(paths))
 	}
 }
+
+// TestShippedSleeperPluginSkillsLoad mirrors TestNewSkillSourceMergesVendoredSkills
+// against the real shipped .agents/plugins/sleeper root (skill-only: no
+// extensions block, so admission never checks it against a linked module) -
+// each of its three skills and one representative resource per skill must
+// load through the same merged source an ACP/native agent actually reads.
+func TestShippedSleeperPluginSkillsLoad(t *testing.T) {
+	src := newSkillSource(resolvePlugins([]string{"../../.agents/plugins/sleeper"}))
+	ctx := context.Background()
+
+	cases := map[string]string{
+		"sleeper:start-sit":       "references/report.md",
+		"sleeper:waivers":         "references/faab-bidding.md",
+		"sleeper:injury-and-news": "references/sources.md",
+	}
+	for name, resource := range cases {
+		fm, err := src.LoadFrontmatter(ctx, name)
+		if err != nil {
+			t.Fatalf("LoadFrontmatter(%q): %v", name, err)
+		}
+		if fm.Name != name {
+			t.Errorf("frontmatter name = %q, want %q", fm.Name, name)
+		}
+		if _, err := src.LoadInstructions(ctx, name); err != nil {
+			t.Errorf("LoadInstructions(%q): %v", name, err)
+		}
+		rc, err := src.LoadResource(ctx, name, resource)
+		if err != nil {
+			t.Errorf("LoadResource(%q, %q): %v", name, resource, err)
+			continue
+		}
+		rc.Close()
+	}
+}
