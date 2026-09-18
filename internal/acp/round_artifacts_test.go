@@ -30,11 +30,11 @@ func TestRound_EmitsArtifactsAndPlugins(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, err := New("code-implementer", "external coder", Options{
-		Command: []string{os.Args[0]},
-		Env:     []string{"QUACK_ACP_FAKE=happy"},
-		Home:    t.TempDir(),
-		Jail:    jail,
-		UserID:  "u1",
+		Command:  []string{os.Args[0]},
+		Env:      []string{"QUACK_ACP_FAKE=happy"},
+		Home:     t.TempDir(),
+		Jail:     jail,
+		UserID:   "u1",
 		Plugins:  func() []ledger.PluginRef { return []ledger.PluginRef{{Name: "dotagents", SHA: "abc123"}} },
 		Preamble: func(context.Context) string { return "you are a coder" },
 		PreambleArtifact: func(context.Context) artifactsrc.Artifact {
