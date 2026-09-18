@@ -1464,7 +1464,7 @@ type nativeNodeBuilder struct {
 	res                *artifactsrc.Resolver
 }
 
-func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
+func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
 	base, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1498,6 +1498,9 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			MemoryRole:         b.ac.Memory.Bucket,
 			Ledger:             b.ledgerStore,
 			Repeats:            repeats,
+			RecordStore:        rc,
+			NodeID:             nodeID,
+			Coords:             coords,
 		}); err != nil {
 			return nil, nil, nil, fmt.Errorf("tools: %w", err)
 		}
@@ -1522,14 +1525,16 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 	prompts := b.bundle.PinPrompt(b.res)
 	var extraTools []tool.Tool
 	var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
+	var rc *recordstore.Client
+	var coords *tools.RoundCoords
 	if artifacts != nil {
-		rc := recordstore.New(artifacts, appName, userID, chatID)
+		rc = recordstore.New(artifacts, appName, userID, chatID)
 		// Same PGStore-only restriction as executor.SetWALLedger (#1153): write_<kind>
 		// must record parent_revision, but only over a transactional ledger.
 		if pg, ok := b.ledgerStore.(*ledger.PGStore); ok {
 			rc = rc.WithLedger(pg)
 		}
-		coords := &tools.RoundCoords{}
+		coords = &tools.RoundCoords{}
 		var terr error
 		if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.SubjectHint(chatID)); terr != nil {
 			return nil, nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
@@ -1538,7 +1543,7 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 			*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
 		}
 	}
-	wag, wm, builtins, err := b.buildWorker(prompts, drain, extraTools...)
+	wag, wm, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, extraTools...)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -1731,7 +1736,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		nodeServers:        nodeServers,
 		res:                res,
 	}
-	protoAgent, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil)
+	protoAgent, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil)
 	if err != nil {
 		return nil, fmtErr(name, "%v", err)
 	}

@@ -265,6 +265,10 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 		Name:        toolWriteArtifact,
 		Description: writeArtifactDescription(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args writeArtifactInput) (*mcp.CallToolResult, any, error) {
+		spec, ok := recordstore.SpecFor(args.Kind)
+		if ok && spec.System {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("write_artifact: kind %q is not writable directly", args.Kind)}}}, nil, nil
+		}
 		data := []byte(args.Bytes)
 		if !strings.HasPrefix(args.Mime, "text/") && args.Mime != "application/json" {
 			if b, err := base64.StdEncoding.DecodeString(args.Bytes); err == nil {
@@ -277,7 +281,7 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 		// subject hint - a hint-optional kind (text, bytes) must keep deriving its
 		// id from content, or every write from this chat would collapse onto one id (#1108 finding 2).
 		var hint string
-		if spec, ok := recordstore.SpecFor(args.Kind); ok && spec.RequiresHint {
+		if ok && spec.RequiresHint {
 			hint = vetting.SubjectHint(sess.ChatID)
 		}
 		id, rev, err := c.SaveBlob(ctx, args.Kind, data, args.Mime, hint, lineage)

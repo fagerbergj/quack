@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -270,7 +271,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 		return nil, g.refuse(sessionID, cn, true) // crossStreak fingerprints args AND result - this tier HAS confirmed it
 	}
 
-	resource, hasResource := resourceFingerprint(argsJSON)
+	resource, hasResource := resourceFingerprint(g.Name(), argsJSON)
 	resourceKey := g.Name() + ":" + resource
 	if hasResource {
 		if fails := g.states.resourceFailCount(sessionID, resourceKey); fails >= pathFailThreshold {
@@ -287,7 +288,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 
 	result, runErr := g.inner.Run(ctx, args)
 	if hasResource {
-		g.states.observeResourceFail(sessionID, resourceKey, runErr != nil)
+		g.states.observeResourceFail(sessionID, resourceKey, runErr != nil || batchAllFailed(g.Name(), result))
 	}
 	if crossTracked {
 		g.states.observeCrossResult(crossKey, resultFingerprint(result, runErr))
@@ -336,11 +337,17 @@ func (g *repeatGuard) hardStop(ctx agent.Context, sessionID, chatID, nodeID stri
 	return errors.New(msg)
 }
 
-// resourceFingerprint extracts the `path` or `url` field from tool args for failure-streak tracking.
-func resourceFingerprint(argsJSON []byte) (string, bool) {
+// resourceFingerprint extracts the `path`/`url` field, or web_fetch's sorted
+// `urls` batch, from tool args for failure-streak tracking.
+func resourceFingerprint(toolName string, argsJSON []byte) (string, bool) {
 	var m map[string]any
 	if err := json.Unmarshal(argsJSON, &m); err != nil {
 		return "", false
+	}
+	if toolName == "web_fetch" {
+		if urls, ok := batchURLFingerprint(m); ok {
+			return urls, true
+		}
 	}
 	for _, key := range []string{"path", "url"} {
 		if v, ok := m[key].(string); ok && v != "" {
@@ -348,6 +355,48 @@ func resourceFingerprint(argsJSON []byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// batchURLFingerprint: web_fetch's `urls` arg, sorted and joined - order-independent, so
+// the same batch retried with its URLs reshuffled still fingerprints identically.
+func batchURLFingerprint(args map[string]any) (string, bool) {
+	urls, ok := args["urls"].([]any)
+	if !ok {
+		return "", false
+	}
+	strs := make([]string, 0, len(urls))
+	for _, u := range urls {
+		if s, ok := u.(string); ok && s != "" {
+			strs = append(strs, s)
+		}
+	}
+	if len(strs) == 0 {
+		return "", false
+	}
+	sort.Strings(strs)
+	return strings.Join(strs, ","), true
+}
+
+// batchAllFailed reports a batched tool call that ran but returned no
+// successful entries (web_fetch's per-URL errors never surface as runErr).
+func batchAllFailed(toolName string, result map[string]any) bool {
+	if toolName != "web_fetch" {
+		return false
+	}
+	results, ok := result["results"].([]any)
+	if !ok || len(results) == 0 {
+		return false
+	}
+	for _, r := range results {
+		m, ok := r.(map[string]any)
+		if !ok {
+			return false
+		}
+		if _, failed := m["error"]; !failed {
+			return false
+		}
+	}
+	return true
 }
 
 // resultFingerprint serializes a call's own outcome so repeatStates can tell

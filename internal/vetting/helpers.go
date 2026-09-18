@@ -315,21 +315,30 @@ func contentPlainText(c *genai.Content) string {
 	return sb.String()
 }
 
-// recordSearchResults: extracts {url: snippet} from web_search response. First snippet wins.
+// recordSearchResults: extracts {url: snippet} from a batched web_search
+// response's per-query result groups. First snippet wins.
 func recordSearchResults(seen map[string]string, resp map[string]any) {
 	if resp == nil {
 		return
 	}
-	var items []any
-	switch r := resp["results"].(type) {
-	case []any:
-		items = r
-	case []map[string]any:
-		items = make([]any, len(r))
-		for i, m := range r {
-			items[i] = m
+	if queries, ok := resp["queries"].([]any); ok {
+		for _, q := range queries {
+			qm, ok := q.(map[string]any)
+			if !ok {
+				continue
+			}
+			recordSearchResultItems(seen, qm["results"])
 		}
-	default:
+		return
+	}
+	// Legacy: a pre-batching response has "results" at the top level, no per-query grouping.
+	recordSearchResultItems(seen, resp["results"])
+}
+
+// recordSearchResultItems: one query group's {url: snippet} extraction.
+func recordSearchResultItems(seen map[string]string, results any) {
+	items, ok := results.([]any)
+	if !ok {
 		return
 	}
 	for _, item := range items {

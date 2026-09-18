@@ -80,6 +80,9 @@ type KindSpec struct {
 	// (#1091) - false for a gate-only kind (judge_round, delivery_record) so
 	// a worker can't forge a verdict/delivery record into the gate's WAL.
 	AgentWritable bool
+	// System excludes a Blob kind from KindsForClass(Blob), so from
+	// write_artifact/MCP and the plan-level kind selector - agent-forgeable evidence risk (e.g. web_page).
+	System bool
 
 	name string // set only by Kinds(); not part of the registered spec
 }
@@ -154,6 +157,9 @@ type Lineage struct {
 	HeadSHA           string    `json:"head_sha,omitempty"`
 	SavedAt           time.Time `json:"saved_at"`
 	Author            string    `json:"author"`
+	// SourceURL: the external URL this revision's content was fetched from,
+	// if any (e.g. web_page) - content itself stays a pure copy of the page.
+	SourceURL string `json:"source_url,omitempty"`
 	// TurnID targets the store row's existing turn_id column (internal/store's
 	// TurnAwareService.SaveForTurn concept), not the lineage JSON blob -
 	// excluded from marshaling so it isn't duplicated in both places.
@@ -793,6 +799,9 @@ func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops [
 	if err != nil {
 		return 0, nil, err
 	}
+	if spec.System {
+		return 0, nil, fmt.Errorf("recordstore: edit %s: kind %q is not editable directly", id, kind)
+	}
 	// Structured edits target decoded field text - a raw byte search/replace on
 	// the serialized JSON breaks the moment New has a newline, quote, or
 	// backslash. Blob has no JSON structure to speak of, so it keeps the byte path.
@@ -830,7 +839,7 @@ func KindsForClass(class Class) []KindSpec {
 	defer registryMu.RUnlock()
 	out := make([]KindSpec, 0, len(registry))
 	for name, spec := range registry {
-		if spec.Class != class {
+		if spec.Class != class || spec.System {
 			continue
 		}
 		spec.name = name

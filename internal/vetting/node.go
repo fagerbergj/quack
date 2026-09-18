@@ -2199,13 +2199,13 @@ func writtenRel(nodeDir, cwd, p string) string {
 // activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.
 func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity {
 	s := &activityScanner{
-		act:           workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
-		nodeDir:       nodeDir,
-		writtenSeen:   map[string]bool{},
-		pending:       map[string]string{},
-		pendingWs:     map[string]map[string]any{},
-		pendingWsTool: map[string]string{},
-		pendingCd:     map[string]bool{},
+		act:              workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
+		nodeDir:          nodeDir,
+		writtenSeen:      map[string]bool{},
+		pendingWs:        map[string]map[string]any{},
+		pendingWsTool:    map[string]string{},
+		pendingCd:        map[string]bool{},
+		pendingLegacyURL: map[string]string{},
 	}
 	if sess == nil {
 		return s.act
@@ -2245,10 +2245,13 @@ func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
 	case "web_search":
 		s.recordSearch(fc.Args)
 	case "web_fetch":
+		// Pre-batching call shape (args["url"], scalar): its response carries no
+		// url of its own, so stash it here for recordFetch's legacy path.
 		if u, ok := fc.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
-			s.pending[fc.ID] = strings.TrimSpace(u)
+			s.pendingLegacyURL[fc.ID] = strings.TrimSpace(u)
 		}
-		// Route into workspace ledger (web_fetch signals web-sourced claims).
+		// Route into workspace ledger (web_fetch signals web-sourced claims);
+		// which URLs it fetched is read back from the response itself (recordFetch), since one batched call covers many.
 		s.pendingWs[fc.ID] = fc.Args
 		s.pendingWsTool[fc.ID] = "web_fetch"
 	case "stage_memory":
@@ -2272,10 +2275,9 @@ func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
 func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 	switch {
 	case fr.Name == "web_fetch":
-		if url, known := s.pending[fr.ID]; known {
-			delete(s.pending, fr.ID)
-			s.recordFetch(url, fr.Response)
-		}
+		legacyURL := s.pendingLegacyURL[fr.ID]
+		delete(s.pendingLegacyURL, fr.ID)
+		s.recordFetch(legacyURL, fr.Response)
 	case fr.Name == "web_search":
 		recordSearchResults(s.act.seen, fr.Response)
 	case fr.Name == "recall_memory", fr.Name == "load_memory":
@@ -2302,10 +2304,12 @@ type activityScanner struct {
 	nodeDir       string
 	curCwd        string          // node-relative cwd ("" = node root)
 	writtenSeen   map[string]bool // dedup for written
-	pending       map[string]string
 	pendingWs     map[string]map[string]any
 	pendingWsTool map[string]string
 	pendingCd     map[string]bool
+	// pendingLegacyURL: pre-batching web_fetch calls (args["url"], a scalar) -
+	// a pre-upgrade session's response has no "url" of its own to key off.
+	pendingLegacyURL map[string]string
 }
 
 // recordPRNumber: captures pull_number for delivery target. First call wins.
@@ -2334,15 +2338,46 @@ func (s *activityScanner) applyDelivery(fc *genai.FunctionCall) {
 	s.act.stagedDelivery[target] = item
 }
 
+// recordSearch: batched args["queries"] ([]any), or a pre-batching
+// session's scalar args["query"] (a legacy transcript has no other shape).
 func (s *activityScanner) recordSearch(args map[string]any) {
+	if qs, ok := args["queries"].([]any); ok {
+		for _, q := range qs {
+			if s2, ok := q.(string); ok && strings.TrimSpace(s2) != "" {
+				s.act.searches = append(s.act.searches, strings.TrimSpace(s2))
+			}
+		}
+		return
+	}
 	if q, ok := args["query"].(string); ok && strings.TrimSpace(q) != "" {
 		s.act.searches = append(s.act.searches, strings.TrimSpace(q))
 	}
 }
 
-func (s *activityScanner) recordFetch(url string, resp map[string]any) {
+// recordFetch: marks every successfully fetched URL in a batched response -
+// a stored-artifact header counts the same as inline text; an error doesn't.
+// legacyURL backs a pre-batching response (resp["result"], no url of its own).
+func (s *activityScanner) recordFetch(legacyURL string, resp map[string]any) {
+	if results, ok := resp["results"].([]any); ok {
+		for _, r := range results {
+			m, ok := r.(map[string]any)
+			if !ok {
+				continue
+			}
+			if _, failed := m["error"]; failed {
+				continue
+			}
+			if u, ok := m["url"].(string); ok && strings.TrimSpace(u) != "" {
+				s.act.fetched[strings.TrimSpace(u)] = struct{}{}
+			}
+		}
+		return
+	}
+	if legacyURL == "" {
+		return
+	}
 	if result, ok := resp["result"].(string); ok && strings.TrimSpace(result) != "" {
-		s.act.fetched[url] = struct{}{}
+		s.act.fetched[legacyURL] = struct{}{}
 	}
 }
 

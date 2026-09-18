@@ -9,10 +9,14 @@ import (
 
 func TestRecordSearchResults(t *testing.T) {
 	seen := map[string]string{}
-	resp := map[string]any{"results": []any{
-		map[string]any{"url": "https://a.com/x", "snippet": "snippet a", "title": "A"},
-		map[string]any{"url": "https://b.com/y", "snippet": "snippet b"},
-		map[string]any{"title": "no url here"}, // skipped: no url
+	resp := map[string]any{"queries": []any{
+		map[string]any{"query": "a", "results": []any{
+			map[string]any{"url": "https://a.com/x", "snippet": "snippet a", "title": "A"},
+			map[string]any{"title": "no url here"}, // skipped: no url
+		}},
+		map[string]any{"query": "b", "results": []any{
+			map[string]any{"url": "https://b.com/y", "snippet": "snippet b"},
+		}},
 	}}
 	recordSearchResults(seen, resp)
 	if seen["https://a.com/x"] != "snippet a" {

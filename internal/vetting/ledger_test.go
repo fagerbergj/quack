@@ -117,6 +117,28 @@ func TestRecordWsOpFailureIsRecorded(t *testing.T) {
 	}
 }
 
+// TestRecordWsOpWebFetchAllFailedIsRecorded: an all-failed batch must show
+// FAILED to the judge, not read as success just because resp["error"] is unset.
+func TestRecordWsOpWebFetchAllFailedIsRecorded(t *testing.T) {
+	allFailed := recordWsOp("web_fetch", map[string]any{"urls": []any{"https://a.com", "https://b.com"}},
+		map[string]any{"results": []any{
+			map[string]any{"url": "https://a.com", "error": "404"},
+			map[string]any{"url": "https://b.com", "error": "timeout"},
+		}})
+	if !strings.Contains(allFailed.detail, "FAILED") {
+		t.Errorf("all-failed batch detail = %q, want a FAILED marker", allFailed.detail)
+	}
+
+	partial := recordWsOp("web_fetch", map[string]any{"urls": []any{"https://a.com", "https://b.com"}},
+		map[string]any{"results": []any{
+			map[string]any{"url": "https://a.com", "text": "ok"},
+			map[string]any{"url": "https://b.com", "error": "404"},
+		}})
+	if strings.Contains(partial.detail, "FAILED") {
+		t.Errorf("partially-successful batch detail = %q, must not show FAILED", partial.detail)
+	}
+}
+
 func TestRecordWsOpReadFileKeepsSample(t *testing.T) {
 	op := recordWsOp("read_file", map[string]any{"path": "README.md"},
 		map[string]any{"content": "# Real README\nreal first line", "total_lines": float64(2)})
@@ -473,8 +495,10 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 func TestWebFetchEntersWorkspaceLedger(t *testing.T) {
 	const url = "https://raw.githubusercontent.com/example/repo/main/internal/tools/exa.go"
 	sess := newTestSession(t,
-		fnCall("f1", "web_fetch", map[string]any{"url": url}),
-		fnResp("f1", "web_fetch", map[string]any{"result": "package tools\n// exa.go contents"}),
+		fnCall("f1", "web_fetch", map[string]any{"urls": []any{url}}),
+		fnResp("f1", "web_fetch", map[string]any{"results": []any{
+			map[string]any{"url": url, "text": "package tools\n// exa.go contents"},
+		}}),
 	)
 	act := activityFromSessionAt(sess, "")
 
@@ -495,6 +519,73 @@ func TestWebFetchEntersWorkspaceLedger(t *testing.T) {
 	// The section the judge reads renders the fetch, giving it a red flag to react to.
 	if ws := buildWorkspaceSection(act); !strings.Contains(ws, "web_fetch") || !strings.Contains(ws, url) {
 		t.Errorf("workspace section missing the web_fetch entry:\n%s", ws)
+	}
+}
+
+// TestRecordFetchBatch: the citation check must see a stored-artifact
+// header as fetched too, and a per-URL error entry as not fetched.
+func TestRecordFetchBatch(t *testing.T) {
+	const small = "https://ex.com/small"
+	const large = "https://ex.com/large"
+	const bad = "https://ex.com/bad"
+	sess := newTestSession(t,
+		fnCall("f1", "web_fetch", map[string]any{"urls": []any{small, large, bad}}),
+		fnResp("f1", "web_fetch", map[string]any{"results": []any{
+			map[string]any{"url": small, "text": "short page text"},
+			map[string]any{"url": large, "text": "title: T\nurl: " + large + "\nartifact: web_page:abc\nlines: 900\n\n...head..."},
+			map[string]any{"url": bad, "error": "web_fetch: 404"},
+		}}),
+	)
+	act := activityFromSessionAt(sess, "")
+	for _, u := range []string{small, large} {
+		if _, ok := act.fetched[u]; !ok {
+			t.Errorf("act.fetched missing %q; a successful batch entry (inline or stored) must count as fetched", u)
+		}
+	}
+	if _, ok := act.fetched[bad]; ok {
+		t.Errorf("act.fetched has %q; a per-URL error entry must not count as fetched", bad)
+	}
+}
+
+// TestRecordSearchBatch: a batched web_search call's queries all land in
+// act.searches, blanks skipped.
+func TestRecordSearchBatch(t *testing.T) {
+	sess := newTestSession(t,
+		fnCall("s1", "web_search", map[string]any{"queries": []any{"first query", "", "second query"}}),
+	)
+	act := activityFromSessionAt(sess, "")
+	want := []string{"first query", "second query"}
+	if len(act.searches) != len(want) {
+		t.Fatalf("searches = %v, want %v", act.searches, want)
+	}
+	for i, w := range want {
+		if act.searches[i] != w {
+			t.Errorf("searches[%d] = %q, want %q", i, act.searches[i], w)
+		}
+	}
+}
+
+// TestActivityAcceptsLegacyScalarSearchAndFetch: a pre-batching session
+// (scalar query/url, resp["result"], top-level results) still earns credit.
+func TestActivityAcceptsLegacyScalarSearchAndFetch(t *testing.T) {
+	const url = "https://ex.com/legacy"
+	sess := newTestSession(t,
+		fnCall("s1", "web_search", map[string]any{"query": "legacy query"}),
+		fnResp("s1", "web_search", map[string]any{"results": []any{
+			map[string]any{"url": "https://ex.com/seen", "snippet": "s"},
+		}}),
+		fnCall("f1", "web_fetch", map[string]any{"url": url}),
+		fnResp("f1", "web_fetch", map[string]any{"result": "legacy page text"}),
+	)
+	act := activityFromSessionAt(sess, "")
+	if len(act.searches) != 1 || act.searches[0] != "legacy query" {
+		t.Fatalf("searches = %v, want [legacy query]", act.searches)
+	}
+	if _, ok := act.seen["https://ex.com/seen"]; !ok {
+		t.Errorf("seen missing the legacy top-level web_search result")
+	}
+	if _, ok := act.fetched[url]; !ok {
+		t.Errorf("fetched missing %q from a legacy scalar web_fetch call/response", url)
 	}
 }
 

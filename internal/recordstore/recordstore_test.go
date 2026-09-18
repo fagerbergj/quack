@@ -132,6 +132,7 @@ func init() {
 			return string(content), nil // trivial "hash" for the test
 		},
 	})
+	Register("test.system", KindSpec{Class: Blob, Identity: hintIdentity, System: true})
 }
 
 func newTestClient(t *testing.T) *Client {
@@ -334,6 +335,24 @@ func TestEditDirectApply(t *testing.T) {
 	var d doc
 	if err := json.Unmarshal(merged, &d); err != nil || d.A != "world" {
 		t.Fatalf("merged = %s, err=%v", merged, err)
+	}
+}
+
+// TestEditRejectsSystemKind: tryEdit must refuse a System kind - the one
+// place both the native and MCP edit_artifact surfaces route through.
+func TestEditRejectsSystemKind(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev, err := c.SaveBlob(ctx, "test.system", []byte("original"), "text/plain", "hint", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, id, rev, []EditOp{{Old: "original", New: "forged"}}, Lineage{}); err == nil {
+		t.Fatal("Edit on a System kind should be refused")
+	}
+	raw, _, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok || string(raw) != "original" {
+		t.Fatalf("Latest: raw=%q ok=%v err=%v, want the content unchanged", raw, ok, err)
 	}
 }
 
