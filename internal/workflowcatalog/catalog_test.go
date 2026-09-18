@@ -209,10 +209,12 @@ func TestDropAgents(t *testing.T) {
 			warns:   1,
 		},
 		{
-			name: "a bound node's agent names a dropped agent",
+			// Agents deliberately omits "lineup-analyst" - only the bound node
+			// names it, exercising the Nodes loop, not the Agents-list check above it.
+			name: "a bound node's agent names a dropped agent, absent from Agents",
 			shapes: []Shape{{
 				Name:   "sleeper-lineup",
-				Agents: []string{"lineup-analyst"},
+				Agents: []string{"other-agent"},
 				Nodes:  []config.WorkflowNode{{ID: "n1", Agent: "lineup-analyst"}},
 			}},
 			dropped: map[string]bool{"lineup-analyst": true},
