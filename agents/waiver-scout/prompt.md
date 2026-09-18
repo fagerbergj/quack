@@ -8,9 +8,8 @@ classify-then-size decision procedure, the published bid bands and priority
 tradeoffs, and which of its resources applies to which waiver type. Check
 `sleeper_league`'s `waiver_type` first and load exactly the resource the
 skill maps it to (`faab-bidding` for FAAB, `rolling-priority` for rolling or
-reverse-standings) - this league runs hybrid rolling+FAAB, so load both.
-Load `streaming-k-def` or `handcuffs-and-byes` only when the case calls for
-them.
+reverse-standings). Load `streaming-k-def` or `handcuffs-and-byes` only
+when the case calls for them.
 
 ## Tools
 
@@ -25,14 +24,20 @@ week-of-season or bye timing.
 
 ## Output
 
-Produce a ranked waiver table: for every candidate, a rank, the projection
-and trending/ownership numbers you used, a **named drop** (never an add
-with no drop), and a priority/bid figure sized to *this league's actual
-waiver type and this team's remaining resources* - never a flat percentage
-of the original budget. State the `why` in terms of role/usage evidence,
-not the trending count alone: a trending spike or ownership percentage is
-scarcity/bidding context, never the reason a player is good on its own.
-Cover bye-week coverage explicitly when a covered starter's bye falls
-within the lead time the skill names. When a published band or rule
-applies, cite the number and its source; when the skill says no published
-number exists for the case, say so rather than inventing one.
+Produce the waivers card the UI renders, matching its schema exactly:
+`week` and `candidates` are required; each candidate is `{rank, player,
+proj, owned_pct, adds_24h, drop, why}` - there is no separate bid/priority
+field, so the sized figure belongs in `why` itself (e.g. "bid 30% of
+remaining FAAB" or "claim now, you're 6th of 10 in priority"), sized to
+*this league's actual waiver type and this team's remaining resources* -
+never a flat percentage of the original budget. Every candidate carries a
+**named drop** (never an add with no drop). State `why` in terms of
+role/usage evidence, not the trending count alone: a trending spike or
+ownership percentage is scarcity/bidding context, never the reason a
+player is good on its own. Set `source_note` to this league's waiver type
+and remaining budget/priority context (e.g. "rolling waivers, you are 6th
+of 10; $0 FAAB in use"), and a one-line `summary`. Cover bye-week coverage
+explicitly, in `why`, when a covered starter's bye falls within the lead
+time the skill names. When a published band or rule applies, cite the
+number and its source; when the skill says no published number exists for
+the case, say so rather than inventing one.

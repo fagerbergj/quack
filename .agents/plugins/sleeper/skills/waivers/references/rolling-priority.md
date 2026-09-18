@@ -13,9 +13,10 @@ priority resets weekly by current record instead of on claim.
 ## The core tradeoff (both positions published, surface both)
 
 - **Aggressive ("sniping is dead"):** burn priority on real value when it
-  surfaces — waiting doesn't lower the price, it just risks losing the
-  player. "Sunday Night Shop": buy next week's target during this week's
-  window, before the market converges ([4for4, Aug 28, 2026](https://www.4for4.com/2026/preseason/ultimate-guide-winning-waiver-wire-2026)).
+  surfaces — the discipline lives in pre-set rules, not in waiting. "Sunday
+  Night Shop": buy next week's target during this week's window or
+  free-agency gap, before the market converges — "the price is only high
+  because all twelve of you showed up at once" ([4for4, Aug 28, 2026](https://www.4for4.com/2026/preseason/ultimate-guide-winning-waiver-wire-2026)).
 - **Patient (priority as ammo):** spending priority early on a medium-upside
   player means entering a later week at the back of the queue when a true
   RB1 vacancy opens — priority is an option with real value in reserve

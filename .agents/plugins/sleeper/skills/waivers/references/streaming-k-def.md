@@ -15,8 +15,9 @@ total, an offense that stalls in field-goal range.
 - Availability gate (sources conflict — surface both): ≥50% of leagues
   ([Footballguys](https://www.footballguys.com/article/2026-rent-a-kicker-week02))
   vs. ≤40% of Yahoo leagues ([4for4, Week 3 2025](https://www.4for4.com/2025/w3/fantasy-football-kicker-streaming-week-3-no-need-prater-fantasy-points)).
-- Hold exceptions exist only at the edges: only kickers who finished top-10
-  in each of the prior two seasons are worth a speculative hold ([USA TODAY, Sep 2, 2025](https://www.usatoday.com/story/sports/fantasy/football/2025/09/02/fantasy-football-strategy-streaming-kickers/85927174007/)).
+- Hold exceptions exist only at the edges: only two kickers (Aubrey,
+  Dicker) finished top-10 in each of the prior two seasons, and they "seem
+  to be the only ones worth a speculative pick" ([USA TODAY, Sep 2, 2025](https://www.usatoday.com/story/sports/fantasy/football/2025/09/02/fantasy-football-strategy-streaming-kickers/85927174007/)).
   A simulation study finds the honest answer is conditional: streaming wins
   in an uncoordinated league, holding a top/dome kicker wins if the whole
   league is chasing top scorers too ([Subvertadown](https://subvertadown.com/article/analysis-of-holding-vs-streaming-kickers)).

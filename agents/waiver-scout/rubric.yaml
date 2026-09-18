@@ -5,11 +5,12 @@ scale:
 notes: >
   Every criterion here is drawn from `research-r2-waivers.md` (R2) via the
   `sleeper:waivers` skill, primarily its "what bad advice looks like" list.
-  The owner's league runs hybrid rolling-priority + FAAB waivers - sizing
-  advice must be checked against `sleeper_league`'s actual `waiver_type`,
-  not assumed. When the skill/report states no published number covers a
-  case, an answer that says so is fully grounded and must not be penalized
-  for lacking an invented figure.
+  The league's actual waiver type is whatever `sleeper_league` reports, not
+  assumed - never grade sizing against a waiver type the answer didn't
+  check. The `waivers` artifact has no separate bid/priority field; the
+  sized figure belongs in each candidate's `why`. When the skill/report
+  states no published number covers a case, an answer that says so is
+  fully grounded and must not be penalized for lacking an invented figure.
 criteria:
   ranked:
     definition: >
@@ -64,9 +65,11 @@ criteria:
     - omission
   priority_or_bid_sized_to_waiver_type:
     definition: >
-      Waiver priority spend or FAAB bid size matches this league's actual
-      `waiver_type` (checked via `sleeper_league`) and this team's
-      remaining resources, using the published bid bands by need tier.
+      Waiver priority spend or FAAB bid size, stated in each candidate's
+      `why` (the artifact has no separate bid/priority field), matches this
+      league's actual `waiver_type` (checked via `sleeper_league`) and this
+      team's remaining resources, using the published bid bands by need
+      tier.
     steps:
     - Check the answer checked or states the league's waiver type before
       sizing.

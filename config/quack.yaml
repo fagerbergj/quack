@@ -244,40 +244,6 @@ agents:
     inputs: [text, image]
     judge: false      # single-pass transcription with no rubric criteria to judge; not a vision limitation
 
-# Sleeper fantasy-football agents (quack-extensions #94/#95/#96). Commented
-# out: buildAgents (internal/serve/serve.go) resolves every configured
-# agent's tools: list eagerly at boot via tools.Build, which errors on any
-# name neither in the builtin registry nor ExtTools (internal/tools/registry.go).
-# ExtTools is populated only from extensions actually blank-imported in
-# internal/serve/extensions_registry.go, and quack-extensions/sleeper isn't
-# pinned in go.mod or imported there yet - so an uncommented binding here
-# would fail `go test ./internal/serve/...` (stagedeliver_test.go rebuilds
-# every native agent's real tool set) and server boot on a plain `go build`
-# clone, breaking CLAUDE.md's "boots with nothing vendored" guarantee.
-# Uncomment once the sleeper module is pinned and blank-imported.
-#
-#  lineup-analyst:
-#    bundle: agents/lineup-analyst
-#    skills: [sleeper:start-sit]
-#    provider: default
-#    model: ${QUACK_RESEARCHER_MODEL}
-#    context_window: 65536
-#    tools: [sleeper_roster, sleeper_matchup, sleeper_player, sleeper_schedule, sleeper_trends, current_date, ask_advisor]
-#  waiver-scout:
-#    bundle: agents/waiver-scout
-#    skills: [sleeper:waivers]
-#    provider: default
-#    model: ${QUACK_RESEARCHER_MODEL}
-#    context_window: 65536
-#    tools: [sleeper_free_agents, sleeper_roster, sleeper_transactions, sleeper_trends, sleeper_schedule, sleeper_league, current_date]
-#  trend-scout:
-#    bundle: agents/trend-scout
-#    skills: [sleeper:injury-and-news]
-#    provider: default
-#    model: ${QUACK_RESEARCHER_MODEL}
-#    context_window: 65536
-#    tools: [sleeper_trends, sleeper_player, sleeper_transactions, web_search, web_fetch, summarize, current_date]
-
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +
 # connection) and may override its namespace (collection/schema). See

@@ -39,8 +39,10 @@ market: worked example, an 8 PPR-point/week upgrade × 12 remaining weeks =
 
 ## Auction mechanics
 
-Bidders cluster on round numbers — $11/$26/$51-style odd bids win a
-disproportionate share of ties ([4for4, Aug 28, 2026](https://www.4for4.com/2026/preseason/ultimate-guide-winning-waiver-wire-2026)).
+Bidders cluster on round numbers — a $11/$26/$51-style odd bid wins a
+shocking number of auctions outright for one extra dollar over that
+cluster; ties fall back to waiver priority, so bidding odd is how you
+*avoid* a tie rather than how you win one ([4for4, Aug 28, 2026](https://www.4for4.com/2026/preseason/ultimate-guide-winning-waiver-wire-2026)).
 Game-theoretically, a first-price sealed-bid equilibrium shades bids to
 about (n-1)/n of true value — ~90% at 10 bidders ([Wikipedia, bid
 shading](https://en.wikipedia.org/wiki/Bid_shading)) — a theoretical anchor,
@@ -49,5 +51,5 @@ not a number any mainstream fantasy source publishes directly.
 ## No published number
 
 No single by-week-of-season spending model is agreed (see the waivers
-SKILL.md's "what bad advice looks like"). State which published stance is
-being applied.
+SKILL.md's "No published number" section for the four-plus-one stances).
+State which published stance is being applied.

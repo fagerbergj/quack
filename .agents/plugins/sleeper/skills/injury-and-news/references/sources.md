@@ -8,11 +8,14 @@ Source: `research-r5-injury-news.md` §11, "Where experts disagree" #1.
 2. Locker-room / one-on-one quotes.
 3. Second-hand / press-box accounts.
 4. Anonymous "sources."
-5. The team's own announcement — definitive, but arrives last.
-6. Aggregators — republish others' observations with a lag; "the slowest
-   useful tier," never a primary citation.
 
 ([Fantasy News Authority, flagged undated](https://fantasynewsauthority.com/beat-reporters-fantasy-news-value/); [Waiver Wizard, 07/06/2026](https://fantasywaiverwizard.com/learn/reading-injury-reports))
+
+Two more outlets sit outside this rank order, on their own timing axis: the
+team's own announcement is "definitive but arrives last" — a latency note,
+not a lower rank than anonymous sourcing — and aggregators, which
+republish others' observations with a lag, are "the slowest useful tier"
+and never a primary citation (same sources).
 
 National insiders (Schefter, Rapoport, etc.) outrank local beat reporters
 only for league-wide, high-stakes news — not for practice-granularity
@@ -30,7 +33,7 @@ wins.
   tweet" ([Fantasy News Authority](https://fantasynewsauthority.com/fantasy-news-twitter-social-media)).
   Even a top-tier reporter can mislead in the first minutes: Adam
   Schefter's Nick Chubb injury tweet (09/18/2023) opened by citing Chubb's
-  *2015* knee injury, drawing immediate correction ([The Comeback, 09/18/2023](https://thecomeback.com/nfl/nick-chubb-adam-schefter-injury-tweet.html)).
+  *2015* knee injury, drawing immediate, heavy criticism ([The Comeback, 09/18/2023](https://thecomeback.com/nfl/nick-chubb-adam-schefter-injury-tweet.html)).
 - **Published synthesis:** the original beat tweet is fine for a waiver
   pickup decision; for starting/sitting a player you believe is out, wait
   for the 90-minute inactive list.

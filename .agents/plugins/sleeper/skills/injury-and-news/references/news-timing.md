@@ -1,6 +1,6 @@
 # News timing
 
-Source: `research-r5-injury-news.md` items 4, 6, 13.
+Source: `research-r5-injury-news.md` items 4, 6, 7, 13.
 
 ## The official filing calendar (Sunday games)
 
@@ -20,19 +20,28 @@ of who plays. A club is not required to update the Game Status Report
 before then even if it privately knows a Questionable player won't play
 ("game-time decision loophole" — [NBC Sports/ProFootballTalk](https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/game-time-decision-loophole-helps-teams-avoid-having-to-downgrade-players-from-questionable)).
 
-Concretely, for a 1:00pm ET kickoff: inactives post ~12:30pm ET. On a
-per-player lineup lock (Sleeper's default — each slot locks at that
-player's own kickoff) there is only a ~30-minute window between inactives
-and lock; on a weekly/first-game lock, the roster may already be frozen
-before that game's inactives post.
+Concretely, for a 1:00pm ET kickoff: inactives post ~12:30pm ET. Most
+platforms default to a per-player lineup lock at that player's own
+kickoff — ESPN's default is per-player at the scheduled game time (leagues
+can opt into a weekly/first-game lock instead), and Yahoo defaults
+likewise to the player's own game start ([ESPN Fan Support, accessed 09/18/2026](https://support.espn.com/hc/en-us/articles/360054748151-Lineup-and-Roster-Lock-Times); [Yahoo Help, accessed 09/18/2026](https://help.yahoo.com/kb/fantasy-football/transaction-lineup-deadlines-yahoo-fantasy-sln6775.html)).
+Sleeper's own per-game lock is documented separately in the `start-sit`
+skill's R1 source. On a per-player lock there is only a ~30-minute window
+between inactives and lock; on a weekly/first-game lock, the roster may
+already be frozen before that game's inactives post.
 
 ## Week 1 is the least data-rich week
 
-Rosters cut to 53 the Sunday before Week 1; the first full practice week
-produces at most three data points before the Friday report, so an early
-Friday designation can be a pure estimate rather than a graded read —
-documented case: a team's walkthrough-only week produced a Friday
-"Questionable" that was explicitly an estimate ([Steelers Depot, 09/09-11/2026](https://steelersdepot.com/2026/09/steelers-week-1-friday-injury-report-joey-porter-jr-ends-week-with-uncertain-status/)).
+Camp's final day was Sunday 09/06/2026; rosters were cut to 53 by 4:00pm
+ET **Sunday 08/30/2026** (two Sundays before the 09/13/2026 openers) —
+[PFWA 2026 calendar](https://www.profootballwriters.org/nfl-calendar/);
+[NFL.com 2026-27 dates](https://www.nfl.com/news/2026-27-national-football-league-important-dates).
+The first full practice week produces at most **three data points** (the
+Wednesday/Thursday/Friday practice reports, inclusive) before the Friday
+Game Status Report, so an early Friday designation can be a pure estimate
+rather than a graded read — documented case: a team's walkthrough-only
+week produced a Friday "Questionable" that was explicitly an estimate
+([Steelers Depot, 09/09-11/2026](https://steelersdepot.com/2026/09/steelers-week-1-friday-injury-report-joey-porter-jr-ends-week-with-uncertain-status/)).
 Weight early-season designations with wider uncertainty than a mid-season
 one with a full practice history behind it; the inactive list remains the
 only certain anchor either way.

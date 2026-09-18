@@ -15,17 +15,19 @@ WR rarely inherits a full target share the way a backup RB inherits touches
    70-75%+ of backfield touches if the starter is out.
 2. Is the path clear — the unambiguous #2, not a committee member?
 
-**Data-backed base rates** (2020-2024, [FantasyDutchman, 2025](https://thefantasydutchman.com/drafting-handcuff-rbs-valuable-or-just-a-myth/)):
-≥33% of top-24 RB1s miss 3+ games to injury in a season; but only 23% of
-drafted handcuffs (rounds 10-15) delivered 2+ startable weeks tied to the
-starter's absence, and 59% were flat misses. Late-round WRs outscored
-late-round RBs by ~18 fantasy points/season over the same window.
+**Data-backed base rates** (2020-2024, [FantasyDutchman, 2025](https://thefantasydutchman.com/drafting-handcuff-rbs-valuable-or-just-a-myth/),
+**12-team data — top-20 RB is the comparable line for this 10-team
+league**): ≥33% of top-24 RB1s miss 3+ games to injury in a season; but
+only 23% of drafted handcuffs (rounds 10-15) delivered 2+ startable weeks
+tied to the starter's absence, and 59% were flat misses. Late-round WRs
+outscored late-round RBs by ~18 fantasy points/season over the same window.
 
 **10-team / short-bench caveat:** in a 10-team league with a short bench,
 the waiver wire is deep enough to react to an injury when it happens —
 handcuffs matter most in deep leagues where replacements are scarce
-(same source). Pre-injury stash at $0-2/minimum bid; after the injury it
-becomes the 25-40%-FAAB replacement-starter case (`faab-bidding.md`).
+([NovaPredict, Jun 10, 2026](https://novapredict.com/blog/fantasy-football-handcuffs)).
+Pre-injury stash at $0-2/minimum bid; after the injury it becomes the
+25-40%-FAAB replacement-starter case (`faab-bidding.md`).
 
 ## Bye-week planning
 
