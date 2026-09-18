@@ -10,8 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// envOnly discards environmentBlock's Artifact return - this file only golden-checks the rendered text.
+func envOnly(s string, _ artifactsrc.Artifact) string { return s }
 
 // updateEnvGolden regenerates testdata/prompts. The goldens were captured
 // before the artifact-resolver change (#1420) and must stay byte-identical.
@@ -59,13 +63,13 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 		return strings.ReplaceAll(s, os.TempDir(), "<TMP>")
 	}
 	ctx := context.Background()
-	checkEnvGolden(t, "environment.txt", norm(populated, environmentBlock(ctx, nil, populated, workspace.Caps{})))
-	checkEnvGolden(t, "environment.empty.txt", norm(empty, environmentBlock(ctx, nil, empty, workspace.Caps{})))
+	checkEnvGolden(t, "environment.txt", norm(populated, envOnly(environmentBlock(ctx, nil, populated, workspace.Caps{}))))
+	checkEnvGolden(t, "environment.empty.txt", norm(empty, envOnly(environmentBlock(ctx, nil, empty, workspace.Caps{}))))
 	ro := workspace.Caps{ReadOnly: true, HomeDir: "/home/agent", Sandbox: workspace.SandboxBwrap, Env: map[string]string{"GOMODCACHE": missingModCache}}
-	checkEnvGolden(t, "environment.readonly.txt", norm(populated, environmentBlock(ctx, nil, populated, ro)))
+	checkEnvGolden(t, "environment.readonly.txt", norm(populated, envOnly(environmentBlock(ctx, nil, populated, ro))))
 
 	noPreseed := workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: t.TempDir(), Env: map[string]string{"GOMODCACHE": missingModCache}}
-	checkEnvGolden(t, "environment.sandboxed-no-preseed.txt", norm(populated, environmentBlock(ctx, nil, populated, noPreseed)))
+	checkEnvGolden(t, "environment.sandboxed-no-preseed.txt", norm(populated, envOnly(environmentBlock(ctx, nil, populated, noPreseed))))
 
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
@@ -87,7 +91,7 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 	// HomeDir distinct from repo: childEnv farms a writable GOMODCACHE under HOME, which would
 	// otherwise pollute repo's own entries.
 	sandboxed := workspace.Caps{Sandbox: workspace.SandboxBwrap, HomeDir: t.TempDir(), Env: map[string]string{"GOMODCACHE": presentModCache}}
-	block := environmentBlock(ctx, nil, repo, sandboxed)
+	block := envOnly(environmentBlock(ctx, nil, repo, sandboxed))
 	if !strings.Contains(block, "git: yes (branch quack/work") {
 		// The fixture repo, not the golden, is what failed - gitInfo degrades to "git: no" on
 		// ANY probe failure (environment.go), so dump the repo's own state instead of guessing.

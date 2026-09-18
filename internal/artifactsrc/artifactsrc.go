@@ -346,14 +346,26 @@ func BundleName(kind, dir string) string {
 // a shipped agents/<x> (kind is "system", "rubric" or "memory"), and straight off disk-then-embedded
 // otherwise - a bundle outside agents/, or one missing that file, has no artifact name to resolve.
 func ReadBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) ([]byte, error) {
-	if name := BundleName(kind, dir); name != "" {
-		art, err := res.Resolve(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		return []byte(art.Body), nil
+	art, err := ResolveBundleFile(ctx, res, kind, dir, file)
+	if err != nil {
+		return nil, err
 	}
-	return bundledir.ReadFile(bundledir.PathJoin(dir, file))
+	return []byte(art.Body), nil
+}
+
+// ResolveBundleFile is ReadBundleFile for a caller that also needs the resolved
+// artifact's provenance - a disk-only bundle still gets a content-hash
+// VersionID (FileArtifact), never a zero Artifact.
+func ResolveBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) (Artifact, error) {
+	if name := BundleName(kind, dir); name != "" {
+		return res.Resolve(ctx, name)
+	}
+	p := bundledir.PathJoin(dir, file)
+	raw, err := bundledir.ReadFile(p)
+	if err != nil {
+		return Artifact{}, err
+	}
+	return FileArtifact(p, raw), nil
 }
 
 // scan derives the name registry from the shipped tree: each agents/<x>/ gives system/<x> plus

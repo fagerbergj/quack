@@ -61,7 +61,7 @@ func TestEmitInvokeAgent_ProducesWellFormedEvent(t *testing.T) {
 	received := &teeBuffer{}
 	received.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}` + "\n"))
 
-	emitInvokeAgent(context.Background(), "code-implementer", sent, received, nil, nil)
+	emitInvokeAgent(context.Background(), "code-implementer", sent, received, nil, nil, nil)
 
 	if len(capExp.records) != 1 {
 		t.Fatalf("got %d records, want 1", len(capExp.records))
@@ -100,7 +100,7 @@ func TestEmitInvokeAgent_RecordsPlugins(t *testing.T) {
 	defer restore()
 
 	emitInvokeAgent(context.Background(), "code-implementer", &teeBuffer{}, &teeBuffer{}, nil,
-		[]ledger.PluginRef{{Name: "dotagents", SHA: "abc123"}})
+		[]ledger.PluginRef{{Name: "dotagents", SHA: "abc123"}}, nil)
 
 	attrs := map[string]attribute.Value{}
 	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
@@ -112,13 +112,35 @@ func TestEmitInvokeAgent_RecordsPlugins(t *testing.T) {
 	}
 }
 
+// TestEmitInvokeAgent_RecordsArtifacts: the quack.artifacts attribute carries
+// the round's resolved-artifact provenance as a JSON array exporter.go maps
+// into AgentInvokePayload.Artifacts.
+func TestEmitInvokeAgent_RecordsArtifacts(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	emitInvokeAgent(context.Background(), "code-implementer", &teeBuffer{}, &teeBuffer{}, nil,
+		nil, []ledger.ArtifactRef{{Name: "system/acp.environment", Source: "static", VersionID: "abc123"}})
+
+	attrs := map[string]attribute.Value{}
+	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
+		attrs[string(kv.Key)] = kv.Value
+		return true
+	})
+	if got := attrs["quack.artifacts"].AsString(); got != `[{"name":"system/acp.environment","source":"static","version_id":"abc123"}]` {
+		t.Errorf("quack.artifacts = %q, want the literal wire shape", got)
+	}
+}
+
 func TestEmitInvokeAgent_RecordsErrorType(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 	defer restore()
 
-	emitInvokeAgent(context.Background(), "code-reviewer", &teeBuffer{}, &teeBuffer{}, errors.New("acp: prompt: boom"), nil)
+	emitInvokeAgent(context.Background(), "code-reviewer", &teeBuffer{}, &teeBuffer{}, errors.New("acp: prompt: boom"), nil, nil)
 
 	attrs := map[string]attribute.Value{}
 	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {

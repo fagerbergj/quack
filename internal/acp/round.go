@@ -28,8 +28,10 @@ func (a *Agent) registerRoundAbort(steerChatID, steerNodeID string, abortCancel 
 
 // steerHooks: live-steer registration and the preamble prepend (skipped for a
 // live pinned process - a resumed session may have missed a preamble change).
-func (a *Agent) steerHooks(ctx context.Context, h *procHandle, outbound, steerChatID, steerNodeID string, fromPinned bool) (string, func()) {
-	unreg := func() {}
+// sentPreamble reports whether the preamble actually went out THIS round - the
+// exact condition roundArtifacts gates its provenance on, not just !fromPinned.
+func (a *Agent) steerHooks(ctx context.Context, h *procHandle, outbound, steerChatID, steerNodeID string, fromPinned bool) (out string, sentPreamble bool, unreg func()) {
+	unreg = func() {}
 	// Live only for this round's duration; CallExtension (an acked request), not NotifyExtension: between the shim settling and the deferred Unregister the connection is still open, so a fire-and-forget notify would report delivered while the shim silently drops it (promptReq already nil).
 	// A failed/errored call reports false, and enqueue's caller parks it instead (#998 review).
 	if a.opts.RegisterLiveSteer != nil && steerChatID != "" && steerNodeID != "" {
@@ -41,9 +43,10 @@ func (a *Agent) steerHooks(ctx context.Context, h *procHandle, outbound, steerCh
 	if a.opts.Preamble != nil && !fromPinned {
 		if p := a.opts.Preamble(ctx); p != "" {
 			outbound = p + "\n\n" + outbound
+			sentPreamble = true
 		}
 	}
-	return outbound, unreg
+	return outbound, sentPreamble, unreg
 }
 
 // handshake: Initialize + session/load|new on a fresh process; the resume only

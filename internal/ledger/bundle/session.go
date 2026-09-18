@@ -30,6 +30,8 @@ type invokeAgentEntry struct {
 	agentName string
 	sent      []json.RawMessage // client → agent (quack's requests)
 	received  []json.RawMessage // agent → client (session/updates + responses)
+	plugins   []ledger.PluginRef
+	artifacts []ledger.ArtifactRef
 }
 
 // EvalScore is one recorded judge verdict.
@@ -99,7 +101,7 @@ func (s *Session) ingest(e ledger.Entry) {
 		if json.Unmarshal(e.Payload, &p) != nil {
 			return
 		}
-		ae := invokeAgentEntry{ts: e.At, agentName: e.Agent}
+		ae := invokeAgentEntry{ts: e.At, agentName: e.Agent, plugins: p.Plugins, artifacts: p.Artifacts}
 		if p.Sent != "" {
 			_ = json.Unmarshal([]byte(p.Sent), &ae.sent)
 		}
@@ -140,6 +142,10 @@ type NodeRun struct {
 	PromptSource    string
 	PromptVersionID string
 	QuackVersion    string
+	// Artifacts/Plugins: every artifact/plugin the answer round resolved
+	// the full list PromptSource/PromptVersionID/QuackVersion summarize.
+	Artifacts []ledger.ArtifactRef
+	Plugins   []ledger.PluginRef
 }
 
 // roundRun is one (Node, Agent, Round) stream's task/answer before rounds
@@ -153,6 +159,8 @@ type roundRun struct {
 	promptSource  string
 	promptVersion string
 	quackVersion  string
+	artifacts     []ledger.ArtifactRef
+	plugins       []ledger.PluginRef
 }
 
 // NodeRuns returns one NodeRun per non-root node whose Agent is in agents:
@@ -185,6 +193,7 @@ func (s *Session) NodeRuns(agents map[string]bool) map[StreamKey]NodeRun {
 		out[latest.key] = NodeRun{
 			Task: earliest.task, Answer: latest.answer, At: latest.answerAt,
 			PromptSource: latest.promptSource, PromptVersionID: latest.promptVersion, QuackVersion: latest.quackVersion,
+			Artifacts: latest.artifacts, Plugins: latest.plugins,
 		}
 	}
 	return out
@@ -208,6 +217,7 @@ func chatRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 			if text := partsText(c.Parts); text != "" {
 				rr.answer, rr.answerAt = text, st.chat[i].ts
 				rr.promptSource, rr.promptVersion, rr.quackVersion = st.chat[i].PromptSource, st.chat[i].PromptVersionID, st.chat[i].QuackVersion
+				rr.artifacts, rr.plugins = st.chat[i].Artifacts, st.chat[i].Plugins
 				return rr, true
 			}
 		}
@@ -227,7 +237,7 @@ func acpRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 	if task == "" && answer == "" {
 		return roundRun{}, false
 	}
-	return roundRun{key: key, task: task, taskAt: ae.ts, answer: answer, answerAt: ae.ts}, true
+	return roundRun{key: key, task: task, taskAt: ae.ts, answer: answer, answerAt: ae.ts, artifacts: ae.artifacts, plugins: ae.plugins}, true
 }
 
 // acpFrame is the JSON-RPC envelope shared by every ACP wire message.

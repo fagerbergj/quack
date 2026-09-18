@@ -10,6 +10,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -69,7 +70,7 @@ func TestRound_ToolSpansEndInsideTheRound(t *testing.T) {
 	exp := withTestTracer(t)
 	a := testAgent(t, "happy")
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "c1", Node: "n1", Agent: "code-implementer", User: "u1"})
-	if err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "add the feature", artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 

@@ -82,6 +82,16 @@ func chatProvenanceAttrs(ctx context.Context, sysHash string) []attribute.KeyVal
 	if c.PromptArtifact != "" {
 		attrs = append(attrs, attribute.String(otelobs.QuackPromptArtifact, c.PromptArtifact))
 	}
+	if len(c.Artifacts) > 0 {
+		if v, ok := marshalAttr(c.Artifacts); ok {
+			attrs = append(attrs, attribute.String(otelobs.QuackArtifacts, v))
+		}
+	}
+	if len(c.Plugins) > 0 {
+		if v, ok := marshalAttr(c.Plugins); ok {
+			attrs = append(attrs, attribute.String(otelobs.QuackPlugins, v))
+		}
+	}
 	if sysHash != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIPromptVersion, sysHash))
 	}

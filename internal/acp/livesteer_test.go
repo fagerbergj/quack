@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -91,7 +92,7 @@ func TestRound_SteerRejectedByShimReportsFailure(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "chat1", "n1", "", "", func(eventSpec) bool { return true })
+		done <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", artifactsrc.Artifact{}, "chat1", "n1", "", "", func(eventSpec) bool { return true })
 	}()
 
 	<-registered

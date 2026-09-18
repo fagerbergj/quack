@@ -58,6 +58,10 @@ type datasetItemMetadata struct {
 	PromptSource    string `json:"prompt_source,omitempty"`
 	PromptVersionID string `json:"prompt_version_id,omitempty"`
 	QuackVersion    string `json:"quack_version,omitempty"`
+	// Artifacts/Plugins: every artifact/plugin the answer round resolved -
+	// the full audit trail PromptSource/PromptVersionID summarize to one entry.
+	Artifacts []ledger.ArtifactRef `json:"artifacts,omitempty"`
+	Plugins   []ledger.PluginRef   `json:"plugins,omitempty"`
 }
 
 // RunDatasetExport reads gated code-reviewer/synthesizer node runs out of the ledger and upserts
@@ -225,6 +229,7 @@ func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, datase
 		Repo: chatRepo(chat), Agent: key.Agent, ChatID: chat.ID, NodeID: key.Node,
 		PromptArtifact: "system/" + key.Agent, PromptSource: run.PromptSource,
 		PromptVersionID: run.PromptVersionID, QuackVersion: run.QuackVersion,
+		Artifacts: run.Artifacts, Plugins: run.Plugins,
 	}
 	id := exportItemID(dataset, chat.ID, key.Node)
 	req := langfusegen.CreateDatasetItemRequest{

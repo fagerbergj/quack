@@ -60,7 +60,7 @@ func TestGoldenAgentPrompts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", dir, err)
 		}
-		mem, err := LoadBundleMemory(context.Background(), nil, dir)
+		mem, _, err := LoadBundleMemory(context.Background(), nil, dir)
 		if err != nil {
 			t.Fatalf("%s: %v", dir, err)
 		}
@@ -84,7 +84,7 @@ func TestGoldenACPPreamble(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mem, err := LoadBundleMemory(context.Background(), nil, dir)
+	mem, _, err := LoadBundleMemory(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

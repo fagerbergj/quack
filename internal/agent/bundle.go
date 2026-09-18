@@ -135,14 +135,16 @@ func resolveBundle(ctx context.Context, res *artifactsrc.Resolver, kind, dir, fi
 	return artifactsrc.FileArtifact(p, raw), nil
 }
 
-// LoadBundleMemory resolves the bundle's optional memory.md ("" when it has none).
-func LoadBundleMemory(ctx context.Context, res *artifactsrc.Resolver, dir string) (string, error) {
-	raw, err := artifactsrc.ReadBundleFile(ctx, res, "memory", dir, memoryFile)
+// LoadBundleMemory resolves the bundle's optional memory.md ("" when it has none). The
+// returned Artifact is ledger provenance for the memory/<agent> entry - its zero
+// value when the bundle has no memory.md, so callers never record a nonexistent artifact.
+func LoadBundleMemory(ctx context.Context, res *artifactsrc.Resolver, dir string) (string, artifactsrc.Artifact, error) {
+	art, err := artifactsrc.ResolveBundleFile(ctx, res, "memory", dir, memoryFile)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", nil
+			return "", artifactsrc.Artifact{}, nil
 		}
-		return "", fmt.Errorf("agent bundle %q: read %s: %w", dir, memoryFile, err)
+		return "", artifactsrc.Artifact{}, fmt.Errorf("agent bundle %q: read %s: %w", dir, memoryFile, err)
 	}
-	return strings.TrimSpace(string(raw)), nil
+	return strings.TrimSpace(art.Body), art, nil
 }

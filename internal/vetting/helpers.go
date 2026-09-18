@@ -45,6 +45,15 @@ type Config struct {
 	JudgeThinkingLevel   string  // gates.judge.thinking_level: "", "low", "medium", "high"; "" = no ThinkingConfig sent
 	Constitution         string  // global principles for judge prompt
 	Rubric               string  // scoring guide; global default or per-agent override; rendered markdown for the judge prompt
+	// ConstitutionArtifact/RubricArtifact/MemoryArtifact: ledger provenance
+	// for Constitution/Rubric/the agent's memory.md guidance - zero Name when the
+	// value came from an inline gates: override or config has none to resolve.
+	ConstitutionArtifact artifactsrc.Artifact
+	RubricArtifact       artifactsrc.Artifact
+	MemoryArtifact       artifactsrc.Artifact
+	// Plugins: the plugin registry rows in scope for this node's rounds,
+	// refreshed alongside Rubric/Constitution at each run's start; nil = no registry.
+	Plugins []ledger.PluginRef
 	// RubricSpecs: per-criterion definition/scale/bands, only when Rubric was
 	// loaded from a rubric.yaml (rubricyaml.go) - nil for a raw prose rubric
 	// override (dag planner / inline GatesConfig.Rubric), which has no structured criteria to look up (#941).

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -278,5 +280,42 @@ func TestBundleName(t *testing.T) {
 		if got := BundleName(c.kind, c.dir); got != c.want {
 			t.Errorf("BundleName(%q, %q) = %q, want %q", c.kind, c.dir, got, c.want)
 		}
+	}
+}
+
+// TestResolveBundleFile covers ResolveBundleFile's three shapes: a name that
+// resolves through the store, a disk-only bundle (still a real Artifact via
+// FileArtifact, never a zero one), and a file that resolves nowhere.
+func TestResolveBundleFile(t *testing.T) {
+	ctx := context.Background()
+
+	src := &stubSource{art: Artifact{Body: "from store"}, ok: true}
+	res := New("langfuse", src, time.Minute)
+	art, err := ResolveBundleFile(ctx, res, "system", "agents/code-reviewer", "prompt.md")
+	if err != nil {
+		t.Fatalf("ResolveBundleFile (store): %v", err)
+	}
+	if art.Body != "from store" || art.Source != "langfuse" {
+		t.Errorf("store-backed resolve = %+v, want body %q source langfuse", art, "from store")
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rubric.yaml"), []byte("criteria: {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	art, err = ResolveBundleFile(ctx, nil, "rubric", dir, "rubric.yaml")
+	if err != nil {
+		t.Fatalf("ResolveBundleFile (disk): %v", err)
+	}
+	if art.Source != StaticSource || art.VersionID == "" {
+		t.Errorf("disk-fallback artifact = %+v, want a static source with a version id", art)
+	}
+	raw, err := ReadBundleFile(ctx, nil, "rubric", dir, "rubric.yaml")
+	if err != nil || string(raw) != "criteria: {}" {
+		t.Errorf("ReadBundleFile = %q (%v), want %q", raw, err, "criteria: {}")
+	}
+
+	if _, err := ResolveBundleFile(ctx, nil, "rubric", dir, "nope.yaml"); err == nil {
+		t.Error("want an error for a file that resolves nowhere")
 	}
 }

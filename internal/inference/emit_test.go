@@ -199,6 +199,43 @@ func TestTracedModel_EmitsProvenance(t *testing.T) {
 	}
 }
 
+// TestTracedModel_EmitsArtifactsAndPlugins: every artifact the round
+// resolved through artifactsrc, and the plugins in scope, land on the round's
+// llm.call as quack.artifacts/quack.plugins JSON arrays.
+func TestTracedModel_EmitsArtifactsAndPlugins(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	resps := []*model.LLMResponse{{Content: &genai.Content{Parts: []*genai.Part{{Text: "answer"}}}, TurnComplete: true}}
+	stub := &stubModel{name: "m", resps: resps}
+	tm := &tracedModel{LLM: stub, name: "m"}
+
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1", Agent: "code-reviewer",
+		Artifacts: []ledger.ArtifactRef{
+			{Name: "system/code-reviewer", Source: "static", VersionID: "abc123"},
+			{Name: "memory/code-reviewer", Source: "static", VersionID: "def456"},
+		},
+		Plugins: []ledger.PluginRef{{Name: "dotagents", SHA: "abc123"}},
+	})
+	for range tm.GenerateContent(ctx, &model.LLMRequest{}, true) {
+	}
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d records, want 1", len(capExp.records))
+	}
+	attrs := attrsOf(t, capExp.records[0])
+	wantArtifacts := `[{"name":"system/code-reviewer","source":"static","version_id":"abc123"},{"name":"memory/code-reviewer","source":"static","version_id":"def456"}]`
+	if got := attrs["quack.artifacts"].AsString(); got != wantArtifacts {
+		t.Errorf("quack.artifacts = %s, want %s", got, wantArtifacts)
+	}
+	wantPlugins := `[{"name":"dotagents","sha":"abc123"}]`
+	if got := attrs["quack.plugins"].AsString(); got != wantPlugins {
+		t.Errorf("quack.plugins = %s, want %s", got, wantPlugins)
+	}
+}
+
 // TestTracedModel_EmitsCachedTokens pins the llm.call payload's
 // cached_tokens field (was silently dropped: emitChatEvent used genai's raw
 // PromptTokenCount for input_tokens and never read CachedContentTokenCount at all). input_tokens must exclude the cached count, matching recordUsageMetrics' otel-metric split (splitPromptTokens), so a consumer summing input+cached never double-counts.

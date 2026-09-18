@@ -185,7 +185,7 @@ func TestAgentMemoryRealBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}
-	mem, err := agent.LoadBundleMemory(context.Background(), nil, dir)
+	mem, _, err := agent.LoadBundleMemory(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatalf("LoadBundleMemory: %v", err)
 	}

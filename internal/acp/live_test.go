@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -62,8 +63,7 @@ func TestLive_PiRound(t *testing.T) {
 	defer cancel()
 
 	var specs []eventSpec
-	err = a.round(ctx, cwd, "", workspace.Caps{},
-		"Create a file named hello.txt in the current directory containing exactly the word: hi\nThen reply with a single line confirming what you did.", "", "", "", "",
+	err = a.round(ctx, cwd, "", workspace.Caps{}, "Create a file named hello.txt in the current directory containing exactly the word: hi\nThen reply with a single line confirming what you did.", artifactsrc.Artifact{}, "", "", "", "",
 		func(s eventSpec) bool {
 			specs = append(specs, s)
 			return true

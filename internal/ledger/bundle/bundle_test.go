@@ -315,6 +315,42 @@ func TestNodeRuns_ACPOnlyStream(t *testing.T) {
 	}
 }
 
+// TestNodeRuns_ACPArtifactsAndPlugins: an ACP round's artifacts/plugins
+// (invokeAgentEntry -> acpRoundRun -> NodeRun, #1455) must survive the same
+// copy the llm.call side already gets (dataset_test.go's MetadataBlock case) -
+// a broken copy here would silently drop provenance from every ACP export.
+func TestNodeRuns_ACPArtifactsAndPlugins(t *testing.T) {
+	sent := []string{`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"review this diff"}]}}`}
+	received := []string{
+		`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Looks good."}}}}`,
+	}
+	e := invokeAgent(t0(), "node-a", "code-reviewer", "worker-r0", sent, received)
+	e.attrs["quack.artifacts"] = `[{"name":"system/acp.environment","source":"static","version_id":"e1"},{"name":"memory/code-reviewer","source":"static","version_id":"m1"}]`
+	e.attrs["quack.plugins"] = `[{"name":"dotagents","sha":"abc123"}]`
+	path := writeJSONL(t, []entry{e})
+
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	runs := sess.NodeRuns(map[string]bool{"code-reviewer": true})
+	if len(runs) != 1 {
+		t.Fatalf("NodeRuns len = %d, want 1", len(runs))
+	}
+	for _, run := range runs {
+		wantArtifacts := []ledger.ArtifactRef{
+			{Name: "system/acp.environment", Source: "static", VersionID: "e1"},
+			{Name: "memory/code-reviewer", Source: "static", VersionID: "m1"},
+		}
+		if len(run.Artifacts) != 2 || run.Artifacts[0] != wantArtifacts[0] || run.Artifacts[1] != wantArtifacts[1] {
+			t.Errorf("Artifacts = %+v, want %+v", run.Artifacts, wantArtifacts)
+		}
+		if len(run.Plugins) != 1 || run.Plugins[0] != (ledger.PluginRef{Name: "dotagents", SHA: "abc123"}) {
+			t.Errorf("Plugins = %+v, want [{dotagents abc123}]", run.Plugins)
+		}
+	}
+}
+
 // TestNodeRuns_ACPAnswerResetsOnToolCall: the delivered answer only ever
 // contains text after the last tool call (translate.go resets t.answer on
 // each u.ToolCall) - NodeRuns must mirror that, not concatenate the whole round.
