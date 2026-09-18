@@ -271,6 +271,41 @@ func TestTracedModel_EmitsCachedTokens(t *testing.T) {
 	}
 }
 
+// TestTracedModel_EmitsReasoningTokens is #1485's fix: gen_ai.usage.reasoning_tokens
+// is recorded from UsageMetadata.ThoughtsTokenCount, split out from output tokens,
+// so a judge/researcher round's ledger entry can tell thinking spend from decode spend.
+func TestTracedModel_EmitsReasoningTokens(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	resps := []*model.LLMResponse{{
+		Content:      &genai.Content{Parts: []*genai.Part{{Text: "answer"}}},
+		TurnComplete: true,
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount:     100,
+			CandidatesTokenCount: 40,
+			ThoughtsTokenCount:   25,
+		},
+	}}
+	stub := &stubModel{name: "m", resps: resps}
+	tm := &tracedModel{LLM: stub, name: "m"}
+	for range tm.GenerateContent(context.Background(), &model.LLMRequest{}, true) {
+	}
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d records, want 1", len(capExp.records))
+	}
+	attrs := attrsOf(t, capExp.records[0])
+	if v := attrs["gen_ai.usage.reasoning_tokens"].AsInt64(); v != 25 {
+		t.Errorf("gen_ai.usage.reasoning_tokens = %v, want 25", v)
+	}
+	if v := attrs["gen_ai.usage.output_tokens"].AsInt64(); v != 40 {
+		t.Errorf("gen_ai.usage.output_tokens = %v, want 40 (unaffected by reasoning)", v)
+	}
+}
+
 func TestTracedModel_EmitsErrorType(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))

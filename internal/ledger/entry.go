@@ -99,9 +99,12 @@ type LLMCallPayload struct {
 	// CachedTokens: prompt tokens served from the provider's cache, already
 	// excluded from InputTokens (see inference.splitPromptTokens) so
 	// InputTokens+CachedTokens never double-counts the raw prompt total.
-	CachedTokens int64   `json:"cached_tokens,omitempty"`
-	Temperature  float64 `json:"temperature,omitempty"`
-	MaxTokens    int64   `json:"max_tokens,omitempty"`
+	CachedTokens int64 `json:"cached_tokens,omitempty"`
+	// ReasoningTokens: thinking-token spend, split out from OutputTokens -
+	// from the translator's Usage() (ADK's ThoughtsTokenCount).
+	ReasoningTokens int64   `json:"reasoning_tokens,omitempty"`
+	Temperature     float64 `json:"temperature,omitempty"`
+	MaxTokens       int64   `json:"max_tokens,omitempty"`
 	// ReasoningEffort is the resolved effort ("low"/"medium"/"high") sent as
 	// gen_ai.request.reasoning_effort - from models.<name>.effort or an
 	// explicit ThinkingConfig (e.g. gates.judge.thinking_level); "" = neither set.

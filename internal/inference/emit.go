@@ -127,6 +127,9 @@ func chatResponseAttrs(resp *model.LLMResponse, pricing *config.ModelPricing) []
 		if u.CandidatesTokenCount != 0 {
 			attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageOutputTokens, int64(u.CandidatesTokenCount)))
 		}
+		if u.ThoughtsTokenCount != 0 {
+			attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageReasoningTokens, int64(u.ThoughtsTokenCount)))
+		}
 		if pricing != nil {
 			cost := float64(u.PromptTokenCount)/1e6*pricing.InputPerMTok + float64(u.CandidatesTokenCount+u.ThoughtsTokenCount)/1e6*pricing.OutputPerMTok
 			attrs = append(attrs, attribute.Float64(otelobs.GenAIUsageCost, cost))
