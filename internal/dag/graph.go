@@ -65,10 +65,9 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 	// run, chat- not node-scoped (#1497), shared by every node's judge rounds.
 	var judgeArtifactTools []tool.Tool
 	if artifacts != nil {
+		// No WithLedger: these tools are read-only and never call Save*, so
+		// there is no parent_revision write to stamp a WAL entry for.
 		rc := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
-		if pg, ok := walLedger.(*ledger.PGStore); ok {
-			rc = rc.WithLedger(pg)
-		}
 		var jerr error
 		if judgeArtifactTools, jerr = vetting.NewJudgeArtifactTools(rc); jerr != nil {
 			return nil, nil, fmt.Errorf("dag: judge artifact tools: %w", jerr)

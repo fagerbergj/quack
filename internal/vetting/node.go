@@ -2488,9 +2488,13 @@ func isArtifactWriteTool(name string) bool {
 }
 
 // recordArtifactWrite captures a successful write's id (skips an
-// edit_artifact conflict reply, which wrote nothing).
+// edit_artifact conflict reply, which wrote nothing). ACP tool replies land
+// under "output" (translate.go's default case), not "result" - fall back.
 func (s *activityScanner) recordArtifactWrite(resp map[string]any) {
 	result, _ := resp["result"].(string)
+	if result == "" {
+		result, _ = resp["output"].(string)
+	}
 	m := artifactWriteResultRe.FindStringSubmatch(result)
 	if m == nil || s.artifactSeen[m[1]] {
 		return

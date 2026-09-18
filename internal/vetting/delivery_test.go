@@ -100,7 +100,8 @@ func TestActivityFromSessionRecordsDelivery(t *testing.T) {
 
 // TestActivityFromSessionRecordsArtifactWrites (#1497): write_artifact,
 // edit_artifact, and write_<kind> all feed artifactsWritten (deduped); an
-// edit_artifact conflict reply and an unrelated write_file call do not.
+// edit_artifact conflict reply and an unrelated write_file call do not. An
+// ACP worker's reply lands under "output" (translate.go), not "result".
 func TestActivityFromSessionRecordsArtifactWrites(t *testing.T) {
 	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "write_artifact", map[string]any{"kind": "text", "mime": "text/plain", "bytes": "hi"}),
@@ -113,10 +114,17 @@ func TestActivityFromSessionRecordsArtifactWrites(t *testing.T) {
 		fnResp("4", "write_finding", map[string]any{"result": "ok: id=finding:1 revision=1"}),
 		fnCall("5", "write_file", map[string]any{"path": "game.go"}),
 		fnResp("5", "write_file", map[string]any{"bytes": float64(10), "created": true}),
+		fnCall("6", "write_code_review", map[string]any{"pr": "123"}),
+		fnResp("6", "write_code_review", map[string]any{"output": "ok: id=code_review:pr123 revision=1"}),
 	), "")
-	want := []string{"text:doc1", "finding:1"}
-	if len(act.artifactsWritten) != len(want) || act.artifactsWritten[0] != want[0] || act.artifactsWritten[1] != want[1] {
-		t.Errorf("artifactsWritten = %v, want %v (deduped, no conflict, no write_file)", act.artifactsWritten, want)
+	want := []string{"text:doc1", "finding:1", "code_review:pr123"}
+	if len(act.artifactsWritten) != len(want) {
+		t.Fatalf("artifactsWritten = %v, want %v (deduped, no conflict, no write_file)", act.artifactsWritten, want)
+	}
+	for i, id := range want {
+		if act.artifactsWritten[i] != id {
+			t.Errorf("artifactsWritten[%d] = %q, want %q", i, act.artifactsWritten[i], id)
+		}
 	}
 }
 
