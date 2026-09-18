@@ -725,10 +725,8 @@ func newServerValidateCmd() *cobra.Command {
 	return c
 }
 
-// staleAgentBundles: every cfg.Agents entry whose bundle directory is
-// missing on disk - boot only discovers this later, at LoadBundle time, so
-// validate catches a stale or typo'd `bundle:` path (e.g. a plugin migration
-// left a copied path behind) up front instead.
+// staleAgentBundles catches a stale or typo'd `bundle:` path up front -
+// boot only discovers a missing bundle dir later, at LoadBundle time.
 func staleAgentBundles(cfg *config.Config) []string {
 	var stale []string
 	for name, ac := range cfg.Agents {
@@ -742,15 +740,14 @@ func staleAgentBundles(cfg *config.Config) []string {
 
 // serverValidateResult is `server validate --json`'s shape; validate only
 // ever reaches it on success (an invalid config returns an error instead).
-// Plugins lists each plugin that seeded at least one agent or shape;
-// Unresolvable names a plugins.seed row validate couldn't check offline;
-// StaleBundles names a configured agent whose bundle path is missing.
 type serverValidateResult struct {
-	Path         string                   `json:"path"`
-	Status       string                   `json:"status"`
-	Plugins      []serve.PluginSeedResult `json:"plugins,omitempty"`
-	Unresolvable []string                 `json:"unresolvable,omitempty"`
-	StaleBundles []string                 `json:"stale_bundles,omitempty"`
+	Path    string                   `json:"path"`
+	Status  string                   `json:"status"`
+	Plugins []serve.PluginSeedResult `json:"plugins,omitempty"`
+	// Unresolvable names a plugins.seed row validate couldn't check offline.
+	Unresolvable []string `json:"unresolvable,omitempty"`
+	// StaleBundles names a configured agent whose bundle path is missing.
+	StaleBundles []string `json:"stale_bundles,omitempty"`
 }
 
 // newServerInitCmd: `quack server init` - the server-config wizard (LLM
