@@ -671,6 +671,12 @@ func latestRevision(ctx context.Context, c *recordstore.Client, kind, hint strin
 }
 
 func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) *episodicRoundState {
+	return saveEpisodicRoundWritten(ctx, cfg, nodeID, turnID, round, answer, staged, st, nil)
+}
+
+// saveEpisodicRoundWritten: written is the session scan's tool-written artifact ids (native
+// tools never reach the MCP ToolWritten stage, which only ACP workers feed).
+func saveEpisodicRoundWritten(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState, written []string) *episodicRoundState {
 	if st == nil {
 		st = loadEpisodicRoundState(ctx, cfg, nodeID)
 	}
@@ -681,7 +687,7 @@ func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	case cfg.Artifact != "":
 		// Drained once here (not inside saveDocumentRound/saveTextRound) so the
 		// artifact-kind check below and the text fallback share one per-round set.
-		toolWritten := resetToolWrittenIDs(cfg)
+		toolWritten := mergeWritten(resetToolWrittenIDs(cfg), written)
 		docID, idErr := recordstore.IdentityFor(cfg.Artifact, nil, DocumentHint(cfg.ChatID))
 		if idErr == nil && toolWritten[docID] {
 			st.artifactToolWritten = true
@@ -774,6 +780,20 @@ func firstCodeReviewDelivery(ctx context.Context, cfg Config) bool {
 // resetToolWrittenIDs drains the ids written via any loopback MCP artifact-write tool this round (write_<kind>, write_artifact, edit_artifact - ToolWrittenStage, threaded through the registered
 // MemSession), nil if there's no advisor thread/session for this node - saveCodeReviewRound's answer-tail fallback uses it to skip re-staging an id the worker already wrote directly (#1091 adversarial review finding #1). Draining (not just snapshotting) is what makes this "this round" rather
 // than "this node run": an id tool-written in round N must not still be in the stage suppressing round N+1's write for the same id (#1108 finding 2).
+// mergeWritten folds session-scanned ids into the MCP-drained set.
+func mergeWritten(ids map[string]bool, written []string) map[string]bool {
+	if len(written) == 0 {
+		return ids
+	}
+	if ids == nil {
+		ids = make(map[string]bool, len(written))
+	}
+	for _, id := range written {
+		ids[id] = true
+	}
+	return ids
+}
+
 func resetToolWrittenIDs(cfg Config) map[string]bool {
 	if cfg.AdvisorToken == "" {
 		return nil

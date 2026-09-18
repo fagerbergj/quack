@@ -1378,6 +1378,29 @@ func TestSaveEpisodicRound_ArtifactKind_SkippedWhenToolWrote(t *testing.T) {
 		}
 	})
 
+	t.Run("native_tool_write_seen_by_the_session_scan", func(t *testing.T) {
+		svc := newMetaAwareInMemory()
+		base := reviewerCfgWithArtifacts(t, svc, true)
+		base.IsReviewer = false
+		base.Artifact = kindDocument
+		base.NodeID = "lineup-analyst"
+		rc := recordClient(base)
+		docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := rc.SaveBlob(context.Background(), kindDocument, []byte(`{"week":6}`), "application/json", DocumentHint(base.ChatID), recordstore.Lineage{NodeID: base.NodeID}); err != nil {
+			t.Fatalf("seed SaveBlob: %v", err)
+		}
+		// No MCP session at all (native worker): the id arrives from the session scan.
+		st := saveEpisodicRoundWritten(context.Background(), base, base.NodeID, "turn-1", 1, "wrote it", StagedDelivery{}, nil, []string{docID})
+		saveEpisodicRoundWritten(context.Background(), base, base.NodeID, "turn-1", 2, "no changes", StagedDelivery{}, st, []string{docID})
+		raw, rev, ok, err := rc.Latest(context.Background(), docID)
+		if err != nil || !ok || rev != 1 || string(raw) != `{"week":6}` {
+			t.Fatalf("doc latest = rev %d %q ok=%v err=%v, want rev 1 JSON untouched", rev, raw, ok, err)
+		}
+	})
+
 	t.Run("worker_wrote_nothing", func(t *testing.T) {
 		svc := newMetaAwareInMemory()
 		base := reviewerCfgWithArtifacts(t, svc, true)

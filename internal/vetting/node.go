@@ -697,7 +697,7 @@ func (g *gateRun) commitFinal(answer string, res GateResult, episodicRoundsWritt
 	// A judge-less node (JudgeRounds == 0, e.g. a deterministic-only reMarkable
 	// stage) never entered the round loop - write its one round here (#1090 P2).
 	if episodicRoundsWritten == 0 && strings.TrimSpace(stripLeadingEnvScaffold(answer)) != "" {
-		saveEpisodicRound(g.nodeCtx, g.cfg, g.nodeID, g.turnID, 1, answer, act.stagedDelivery["review"], nil)
+		saveEpisodicRoundWritten(g.nodeCtx, g.cfg, g.nodeID, g.turnID, 1, answer, act.stagedDelivery["review"], nil, act.artifactsWritten)
 	}
 	// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.
 	g.delivered = true
@@ -938,7 +938,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	j.receivedMemories = mergeAndCountRecalledMemories(j.nodeCtx, j.cfg, j.advisorToken, j.receivedMemories, act.recalled)
 	// Every judge round writes a revision, gate-passed or not - only delivery stays
 	// gate-passed-only (#1090 P2), and every gated node writes one (#1095).
-	j.episodicState = saveEpisodicRound(j.nodeCtx, j.cfg, j.nodeID, j.turnID, round, j.answer, act.stagedDelivery["review"], j.episodicState)
+	j.episodicState = saveEpisodicRoundWritten(j.nodeCtx, j.cfg, j.nodeID, j.turnID, round, j.answer, act.stagedDelivery["review"], j.episodicState, act.artifactsWritten)
 	j.episodicRoundsWritten++
 	runID = fmt.Sprintf("judge-r%d", round)
 	judgeCtx, jspan = startStageSpan(j.nodeCtx, j.sink, j.cfg, j.nodeID, "judge", stream.StageJudge, runID, round)
