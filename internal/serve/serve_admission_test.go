@@ -50,3 +50,27 @@ func TestOrchestratorSpecOmitsKVWhenModelHasNoKVLimit(t *testing.T) {
 		t.Fatalf("KVTokens = %d, want 0", got)
 	}
 }
+
+func TestLightweightSpecIdentityAndNoKV(t *testing.T) {
+	cfg := &config.Config{
+		Models: map[string]config.ModelConfig{
+			"m": {Provider: "p", Role: "worker", ContextWindow: 262144, Limits: &config.ModelLimits{Sessions: 4, KVTokens: 262144}},
+		},
+	}
+	spec := lightweightSpec(cfg, "m")
+	if spec.KVTokens != 0 {
+		t.Fatalf("KVTokens = %d, want 0 - a one-shot caller never sizes a kv reservation", spec.KVTokens)
+	}
+	if spec.Model != "m" || spec.Provider != "p" || spec.Role != "worker" {
+		t.Fatalf("spec lost its identity dimensions: %+v", spec)
+	}
+}
+
+// An unregistered model must return a zero spec, so NewAdmittingLLM's fast
+// path skips wrapping instead of gating on an empty Model key.
+func TestLightweightSpecUnregisteredModelIsZero(t *testing.T) {
+	cfg := &config.Config{Models: map[string]config.ModelConfig{}}
+	if spec := lightweightSpec(cfg, "missing"); spec.Model != "" {
+		t.Fatalf("spec = %+v, want a zero spec for an unregistered model", spec)
+	}
+}
