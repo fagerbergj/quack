@@ -74,7 +74,7 @@ func TestSleeperAgentsResolveToolsWhenExtensionEnabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("agent %q: model: %v", name, err)
 		}
-		toolNames := resolveToolNames(ac.Tools, true, true)
+		toolNames := resolveToolNames(ac.Tools, true)
 		if _, err := tools.Build(toolNames, tools.Deps{
 			WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
 			Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
@@ -130,7 +130,7 @@ func TestSleeperWorkflowShapesAbsentWhenExtensionDisabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("agent %q: model: %v", name, err)
 		}
-		toolNames := resolveToolNames(ac.Tools, true, true)
+		toolNames := resolveToolNames(ac.Tools, true)
 		// No ExtTools: extensions.sleeper is off by default, exactly as a
 		// fresh clone boots - sleeper_* never resolves.
 		if _, err := tools.Build(toolNames, tools.Deps{

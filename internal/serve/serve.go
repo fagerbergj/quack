@@ -769,7 +769,6 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 
 // builds the configured agents (and their gate config, executor lookups, and classify model)
 func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM], reg pluginreg.FetchRegistry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
-	advisorAgent := buildAdvisorAgent(context.Background(), b.cfg, b.res, artifacts)
 	var executorRef atomic.Pointer[dag.Executor]
 	nodeCancelled := func(chatID, nodeID string) bool {
 		ex := executorRef.Load()
@@ -800,7 +799,7 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 		}
 	}
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore, reg, b.admission)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore, reg, b.admission)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("agent build failed: %w", err)
 	}
@@ -1101,7 +1100,7 @@ func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
+func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := newNodeScope(jail)
@@ -1189,7 +1188,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 			continue
 		}
 
-		na, err := buildNativeNode(name, ac, prov, taskStore, advisorAgent, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg)
+		na, err := buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg)
 		if err != nil {
 			if !dropOptionalAgent(name, ac, err) {
 				return nil, nil, nodeServers, nil, nil, nil, nil, err
@@ -1469,7 +1468,6 @@ type nativeNodeBuilder struct {
 	cfg                *config.Config
 	toolNames          []string
 	urlCache           *tools.URLCache
-	advisorAgent       adkagent.Agent
 	sessions           session.Service
 	jail               *workspace.Jail
 	gitCredentials     []tools.GitCredential
@@ -1510,7 +1508,6 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			Fetch:              tools.Backend{Kind: b.cfg.Tools["web_fetch"].Kind, URL: b.cfg.Tools["web_fetch"].URL},
 			Summarizer:         wm,
 			Cache:              b.urlCache,
-			Advisor:            b.advisorAgent,
 			Sessions:           b.sessions,
 			Workspace:          b.jail,
 			WorkspaceUserID:    localUserID,
@@ -1703,8 +1700,8 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
-func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, advisorAgent adkagent.Agent, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry) (adkagent.Agent, error) {
-	toolNames := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
+func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry) (adkagent.Agent, error) {
+	toolNames := resolveToolNames(ac.Tools, taskStore != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
 	if err != nil {
@@ -1742,7 +1739,6 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		cfg:                cfg,
 		toolNames:          toolNames,
 		urlCache:           urlCache,
-		advisorAgent:       advisorAgent,
 		sessions:           sessions,
 		jail:               jail,
 		gitCredentials:     gitCredentials,
@@ -1914,28 +1910,6 @@ func discoverSDKToolSources(sdkExts []builtSDKExtension) (tools.GitTokenSource, 
 		slog.Info("extension supplies assignment meta", "component", "startup", "extension", metaExtensionName)
 	}
 	return gitTokenSource, deliver, assignmentFreshness, assignmentMeta
-}
-
-func buildAdvisorAgent(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, artifacts artifact.Service) adkagent.Agent {
-	var advisorAgent adkagent.Agent
-	if cfg.Gates.JudgeEnabled() {
-		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
-			if am, merr := inference.NewModelWithEffort(aprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model)); merr != nil {
-				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
-			} else if ab, berr := agent.LoadBundle(ctx, res, "agents/advisor"); berr != nil {
-				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
-			} else if built, aerr := agent.BuildChat(ab, ab.PinPrompt(res), am, nil, nil, "", nil, ""); aerr != nil {
-				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
-			} else {
-				// ask_advisor nests its own runner.Run, but synchronously inside a node's
-				// tool call; unwrapped, since nesting an Admit in its reservation deadlocks it.
-				setDefaultAgent(am, "advisor")
-				advisorAgent = built
-				slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
-			}
-		}
-	}
-	return advisorAgent
 }
 
 func buildAgentInfos(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, clientMap map[string]adkagent.Agent) ([]dag.AgentInfo, map[string]bool, string) {
@@ -2545,7 +2519,7 @@ func fmtErr(agentName, format string, args ...any) error {
 
 // resolveToolNames drops runtime-conditional builtins whose dependency is off, and
 // collapses recall_memory/load_memory (the same tool under two names) to whichever is listed first.
-func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string) {
+func resolveToolNames(configured []string, taskMemAvailable bool) (names []string) {
 	names = make([]string, 0, len(configured))
 	sawMemoryRecall := false
 	for _, t := range configured {
@@ -2559,10 +2533,6 @@ func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bo
 				continue
 			}
 			sawMemoryRecall = true
-		case "ask_advisor":
-			if !advisorAvailable {
-				continue
-			}
 		}
 		names = append(names, t)
 	}

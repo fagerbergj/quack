@@ -28,7 +28,6 @@ const TOOL_VIEWS: Record<string, (props: { tool: ToolCall }) => ReactNode> = {
   grep: GrepView,
   web_search: WebSearchView,
   web_fetch: WebFetchView,
-  ask_advisor: AskAdvisorView,
   stage_memory: StageMemoryView,
   load_memory: LoadMemoryView,
   get_user_choice: GetUserChoiceView,
@@ -392,29 +391,6 @@ function WebFetchView({ tool }: { tool: ToolCall }) {
       {text != null
         ? <Code text={text} cap={220} />
         : !tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">fetching…</span>}
-    </div>
-  )
-}
-
-// AskAdvisorView - the worker's request followed by the advisor's reply, both
-// prose (not code), since neither is source text.
-function AskAdvisorView({ tool }: { tool: ToolCall }) {
-  const request = str(tool.args, 'request') ?? ''
-  const advice = tool.done ? str(tool.result, 'advice') : undefined
-  return (
-    <div className="space-y-1">
-      <div>
-        <Label>asked</Label>
-        <div className="text-[11px] text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 rounded p-2 whitespace-pre-wrap">{request}</div>
-      </div>
-      {advice != null && (
-        <div>
-          <Label>advice</Label>
-          <Expandable maxHeight={200} fade="from-gray-50 dark:from-gray-900">
-            <div className="text-[11px] text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 rounded p-2 whitespace-pre-wrap">{advice}</div>
-          </Expandable>
-        </div>
-      )}
     </div>
   )
 }

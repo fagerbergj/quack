@@ -57,7 +57,7 @@ type nodeScopedWorker interface {
 // app value) - observability only, see vetting.Config.Source. userID scopes the recordstore.Client behind
 // a native node's artifact tools (#1123) and must match the userID the rest of the chat's artifacts (e.g. the orchestrator's own writes) were saved under, or a node's list/read/edit silently sees nothing.
 func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(context.Context, string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
-	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent), sessions session.Service) (map[string]workflow.Node, []adkagent.Agent, error) {
+	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -117,7 +117,7 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup, sessions)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -237,12 +237,11 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 }
 
 func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), release func(paused bool), admission *Admission, spec, judgeSpec AdmissionSpec,
-	refreshSetup func(context.Context, Node, vetting.Config) bool, sessions session.Service) workflow.Node {
+	refreshSetup func(context.Context, Node, vetting.Config) bool) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			// paused stays false on every path except the HITL-park return below:
-			// it tells release() and the ask_advisor cleanup further down whether
-			// the node is truly finishing (reap its sessions) or only parking (a resume needs them intact).
+			// it tells release() whether the node is truly finishing or only parking (a resume needs its state intact).
 			paused := false
 			if release != nil {
 				defer func() { release(paused) }()
@@ -305,22 +304,6 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)
-			// Reaps the ask_advisor consult session this node's worker may have
-			// created (internal/tools.NewAskAdvisorTool) - a second orphaned
-			// session class alongside the A2A worker one (#A2), keyed the same
-			// deterministic way so it never outlives the node. Skipped on a
-			// HITL park (paused==true): a resume re-registers this SAME token
-			// and must still find its prior consult history.
-			if sessions != nil {
-				defer func() {
-					if paused {
-						return
-					}
-					_ = sessions.Delete(context.WithoutCancel(ctx), &session.DeleteRequest{
-						AppName: vetting.AdvisorSessionApp, UserID: vetting.AdvisorSessionUser, SessionID: vetting.AdvisorSessionID(token),
-					})
-				}()
-			}
 			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
 			atts := plan.Attachments
 			if !mediaAgents[node.AgentName] {

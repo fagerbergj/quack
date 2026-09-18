@@ -101,7 +101,7 @@ func TestBuildAgents_PlanJudgeReservesAndReleases(t *testing.T) {
 
 	var setupFn dag.SetupFunc
 	_, _, nodeServers, _, planJudge, _, _, err := buildAgents(cfg, nil, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil, nil, nil, admission)
+		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil, nil, nil, admission)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}
@@ -424,26 +424,4 @@ func TestOpenMemoryStores_WrapsConsolidator(t *testing.T) {
 		t.Fatal("commit did not release the consolidation model's session")
 	}
 	admission.Release(occupySpec)
-}
-
-// TestBuildAdvisorAgent_Unwrapped: no admission assertions here on purpose -
-// ask_advisor runs inside a node's own held slot, so it stays unwrapped.
-func TestBuildAdvisorAgent_Unwrapped(t *testing.T) {
-	cfg := &config.Config{
-		Providers: map[string]config.ProviderConfig{"judge-test": newTextStubProvider(t, "ok")},
-		Models: map[string]config.ModelConfig{
-			"judge-model": {Provider: "judge-test"},
-		},
-		Gates: config.GatesConfig{
-			Rubric: "be good",
-			Judge: config.JudgeConfig{
-				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
-				Threshold: 0.7, MaxIterations: 2,
-			},
-		},
-	}
-	res := artifactsrc.New("", nil, 0)
-	if advisorAgent := buildAdvisorAgent(context.Background(), cfg, res, nil); advisorAgent == nil {
-		t.Fatal("buildAdvisorAgent returned nil, want a built advisor")
-	}
 }

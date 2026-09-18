@@ -442,9 +442,9 @@ paths:
         each revision. Every run is delimited by `agent_start` / `agent_complete`
         and carries a `run_id` + `stage` (`worker` | `judge` | `revise`); its
         activity references that `run_id`. Clients group runs by `node_id` and
-        pair tools by `call_id`. A worker's advisor consultations (`ask_advisor`)
-        are NOT a separate stage - they surface as ordinary tool activity
-        (`agent_tool_call` / `agent_tool_result`) within the worker's own run.
+        pair tools by `call_id`. Every tool call surfaces as ordinary tool activity
+        (`agent_tool_call` / `agent_tool_result`) within the worker's own run - never
+        a separate stage.
 
         Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round",
         "started_at_ms","trace_id"}) opens a run - `started_at_ms` is the

@@ -72,7 +72,7 @@ agents:
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
-    tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor]
+    tools: [web_search, web_fetch, summarize, current_date, stage_memory]
     # no skills scoped: see config/quack.yaml's web-researcher comment
   code-implementer:
     bundle: agents/code-implementer   # card + prompt.md (ACP preamble) + rubric.yaml

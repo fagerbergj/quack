@@ -31,7 +31,7 @@ agents:
     context_window: 65536
     memory:
       bucket: research
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor]
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
 ```
 
 `tools:` is explicit and independent of the card's `skills` — a skill can come from the model, the prompt, or a tool, so listing tools here is a separate, honest declaration of what the agent can actually reach. `skills:` (a different list — built-in skill names, not the card's A2A skills) names which of quack's own skill library entries this agent may `load_skill`.
@@ -45,8 +45,6 @@ agents:
 quack runs two different kinds of worker:
 
 **Native (llmagent) agents** — `web-researcher`, `synthesizer`, `media-reader`, `image-reader`, and the orchestrator itself — run in-process as ADK `llmagent`s, using the `tools:` list above.
-
-`agents/advisor` is also a native bundle but isn't bound through the `agents:` map like the others: `internal/serve/serve.go` loads it once at startup, tool-less, bound to the judge's model (not its own), and wires it in as the backing agent for the `ask_advisor` tool a gated worker calls mid-run — it's never dispatched as a node in its own right. See [trust-gate.md](trust-gate.md#the-advisor-is-not-a-gate-stage).
 
 **ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `tools/pi-acp` shim driving pi, by default). They carry an `acp:` block instead of a `tools:` list:
 
@@ -92,7 +90,7 @@ The orchestrator stays light on tools — it needs only:
 
 `commit_memory` relies on the orchestrator model choosing to call it, which doesn't hold up reliably in practice. `orchestrator.user_memory_hook` (#262) is the fix: an end-of-turn hook that, after a cheap keyword pre-filter, hands the message to a dedicated `agents/memory-agent` bundle and commits whatever it extracts - fire-and-forget, so it never affects the response. Off by default (costs a model call per qualifying turn); enable with `orchestrator.user_memory_hook.enabled: true` plus a `provider`/`model`. Its guidance comes from `agents/orchestrator/memory.md` (what's worth remembering) and `agents/memory-agent/rubric.yaml` (the candidate-quality bar) - not duplicated into its own prompt.
 
-This is the orchestrator's own fixed list, not the full builtin tool registry (`internal/tools/` has 14 tools — web search/fetch, memory, filesystem reads, ask/advisor — no git or write tools, since code agents are ACP subprocesses) that individual agents pull from by name in their own `tools:` list above. See [tools.md](tools.md) for the full registry and the `tools:` backends.
+This is the orchestrator's own fixed list, not the full builtin tool registry (`internal/tools/` has 14 tools — web search/fetch, memory, filesystem reads, ask-user — no git or write tools, since code agents are ACP subprocesses) that individual agents pull from by name in their own `tools:` list above. See [tools.md](tools.md) for the full registry and the `tools:` backends.
 
 ### `recall_memory`
 

@@ -237,7 +237,7 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 	gateNodes, _, err := buildGateNodes(ctx, plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.specFor, e.judgeSpec, artifacts, e.walLedger, nil, sink, e.sessions) // a subset run never re-runs setup, so nothing to refresh
+		}, e.admission, e.specFor, e.judgeSpec, artifacts, e.walLedger, nil, sink) // a subset run never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}

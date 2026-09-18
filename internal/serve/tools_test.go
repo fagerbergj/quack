@@ -28,21 +28,8 @@ func TestResolveToolNames(t *testing.T) {
 		name             string
 		configured       []string
 		taskMemAvailable bool
-		advisorAvailable bool
 		wantNames        []string
 	}{
-		{
-			name:             "ask_advisor present when advisor available",
-			configured:       []string{"web_search", "ask_advisor"},
-			advisorAvailable: true,
-			wantNames:        []string{"web_search", "ask_advisor"},
-		},
-		{
-			name:             "ask_advisor absent when advisor unavailable (JudgeEnabled=false)",
-			configured:       []string{"web_search", "ask_advisor"},
-			advisorAvailable: false,
-			wantNames:        []string{"web_search"},
-		},
 		{
 			name:             "stage_memory present when task memory available",
 			configured:       []string{"stage_memory"},
@@ -95,7 +82,7 @@ func TestResolveToolNames(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotNames := resolveToolNames(tc.configured, tc.taskMemAvailable, tc.advisorAvailable)
+			gotNames := resolveToolNames(tc.configured, tc.taskMemAvailable)
 			if !reflect.DeepEqual(gotNames, tc.wantNames) {
 				t.Errorf("names = %v, want %v", gotNames, tc.wantNames)
 			}
@@ -112,7 +99,7 @@ func TestConfigListingBothMemoryToolsBuildsOne(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	names := resolveToolNames([]string{"load_memory", "recall_memory"}, true, false)
+	names := resolveToolNames([]string{"load_memory", "recall_memory"}, true)
 	lgr := ledgertest.NewMemStore()
 	built, err := tools.Build(names, tools.Deps{Memory: store, Ledger: lgr, MemoryRole: "task"})
 	if err != nil {
@@ -201,7 +188,7 @@ func TestEmitServerConfigToolsBuild(t *testing.T) {
 		if ac.Acp != nil {
 			continue // external worker: brings its own tools, quack builds none
 		}
-		names := resolveToolNames(ac.Tools, true, false)
+		names := resolveToolNames(ac.Tools, true)
 		if _, err := tools.Build(names, deps); err != nil {
 			t.Errorf("agent %q tools %v: %v", name, ac.Tools, err)
 		}
