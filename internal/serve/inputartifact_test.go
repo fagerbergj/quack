@@ -203,12 +203,14 @@ func TestReadExtInputArtifactKindFallback(t *testing.T) {
 		userID := st.SessionUserForChat(ctx, chatID)
 		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
 
+		// Hints sort "a-older" before "z-newer" (List orders by name): the
+		// SavedAt comparison, not list order, must pick the newer one.
 		older := time.Now().Add(-time.Hour)
 		newer := time.Now()
-		if _, _, err := client.SaveBlob(ctx, extReadFallbackTestKind, []byte("older"), "application/octet-stream", "inst-older", recordstore.Lineage{SavedAt: older}); err != nil {
+		if _, _, err := client.SaveBlob(ctx, extReadFallbackTestKind, []byte("older"), "application/octet-stream", "a-older", recordstore.Lineage{SavedAt: older}); err != nil {
 			t.Fatalf("SaveBlob older: %v", err)
 		}
-		if _, _, err := client.SaveBlob(ctx, extReadFallbackTestKind, []byte("newer"), "application/octet-stream", "inst-newer", recordstore.Lineage{SavedAt: newer}); err != nil {
+		if _, _, err := client.SaveBlob(ctx, extReadFallbackTestKind, []byte("newer"), "application/octet-stream", "z-newer", recordstore.Lineage{SavedAt: newer}); err != nil {
 			t.Fatalf("SaveBlob newer: %v", err)
 		}
 
@@ -223,6 +225,16 @@ func TestReadExtInputArtifactKindFallback(t *testing.T) {
 		read := readExtInputArtifact(st, artifacts)
 
 		data, ok := read(chatID, "github", "no_such_kind_or_input")
+		if ok || data != nil {
+			t.Errorf("read = (%v, %v), want (nil, false)", data, ok)
+		}
+	})
+
+	t.Run("registered kind with no saved artifacts yet is not found", func(t *testing.T) {
+		st, _, _, artifacts, _ := newExtTestStack(t)
+		read := readExtInputArtifact(st, artifacts)
+
+		data, ok := read(chatID, "github", extReadFallbackTestKind)
 		if ok || data != nil {
 			t.Errorf("read = (%v, %v), want (nil, false)", data, ok)
 		}
