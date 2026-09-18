@@ -1334,6 +1334,50 @@ func TestSaveEpisodicRound_ArtifactKind_SkippedWhenToolWrote(t *testing.T) {
 		}
 	})
 
+	t.Run("later_round_without_a_write_keeps_the_tool_written_artifact", func(t *testing.T) {
+		svc := newMetaAwareInMemory()
+		base := reviewerCfgWithArtifacts(t, svc, true)
+		base.IsReviewer = false
+		base.Artifact = kindDocument
+		base.NodeID = "lineup-analyst"
+
+		toolStage := NewToolWrittenStage()
+		secret := "sec-1501-artifact-sticky"
+		RegisterMemSession(secret, MemSession{ToolWritten: toolStage})
+		MarkMemSessionConnected(secret)
+		defer UnregisterMemSession(secret)
+		token := "tok-1501-artifact-sticky"
+		RegisterAdvisorThread(token, AdvisorTask{MemSecret: secret})
+		defer UnregisterAdvisorThread(token)
+		base.AdvisorToken = token
+
+		rc := recordClient(base)
+		docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := rc.SaveBlob(context.Background(), kindDocument, []byte(`{"week":1}`), "application/json", DocumentHint(base.ChatID), recordstore.Lineage{NodeID: base.NodeID}); err != nil {
+			t.Fatalf("seed SaveBlob: %v", err)
+		}
+		toolStage.Add(docID)
+		st := saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, "wrote the lineup artifact", StagedDelivery{}, nil)
+
+		// Round 2: judge failed, the worker only re-answers - no tool write this round.
+		saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 2, "still no changes this week", StagedDelivery{}, st)
+
+		raw, rev, ok, err := rc.Latest(context.Background(), docID)
+		if err != nil || !ok || rev != 1 || string(raw) != `{"week":1}` {
+			t.Fatalf("doc latest = rev %d %q ok=%v err=%v, want rev 1 JSON untouched", rev, raw, ok, err)
+		}
+		textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if traw, _, tok, err := rc.Latest(context.Background(), textID); err != nil || !tok || string(traw) != "still no changes this week" {
+			t.Fatalf("text latest = %q ok=%v err=%v, want the round-2 answer", traw, tok, err)
+		}
+	})
+
 	t.Run("worker_wrote_nothing", func(t *testing.T) {
 		svc := newMetaAwareInMemory()
 		base := reviewerCfgWithArtifacts(t, svc, true)

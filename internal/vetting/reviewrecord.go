@@ -414,7 +414,9 @@ type episodicRoundState struct {
 	findingRev   map[string]int           // every finding id ever seen -> its last WRITTEN revision
 	reviewRev    int
 	documentRev  int
-	textRev      int // "text:<node>" fallback kind's last-known revision (#1095)
+	// artifactToolWritten: the worker tool-wrote cfg.Artifact's id at some round of this run.
+	artifactToolWritten bool
+	textRev             int // "text:<node>" fallback kind's last-known revision (#1095)
 	// triggerAnnotation: the PRIOR round's judge_round id (#1092 design V4 §7
 	// case 3) - stamped as this round's writes' lineage.TriggerAnnotation, then advanced by the caller (node.go) once the round's own judge_round
 	// record is saved, so round r+1's revisions point back at round r's verdict.
@@ -682,8 +684,12 @@ func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 		toolWritten := resetToolWrittenIDs(cfg)
 		docID, idErr := recordstore.IdentityFor(cfg.Artifact, nil, DocumentHint(cfg.ChatID))
 		if idErr == nil && toolWritten[docID] {
-			// The worker already wrote this round's artifact directly via a
-			// write_<kind>/write_artifact tool call; the answer is a summary, not a second revision.
+			st.artifactToolWritten = true
+		}
+		if st.artifactToolWritten {
+			// Sticky for the run: once the worker owns the artifact id, a later round's
+			// answer (a summary) goes to text:<node>, never over the tool-written revision.
+			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, toolWritten)
 			break
 		}
 		// An unregistered artifact kind (e.g. a workflow-config typo) must not
