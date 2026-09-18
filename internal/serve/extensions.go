@@ -735,8 +735,8 @@ func extChatUser(st *store.Store) func(chatID string) (string, bool) {
 	}
 }
 
-// readExtInputArtifact backs Host.ReadArtifact, falling back to the newest
-// artifact of a Blob kind named name: agents write output under their own chosen id, not the job name a UI reads by.
+// readExtInputArtifact backs Host.ReadArtifact: bytes:<name> first (ok=false on a first dispatch,
+// no baseline), else the newest hint-identified Blob of kind name - agents pick their own artifact id, a UI reads by kind.
 func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, user, name string) ([]byte, bool) {
 	return func(chatID, user, name string) ([]byte, bool) {
 		if artifacts == nil {
@@ -765,14 +765,14 @@ func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) fu
 	}
 }
 
-// readLatestOfKind picks the artifact with the newest Lineage.SavedAt among
-// name's instances, highest Revision on a tie (SavedAt absent/equal).
+// readLatestOfKind picks the newest Lineage.SavedAt among name's instances, highest Revision on a tie.
+// RequiresHint excludes the generic bytes/text kinds: "bytes" would otherwise expose every input and upload-* attachment.
 func readLatestOfKind(ctx context.Context, client *recordstore.Client, name string) ([]byte, bool) {
 	spec, ok := recordstore.SpecFor(name)
-	if !ok || spec.Class != recordstore.Blob {
+	if !ok || spec.Class != recordstore.Blob || !spec.RequiresHint {
 		return nil, false
 	}
-	summaries, err := client.List(ctx, name)
+	summaries, err := client.List(ctx, name) // ponytail: List loads every artifact's bytes; index by kind if UIs poll this
 	if err != nil || len(summaries) == 0 {
 		return nil, false
 	}

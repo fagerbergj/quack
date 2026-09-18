@@ -240,6 +240,23 @@ func TestReadExtInputArtifactKindFallback(t *testing.T) {
 		}
 	})
 
+	t.Run("the generic bytes kind never falls back to attachments", func(t *testing.T) {
+		st, _, _, artifacts, _ := newExtTestStack(t)
+		ctx := context.Background()
+		read := readExtInputArtifact(st, artifacts)
+		userID := st.SessionUserForChat(ctx, chatID)
+		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
+
+		if _, _, err := client.SaveBlob(ctx, "bytes", []byte("secret upload"), "application/octet-stream", "upload-notes.pdf", recordstore.Lineage{SavedAt: time.Now()}); err != nil {
+			t.Fatalf("SaveBlob: %v", err)
+		}
+
+		data, ok := read(chatID, "github", "bytes")
+		if ok || data != nil {
+			t.Errorf("read of the bytes kind name = (%q, %v), want (nil, false)", data, ok)
+		}
+	})
+
 	t.Run("a Structured kind name never falls back", func(t *testing.T) {
 		st, _, _, artifacts, _ := newExtTestStack(t)
 		ctx := context.Background()
