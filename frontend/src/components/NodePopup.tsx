@@ -11,6 +11,10 @@ import type { NodeState, QueuedMessage } from '../state/chatStore'
 interface Props {
   node: DagNodeDef
   state: NodeState
+  // Has this node produced at least one run, ever - disambiguates a
+  // never-dispatched 'queued' from a mid-run re-queue (#1480). Defaults to
+  // false (never dispatched) for callers that don't track it.
+  dispatched?: boolean
   onClose: () => void
   onQueueMessage?: (nodeId: string, text: string) => void
   onEditQueuedMessage?: (nodeId: string, messageId: string, text: string) => void
@@ -188,16 +192,26 @@ function InputRow({ answering, value, onChange, onSubmit }: {
   )
 }
 
+// notStarted/isLive: split out of NodePopup to keep its own complexity under
+// the lint ceiling - 'queued' also fires mid-run, at a worker/judge
+// admission re-wait (#1480), which dispatched disambiguates from a real first wait.
+function notStarted(status: NodeState['status'], dispatched: boolean): boolean {
+  return status === 'queued' && !dispatched
+}
+function isLive(status: NodeState['status'], dispatched: boolean): boolean {
+  return status === 'running' || (status === 'queued' && dispatched)
+}
+
 export function NodePopup({
-  node, state, onClose,
+  node, state, dispatched = false, onClose,
   onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask, onAnswerQuestion,
 }: Props) {
   const [inputText, setInputText] = useState('')
 
-  // A node is editable-before-start only while still `queued` (never
-  // dispatched) - matches the server's check (PATCH .../nodes/{id}).
-  const notStarted = state.status === 'queued'
-  const running = state.status === 'running'
+  // A node is editable-before-start only while still `queued` AND never
+  // dispatched - matches the server's check (PATCH .../nodes/{id}).
+  const nodeNotStarted = notStarted(state.status, dispatched)
+  const running = isLive(state.status, dispatched)
   // Answering resumes the node now; queueing waits for its next turn
   // boundary - same input widget, chosen by which state the node is in.
   // needs_input is the legacy DB/SSE spelling; paused/awaiting_input is the wire-normalized one the REST read model returns - both mean "parked on a question".
@@ -232,7 +246,7 @@ export function NodePopup({
 
       {/* Prompt - the same bubble treatment as an assistant turn in chat. */}
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-        <PromptBlock nodeId={node.id} agent={node.agent} task={node.task} notStarted={notStarted} onEditTask={onEditTask} />
+        <PromptBlock nodeId={node.id} agent={node.agent} task={node.task} notStarted={nodeNotStarted} onEditTask={onEditTask} />
       </div>
 
       {/* Pending mid-node question - rendered as its own chat-style bubble,
