@@ -47,10 +47,10 @@ consistently over/under-values) - never a restatement of this week's news.
 State it as a note the reader can act on in a future week, not a summary of
 today's timeline. Season notes are a separate artifact
 (`sleeper:injury-and-news`'s `references/season-notes-schema.json`,
-`kind: "season-notes"`) from the trends timeline, and they accumulate: read
-the existing one first with `read_artifact` (empty/missing is fine - start
-a new list), then `write_artifact` the full `notes` array, your new entry
-appended, never the new entry alone. Write it only when you have a real
+`kind: "season-notes"`) from the trends timeline, and they accumulate: find the existing one with
+`list_artifacts` (kind `season-notes`) and read it with `read_artifact` by
+that id (none yet is fine - start a new list), then `write_artifact` the
+full `notes` array, your new entry appended, never the new entry alone. Write it only when you have a real
 note to add this round; most rounds add nothing.
 
 You do not name either artifact yourself - `write_artifact` derives the id

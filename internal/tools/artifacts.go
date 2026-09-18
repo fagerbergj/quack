@@ -147,9 +147,8 @@ func writeArtifactDescription() string {
 	return fmt.Sprintf("Write a new revision of a blob artifact (%s - not a structured kind; use write_<kind> for those). The registry derives the id.", strings.Join(kinds, ", "))
 }
 
-// NewWriteArtifactTool: blob writes only; structured kinds go through their
-// write_<kind> tool (NewWriteKindTool) instead. hint is the session-derived
-// identity hint (vetting.SubjectHint(chatID)) for hint-requiring kinds (document, pr_body) - never a tool argument, like ids (#1108 finding 2).
+// NewWriteArtifactTool: blob writes only; structured kinds go through write_<kind>. hint is the
+// session-derived DocumentHint for hint-requiring kinds (document, pr_body, lineup) - never a tool argument (#1108).
 func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) (tool.Tool, error) {
 	return functiontool.New[writeArtifactArgs, string](
 		functiontool.Config{
