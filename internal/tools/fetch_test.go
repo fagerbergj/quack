@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -193,6 +194,45 @@ func TestFetchBatch_InlineBudgetForcesStorage(t *testing.T) {
 	}
 }
 
+// TestFetchBatch_ManyLargePagesStayBoundedByBudget: 20 over-threshold pages
+// must not each return a full header+head - the shared budget bounds the total.
+func TestFetchBatch_ManyLargePagesStayBoundedByBudget(t *testing.T) {
+	const n = 20
+	body := strings.Repeat("word ", fetchArtifactThreshold/5+50) // over threshold
+	urls := make([]string, n)
+	stubs := map[string]fakeFetchResult{}
+	for i := 0; i < n; i++ {
+		u := fmt.Sprintf("https://ex.com/big%d", i)
+		urls[i] = u
+		stubs[u] = fakeFetchResult{body: body}
+	}
+	f := newFakeFetcher(stubs)
+	rc := testRecordStore()
+	d := Deps{RecordStore: rc, NodeID: "n1"}
+
+	results := fetchBatch(newFakeCtx(), d, f, urls, "", 0)
+	total, headless := 0, 0
+	for i, r := range results {
+		if r.Error != "" {
+			t.Fatalf("result %d: unexpected error %q", i, r.Error)
+		}
+		if !strings.Contains(r.Text, "artifact:") {
+			t.Fatalf("result %d: want a stored header for an over-threshold page", i)
+		}
+		total += len(r.Text)
+		if !strings.Contains(r.Text, "\n\n") { // a headed entry always has a "\n\n" before its head/footer
+			headless++
+		}
+	}
+	// Bound: the budget plus one page's overrun before it's noticed, plus small headers.
+	if maxAllowed := maxBatchInlineBytes + fetchArtifactThreshold + n*200; total > maxAllowed {
+		t.Fatalf("total returned bytes = %d, want <= %d (budget %d plus one page's overrun plus header overhead)", total, maxAllowed, maxBatchInlineBytes)
+	}
+	if headless == 0 {
+		t.Fatalf("no headless headers among %d large pages - budget enforcement on stored headers isn't working", n)
+	}
+}
+
 func TestShapeOrStore_PatternShortcutStillStores(t *testing.T) {
 	// One short needle line among many filler lines, so the matched line itself
 	// (not just the whole page) stays well under capFetchReturn's byte cap.
@@ -200,10 +240,7 @@ func TestShapeOrStore_PatternShortcutStillStores(t *testing.T) {
 	rc := testRecordStore()
 	d := Deps{RecordStore: rc, NodeID: "n1"}
 
-	got, inlined := shapeOrStore(newFakeCtx(), d, fetchedPage{url: "https://ex.com/large", full: large}, "needle-marker", 0, true)
-	if inlined {
-		t.Errorf("pattern shortcut result should never count against the inline budget")
-	}
+	got := shapeOrStore(newFakeCtx(), d, fetchedPage{url: "https://ex.com/large", full: large}, "needle-marker", 0, true)
 	if strings.Contains(got, "artifact:") {
 		t.Errorf("pattern shortcut should grep the page directly, not return the stored header: %q", got)
 	}
@@ -218,10 +255,7 @@ func TestShapeOrStore_PatternShortcutStillStores(t *testing.T) {
 
 func TestShapeOrStore_NoRecordStoreFallsBackToHead(t *testing.T) {
 	large := strings.Repeat("word ", (fetchArtifactThreshold/5)+100)
-	got, inlined := shapeOrStore(newFakeCtx(), Deps{}, fetchedPage{url: "https://ex.com/large", full: large}, "", 0, true)
-	if inlined {
-		t.Errorf("no RecordStore, over threshold: must not count as inlined")
-	}
+	got := shapeOrStore(newFakeCtx(), Deps{}, fetchedPage{url: "https://ex.com/large", full: large}, "", 0, true)
 	if strings.Contains(got, "artifact:") {
 		t.Errorf("no RecordStore configured: should degrade to inline text, got %q", got[:60])
 	}
@@ -235,8 +269,8 @@ func TestStoreWebPage_CacheHitReusesExistingID(t *testing.T) {
 	full := strings.Repeat("y", fetchArtifactThreshold+500)
 	ctx := newFakeCtx()
 
-	first := storeWebPage(ctx, d, "https://ex.com/cached", full, false)
-	second := storeWebPage(ctx, d, "https://ex.com/cached", full, true)
+	first := storeWebPage(ctx, d, "https://ex.com/cached", full, false, true)
+	second := storeWebPage(ctx, d, "https://ex.com/cached", full, true, true)
 
 	firstID := headerField(t, first, "artifact")
 	secondID := headerField(t, second, "artifact")
@@ -256,16 +290,23 @@ func TestStoreWebPage_CacheHitReusesExistingID(t *testing.T) {
 // byte size and flags a fetch that hit maxFetchBytes.
 func TestWebPageHeader_ByteSizeAndTruncation(t *testing.T) {
 	content := "line one\nline two"
-	got := webPageHeader("T", "https://ex.com/x", "web_page:abc", content, true)
+	got := webPageHeader("T", "https://ex.com/x", "web_page:abc", content, true, true)
 	if !strings.Contains(got, fmt.Sprintf("bytes: %d", len(content))) {
 		t.Errorf("header = %q, want a bytes: %d field", got, len(content))
 	}
 	if !strings.Contains(got, "truncated") {
 		t.Errorf("header = %q, want a truncation note", got)
 	}
-	untruncated := webPageHeader("T", "https://ex.com/x", "web_page:abc", content, false)
+	untruncated := webPageHeader("T", "https://ex.com/x", "web_page:abc", content, false, true)
 	if strings.Contains(untruncated, "truncated") {
 		t.Errorf("untruncated header = %q, should not mention truncation", untruncated)
+	}
+	headless := webPageHeader("T", "https://ex.com/x", "web_page:abc", content, false, false)
+	if strings.Contains(headless, "line one") {
+		t.Errorf("includeHead=false header = %q, must not carry the page head", headless)
+	}
+	if !strings.Contains(headless, "artifact: web_page:abc") {
+		t.Errorf("includeHead=false header = %q, must still carry the id/metadata", headless)
 	}
 }
 
@@ -363,4 +404,85 @@ func TestPageTitle(t *testing.T) {
 			t.Errorf("pageTitle(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// TestFetchGrepReadOffsetAgreeOnLineNumbers: grep_artifacts, read_artifact
+// and web_fetch's offset must all agree on the same stored page's line numbers.
+func TestFetchGrepReadOffsetAgreeOnLineNumbers(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 2000; i++ {
+		lines = append(lines, fmt.Sprintf("line %d content padding padding", i))
+	}
+	const needleLine = 1500
+	lines[needleLine-1] = "needle-marker unique-phrase"
+	full := strings.Join(lines, "\n")
+	if len(full) < fetchArtifactThreshold {
+		t.Fatalf("test setup: page is %d bytes, want at/above threshold (%d)", len(full), fetchArtifactThreshold)
+	}
+
+	rc := testRecordStore()
+	d := Deps{RecordStore: rc, Cache: NewURLCache(), NodeID: "n1"}
+	ctx := newFakeCtx()
+	const target = "https://ex.com/consistent"
+	f := newFakeFetcher(map[string]fakeFetchResult{target: {body: full}})
+
+	fetchResults := fetchBatch(ctx, d, f, []string{target}, "", 0)
+	header := fetchResults[0].Text
+	if fetchResults[0].Error != "" || !strings.Contains(header, "artifact:") {
+		t.Fatalf("expected the page to be stored, got %+v", fetchResults[0])
+	}
+	id := headerField(t, header, "artifact")
+
+	grepTool, err := NewGrepArtifactsTool(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grepOut, err := grepTool.(runnableTool).Run(newArtifactsToolCtx(), map[string]any{"pattern": "needle-marker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grepResult, _ := grepOut["result"].(string)
+	if got := parseGrepHitLine(t, grepResult, id); got != needleLine {
+		t.Fatalf("grep_artifacts hit line = %d, want %d", got, needleLine)
+	}
+
+	readTool, err := NewReadArtifactTool(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOut, err := readTool.(runnableTool).Run(newArtifactsToolCtx(), map[string]any{"id": id, "offset": needleLine, "lines": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readResult, _ := readOut["result"].(string)
+	if !strings.Contains(readResult, "needle-marker") {
+		t.Fatalf("read_artifact(offset=%d) = %q, want the needle line", needleLine, readResult)
+	}
+
+	// web_fetch's own offset shortcut against the same (now cached) page.
+	offsetResults := fetchBatch(ctx, d, f, []string{target}, "", needleLine)
+	if offsetResults[0].Error != "" || !strings.Contains(offsetResults[0].Text, "needle-marker") {
+		t.Fatalf("web_fetch(offset=%d) = %+v, want the needle line", needleLine, offsetResults[0])
+	}
+}
+
+// parseGrepHitLine extracts the line number from a grep_artifacts hit
+// formatted "<id>:<line>: <text>".
+func parseGrepHitLine(t *testing.T, output, id string) int {
+	t.Helper()
+	prefix := id + ":"
+	idx := strings.Index(output, prefix)
+	if idx < 0 {
+		t.Fatalf("grep_artifacts output = %q, want a hit for %s", output, id)
+	}
+	rest := output[idx+len(prefix):]
+	end := strings.Index(rest, ":")
+	if end < 0 {
+		t.Fatalf("grep_artifacts hit %q has no line number", rest)
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		t.Fatalf("grep_artifacts hit line %q not a number: %v", rest[:end], err)
+	}
+	return n
 }

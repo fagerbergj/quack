@@ -55,6 +55,9 @@ const (
 	// it, a page that would otherwise inline stores as an artifact instead.
 	maxBatchInlineBytes = 60_000
 
+	// maxTitleLen caps pageTitle's output so a header-only entry stays small.
+	maxTitleLen = 200
+
 	kindWebPage = "web_page"
 
 	// fetchTruncatedMarker: appended when a fetch is cut at maxFetchBytes -
@@ -253,8 +256,8 @@ func fetchOnePage(tc agent.Context, d Deps, f fetcher, raw string) fetchedPage {
 	return fetchedPage{url: target, full: fetched}
 }
 
-// shapePages shapes pages in order against a shared budget: past
-// maxBatchInlineBytes cumulative, later under-threshold pages store too.
+// shapePages shapes pages in order against a shared budget decremented by
+// every entry's own size - past it, stored headers drop their head too.
 func shapePages(tc agent.Context, d Deps, pages []fetchedPage, pattern string, offset int) []FetchResult {
 	out := make([]FetchResult, len(pages))
 	budget := maxBatchInlineBytes
@@ -263,33 +266,31 @@ func shapePages(tc agent.Context, d Deps, pages []fetchedPage, pattern string, o
 			out[i] = FetchResult{URL: p.url, Error: p.err.Error()}
 			continue
 		}
-		text, inlined := shapeOrStore(tc, d, p, pattern, offset, budget > 0)
-		if inlined {
-			budget -= len(text)
-		}
+		text := shapeOrStore(tc, d, p, pattern, offset, budget > 0)
+		budget -= len(text)
 		out[i] = FetchResult{URL: p.url, Text: text}
 	}
 	return out
 }
 
 // shapeOrStore shapes one page. allowInline false forces storage even under
-// threshold (budget spent); inlined says whether text counts against it.
-func shapeOrStore(tc agent.Context, d Deps, p fetchedPage, pattern string, offset int, allowInline bool) (text string, inlined bool) {
+// threshold, and drops a stored header's head - the budget is spent.
+func shapeOrStore(tc agent.Context, d Deps, p fetchedPage, pattern string, offset int, allowInline bool) string {
 	underThreshold := len(p.full) < fetchArtifactThreshold
 	var header string
 	if (!underThreshold || !allowInline) && d.RecordStore != nil {
-		header = storeWebPage(tc, d, p.url, p.full, p.cacheHit)
+		header = storeWebPage(tc, d, p.url, p.full, p.cacheHit, allowInline)
 	}
 	if strings.TrimSpace(pattern) != "" || offset > 0 {
-		return shapeFetchResult(p.full, pattern, offset), false
+		return shapeFetchResult(p.full, pattern, offset)
 	}
 	if header != "" {
-		return header, false
+		return header
 	}
 	if underThreshold {
-		return capFetchReturn(p.full), true
+		return capFetchReturn(p.full)
 	}
-	return shapeFetchResult(p.full, "", 0), false
+	return shapeFetchResult(p.full, "", 0)
 }
 
 // webPageIdentity: instance = a short hash of the URL (hint), ignoring
@@ -310,19 +311,26 @@ func pageTitle(text string) string {
 		if ln == "" {
 			continue
 		}
-		return strings.TrimSpace(strings.TrimLeft(ln, "# "))
+		title := strings.TrimSpace(strings.TrimLeft(ln, "# "))
+		if len(title) > maxTitleLen {
+			// A page with no line breaks at all (e.g. minified) would otherwise
+			// make "title" as large as the whole page.
+			title = title[:maxTitleLen] + "…"
+		}
+		return title
 	}
 	return ""
 }
 
 // storeWebPage persists full verbatim (or, on a cache hit, reuses its
 // existing id) and returns the short header; "" falls back to an inline head.
-func storeWebPage(tc agent.Context, d Deps, target, full string, cacheHit bool) string {
+// includeHead false (the batch budget is spent) omits the header's page head.
+func storeWebPage(tc agent.Context, d Deps, target, full string, cacheHit, includeHead bool) string {
 	title := pageTitle(full)
 	truncated := strings.HasSuffix(full, fetchTruncatedMarker)
 	if cacheHit {
 		if id, ok := existingWebPageID(tc, d, target, full); ok {
-			return webPageHeader(title, target, id, full, truncated)
+			return webPageHeader(title, target, id, full, truncated, includeHead)
 		}
 	}
 	lineage := recordstore.Lineage{Author: "worker", SavedAt: time.Now().UTC()}
@@ -337,7 +345,7 @@ func storeWebPage(tc agent.Context, d Deps, target, full string, cacheHit bool) 
 		slog.Warn("web_fetch: store page artifact failed; falling back to inline head", "component", "tools", "url", target, "error", err)
 		return ""
 	}
-	return webPageHeader(title, target, id, full, truncated)
+	return webPageHeader(title, target, id, full, truncated, includeHead)
 }
 
 // existingWebPageID: id is a pure function of the URL, so a cache hit can
@@ -354,16 +362,20 @@ func existingWebPageID(tc agent.Context, d Deps, target, full string) (string, b
 	return id, true
 }
 
-// webPageHeader: the short entry a stored page returns in place of its full text.
-func webPageHeader(title, target, id, content string, truncated bool) string {
+// webPageHeader: the short entry a stored page returns in place of its full
+// text. includeHead false (the budget is spent) omits the page head.
+func webPageHeader(title, target, id, content string, truncated, includeHead bool) string {
 	ls := strings.Split(content, "\n")
-	head := windowLines(ls, 1, fetchHeadLines, len(ls))
 	note := ""
 	if truncated {
 		note = " (truncated at the fetch limit)"
 	}
-	return fmt.Sprintf("title: %s\nurl: %s\nartifact: %s\nlines: %d\nbytes: %d%s\n\n%s",
-		title, target, id, len(ls), len(content), note, head)
+	base := fmt.Sprintf("title: %s\nurl: %s\nartifact: %s\nlines: %d\nbytes: %d%s",
+		title, target, id, len(ls), len(content), note)
+	if !includeHead {
+		return base
+	}
+	return base + "\n\n" + windowLines(ls, 1, fetchHeadLines, len(ls))
 }
 
 // shapeFetchResult: returns grep matches, offset window, or head of cached page.
