@@ -274,7 +274,7 @@ agents:
     context_window: 65536
     judge_rounds: 1
     optional: true
-    tools: [sleeper_trends, sleeper_player, sleeper_transactions, web_search, web_fetch, summarize, current_date]
+    tools: [sleeper_trends, sleeper_player, sleeper_transactions, web_search, web_fetch, grep_artifacts, summarize, current_date]
 
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +
