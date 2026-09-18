@@ -321,7 +321,7 @@ func dependencyArtifactCandidates(cfg Config, dep string) []string {
 			candidates = append(candidates, tid)
 		}
 	case cfg.Artifact != "":
-		if tid, err := recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID)); err == nil {
+		if tid, err := recordstore.IdentityFor(cfg.Artifact, nil, DocumentHint(cfg.ChatID)); err == nil {
 			candidates = append(candidates, tid)
 		}
 	}
