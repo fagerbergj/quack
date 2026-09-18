@@ -203,8 +203,8 @@ func TestReadExtInputArtifactKindFallback(t *testing.T) {
 		userID := st.SessionUserForChat(ctx, chatID)
 		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
 
-		// Hints sort "z-older" before "a-newer" (List orders by name): the
-		// SavedAt comparison, not list order, must pick the newer one.
+		// List orders by name, so "a-newer" comes first and "z-older" last: a
+		// take-last shortcut would return the older one; only SavedAt picks right.
 		older := time.Now().Add(-time.Hour)
 		newer := time.Now()
 		if _, _, err := client.SaveBlob(ctx, extReadFallbackTestKind, []byte("older"), "application/octet-stream", "z-older", recordstore.Lineage{SavedAt: older}); err != nil {
