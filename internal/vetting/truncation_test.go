@@ -6,6 +6,7 @@ import (
 	"iter"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -120,7 +121,8 @@ func TestRunGatedRefine_TruncatedAnswerGetsOneContinuation(t *testing.T) {
 		{text: "ght.", finish: genai.FinishReasonStop},
 	}}
 	final, res := runTruncationNode(t, stub)
-	if want := "It was a dark and stormy night."; final != want {
+	// truncationSeam inserts "\n" since the continuation doesn't open with whitespace.
+	if want := "It was a dark and stormy ni\nght."; final != want {
 		t.Errorf("final answer = %q, want %q", final, want)
 	}
 	if stub.workerCalls != 2 {
@@ -143,8 +145,8 @@ func TestRunGatedRefine_TruncatedAnswerGetsTwoContinuations(t *testing.T) {
 		{text: "C", finish: genai.FinishReasonStop},
 	}}
 	final, res := runTruncationNode(t, stub)
-	if final != "ABC" {
-		t.Errorf("final answer = %q, want %q", final, "ABC")
+	if final != "A\nB\nC" {
+		t.Errorf("final answer = %q, want %q", final, "A\\nB\\nC")
 	}
 	if stub.workerCalls != 3 {
 		t.Errorf("worker calls = %d, want 3 (draft + 2 continuations)", stub.workerCalls)
@@ -168,8 +170,8 @@ func TestRunGatedRefine_ExhaustedContinuationsFailClosed(t *testing.T) {
 		{text: "F", finish: genai.FinishReasonMaxTokens}, // round 2 continuation 2 (budget exhausted, terminal round)
 	}}
 	final, res := runTruncationNode(t, stub)
-	if final != "DEF" {
-		t.Errorf("final answer = %q, want %q (round 2's revision, still cut off)", final, "DEF")
+	if final != "D\nE\nF" {
+		t.Errorf("final answer = %q, want %q (round 2's revision, still cut off)", final, "D\\nE\\nF")
 	}
 	if stub.workerCalls != 6 {
 		t.Errorf("worker calls = %d, want 6 (2 rounds x (1 producing call + 2 continuations))", stub.workerCalls)
@@ -237,5 +239,35 @@ func TestBuildTruncationContinuationPrompt_LongAnswerQuotesOnlyTheTail(t *testin
 	}
 	if strings.Contains(got, strings.Repeat("x", truncationTailChars+1)) {
 		t.Errorf("prompt quoted more than truncationTailChars of the answer")
+	}
+}
+
+// TestBuildTruncationContinuationPrompt_RuneSafeTail: the byte cutoff lands
+// inside "日"'s 3-byte encoding - the trailing partial rune must be dropped,
+// not left to corrupt the quoted tail (valid UTF-8 in, valid UTF-8 out).
+func TestBuildTruncationContinuationPrompt_RuneSafeTail(t *testing.T) {
+	answer := "日" + strings.Repeat("x", truncationTailChars-1) // len = 3 + 199 = 202
+	got := buildTruncationContinuationPrompt(answer)
+	if !utf8.ValidString(got) {
+		t.Fatalf("prompt is not valid UTF-8 after tail-trimming:\n%q", got)
+	}
+	if strings.Contains(got, "日") {
+		t.Errorf("prompt kept a rune whose bytes were cut mid-sequence, want it dropped entirely:\n%s", got)
+	}
+}
+
+// TestTruncationSeam: a "\n" seam unless the continuation already opens with
+// whitespace, avoiding a doubled seam.
+func TestTruncationSeam(t *testing.T) {
+	cases := []struct{ cont, want string }{
+		{"ght.", "\n"},
+		{" the rest.", ""},
+		{"\nthe rest.", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := truncationSeam(c.cont); got != c.want {
+			t.Errorf("truncationSeam(%q) = %q, want %q", c.cont, got, c.want)
+		}
 	}
 }

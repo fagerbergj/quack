@@ -558,6 +558,32 @@ func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, string,
 	return resp.Part.InlineData.Data, resp.Part.InlineData.MIMEType, lineage, rev, true, nil
 }
 
+// LoadVersionWithMeta is LoadVersion, also returning that specific revision's
+// own lineage - a past revision keeps its own, never the latest's (zero on a backend with no row to read it from, as LatestWithMeta).
+func (c *Client) LoadVersionWithMeta(ctx context.Context, id string, version int) ([]byte, Lineage, bool, error) {
+	req := &artifact.LoadRequest{AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: id, Version: int64(version)}
+	var resp *artifact.LoadResponse
+	var lineageJSON []byte
+	var err error
+	if ml, ok := c.svc.(metaLoader); ok {
+		resp, _, _, lineageJSON, err = ml.LoadWithMeta(ctx, req)
+	} else {
+		resp, err = c.svc.Load(ctx, req)
+	}
+	if err != nil {
+		if isNotFound(err) {
+			return nil, Lineage{}, false, nil
+		}
+		return nil, Lineage{}, false, fmt.Errorf("recordstore: load %s@%d: %w", id, version, err)
+	}
+	if resp == nil || resp.Part == nil || resp.Part.InlineData == nil {
+		return nil, Lineage{}, false, nil
+	}
+	var lineage Lineage
+	_ = json.Unmarshal(lineageJSON, &lineage) // best-effort; zero value if absent/malformed
+	return resp.Part.InlineData.Data, lineage, true, nil
+}
+
 // Versions returns id's saved revision numbers, newest first, nil if none -
 // the public counterpart of versionsDesc, for a caller (delivery_record's
 // history read, #1093) that needs every revision of one id, not just Latest.

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -292,26 +293,63 @@ func deliveryTarget(ctx context.Context, cfg Config) (id string, revision int, o
 	return targetID, rev, true
 }
 
-// LatestArtifactContent: nodeID's full delivered artifact - deliveryTarget's typed
-// kind, else the generic "text:<nodeID>" every gate writes; for dag's inlining.
-func LatestArtifactContent(ctx context.Context, cfg Config, nodeID string) (content string, revision int, ok bool) {
+// DependencyArtifact: dep's own artifact, scoped by Lineage.NodeID (the typed
+// kind's id is chat-scoped) and picked by the highest Lineage.Round found. Never a System kind.
+func DependencyArtifact(ctx context.Context, cfg Config, dep string) (id string, revision int, content string, ok bool) {
 	c := recordClient(cfg)
 	if c == nil {
-		return "", 0, false
+		return "", 0, "", false
 	}
-	targetID, _, found := deliveryTarget(ctx, cfg)
-	if !found {
-		var err error
-		targetID, err = recordstore.IdentityFor(kindText, nil, nodeID)
-		if err != nil {
-			return "", 0, false
+	bestRound := -1
+	for _, cid := range dependencyArtifactCandidates(cfg, dep) {
+		cRev, cContent, cRound, cok := bestDependencyRevision(ctx, c, cid, dep, bestRound)
+		if !cok {
+			continue
+		}
+		id, revision, content, ok, bestRound = cid, cRev, cContent, true, cRound
+	}
+	return id, revision, content, ok
+}
+
+// dependencyArtifactCandidates: dep's typed kind (its IsReviewer/Artifact
+// selector), preferred, then the "text:<dep>" fallback every gate writes.
+func dependencyArtifactCandidates(cfg Config, dep string) []string {
+	var candidates []string
+	switch {
+	case cfg.IsReviewer:
+		if tid, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID)); err == nil {
+			candidates = append(candidates, tid)
+		}
+	case cfg.Artifact != "":
+		if tid, err := recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID)); err == nil {
+			candidates = append(candidates, tid)
 		}
 	}
-	data, rev, exists, lerr := c.Latest(ctx, targetID)
-	if lerr != nil || !exists {
-		return "", 0, false
+	if tid, err := recordstore.IdentityFor(kindText, nil, dep); err == nil {
+		candidates = append(candidates, tid)
 	}
-	return string(data), rev, true
+	return candidates
+}
+
+// bestDependencyRevision: cid's highest-Round revision with Lineage.NodeID ==
+// dep and Round > floor, skipping a System kind entirely.
+func bestDependencyRevision(ctx context.Context, c *recordstore.Client, cid, dep string, floor int) (revision int, content string, round int, ok bool) {
+	if spec, sok := recordstore.SpecFor(recordstore.KindOf(cid)); sok && spec.System {
+		return 0, "", 0, false
+	}
+	versions, verr := c.Versions(ctx, cid)
+	if verr != nil {
+		return 0, "", 0, false
+	}
+	round = floor
+	for _, v := range versions {
+		data, lineage, exists, lerr := c.LoadVersionWithMeta(ctx, cid, v)
+		if lerr != nil || !exists || lineage.NodeID != dep || lineage.Round <= round {
+			continue
+		}
+		revision, content, round, ok = v, string(data), lineage.Round, true
+	}
+	return revision, content, round, ok
 }
 
 // deliveryIdempotencyKey: target artifact id + revision (#1090 V4 §4.9) -
@@ -997,7 +1035,7 @@ func (j *judgeRounds) checkTruncation(round int) bool {
 			j.truncated = true
 			return true
 		}
-		j.answer += cont
+		j.answer += truncationSeam(cont) + cont
 		j.lastAnswerRunID = runID
 		j.log.Info("continued a cut-off worker reply", "round", round, "continuation", n)
 		// Mirrors draftOrResume/continueWorker's own pause check: a worker-raised
@@ -1041,12 +1079,25 @@ func workerRunFinishReason(sess session.Session, invocationID, nodeID, runID str
 func buildTruncationContinuationPrompt(answer string) string {
 	tail := answer
 	if len(tail) > truncationTailChars {
+		// Byte-slice from the end, then drop a leading rune the cut split.
 		tail = tail[len(tail)-truncationTailChars:]
+		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+			tail = tail[1:]
+		}
 	}
 	return "Your last reply was cut off by the model's output-length limit. It ended with:\n\n\"..." + tail + "\"\n\n" +
 		"Do NOT repeat any text you already delivered - continue writing from exactly where you stopped. " +
 		"If you are writing a long deliverable to your artifact (write_artifact/edit_artifact), append the " +
 		"remainder there with edit_artifact, then reply with just the remainder text. Never restart from the top."
+}
+
+// truncationSeam: a "\n" between the truncated answer and its continuation,
+// skipped when cont already opens with whitespace (avoid a doubled seam).
+func truncationSeam(cont string) string {
+	if cont == "" || cont[0] == ' ' || cont[0] == '\n' || cont[0] == '\t' {
+		return ""
+	}
+	return "\n"
 }
 
 // prepareJudge: per-round act/memories scan, the always-written episodic

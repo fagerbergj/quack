@@ -66,7 +66,7 @@ Independence still holds: the planner writes the rubric, a different model does 
 
 ## Dependents read the artifact
 
-When a node's answer feeds a dependent node's prompt (`dag.buildTask`), the dependent gets the node's full saved artifact instead of the answer text whenever the artifact is longer - the answer may be a pointer or a summary ("fixed in artifact revision 3") rather than the deliverable itself. This checks the node's configured `Artifact` kind first, then the generic per-round `text:<nodeID>` revision every gated node writes; a shorter or missing artifact leaves the answer text unchanged.
+When a node's answer feeds a dependent node's prompt (`dag.buildTask`), the dependent keeps that answer exactly as before and, when the node's own artifact revision differs from it, gets that artifact appended after it under a header naming its id and revision - the answer may be a pointer or a summary ("fixed in artifact revision 3") rather than the deliverable itself. `vetting.DependencyArtifact` scopes this by `Lineage.NodeID` (never a sibling's revision under the same chat-scoped typed id) and picks the highest `Lineage.Round` across the node's configured `Artifact` kind and the generic per-round `text:<nodeID>` fallback, so a later round's tool-write is never shadowed by an earlier, possibly gate-failed round. A System kind (e.g. `web_page`) is never a candidate. Total appended bytes per task are capped to a share of the dependent's own `context_window` (`artifactContextShare`, `artifactBytesPerToken`); an oversized artifact is truncated with a trailing marker naming the id so the node can `read_artifact` the rest.
 
 ## Delivery
 
