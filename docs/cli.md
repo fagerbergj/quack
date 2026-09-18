@@ -15,7 +15,7 @@ Every command has its own `--help`; this page is the map.
 | `quack init` | Onboarding wizard: run a server locally (writes `quack.yaml`; the CLI then runs it in-process, no server registered) or register a remote one someone else runs. |
 | `quack server init` | Just the config wizard - LLM provider, endpoint, model roles, optional features, stores. Writes `quack.yaml` without touching the client registry. `--answers <file.yaml>` skips the wizard entirely for a headless setup (Dockerfile, CI, Ansible) - a YAML file of the same fields the wizard asks for (see `InitAnswers` in `internal/cli/emit.go`); unset fields fall back to the same environment variables the wizard prefills from. |
 | `quack server use <name>` / `add <name> <url>` / `list [--json]` / `remove <name>` | Manage the set of servers this CLI knows about and which one is active. `add` activates the server if it's the first one registered. |
-| `quack server validate [--json]` | Load and validate a `quack.yaml` without starting the server. |
+| `quack server validate [--json]` | Load and validate a `quack.yaml` without starting the server; also resolves plugins and lists each plugin's seeded agents and shapes. |
 | `quack server login <name> --issuer <url> --client-id <id>` | Log in to a registered server that requires [OIDC auth](configuration/auth.md#cli-login-quack-server-login), via the authorization code flow with PKCE (needs a local browser - doesn't work headless/over SSH). |
 
 Once logged in, `quack chat`/`quack api`/`-p` attach the stored access token to every request against that server automatically (refreshed silently as it nears expiry) - nothing else to pass on the command line.

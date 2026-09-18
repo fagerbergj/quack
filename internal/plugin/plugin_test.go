@@ -142,3 +142,43 @@ func TestResolveSkillDirs_PreservesOrder(t *testing.T) {
 		t.Fatalf("dirs = %v, want [%s %s] in that order", dirs, filepath.Join(a, "skills"), filepath.Join(b, "skills"))
 	}
 }
+
+// agents/ and workflows/ are discovered by presence, same as skills/ - no
+// manifest listing required, and neither is an error when absent.
+func TestResolve_AgentsAndWorkflowsDirs(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "plugin.json"), `{"$schema":"x","name":"sleeper"}`)
+	writeFile(t, filepath.Join(root, "agents", "lineup-analyst", "agent-card.json"), `{"name":"lineup-analyst"}`)
+	writeFile(t, filepath.Join(root, "workflows", "sleeper-lineup.yaml"), "name: sleeper-lineup")
+
+	plugins, err := Resolve([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("plugins = %v, want 1", plugins)
+	}
+	p := plugins[0]
+	if want := filepath.Join(root, "agents"); p.AgentsDir != want {
+		t.Errorf("AgentsDir = %q, want %q", p.AgentsDir, want)
+	}
+	if want := filepath.Join(root, "workflows"); p.WorkflowsDir != want {
+		t.Errorf("WorkflowsDir = %q, want %q", p.WorkflowsDir, want)
+	}
+}
+
+// A plugin with no agents/ or workflows/ directory leaves both fields "" -
+// §6.2's "absent fixed location is not an error" applies here too.
+func TestResolve_NoAgentsOrWorkflowsDirs(t *testing.T) {
+	root := pluginRoot(t, `{"$schema":"x","name":"acme"}`, "", "skills", "a")
+	plugins, err := Resolve([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("plugins = %v, want 1", plugins)
+	}
+	if plugins[0].AgentsDir != "" || plugins[0].WorkflowsDir != "" {
+		t.Errorf("AgentsDir/WorkflowsDir = %q/%q, want both empty", plugins[0].AgentsDir, plugins[0].WorkflowsDir)
+	}
+}

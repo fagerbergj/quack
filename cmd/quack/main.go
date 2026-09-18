@@ -690,13 +690,25 @@ func newServerValidateCmd() *cobra.Command {
 			if len(args) == 1 {
 				path = args[0]
 			}
-			if _, err := config.Load(path); err != nil {
+			cfg, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			plugins, err := serve.ResolveConfiguredPlugins(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
+			seeded, err := serve.SeedPluginAgentsAndShapes(cfg, plugins)
+			if err != nil {
 				return err
 			}
 			if asJSON {
-				return cli.WriteJSON(cmd.OutOrStdout(), serverValidateResult{Path: path, Status: "ok"})
+				return cli.WriteJSON(cmd.OutOrStdout(), serverValidateResult{Path: path, Status: "ok", Plugins: seeded})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: OK\n", path)
+			for _, r := range seeded {
+				fmt.Fprintf(cmd.OutOrStdout(), "  plugin %s: agents %v, shapes %v\n", r.Plugin, r.Agents, r.Shapes)
+			}
 			return nil
 		},
 	}
@@ -706,9 +718,11 @@ func newServerValidateCmd() *cobra.Command {
 
 // serverValidateResult is `server validate --json`'s shape; validate only
 // ever reaches it on success (an invalid config returns an error instead).
+// Plugins lists each plugin that seeded at least one agent or shape.
 type serverValidateResult struct {
-	Path   string `json:"path"`
-	Status string `json:"status"`
+	Path    string                   `json:"path"`
+	Status  string                   `json:"status"`
+	Plugins []serve.PluginSeedResult `json:"plugins,omitempty"`
 }
 
 // newServerInitCmd: `quack server init` - the server-config wizard (LLM

@@ -1,0 +1,5 @@
+skills: [sleeper:waivers]
+model_role: researcher
+context_window: 65536
+judge_rounds: 1
+tools: [sleeper_free_agents, sleeper_roster, sleeper_transactions, sleeper_trends, sleeper_schedule, sleeper_league, current_date]
