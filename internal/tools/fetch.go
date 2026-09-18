@@ -48,7 +48,18 @@ const (
 	// lines) so one call can't flood context.
 	maxWindowLines = 500
 
+	// maxBatchURLs bounds one web_fetch call's URL count (goroutines + worst-case context cost).
+	maxBatchURLs = 20
+
+	// maxBatchInlineBytes bounds one call's cumulative inlined text - past
+	// it, a page that would otherwise inline stores as an artifact instead.
+	maxBatchInlineBytes = 60_000
+
 	kindWebPage = "web_page"
+
+	// fetchTruncatedMarker: appended when a fetch is cut at maxFetchBytes -
+	// shared so a stored header can flag it without re-deriving the suffix.
+	fetchTruncatedMarker = "\n[content truncated at fetch limit]"
 )
 
 func init() {
@@ -58,7 +69,8 @@ func init() {
 		// URL keeps landing on the same artifact id rather than minting a new one.
 		Identity:     webPageIdentity,
 		RequiresHint: true,
-		// AgentWritable stays false: only web_fetch's store path writes this kind.
+		// System: only storeWebPage may write this kind - see recordstore.KindSpec.System.
+		System: true,
 	})
 }
 
@@ -124,17 +136,18 @@ func newFetch(d Deps) (tool.Tool, error) {
 	if err != nil {
 		return nil, err
 	}
-	desc := "Fetch a batch of web pages: `urls: [\"https://...\", ...]` (a single page is still a " +
-		"one-element list), fetched concurrently, one result entry per URL - a failed URL is reported " +
-		"on its own and does not fail the rest of the batch. "
+	desc := fmt.Sprintf("Fetch a batch of web pages: `urls: [\"https://...\", ...]` (a single page is "+
+		"still a one-element list; up to %d per call), fetched concurrently, one result entry per URL - "+
+		"a failed URL is reported on its own and does not fail the rest of the batch. ", maxBatchURLs)
 	if _, ok := f.(crawl4aiFetcher); ok {
 		desc += "Falls back to a headless browser for JavaScript-rendered pages. "
 	}
-	desc += fmt.Sprintf("A short page's full text comes back inline; a page at or above %d bytes is stored "+
-		"as an artifact instead and its entry is a short header (title, url, artifact id, line count, a "+
-		"small head) - grep_artifacts and read_artifact(id, offset, lines) read the rest without re-fetching. "+
-		"`pattern` (a regex, applied to every URL in this call) or `offset` (a line number) still shapes "+
-		"the full page directly as a shortcut, storage or not.", fetchArtifactThreshold)
+	desc += fmt.Sprintf("A short page's full text comes back inline; a page at or above %d bytes, or past "+
+		"this call's combined ~%d-byte inline budget, is stored as an artifact instead and its entry is a "+
+		"short header (title, url, artifact id, line/byte count, a small head) - grep_artifacts and "+
+		"read_artifact(id, offset, lines) read the rest without re-fetching. `pattern` (a regex, applied to "+
+		"every URL in this call) or `offset` (a line number) still shapes the full page directly as a "+
+		"shortcut, storage or not.", fetchArtifactThreshold, maxBatchInlineBytes)
 
 	return functiontool.New[fetchArgs, fetchResponse](
 		functiontool.Config{
@@ -145,79 +158,138 @@ func newFetch(d Deps) (tool.Tool, error) {
 			if len(a.URLs) == 0 {
 				return fetchResponse{}, errors.New("web_fetch: urls must be non-empty")
 			}
+			if len(a.URLs) > maxBatchURLs {
+				return fetchResponse{}, fmt.Errorf("web_fetch: %d urls exceeds the %d-url batch limit; split into smaller batches", len(a.URLs), maxBatchURLs)
+			}
 			return fetchResponse{Results: fetchBatch(tc, d, f, a.URLs, a.Pattern, a.Offset)}, nil
 		},
 	)
 }
 
-// fetchBatch fetches urls concurrently, bounded by maxConcurrentFetches, and
-// returns one result per URL in input order.
+// fetchedPage: one URL's raw fetch outcome, before shaping.
+type fetchedPage struct {
+	url      string
+	full     string
+	cacheHit bool
+	err      error
+}
+
+// fetchBatch fetches each unique URL once, shapes them against a shared
+// budget, then replicates results to every position a dup URL requested.
 func fetchBatch(tc agent.Context, d Deps, f fetcher, urls []string, pattern string, offset int) []FetchResult {
+	order, idxsByKey, rawByKey := dedupURLs(urls)
+	pages := fetchPages(tc, d, f, order, rawByKey)
+	shaped := shapePages(tc, d, pages, pattern, offset)
+
 	out := make([]FetchResult, len(urls))
+	for ui, key := range order {
+		for _, idx := range idxsByKey[key] {
+			out[idx] = shaped[ui]
+		}
+	}
+	return out
+}
+
+// dedupURLs: first-seen order of urls' trimmed values, with every original
+// index each one covers - so a URL repeated in one batch is fetched once.
+func dedupURLs(urls []string) (order []string, idxsByKey map[string][]int, rawByKey map[string]string) {
+	idxsByKey = map[string][]int{}
+	rawByKey = map[string]string{}
+	for i, raw := range urls {
+		key := strings.TrimSpace(raw)
+		if _, seen := idxsByKey[key]; !seen {
+			order = append(order, key)
+			rawByKey[key] = raw
+		}
+		idxsByKey[key] = append(idxsByKey[key], i)
+	}
+	return order, idxsByKey, rawByKey
+}
+
+// fetchPages fetches each of order's URLs concurrently, bounded by maxConcurrentFetches.
+func fetchPages(tc agent.Context, d Deps, f fetcher, order []string, rawByKey map[string]string) []fetchedPage {
+	out := make([]fetchedPage, len(order))
 	sem := make(chan struct{}, maxConcurrentFetches)
 	var wg sync.WaitGroup
-	for i, raw := range urls {
+	for i, key := range order {
 		wg.Add(1)
 		go func(i int, raw string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out[i] = fetchOne(tc, d, f, raw, pattern, offset)
-		}(i, raw)
+			out[i] = fetchOnePage(tc, d, f, raw)
+		}(i, rawByKey[key])
 	}
 	wg.Wait()
 	return out
 }
 
-// fetchOne fetches one URL (cache-first) and shapes or stores it. Never
-// errors: a failure lands in the result's Error field instead.
-func fetchOne(tc agent.Context, d Deps, f fetcher, raw, pattern string, offset int) FetchResult {
+// fetchOnePage validates, then fetches (cache-first) and sanitizes one URL.
+// Shaping/storage happen later in shapePages, so a cache hit is visible.
+func fetchOnePage(tc agent.Context, d Deps, f fetcher, raw string) fetchedPage {
 	u, err := ValidateURL(strings.TrimSpace(raw))
 	if err != nil {
-		return FetchResult{URL: raw, Error: err.Error()}
+		return fetchedPage{url: raw, err: err}
 	}
 	target := u.String()
-
-	var full string
 	if d.Cache != nil {
 		if cached, ok := d.Cache.Get(target); ok {
-			full = cached
+			return fetchedPage{url: target, full: cached, cacheHit: true}
 		}
 	}
-	if full == "" {
-		fetched, ferr := f.fetch(tc, d, u, target)
-		if ferr != nil {
-			return FetchResult{URL: target, Error: ferr.Error()}
-		}
-		if fetched, ferr = sanitizeFetched(target, fetched); ferr != nil {
-			return FetchResult{URL: target, Error: ferr.Error()}
-		}
-		if len(fetched) > maxFetchBytes {
-			fetched = strings.ToValidUTF8(fetched[:maxFetchBytes], "") + "\n[content truncated at fetch limit]"
-		}
-		full = fetched
-		if d.Cache != nil {
-			d.Cache.Set(target, full)
-		}
+	fetched, ferr := f.fetch(tc, d, u, target)
+	if ferr != nil {
+		return fetchedPage{url: target, err: ferr}
 	}
-
-	return FetchResult{URL: target, Text: shapeOrStore(tc, d, target, full, pattern, offset)}
+	if fetched, ferr = sanitizeFetched(target, fetched); ferr != nil {
+		return fetchedPage{url: target, err: ferr}
+	}
+	if len(fetched) > maxFetchBytes {
+		fetched = strings.ToValidUTF8(fetched[:maxFetchBytes], "") + fetchTruncatedMarker
+	}
+	if d.Cache != nil {
+		d.Cache.Set(target, fetched)
+	}
+	return fetchedPage{url: target, full: fetched}
 }
 
-// shapeOrStore: pattern/offset always shapes the full page directly (the
-// documented shortcut); otherwise inline under threshold, stored header above it.
-func shapeOrStore(tc agent.Context, d Deps, target, full, pattern string, offset int) string {
+// shapePages shapes pages in order against a shared budget: past
+// maxBatchInlineBytes cumulative, later under-threshold pages store too.
+func shapePages(tc agent.Context, d Deps, pages []fetchedPage, pattern string, offset int) []FetchResult {
+	out := make([]FetchResult, len(pages))
+	budget := maxBatchInlineBytes
+	for i, p := range pages {
+		if p.err != nil {
+			out[i] = FetchResult{URL: p.url, Error: p.err.Error()}
+			continue
+		}
+		text, inlined := shapeOrStore(tc, d, p, pattern, offset, budget > 0)
+		if inlined {
+			budget -= len(text)
+		}
+		out[i] = FetchResult{URL: p.url, Text: text}
+	}
+	return out
+}
+
+// shapeOrStore shapes one page. allowInline false forces storage even under
+// threshold (budget spent); inlined says whether text counts against it.
+func shapeOrStore(tc agent.Context, d Deps, p fetchedPage, pattern string, offset int, allowInline bool) (text string, inlined bool) {
+	underThreshold := len(p.full) < fetchArtifactThreshold
 	var header string
-	if len(full) >= fetchArtifactThreshold && d.RecordStore != nil {
-		header = storeWebPage(tc, d, target, full)
+	if (!underThreshold || !allowInline) && d.RecordStore != nil {
+		header = storeWebPage(tc, d, p.url, p.full, p.cacheHit)
 	}
 	if strings.TrimSpace(pattern) != "" || offset > 0 {
-		return shapeFetchResult(full, pattern, offset)
+		return shapeFetchResult(p.full, pattern, offset), false
 	}
 	if header != "" {
-		return header
+		return header, false
 	}
-	return shapeFetchResult(full, "", 0)
+	if underThreshold {
+		return capFetchReturn(p.full), true
+	}
+	return shapeFetchResult(p.full, "", 0), false
 }
 
 // webPageIdentity: instance = a short hash of the URL (hint), ignoring
@@ -243,27 +315,55 @@ func pageTitle(text string) string {
 	return ""
 }
 
-// storeWebPage persists a large page and returns its short header; "" (with
-// a logged warning) tells the caller to fall back to the inline head instead.
-func storeWebPage(tc agent.Context, d Deps, target, full string) string {
+// storeWebPage persists full verbatim (or, on a cache hit, reuses its
+// existing id) and returns the short header; "" falls back to an inline head.
+func storeWebPage(tc agent.Context, d Deps, target, full string, cacheHit bool) string {
 	title := pageTitle(full)
-	fetchedAt := time.Now().UTC()
-	content := fmt.Sprintf("url: %s\ntitle: %s\nfetched_at: %s\n\n%s", target, title, fetchedAt.Format(time.RFC3339), full)
-	lineage := recordstore.Lineage{Author: "worker", SavedAt: fetchedAt}
+	truncated := strings.HasSuffix(full, fetchTruncatedMarker)
+	if cacheHit {
+		if id, ok := existingWebPageID(tc, d, target, full); ok {
+			return webPageHeader(title, target, id, full, truncated)
+		}
+	}
+	lineage := recordstore.Lineage{Author: "worker", SavedAt: time.Now().UTC()}
 	if d.NodeID != "" {
 		lineage.NodeID = d.NodeID
 	}
 	if d.Coords != nil {
 		lineage.Round, lineage.TurnID, lineage.HeadSHA, lineage.TriggerAnnotation = d.Coords.Round, d.Coords.TurnID, d.Coords.HeadSHA, d.Coords.TriggerAnnotation
 	}
-	id, _, err := d.RecordStore.SaveBlob(tc, kindWebPage, []byte(content), "text/markdown", target, lineage)
+	id, _, err := d.RecordStore.SaveBlob(tc, kindWebPage, []byte(full), "text/markdown", target, lineage)
 	if err != nil {
 		slog.Warn("web_fetch: store page artifact failed; falling back to inline head", "component", "tools", "url", target, "error", err)
 		return ""
 	}
-	lines := strings.Count(content, "\n") + 1
-	head := windowLines(strings.Split(content, "\n"), 1, fetchHeadLines, lines)
-	return fmt.Sprintf("title: %s\nurl: %s\nartifact: %s\nlines: %d\n\n%s", title, target, id, lines, head)
+	return webPageHeader(title, target, id, full, truncated)
+}
+
+// existingWebPageID: id is a pure function of the URL, so a cache hit can
+// reuse it instead of writing a duplicate revision; false retries a fresh save.
+func existingWebPageID(tc agent.Context, d Deps, target, full string) (string, bool) {
+	id, err := recordstore.IdentityFor(kindWebPage, "", target)
+	if err != nil {
+		return "", false
+	}
+	data, _, ok, err := d.RecordStore.Latest(tc, id)
+	if err != nil || !ok || string(data) != full {
+		return "", false
+	}
+	return id, true
+}
+
+// webPageHeader: the short entry a stored page returns in place of its full text.
+func webPageHeader(title, target, id, content string, truncated bool) string {
+	ls := strings.Split(content, "\n")
+	head := windowLines(ls, 1, fetchHeadLines, len(ls))
+	note := ""
+	if truncated {
+		note = " (truncated at the fetch limit)"
+	}
+	return fmt.Sprintf("title: %s\nurl: %s\nartifact: %s\nlines: %d\nbytes: %d%s\n\n%s",
+		title, target, id, len(ls), len(content), note, head)
 }
 
 // shapeFetchResult: returns grep matches, offset window, or head of cached page.

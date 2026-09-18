@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -80,5 +81,28 @@ func TestRunSearches(t *testing.T) {
 				t.Errorf("runSearches() = %+v, want %+v", got.Queries, tc.want)
 			}
 		})
+	}
+}
+
+// TestWebSearchTool_EmptyAndTooManyQueriesError pins nit 8 (empty queries
+// must error like empty urls) and blocker 2's query-count cap.
+func TestWebSearchTool_EmptyAndTooManyQueriesError(t *testing.T) {
+	tl, err := newWebSearch(Deps{WebSearch: Backend{Kind: "searxng", URL: "http://x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("web_search tool is not runnable")
+	}
+	if _, err := rt.Run(newFakeCtx(), map[string]any{"queries": []string{}}); err == nil {
+		t.Error("empty queries should error, same as empty urls")
+	}
+	tooMany := make([]string, maxBatchQueries+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("q%d", i)
+	}
+	if _, err := rt.Run(newFakeCtx(), map[string]any{"queries": tooMany}); err == nil {
+		t.Error("a batch over maxBatchQueries should error")
 	}
 }

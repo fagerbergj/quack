@@ -446,6 +446,40 @@ func TestWriteArtifactMCP_Blob(t *testing.T) {
 	}
 }
 
+// TestWriteArtifactMCP_RejectsSystemKind: a System blob kind (e.g. web_page)
+// must be refused here, not silently saved as a forged artifact.
+func TestWriteArtifactMCP_RejectsSystemKind(t *testing.T) {
+	const kind = "acp_test_system_kind"
+	recordstore.Register(kind, recordstore.KindSpec{
+		Class:    recordstore.Blob,
+		Identity: func(_ []byte, hint string) (string, error) { return "x", nil },
+		System:   true,
+	})
+
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_artifact", Arguments: map[string]any{
+		"kind": kind, "mime": "text/plain", "bytes": "forged",
+	}})
+	if err != nil {
+		t.Fatalf("CallTool write_artifact: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("write_artifact with a System kind should be refused, got: %s", toolResultText(t, res))
+	}
+	if strings.Contains(writeArtifactDescription(), kind) {
+		t.Errorf("write_artifact description lists the System kind %q", kind)
+	}
+}
+
 // TestWriteArtifactMCP_RecordsToolWritten: write_artifact must add its id to
 // the session's ToolWritten stage exactly like write_<kind> does, so
 // vetting's saveTextRound fallback can tell a tool-written round apart from one with no tool writes (#1095 adversarial review finding #1 - the blob path used to skip this, so a node that only called write_artifact still got a duplicate text:<node> revision).

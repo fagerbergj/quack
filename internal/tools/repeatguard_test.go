@@ -106,6 +106,89 @@ func TestRepeatGuardCatchesSemanticChurn(t *testing.T) {
 	}
 }
 
+// newAllFailingWebFetchTool: Run never returns a Go error (like the real
+// tool), but every URL entry carries one - the shape batchAllFailed reads.
+func newAllFailingWebFetchTool(t *testing.T, calls *int) runnableTool {
+	t.Helper()
+	tl, err := functiontool.New[fetchArgs, fetchResponse](
+		functiontool.Config{Name: "web_fetch", Description: "fake"},
+		func(_ adkagent.Context, a fetchArgs) (fetchResponse, error) {
+			*calls++
+			results := make([]FetchResult, len(a.URLs))
+			for i, u := range a.URLs {
+				results[i] = FetchResult{URL: u, Error: "boom"}
+			}
+			return fetchResponse{Results: results}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tl.(runnableTool)
+}
+
+// TestRepeatGuardWebFetchAllFailedBatchCountsAsResourceFailure: per-URL
+// failures never surface as a Go error, so the guard reads the batch itself.
+func TestRepeatGuardWebFetchAllFailedBatchCountsAsResourceFailure(t *testing.T) {
+	calls := 0
+	g, err := newRepeatGuard(newAllFailingWebFetchTool(t, &calls), newRepeatStates(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtx("s1")
+	urls := []string{"https://a.com", "https://b.com"}
+
+	// offset varies call-to-call (never byte-identical args) so the adjacency
+	// exact-repeat guard doesn't trip first - only the resource-fail guard should.
+	for i := 0; i < pathFailThreshold; i++ {
+		if _, err := rg.Run(ctx, map[string]any{"urls": urls, "offset": i + 1}); err != nil {
+			t.Fatalf("call %d: web_fetch itself never errors even when every URL fails; got %v", i+1, err)
+		}
+	}
+	if _, err := rg.Run(ctx, map[string]any{"urls": urls, "offset": pathFailThreshold + 1}); err == nil || !strings.Contains(err.Error(), "REFUSED") {
+		t.Fatalf("call %d after %d all-failed batches: want REFUSED, got %v", pathFailThreshold+1, pathFailThreshold, err)
+	}
+	if calls != pathFailThreshold {
+		t.Fatalf("tool executed %d times; want %d (last call refused before running)", calls, pathFailThreshold)
+	}
+}
+
+// TestResourceFingerprintWebFetchIsOrderIndependent: the same URL set,
+// reshuffled, must fingerprint identically to keep sharing its fail streak.
+func TestResourceFingerprintWebFetchIsOrderIndependent(t *testing.T) {
+	a, ok := resourceFingerprint("web_fetch", []byte(`{"urls":["https://b.com","https://a.com"]}`))
+	if !ok {
+		t.Fatal("want hasResource=true")
+	}
+	b, ok := resourceFingerprint("web_fetch", []byte(`{"urls":["https://a.com","https://b.com"]}`))
+	if !ok {
+		t.Fatal("want hasResource=true")
+	}
+	if a != b {
+		t.Errorf("fingerprints differ by url order: %q vs %q", a, b)
+	}
+}
+
+func TestBatchAllFailed(t *testing.T) {
+	allFailed := map[string]any{"results": []any{
+		map[string]any{"url": "a", "error": "x"},
+		map[string]any{"url": "b", "error": "y"},
+	}}
+	if !batchAllFailed("web_fetch", allFailed) {
+		t.Error("want true for an all-failed batch")
+	}
+	partial := map[string]any{"results": []any{
+		map[string]any{"url": "a", "text": "ok"},
+		map[string]any{"url": "b", "error": "y"},
+	}}
+	if batchAllFailed("web_fetch", partial) {
+		t.Error("want false when at least one URL succeeded")
+	}
+	if batchAllFailed("read_file", allFailed) {
+		t.Error("want false for a non-web_fetch tool")
+	}
+}
+
 // Genuinely different calls - different resources, or a call that succeeds -
 // are never caught: failures against different paths don't share a streak,
 // and a success resets the streak for its own path.

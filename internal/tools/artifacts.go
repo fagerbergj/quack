@@ -163,12 +163,16 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoo
 					data = b
 				}
 			}
+			spec, ok := recordstore.SpecFor(a.Kind)
+			if ok && spec.System {
+				return "", fmt.Errorf("write_artifact: kind %q is not writable directly", a.Kind)
+			}
 			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, TriggerAnnotation: coords.TriggerAnnotation, Author: "worker", SavedAt: time.Now().UTC()}
 			// Only hint-requiring blob kinds (document, pr_body) get hint -
 			// hint-optional kinds (text, bytes) must keep deriving their id from
 			// content, or every write collapses onto one id (#1108 finding 2, mirrors memorymcp.go).
 			blobHint := ""
-			if spec, ok := recordstore.SpecFor(a.Kind); ok && spec.RequiresHint {
+			if ok && spec.RequiresHint {
 				blobHint = hint
 			}
 			id, rev, err := c.SaveBlob(ctx, a.Kind, data, a.Mime, blobHint, lineage)

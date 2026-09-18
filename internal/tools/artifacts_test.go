@@ -228,6 +228,35 @@ func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
 	}
 }
 
+// TestWriteArtifact_RejectsSystemKind: web_page is a System blob kind, not
+// listed or writable via write_artifact - forging one would fake retrieval.
+func TestWriteArtifact_RejectsSystemKind(t *testing.T) {
+	desc := writeArtifactDescription()
+	if strings.Contains(desc, kindWebPage) {
+		t.Errorf("write_artifact description = %q, must not list the System kind %q", desc, kindWebPage)
+	}
+
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	tl, err := NewWriteArtifactTool(rc, "n1", &RoundCoords{}, "hint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("write_artifact tool is not runnable")
+	}
+	if _, err := rt.Run(newArtifactsToolCtx(), map[string]any{"kind": kindWebPage, "mime": "text/markdown", "bytes": "forged page"}); err == nil {
+		t.Fatal("write_artifact with kind=web_page should be refused, not silently saved")
+	}
+	items, err := rc.List(context.Background(), kindWebPage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("web_page artifacts = %d, want 0 (the forged write must not have landed)", len(items))
+	}
+}
+
 // TestNewEditArtifactTool_ConflictIsStructuredSuccess: a real conflict is a
 // structured success, not a tool error; pins the JSON payload shape with the
 // same field names as the MCP surface's editConflictResult so the surfaces can't drift (#1108 finding 3).

@@ -10,6 +10,9 @@ import (
 type wsOpSpec struct {
 	args    []string
 	results []string
+	// batchFailure reports a whole-call failure for a tool whose success is
+	// per-entry (web_fetch's batch), not a top-level resp["error"].
+	batchFailure func(resp map[string]any) bool
 }
 
 // wsOpSpecs: workspace tools whose outcomes an answer could claim.
@@ -19,7 +22,7 @@ var wsOpSpecs = map[string]wsOpSpec{
 	"edit_file":   {args: []string{"path"}, results: []string{"replacements"}},
 	"delete_path": {args: []string{"path"}, results: []string{"deleted"}},
 	"run_command": {args: []string{"dir", "command"}, results: []string{"exit_code"}},
-	"web_fetch":   {args: []string{"urls"}}, // args only; presence signals web-sourced claims
+	"web_fetch":   {args: []string{"urls"}, batchFailure: webFetchAllFailed}, // args only; presence signals web-sourced claims
 
 	"git_clone":                 {args: []string{"url", "dir"}, results: []string{"dir", "head", "default_branch"}},
 	"git_checkout":              {args: []string{"dir", "ref"}, results: []string{"branch", "head"}},
@@ -44,6 +47,25 @@ func isWorkspaceTool(name string) bool {
 	return ok
 }
 
+// webFetchAllFailed: true when a batched web_fetch response has at least
+// one result and every one of them carries an error.
+func webFetchAllFailed(resp map[string]any) bool {
+	results, ok := resp["results"].([]any)
+	if !ok || len(results) == 0 {
+		return false
+	}
+	for _, r := range results {
+		m, ok := r.(map[string]any)
+		if !ok {
+			return false
+		}
+		if _, failed := m["error"]; !failed {
+			return false
+		}
+	}
+	return true
+}
+
 // recordWsOp: builds ledger entry for one call/response pair. Failed ops recorded (judge must contradict claims).
 func recordWsOp(tool string, args, resp map[string]any) wsOp {
 	spec := wsOpSpecs[tool]
@@ -54,6 +76,10 @@ func recordWsOp(tool string, args, resp map[string]any) wsOp {
 	b.WriteString(")")
 	if errVal, failed := resp["error"]; failed {
 		fmt.Fprintf(&b, " → FAILED: %v", errVal)
+		return wsOp{tool: tool, detail: b.String()}
+	}
+	if spec.batchFailure != nil && spec.batchFailure(resp) {
+		b.WriteString(" → FAILED: every URL in this batch errored")
 		return wsOp{tool: tool, detail: b.String()}
 	}
 	if res := kvList(resp, spec.results); res != "" {

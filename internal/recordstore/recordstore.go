@@ -80,6 +80,9 @@ type KindSpec struct {
 	// (#1091) - false for a gate-only kind (judge_round, delivery_record) so
 	// a worker can't forge a verdict/delivery record into the gate's WAL.
 	AgentWritable bool
+	// System excludes a Blob kind from KindsForClass(Blob), so from
+	// write_artifact/MCP and the plan-level kind selector - agent-forgeable evidence risk (e.g. web_page).
+	System bool
 
 	name string // set only by Kinds(); not part of the registered spec
 }
@@ -830,7 +833,7 @@ func KindsForClass(class Class) []KindSpec {
 	defer registryMu.RUnlock()
 	out := make([]KindSpec, 0, len(registry))
 	for name, spec := range registry {
-		if spec.Class != class {
+		if spec.Class != class || spec.System {
 			continue
 		}
 		spec.name = name

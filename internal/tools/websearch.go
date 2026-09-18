@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"google.golang.org/adk/v2/agent"
@@ -10,6 +12,9 @@ import (
 
 // maxSearchResults: caps web_search hits per query to keep agent context small.
 const maxSearchResults = 8
+
+// maxBatchQueries bounds one web_search call's query count (sequential backend calls per call).
+const maxBatchQueries = 20
 
 type searchArgs struct {
 	Queries []string `json:"queries"`
@@ -42,13 +47,19 @@ func newWebSearch(d Deps) (tool.Tool, error) {
 	return functiontool.New[searchArgs, searchResponse](
 		functiontool.Config{
 			Name: "web_search",
-			Description: "Search the web for a batch of queries. Takes `queries: [\"q1\", \"q2\", ...]` " +
-				"(a single query is still a one-element list) and runs them all in one call - plan your " +
-				"searches up front rather than issuing them one at a time. Returns {queries: [{query, results: " +
-				"[{title, url, snippet}], note}]}, one group per query; a URL already returned for an earlier " +
-				"query in the same call is not repeated. Use the urls with the fetch tool to read a page.",
+			Description: fmt.Sprintf("Search the web for a batch of queries. Takes `queries: [\"q1\", \"q2\", ...]` "+
+				"(a single query is still a one-element list; up to %d per call) and runs them all in one call - "+
+				"plan your searches up front rather than issuing them one at a time. Returns {queries: [{query, "+
+				"results: [{title, url, snippet}], note}]}, one group per query; a URL already returned for an "+
+				"earlier query in the same call is not repeated. Use the urls with the fetch tool to read a page.", maxBatchQueries),
 		},
 		func(tc agent.Context, a searchArgs) (searchResponse, error) {
+			if len(a.Queries) == 0 {
+				return searchResponse{}, errors.New("web_search: queries must be non-empty")
+			}
+			if len(a.Queries) > maxBatchQueries {
+				return searchResponse{}, fmt.Errorf("web_search: %d queries exceeds the %d-query batch limit; split into smaller batches", len(a.Queries), maxBatchQueries)
+			}
 			return runSearches(tc, searcher, a.Queries), nil
 		},
 	)

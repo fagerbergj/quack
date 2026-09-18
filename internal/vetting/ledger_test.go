@@ -117,6 +117,28 @@ func TestRecordWsOpFailureIsRecorded(t *testing.T) {
 	}
 }
 
+// TestRecordWsOpWebFetchAllFailedIsRecorded: an all-failed batch must show
+// FAILED to the judge, not read as success just because resp["error"] is unset.
+func TestRecordWsOpWebFetchAllFailedIsRecorded(t *testing.T) {
+	allFailed := recordWsOp("web_fetch", map[string]any{"urls": []any{"https://a.com", "https://b.com"}},
+		map[string]any{"results": []any{
+			map[string]any{"url": "https://a.com", "error": "404"},
+			map[string]any{"url": "https://b.com", "error": "timeout"},
+		}})
+	if !strings.Contains(allFailed.detail, "FAILED") {
+		t.Errorf("all-failed batch detail = %q, want a FAILED marker", allFailed.detail)
+	}
+
+	partial := recordWsOp("web_fetch", map[string]any{"urls": []any{"https://a.com", "https://b.com"}},
+		map[string]any{"results": []any{
+			map[string]any{"url": "https://a.com", "text": "ok"},
+			map[string]any{"url": "https://b.com", "error": "404"},
+		}})
+	if strings.Contains(partial.detail, "FAILED") {
+		t.Errorf("partially-successful batch detail = %q, must not show FAILED", partial.detail)
+	}
+}
+
 func TestRecordWsOpReadFileKeepsSample(t *testing.T) {
 	op := recordWsOp("read_file", map[string]any{"path": "README.md"},
 		map[string]any{"content": "# Real README\nreal first line", "total_lines": float64(2)})
