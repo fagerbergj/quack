@@ -288,3 +288,35 @@ describe('DagNode retry controls (done + retry + steered)', () => {
     expect(container.textContent ?? '').not.toMatch(/[\u2190-\u21FF\u2300-\u23FF\u25A0-\u25FF\u2B00-\u2BFF]/)
   })
 })
+
+// #1480: a worker/judge admission-slot swap re-queues an already-dispatched
+// node (status 'queued' again, mid-run) - it must still read as live, not
+// as "never started", since a fresh node_start never re-fires for it.
+describe('DagNode stays live through a mid-run admission re-queue (#1480)', () => {
+  const openRun = [{ runId: 'r1', agent: 'web-researcher', stage: 'worker' as const, done: false,
+    activity: [{ kind: 'thinking' as const, text: 'Still working.' }] }]
+
+  it('keeps the open run card expanded and offers Pause, not Start/edit prompt', async () => {
+    const user = userEvent.setup()
+    const { container } = render(
+      <DagNode node={node} state={{ status: 'queued' }} runs={openRun} answer="" isFinal={false} onPause={() => {}} onEditTask={() => {}} />,
+    )
+
+    // The streaming run's card stays open - a re-queue must not collapse it.
+    expect(container.querySelector('details')?.hasAttribute('open')).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: 'Node actions' }))
+    expect(await screen.findByRole('menuitem', { name: /Pause/ })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /Start/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Edit prompt/ })).toBeNull()
+  })
+
+  it('a genuinely never-dispatched queued node (no runs) still offers Start and edit prompt', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={{ status: 'queued' }} runs={[]} answer="" isFinal={false} onResume={() => {}} onEditTask={() => {}} />)
+
+    await user.click(screen.getByRole('button', { name: 'Node actions' }))
+    expect(await screen.findByRole('menuitem', { name: /Start/ })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /Pause/ })).toBeNull()
+  })
+})

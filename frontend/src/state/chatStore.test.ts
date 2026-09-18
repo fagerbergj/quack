@@ -750,6 +750,47 @@ describe('ChatStore - mid-node steering', () => {
   })
 })
 
+// #1480: a worker/judge admission-slot swap re-queues an already-running
+// node, then re-admits it - node_start fires once, so node_admitted (not
+// another node_start) must be what puts it back to 'running'.
+describe('ChatStore - node_admitted resumes a node re-queued mid-run (#1480)', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let store: ChatStore
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    store = new ChatStore()
+    store.seed('c', [])
+  })
+
+  it('node_queued after node_start re-queues, node_admitted resumes running', async () => {
+    const encoder = new TextEncoder()
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const readable = new ReadableStream({ start(ctrl) { controller = ctrl } })
+    fetchMock.mockResolvedValueOnce(new Response(readable, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    const p = store.submit('c', 'go')
+    const send = (chunk: string) => controller.enqueue(encoder.encode(chunk))
+
+    send('event: dag_plan\ndata: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}\n\n')
+    send('event: node_start\ndata: {"node_id":"a","agent":"researcher"}\n\n')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
+
+    // Worker slot released for the judge call, which blocks on admission.
+    send('event: node_queued\ndata: {"node_id":"a"}\n\n')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('queued'))
+
+    // Judge admitted - back to running without a second node_start.
+    send('event: node_admitted\ndata: {"node_id":"a"}\n\n')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
+
+    send('event: node_done\ndata: {"node_id":"a"}\n\n')
+    send('event: done\ndata: {}\n\n')
+    controller.close()
+    await p
+  })
+})
+
 // agent_complete/node_done/node_failed/node_cancelled carry a server-clock
 // finished_at_ms, so a finished run/node's duration comes from two server
 // timestamps - never Date.now() at whatever moment the client processes (or replays) the event.

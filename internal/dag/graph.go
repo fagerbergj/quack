@@ -322,11 +322,23 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 // setupAdmission: reserve the node's worker slot, then wire the four
 // admission hooks RunGatedRefine uses to swap the held spec for the judge's during judge calls.
 func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, admission *Admission, spec, judgeSpec AdmissionSpec) (func(), error) {
+	yield, hasYield := stream.YieldFromContext(ctx)
+	// admit wraps one Admit call so every wait - not just the node's first -
+	// persists queued while blocked and running again once let back in.
+	waited := false
 	onQueued := func() {}
-	if yield, ok := stream.YieldFromContext(ctx); ok {
-		onQueued = func() { yield(stream.NodeQueued(nodeID)) }
+	if hasYield {
+		onQueued = func() { waited = true; yield(stream.NodeQueued(nodeID)) }
 	}
-	if !admission.Admit(ctx, spec, onQueued) {
+	admit := func(actx context.Context, s AdmissionSpec) bool {
+		waited = false
+		ok := admission.Admit(actx, s, onQueued)
+		if ok && waited && hasYield {
+			yield(stream.NodeAdmitted(nodeID))
+		}
+		return ok
+	}
+	if !admit(ctx, spec) {
 		return nil, ctx.Err()
 	}
 	// held tracks the currently-reserved spec, swapped by RunGatedRefine
@@ -334,7 +346,7 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 	held := spec
 	cfg.ReleaseWorker = func() { admission.Release(spec); held = AdmissionSpec{} }
 	cfg.AdmitJudge = func(actx context.Context) bool {
-		if !admission.Admit(actx, judgeSpec, onQueued) {
+		if !admit(actx, judgeSpec) {
 			return false
 		}
 		held = judgeSpec
@@ -342,7 +354,7 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 	}
 	cfg.ReleaseJudge = func() { admission.Release(judgeSpec); held = AdmissionSpec{} }
 	cfg.AdmitWorker = func(actx context.Context) bool {
-		if !admission.Admit(actx, spec, onQueued) {
+		if !admit(actx, spec) {
 			return false
 		}
 		held = spec

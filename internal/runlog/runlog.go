@@ -297,22 +297,21 @@ func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res 
 	}
 }
 
-// PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal transitions
-// are logged, write proceeds. Synchronous on purpose: one goroutine per event gave
-// no ordering, so a node_done write could be overwritten by an earlier event's later-scheduled goroutine, leaving a finished node stuck at running. Lifecycle events are a handful per node.
-// The store row (UpsertDagNode) and the dag_node record (UpdateDagNodeStatus/Context) below
-// are two independent, non-transactional writes - a failure between them leaves the two
-// transiently out of sync until this node's next lifecycle event.
-func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent) {
+// nodeEventRow maps one lifecycle SSE event to its DagNode row, target
+// status, and any ACP context id - split from PersistNodeEvent to keep the
+// per-event-type branching out of its CC. ok=false for a non-lifecycle event.
+func nodeEventRow(st *store.Store, planID string, ev stream.SSEEvent) (n store.DagNode, nodeID string, to dag.NodeStatus, contextID string, ok bool) {
 	t := time.Now().UTC()
-	var nodeID string
-	var to dag.NodeStatus
-	var contextID string // ACP transport session id learned this round, "" for a native node
-	n := store.DagNode{PlanID: planID}
+	n = store.DagNode{PlanID: planID}
 	switch d := ev.Data.(type) {
 	case stream.NodeQueuedData:
 		nodeID, to = d.NodeID, dag.StatusQueued
 		n.NodeID, n.Status, n.InstanceID = d.NodeID, string(to), st.InstanceID()
+	case stream.NodeAdmittedData:
+		// Resumed after a mid-run admission wait - status only, so a prior
+		// node_start's started_at/trace_id are never clobbered.
+		nodeID, to = d.NodeID, dag.StatusRunning
+		n.NodeID, n.Status = d.NodeID, string(to)
 	case stream.NodeStartData:
 		nodeID, to = d.NodeID, dag.StatusRunning
 		n.NodeID, n.Status, n.StartedAt, n.InstanceID = d.NodeID, string(to), &t, st.InstanceID()
@@ -344,6 +343,17 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
 		contextID = d.ContextID
 	default:
+		return n, "", "", "", false
+	}
+	return n, nodeID, to, contextID, true
+}
+
+// PersistNodeEvent upserts DagNode state for node-lifecycle events - illegal
+// transitions are logged, not blocked. Synchronous by design (a goroutine per
+// event could let a stale write clobber node_done); the store row and dag_node record below write independently and can transiently diverge.
+func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent) {
+	n, nodeID, to, contextID, ok := nodeEventRow(st, planID, ev)
+	if !ok {
 		return
 	}
 	ctx := context.Background()

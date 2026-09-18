@@ -23,12 +23,26 @@ const isTerminal = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'c
 // are "paused" for transition purposes (dag.CanTransition treats them alike).
 const isPausedStatus = (s: NodeStatus) => s === 'paused' || s === 'needs_input'
 
+// dispatched/notStarted/running: 'queued' also fires mid-run, at a
+// worker/judge admission re-wait (#1480) - dispatched (has this node ever
+// produced a run) disambiguates that from the node's real first wait.
+function liveState(status: NodeStatus, runs: AgentRun[]) {
+  const dispatched = runs.length > 0
+  return {
+    dispatched,
+    notStarted: status === 'queued' && !dispatched,
+    running: status === 'running' || (status === 'queued' && dispatched),
+  }
+}
+
 // The per-status action flags for NodeMenu's items - startable/cancellable
-// mirror dag.CanTransition's legal transitions from each state.
-function menuFlags(status: NodeStatus, canQueue: boolean, canEdit: boolean) {
+// mirror dag.CanTransition's legal transitions from each state. live/notStarted
+// come from the caller: raw 'queued' is ambiguous - it also fires mid-run at
+// a worker/judge admission wait (#1480), which must read as live, not startable.
+function menuFlags(status: NodeStatus, live: boolean, notStarted: boolean, canQueue: boolean, canEdit: boolean) {
   const terminal = isTerminal(status)
-  const startable = !terminal && (isPausedStatus(status) || status === 'queued')
-  const cancellable = !terminal && (status === 'running' || startable)
+  const startable = !terminal && (isPausedStatus(status) || notStarted)
+  const cancellable = !terminal && (live || startable)
   const hasSecondary = !terminal && (canQueue || canEdit)
   return { startable, cancellable, hasSecondary }
 }
@@ -37,10 +51,14 @@ function menuFlags(status: NodeStatus, canQueue: boolean, canEdit: boolean) {
 // round-trip); "queue a message…" / "edit prompt" open the popup only when
 // they need its input/editor. Hidden entirely on a terminal node (done/failed/cancelled) - nothing left to do.
 function NodeMenu({
-  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, onOpenPopup, onOpenArtifacts, onOpenMemories,
+  nodeId, status, live, notStarted, onCancel, onPause, onResume, canQueue, canEdit, onOpenPopup, onOpenArtifacts, onOpenMemories,
 }: {
   nodeId: string
   status: NodeStatus
+  // live: status === 'running', or 'queued' mid-run (an admission re-wait,
+  // not the node's first dispatch). notStarted: 'queued' with no run yet.
+  live: boolean
+  notStarted: boolean
   onCancel?: (nodeId: string) => void
   onPause?: (nodeId: string) => void
   onResume?: (nodeId: string) => void
@@ -79,7 +97,7 @@ function NodeMenu({
   // still worth a menu - the whole point of viewing them is usually AFTER a
   // node finishes. Only fully hide the menu when there's truly nothing in it.
   if (terminal && !onOpenArtifacts && !onOpenMemories) return null
-  const { startable, cancellable, hasSecondary } = menuFlags(status, canQueue, canEdit)
+  const { startable, cancellable, hasSecondary } = menuFlags(status, live, notStarted, canQueue, canEdit)
 
   return (
     <div ref={ref} className="relative shrink-0">
@@ -99,7 +117,7 @@ function NodeMenu({
       {open && (
         <NodeMenuItems
           nodeId={nodeId}
-          running={status === 'running'}
+          running={live}
           terminal={terminal}
           startable={startable}
           cancellable={cancellable}
@@ -827,8 +845,7 @@ export const DagNode = memo(function DagNode({
   onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,
   onRetry, onAnswerQuestion,
 }: Props) {
-  const running = state.status === 'running'
-  const notStarted = state.status === 'queued'
+  const { dispatched, notStarted, running } = liveState(state.status, runs)
   const finished = isTerminal(state.status)
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
@@ -865,6 +882,8 @@ export const DagNode = memo(function DagNode({
         <NodeMenu
           nodeId={node.id}
           status={state.status}
+          live={running}
+          notStarted={notStarted}
           onCancel={onCancel}
           onPause={onPause}
           onResume={onResume}
@@ -893,6 +912,7 @@ export const DagNode = memo(function DagNode({
         <NodePopup
           node={node}
           state={state}
+          dispatched={dispatched}
           onClose={() => setPopupOpen(false)}
           onQueueMessage={onQueueMessage}
           onEditQueuedMessage={onEditQueuedMessage}

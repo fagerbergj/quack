@@ -344,3 +344,47 @@ func TestPersistNodeEventReusedNodeTransitionsThroughQueued(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// TestPersistNodeEventRunningNodeReQueuesOnMidRunAdmissionWait is #1480: a
+// worker/judge slot swap re-queues an already-running node, not just a
+// fresh node's first dispatch. The store row must carry running -> queued
+// -> running with no illegal-transition warning, and keep its original
+// started_at through the re-queue.
+func TestPersistNodeEventRunningNodeReQueuesOnMidRunAdmissionWait(t *testing.T) {
+	dag.SetAgentRoster([]dag.AgentInfo{{Name: "code-implementer"}})
+	st := newTestStore(t)
+	svc := artifact.InMemoryService()
+	st.SetArtifactService(svc)
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if err := st.SaveDagPlan(ctx, c.ID, "p1", "turn-1", `{"plan_id":"p1"}`); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeQueued, Data: stream.NodeQueuedData{NodeID: "n1"}})
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeStart, Data: stream.NodeStartData{NodeID: "n1", Agent: "code-implementer"}})
+	started := waitForNodeStoreStatus(t, st, "p1", "n1", "running")
+
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(restore)
+
+	// The judge slot swap: worker released, judge admission blocks, re-queuing a node already running.
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeQueued, Data: stream.NodeQueuedData{NodeID: "n1"}})
+	got := waitForNodeStoreStatus(t, st, "p1", "n1", "queued")
+	if got.StartedAt == nil || !got.StartedAt.Equal(*started.StartedAt) {
+		t.Errorf("re-queue must not clear the node's original started_at: got %v, want %v", got.StartedAt, started.StartedAt)
+	}
+
+	// Judge admitted: back to running, without a fresh node_start.
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeAdmitted, Data: stream.NodeAdmittedData{NodeID: "n1"}})
+	waitForNodeStoreStatus(t, st, "p1", "n1", "running")
+
+	if strings.Contains(buf.String(), "illegal") {
+		t.Errorf("want no illegal-transition warning logged, got: %s", buf.String())
+	}
+}

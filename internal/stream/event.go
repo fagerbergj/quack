@@ -46,6 +46,7 @@ const (
 	// DAG / static structure.
 	EventDagPlan        = "dag_plan"
 	EventNodeQueued     = "node_queued"
+	EventNodeAdmitted   = "node_admitted"
 	EventNodeStart      = "node_start"
 	EventNodeDone       = "node_done"
 	EventNodeNeedsInput = "node_needs_input"
@@ -241,6 +242,17 @@ type NodeQueuedData struct {
 // a node waiting on capacity (#1007) reads as "waiting", not hung.
 func NodeQueued(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
+}
+
+// `node_admitted` event payload.
+type NodeAdmittedData struct {
+	NodeID string `json:"node_id"`
+}
+
+// NodeAdmitted builds a node_admitted event: a node_queued node resumed
+// running - distinct from node_start, which fires only once per node.
+func NodeAdmitted(nodeID string) SSEEvent {
+	return SSEEvent{Name: EventNodeAdmitted, Data: NodeAdmittedData{NodeID: nodeID}}
 }
 
 // `node_start` event payload.
