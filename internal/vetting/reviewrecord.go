@@ -780,20 +780,6 @@ func firstCodeReviewDelivery(ctx context.Context, cfg Config) bool {
 // resetToolWrittenIDs drains the ids written via any loopback MCP artifact-write tool this round (write_<kind>, write_artifact, edit_artifact - ToolWrittenStage, threaded through the registered
 // MemSession), nil if there's no advisor thread/session for this node - saveCodeReviewRound's answer-tail fallback uses it to skip re-staging an id the worker already wrote directly (#1091 adversarial review finding #1). Draining (not just snapshotting) is what makes this "this round" rather
 // than "this node run": an id tool-written in round N must not still be in the stage suppressing round N+1's write for the same id (#1108 finding 2).
-// mergeWritten folds session-scanned ids into the MCP-drained set.
-func mergeWritten(ids map[string]bool, written []string) map[string]bool {
-	if len(written) == 0 {
-		return ids
-	}
-	if ids == nil {
-		ids = make(map[string]bool, len(written))
-	}
-	for _, id := range written {
-		ids[id] = true
-	}
-	return ids
-}
-
 func resetToolWrittenIDs(cfg Config) map[string]bool {
 	if cfg.AdvisorToken == "" {
 		return nil
@@ -807,6 +793,20 @@ func resetToolWrittenIDs(cfg Config) map[string]bool {
 		return nil
 	}
 	return ms.ToolWritten.Reset()
+}
+
+// mergeWritten folds session-scanned ids into the MCP-drained set.
+func mergeWritten(ids map[string]bool, written []string) map[string]bool {
+	if len(written) == 0 {
+		return ids
+	}
+	if ids == nil {
+		ids = make(map[string]bool, len(written))
+	}
+	for _, id := range written {
+		ids[id] = true
+	}
+	return ids
 }
 
 // reviewFields resolves this round's takeaway/verified/notes: tool-staged
