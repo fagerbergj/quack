@@ -735,9 +735,8 @@ func extChatUser(st *store.Store) func(chatID string) (string, bool) {
 	}
 }
 
-// readExtInputArtifact backs Host.ReadArtifact: the latest bytes for a named
-// input artifact in chatID, or ok=false when none exists yet (first
-// dispatch - no baseline to diff against).
+// readExtInputArtifact backs Host.ReadArtifact, falling back to the newest
+// artifact of a Blob kind named name: agents write output under their own chosen id, not the job name a UI reads by.
 func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, user, name string) ([]byte, bool) {
 	return func(chatID, user, name string) ([]byte, bool) {
 		if artifacts == nil {
@@ -759,8 +758,35 @@ func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) fu
 			slog.Warn("ext input artifact: read failed", "component", "startup", "chat", chatID, "artifact", name, "err", err)
 			return nil, false
 		}
-		return data, ok
+		if ok {
+			return data, true
+		}
+		return readLatestOfKind(ctx, client, name)
 	}
+}
+
+// readLatestOfKind picks the artifact with the newest Lineage.SavedAt among
+// name's instances, highest Revision on a tie (SavedAt absent/equal).
+func readLatestOfKind(ctx context.Context, client *recordstore.Client, name string) ([]byte, bool) {
+	spec, ok := recordstore.SpecFor(name)
+	if !ok || spec.Class != recordstore.Blob {
+		return nil, false
+	}
+	summaries, err := client.List(ctx, name)
+	if err != nil || len(summaries) == 0 {
+		return nil, false
+	}
+	best := summaries[0]
+	for _, s := range summaries[1:] {
+		if s.SavedAt.After(best.SavedAt) || (s.SavedAt.Equal(best.SavedAt) && s.Revision > best.Revision) {
+			best = s
+		}
+	}
+	data, _, ok, err := client.Latest(ctx, best.ID)
+	if err != nil || !ok {
+		return nil, false
+	}
+	return data, true
 }
 
 // writeExtInputArtifact backs Host.WriteArtifact: saves a new revision only when data changed

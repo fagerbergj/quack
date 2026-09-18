@@ -3,11 +3,26 @@ package serve
 import (
 	"context"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
+
+// extReadFallbackTestKind is a Blob kind registered only for
+// TestReadExtInputArtifactKindFallback's table, distinct from any kind a
+// real agent bundle registers.
+const extReadFallbackTestKind = "ext_read_fallback_test_kind"
+
+func init() {
+	recordstore.Register(extReadFallbackTestKind, recordstore.KindSpec{
+		Class:        recordstore.Blob,
+		Identity:     func(_ []byte, hint string) (string, error) { return hint, nil },
+		RequiresHint: true,
+	})
+}
 
 // TestWriteExtInputArtifactUnchangedNoNewRevision pins #1010's delta rule:
 // re-writing identical bytes for the same name must not mint a new revision.
@@ -151,4 +166,82 @@ func TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact(t *testing.T)
 	if string(data) != string(inputBytes) {
 		t.Errorf("input artifact \"pull\" content = %q, want unchanged %q", data, inputBytes)
 	}
+}
+
+// TestReadExtInputArtifactKindFallback covers readExtInputArtifact's fallback
+// to the newest artifact of a Blob kind matching name, once no "bytes:<name>"
+// input exists - the path an extension UI relies on to read an agent's own
+// typed output artifact by job id.
+func TestReadExtInputArtifactKindFallback(t *testing.T) {
+	const chatID = "github-acme-widgets-7"
+
+	t.Run("bytes input wins over a same-named kind", func(t *testing.T) {
+		st, _, _, artifacts, _ := newExtTestStack(t)
+		ctx := context.Background()
+		write := writeExtInputArtifact(st, artifacts)
+		read := readExtInputArtifact(st, artifacts)
+
+		if _, _, err := write(chatID, "github", extReadFallbackTestKind, "application/octet-stream", []byte("input bytes")); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		userID := st.SessionUserForChat(ctx, chatID)
+		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
+		if _, _, err := client.SaveBlob(ctx, extReadFallbackTestKind, []byte("kind bytes"), "application/octet-stream", "inst1", recordstore.Lineage{SavedAt: time.Now()}); err != nil {
+			t.Fatalf("SaveBlob: %v", err)
+		}
+
+		data, ok := read(chatID, "github", extReadFallbackTestKind)
+		if !ok || string(data) != "input bytes" {
+			t.Errorf("read = (%q, %v), want (\"input bytes\", true)", data, ok)
+		}
+	})
+
+	t.Run("no bytes input, newest SavedAt across kind instances wins", func(t *testing.T) {
+		st, _, _, artifacts, _ := newExtTestStack(t)
+		ctx := context.Background()
+		read := readExtInputArtifact(st, artifacts)
+		userID := st.SessionUserForChat(ctx, chatID)
+		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
+
+		older := time.Now().Add(-time.Hour)
+		newer := time.Now()
+		if _, _, err := client.SaveBlob(ctx, extReadFallbackTestKind, []byte("older"), "application/octet-stream", "inst-older", recordstore.Lineage{SavedAt: older}); err != nil {
+			t.Fatalf("SaveBlob older: %v", err)
+		}
+		if _, _, err := client.SaveBlob(ctx, extReadFallbackTestKind, []byte("newer"), "application/octet-stream", "inst-newer", recordstore.Lineage{SavedAt: newer}); err != nil {
+			t.Fatalf("SaveBlob newer: %v", err)
+		}
+
+		data, ok := read(chatID, "github", extReadFallbackTestKind)
+		if !ok || string(data) != "newer" {
+			t.Errorf("read = (%q, %v), want (\"newer\", true)", data, ok)
+		}
+	})
+
+	t.Run("unknown name and no bytes input is not found", func(t *testing.T) {
+		st, _, _, artifacts, _ := newExtTestStack(t)
+		read := readExtInputArtifact(st, artifacts)
+
+		data, ok := read(chatID, "github", "no_such_kind_or_input")
+		if ok || data != nil {
+			t.Errorf("read = (%v, %v), want (nil, false)", data, ok)
+		}
+	})
+
+	t.Run("a Structured kind name never falls back", func(t *testing.T) {
+		st, _, _, artifacts, _ := newExtTestStack(t)
+		ctx := context.Background()
+		read := readExtInputArtifact(st, artifacts)
+		userID := st.SessionUserForChat(ctx, chatID)
+		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
+
+		if _, _, err := client.SaveStructured(ctx, "code_review", map[string]any{"verdict": "approve"}, "pr:1", recordstore.Lineage{SavedAt: time.Now()}); err != nil {
+			t.Fatalf("SaveStructured: %v", err)
+		}
+
+		data, ok := read(chatID, "github", "code_review")
+		if ok || data != nil {
+			t.Errorf("read of a Structured kind name = (%v, %v), want (nil, false)", data, ok)
+		}
+	})
 }

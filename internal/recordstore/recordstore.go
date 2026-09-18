@@ -596,7 +596,8 @@ type ArtifactSummary struct {
 	ID       string
 	Kind     string
 	Revision int
-	NodeID   string // lineage.node_id of the latest revision
+	NodeID   string    // lineage.node_id of the latest revision
+	SavedAt  time.Time // lineage.saved_at of the latest revision; zero if unavailable (e.g. artifact.InMemoryService())
 }
 
 // List returns every id in this chat whose kind matches kindFilter ("" =
@@ -620,7 +621,7 @@ func (c *Client) List(ctx context.Context, kindFilter string) ([]ArtifactSummary
 		if err != nil || !ok {
 			continue
 		}
-		out = append(out, ArtifactSummary{ID: id, Kind: kind, Revision: rev, NodeID: lineage.NodeID})
+		out = append(out, ArtifactSummary{ID: id, Kind: kind, Revision: rev, NodeID: lineage.NodeID, SavedAt: lineage.SavedAt})
 	}
 	return out, nil
 }
