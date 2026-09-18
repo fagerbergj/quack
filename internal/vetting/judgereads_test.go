@@ -40,3 +40,33 @@ func TestCountReadsIsTransparent(t *testing.T) {
 		t.Errorf("countReads(nil) = %d tools, hadTools=%v; want 0, false", len(wrapped), c.hadTools)
 	}
 }
+
+// TestUnreadArtifactPass (#1497): unlike unreadPass, this rule keys on
+// whether the WORKER wrote an artifact this round, not on tool presence - a
+// research node with the tools but no write is never faulted.
+func TestUnreadArtifactPass(t *testing.T) {
+	withReads := func(reads int64) *readCounter {
+		c := &readCounter{}
+		c.n.Store(reads)
+		return c
+	}
+	for _, tc := range []struct {
+		name  string
+		c     *readCounter
+		v     verdict
+		wrote bool
+		want  bool
+	}{
+		{"passed with zero reads, worker wrote", withReads(0), verdict{Passed: true}, true, true},
+		{"passed after reading, worker wrote", withReads(1), verdict{Passed: true}, true, false},
+		{"failed with zero reads, worker wrote", withReads(0), verdict{Passed: false}, true, false},
+		{"passed with zero reads, worker wrote nothing", withReads(0), verdict{Passed: true}, false, false},
+		{"no counter", nil, verdict{Passed: true}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := unreadArtifactPass(tc.c, tc.v, tc.wrote); got != tc.want {
+				t.Errorf("unreadArtifactPass = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

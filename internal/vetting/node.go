@@ -2202,6 +2202,7 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 		act:              workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
 		nodeDir:          nodeDir,
 		writtenSeen:      map[string]bool{},
+		artifactSeen:     map[string]bool{},
 		pendingWs:        map[string]map[string]any{},
 		pendingWsTool:    map[string]string{},
 		pendingCd:        map[string]bool{},
@@ -2287,6 +2288,8 @@ func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 			delete(s.pendingCd, fr.ID)
 			s.recordCd(fr.Response)
 		}
+	case isArtifactWriteTool(fr.Name):
+		s.recordArtifactWrite(fr.Response)
 	}
 	if isWorkspaceTool(fr.Name) {
 		// Only completed call/response pairs enter the ledger.
@@ -2304,6 +2307,7 @@ type activityScanner struct {
 	nodeDir       string
 	curCwd        string          // node-relative cwd ("" = node root)
 	writtenSeen   map[string]bool // dedup for written
+	artifactSeen  map[string]bool // dedup for artifactsWritten
 	pendingWs     map[string]map[string]any
 	pendingWsTool map[string]string
 	pendingCd     map[string]bool
@@ -2463,4 +2467,34 @@ func (s *activityScanner) recordFileOp(name string, args map[string]any) {
 			s.act.written = append(s.act.written, jr)
 		}
 	}
+}
+
+// artifactWriteResultRe pulls the id from write_artifact/write_<kind>'s
+// "ok: id=<id> revision=<n>" reply, or edit_artifact's "ok: <id> revision <n>".
+var artifactWriteResultRe = regexp.MustCompile(`^ok: (?:id=)?(\S+) revision[= ]\d+`)
+
+// isArtifactWriteTool reports whether name is a native artifact-write tool
+// call - write_artifact/edit_artifact/write_<kind> for a registered kind.
+func isArtifactWriteTool(name string) bool {
+	if name == "write_artifact" || name == "edit_artifact" {
+		return true
+	}
+	kind, ok := strings.CutPrefix(name, "write_")
+	if !ok {
+		return false
+	}
+	spec, ok := recordstore.SpecFor(kind)
+	return ok && spec.AgentWritable
+}
+
+// recordArtifactWrite captures a successful write's id (skips an
+// edit_artifact conflict reply, which wrote nothing).
+func (s *activityScanner) recordArtifactWrite(resp map[string]any) {
+	result, _ := resp["result"].(string)
+	m := artifactWriteResultRe.FindStringSubmatch(result)
+	if m == nil || s.artifactSeen[m[1]] {
+		return
+	}
+	s.artifactSeen[m[1]] = true
+	s.act.artifactsWritten = append(s.act.artifactsWritten, m[1])
 }

@@ -3,11 +3,13 @@
 package vetting
 
 import (
+	"strings"
 	"sync/atomic"
 
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/toolutils"
 	"google.golang.org/genai"
 )
 
@@ -39,8 +41,12 @@ func (t *countingTool) IsLongRunning() bool { return t.inner.IsLongRunning() }
 func (t *countingTool) Declaration() *genai.FunctionDeclaration {
 	return t.inner.Declaration()
 }
-func (t *countingTool) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	return t.inner.ProcessRequest(ctx, req)
+
+// ProcessRequest packs the wrapper, not the inner tool, into the request's
+// tool map (mirrors guardedTool) - packing inner here would register the
+// unwrapped tool for dispatch and this wrapper's Run would never be called.
+func (t *countingTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) error {
+	return toolutils.PackTool(req, t)
 }
 
 func (t *countingTool) Run(ctx agent.Context, args any) (map[string]any, error) {
@@ -72,3 +78,25 @@ const unreadPassFeedback = "Your previous verdict passed this answer without ope
 	"Read-tool calls are counted: a pass with zero reads is discarded, because nothing in it was verified " +
 	"against the repository. Identify every specific claim the answer makes about this repo, check each one " +
 	"with grep/glob/read_file, and score from what you actually found."
+
+// judgeReadCounters: one round's repo-read and artifact-read tallies, kept
+// separate so each zero-reads discard rule keys on its own tool set.
+type judgeReadCounters struct {
+	repo     *readCounter
+	artifact *readCounter
+}
+
+// unreadArtifactPass: the worker wrote/edited an artifact this round, the
+// judge passed, and never called read_artifact - nothing in the verdict
+// checked what the worker actually produced.
+func unreadArtifactPass(c *readCounter, v verdict, workerWroteArtifact bool) bool {
+	return c != nil && workerWroteArtifact && v.Passed && c.count() == 0
+}
+
+// unreadArtifactPassFeedback: appended to the judge prompt on re-run, naming
+// the exact ids so the retry has no excuse to skip them.
+func unreadArtifactPassFeedback(ids []string) string {
+	return "Your previous verdict passed this answer, but the worker wrote or edited an artifact this round " +
+		"and you never called read_artifact. Read it before judging: " + strings.Join(ids, ", ") + ". " +
+		"If the answer refers to an artifact instead of containing the deliverable, the artifact's content IS the answer."
+}

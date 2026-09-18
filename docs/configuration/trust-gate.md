@@ -31,6 +31,8 @@ The check commands themselves come from `workspace.check_commands` - an allowlis
 
 A separate, independently-configured model scores the answer G-Eval style against the rubric. `provider`/`model` are set here, deliberately apart from any worker's model - see [models.md](models.md#the-judge-is-a-separate-model) for why that independence matters. Empty `model` (or `max_rounds: 0`) disables the judge; the cheaper deterministic stage still runs on its own.
 
+Every judge round also gets `list_artifacts`/`read_artifact`, scoped to the node's chat, alongside any jail-scoped repo read tools - so an answer that points at an artifact instead of restating it (`read_artifact to see it`, a revision number) can actually be checked. A PASS that never read the repo, or never read an artifact the worker wrote or edited that round, is discarded and the round is re-judged once.
+
 - `threshold` (default `0.7`) is a **per-criterion** pass bar, not an average - every rubric criterion must individually clear it. The verdict score is the *lowest* criterion (weakest-link gating; no averaging, no caps).
 - `max_rounds` bounds judge/revise cycles - the worker gets self-contained feedback and another attempt, up to this many times.
 - `max_iterations` caps the judge's own agentic model turns within a single round (it may call tools to verify claims, e.g. reading the clone).

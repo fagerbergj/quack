@@ -117,8 +117,11 @@ func TestJudgeBehaviourSelectsBlocks(t *testing.T) {
 		t.Errorf("provenance = %+v, want the shipped file with a version id", p.art)
 	}
 	b := p.behaviour(false, false)
-	if !strings.Contains(b, "You have no tools") || strings.Contains(b, "skill tools") {
+	if !strings.Contains(b, "You have no workspace tools") || strings.Contains(b, "skill tools") {
 		t.Errorf("no-tools behaviour selected the wrong blocks: %q", b)
+	}
+	if !strings.Contains(b, "list_artifacts") || !strings.Contains(b, "read_artifact") {
+		t.Errorf("no-tools behaviour missing the always-on artifact_tools clause: %q", b)
 	}
 }
 
