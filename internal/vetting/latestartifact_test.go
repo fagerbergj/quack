@@ -19,8 +19,9 @@ import (
 // specific PAST revision's own lineage, which a latest-only map can't give it.
 type versionedMetaInMemory struct {
 	artifact.Service
-	mu   sync.Mutex
-	meta map[string]struct {
+	mu        sync.Mutex
+	loadCalls int
+	meta      map[string]struct {
 		kind, class string
 		lineage     []byte
 	}
@@ -53,13 +54,20 @@ func (m *versionedMetaInMemory) SaveWithMeta(ctx context.Context, req *artifact.
 
 func (m *versionedMetaInMemory) LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, string, string, []byte, error) {
 	resp, err := m.Service.Load(ctx, req)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.loadCalls++
 	if err != nil {
 		return nil, "", "", nil, err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	meta := m.meta[versionedMetaKey(req.AppName, req.UserID, req.SessionID, req.FileName, req.Version)]
 	return resp, meta.kind, meta.class, meta.lineage, nil
+}
+
+func (m *versionedMetaInMemory) LoadCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.loadCalls
 }
 
 // testSystemKind stands in for a real System kind (e.g. tools' web_page,
@@ -107,25 +115,49 @@ func TestDependencyArtifact_TypedKindScopedByLineage(t *testing.T) {
 	}
 }
 
-// TestDependencyArtifact_LaterRoundBeatsStaleText pins the #1504 review's B2:
-// a passing round that tool-writes the typed kind must win over an earlier
-// (possibly failed) round's episodic text:<dep> revision.
-func TestDependencyArtifact_LaterRoundBeatsStaleText(t *testing.T) {
+// TestDependencyArtifact_NewerTurnBeatsAnOlderTurnsHigherRound pins the round
+// 2 review's B2: an id is chat-scoped across every TURN, not just this one -
+// an earlier turn's round 8 must never outrank this turn's round 1, the
+// newest revision by save order regardless of what round number it carries.
+func TestDependencyArtifact_NewerTurnBeatsAnOlderTurnsHigherRound(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
-	if _, _, err := c.SaveBlob(context.Background(), "text", []byte("round 1's stale answer"), "text/markdown", "dep",
+	if _, _, err := c.SaveBlob(context.Background(), "text", []byte("an earlier turn's round 8 answer"), "text/markdown", "dep",
+		recordstore.Lineage{NodeID: "dep", Round: 8}); err != nil {
+		t.Fatalf("seed the earlier turn's revision: %v", err)
+	}
+	if _, _, err := c.SaveBlob(context.Background(), "text", []byte("this turn's round 1 answer"), "text/markdown", "dep",
 		recordstore.Lineage{NodeID: "dep", Round: 1}); err != nil {
-		t.Fatalf("seed round 1 text: %v", err)
+		t.Fatalf("seed this turn's revision: %v", err)
 	}
-	if _, _, err := c.SaveBlob(context.Background(), "document", []byte("round 2's real deliverable"), "text/markdown", "doc:chat1",
-		recordstore.Lineage{NodeID: "dep", Round: 2}); err != nil {
-		t.Fatalf("seed round 2 document: %v", err)
-	}
-	cfg := Config{Artifacts: svc, User: "u1", ChatID: "chat1", Artifact: "document"}
+	cfg := Config{Artifacts: svc, User: "u1", ChatID: "chat1"}
 
 	_, _, content, ok := DependencyArtifact(context.Background(), cfg, "dep")
-	if !ok || content != "round 2's real deliverable" {
-		t.Errorf("DependencyArtifact content = %q, ok=%v, want round 2's document, not the shadowed round-1 text", content, ok)
+	if !ok || content != "this turn's round 1 answer" {
+		t.Errorf("DependencyArtifact content = %q, ok=%v, want this turn's newer revision, not the older turn's higher-round one", content, ok)
+	}
+}
+
+// TestDependencyArtifact_StopsAtTheFirstMatchPerCandidate proves the newest-
+// first scan loads at most one revision per candidate when dep's own write is
+// already the newest - it never walks the id's whole history.
+func TestDependencyArtifact_StopsAtTheFirstMatchPerCandidate(t *testing.T) {
+	svc := newVersionedMetaInMemory()
+	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
+	for i, author := range []string{"someone-else", "someone-else", "dep"} {
+		if _, _, err := c.SaveBlob(context.Background(), "text", []byte("revision"), "text/markdown", "dep",
+			recordstore.Lineage{NodeID: author, Round: i + 1}); err != nil {
+			t.Fatalf("seed revision %d: %v", i+1, err)
+		}
+	}
+	cfg := Config{Artifacts: svc, User: "u1", ChatID: "chat1"}
+
+	_, rev, _, ok := DependencyArtifact(context.Background(), cfg, "dep")
+	if !ok || rev != 3 {
+		t.Fatalf("DependencyArtifact rev=%d ok=%v, want dep's own newest revision 3", rev, ok)
+	}
+	if got := svc.LoadCalls(); got != 1 {
+		t.Errorf("LoadWithMeta calls = %d, want 1 - the older, non-matching revisions must never be loaded", got)
 	}
 }
 

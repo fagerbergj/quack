@@ -884,7 +884,9 @@ func appendDependencyArtifact(ctx context.Context, plan Plan, cfg vetting.Config
 	if truncated {
 		fmt.Fprintf(&b, "\n\n[... truncated; read_artifact(%q) for the rest]", id)
 	}
-	return b.String(), len(content)
+	// used is the whole block (header/marker included), not just content - the
+	// running per-task budget must reflect every byte actually spent.
+	return b.String(), b.Len()
 }
 
 // safeTruncateBytes: content's first n bytes, backing off to the last full

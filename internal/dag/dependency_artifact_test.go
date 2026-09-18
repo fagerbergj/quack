@@ -138,25 +138,25 @@ func TestBuildTask_SiblingsSharingAnAgentEachGetTheirOwnArtifact(t *testing.T) {
 	}
 }
 
-// TestBuildTask_LaterRoundBeatsAFailedRoundsStaleText pins the #1504 review's
-// B2: a passing round that tool-wrote the typed kind must win over an
-// earlier (possibly gate-failed) round's episodic text:<dep> revision.
-func TestBuildTask_LaterRoundBeatsAFailedRoundsStaleText(t *testing.T) {
+// TestBuildTask_NewerTurnBeatsAnOlderTurnsHigherRound: the text:<dep> id is
+// chat-scoped across every turn, not just this one - an earlier turn's round
+// 8 must never outrank this turn's round 1.
+func TestBuildTask_NewerTurnBeatsAnOlderTurnsHigherRound(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
-	saveDepRevision(t, c, "text", "dep", "round 1's failed-gate answer", "dep", 1)
-	saveDepRevision(t, c, "document", "doc:chat1", "round 2's real deliverable", "dep", 2)
-	plan := depPlan("document", "web-researcher")
+	saveDepRevision(t, c, "text", "dep", "an earlier turn's round 8 answer", "dep", 8)
+	saveDepRevision(t, c, "text", "dep", "this turn's round 1 answer", "dep", 1)
+	plan := depPlan("", "code-explorer")
 	cfg := vetting.Config{Artifacts: svc, User: "u1", ChatID: "chat1"}
 	upstream := map[string]string{"dep": "the delivered answer"}
 
 	got := buildTask(context.Background(), plan, plan.Nodes[1], upstream, nil, cfg)
 
-	if !strings.Contains(got, "round 2's real deliverable") {
-		t.Errorf("dependent prompt should carry round 2's document, not the shadowed round 1 text:\n%s", got)
+	if !strings.Contains(got, "this turn's round 1 answer") {
+		t.Errorf("dependent prompt should carry this turn's newer revision:\n%s", got)
 	}
-	if strings.Contains(got, "round 1's failed-gate answer") {
-		t.Errorf("dependent prompt leaked the stale, earlier round's text:\n%s", got)
+	if strings.Contains(got, "an earlier turn's round 8 answer") {
+		t.Errorf("dependent prompt leaked an older turn's stale, higher-round revision:\n%s", got)
 	}
 }
 
@@ -243,6 +243,35 @@ func TestBuildTask_BudgetExhaustedByAnEarlierDependencyAppendsNothingMore(t *tes
 
 	if strings.Contains(got, "dep-b's own artifact") {
 		t.Errorf("dep-b's artifact should not be appended once dep-a's spent the whole budget:\n%s", got)
+	}
+}
+
+// TestBuildTask_HeaderAndMarkerBytesCountTowardBudget: dep-a's content alone
+// fits under the budget (so appendDependencyArtifact never truncates it), but
+// its header text pushes the actual bytes spent over budget - dep-b must get
+// nothing once that overspend is counted.
+func TestBuildTask_HeaderAndMarkerBytesCountTowardBudget(t *testing.T) {
+	svc := newVersionedMetaInMemory()
+	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
+	saveDepRevision(t, c, "text", "dep-a", strings.Repeat("a", 180), "dep-a", 1)
+	saveDepRevision(t, c, "text", "dep-b", "dep-b's own artifact", "dep-b", 1)
+	plan := Plan{Nodes: []Node{
+		{ID: "dep-a", AgentName: "code-explorer"},
+		{ID: "dep-b", AgentName: "code-explorer"},
+		// 125 tokens * 40% * 4 bytes/token = a 200-byte budget: dep-a's 180-byte
+		// content fits alone, but content + its ~50-byte header does not.
+		{ID: "synth", AgentName: "synthesizer", DependsOn: []string{"dep-a", "dep-b"}, Task: "Write the report.", ContextWindow: 125},
+	}}
+	cfg := vetting.Config{Artifacts: svc, User: "u1", ChatID: "chat1"}
+	upstream := map[string]string{"dep-a": "pointer a", "dep-b": "pointer b"}
+
+	got := buildTask(context.Background(), plan, plan.Nodes[2], upstream, nil, cfg)
+
+	if !strings.Contains(got, strings.Repeat("a", 180)) {
+		t.Errorf("dep-a's own content should still be appended whole (it fits alone):\n%s", got)
+	}
+	if strings.Contains(got, "dep-b's own artifact") {
+		t.Errorf("dep-b's artifact should not fit once dep-a's header/marker bytes count against the budget:\n%s", got)
 	}
 }
 

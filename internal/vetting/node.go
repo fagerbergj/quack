@@ -294,19 +294,19 @@ func deliveryTarget(ctx context.Context, cfg Config) (id string, revision int, o
 }
 
 // DependencyArtifact: dep's own artifact, scoped by Lineage.NodeID (the typed
-// kind's id is chat-scoped) and picked by the highest Lineage.Round found. Never a System kind.
+// kind's id is chat-scoped) and picked as the newest across candidates. Never a System kind.
 func DependencyArtifact(ctx context.Context, cfg Config, dep string) (id string, revision int, content string, ok bool) {
 	c := recordClient(cfg)
 	if c == nil {
 		return "", 0, "", false
 	}
-	bestRound := -1
+	var bestSaved time.Time
 	for _, cid := range dependencyArtifactCandidates(cfg, dep) {
-		cRev, cContent, cRound, cok := bestDependencyRevision(ctx, c, cid, dep, bestRound)
-		if !cok {
+		cRev, cContent, cSaved, cok := bestDependencyRevision(ctx, c, cid, dep)
+		if !cok || (ok && !cSaved.After(bestSaved)) {
 			continue
 		}
-		id, revision, content, ok, bestRound = cid, cRev, cContent, true, cRound
+		id, revision, content, ok, bestSaved = cid, cRev, cContent, true, cSaved
 	}
 	return id, revision, content, ok
 }
@@ -331,25 +331,24 @@ func dependencyArtifactCandidates(cfg Config, dep string) []string {
 	return candidates
 }
 
-// bestDependencyRevision: cid's highest-Round revision with Lineage.NodeID ==
-// dep and Round > floor, skipping a System kind entirely.
-func bestDependencyRevision(ctx context.Context, c *recordstore.Client, cid, dep string, floor int) (revision int, content string, round int, ok bool) {
+// bestDependencyRevision: cid's newest revision authored by dep - a chat-scoped
+// id can carry every node's and every turn's writes, so this stops (and stops loading) at the first NodeID match, newest-first.
+func bestDependencyRevision(ctx context.Context, c *recordstore.Client, cid, dep string) (revision int, content string, savedAt time.Time, ok bool) {
 	if spec, sok := recordstore.SpecFor(recordstore.KindOf(cid)); sok && spec.System {
-		return 0, "", 0, false
+		return 0, "", time.Time{}, false
 	}
 	versions, verr := c.Versions(ctx, cid)
 	if verr != nil {
-		return 0, "", 0, false
+		return 0, "", time.Time{}, false
 	}
-	round = floor
 	for _, v := range versions {
 		data, lineage, exists, lerr := c.LoadVersionWithMeta(ctx, cid, v)
-		if lerr != nil || !exists || lineage.NodeID != dep || lineage.Round <= round {
+		if lerr != nil || !exists || lineage.NodeID != dep {
 			continue
 		}
-		revision, content, round, ok = v, string(data), lineage.Round, true
+		return v, string(data), lineage.SavedAt, true
 	}
-	return revision, content, round, ok
+	return 0, "", time.Time{}, false
 }
 
 // deliveryIdempotencyKey: target artifact id + revision (#1090 V4 §4.9) -
