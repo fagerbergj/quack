@@ -61,8 +61,8 @@ type builtSDKExtension struct {
 
 // sdkBuildDeps: the server-side dependencies one extension's build needs.
 type sdkBuildDeps struct {
-	cfg           *config.Config
-	factories     map[string]extsdk.Factory
+	cfg       *config.Config
+	factories map[string]extsdk.Factory
 	// shapesRef: read lazily by newExtDispatch, since buildAgents (and so the
 	// dropped-agent filter, internal/serve/serve.go's finalizeCatalogShapes)
 	// hasn't run yet when this deps struct is built - see that func's doc.
