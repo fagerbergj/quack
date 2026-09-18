@@ -275,6 +275,33 @@ func TestLatestMissing(t *testing.T) {
 	}
 }
 
+// TestListPopulatesSavedAt pins List's ArtifactSummary.SavedAt to the
+// backing lineage, the field a caller ranks multiple ids of one kind by.
+func TestListPopulatesSavedAt(t *testing.T) {
+	ctx := context.Background()
+	svc := newMetaAwareInMemory()
+	c := New(svc, "quack", "user1", "chat1")
+	older := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	newer := time.Now().UTC().Truncate(time.Second)
+	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("a"), "text/plain", "doc:a", Lineage{SavedAt: older}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("b"), "text/plain", "doc:b", Lineage{SavedAt: newer}); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := c.List(ctx, "test.blob")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := map[string]time.Time{}
+	for _, s := range summaries {
+		got[s.ID] = s.SavedAt
+	}
+	if !got["test.blob:doc:a"].Equal(older) || !got["test.blob:doc:b"].Equal(newer) {
+		t.Fatalf("List SavedAt = %v, want doc:a=%v doc:b=%v", got, older, newer)
+	}
+}
+
 // TestEveryRevisionKept proves design V4.1 #2: no retention call exists, so
 // every save keeps its own revision and Latest always reports the newest.
 func TestEveryRevisionKept(t *testing.T) {
