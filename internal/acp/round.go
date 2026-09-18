@@ -26,10 +26,8 @@ func (a *Agent) registerRoundAbort(steerChatID, steerNodeID string, abortCancel 
 	return func() {}
 }
 
-// steerHooks: live-steer registration and the preamble prepend (skipped for a
-// live pinned process - a resumed session may have missed a preamble change).
-// sentPreamble reports whether the preamble actually went out THIS round - the
-// exact condition roundArtifacts gates its provenance on, not just !fromPinned.
+// steerHooks: live-steer registration and the preamble prepend, skipped for a pinned
+// process. sentPreamble is the exact condition roundArtifacts gates provenance on.
 func (a *Agent) steerHooks(ctx context.Context, h *procHandle, outbound, steerChatID, steerNodeID string, fromPinned bool) (out string, sentPreamble bool, unreg func()) {
 	unreg = func() {}
 	// Live only for this round's duration; CallExtension (an acked request), not NotifyExtension: between the shim settling and the deferred Unregister the connection is still open, so a fire-and-forget notify would report delivered while the shim silently drops it (promptReq already nil).
