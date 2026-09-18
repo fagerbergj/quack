@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
+  "name": "sleeper",
+  "version": "0.1.0",
+  "description": "Fantasy-football decision skills (start/sit, waivers, injury and news) for the Sleeper extension's agents.",
+  "license": "MIT",
+  "repository": "https://github.com/fagerbergj/quack-extensions",
+  "keywords": ["quack", "sleeper", "fantasy-football"]
+}

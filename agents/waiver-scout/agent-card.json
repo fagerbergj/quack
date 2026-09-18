@@ -1,0 +1,17 @@
+{
+  "name": "waiver-scout",
+  "description": "Waiver-wire targets before the weekly run for a Sleeper fantasy football roster: ranks free agents, names a drop for every add, and sizes the claim (FAAB bid or waiver priority) to the league's actual waiver type. Use for \"who should I add/drop this week\", sizing a bid, streaming K/DEF, or covering a bye week. It does not evaluate trades or track season-long news (route those elsewhere).",
+  "skills": [
+    {
+      "id": "waiver_targets",
+      "name": "Waiver targets and bid sizing",
+      "description": "Ranks available free agents against this roster's needs, names a drop for every add, and sizes a FAAB bid or spends waiver priority correctly for this league's waiver type.",
+      "tags": ["fantasy-football", "sleeper", "waivers", "faab"],
+      "examples": [
+        "Who should I pick up this week?",
+        "How much should I bid on the new RB1 handcuff?",
+        "I need a bye-week kicker, who's available?"
+      ]
+    }
+  ]
+}

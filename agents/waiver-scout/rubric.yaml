@@ -1,0 +1,144 @@
+scale:
+  min: 0
+  max: 3
+  pass: 2
+notes: >
+  Every criterion here is drawn from `research-r2-waivers.md` (R2) via the
+  `sleeper:waivers` skill, primarily its "what bad advice looks like" list.
+  The owner's league runs hybrid rolling-priority + FAAB waivers - sizing
+  advice must be checked against `sleeper_league`'s actual `waiver_type`,
+  not assumed. When the skill/report states no published number covers a
+  case, an answer that says so is fully grounded and must not be penalized
+  for lacking an invented figure.
+criteria:
+  ranked:
+    definition: >
+      Waiver candidates are presented as a ranked list, not an unordered
+      dump - the ranking reflects role/usage evidence, not raw trending
+      count or ownership alone.
+    steps:
+    - Check candidates carry an explicit rank or clear ordering.
+    - Check the ranking rationale is role/usage-based, not just "most
+      trending" or "highest owned."
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: candidates are ranked, and the ranking is justified by role/usage evidence.
+    - min: 2.0
+      max: 2.0
+      meaning: candidates are ranked correctly, but one ranking's rationale leans on a crowd metric more than it should.
+    - min: 1.0
+      max: 1.0
+      meaning: an implicit but inconsistent ordering, not stated as a ranking.
+    - min: 0.0
+      max: 0.0
+      meaning: candidates are an unordered list, or ranked by trending/ownership count alone.
+    anchors:
+    - quote
+    - omission
+  drop_named:
+    definition: >
+      Every recommended add carries a named drop from the current roster -
+      an add with no drop is not an actionable recommendation on a full
+      roster.
+    steps:
+    - For each recommended add, check a specific roster player is named to
+      drop.
+    - Check the drop rationale cites a role change or clear bench-of-bench
+      status, not just "worst name."
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every add names a drop, each justified by role/status.
+    - min: 2.0
+      max: 2.0
+      meaning: every add names a drop, but one drop's rationale is thin.
+    - min: 1.0
+      max: 1.0
+      meaning: one add has no named drop.
+    - min: 0.0
+      max: 0.0
+      meaning: multiple adds have no named drop.
+    anchors:
+    - quote
+    - omission
+  priority_or_bid_sized_to_waiver_type:
+    definition: >
+      Waiver priority spend or FAAB bid size matches this league's actual
+      `waiver_type` (checked via `sleeper_league`) and this team's
+      remaining resources, using the published bid bands by need tier.
+    steps:
+    - Check the answer checked or states the league's waiver type before
+      sizing.
+    - For a FAAB bid, check the figure is expressed as a share of *remaining*
+      FAAB (not the original $100) and matches the need-tier band (e.g.
+      25-40% for a replacement starter, $1-2 for K/DEF).
+    - For a priority-queue claim, check the answer weighs the
+      aggressive-vs-patient tradeoff rather than assuming one stance.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: sizing matches the actual waiver type, remaining resources, and the published need-tier bands.
+    - min: 2.0
+      max: 2.0
+      meaning: sizing is correct in kind, but one figure is a bit off-band without being a category error.
+    - min: 1.0
+      max: 1.0
+      meaning: a bid is given with no percentage/dollar figure, or is sized against the original budget instead of what remains.
+    - min: 0.0
+      max: 0.0
+      meaning: sizing ignores the league's actual waiver type, or a K/DEF bid exceeds the published cap with no stated reason.
+    anchors:
+    - quote
+    - omission
+  bye_coverage:
+    definition: >
+      A bye-week gap in the roster is flagged with the lead time the skill
+      names (1-2 weeks ahead), and a double-stacked bye is flagged as a
+      two-slot problem, not treated as a single-slot fix.
+    steps:
+    - Check any starter's upcoming bye within the lead window is flagged.
+    - Check a double-stacked bye (two rostered players sharing a bye) is
+      named as such, not silently treated as one gap.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: bye coverage is flagged with correct lead time, and any double-stack is named.
+    - min: 2.0
+      max: 2.0
+      meaning: bye coverage is flagged, but the lead time is later than the skill's 1-2 week guidance.
+    - min: 1.0
+      max: 1.0
+      meaning: a bye gap exists but goes unmentioned.
+    - min: 0.0
+      max: 0.0
+      meaning: a double-stacked bye is treated as a single-slot problem, or bye coverage is ignored entirely when relevant.
+    anchors:
+    - quote
+    - omission
+  trending_data_interpreted:
+    definition: >
+      Trending-add counts and ownership % are used as scarcity/bidding
+      context, with the value case made on role/usage - never cited as the
+      reason a player is good.
+    steps:
+    - Check any cited trending/ownership number carries its meaning
+      (scarcity signal) rather than being framed as evidence of talent.
+    - Check a post-box-score trending spike is not treated as new
+      information when usage hasn't changed.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every crowd metric is framed as scarcity/bidding context; the value case rests on role/usage.
+    - min: 2.0
+      max: 2.0
+      meaning: crowd metrics are framed correctly, but one mention reads slightly more like a value claim than it should.
+    - min: 1.0
+      max: 1.0
+      meaning: a trending number is cited without stating what it actually measures.
+    - min: 0.0
+      max: 0.0
+      meaning: a trending/ownership number is used as the stated reason a player is worth adding.
+    anchors:
+    - quote
+    - omission
