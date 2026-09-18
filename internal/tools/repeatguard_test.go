@@ -5,10 +5,15 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
+	"google.golang.org/adk/v2/tool/skilltoolset"
+	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 	"google.golang.org/genai"
 
@@ -527,5 +532,130 @@ func TestRepeatGuardEndsRoundAfterRefusalIgnored(t *testing.T) {
 	// The streak reset: the same call now runs again instead of re-tripping.
 	if _, err := rg.Run(ctx, args); err != nil {
 		t.Fatalf("call after hard stop: want a fresh budget, got %v", err)
+	}
+}
+
+// A RepeatWrapToolset-wrapped toolset (skilltoolset.SkillToolset here) must refuse a 3rd identical
+// load_skill call and hard-stop past it, driven through the real Tools() expansion, not a stand-in.
+func TestRepeatWrapToolsetRefusesRepeatedLoadSkill(t *testing.T) {
+	src := skill.NewFileSystemSource(fstest.MapFS{
+		"demo/SKILL.md": &fstest.MapFile{Data: []byte(
+			"---\nname: demo\ndescription: a demo skill for the repeat guard test.\n---\n\nBody.\n")},
+	})
+	ts, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotChat, gotNode, gotMsg string
+	tripped := func(chatID, nodeID, msg string) bool {
+		gotChat, gotNode, gotMsg = chatID, nodeID, msg
+		return true
+	}
+	wrapped := RepeatWrapToolset(ts, newRepeatStates(), tripped)
+	ctx := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
+
+	loadSkill := func() runnableTool {
+		wtools, err := wrapped.Tools(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, wt := range wtools {
+			if wt.Name() == "load_skill" {
+				rt, ok := wt.(runnableTool)
+				if !ok {
+					t.Fatalf("wrapped load_skill does not implement runnableTool")
+				}
+				return rt
+			}
+		}
+		t.Fatal("load_skill not found in wrapped toolset")
+		return nil
+	}
+
+	args := map[string]any{"name": "demo"}
+	for i := 1; i <= repeatThreshold+repeatHardStopAfter; i++ {
+		_, err := loadSkill().Run(ctx, args)
+		if i < repeatThreshold {
+			if err != nil {
+				t.Fatalf("call %d: want it to run, got %v", i, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "REFUSED") {
+			t.Fatalf("call %d: want REFUSED, got %v", i, err)
+		}
+	}
+	if gotMsg != "" {
+		t.Fatalf("tripped fired before the model ignored the refusal %d times: %q", repeatHardStopAfter, gotMsg)
+	}
+	if _, err := loadSkill().Run(ctx, args); err == nil || !strings.Contains(err.Error(), "tool-call loop") {
+		t.Fatalf("call after %d refusals: want the hard-stop error, got %v", repeatThreshold+repeatHardStopAfter, err)
+	}
+	if gotChat != "chat-1" || gotNode != "node-1" || !strings.Contains(gotMsg, "load_skill") {
+		t.Fatalf("tripped(%q, %q, %q); want chat-1/node-1 and load_skill", gotChat, gotNode, gotMsg)
+	}
+}
+
+// fakeToolset is a minimal tool.Toolset stand-in, with no ProcessRequest of its own.
+type fakeToolset struct {
+	name  string
+	tools []tool.Tool
+}
+
+func (f *fakeToolset) Name() string { return f.name }
+func (f *fakeToolset) Tools(adkagent.ReadonlyContext) ([]tool.Tool, error) {
+	return f.tools, nil
+}
+
+// fakeProcessingToolset is a fakeToolset that also implements ProcessRequest,
+// like skilltoolset.SkillToolset does.
+type fakeProcessingToolset struct {
+	fakeToolset
+	processed *bool
+}
+
+func (f *fakeProcessingToolset) ProcessRequest(adkagent.Context, *model.LLMRequest) error {
+	*f.processed = true
+	return nil
+}
+
+// TestRepeatWrapToolsetPassthroughs covers RepeatWrapToolset's non-Run
+// surface: Name(), the SupportsRepeatGuard-false skip in Tools(), and
+// ProcessRequest forwarding both when the inner toolset implements it and
+// when it doesn't.
+func TestRepeatWrapToolsetPassthroughs(t *testing.T) {
+	calls := 0
+	inner := &fakeToolset{name: "fake", tools: []tool.Tool{stubTool{}, newRepeatTestTool(t, &calls)}}
+	wrapped := RepeatWrapToolset(inner, newRepeatStates(), nil)
+	if wrapped.Name() != "fake" {
+		t.Fatalf("Name() = %q, want %q", wrapped.Name(), "fake")
+	}
+	wt, err := wrapped.Tools(newRepeatCtx("s1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wt[0] != tool.Tool(stubTool{}) {
+		t.Fatalf("non-runnable tool was wrapped instead of passed through: %T", wt[0])
+	}
+	if _, ok := wt[1].(*repeatGuard); !ok {
+		t.Fatalf("runnable tool was not wrapped: %T", wt[1])
+	}
+
+	rgt, ok := wrapped.(*repeatGuardedToolset)
+	if !ok {
+		t.Fatalf("RepeatWrapToolset returned %T, want *repeatGuardedToolset", wrapped)
+	}
+	if err := rgt.ProcessRequest(newRepeatCtx("s1"), &model.LLMRequest{}); err != nil {
+		t.Fatalf("ProcessRequest on a non-processing inner toolset: want nil, got %v", err)
+	}
+
+	processed := false
+	processing := RepeatWrapToolset(&fakeProcessingToolset{fakeToolset: fakeToolset{name: "fp"}, processed: &processed}, newRepeatStates(), nil)
+	if err := processing.(*repeatGuardedToolset).ProcessRequest(newRepeatCtx("s1"), &model.LLMRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if !processed {
+		t.Fatal("ProcessRequest did not forward to the inner toolset")
 	}
 }

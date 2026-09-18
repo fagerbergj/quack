@@ -44,6 +44,9 @@ type Deps struct {
 	Memory             *memory.Store      // recall_memory/load_memory (nil = not offered - see resolveToolNames)
 	MemoryRole         string             // recall_memory/load_memory's role bucket; empty falls back to repo then user
 	Ledger             ledger.LedgerStore // recall_memory/load_memory's memory.recall ledger entries
+	// Repeats lets a caller share this call's repeat-guard state with tools it wraps
+	// outside Build (e.g. RepeatWrapToolset); nil creates a fresh instance.
+	Repeats *repeatStates
 }
 
 type constructor func(Deps) (tool.Tool, error)
@@ -73,7 +76,10 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	if d.Guarded == nil {
 		d.Guarded = GuardedClient()
 	}
-	repeats := newRepeatStates()
+	repeats := d.Repeats
+	if repeats == nil {
+		repeats = newRepeatStates()
+	}
 	scrub := workspaceScrub(d)
 	out := make([]tool.Tool, 0, len(names))
 	for _, name := range names {

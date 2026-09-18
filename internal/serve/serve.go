@@ -1204,6 +1204,9 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 					return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
 				}
 			}
+			// Unwrapped: judgeSessionID is per chat, not per round, so a shared repeatStates
+			// would falsely refuse a chat's 3rd load_skill(rubric) round - the judge already
+			// breaks in-round loops itself via repeatsLastToolCall/forcedVerdictCallback.
 			var judgeSkillsets []tool.Toolset
 			if skillTS != nil {
 				judgeSkillsets = []tool.Toolset{skillTS}
@@ -1424,6 +1427,8 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	// wrapping in Overridable lets the round-start refresh swap targets without
 	// rebuilding the ADK agent, which holds this LLM for its whole lifetime.
 	wm := inference.NewOverridable(base)
+	// Shared with the skill toolset below so load_skill counts against this node's registry-tool budget.
+	repeats := tools.NewRepeatStates()
 	var builtins []tool.Tool
 	if len(b.toolNames) > 0 {
 		if builtins, err = tools.Build(b.toolNames, tools.Deps{
@@ -1446,6 +1451,7 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			Memory:             b.taskStore,
 			MemoryRole:         b.ac.Memory.Bucket,
 			Ledger:             b.ledgerStore,
+			Repeats:            repeats,
 		}); err != nil {
 			return nil, nil, nil, fmt.Errorf("tools: %w", err)
 		}
@@ -1456,7 +1462,8 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
 	builtins = append(builtins, extraTools...)
-	wag, err := agent.Build(b.bundle, prompts, wm, builtins, []tool.Toolset{b.agentSkillTS}, b.memGuidance, b.skillFms, b.grading, drain)
+	skillTS := tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped)
+	wag, err := agent.Build(b.bundle, prompts, wm, builtins, []tool.Toolset{skillTS}, b.memGuidance, b.skillFms, b.grading, drain)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
