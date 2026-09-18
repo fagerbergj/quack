@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"strings"
 	"testing"
@@ -30,6 +31,8 @@ type truncationStubModel struct {
 	queue       []queuedTurn
 	workerCalls int
 	judgeCalls  int
+	// errAtCall: 1-based worker-call index that fails instead of replying (0 = never).
+	errAtCall int
 }
 
 func (m *truncationStubModel) Name() string { return "truncation-stub" }
@@ -43,6 +46,10 @@ func (m *truncationStubModel) GenerateContent(_ context.Context, req *model.LLMR
 		}
 		i := m.workerCalls
 		m.workerCalls++
+		if m.errAtCall == i+1 {
+			yield(nil, errors.New("simulated transport error"))
+			return
+		}
 		t := queuedTurn{text: "(unexpected extra worker call)", finish: genai.FinishReasonStop}
 		if i < len(m.queue) {
 			t = m.queue[i]
@@ -190,5 +197,45 @@ func TestRunGatedRefine_CompleteAnswerNeverContinues(t *testing.T) {
 	}
 	if !res.Passed {
 		t.Errorf("GateResult.Passed = false, want true")
+	}
+}
+
+// TestRunGatedRefine_ContinuationCallFailureStillJudges: a transport error on
+// the continuation call itself (not a repeat-guard abort) doesn't hang or
+// retry forever - it judges the still-cut-off answer as truncated instead.
+func TestRunGatedRefine_ContinuationCallFailureStillJudges(t *testing.T) {
+	stub := &truncationStubModel{
+		queue: []queuedTurn{
+			{text: "cut off mid", finish: genai.FinishReasonMaxTokens},
+		},
+		errAtCall: 2, // the continuation call
+	}
+	runTruncationNode(t, stub) // must not hang or error the run
+	if stub.workerCalls != 3 {
+		t.Errorf("worker calls = %d, want 3 (draft + 1 failed continuation, no retry + round 2's revise)", stub.workerCalls)
+	}
+	if stub.judgeCalls != 2 {
+		t.Errorf("judge calls = %d, want 2 - a continuation failure must still reach judging, round 1 fails, round 2 revises", stub.judgeCalls)
+	}
+}
+
+// TestWorkerRunFinishReason_NilSession: a defensive guard, not a real path -
+// checkTruncation always has a live session, but the helper must not panic.
+func TestWorkerRunFinishReason_NilSession(t *testing.T) {
+	if got := workerRunFinishReason(nil, "inv", "node", "run"); got != genai.FinishReasonUnspecified {
+		t.Errorf("workerRunFinishReason(nil session) = %v, want Unspecified", got)
+	}
+}
+
+// TestBuildTruncationContinuationPrompt_LongAnswerQuotesOnlyTheTail proves the
+// worker is shown its last ~200 chars, not the whole (possibly huge) answer.
+func TestBuildTruncationContinuationPrompt_LongAnswerQuotesOnlyTheTail(t *testing.T) {
+	answer := strings.Repeat("x", 500) + "THE_TAIL_END"
+	got := buildTruncationContinuationPrompt(answer)
+	if !strings.Contains(got, "THE_TAIL_END") {
+		t.Fatalf("prompt missing the answer's actual tail:\n%s", got)
+	}
+	if strings.Contains(got, strings.Repeat("x", truncationTailChars+1)) {
+		t.Errorf("prompt quoted more than truncationTailChars of the answer")
 	}
 }
