@@ -34,6 +34,8 @@ agents:
 
 `memory.bucket` buckets the agent into shared memory (`coding` or `research`, empty/absent means no bucket) — memory is shared by subject, not siloed per agent, so what the code-explorer learns about a repo reaches the code-implementer and the code-reviewer too.
 
+`optional: true` marks an agent whose tools depend on a compiled-but-possibly-disabled extension (e.g. the Sleeper agents' `sleeper_*` tools need `extensions.sleeper` enabled): if it fails to build, `buildAgents` warns and drops it from the roster instead of failing boot, so a deployment that never enables that extension still boots with the rest of the roster intact.
+
 ## Native agents vs. external ACP agents
 
 quack runs two different kinds of worker:
