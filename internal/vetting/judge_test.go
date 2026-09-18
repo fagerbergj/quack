@@ -13,12 +13,14 @@ import (
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -456,12 +458,212 @@ func TestJudgeNoReadToolsOneShot(t *testing.T) {
 	}
 }
 
+// toolCapturingJudge records the last request it saw (for inspecting its
+// tool declarations) and always passes.
+type toolCapturingJudge struct{ req **model.LLMRequest }
+
+func (toolCapturingJudge) Name() string { return "tool-capturing-judge" }
+
+func (j toolCapturingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		*j.req = req
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil)
+	}
+}
+
+// TestJudgeFactoryIncludesArtifactTools: cfg.JudgeArtifactTools (list_artifacts/
+// read_artifact, built the same way the dag builds them) must reach the actual
+// judge round's tool declarations, not just sit unused on Config (#1497).
+func TestJudgeFactoryIncludesArtifactTools(t *testing.T) {
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
+	artTools, err := NewJudgeArtifactTools(rc)
+	if err != nil {
+		t.Fatalf("NewJudgeArtifactTools: %v", err)
+	}
+	var req *model.LLMRequest
+	factory := NewJudgeFactory(toolCapturingJudge{req: &req}, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Research X"}}}
+	cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: artTools}
+	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "answer", workerActivity{}, nil, nil, func(*genai.Part) bool { return true }); err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if req == nil {
+		t.Fatal("judge model never received a request")
+	}
+	if !stubHasTool(req, "list_artifacts") || !stubHasTool(req, "read_artifact") {
+		t.Errorf("judge round tools missing list_artifacts/read_artifact")
+	}
+}
+
+// artifactDiscardJudge always passes without reading (via the text-JSON
+// fallback: submit_verdict's schema has no "passed" field); its 2nd call's request is captured to check what the re-judge named.
+type artifactDiscardJudge struct {
+	calls  *int32
+	second *string
+}
+
+func (artifactDiscardJudge) Name() string { return "artifact-discard-judge" }
+
+func (j artifactDiscardJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if atomic.AddInt32(j.calls, 1) == 2 && j.second != nil {
+			*j.second = stubAllText(req)
+		}
+		yield(stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil)
+	}
+}
+
+// spyReadArtifactArgs mirrors read_artifact's id-addressed input.
+type spyReadArtifactArgs struct {
+	ID string `json:"id"`
+}
+
+// newSpyReadArtifactTool returns a stand-in read_artifact tool that bumps
+// calls each time the judge invokes it.
+func newSpyReadArtifactTool(t *testing.T, calls *int32) tool.Tool {
+	t.Helper()
+	rt, err := functiontool.New[spyReadArtifactArgs, string](
+		functiontool.Config{Name: "read_artifact", Description: "Read an artifact by id."},
+		func(_ adkagent.Context, _ spyReadArtifactArgs) (string, error) {
+			atomic.AddInt32(calls, 1)
+			return "artifact content", nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("spy read_artifact tool: %v", err)
+	}
+	return rt
+}
+
+// sawReadArtifactResponse reports whether req already carries a completed
+// read_artifact call/response pair.
+func sawReadArtifactResponse(req *model.LLMRequest) bool {
+	for _, c := range req.Contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == "read_artifact" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// artifactReadingJudge calls read_artifact once, then passes - proving a
+// round that DID read is never discarded.
+type artifactReadingJudge struct {
+	id string
+}
+
+func (artifactReadingJudge) Name() string { return "artifact-reading-judge" }
+
+func (j artifactReadingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if sawReadArtifactResponse(req) {
+			yield(stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil)
+			return
+		}
+		yield(stubCall("read_artifact", map[string]any{"id": j.id}), nil)
+	}
+}
+
+// TestJudgeRepoUnreadPassDiscardRound: the pre-existing repo-tools zero-reads
+// rule (judgereads.go's unreadPass), driven through a real round via the
+// text-JSON fallback so v.Passed is actually true, not just the predicate test.
+func TestJudgeRepoUnreadPassDiscardRound(t *testing.T) {
+	var calls int32
+	var second string
+	readTool := newSpyReadTool(t, "package main", new(int32)) // present but never called
+	factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
+	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "I implemented game.go",
+		workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("model calls = %d, want 2 (one discard, one re-judge)", calls)
+	}
+	if !v.Passed {
+		t.Errorf("final verdict Passed = false, want true (accepted on second offence)")
+	}
+}
+
+// TestJudgeArtifactReadDiscard covers #1497's second zero-reads rule: a PASS
+// that never read an artifact the worker wrote this round is discarded and
+// re-judged once, naming the ids; reading first, or writing nothing, leave the verdict alone.
+func TestJudgeArtifactReadDiscard(t *testing.T) {
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Research X"}}}
+	wroteArtifact := workerActivity{artifactsWritten: []string{"doc:abc123"}}
+
+	t.Run("pass with zero artifact reads is re-judged, naming the id", func(t *testing.T) {
+		var calls int32
+		var second string
+		readTool := newSpyReadArtifactTool(t, new(int32)) // present but never called
+		factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, nil, nil)
+		cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: []tool.Tool{readTool}}
+		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "read_artifact to see the research",
+			wroteArtifact, nil, nil, func(*genai.Part) bool { return true })
+		if err != nil {
+			t.Fatalf("runJudgeAgent: %v", err)
+		}
+		if calls != 2 {
+			t.Fatalf("model calls = %d, want 2 (one discard, one re-judge)", calls)
+		}
+		if !strings.Contains(second, "doc:abc123") {
+			t.Errorf("re-judge prompt = %q, want it to name doc:abc123", second)
+		}
+		if !v.Passed {
+			t.Errorf("final verdict Passed = false, want true (accepted on second offence)")
+		}
+	})
+
+	t.Run("pass after reading is accepted, no re-judge", func(t *testing.T) {
+		var reads int32
+		readTool := newSpyReadArtifactTool(t, &reads)
+		factory := NewJudgeFactory(artifactReadingJudge{id: "doc:abc123"}, nil, nil)
+		cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: []tool.Tool{readTool}}
+		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "the research is in the artifact",
+			wroteArtifact, nil, nil, func(*genai.Part) bool { return true })
+		if err != nil {
+			t.Fatalf("runJudgeAgent: %v", err)
+		}
+		// A re-judge would have read again (artifactReadingJudge always reads
+		// before passing), so exactly one call proves no re-judge fired.
+		if reads != 1 {
+			t.Errorf("read_artifact calls = %d, want 1 (no re-judge)", reads)
+		}
+		if !v.Passed {
+			t.Errorf("verdict Passed = false, want true")
+		}
+	})
+
+	t.Run("worker wrote nothing: no discard even with zero reads", func(t *testing.T) {
+		var calls int32
+		var second string
+		factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, nil, nil)
+		v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
+			"a plain answer", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+		if err != nil {
+			t.Fatalf("runJudgeAgent: %v", err)
+		}
+		if calls != 1 {
+			t.Errorf("model calls = %d, want 1 (no re-judge)", calls)
+		}
+		if !v.Passed {
+			t.Errorf("verdict Passed = false, want true")
+		}
+	})
+}
+
 // TestJudgeBehaviourSelectsClause pins the prompt-clause selection: the read-
 // tools clause appears only when the judge holds read tools, and the no-tools
 // clause only when it does not.
 func TestJudgeBehaviourSelectsClause(t *testing.T) {
 	with := mustJudgeBehaviour(t, true, false)
-	if !strings.Contains(with, "read-only workspace tools") || strings.Contains(with, "You have no tools") {
+	if !strings.Contains(with, "read-only workspace tools") || strings.Contains(with, "You have no workspace tools") {
 		t.Errorf("read-tools behaviour missing its clause: %q", with)
 	}
 	// #502/#498: the judge must be told the clone root is its working root and
@@ -471,8 +673,12 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 		t.Errorf("read-tools behaviour missing repo-relative path grounding: %q", with)
 	}
 	without := mustJudgeBehaviour(t, false, false)
-	if !strings.Contains(without, "You have no tools") || strings.Contains(without, "read-only workspace tools") {
+	if !strings.Contains(without, "You have no workspace tools") || strings.Contains(without, "read-only workspace tools") {
 		t.Errorf("no-tools behaviour missing its clause: %q", without)
+	}
+	// #1497: artifact_tools is unconditional, present with or without repo read tools.
+	if !strings.Contains(with, "list_artifacts") || !strings.Contains(without, "list_artifacts") {
+		t.Errorf("artifact_tools clause missing: with=%q without=%q", with, without)
 	}
 	// The skills clause appears only when the judge holds the skill toolset.
 	withSkills := mustJudgeBehaviour(t, false, true)

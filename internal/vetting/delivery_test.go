@@ -98,6 +98,36 @@ func TestActivityFromSessionRecordsDelivery(t *testing.T) {
 	}
 }
 
+// TestActivityFromSessionRecordsArtifactWrites (#1497): write_artifact,
+// edit_artifact, and write_<kind> all feed artifactsWritten (deduped); an
+// edit_artifact conflict reply and an unrelated write_file call do not. An
+// ACP worker's reply lands under "output" (translate.go), not "result".
+func TestActivityFromSessionRecordsArtifactWrites(t *testing.T) {
+	act := activityFromSessionAt(newTestSession(t,
+		fnCall("1", "write_artifact", map[string]any{"kind": "text", "mime": "text/plain", "bytes": "hi"}),
+		fnResp("1", "write_artifact", map[string]any{"result": "ok: id=text:doc1 revision=1"}),
+		fnCall("2", "edit_artifact", map[string]any{"id": "text:doc1", "base_revision": float64(1)}),
+		fnResp("2", "edit_artifact", map[string]any{"result": "ok: text:doc1 revision 2"}),
+		fnCall("3", "edit_artifact", map[string]any{"id": "text:doc1", "base_revision": float64(1)}),
+		fnResp("3", "edit_artifact", map[string]any{"result": `{"conflict":true,"revision":2,"content":"hi"}`}),
+		fnCall("4", "write_finding", map[string]any{"path": "x.go"}),
+		fnResp("4", "write_finding", map[string]any{"result": "ok: id=finding:1 revision=1"}),
+		fnCall("5", "write_file", map[string]any{"path": "game.go"}),
+		fnResp("5", "write_file", map[string]any{"bytes": float64(10), "created": true}),
+		fnCall("6", "write_code_review", map[string]any{"pr": "123"}),
+		fnResp("6", "write_code_review", map[string]any{"output": "ok: id=code_review:pr123 revision=1"}),
+	), "")
+	want := []string{"text:doc1", "finding:1", "code_review:pr123"}
+	if len(act.artifactsWritten) != len(want) {
+		t.Fatalf("artifactsWritten = %v, want %v (deduped, no conflict, no write_file)", act.artifactsWritten, want)
+	}
+	for i, id := range want {
+		if act.artifactsWritten[i] != id {
+			t.Errorf("artifactsWritten[%d] = %q, want %q", i, act.artifactsWritten[i], id)
+		}
+	}
+}
+
 // A missing push alone is named precisely - the feedback must be actionable.
 func TestDeliveryCriterionNamesOnlyWhatIsMissing(t *testing.T) {
 	act := workerActivity{committed: true}
