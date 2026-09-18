@@ -151,14 +151,18 @@ func (c *Config) SeedPluginAgents(pluginName, agentsDir string) ([]string, error
 }
 
 // SeedPluginShapes merges one plugin's workflows/*.yaml files into
-// c.Workflows (one file per config.WorkflowShape) and re-validates with
-// validateWorkflows, wrapping any failure with pluginName.
+// c.Workflows, re-validated by validateWorkflows. A shape whose Name already
+// exists (a config entry, or an earlier plugin's) is skipped, not duplicated.
 func (c *Config) SeedPluginShapes(pluginName, workflowsDir string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(workflowsDir, "*.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("plugin %q: read workflows dir: %w", pluginName, err)
 	}
 	sort.Strings(files)
+	existing := make(map[string]bool, len(c.Workflows))
+	for _, w := range c.Workflows {
+		existing[w.Name] = true
+	}
 	var attempted []string
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
@@ -171,7 +175,11 @@ func (c *Config) SeedPluginShapes(pluginName, workflowsDir string) ([]string, er
 		if err := dec.Decode(&shape); err != nil {
 			return nil, fmt.Errorf("plugin %q: workflow %q: %w", pluginName, filepath.Base(f), err)
 		}
+		if existing[shape.Name] {
+			continue
+		}
 		c.Workflows = append(c.Workflows, shape)
+		existing[shape.Name] = true
 		attempted = append(attempted, shape.Name)
 	}
 	if err := c.validateWorkflows(); err != nil {

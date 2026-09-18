@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
@@ -13,9 +14,21 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/skillsource"
+	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// initSkills is production's old resolvePlugins+buildSkillsInit combined -
+// buildFromConfig now calls them separately (plugin agents/shapes seed in
+// between), so this stays only as a test convenience.
+func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
+	reg, _, plugins, err := b.resolvePlugins(ctx, st)
+	if err != nil {
+		return skillsInit{}, err
+	}
+	return b.buildSkillsInit(jail, reg, plugins, shapesRef)
+}
 
 // TestSkillsLoad guards against a skill in THIS repo whose SKILL.md frontmatter
 // fails the skilltoolset's validation (bad name, description over the 1024-char

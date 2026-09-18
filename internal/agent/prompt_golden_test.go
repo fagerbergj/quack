@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
@@ -44,31 +45,57 @@ func checkGolden(t *testing.T, name, got string) {
 	}
 }
 
-// TestGoldenAgentPrompts pins every shipped agent's assembled system prompt.
+// pluginAgentBundleDirs lists every .agents/plugins/<name>/agents/<bundle>/
+// directory on disk (a plugin bundle is never embedded, only ever a live
+// checkout) - the golden walk's second root, alongside the shipped agents/.
+func pluginAgentBundleDirs(t *testing.T) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join("..", "..", ".agents", "plugins", "*", "agents", "*"))
+	if err != nil {
+		t.Fatalf("glob plugin agent bundles: %v", err)
+	}
+	var dirs []string
+	for _, m := range matches {
+		if st, err := os.Stat(m); err == nil && st.IsDir() {
+			dirs = append(dirs, m)
+		}
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+// TestGoldenAgentPrompts pins every shipped agent's assembled system prompt,
+// plus every plugin's own agent bundles (.agents/plugins/*/agents/*) - a
+// plugin bundle's prompt.md is pinned exactly like a shipped one.
 func TestGoldenAgentPrompts(t *testing.T) {
 	des, err := fs.ReadDir(bundledir.SubFS("agents"), ".")
 	if err != nil {
 		t.Fatalf("list agents: %v", err)
 	}
-	seen := 0
+	type bundle struct{ dir, goldenName string }
+	var bundles []bundle
 	for _, de := range des {
-		if !de.IsDir() {
-			continue
+		if de.IsDir() {
+			bundles = append(bundles, bundle{bundledir.PathJoin("agents", de.Name()), "agent." + de.Name() + ".txt"})
 		}
-		dir := bundledir.PathJoin("agents", de.Name())
-		b, err := LoadBundle(context.Background(), nil, dir)
+	}
+	for _, dir := range pluginAgentBundleDirs(t) {
+		bundles = append(bundles, bundle{dir, "agent." + filepath.Base(dir) + ".txt"})
+	}
+
+	for _, bd := range bundles {
+		b, err := LoadBundle(context.Background(), nil, bd.dir)
 		if err != nil {
-			t.Fatalf("%s: %v", dir, err)
+			t.Fatalf("%s: %v", bd.dir, err)
 		}
-		mem, _, err := LoadBundleMemory(context.Background(), nil, dir)
+		mem, _, err := LoadBundleMemory(context.Background(), nil, bd.dir)
 		if err != nil {
-			t.Fatalf("%s: %v", dir, err)
+			t.Fatalf("%s: %v", bd.dir, err)
 		}
 		got := promptbuilder.Agent(b.Card.Name, b.Card.Description, nil, nil, false, BehaviourLayer(b.Prompt, mem), "", "")
-		checkGolden(t, "agent."+de.Name()+".txt", got)
-		seen++
+		checkGolden(t, bd.goldenName, got)
 	}
-	if seen == 0 {
+	if len(bundles) == 0 {
 		t.Fatal("no agent bundles found")
 	}
 }

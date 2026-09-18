@@ -1,7 +1,6 @@
 package serve
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -204,9 +203,12 @@ func TestResolveConfiguredPlugins_LocalRoot(t *testing.T) {
 	cfg := minimalPluginTestConfig()
 	cfg.Plugins = &config.PluginsConfig{Root: t.TempDir(), Seed: []string{root}}
 
-	plugins, err := ResolveConfiguredPlugins(context.Background(), cfg)
+	plugins, unresolvable, err := ResolveConfiguredPlugins(cfg)
 	if err != nil {
 		t.Fatalf("ResolveConfiguredPlugins: %v", err)
+	}
+	if len(unresolvable) != 0 {
+		t.Errorf("unresolvable = %v, want none for a local root", unresolvable)
 	}
 	found := false
 	for _, p := range plugins {
@@ -216,6 +218,32 @@ func TestResolveConfiguredPlugins_LocalRoot(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("plugins = %+v, want the local acme root resolved", plugins)
+	}
+}
+
+// A github: seed entry with no local clone yet is reported unresolvable and
+// skipped, never fetched - ResolveConfiguredPlugins never touches the network.
+func TestResolveConfiguredPlugins_UnclonedGitHubEntryUnresolvable(t *testing.T) {
+	cfg := minimalPluginTestConfig()
+	registryRoot := t.TempDir()
+	cfg.Plugins = &config.PluginsConfig{Root: registryRoot, Seed: []string{"github:fagerbergj/dotagents"}}
+
+	plugins, unresolvable, err := ResolveConfiguredPlugins(cfg)
+	if err != nil {
+		t.Fatalf("ResolveConfiguredPlugins: %v", err)
+	}
+	if len(plugins) != 0 {
+		t.Errorf("plugins = %+v, want none (never cloned)", plugins)
+	}
+	if len(unresolvable) != 1 || unresolvable[0] != "dotagents" {
+		t.Fatalf("unresolvable = %v, want [dotagents]", unresolvable)
+	}
+	entries, err := os.ReadDir(registryRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("registryRoot has %d entries, want 0 - ResolveConfiguredPlugins must never write or fetch", len(entries))
 	}
 }
 

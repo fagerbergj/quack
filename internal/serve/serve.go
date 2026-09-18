@@ -663,19 +663,9 @@ func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (plug
 	return reg, plugins, workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision), nil
 }
 
-// initSkills resolves the plugin registry (see resolvePlugins) and builds
-// the skill sources and toolsets from the result.
-func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
-	reg, _, plugins, err := b.resolvePlugins(ctx, st)
-	if err != nil {
-		return skillsInit{}, err
-	}
-	return b.buildSkillsInit(jail, reg, plugins, shapesRef)
-}
-
-// buildSkillsInit is initSkills' second half, over an already-resolved
-// plugin set - buildFromConfig calls this directly so plugin agents/shapes
-// can be seeded into cfg between resolvePlugins and here.
+// buildSkillsInit builds the skill sources and toolsets over an
+// already-resolved plugin set (see resolvePlugins) - buildFromConfig calls
+// this directly so plugin agents/shapes can be seeded into cfg first.
 func (b *boot) buildSkillsInit(jail *workspace.Jail, reg pluginreg.FetchRegistry, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
 	var mcpDeclaredPtr atomic.Pointer[map[string]bool]
 	mcpDeclaredPtr.Store(mcpDeclaredNames(plugins))

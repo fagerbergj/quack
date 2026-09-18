@@ -92,6 +92,8 @@ A fetch or update rebuilds the skill roster with no server restart: native agent
 
 MCP servers are different: they're enumerated once at boot and their tools baked into each native agent's toolset for that process's whole life, the same way local-root MCP servers always worked. A fetch or update that changes a plugin's `mcp.json` does **not** spawn or re-enumerate anything live - the new servers start at the next restart. The wire row's `declares_mcp_servers` flags whether the plugin *currently* ships a server, so this is visible without checking the logs; the tools an agent can call this session are still whatever booted.
 
+Agent bundles and workflow shapes are boot-only too: seeding happens once, during startup, from whatever `plugins.seed` resolved to at that moment. A plugin added, updated, or removed at runtime (REST) does not change the roster or the planner table until the next restart - unlike skills, there is no rebuild hook for either.
+
 ### Admission
 
 A newly fetched or re-fetched plugin still runs the same checks as any other (linked module, `config: "required"`; see [Failure philosophy](#failure-philosophy)), but what a failure does depends on where the row came from:

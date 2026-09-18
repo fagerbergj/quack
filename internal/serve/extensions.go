@@ -132,14 +132,17 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 	if err != nil {
 		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
 	}
-
+	enabled, err := moduleEnabled(d.cfg, name)
+	if err != nil {
+		return builtSDKExtension{}, false, err
+	}
+	if !enabled {
+		slog.Info("sdk extension disabled by config; staying dormant", "component", "startup", "extension", name)
+		return builtSDKExtension{}, true, nil
+	}
 	var base extsdk.BaseConfig
 	if err := yaml.Unmarshal(raw, &base); err != nil {
 		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
-	}
-	if base.Enabled != nil && !*base.Enabled {
-		slog.Info("sdk extension disabled by config; staying dormant", "component", "startup", "extension", name)
-		return builtSDKExtension{}, true, nil
 	}
 
 	dataDir := base.DataDir

@@ -694,7 +694,7 @@ func newServerValidateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plugins, err := serve.ResolveConfiguredPlugins(cmd.Context(), cfg)
+			plugins, unresolvable, err := serve.ResolveConfiguredPlugins(cfg)
 			if err != nil {
 				return err
 			}
@@ -702,12 +702,21 @@ func newServerValidateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			stale := staleAgentBundles(cfg)
 			if asJSON {
-				return cli.WriteJSON(cmd.OutOrStdout(), serverValidateResult{Path: path, Status: "ok", Plugins: seeded})
+				return cli.WriteJSON(cmd.OutOrStdout(), serverValidateResult{
+					Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, StaleBundles: stale,
+				})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: OK\n", path)
 			for _, r := range seeded {
 				fmt.Fprintf(cmd.OutOrStdout(), "  plugin %s: agents %v, shapes %v\n", r.Plugin, r.Agents, r.Shapes)
+			}
+			for _, name := range unresolvable {
+				fmt.Fprintf(cmd.OutOrStdout(), "  plugin %s: not resolvable offline (not cloned locally; run a real boot or fetch first)\n", name)
+			}
+			for _, name := range stale {
+				fmt.Fprintf(cmd.OutOrStdout(), "  agent %s: bundle path does not exist on disk\n", name)
 			}
 			return nil
 		},
@@ -716,13 +725,32 @@ func newServerValidateCmd() *cobra.Command {
 	return c
 }
 
+// staleAgentBundles: every cfg.Agents entry whose bundle directory is
+// missing on disk - boot only discovers this later, at LoadBundle time, so
+// validate catches a stale or typo'd `bundle:` path (e.g. a plugin migration
+// left a copied path behind) up front instead.
+func staleAgentBundles(cfg *config.Config) []string {
+	var stale []string
+	for name, ac := range cfg.Agents {
+		if st, err := os.Stat(ac.Bundle); err != nil || !st.IsDir() {
+			stale = append(stale, name)
+		}
+	}
+	sort.Strings(stale)
+	return stale
+}
+
 // serverValidateResult is `server validate --json`'s shape; validate only
 // ever reaches it on success (an invalid config returns an error instead).
-// Plugins lists each plugin that seeded at least one agent or shape.
+// Plugins lists each plugin that seeded at least one agent or shape;
+// Unresolvable names a plugins.seed row validate couldn't check offline;
+// StaleBundles names a configured agent whose bundle path is missing.
 type serverValidateResult struct {
-	Path    string                   `json:"path"`
-	Status  string                   `json:"status"`
-	Plugins []serve.PluginSeedResult `json:"plugins,omitempty"`
+	Path         string                   `json:"path"`
+	Status       string                   `json:"status"`
+	Plugins      []serve.PluginSeedResult `json:"plugins,omitempty"`
+	Unresolvable []string                 `json:"unresolvable,omitempty"`
+	StaleBundles []string                 `json:"stale_bundles,omitempty"`
 }
 
 // newServerInitCmd: `quack server init` - the server-config wizard (LLM

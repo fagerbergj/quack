@@ -150,6 +150,65 @@ func TestSeedPluginShapes_AppearsAndValidates(t *testing.T) {
 	}
 }
 
+// A non-atomic deploy's exact failure mode: the old config still carries a
+// workflows: entry the new plugin also ships. The config's entry must win -
+// one row, no duplicate, and (since compose()'s trigger-collision warning
+// only fires on a genuine second row) nothing left for it to collide with.
+func TestSeedPluginShapes_DedupesAgainstExistingConfigShape(t *testing.T) {
+	c := baseConfigForPluginSeed(t)
+	c.Workflows = append(c.Workflows, WorkflowShape{
+		Name: "acme-job", Trigger: "Run the OLD acme job", Agents: []string{"host"}, Shape: "ONE `host` node",
+	})
+	workflowsDir := t.TempDir()
+	shape := "name: acme-job\ntrigger: \"Run the NEW acme job\"\nagents: [host]\nshape: \"ONE `host` node\"\n"
+	if err := os.WriteFile(filepath.Join(workflowsDir, "acme-job.yaml"), []byte(shape), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := c.SeedPluginShapes("acme", workflowsDir)
+	if err != nil {
+		t.Fatalf("SeedPluginShapes: %v", err)
+	}
+	if len(names) != 0 {
+		t.Errorf("names = %v, want none (the config's shape already covers this name)", names)
+	}
+	if len(c.Workflows) != 1 {
+		t.Fatalf("c.Workflows = %+v, want exactly one row, no duplicate", c.Workflows)
+	}
+	if c.Workflows[0].Trigger != "Run the OLD acme job" {
+		t.Errorf("c.Workflows[0].Trigger = %q, want the config's entry to win over the plugin's", c.Workflows[0].Trigger)
+	}
+}
+
+// Two plugins declaring the same shape name: the first to seed wins,
+// matching the "first in seed order wins" rule bare-skill-name resolution
+// already uses.
+func TestSeedPluginShapes_DedupesAgainstEarlierPlugin(t *testing.T) {
+	c := baseConfigForPluginSeed(t)
+	firstDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(firstDir, "acme-job.yaml"), []byte("name: acme-job\ntrigger: \"first\"\nagents: [host]\nshape: \"ONE `host` node\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secondDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secondDir, "acme-job.yaml"), []byte("name: acme-job\ntrigger: \"second\"\nagents: [host]\nshape: \"ONE `host` node\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.SeedPluginShapes("first-plugin", firstDir); err != nil {
+		t.Fatalf("SeedPluginShapes(first): %v", err)
+	}
+	names, err := c.SeedPluginShapes("second-plugin", secondDir)
+	if err != nil {
+		t.Fatalf("SeedPluginShapes(second): %v", err)
+	}
+	if len(names) != 0 {
+		t.Errorf("names = %v, want none (first-plugin already seeded acme-job)", names)
+	}
+	if len(c.Workflows) != 1 || c.Workflows[0].Trigger != "first" {
+		t.Fatalf("c.Workflows = %+v, want exactly the first plugin's entry", c.Workflows)
+	}
+}
+
 // A shape naming an agent nobody configured must fail loud (never silently
 // dropped) and name the plugin, so a bad bundle points straight at its source.
 func TestSeedPluginShapes_MissingAgentFailsNamingPlugin(t *testing.T) {
