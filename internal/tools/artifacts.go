@@ -402,7 +402,13 @@ outer:
 // BuildNativeArtifactTools assembles one node's full artifact tool set -
 // the single place both the orchestrator and native gated nodes
 // (internal/dag/graph.go) construct these, so the two surfaces can't drift (#1123).
-func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) ([]tool.Tool, error) {
+//
+// blobHint and structuredHint are separate because their kinds' own save-side
+// lookups key off different values: write_artifact's Blob kinds (document,
+// pr_body, and per-extension kinds like lineup) off vetting.DocumentHint,
+// write_<kind>'s code_review off vetting.SubjectHint - one shared hint would
+// land a tool write at an id its own kind's save path never looks up.
+func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *RoundCoords, blobHint, structuredHint string) ([]tool.Tool, error) {
 	if coords == nil {
 		coords = &RoundCoords{}
 	}
@@ -418,11 +424,11 @@ func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *Roun
 	if err != nil {
 		return nil, fmt.Errorf("edit_artifact: %w", err)
 	}
-	writeTool, err := NewWriteArtifactTool(c, nodeID, coords, hint)
+	writeTool, err := NewWriteArtifactTool(c, nodeID, coords, blobHint)
 	if err != nil {
 		return nil, fmt.Errorf("write_artifact: %w", err)
 	}
-	kindTools, err := NewWriteKindTools(c, nodeID, coords, hint)
+	kindTools, err := NewWriteKindTools(c, nodeID, coords, structuredHint)
 	if err != nil {
 		return nil, fmt.Errorf("write_<kind>: %w", err)
 	}

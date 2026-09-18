@@ -26,12 +26,19 @@ week-of-season or bye timing.
 
 ## Output
 
-Produce the waivers card the UI renders, matching its schema exactly:
-`week` and `candidates` are required; each candidate is `{rank, player,
-proj, owned_pct, adds_24h, drop, why}` - there is no separate bid/priority
-field, so the sized figure belongs in `why` itself (e.g. "bid 30% of
-remaining FAAB" or "claim now, you're 6th of 10 in priority"), sized to
-*this league's actual waiver type and this team's remaining resources* -
+Write the waivers card as an artifact with `write_artifact` (`kind:
+"waivers"`, `mime: "application/json"`), matching `sleeper:waivers`'s
+`references/output-schema.json` exactly: `week` and `candidates` are
+required; each candidate is `{rank, player, proj, owned_pct, adds_24h,
+drop, why}` - `player` needs at least `id`/`name` (both required, non-null
+- pull them from the same `sleeper_free_agents`/`sleeper_roster` call that
+gave you the projection), and `proj` is a plain number, never null (use
+Sleeper's own projection, or `0` only when Sleeper genuinely has none).
+`rank`, `owned_pct`, and `adds_24h` are nullable - leave one null rather
+than inventing a value Sleeper didn't report. There is no separate
+bid/priority field, so the sized figure belongs in `why` itself (e.g. "bid
+30% of remaining FAAB" or "claim now, you're 6th of 10 in priority"), sized
+to *this league's actual waiver type and this team's remaining resources* -
 never a flat percentage of the original budget. Every candidate carries a
 **named drop** (never an add with no drop). State `why` in terms of
 role/usage evidence, not the trending count alone: a trending spike or
@@ -43,6 +50,14 @@ explicitly, in `why`, when a covered starter's bye falls within the lead
 time the skill names. When a published band or rule applies, cite the
 number and its source; when the skill says no published number exists for
 the case, say so rather than inventing one.
+
+You do not name the artifact yourself - `write_artifact` derives its id
+from this chat automatically, and the UI finds it by kind. Do not pass an
+id or filename.
+
+Once the artifact is written, reply with a short markdown summary - the
+top 2-3 targets and their sizing - naming the waivers artifact rather than
+repeating it. The reply is not the deliverable; the artifact is.
 
 ## Environment
 

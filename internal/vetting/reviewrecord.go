@@ -342,8 +342,8 @@ func SubjectHint(chatID string) string {
 	return "chat:" + local
 }
 
-// documentHint mirrors SubjectHint for the "document" kind.
-func documentHint(chatID string) string {
+// DocumentHint mirrors SubjectHint for the "document" kind.
+func DocumentHint(chatID string) string {
 	local := chatID
 	if m := extChatIDRe.FindStringSubmatch(chatID); m != nil {
 		local = m[1]
@@ -609,7 +609,7 @@ func loadEpisodicRoundState(ctx context.Context, cfg Config, nodeID string) *epi
 		loadReviewState(ctx, c, cfg, st)
 	}
 	if cfg.Artifact != "" {
-		if rev, ok := latestRevision(ctx, c, cfg.Artifact, documentHint(cfg.ChatID)); ok {
+		if rev, ok := latestRevision(ctx, c, cfg.Artifact, DocumentHint(cfg.ChatID)); ok {
 			st.documentRev = rev
 		}
 	}
@@ -677,25 +677,34 @@ func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	case cfg.IsReviewer:
 		saveCodeReviewRound(ctx, cfg, nodeID, turnID, round, answer, staged, st)
 	case cfg.Artifact != "":
+		// Drained once here (not inside saveDocumentRound/saveTextRound) so the
+		// artifact-kind check below and the text fallback share one per-round set.
+		toolWritten := resetToolWrittenIDs(cfg)
+		docID, idErr := recordstore.IdentityFor(cfg.Artifact, nil, DocumentHint(cfg.ChatID))
+		if idErr == nil && toolWritten[docID] {
+			// The worker already wrote this round's artifact directly via a
+			// write_<kind>/write_artifact tool call; the answer is a summary, not a second revision.
+			break
+		}
 		// An unregistered artifact kind (e.g. a workflow-config typo) must not
 		// silently drop the node's output - fall back to the same text:<node>
 		// write the no-selector branch below performs.
 		if !saveDocumentRound(ctx, cfg, nodeID, turnID, round, answer, st) {
-			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st)
+			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, toolWritten)
 		}
 	default:
 		// No registered structured kind selected (#1095): every gated node's
 		// round output still becomes a revision, generic "text:<node>".
-		saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st)
+		saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, resetToolWrittenIDs(cfg))
 	}
 	return st
 }
 
 // saveTextRound is the generic fallback for a gated node with no cfg.IsReviewer/cfg.Artifact kind (#1095, #1090 P8): id "text:<node>", one
 // revision per round including failed rounds. Skipped when the worker already tool-wrote an artifact this round (any kind, via write_<kind>,
-// write_artifact, or edit_artifact) - reusing the same drain the code_review path uses, so a tool-writing implementer/explorer node doesn't ALSO get a redundant text revision.
-func saveTextRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) {
-	if toolWritten := resetToolWrittenIDs(cfg); len(toolWritten) > 0 {
+// write_artifact, or edit_artifact) - toolWritten is the caller's own per-round drain (resetToolWrittenIDs is a one-shot Reset, so it must not be called twice for one round).
+func saveTextRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState, toolWritten map[string]bool) {
+	if len(toolWritten) > 0 {
 		return
 	}
 	c := recordClient(cfg)
@@ -1055,7 +1064,7 @@ func saveDocumentRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	}
 	answer = truncateForBlob(answer, nodeID, cfg.Artifact)
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.documentRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
-	id, rev, err := c.SaveBlob(ctx, cfg.Artifact, []byte(answer), "text/markdown", documentHint(cfg.ChatID), lineage)
+	id, rev, err := c.SaveBlob(ctx, cfg.Artifact, []byte(answer), "text/markdown", DocumentHint(cfg.ChatID), lineage)
 	if err != nil {
 		slog.Warn("document record save failed", "component", "vetting", "node", nodeID, "err", err)
 		return false
@@ -1211,7 +1220,7 @@ func BuildBodyPreload(ctx context.Context, cfg Config, nodeID string) string {
 	if c == nil {
 		return ""
 	}
-	id, err := recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID))
+	id, err := recordstore.IdentityFor(cfg.Artifact, nil, DocumentHint(cfg.ChatID))
 	if err != nil {
 		return ""
 	}

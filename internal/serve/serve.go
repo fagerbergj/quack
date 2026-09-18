@@ -1566,7 +1566,7 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 		}
 		coords = &tools.RoundCoords{}
 		var terr error
-		if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.SubjectHint(chatID)); terr != nil {
+		if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.DocumentHint(chatID), vetting.SubjectHint(chatID)); terr != nil {
 			return nil, nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
 		}
 		setRoundCoords = func(round int, turnID, headSHA, triggerAnnotation string) {

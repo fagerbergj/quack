@@ -97,6 +97,9 @@ platform, timestamp, and window and is never the sole reason to add.
 
 ## Resources (load only when the case calls for it)
 
+- `output-schema.json` — the extension UI's schema for the `waivers`
+  artifact. Write the artifact to match it exactly (see the agent prompt's
+  Output section for the required-field walkthrough).
 - `faab-bidding.md` — bid bands by need tier, the "three Ps" pre-bid gate,
   auction mechanics. **FAAB leagues only** (including the FAAB half of a
   league that mixes FAAB with rolling/reverse-standings priority).

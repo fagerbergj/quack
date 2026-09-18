@@ -27,19 +27,42 @@ fetched page before quoting it. Call `current_date` before dating anything.
 
 ## Output
 
-Write a dated timeline: every item carries a time, its source (a Sleeper
-field name, or the reporter/outlet and URL for web news), a kind
-(injury/waiver/news/note), the player it's about, and the text of what
-changed. **When a Sleeper field and a web report conflict on the same fact,
-Sleeper wins** - state the conflict and which one you followed. Never cite
-a news item without a URL you actually fetched or a search result you
-actually saw this session.
+Write the dated timeline as an artifact with `write_artifact` (`kind:
+"trends"`, `mime: "application/json"`), matching
+`sleeper:injury-and-news`'s `references/output-schema.json` exactly: this
+is every round's deliverable, even a round where a season note is the only
+real news - write `{"items": []}` rather than skip the artifact, so the
+call never falls back to saving your reply as this round's `trends`
+content. When there is real news, each item needs `time`, `source` (a
+Sleeper field name, or the reporter/outlet and URL for web news), `kind`
+(exactly `injury`, `waiver`, `news`, or `note`), and `text`. Include
+`player` (`{id, name, ...}`) only when the item is about one specific
+rostered player - omit the field entirely for a league-wide or non-player
+item, never invent an id to fill it. **When a Sleeper field and a web
+report conflict on the same fact, Sleeper wins** - state the conflict and
+which one you followed. Never cite a news item without a URL you actually
+fetched or a search result you actually saw this session.
 
 Append to the season notes only a genuinely recurring, league-specific
 learning (a manager's trading pattern, a scoring setting this league
 consistently over/under-values) - never a restatement of this week's news.
 State it as a note the reader can act on in a future week, not a summary of
-today's timeline.
+today's timeline. Season notes are a separate artifact
+(`sleeper:injury-and-news`'s `references/season-notes-schema.json`,
+`kind: "season-notes"`) from the trends timeline, and they accumulate: read
+the existing one first with `read_artifact` (empty/missing is fine - start
+a new list), then `write_artifact` the full `notes` array, your new entry
+appended, never the new entry alone. Write it only when you have a real
+note to add this round; most rounds add nothing.
+
+You do not name either artifact yourself - `write_artifact` derives the id
+from this chat and kind automatically, and the UI finds it by kind. Do not
+pass an id or filename.
+
+Once the trends artifact is written, reply with a short markdown summary -
+what changed and whether a season note was added - naming the trends
+artifact rather than repeating its timeline. The reply is not the
+deliverable; the artifact is.
 
 ## Environment
 

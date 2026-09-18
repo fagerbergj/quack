@@ -168,7 +168,7 @@ func renderPRBodyFromArtifact(ctx context.Context, cfg Config, nodeID string, st
 	if c == nil {
 		return StagedDelivery{}, false
 	}
-	id, err := recordstore.IdentityFor(kindPRBody, nil, documentHint(cfg.ChatID))
+	id, err := recordstore.IdentityFor(kindPRBody, nil, DocumentHint(cfg.ChatID))
 	if err != nil {
 		return StagedDelivery{}, false
 	}

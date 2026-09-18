@@ -140,13 +140,14 @@ func (s *orchRun) buildMemoryArtifactTools(githubSetup *dag.Setup) string {
 		if err != nil {
 			return "orchestrator: edit_artifact tool: " + err.Error()
 		}
-		hint := vetting.SubjectHint(s.sessionID)
-		writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, &tools.RoundCoords{}, hint)
+		// Split like BuildNativeArtifactTools: write_artifact needs DocumentHint,
+		// write_<kind> (code_review) needs SubjectHint - one shared hint mismatches one of the two.
+		writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, &tools.RoundCoords{}, vetting.DocumentHint(s.sessionID))
 		if err != nil {
 			return "orchestrator: write_artifact tool: " + err.Error()
 		}
 		s.toolList = append(s.toolList, listTool, editTool, writeTool)
-		writeKindTools, err := tools.NewWriteKindTools(rc, orchestratorName, &tools.RoundCoords{}, hint)
+		writeKindTools, err := tools.NewWriteKindTools(rc, orchestratorName, &tools.RoundCoords{}, vetting.SubjectHint(s.sessionID))
 		if err != nil {
 			return "orchestrator: write_<kind> tools: " + err.Error()
 		}

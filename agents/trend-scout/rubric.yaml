@@ -93,3 +93,31 @@ criteria:
     anchors:
     - quote
     - omission
+  artifact_delivered:
+    definition: >
+      The round's deliverable is a `trends` artifact written via
+      write_artifact, not just a timeline described in the chat reply - it
+      parses as JSON and carries the schema's required top-level field (a
+      non-empty `items` array). A season-notes-only round (no new trends
+      to report) is judged on `season_notes_are_league_specific` instead.
+    steps:
+    - Check a `trends` artifact exists for this round (list_artifacts/
+      read_artifact), separate from the reply's own text.
+    - Parse the artifact's content as JSON.
+    - Check a non-empty `items` array is present.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: a `trends` artifact exists, parses as JSON, and `items` is present.
+    - min: 2.0
+      max: 2.0
+      meaning: the artifact exists and parses, but `items` is present and empty despite real changes being described in the reply.
+    - min: 1.0
+      max: 1.0
+      meaning: no artifact was written this round - the timeline only exists as prose in the reply.
+    - min: 0.0
+      max: 0.0
+      meaning: the round's content does not parse as JSON at all, or no timeline content exists anywhere.
+    anchors:
+    - quote
+    - omission

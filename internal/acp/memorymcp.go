@@ -277,12 +277,11 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 		}
 		round, turnID, headSHA, trigger := currentRound(sess)
 		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: trigger, Author: "worker", SavedAt: time.Now().UTC()}
-		// Only a hint-requiring blob kind (document, pr_body) gets the session's
-		// subject hint - a hint-optional kind (text, bytes) must keep deriving its
-		// id from content, or every write from this chat would collapse onto one id (#1108 finding 2).
+		// RequiresHint gets DocumentHint (matches its own save-side lookup, not
+		// SubjectHint) - a hint-optional kind stays unhinted or every write collapses onto one id.
 		var hint string
 		if ok && spec.RequiresHint {
-			hint = vetting.SubjectHint(sess.ChatID)
+			hint = vetting.DocumentHint(sess.ChatID)
 		}
 		id, rev, err := c.SaveBlob(ctx, args.Kind, data, args.Mime, hint, lineage)
 		if err != nil {

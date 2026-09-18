@@ -270,7 +270,7 @@ func deliveryTarget(ctx context.Context, cfg Config) (id string, revision int, o
 	case cfg.IsReviewer:
 		targetID, err = recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	case cfg.Artifact != "":
-		targetID, err = recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID))
+		targetID, err = recordstore.IdentityFor(cfg.Artifact, nil, DocumentHint(cfg.ChatID))
 	default:
 		return "", 0, false
 	}
