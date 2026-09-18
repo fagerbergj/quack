@@ -20,6 +20,24 @@ func TestKindsRegistered(t *testing.T) {
 	}
 }
 
+// TestContentOrHintIdentity covers both branches: a caller-given hint wins,
+// an empty one falls back to a stable content hash.
+func TestContentOrHintIdentity(t *testing.T) {
+	if got, err := contentOrHintIdentity([]byte("body"), "job-hint"); err != nil || got != "job-hint" {
+		t.Errorf("hint branch: got (%q, %v), want (\"job-hint\", nil)", got, err)
+	}
+	got1, err := contentOrHintIdentity([]byte("body"), "")
+	if err != nil {
+		t.Fatalf("hash branch: %v", err)
+	}
+	if got2, _ := contentOrHintIdentity([]byte("body"), ""); got1 != got2 {
+		t.Errorf("hash branch not stable: %q != %q", got1, got2)
+	}
+	if got3, _ := contentOrHintIdentity([]byte("other"), ""); got3 == got1 {
+		t.Errorf("hash branch collided for different content: %q", got3)
+	}
+}
+
 // TestFixturesValidateAgainstSchema checks the copied schemas (source of
 // truth: quack-extensions/sleeper/ui/schemas) still accept the copied UI
 // fixtures (quack-extensions/sleeper/ui/fixtures) - catches the two drifting

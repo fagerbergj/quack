@@ -1,11 +1,5 @@
 // Package sleeperkinds registers the recordstore artifact kinds the Sleeper
-// extension's agent bundles (agents/lineup-analyst, waiver-scout, trend-scout)
-// declare on agent-card.json's "artifact" field. The extension module
-// (github.com/fagerbergj/quack-extensions/sleeper) has no quack import and so
-// cannot call recordstore.Register itself; quack owns these kinds instead,
-// keyed to the same JSON Schema files the extension's own UI renders against
-// (copied from quack-extensions/sleeper/ui/schemas at v0.1.0/83b77b7 - update
-// schemas/*.json here if that module's schemas change).
+// agent bundles' agent-card.json "artifact" field names - the SDK module has no quack import and can't call recordstore.Register itself.
 package sleeperkinds
 
 import (
@@ -17,14 +11,12 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
+// schemaFS holds copies of quack-extensions/sleeper's ui/schemas/*.json (v0.1.0/83b77b7) - update these if that module's schemas change.
 //go:embed schemas/*.json
 var schemaFS embed.FS
 
-// Kinds are Blob-class (not Structured): write_artifact accepts any
-// registered Blob kind by name with no registry-level body validation, and
-// ArtifactKindNames() - the set agent-card.json's "artifact" field may name -
-// only ever lists Blob kinds. The schema still rides along on JSONSchema for
-// documentation and the free well-formedness check recordstore.Register does.
+// Blob-class, not Structured: ArtifactKindNames() (what agent-card.json's
+// "artifact" may name) only ever lists Blob kinds.
 var kindNames = []string{"lineup", "waivers", "trends", "season-notes"}
 
 func init() {
@@ -41,9 +33,8 @@ func init() {
 	}
 }
 
-// contentOrHintIdentity: hint if the caller gave one (e.g. a job's
-// chat-derived subject), else a content hash - mirrors the schema-less blob
-// fallback in internal/vetting's kindText/kindBytes.
+// contentOrHintIdentity: hint if given, else a content hash - mirrors the
+// schema-less blob fallback in internal/vetting's kindText/kindBytes.
 func contentOrHintIdentity(content []byte, hint string) (string, error) {
 	if hint != "" {
 		return hint, nil

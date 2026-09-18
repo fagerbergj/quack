@@ -617,10 +617,8 @@ type AgentConfig struct {
 	Memory        MemoryConfig    `yaml:"memory"`
 	Skills        []string        `yaml:"skills"`
 	Acp           *AcpAgentConfig `yaml:"acp"`
-	// Optional marks an agent whose tools depend on a compiled-but-possibly-disabled
-	// extension (e.g. sleeper_* tools need extensions.sleeper enabled): buildAgents
-	// warns and drops it from the roster instead of failing boot when it fails to
-	// build, rather than forcing every deployment to enable the extension just to boot.
+	// Optional: buildAgents warns and drops this agent from the roster instead
+	// of failing boot if it fails to build (e.g. its extension is disabled).
 	Optional bool `yaml:"optional"`
 }
 
