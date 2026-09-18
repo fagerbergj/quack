@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/artifact"
@@ -788,8 +789,29 @@ func toInt(v any) int {
 	return 0
 }
 
+// artifactContextShare/artifactBytesPerToken: a dependent's inlined-artifact
+// budget as a fraction of its own context window, not a fixed size.
+const artifactContextShare = 0.4
+const artifactBytesPerToken = 4
+
+// defaultNodeContextWindow: artifactByteBudget's fallback when a node carries
+// no ContextWindow (mirrors vetting's own defaultJudgeContextWindow).
+const defaultNodeContextWindow = 32_768
+
+// artifactByteBudget: node's total inlined-artifact budget in bytes, shared
+// across every dependency buildTask appends one to.
+func artifactByteBudget(node Node) int {
+	window := node.ContextWindow
+	if window <= 0 {
+		window = defaultNodeContextWindow
+	}
+	return int(float64(window)*artifactContextShare) * artifactBytesPerToken
+}
+
 // buildTask assembles a node's worker prompt from user request, dependencies, and task.
-func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool) string {
+// cfg carries the Artifacts/User/ChatID connection so a dependency's own
+// artifact can be appended after its answer (prod chat effc2636).
+func buildTask(ctx context.Context, plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool, cfg vetting.Config) string {
 	background := plan.WorkerBackground
 	if background == "" {
 		background = plan.UserMessage
@@ -806,12 +828,17 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 				"Do not do their work. Anything you produce outside your own task below is thrown away.\n\n---\n\n")
 		}
 	}
+	budget := artifactByteBudget(node)
 	for _, dep := range node.DependsOn {
 		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
 			if gateFailed[dep] {
 				sb.WriteString("⚠ WARNING: the following input FAILED independent quality vetting (unverified claims or missing citations). Treat its claims with suspicion and do not present them as verified:\n\n")
 			}
 			sb.WriteString(out)
+			if block, used := appendDependencyArtifact(ctx, plan, cfg, dep, out, budget); block != "" {
+				sb.WriteString(block)
+				budget -= used
+			}
 			sb.WriteString("\n\n---\n\n")
 		} else {
 			sb.WriteString("⚠ NOTE: upstream node \"" + dep + "\" produced NO answer - it failed. You have no data for its part of the task; explicitly state that this piece is unavailable rather than omitting it or fabricating content.\n\n---\n\n")
@@ -825,6 +852,61 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 	sb.WriteString(node.Task)
 	sb.WriteString(ctxDetail)
 	return sb.String()
+}
+
+// appendDependencyArtifact: dep's own artifact appended after its answer under
+// a header naming its id/revision - never a replacement. "" when there's
+// nothing to add: no match, content equals the answer already, or budget is spent.
+func appendDependencyArtifact(ctx context.Context, plan Plan, cfg vetting.Config, dep, answer string, budget int) (block string, used int) {
+	if budget <= 0 {
+		return "", 0
+	}
+	depCfg := cfg
+	depCfg.Artifact, depCfg.IsReviewer = "", false
+	for _, n := range plan.Nodes {
+		if n.ID == dep {
+			depCfg.Artifact, depCfg.IsReviewer = n.Artifact, n.AgentName == reviewerAgent
+			break
+		}
+	}
+	id, rev, content, ok := vetting.DependencyArtifact(ctx, depCfg, dep)
+	if !ok || content == answer {
+		return "", 0
+	}
+	truncated := false
+	if len(content) > budget {
+		content = safeTruncateBytes(content, budget)
+		truncated = true
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n\n[%s's full artifact - %s revision %d]\n", dep, id, rev)
+	b.WriteString(content)
+	if truncated {
+		fmt.Fprintf(&b, "\n\n[... truncated; read_artifact(%q) for the rest]", id)
+	}
+	// used is the whole block (header/marker included), not just content - the
+	// running per-task budget must reflect every byte actually spent.
+	return b.String(), b.Len()
+}
+
+// safeTruncateBytes: content's first n bytes, backing off to the last full
+// rune - never splits a multi-byte UTF-8 sequence.
+func safeTruncateBytes(content string, n int) string {
+	if n < 0 {
+		n = 0
+	}
+	if n >= len(content) {
+		return content
+	}
+	cut := content[:n]
+	for len(cut) > 0 {
+		r, size := utf8.DecodeLastRuneInString(cut)
+		if r != utf8.RuneError || size != 1 {
+			break
+		}
+		cut = cut[:len(cut)-1]
+	}
+	return cut
 }
 
 // matchedContext: detail for context items a node's task names by name.

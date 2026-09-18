@@ -207,6 +207,34 @@ func TestSaveStructuredRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLoadVersionWithMeta_RoundTrip: a specific past revision's own lineage
+// comes back, not the latest's - DependencyArtifact's per-revision scan relies on this.
+func TestLoadVersionWithMeta_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := New(newMetaAwareInMemory(), "quack", "user1", "chat1")
+	id, rev, err := c.SaveBlob(ctx, "test.blob", []byte("v1 content"), "text/plain", "main", Lineage{NodeID: "n1", Round: 1})
+	if err != nil {
+		t.Fatalf("SaveBlob: %v", err)
+	}
+	data, lineage, ok, err := c.LoadVersionWithMeta(ctx, id, rev)
+	if err != nil || !ok || string(data) != "v1 content" {
+		t.Fatalf("LoadVersionWithMeta: data=%q ok=%v err=%v", data, ok, err)
+	}
+	if lineage.NodeID != "n1" || lineage.Round != 1 {
+		t.Errorf("lineage = %+v, want NodeID=n1 Round=1", lineage)
+	}
+}
+
+// TestLoadVersionWithMeta_NotFound: a missing id/version is ok=false, not an error.
+func TestLoadVersionWithMeta_NotFound(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	_, _, ok, err := c.LoadVersionWithMeta(ctx, "test.blob:nonexistent", 1)
+	if err != nil || ok {
+		t.Fatalf("LoadVersionWithMeta on a missing id: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}
+
 func TestSaveStructuredRejectsInvalidBody(t *testing.T) {
 	ctx := context.Background()
 	c := newTestClient(t)

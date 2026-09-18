@@ -1,8 +1,11 @@
 package dag
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // A node must be told that the verbatim user request is BACKGROUND, and that
@@ -17,7 +20,7 @@ func TestBuildTaskMarksTheRequestAsBackgroundAndNamesTheSiblings(t *testing.T) {
 			{ID: "implement", AgentName: "code-implementer", Task: "Implement it."},
 		},
 	}
-	got := buildTask(plan, plan.Nodes[0], nil, nil)
+	got := buildTask(context.Background(), plan, plan.Nodes[0], nil, nil, vetting.Config{})
 
 	if !strings.Contains(got, "CONTEXT ONLY") {
 		t.Error("the verbatim request is handed over unframed; a node reads the whole brief as its own to-do list")
@@ -44,7 +47,7 @@ func TestBuildTaskSingleNodeHasNoSiblingWarning(t *testing.T) {
 		UserMessage: "Add a feature and open a PR.",
 		Nodes:       []Node{{ID: "solo", AgentName: "code-implementer", Task: "Do the whole thing."}},
 	}
-	got := buildTask(plan, plan.Nodes[0], nil, nil)
+	got := buildTask(context.Background(), plan, plan.Nodes[0], nil, nil, vetting.Config{})
 	if strings.Contains(got, "ALREADY ASSIGNED") {
 		t.Error("a lone node was warned off work that no sibling is doing - it may now refuse part of its own task")
 	}
@@ -62,7 +65,7 @@ func TestBuildTaskWorkerBackgroundOverridesUserMessage(t *testing.T) {
 		WorkerBackground: "<permissions>push_commits_to_pr</permissions>\n<deliverable>a commit</deliverable>",
 		Nodes:            []Node{{ID: "solo", AgentName: "code-implementer", Task: "Fix the failing build check."}},
 	}
-	got := buildTask(plan, plan.Nodes[0], nil, nil)
+	got := buildTask(context.Background(), plan, plan.Nodes[0], nil, nil, vetting.Config{})
 	if strings.Contains(got, "changed_files count") {
 		t.Errorf("node background leaked the orchestrator's evidence instead of using WorkerBackground:\n%s", got)
 	}
@@ -79,7 +82,7 @@ func TestBuildTaskWorkerBackgroundFallsBackToUserMessage(t *testing.T) {
 		UserMessage: "Add a feature and open a PR.",
 		Nodes:       []Node{{ID: "solo", AgentName: "code-implementer", Task: "Do the whole thing."}},
 	}
-	got := buildTask(plan, plan.Nodes[0], nil, nil)
+	got := buildTask(context.Background(), plan, plan.Nodes[0], nil, nil, vetting.Config{})
 	if !strings.Contains(got, "Add a feature and open a PR.") {
 		t.Errorf("an empty WorkerBackground should fall back to UserMessage:\n%s", got)
 	}
@@ -100,7 +103,7 @@ func TestBuildTaskContextItemsScopedToTheNodeThatNamesThem(t *testing.T) {
 			{ID: "fix-lint", AgentName: "code-implementer", Task: "Fix the failing `lint` check.", DependsOn: nil},
 		},
 	}
-	got := buildTask(plan, plan.Nodes[0], nil, nil)
+	got := buildTask(context.Background(), plan, plan.Nodes[0], nil, nil, vetting.Config{})
 	if !strings.Contains(got, "undefined: Bar") {
 		t.Errorf("fix-build node prompt missing its OWN check's annotation detail:\n%s", got)
 	}

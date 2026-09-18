@@ -39,6 +39,10 @@ Every judge round also gets `list_artifacts`/`read_artifact`, scoped to the node
 - `context_window` budgets the assembled judge prompt so it fits before the call, instead of discovering a 400 mid-request.
 - `thinking_level` (`low`/`medium`/`high`, unset by default) opts the judge/plan-judge request into a capped reasoning effort so thinking can't consume the whole `max_output_tokens` budget before a verdict is reached - leave it unset for a non-reasoning model or an endpoint that 400s on `reasoning_effort`.
 
+## Cut-off answers
+
+A worker round that ends with `finish_reason: MAX_TOKENS` is never judged as-is - the answer was cut off mid-sentence, not finished. The gate runs an automatic continuation turn in the same session (quoting the answer's trailing ~200 characters so the worker resumes instead of restarting), up to `maxTruncationContinuations` (2, a fixed constant) times per round. If the answer is still cut off after that budget, the round is judged with a deterministic `complete_output` criterion scored 0, so a truncated answer can never pass by weakest-link scoring regardless of what the judge would have scored the visible text.
+
 ## Rubrics
 
 `rubric_path` is the default scoring guide; an agent's own bundle can override it with a `rubric.yaml` sitting next to its `prompt.md` (see [agents.md](agents.md)). `constitution_path` is the fixed, standing set of principles layered under every rubric - grounded claims, no fabrication - that no per-node rubric can remove.
@@ -59,6 +63,10 @@ Independence still holds: the planner writes the rubric, a different model does 
 ## The advisor is not a gate stage
 
 `agents/advisor` isn't one of the stages above - it's the `ask_advisor` *tool*, which a worker calls at its own discretion mid-run. It reuses the judge's provider/model and is only wired onto a worker's tool list when the judge is enabled (leaving `gates.judge.model` empty turns off both the judge and `ask_advisor` together).
+
+## Dependents read the artifact
+
+When a node's answer feeds a dependent node's prompt (`dag.buildTask`), the dependent keeps that answer exactly as before and, when the node's own artifact revision differs from it, gets that artifact appended after it under a header naming its id and revision - the answer may be a pointer or a summary ("fixed in artifact revision 3") rather than the deliverable itself. `vetting.DependencyArtifact` scopes this by `Lineage.NodeID` (never a sibling's revision under the same chat-scoped typed id) and picks the highest `Lineage.Round` across the node's configured `Artifact` kind and the generic per-round `text:<nodeID>` fallback, so a later round's tool-write is never shadowed by an earlier, possibly gate-failed round. A System kind (e.g. `web_page`) is never a candidate. Total appended bytes per task are capped to a share of the dependent's own `context_window` (`artifactContextShare`, `artifactBytesPerToken`); an oversized artifact is truncated with a trailing marker naming the id so the node can `read_artifact` the rest.
 
 ## Delivery
 
