@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
@@ -12,7 +13,27 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workflowcatalog"
 )
+
+// TestLoadShapes covers loadShapes' three states: no ref at all, a ref
+// nothing has Stored into yet, and a ref carrying a real catalog.
+func TestLoadShapes(t *testing.T) {
+	if got := loadShapes(nil); got != nil {
+		t.Errorf("loadShapes(nil) = %v, want nil", got)
+	}
+	var unset atomic.Pointer[[]workflowcatalog.Shape]
+	if got := loadShapes(&unset); got != nil {
+		t.Errorf("loadShapes(unset) = %v, want nil", got)
+	}
+	shapes := []workflowcatalog.Shape{{Name: "a"}}
+	var set atomic.Pointer[[]workflowcatalog.Shape]
+	set.Store(&shapes)
+	got := loadShapes(&set)
+	if len(got) != 1 || got[0].Name != "a" {
+		t.Errorf("loadShapes(set) = %v, want %v", got, shapes)
+	}
+}
 
 // fakeSDKRecoverer stands in for an extension's sdk.DeliveryRecoverer.
 type fakeSDKRecoverer struct{ gotDC extsdk.DeliveryContext }

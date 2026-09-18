@@ -617,6 +617,9 @@ type AgentConfig struct {
 	Memory        MemoryConfig    `yaml:"memory"`
 	Skills        []string        `yaml:"skills"`
 	Acp           *AcpAgentConfig `yaml:"acp"`
+	// Optional: buildAgents warns and drops this agent from the roster instead
+	// of failing boot if it fails to build (e.g. its extension is disabled).
+	Optional bool `yaml:"optional"`
 }
 
 type MemoryConfig struct {

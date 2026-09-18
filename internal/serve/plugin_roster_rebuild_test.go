@@ -24,7 +24,7 @@ func TestRebuildSkillsPicksUpNewlyRegisteredPlugin(t *testing.T) {
 	}
 	b := &boot{cfg: &config.Config{Plugins: &config.PluginsConfig{Root: registryRoot}}}
 
-	skills, err := b.initSkills(context.Background(), jail, nil)
+	skills, err := b.initSkills(context.Background(), jail, nil, nil)
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestRebuildSkillsDropsOnlyTheRefusedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := &boot{cfg: &config.Config{Plugins: &config.PluginsConfig{Root: registryRoot}}}
-	skills, err := b.initSkills(context.Background(), jail, nil)
+	skills, err := b.initSkills(context.Background(), jail, nil, nil)
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestRebuildSkillsPreExistingRefusalDoesNotBlockAnUnrelatedAdd(t *testing.T)
 		t.Fatal(err)
 	}
 	b := &boot{cfg: &config.Config{Plugins: &config.PluginsConfig{Root: registryRoot}}}
-	skills, err := b.initSkills(context.Background(), jail, nil)
+	skills, err := b.initSkills(context.Background(), jail, nil, nil)
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}

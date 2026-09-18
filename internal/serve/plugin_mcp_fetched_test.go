@@ -151,7 +151,7 @@ func TestMCPDeclaredReflectsRosterAfterUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := &boot{cfg: &config.Config{Plugins: &config.PluginsConfig{Root: registryRoot}}}
-	skills, err := b.initSkills(context.Background(), jail, nil)
+	skills, err := b.initSkills(context.Background(), jail, nil, nil)
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}

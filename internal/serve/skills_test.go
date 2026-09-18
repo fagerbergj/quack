@@ -204,7 +204,7 @@ func TestWorkflowCatalogNoShapesIsByteIdentical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrapped := workflowcatalog.Wrap(src, workflowcatalog.FromConfig(nil, "rev"))
+	wrapped := workflowcatalog.WrapRef(src, shapesRefOf(workflowcatalog.FromConfig(nil, "rev")))
 	got, err := wrapped.LoadInstructions(context.Background(), "quack:plan-work")
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +224,7 @@ func TestWorkflowCatalogComposesIntoRealSkill(t *testing.T) {
 		Agents: []string{"document-classifier"},
 		Shape:  "ONE `document-classifier` node (terminal - files the document in the KB)",
 	}}, "rev")
-	got, err := workflowcatalog.Wrap(src, shapes).LoadInstructions(context.Background(), "quack:plan-work")
+	got, err := workflowcatalog.WrapRef(src, shapesRefOf(shapes)).LoadInstructions(context.Background(), "quack:plan-work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 			Seed: []string{dotagents, ".agents/plugins/usage"},
 		},
 	}}
-	skills, err := b.initSkills(context.Background(), jail, nil)
+	skills, err := b.initSkills(context.Background(), jail, nil, nil)
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 			Seed: []string{daRoot, ptRoot, ".agents/plugins/usage"},
 		},
 	}}
-	skills, err := b.initSkills(context.Background(), jail, nil)
+	skills, err := b.initSkills(context.Background(), jail, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

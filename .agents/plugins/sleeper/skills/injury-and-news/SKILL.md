@@ -75,6 +75,12 @@ with no dollar figure or % of remaining budget attached.
 
 ## Resources (load only when the case calls for it)
 
+- `output-schema.json` — the extension UI's schema for the `trends`
+  artifact. Write the artifact to match it exactly (see the agent prompt's
+  Output section for the required-field walkthrough).
+- `season-notes-schema.json` — the schema for the separate `season-notes`
+  artifact (only written when you're appending a durable, league-specific
+  note).
 - `sources.md` — the reliability tier (beat reporter > aggregator) and its
   documented limits; load when a news item's *source*, not just its
   content, is in question.

@@ -89,6 +89,9 @@ reasoning instead — do not invent a figure to sound precise.
 
 ## Resources (load only when the case calls for it)
 
+- `output-schema.json` — the extension UI's schema for the `lineup`
+  artifact. Write the artifact to match it exactly (see the agent prompt's
+  Output section for the required-field walkthrough).
 - `practice-report-semantics.md` — DNP/LP/FP definitions, the injury-type
   play-rate breakdown (concussion/knee/hamstring), and why a practice report
   line is not itself an availability signal. Load whenever a starter carries

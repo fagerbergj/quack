@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
@@ -65,6 +66,41 @@ func Lookup(shapes []Shape, name string) (Shape, bool) {
 	return Shape{}, false
 }
 
+// DropAgents removes any shape naming an agent in dropped (its Agents list
+// or a bound node's Agent) - a shape an unresolved optional agent could
+// never serve, dropped from BOTH catalog consumers with one warning each.
+func DropAgents(shapes []Shape, dropped map[string]bool) []Shape {
+	if len(dropped) == 0 {
+		return shapes
+	}
+	out := make([]Shape, 0, len(shapes))
+	for _, s := range shapes {
+		if agent, ok := shapeDroppedAgent(s, dropped); ok {
+			slog.Warn("workflow catalog: shape names a dropped optional agent; shape removed",
+				"component", "workflowcatalog", "shape", s.Name, "agent", agent)
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// shapeDroppedAgent returns the first agent of s (its own list, then each
+// bound node) that dropped names, if any.
+func shapeDroppedAgent(s Shape, dropped map[string]bool) (string, bool) {
+	for _, a := range s.Agents {
+		if dropped[a] {
+			return a, true
+		}
+	}
+	for _, n := range s.Nodes {
+		if dropped[n.Agent] {
+			return n.Agent, true
+		}
+	}
+	return "", false
+}
+
 // askPlaceholder is the only substitution a bound node's task template
 // supports - deliberately no templating engine, per the design's "minimal"
 // call: the first (and only) consumer is a one-or-two-node ingest pipeline.
@@ -91,29 +127,36 @@ func Bind(shape Shape, ask string) (nodes []dag.RawNode, ok bool) {
 	return out, true
 }
 
-// Wrap returns src unchanged when shapes is empty - no custom shapes means the exact same Source,
-// not a passthrough wrapper, so the composed catalog stays byte-identical to today's. Otherwise
-// it returns a Source that appends shapes to plan-work's table on every LoadInstructions call.
-func Wrap(src skill.Source, shapes []Shape) skill.Source {
-	if len(shapes) == 0 {
-		return src
-	}
-	return &augmented{Source: src, shapes: shapes}
+// WrapRef appends shapesRef's current value to plan-work's table on every
+// LoadInstructions call - re-read live, since shapesRef can still change.
+func WrapRef(src skill.Source, shapesRef *atomic.Pointer[[]Shape]) skill.Source {
+	return &augmentedRef{Source: src, shapesRef: shapesRef}
 }
 
-type augmented struct {
+type augmentedRef struct {
 	skill.Source
-	shapes []Shape
+	shapesRef *atomic.Pointer[[]Shape]
 }
 
-func (a *augmented) LoadInstructions(ctx context.Context, name string) (string, error) {
+func (a *augmentedRef) LoadInstructions(ctx context.Context, name string) (string, error) {
+	var shapes []Shape
+	if a.shapesRef != nil { // tests build sources with no ref
+		if p := a.shapesRef.Load(); p != nil {
+			shapes = *p
+		}
+	}
+	if len(shapes) == 0 {
+		// Skip compose entirely - otherwise a shapeless deployment logs its
+		// "no Common workflows table" warning on every single load.
+		return a.Source.LoadInstructions(ctx, name)
+	}
 	instructions, err := a.Source.LoadInstructions(ctx, name)
 	// plan-work is now plugin-qualified ("quack:plan-work", #1427 S2) - match
 	// by bare name so composition survives the prefix.
 	if err != nil || skillsource.BareName(name) != planWorkSkill {
 		return instructions, err
 	}
-	return compose(instructions, a.shapes), nil
+	return compose(instructions, shapes), nil
 }
 
 // compose appends non-colliding shapes beneath the shipped table's last row - never a second table

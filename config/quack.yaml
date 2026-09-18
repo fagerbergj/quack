@@ -243,6 +243,38 @@ agents:
     tools: []
     inputs: [text, image]
     judge: false      # single-pass transcription with no rubric criteria to judge; not a vision limitation
+  # The three Sleeper agents below need extensions.sleeper enabled (off by
+  # default; see its block under extensions: further down) to resolve their
+  # sleeper_* tools. `optional: true` tells buildAgents to drop an agent from
+  # the roster with a warning, not fail boot, when its tools don't resolve -
+  # a fresh clone with the extension off boots with these three simply absent.
+  lineup-analyst:
+    bundle: agents/lineup-analyst
+    skills: [sleeper:start-sit]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 65536       # one served slot of the researcher model, like web-researcher
+    judge_rounds: 1
+    optional: true
+    tools: [sleeper_roster, sleeper_matchup, sleeper_player, sleeper_schedule, sleeper_trends, current_date, ask_advisor]
+  waiver-scout:
+    bundle: agents/waiver-scout
+    skills: [sleeper:waivers]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 65536
+    judge_rounds: 1
+    optional: true
+    tools: [sleeper_free_agents, sleeper_roster, sleeper_transactions, sleeper_trends, sleeper_schedule, sleeper_league, current_date]
+  trend-scout:
+    bundle: agents/trend-scout
+    skills: [sleeper:injury-and-news]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 65536
+    judge_rounds: 1
+    optional: true
+    tools: [sleeper_trends, sleeper_player, sleeper_transactions, web_search, web_fetch, grep_artifacts, summarize, current_date]
 
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +
@@ -450,6 +482,46 @@ plugins:
 #   # rmfakecloud documents arrive as application/pdf; the OpenAI backend
 #   # (internal/inference/openaimodel) doesn't decode inline PDF data yet, so
 #   # this shape is the intended wiring, not yet an end-to-end working one.
+
+# Fixed job shapes the Sleeper extension dispatches by name (RunConfig.Workflow);
+# bound (nodes:) so a dispatch skips the planner call entirely.
+workflows:
+  - name: sleeper-lineup
+    trigger: "Run the Sleeper lineup job for a league (extensions.sleeper dispatch)"
+    agents: [lineup-analyst]
+    shape: "ONE `lineup-analyst` node (terminal - writes the lineup artifact)"
+    nodes:
+      - id: lineup
+        agent: lineup-analyst
+        task: "Decide the start/sit call for every roster slot this week for the Sleeper league and team named below, using the sleeper:start-sit skill.\n\n{{ask}}"
+        artifact: lineup
+  - name: sleeper-waivers
+    trigger: "Run the Sleeper waivers job for a league (extensions.sleeper dispatch)"
+    agents: [waiver-scout]
+    shape: "ONE `waiver-scout` node (terminal - writes the waivers artifact)"
+    nodes:
+      - id: waivers
+        agent: waiver-scout
+        task: "Rank this week's best waiver-wire adds for the Sleeper league and team named below, sizing each claim with the sleeper:waivers skill.\n\n{{ask}}"
+        artifact: waivers
+  - name: sleeper-trends
+    trigger: "Run the Sleeper trends job for a league (extensions.sleeper dispatch)"
+    agents: [trend-scout]
+    shape: "ONE `trend-scout` node (terminal - writes the trends artifact)"
+    nodes:
+      - id: trends
+        agent: trend-scout
+        task: "Build this week's dated trends timeline for the Sleeper league named below, using the sleeper:injury-and-news skill.\n\n{{ask}}"
+        artifact: trends
+  - name: sleeper-season-notes
+    trigger: "Update the Sleeper season notes for a league from this week's trends (extensions.sleeper dispatch)"
+    agents: [trend-scout]
+    shape: "ONE `trend-scout` node (terminal - writes the season-notes artifact)"
+    nodes:
+      - id: season-notes
+        agent: trend-scout
+        task: "Review this week's trends findings for the Sleeper league named below and append any genuinely recurring, league-specific learning to its season notes.\n\n{{ask}}"
+        artifact: season-notes
 
 # The agents' working disk (filesystem/git tools). One configured root; a
 # per-user jail lives under it (<root>/<user_id>/ - "local" today, the OIDC
@@ -690,6 +762,20 @@ workspace:
 #     # tempo_url: http://tempo:3200   # optional, linked only
 #     # default_range: 24h             # optional Go duration
 #     # max_attempts: 3         # optional; retries per failed document before giving up (0 = unlimited)
+#
+#   # extensions.sleeper wires the Sleeper fantasy-football extension: read-only
+#   # Sleeper API tools for lineup-analyst/waiver-scout/trend-scout (agents:
+#   # above, bound optional: true - see that section's comment) and its own UI
+#   # page under the nav rail. No secrets required, so this block is safe to
+#   # uncomment as-is; enabled: false here is the shipped default - flip it (and
+#   # set default_user/default_league to the deployment's own Sleeper account)
+#   # to actually run it.
+#   sleeper:
+#     enabled: false
+#     default_user: jffagerberg          # Sleeper username or user_id; tools fall back to it when a chat names none
+#     default_league: "1356407594683482112"
+#     season: 2026                       # optional; defaults to /v1/state/nfl's current season
+#     snapshots: daily                   # off | daily; feeds trend-scout's diffing, fetches only, never dispatches
 
 # Inbound request auth (internal/auth), gating the REST + MCP surface (never
 # /health or the SPA). Absent entirely - as here - auth is disabled and every

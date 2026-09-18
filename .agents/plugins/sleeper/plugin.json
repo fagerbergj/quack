@@ -5,5 +5,17 @@
   "description": "Fantasy-football decision skills (start/sit, waivers, injury and news) for the Sleeper extension's agents.",
   "license": "MIT",
   "repository": "https://github.com/fagerbergj/quack-extensions",
-  "keywords": ["quack", "sleeper", "fantasy-football"]
+  "keywords": ["quack", "sleeper", "fantasy-football"],
+  "extensions": {
+    "io.github.fagerbergj.quack": {
+      "schemaVersion": 1,
+      "modules": [
+        {
+          "name": "sleeper",
+          "path": "github.com/fagerbergj/quack-extensions/sleeper"
+        }
+      ],
+      "config": "optional"
+    }
+  }
 }

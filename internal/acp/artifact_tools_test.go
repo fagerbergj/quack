@@ -683,8 +683,8 @@ func TestWriteCodeReviewMCP_BakesInRenderedOverview(t *testing.T) {
 }
 
 // TestWriteArtifactMCP_HintRequiringKind: write_artifact with a hint-requiring
-// blob kind ("document") must succeed by deriving its hint from the session,
-// exactly like write_code_review - the same root cause as finding 1 (#1108 finding 2).
+// blob kind ("document") must succeed by deriving DocumentHint from the
+// session, matching what document's own save-side lookups compute (#1108 finding 2, #1501 fix-up).
 func TestWriteArtifactMCP_HintRequiringKind(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -706,7 +706,7 @@ func TestWriteArtifactMCP_HintRequiringKind(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("write_artifact(document) returned an error: %s", toolResultText(t, res))
 	}
-	wantID, err := recordstore.IdentityFor("document", nil, vetting.SubjectHint(chatID))
+	wantID, err := recordstore.IdentityFor("document", nil, vetting.DocumentHint(chatID))
 	if err != nil {
 		t.Fatal(err)
 	}

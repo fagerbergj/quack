@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -628,7 +629,7 @@ type skillsInit struct {
 // resolves the plugin registry and builds the skill sources and toolsets.
 // st (nilable) is reused for the registry's own DB connection when
 // plugins.store names the same store as session.store (#1427 P3).
-func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store) (skillsInit, error) {
+func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
 	reg, rows, err := b.bootPluginRegistry(ctx, st)
 	if err != nil {
 		return skillsInit{}, err
@@ -651,7 +652,9 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	// agents' next round with no rebuild plumbing beyond this one pointer.
 	liveSkillSrc := newSkillSource(plugins)
 	swappable := newSwappableSkillSource(liveSkillSrc)
-	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
+	// WrapRef re-reads shapesRef per call, so finalizeCatalogShapes' later
+	// Store reaches this already-built Source and everything wrapping it.
+	builtinSkillSrc := workflowcatalog.WrapRef(skill.Source(swappable), shapesRef)
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
@@ -693,6 +696,21 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	}, nil
 }
 
+// finalizeCatalogShapes drops shapes naming an agent buildAgents left out of
+// clientMap and Stores the result - shapesRef's readers (WrapRef, newExtDispatch) pick it up on their next call.
+func (b *boot) finalizeCatalogShapes(rawShapes []workflowcatalog.Shape, clientMap map[string]adkagent.Agent, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) {
+	dropped := map[string]bool{}
+	for name, ac := range b.cfg.Agents {
+		if ac.Optional {
+			if _, ok := clientMap[name]; !ok {
+				dropped[name] = true
+			}
+		}
+	}
+	filtered := workflowcatalog.DropAgents(rawShapes, dropped)
+	shapesRef.Store(&filtered)
+}
+
 // opens the task/user memory stores and the shared boot event log
 func (b *boot) initMemory(ctx context.Context, st *store.Store, artifacts artifact.Service) (*memory.Store, *memory.Store, []func(), *runlog.EventLog, error) {
 	taskStore, userStore, startSweeps, err := openMemoryStores(ctx, b.cfg, st, artifacts, b.admission)
@@ -706,11 +724,11 @@ func (b *boot) initMemory(ctx context.Context, st *store.Store, artifacts artifa
 }
 
 // builds the SDK extensions, plugin MCP tools, and the ledger recovery path
-func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, plugins []plugin.Plugin) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, error) {
+func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, error) {
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
-	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore)
+	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -901,7 +919,13 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
-	skills, err := b.initSkills(ctx, jail, st)
+	// Both catalog consumers below are built before buildAgents runs, so this
+	// starts unfiltered; finalizeCatalogShapes corrects it once buildAgents returns.
+	rawShapes := workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision)
+	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
+	shapesRef.Store(&rawShapes)
+
+	skills, err := b.initSkills(ctx, jail, st, &shapesRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -909,7 +933,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins)
+	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins, &shapesRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -917,6 +941,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
+	b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef)
 	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
 	if err != nil {
 		return nil, nil, "", err
@@ -1166,7 +1191,10 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 
 		na, err := buildNativeNode(name, ac, prov, taskStore, advisorAgent, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg)
 		if err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, err
+			if !dropOptionalAgent(name, ac, err) {
+				return nil, nil, nodeServers, nil, nil, nil, nil, err
+			}
+			continue
 		}
 		clientMap[name] = na
 	}
@@ -1536,7 +1564,7 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 		}
 		coords = &tools.RoundCoords{}
 		var terr error
-		if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.SubjectHint(chatID)); terr != nil {
+		if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.DocumentHint(chatID), vetting.SubjectHint(chatID)); terr != nil {
 			return nil, nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
 		}
 		setRoundCoords = func(round int, turnID, headSHA, triggerAnnotation string) {
@@ -1738,7 +1766,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 	}
 	protoAgent, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil)
 	if err != nil {
-		return nil, fmtErr(name, "%v", err)
+		return nil, fmtErr(name, "%w", err)
 	}
 	na := nativeAgent{
 		Agent: protoAgent,
@@ -2499,6 +2527,16 @@ func contentText(c *genai.Content) string {
 		}
 	}
 	return b.String()
+}
+
+// dropOptionalAgent: an optional agent whose extension isn't enabled (its tools unresolved) is
+// dropped from the roster with a warning; any other build error still fails boot.
+func dropOptionalAgent(name string, ac config.AgentConfig, err error) bool {
+	if !ac.Optional || !errors.Is(err, tools.ErrUnknownTool) {
+		return false
+	}
+	slog.Warn("optional agent unavailable; dropped from the roster", "component", "startup", "agent", name, "err", err)
+	return true
 }
 
 func fmtErr(agentName, format string, args ...any) error {

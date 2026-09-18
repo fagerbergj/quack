@@ -2133,25 +2133,34 @@ func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read shipped config: %v", err)
 	}
-	c, err := Load(writeTemp(t, string(raw)+`
+	// The shipped file already has a real, non-empty workflows: key (the
+	// Sleeper shapes) - a second top-level workflows: key would be a YAML
+	// duplicate-key error, so this example must join that SAME list by
+	// splicing another item in just before the next top-level section.
+	const anchor = "\n# The agents' working disk"
+	idx := strings.Index(string(raw), anchor)
+	if idx == -1 {
+		t.Fatal("shipped config/quack.yaml missing the workspace section anchor this test injects before")
+	}
+	documentIngestItem := "  - name: document-ingest\n" +
+		`    trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"` + "\n" +
+		"    agents: [image-reader, synthesizer]\n" +
+		"    shape: \"ONE `image-reader` node (transcribes the attached document) -> ONE `synthesizer` node (terminal - writes the structured summary)\"\n" +
+		"    nodes:\n" +
+		"      - id: transcribe\n" +
+		"        agent: image-reader\n" +
+		`        task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"` + "\n" +
+		"      - id: summarize\n" +
+		"        agent: synthesizer\n" +
+		"        depends_on: [transcribe]\n" +
+		`        task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"` + "\n"
+	rawWithShape := string(raw)[:idx] + "\n" + documentIngestItem + string(raw)[idx:]
+	c, err := Load(writeTemp(t, rawWithShape+`
 extensions:
   remarkable:
     base_url: ${RMFAKECLOUD_URL}
     email: ${RMFAKECLOUD_EMAIL}
     password: ${RMFAKECLOUD_PASSWORD}
-workflows:
-  - name: document-ingest
-    trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
-    agents: [image-reader, synthesizer]
-    shape: "ONE `+"`image-reader`"+` node (transcribes the attached document) -> ONE `+"`synthesizer`"+` node (terminal - writes the structured summary)"
-    nodes:
-      - id: transcribe
-        agent: image-reader
-        task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
-      - id: summarize
-        agent: synthesizer
-        depends_on: [transcribe]
-        task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
 `))
 	if err != nil {
 		t.Fatalf("Load with document-ingest example: %v", err)

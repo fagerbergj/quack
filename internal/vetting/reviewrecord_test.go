@@ -931,7 +931,7 @@ func TestDocumentStagesShareOneID(t *testing.T) {
 		cfg.NodeID = nodeID
 		saveDocumentRound(context.Background(), cfg, nodeID, "", 1, text, st)
 	}
-	docID, err := recordstore.IdentityFor(kindDocument, nil, documentHint(base.ChatID))
+	docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1270,7 +1270,7 @@ func TestSaveDocumentRound_TruncatesOversizedAnswer(t *testing.T) {
 	big := strings.Repeat("y", artifactref.InlineMaxBytes+100)
 	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, big, StagedDelivery{}, nil)
 
-	docID, err := recordstore.IdentityFor(kindDocument, nil, documentHint(base.ChatID))
+	docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1282,4 +1282,145 @@ func TestSaveDocumentRound_TruncatesOversizedAnswer(t *testing.T) {
 	if !strings.Contains(string(raw), "[truncated:") {
 		t.Fatalf("stored content missing truncation marker: %q...", string(raw[:80]))
 	}
+}
+
+// TestSaveEpisodicRound_ArtifactKind_SkippedWhenToolWrote covers #1501 fix-up
+// item 1: a worker that already tool-wrote this round's cfg.Artifact document
+// directly (write_artifact) must not also get its markdown answer saved as a
+// redundant revision - the tool-written content stays latest. A worker that
+// wrote nothing still gets the answer saved, exactly as before.
+func TestSaveEpisodicRound_ArtifactKind_SkippedWhenToolWrote(t *testing.T) {
+	t.Run("tool_wrote_this_round", func(t *testing.T) {
+		svc := newMetaAwareInMemory()
+		base := reviewerCfgWithArtifacts(t, svc, true)
+		base.IsReviewer = false
+		base.Artifact = kindDocument
+		base.NodeID = "lineup-analyst"
+
+		toolStage := NewToolWrittenStage()
+		secret := "sec-1501-artifact-tool"
+		RegisterMemSession(secret, MemSession{ToolWritten: toolStage})
+		MarkMemSessionConnected(secret)
+		defer UnregisterMemSession(secret)
+		token := "tok-1501-artifact-tool"
+		RegisterAdvisorThread(token, AdvisorTask{MemSecret: secret})
+		defer UnregisterAdvisorThread(token)
+		base.AdvisorToken = token
+
+		rc := recordClient(base)
+		docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Simulate the worker having called write_artifact this round - the real
+		// handler (memorymcp.go/tools/artifacts.go) both saves the blob and
+		// records ToolWritten.Add(id) as a side effect.
+		if _, rev, err := rc.SaveBlob(context.Background(), kindDocument, []byte(`{"week":1}`), "application/json", DocumentHint(base.ChatID), recordstore.Lineage{NodeID: base.NodeID}); err != nil || rev != 1 {
+			t.Fatalf("seed SaveBlob: rev=%d err=%v", rev, err)
+		}
+		toolStage.Add(docID)
+
+		saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, "| week | starters |\n|---|---|\n| 1 | ... |", StagedDelivery{}, nil)
+
+		raw, rev, ok, err := rc.Latest(context.Background(), docID)
+		if err != nil || !ok {
+			t.Fatalf("Latest: ok=%v err=%v", ok, err)
+		}
+		if rev != 1 {
+			t.Fatalf("revision = %d, want 1 (no gate-added revision on top of the tool write)", rev)
+		}
+		if string(raw) != `{"week":1}` {
+			t.Fatalf("latest content = %q, want the tool-written JSON untouched", raw)
+		}
+	})
+
+	t.Run("later_round_without_a_write_keeps_the_tool_written_artifact", func(t *testing.T) {
+		svc := newMetaAwareInMemory()
+		base := reviewerCfgWithArtifacts(t, svc, true)
+		base.IsReviewer = false
+		base.Artifact = kindDocument
+		base.NodeID = "lineup-analyst"
+
+		toolStage := NewToolWrittenStage()
+		secret := "sec-1501-artifact-sticky"
+		RegisterMemSession(secret, MemSession{ToolWritten: toolStage})
+		MarkMemSessionConnected(secret)
+		defer UnregisterMemSession(secret)
+		token := "tok-1501-artifact-sticky"
+		RegisterAdvisorThread(token, AdvisorTask{MemSecret: secret})
+		defer UnregisterAdvisorThread(token)
+		base.AdvisorToken = token
+
+		rc := recordClient(base)
+		docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := rc.SaveBlob(context.Background(), kindDocument, []byte(`{"week":1}`), "application/json", DocumentHint(base.ChatID), recordstore.Lineage{NodeID: base.NodeID}); err != nil {
+			t.Fatalf("seed SaveBlob: %v", err)
+		}
+		toolStage.Add(docID)
+		st := saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, "wrote the lineup artifact", StagedDelivery{}, nil)
+
+		// Round 2: judge failed, the worker only re-answers - no tool write this round.
+		saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 2, "still no changes this week", StagedDelivery{}, st)
+
+		raw, rev, ok, err := rc.Latest(context.Background(), docID)
+		if err != nil || !ok || rev != 1 || string(raw) != `{"week":1}` {
+			t.Fatalf("doc latest = rev %d %q ok=%v err=%v, want rev 1 JSON untouched", rev, raw, ok, err)
+		}
+		textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if traw, _, tok, err := rc.Latest(context.Background(), textID); err != nil || !tok || string(traw) != "still no changes this week" {
+			t.Fatalf("text latest = %q ok=%v err=%v, want the round-2 answer", traw, tok, err)
+		}
+	})
+
+	t.Run("native_tool_write_seen_by_the_session_scan", func(t *testing.T) {
+		svc := newMetaAwareInMemory()
+		base := reviewerCfgWithArtifacts(t, svc, true)
+		base.IsReviewer = false
+		base.Artifact = kindDocument
+		base.NodeID = "lineup-analyst"
+		rc := recordClient(base)
+		docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := rc.SaveBlob(context.Background(), kindDocument, []byte(`{"week":6}`), "application/json", DocumentHint(base.ChatID), recordstore.Lineage{NodeID: base.NodeID}); err != nil {
+			t.Fatalf("seed SaveBlob: %v", err)
+		}
+		// No MCP session at all (native worker): the id arrives from the session scan.
+		st := saveEpisodicRoundWritten(context.Background(), base, base.NodeID, "turn-1", 1, "wrote it", StagedDelivery{}, nil, []string{docID})
+		saveEpisodicRoundWritten(context.Background(), base, base.NodeID, "turn-1", 2, "no changes", StagedDelivery{}, st, []string{docID})
+		raw, rev, ok, err := rc.Latest(context.Background(), docID)
+		if err != nil || !ok || rev != 1 || string(raw) != `{"week":6}` {
+			t.Fatalf("doc latest = rev %d %q ok=%v err=%v, want rev 1 JSON untouched", rev, raw, ok, err)
+		}
+	})
+
+	t.Run("worker_wrote_nothing", func(t *testing.T) {
+		svc := newMetaAwareInMemory()
+		base := reviewerCfgWithArtifacts(t, svc, true)
+		base.IsReviewer = false
+		base.Artifact = kindDocument
+		base.NodeID = "lineup-analyst"
+
+		saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, "summary text", StagedDelivery{}, nil)
+
+		rc := recordClient(base)
+		docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, rev, ok, err := rc.Latest(context.Background(), docID)
+		if err != nil || !ok {
+			t.Fatalf("Latest: ok=%v err=%v", ok, err)
+		}
+		if rev != 1 || string(raw) != "summary text" {
+			t.Fatalf("Latest = rev=%d %q, want rev=1 %q (answer saved as before)", rev, raw, "summary text")
+		}
+	})
 }

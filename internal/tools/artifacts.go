@@ -147,9 +147,8 @@ func writeArtifactDescription() string {
 	return fmt.Sprintf("Write a new revision of a blob artifact (%s - not a structured kind; use write_<kind> for those). The registry derives the id.", strings.Join(kinds, ", "))
 }
 
-// NewWriteArtifactTool: blob writes only; structured kinds go through their
-// write_<kind> tool (NewWriteKindTool) instead. hint is the session-derived
-// identity hint (vetting.SubjectHint(chatID)) for hint-requiring kinds (document, pr_body) - never a tool argument, like ids (#1108 finding 2).
+// NewWriteArtifactTool: blob writes only; structured kinds go through write_<kind>. hint is the
+// session-derived DocumentHint for hint-requiring kinds (document, pr_body, lineup) - never a tool argument (#1108).
 func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) (tool.Tool, error) {
 	return functiontool.New[writeArtifactArgs, string](
 		functiontool.Config{
@@ -399,10 +398,9 @@ outer:
 	return capFetchReturn(strings.Join(hits, "\n")) + footer
 }
 
-// BuildNativeArtifactTools assembles one node's full artifact tool set -
-// the single place both the orchestrator and native gated nodes
-// (internal/dag/graph.go) construct these, so the two surfaces can't drift (#1123).
-func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) ([]tool.Tool, error) {
+// BuildNativeArtifactTools is the one place orchestrator and gated nodes build artifact tools (#1123).
+// blobHint (DocumentHint) and structuredHint (SubjectHint) differ because each kind's save path looks up its own id.
+func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *RoundCoords, blobHint, structuredHint string) ([]tool.Tool, error) {
 	if coords == nil {
 		coords = &RoundCoords{}
 	}
@@ -418,11 +416,11 @@ func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *Roun
 	if err != nil {
 		return nil, fmt.Errorf("edit_artifact: %w", err)
 	}
-	writeTool, err := NewWriteArtifactTool(c, nodeID, coords, hint)
+	writeTool, err := NewWriteArtifactTool(c, nodeID, coords, blobHint)
 	if err != nil {
 		return nil, fmt.Errorf("write_artifact: %w", err)
 	}
-	kindTools, err := NewWriteKindTools(c, nodeID, coords, hint)
+	kindTools, err := NewWriteKindTools(c, nodeID, coords, structuredHint)
 	if err != nil {
 		return nil, fmt.Errorf("write_<kind>: %w", err)
 	}

@@ -1,10 +1,13 @@
 package workflowcatalog
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
@@ -33,35 +36,64 @@ func writePlanWork(t *testing.T, dir string) skill.Source {
 	return skill.NewFileSystemSource(os.DirFS(dir))
 }
 
-// TestWrapNoShapesIsIdentity is issue #805 test case 2: a deployment with no
-// custom shapes must produce a catalog byte-identical to today's - Wrap must
-// return the exact same Source, not a passthrough wrapper around it.
-func TestWrapNoShapesIsIdentity(t *testing.T) {
+// refOf stores shapes into a fresh ref, for a WrapRef call that never needs
+// to change it again - the common case in tests that predate WrapRef.
+func refOf(shapes []Shape) *atomic.Pointer[[]Shape] {
+	var ref atomic.Pointer[[]Shape]
+	ref.Store(&shapes)
+	return &ref
+}
+
+// TestWrapRefNoShapesIsIdentity is issue #805 test case 2, and the round-3
+// regression: an empty shapesRef must produce a catalog byte-identical to
+// today's - no compose call at all, so a plan-work body with no Common
+// workflows table doesn't log a warning on every single load.
+func TestWrapRefNoShapesIsIdentity(t *testing.T) {
 	src := writePlanWork(t, t.TempDir())
-	wrapped := Wrap(src, nil)
 	want, err := src.LoadInstructions(context.Background(), "plan-work")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := wrapped.LoadInstructions(context.Background(), "plan-work")
+	got, err := WrapRef(src, refOf(nil)).LoadInstructions(context.Background(), "plan-work")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
 		t.Errorf("wrapped instructions changed with zero shapes:\ngot:  %q\nwant: %q", got, want)
 	}
+
+	noTableDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(noTableDir, "plan-work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	noTableBody := "---\nname: plan-work\ndescription: test\n---\n\nNo table in this body.\n"
+	if err := os.WriteFile(filepath.Join(noTableDir, "plan-work", "SKILL.md"), []byte(noTableBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	noTableSrc := skill.NewFileSystemSource(os.DirFS(noTableDir))
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+	if _, err := WrapRef(noTableSrc, refOf(nil)).LoadInstructions(context.Background(), "plan-work"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "no Common workflows table") {
+		t.Errorf("empty shapesRef must skip compose entirely, not warn every load:\n%s", buf.String())
+	}
 }
 
-// TestWrapAddsShapeToTable is issue #805 test case 1: a configured shape
+// TestWrapRefAddsShapeToTable is issue #805 test case 1: a configured shape
 // appears in the composed catalog as a new row of the SAME table.
-func TestWrapAddsShapeToTable(t *testing.T) {
+func TestWrapRefAddsShapeToTable(t *testing.T) {
 	src := writePlanWork(t, t.TempDir())
 	shapes := []Shape{{
 		Name: "document-ingest", Trigger: "Ingest a document into the knowledge base",
 		DAGShape: "ONE `document-classifier` node (terminal)",
 		Source:   "operator", Version: "abc123", Approved: true,
 	}}
-	got, err := Wrap(src, shapes).LoadInstructions(context.Background(), "plan-work")
+	got, err := WrapRef(src, refOf(shapes)).LoadInstructions(context.Background(), "plan-work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,16 +119,16 @@ func TestWrapAddsShapeToTable(t *testing.T) {
 	}
 }
 
-// TestWrapCollisionSkipsShape proves the collision decision: a shape whose
+// TestWrapRefCollisionSkipsShape proves the collision decision: a shape whose
 // trigger matches an existing row (shipped or already-added) is refused
 // deterministically, never left to "whichever the model reads first".
-func TestWrapCollisionSkipsShape(t *testing.T) {
+func TestWrapRefCollisionSkipsShape(t *testing.T) {
 	src := writePlanWork(t, t.TempDir())
 	shapes := []Shape{{
 		Name: "dup", Trigger: "Single information topic", // collides with the shipped row verbatim
 		DAGShape: "something else entirely",
 	}}
-	got, err := Wrap(src, shapes).LoadInstructions(context.Background(), "plan-work")
+	got, err := WrapRef(src, refOf(shapes)).LoadInstructions(context.Background(), "plan-work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +140,8 @@ func TestWrapCollisionSkipsShape(t *testing.T) {
 	}
 }
 
-// TestWrapOnlyAugmentsPlanWork proves other skills pass through unchanged.
-func TestWrapOnlyAugmentsPlanWork(t *testing.T) {
+// TestWrapRefOnlyAugmentsPlanWork proves other skills pass through unchanged.
+func TestWrapRefOnlyAugmentsPlanWork(t *testing.T) {
 	dir := t.TempDir()
 	writePlanWork(t, dir)
 	other := filepath.Join(dir, "format-markdown")
@@ -122,12 +154,43 @@ func TestWrapOnlyAugmentsPlanWork(t *testing.T) {
 	}
 	src := skill.NewFileSystemSource(os.DirFS(dir))
 	shapes := []Shape{{Name: "x", Trigger: "t", DAGShape: "s"}}
-	got, err := Wrap(src, shapes).LoadInstructions(context.Background(), "format-markdown")
+	got, err := WrapRef(src, refOf(shapes)).LoadInstructions(context.Background(), "format-markdown")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "\nBody.\n" {
 		t.Errorf("format-markdown instructions changed: %q", got)
+	}
+}
+
+// TestWrapRefReflectsLatestShapes is the round-2 regression: a Source built
+// with WrapRef must render whatever shapesRef holds AT CALL TIME, not a
+// snapshot frozen at construction - the bug that let a dropped shape's row
+// keep rendering in the planner table after boot filtered the slice.
+func TestWrapRefReflectsLatestShapes(t *testing.T) {
+	src := writePlanWork(t, t.TempDir())
+	shapes := []Shape{{Name: "sleeper-lineup", Trigger: "Run the Sleeper lineup job", DAGShape: "ONE `lineup-analyst` node", Agents: []string{"lineup-analyst"}}}
+	var ref atomic.Pointer[[]Shape]
+	ref.Store(&shapes)
+	wrapped := WrapRef(src, &ref)
+
+	got, err := wrapped.LoadInstructions(context.Background(), "plan-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Run the Sleeper lineup job") {
+		t.Errorf("before filtering, want the shape's row present:\n%s", got)
+	}
+
+	filtered := DropAgents(shapes, map[string]bool{"lineup-analyst": true})
+	ref.Store(&filtered)
+
+	got, err = wrapped.LoadInstructions(context.Background(), "plan-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "Run the Sleeper lineup job") {
+		t.Errorf("after filtering, want the dropped shape's row gone from the SAME already-built Source:\n%s", got)
 	}
 }
 
@@ -179,5 +242,80 @@ func TestLookupFindsByName(t *testing.T) {
 	}
 	if _, ok := Lookup(shapes, "c"); ok {
 		t.Error("Lookup(c) = true, want false")
+	}
+}
+
+// TestDropAgents is a table test of the shape-removal decision: a shape
+// naming a dropped agent (via Agents or a bound node) is removed, one warning
+// per drop; everything else, and an empty dropped set, passes through untouched.
+func TestDropAgents(t *testing.T) {
+	tests := []struct {
+		name    string
+		shapes  []Shape
+		dropped map[string]bool
+		want    []string // surviving shape names, in order
+		warns   int
+	}{
+		{
+			name:    "no dropped agents is a no-op",
+			shapes:  []Shape{{Name: "a", Agents: []string{"web-researcher"}}},
+			dropped: nil,
+			want:    []string{"a"},
+		},
+		{
+			name:    "shape's Agents list names a dropped agent",
+			shapes:  []Shape{{Name: "sleeper-lineup", Agents: []string{"lineup-analyst"}}},
+			dropped: map[string]bool{"lineup-analyst": true},
+			want:    nil,
+			warns:   1,
+		},
+		{
+			// Agents deliberately omits "lineup-analyst" - only the bound node
+			// names it, exercising the Nodes loop, not the Agents-list check above it.
+			name: "a bound node's agent names a dropped agent, absent from Agents",
+			shapes: []Shape{{
+				Name:   "sleeper-lineup",
+				Agents: []string{"other-agent"},
+				Nodes:  []config.WorkflowNode{{ID: "n1", Agent: "lineup-analyst"}},
+			}},
+			dropped: map[string]bool{"lineup-analyst": true},
+			want:    nil,
+			warns:   1,
+		},
+		{
+			name: "unrelated shape survives alongside a dropped one",
+			shapes: []Shape{
+				{Name: "sleeper-lineup", Agents: []string{"lineup-analyst"}},
+				{Name: "document-ingest", Agents: []string{"image-reader"}},
+			},
+			dropped: map[string]bool{"lineup-analyst": true},
+			want:    []string{"document-ingest"},
+			warns:   1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			defer slog.SetDefault(prev)
+
+			got := DropAgents(tt.shapes, tt.dropped)
+			gotNames := make([]string, len(got))
+			for i, s := range got {
+				gotNames[i] = s.Name
+			}
+			if len(gotNames) != len(tt.want) {
+				t.Fatalf("DropAgents names = %v, want %v", gotNames, tt.want)
+			}
+			for i := range tt.want {
+				if gotNames[i] != tt.want[i] {
+					t.Errorf("DropAgents names = %v, want %v", gotNames, tt.want)
+				}
+			}
+			if got := strings.Count(buf.String(), "shape names a dropped optional agent"); got != tt.warns {
+				t.Errorf("warnings logged = %d, want %d:\n%s", got, tt.warns, buf.String())
+			}
+		})
 	}
 }

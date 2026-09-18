@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/waivers.json",
+  "title": "waivers",
+  "description": "Ranked waiver-wire targets for the next run, with a drop suggestion each.",
+  "type": "object",
+  "properties": {
+    "week": {
+      "type": "integer"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "player",
+          "proj"
+        ],
+        "properties": {
+          "rank": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "proj": {
+            "type": "number"
+          },
+          "owned_pct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "adds_24h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "drop": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "source_note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "week",
+    "candidates"
+  ]
+}
