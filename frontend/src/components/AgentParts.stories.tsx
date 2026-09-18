@@ -358,8 +358,8 @@ export const LiveStatusUnmappedTool: Story = {
   ),
 }
 
-// Assistant prose is capped at a 70ch measure; a wide table or a long code
-// line scrolls inside its own box rather than widening the bubble.
+// Assistant prose fills its column; a wide table or a long code line still
+// scrolls inside its own box rather than widening the bubble.
 export const ProseWideContent: StoryObj = {
   parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
   render: () => (
