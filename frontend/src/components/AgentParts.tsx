@@ -77,7 +77,7 @@ function AssistantDocument({ text }: { text: string }) {
       return <CopyablePre {...rest}>{children}</CopyablePre>
     },
     // A wide table scrolls inside its own box instead of pushing the bubble
-    // past the 70ch measure (or the viewport on a phone).
+    // past its column (or the viewport on a phone).
     table: (props: ComponentPropsWithoutRef<'table'> & { node?: Element }) => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { node, ...rest } = props
@@ -126,7 +126,7 @@ export function AssistantText({ text, streaming = false }: { text: string; strea
   }
   const cut = streaming ? frozenCutRef.current : 0
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-[70ch] break-words">
+    <div className="prose prose-sm dark:prose-invert max-w-none break-words">
       {cut > 0 ? (
         <>
           <FrozenAssistantDocument text={fixed.slice(0, cut)} />

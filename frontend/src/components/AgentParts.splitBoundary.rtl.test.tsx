@@ -25,7 +25,7 @@ function renderHtml(text: string, streaming = false): string {
 // and rejoined in ONE outer div - matching production's single wrapping div.
 function splitHtml(text: string, cut: number): string {
   const unwrap = (html: string) => html.replace(/^<div class="prose[^"]*">/, '').replace(/<\/div>$/, '')
-  return `<div class="prose prose-sm dark:prose-invert max-w-[70ch] break-words">`
+  return `<div class="prose prose-sm dark:prose-invert max-w-none break-words">`
     + unwrap(renderHtml(text.slice(0, cut))) + unwrap(renderHtml(text.slice(cut))) + `</div>`
 }
 
