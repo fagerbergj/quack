@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool/skilltoolset"
+	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/config"
@@ -30,16 +31,6 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
-	}
-	builtinSkillSrc := newSkillSource(nil)
-	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
-	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
-	if err != nil {
-		t.Fatalf("skill toolset: %v", err)
-	}
-	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
-		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
-		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
 	res := artifactsrc.New("stub", &stubBindingSource{}, time.Nanosecond)
 
@@ -66,6 +57,40 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 		},
 	}
 
+	// Wired exactly as boot() wires it: builtinSkillSrc is WrapRef over
+	// shapesRef, so it (and everything built from it below, including
+	// newScopedSkillTS - the orchestrator's own plan-work path) live-reflects
+	// whatever finalizeCatalogShapes later Stores.
+	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
+	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
+	shapesRef.Store(&rawShapes)
+	swappable := newSwappableSkillSource(newSkillSource(nil))
+	builtinSkillSrc := workflowcatalog.WrapRef(skill.Source(swappable), &shapesRef)
+	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
+	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
+	if err != nil {
+		t.Fatalf("skill toolset: %v", err)
+	}
+	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
+		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
+		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
+	}
+	// planWorkInstructions mirrors what assembleOrchestrator actually reads
+	// (newScopedSkillTS(cfg.Orchestrator.Skills), serve.go) - the real path
+	// round 2 found the old test never exercised.
+	planWorkInstructions := func() string {
+		t.Helper()
+		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, []string{"plan-work"}), jail, localUserID)
+		got, err := src.LoadInstructions(context.Background(), "plan-work")
+		if err != nil {
+			t.Fatalf("LoadInstructions(plan-work): %v", err)
+		}
+		return got
+	}
+	if before := planWorkInstructions(); !strings.Contains(before, "resolves trigger") || !strings.Contains(before, "drops trigger") {
+		t.Fatalf("both triggers must render before buildAgents/finalizeCatalogShapes run:\n%s", before)
+	}
+
 	var setupFn dag.SetupFunc
 	artifacts := artifact.InMemoryService()
 	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, res, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
@@ -82,30 +107,23 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 		t.Error(`clientMap["broken-optional"] present - an optional agent with unresolved tools must be dropped`)
 	}
 
-	// finalizeCatalogShapes (serve.go) must remove "drops-shape" - it names the
-	// dropped agent - from BOTH catalog consumers, and log why, while
-	// "resolves-shape" (names the agent that built fine) survives.
+	// finalizeCatalogShapes (serve.go) must remove "drops-shape" - it names
+	// the dropped agent - from the REAL rendered plan-work table, and log why,
+	// while "resolves-shape" (names the agent that built fine) survives.
 	var buf bytes.Buffer
 	prevLog := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	defer slog.SetDefault(prevLog)
 
-	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
-	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
-	shapesRef.Store(&rawShapes)
-	swappable := newSwappableSkillSource(builtinSkillSrc)
 	b := &boot{cfg: cfg}
-	planSkillSrc := b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef, swappable, jail)
-	if planSkillSrc == nil {
-		t.Fatal("finalizeCatalogShapes returned a nil skill source")
-	}
+	b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef)
 
-	filtered := *shapesRef.Load()
-	if _, ok := workflowcatalog.Lookup(filtered, "drops-shape"); ok {
-		t.Error(`shapesRef still names "drops-shape" - its agent was dropped, the extension dispatch catalog must not offer it`)
+	after := planWorkInstructions()
+	if strings.Contains(after, "drops trigger") {
+		t.Errorf(`"drops trigger" still renders in the orchestrator's own plan-work instructions after filtering:\n%s`, after)
 	}
-	if _, ok := workflowcatalog.Lookup(filtered, "resolves-shape"); !ok {
-		t.Error(`shapesRef lost "resolves-shape" - its agent built fine, it must stay bindable`)
+	if !strings.Contains(after, "resolves trigger") {
+		t.Errorf(`"resolves trigger" is missing after filtering - a surviving shape must stay rendered:\n%s`, after)
 	}
 	if !strings.Contains(buf.String(), "shape names a dropped optional agent") || !strings.Contains(buf.String(), "drops-shape") {
 		t.Errorf("expected a warning naming the dropped shape, got:\n%s", buf.String())

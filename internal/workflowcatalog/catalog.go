@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
@@ -149,6 +150,29 @@ func (a *augmented) LoadInstructions(ctx context.Context, name string) (string, 
 		return instructions, err
 	}
 	return compose(instructions, a.shapes), nil
+}
+
+// WrapRef is Wrap for a shapes list that can still change after this Source
+// is built elsewhere: it re-reads shapesRef every LoadInstructions call.
+func WrapRef(src skill.Source, shapesRef *atomic.Pointer[[]Shape]) skill.Source {
+	return &augmentedRef{Source: src, shapesRef: shapesRef}
+}
+
+type augmentedRef struct {
+	skill.Source
+	shapesRef *atomic.Pointer[[]Shape]
+}
+
+func (a *augmentedRef) LoadInstructions(ctx context.Context, name string) (string, error) {
+	instructions, err := a.Source.LoadInstructions(ctx, name)
+	if err != nil || skillsource.BareName(name) != planWorkSkill {
+		return instructions, err
+	}
+	var shapes []Shape
+	if p := a.shapesRef.Load(); p != nil {
+		shapes = *p
+	}
+	return compose(instructions, shapes), nil
 }
 
 // compose appends non-colliding shapes beneath the shipped table's last row - never a second table

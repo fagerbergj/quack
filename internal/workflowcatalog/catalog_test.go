@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
@@ -130,6 +131,37 @@ func TestWrapOnlyAugmentsPlanWork(t *testing.T) {
 	}
 	if got != "\nBody.\n" {
 		t.Errorf("format-markdown instructions changed: %q", got)
+	}
+}
+
+// TestWrapRefReflectsLatestShapes is the round-2 regression: a Source built
+// with WrapRef must render whatever shapesRef holds AT CALL TIME, not a
+// snapshot frozen at construction - the bug that let a dropped shape's row
+// keep rendering in the planner table after boot filtered the slice.
+func TestWrapRefReflectsLatestShapes(t *testing.T) {
+	src := writePlanWork(t, t.TempDir())
+	shapes := []Shape{{Name: "sleeper-lineup", Trigger: "Run the Sleeper lineup job", DAGShape: "ONE `lineup-analyst` node", Agents: []string{"lineup-analyst"}}}
+	var ref atomic.Pointer[[]Shape]
+	ref.Store(&shapes)
+	wrapped := WrapRef(src, &ref)
+
+	got, err := wrapped.LoadInstructions(context.Background(), "plan-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Run the Sleeper lineup job") {
+		t.Errorf("before filtering, want the shape's row present:\n%s", got)
+	}
+
+	filtered := DropAgents(shapes, map[string]bool{"lineup-analyst": true})
+	ref.Store(&filtered)
+
+	got, err = wrapped.LoadInstructions(context.Background(), "plan-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "Run the Sleeper lineup job") {
+		t.Errorf("after filtering, want the dropped shape's row gone from the SAME already-built Source:\n%s", got)
 	}
 }
 

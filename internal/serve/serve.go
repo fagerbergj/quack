@@ -613,10 +613,6 @@ type skillsInit struct {
 	skillSrc         skill.Source
 	skillTS          *skilltoolset.SkillToolset
 	newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error)
-	// swappable is the plugin-registry-derived skill source builtinSkillSrc
-	// wraps - finalizeCatalogShapes re-wraps this SAME instance with the
-	// post-buildAgents filtered shapes for the orchestrator's own skillSrc.
-	swappable *swappableSkillSource
 	// rebuildSkills swaps in a freshly-admitted roster and returns which
 	// (if any) non-seed rows were refused this pass - review#2: rebuild uses
 	// the SAME per-row admission as boot, not an all-or-nothing gate.
@@ -632,7 +628,7 @@ type skillsInit struct {
 // resolves the plugin registry and builds the skill sources and toolsets.
 // st (nilable) is reused for the registry's own DB connection when
 // plugins.store names the same store as session.store (#1427 P3).
-func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store, rawShapes []workflowcatalog.Shape) (skillsInit, error) {
+func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
 	reg, rows, err := b.bootPluginRegistry(ctx, st)
 	if err != nil {
 		return skillsInit{}, err
@@ -655,10 +651,9 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	// agents' next round with no rebuild plumbing beyond this one pointer.
 	liveSkillSrc := newSkillSource(plugins)
 	swappable := newSwappableSkillSource(liveSkillSrc)
-	// RAW (unfiltered) shapes: only backs per-agent named-skill loading and
-	// the judge below, neither of which reads the catalog table -
-	// finalizeCatalogShapes rebuilds the planner's own filtered copy.
-	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), rawShapes)
+	// WrapRef re-reads shapesRef per call, so finalizeCatalogShapes' later
+	// Store reaches this already-built Source and everything wrapping it.
+	builtinSkillSrc := workflowcatalog.WrapRef(skill.Source(swappable), shapesRef)
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
@@ -696,14 +691,13 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
 		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
 		mcpDeclared: func() map[string]bool { return *mcpDeclaredPtr.Load() },
-		reg:         reg, swappable: swappable,
+		reg:         reg,
 	}, nil
 }
 
 // finalizeCatalogShapes drops shapes naming an agent buildAgents left out of
-// clientMap (DropAgents warns per drop) and republishes the result to both
-// catalog consumers - both were built before buildAgents could know that.
-func (b *boot) finalizeCatalogShapes(rawShapes []workflowcatalog.Shape, clientMap map[string]adkagent.Agent, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], swappable *swappableSkillSource, jail *workspace.Jail) skill.Source {
+// clientMap and Stores the result - shapesRef's readers (WrapRef, newExtDispatch) pick it up on their next call.
+func (b *boot) finalizeCatalogShapes(rawShapes []workflowcatalog.Shape, clientMap map[string]adkagent.Agent, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) {
 	dropped := map[string]bool{}
 	for name, ac := range b.cfg.Agents {
 		if ac.Optional {
@@ -714,7 +708,6 @@ func (b *boot) finalizeCatalogShapes(rawShapes []workflowcatalog.Shape, clientMa
 	}
 	filtered := workflowcatalog.DropAgents(rawShapes, dropped)
 	shapesRef.Store(&filtered)
-	return skillsource.New(workflowcatalog.Wrap(skill.Source(swappable), filtered), jail, localUserID)
 }
 
 // opens the task/user memory stores and the shared boot event log
@@ -925,14 +918,13 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
-	// Computed once for both catalog consumers (planner, extension dispatch);
-	// both are built before buildAgents runs, so shapesRef starts unfiltered
-	// and finalizeCatalogShapes corrects it below, well before either reads it.
+	// Both catalog consumers below are built before buildAgents runs, so this
+	// starts unfiltered; finalizeCatalogShapes corrects it once buildAgents returns.
 	rawShapes := workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision)
 	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
 	shapesRef.Store(&rawShapes)
 
-	skills, err := b.initSkills(ctx, jail, st, rawShapes)
+	skills, err := b.initSkills(ctx, jail, st, &shapesRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -948,8 +940,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	planSkillSrc := b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef, skills.swappable, jail)
-	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, planSkillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
+	b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef)
+	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
 	if err != nil {
 		return nil, nil, "", err
 	}
