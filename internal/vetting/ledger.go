@@ -19,7 +19,7 @@ var wsOpSpecs = map[string]wsOpSpec{
 	"edit_file":   {args: []string{"path"}, results: []string{"replacements"}},
 	"delete_path": {args: []string{"path"}, results: []string{"deleted"}},
 	"run_command": {args: []string{"dir", "command"}, results: []string{"exit_code"}},
-	"web_fetch":   {args: []string{"url"}}, // args only; presence signals web-sourced claims
+	"web_fetch":   {args: []string{"urls"}}, // args only; presence signals web-sourced claims
 
 	"git_clone":                 {args: []string{"url", "dir"}, results: []string{"dir", "head", "default_branch"}},
 	"git_checkout":              {args: []string{"dir", "ref"}, results: []string{"branch", "head"}},

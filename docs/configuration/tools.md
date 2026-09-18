@@ -1,11 +1,12 @@
 # Built-in tools
 
-The `tools:` config section configures quack's builtin tool registry; each agent's `tools:` list in `agents:` binds names from it (ACP agents bind none - they bring their own tools; see [agents.md](agents.md)). `internal/tools/registry.go` is the authoritative list - 14 tools:
+The `tools:` config section configures quack's builtin tool registry; each agent's `tools:` list in `agents:` binds names from it (ACP agents bind none - they bring their own tools; see [agents.md](agents.md)). `internal/tools/registry.go` is the authoritative list - 15 tools:
 
 | Tool | What it does |
 | --- | --- |
-| `web_search` | Web search, returns `{results: [{title, url, snippet}]}`. Backend via `tools.web_search.kind`: `exa` (keyless hosted MCP, or REST with `auth.api_key`) or `searxng` (`url` required). |
-| `web_fetch` | Read a page. Backend via `tools.web_fetch.kind`: `direct` (plain GET, the default when empty) or `crawl4ai` (GET + browser render, `url` required). |
+| `web_search` | Batched web search: `queries: [...]`, one group of `{title, url, snippet}` per query, deduplicated by URL across the batch. Backend via `tools.web_search.kind`: `exa` (keyless hosted MCP, or REST with `auth.api_key`) or `searxng` (`url` required). |
+| `web_fetch` | Batched page fetch: `urls: [...]`, fetched concurrently, one result per URL and a per-URL failure that doesn't fail the batch. A page under the inline threshold (24 KB) comes back in full; at or above it, the page is stored as a `web_page` artifact of the chat and the entry is a short header - see `grep_artifacts` below. `pattern`/`offset` still shape the full page directly as a shortcut. Backend via `tools.web_fetch.kind`: `direct` (plain GET, the default when empty) or `crawl4ai` (GET + browser render, `url` required). |
+| `grep_artifacts` | Regex search across the chat's stored `web_page` artifacts (or a given `ids` subset), returning `artifact:line: text` hits - pairs with `read_artifact`'s `offset`/`lines` window to read around a hit without re-fetching. |
 | `summarize` | Summarize a long text block, optionally focused on a question. |
 | `current_date` | The current date, for prompts that need "today". |
 | `read_file` | Read a file inside the agent's jail (workspace root + size caps). |

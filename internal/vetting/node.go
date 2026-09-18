@@ -2202,7 +2202,6 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 		act:           workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
 		nodeDir:       nodeDir,
 		writtenSeen:   map[string]bool{},
-		pending:       map[string]string{},
 		pendingWs:     map[string]map[string]any{},
 		pendingWsTool: map[string]string{},
 		pendingCd:     map[string]bool{},
@@ -2245,10 +2244,8 @@ func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
 	case "web_search":
 		s.recordSearch(fc.Args)
 	case "web_fetch":
-		if u, ok := fc.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
-			s.pending[fc.ID] = strings.TrimSpace(u)
-		}
-		// Route into workspace ledger (web_fetch signals web-sourced claims).
+		// Route into workspace ledger (web_fetch signals web-sourced claims);
+		// which URLs it fetched is read back from the response itself (recordFetch), since one batched call covers many.
 		s.pendingWs[fc.ID] = fc.Args
 		s.pendingWsTool[fc.ID] = "web_fetch"
 	case "stage_memory":
@@ -2272,10 +2269,7 @@ func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
 func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 	switch {
 	case fr.Name == "web_fetch":
-		if url, known := s.pending[fr.ID]; known {
-			delete(s.pending, fr.ID)
-			s.recordFetch(url, fr.Response)
-		}
+		s.recordFetch(fr.Response)
 	case fr.Name == "web_search":
 		recordSearchResults(s.act.seen, fr.Response)
 	case fr.Name == "recall_memory", fr.Name == "load_memory":
@@ -2302,7 +2296,6 @@ type activityScanner struct {
 	nodeDir       string
 	curCwd        string          // node-relative cwd ("" = node root)
 	writtenSeen   map[string]bool // dedup for written
-	pending       map[string]string
 	pendingWs     map[string]map[string]any
 	pendingWsTool map[string]string
 	pendingCd     map[string]bool
@@ -2335,14 +2328,35 @@ func (s *activityScanner) applyDelivery(fc *genai.FunctionCall) {
 }
 
 func (s *activityScanner) recordSearch(args map[string]any) {
-	if q, ok := args["query"].(string); ok && strings.TrimSpace(q) != "" {
-		s.act.searches = append(s.act.searches, strings.TrimSpace(q))
+	qs, ok := args["queries"].([]any)
+	if !ok {
+		return
+	}
+	for _, q := range qs {
+		if s2, ok := q.(string); ok && strings.TrimSpace(s2) != "" {
+			s.act.searches = append(s.act.searches, strings.TrimSpace(s2))
+		}
 	}
 }
 
-func (s *activityScanner) recordFetch(url string, resp map[string]any) {
-	if result, ok := resp["result"].(string); ok && strings.TrimSpace(result) != "" {
-		s.act.fetched[url] = struct{}{}
+// recordFetch: marks every successfully fetched URL in a batched response -
+// a stored-artifact header counts the same as inline text; an error doesn't.
+func (s *activityScanner) recordFetch(resp map[string]any) {
+	results, ok := resp["results"].([]any)
+	if !ok {
+		return
+	}
+	for _, r := range results {
+		m, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, failed := m["error"]; failed {
+			continue
+		}
+		if u, ok := m["url"].(string); ok && strings.TrimSpace(u) != "" {
+			s.act.fetched[strings.TrimSpace(u)] = struct{}{}
+		}
 	}
 }
 

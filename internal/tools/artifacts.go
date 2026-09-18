@@ -233,6 +233,10 @@ func NewWriteKindTools(c *recordstore.Client, nodeID string, coords *RoundCoords
 type readArtifactArgs struct {
 	ID       string `json:"id"`
 	Revision int    `json:"revision,omitempty"`
+	// Offset/Lines window a large text artifact instead of returning it whole -
+	// a window bypasses InlineMaxBytes, since only the slice is ever returned.
+	Offset int `json:"offset,omitempty"`
+	Lines  int `json:"lines,omitempty"`
 }
 
 // NewReadArtifactTool: the native equivalent of the MCP-only read_artifact
@@ -241,8 +245,11 @@ type readArtifactArgs struct {
 func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 	return functiontool.New[readArtifactArgs, string](
 		functiontool.Config{
-			Name:        "read_artifact",
-			Description: "Read an artifact by id (from list_artifacts). Text content is returned inline; binary content is base64-encoded. Omit revision for the latest.",
+			Name: "read_artifact",
+			Description: "Read an artifact by id (from list_artifacts). Text content is returned inline; " +
+				"binary content is base64-encoded. Omit revision for the latest. Pass offset (a 1-based line " +
+				"number) and/or lines (window size) to read a window of a large text artifact instead of the " +
+				"whole thing - a window is returned even past the inline size limit that would otherwise refuse it.",
 		},
 		func(ctx agent.Context, a readArtifactArgs) (string, error) {
 			var data []byte
@@ -260,16 +267,24 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 			if !ok {
 				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
 			}
-			if len(data) > artifactref.InlineMaxBytes {
-				return fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline.",
-					len(data), artifactref.InlineMaxBytes), nil
-			}
 			// LoadVersion carries no stored mime; a historical revision falls back
 			// to a UTF-8 sniff (ponytail: a binary kind with a valid-UTF-8-looking old
 			// revision would misprint, not corrupt - no data-loss risk).
+			isText := (mime != "" && (strings.HasPrefix(mime, "text/") || mime == "application/json")) ||
+				(mime == "" && utf8.Valid(data))
+			if isText && (a.Offset > 0 || a.Lines > 0) {
+				start := a.Offset
+				if start < 1 {
+					start = 1
+				}
+				return windowLines(strings.Split(string(data), "\n"), start, a.Lines, strings.Count(string(data), "\n")+1), nil
+			}
+			if len(data) > artifactref.InlineMaxBytes {
+				return fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; pass offset/lines to read a window.",
+					len(data), artifactref.InlineMaxBytes), nil
+			}
 			text := string(data)
-			if (mime != "" && !strings.HasPrefix(mime, "text/") && mime != "application/json") ||
-				(mime == "" && !utf8.Valid(data)) {
+			if !isText {
 				text = base64.StdEncoding.EncodeToString(data)
 			}
 			if mime == "" {
@@ -278,6 +293,85 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 			return fmt.Sprintf("mime: %s\n\n%s", mime, text), nil
 		},
 	)
+}
+
+// grepArtifactsArgs is grep_artifacts' input.
+type grepArtifactsArgs struct {
+	Pattern string   `json:"pattern"`
+	IDs     []string `json:"ids,omitempty"`
+}
+
+// newGrepArtifacts: registry constructor for grep_artifacts.
+func newGrepArtifacts(d Deps) (tool.Tool, error) {
+	return NewGrepArtifactsTool(d.RecordStore)
+}
+
+// NewGrepArtifactsTool: regexes across the chat's stored web_page artifacts
+// (or just ids, when given). A nil c builds fine but errors only on a call.
+func NewGrepArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
+	return functiontool.New[grepArtifactsArgs, string](
+		functiontool.Config{
+			Name: "grep_artifacts",
+			Description: "Search this chat's stored web_page artifacts (from a large web_fetch) for a regex " +
+				"pattern (case-insensitive; falls back to a literal substring match on an invalid regex). " +
+				"Searches every stored page, or only the given ids. Returns `artifact:line: text` hits; pair " +
+				"with read_artifact(id, offset, lines) to read the window around a hit.",
+		},
+		func(ctx agent.Context, a grepArtifactsArgs) (string, error) {
+			if c == nil {
+				return "", errors.New("grep_artifacts: no chat artifacts service configured")
+			}
+			if strings.TrimSpace(a.Pattern) == "" {
+				return "", errors.New("grep_artifacts: pattern must be non-empty")
+			}
+			ids := a.IDs
+			if len(ids) == 0 {
+				items, err := c.List(ctx, kindWebPage)
+				if err != nil {
+					return "", fmt.Errorf("grep_artifacts: %w", err)
+				}
+				for _, it := range items {
+					ids = append(ids, it.ID)
+				}
+			}
+			return grepArtifactIDs(ctx, c, ids, a.Pattern), nil
+		},
+	)
+}
+
+// grepArtifactIDs: matches pattern across every id's latest revision,
+// capped at fetchGrepMaxLines total hits across all of them.
+func grepArtifactIDs(ctx agent.Context, c *recordstore.Client, ids []string, pattern string) string {
+	matchLine := compileGrepMatcher(pattern)
+	var hits []string
+	capped := false
+	for _, id := range ids {
+		data, _, _, _, ok, err := c.LatestWithMeta(ctx, id)
+		if err != nil || !ok {
+			continue
+		}
+		for i, ln := range strings.Split(string(data), "\n") {
+			if !matchLine(ln) {
+				continue
+			}
+			if len(hits) >= fetchGrepMaxLines {
+				capped = true
+				break
+			}
+			hits = append(hits, fmt.Sprintf("%s:%d: %s", id, i+1, strings.TrimSpace(ln)))
+		}
+		if capped {
+			break
+		}
+	}
+	if len(hits) == 0 {
+		return fmt.Sprintf("[no lines match %q across %d artifact(s)]", pattern, len(ids))
+	}
+	footer := fmt.Sprintf("\n\n[%d matching line(s).]", len(hits))
+	if capped {
+		footer = fmt.Sprintf("\n\n[first %d matches shown (more exist) - narrow the pattern.]", fetchGrepMaxLines)
+	}
+	return capFetchReturn(strings.Join(hits, "\n")) + footer
 }
 
 // BuildNativeArtifactTools assembles one node's full artifact tool set -

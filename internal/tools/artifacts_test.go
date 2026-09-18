@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -496,5 +498,162 @@ func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
 	}
 	if !sawRev2Intent {
 		t.Fatal("no artifact.revision WAL intent for revision 2")
+	}
+}
+
+// storeWebPageArtifact saves content as a web_page artifact of rc's chat, for
+// grep_artifacts/read_artifact window tests.
+func storeWebPageArtifact(t *testing.T, rc *recordstore.Client, url, content string) string {
+	t.Helper()
+	id, _, err := rc.SaveBlob(context.Background(), kindWebPage, []byte(content), "text/markdown", url, recordstore.Lineage{NodeID: "n1"})
+	if err != nil {
+		t.Fatalf("SaveBlob(web_page): %v", err)
+	}
+	return id
+}
+
+func TestGrepArtifactsTool_HitsAndScope(t *testing.T) {
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	idA := storeWebPageArtifact(t, rc, "https://ex.com/a", "line one\nneedle here\nline three")
+	idB := storeWebPageArtifact(t, rc, "https://ex.com/b", "no match in this page at all")
+
+	tl, err := NewGrepArtifactsTool(rc)
+	if err != nil {
+		t.Fatalf("NewGrepArtifactsTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("grep_artifacts tool is not runnable")
+	}
+
+	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{"pattern": "needle"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	result, _ := out["result"].(string)
+	want := idA + ":2: needle here"
+	if !strings.Contains(result, want) {
+		t.Fatalf("result = %q, want a hit %q", result, want)
+	}
+	if strings.Contains(result, idB) {
+		t.Fatalf("result = %q, should not mention the non-matching artifact %s", result, idB)
+	}
+
+	// Scoped to an explicit id list that excludes the match: no hits.
+	scoped, err := rt.Run(newArtifactsToolCtx(), map[string]any{"pattern": "needle", "ids": []string{idB}})
+	if err != nil {
+		t.Fatalf("Run scoped: %v", err)
+	}
+	scopedResult, _ := scoped["result"].(string)
+	if !strings.Contains(scopedResult, "no lines match") {
+		t.Fatalf("scoped result = %q, want no match (idA excluded)", scopedResult)
+	}
+}
+
+func TestGrepArtifactsTool_CapsHits(t *testing.T) {
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	var lines []string
+	for i := 0; i < fetchGrepMaxLines+20; i++ {
+		lines = append(lines, "needle line")
+	}
+	storeWebPageArtifact(t, rc, "https://ex.com/many", strings.Join(lines, "\n"))
+
+	tl, err := NewGrepArtifactsTool(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := tl.(runnableTool)
+	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{"pattern": "needle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _ := out["result"].(string)
+	if !strings.Contains(result, "more exist") {
+		t.Fatalf("result should report a cap with a more-exist marker, got tail: %q", result[len(result)-120:])
+	}
+}
+
+// TestNewGrepArtifacts_NoRecordStoreBuildsButErrorsOnCall: an early tool
+// resolve with no chat context must still build, but a call must fail clearly.
+func TestNewGrepArtifacts_NoRecordStoreBuildsButErrorsOnCall(t *testing.T) {
+	tl, err := newGrepArtifacts(Deps{})
+	if err != nil {
+		t.Fatalf("newGrepArtifacts with no RecordStore should still build: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("grep_artifacts tool is not runnable")
+	}
+	if _, err := rt.Run(newArtifactsToolCtx(), map[string]any{"pattern": "x"}); err == nil {
+		t.Fatal("calling grep_artifacts with no RecordStore should error")
+	}
+}
+
+func TestReadArtifactTool_OffsetLinesWindow(t *testing.T) {
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	var lines []string
+	for i := 1; i <= 50; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	id := storeWebPageArtifact(t, rc, "https://ex.com/big", strings.Join(lines, "\n"))
+
+	tl, err := NewReadArtifactTool(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := tl.(runnableTool)
+
+	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id, "offset": 10, "lines": 3})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	result, _ := out["result"].(string)
+	if !strings.Contains(result, "line 10\nline 11\nline 12") {
+		t.Fatalf("windowed result = %q, want lines 10-12", result)
+	}
+	if strings.Contains(result, "line 13") || strings.Contains(result, "line 9\n") {
+		t.Fatalf("windowed result = %q, leaked lines outside the window", result)
+	}
+
+	// No offset/lines: unchanged whole-content behavior.
+	full, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullResult, _ := full["result"].(string)
+	if !strings.Contains(fullResult, "line 1\n") || !strings.Contains(fullResult, "line 50") {
+		t.Fatalf("whole-content read = %q, want every line", fullResult)
+	}
+}
+
+// TestReadArtifactTool_WindowBypassesInlineLimit: a window into an artifact
+// bigger than InlineMaxBytes returns its slice, not the too-large refusal.
+func TestReadArtifactTool_WindowBypassesInlineLimit(t *testing.T) {
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	big := strings.Repeat("x", artifactref.InlineMaxBytes+1000)
+	id := storeWebPageArtifact(t, rc, "https://ex.com/huge", "first line\n"+big)
+
+	tl, err := NewReadArtifactTool(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := tl.(runnableTool)
+
+	whole, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wholeResult, _ := whole["result"].(string)
+	if !strings.Contains(wholeResult, "too large") {
+		t.Fatalf("whole-content read of an oversized artifact = %q, want the too-large refusal", wholeResult)
+	}
+
+	windowed, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id, "offset": 1, "lines": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowedResult, _ := windowed["result"].(string)
+	if !strings.Contains(windowedResult, "first line") {
+		t.Fatalf("windowed read of an oversized artifact = %q, want the first line", windowedResult)
 	}
 }

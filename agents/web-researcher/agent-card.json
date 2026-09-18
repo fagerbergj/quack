@@ -5,7 +5,7 @@
     {
       "id": "web_search",
       "name": "Web search",
-      "description": "Finds relevant pages for a query using a keyless web search backend. Returns titles, URLs, and snippets.",
+      "description": "Finds relevant pages for a batch of queries using a keyless web search backend. Returns titles, URLs, and snippets grouped per query, deduplicated by URL across the batch.",
       "tags": [
         "search",
         "web",
@@ -18,8 +18,8 @@
     },
     {
       "id": "web_fetch",
-      "name": "Fetch page",
-      "description": "Retrieves and reads the text of a web page, falling back to a headless browser for JavaScript-rendered pages. Supports pattern-based grep and line-offset navigation for long pages.",
+      "name": "Fetch pages",
+      "description": "Retrieves and reads the text of a batch of web pages concurrently, falling back to a headless browser for JavaScript-rendered pages. A short page returns in full; a long one is stored as a chat artifact and searched with grep_artifacts and read windows, without re-fetching.",
       "tags": [
         "fetch",
         "http",
