@@ -168,8 +168,8 @@ func judgeSpec(cfg *config.Config) dag.AdmissionSpec {
 	return modelSpec(mc, cfg.Gates.Judge.Model, cfg.Gates.Judge.ContextWindow)
 }
 
-// lightweightSpec: capacity spec for a one-shot round trip (classify, hooks,
-// compaction/consolidation fallbacks, advisor) - sessions only, no kv dimension.
+// lightweightSpec: capacity spec for a call outside any held node reservation
+// (classify/title/hook, hooks, consolidation) - sessions and residency, no kv.
 func lightweightSpec(cfg *config.Config, modelName string) dag.AdmissionSpec {
 	mc, ok := cfg.Models[modelName]
 	if !ok {
@@ -751,7 +751,7 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 
 // builds the configured agents (and their gate config, executor lookups, and classify model)
 func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM], reg pluginreg.FetchRegistry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
-	advisorAgent := buildAdvisorAgent(context.Background(), b.cfg, b.res, artifacts, b.admission)
+	advisorAgent := buildAdvisorAgent(context.Background(), b.cfg, b.res, artifacts)
 	var executorRef atomic.Pointer[dag.Executor]
 	nodeCancelled := func(chatID, nodeID string) bool {
 		ex := executorRef.Load()
@@ -1127,7 +1127,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 		*setupOut = setupCloneFunc(cfg, jail, workspaceCaps, gitCredentials, gitTokenSource)
 	}
 
-	compactionFor, err := buildCompaction(cfg, res, artifacts, admission)
+	compactionFor, err := buildCompaction(cfg, res, artifacts)
 	if err != nil {
 		return nil, nil, nodeServers, nil, nil, nil, nil, err
 	}
@@ -1244,11 +1244,12 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			if err != nil {
 				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: plan judge model: %w", err)
 			}
-			// Same judge spec as a node's judge round: these calls hit the same
-			// vLLM sequences but never go through setupAdmission.
-			jSpec := judgeSpec(cfg)
-			safetyJudge = tools.NewSafetyJudge(dag.NewAdmittingLLM(safetyModel, admission, jSpec, nil))
-			planJudge = vetting.NewPlanJudge(dag.NewAdmittingLLM(planModel, admission, jSpec, nil), cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel, taskStore, ledgerStore)
+			// Unwrapped: guardedTool.Run and acpPermJudge call this from inside a
+			// node's own held reservation - nesting an Admit there deadlocks it.
+			safetyJudge = tools.NewSafetyJudge(safetyModel)
+			// Wrapped: a plan judge round fires between turns, never inside a held
+			// node reservation, so it must reserve its own capacity.
+			planJudge = vetting.NewPlanJudge(dag.NewAdmittingLLM(planModel, admission, judgeSpec(cfg), nil), cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel, taskStore, ledgerStore)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
 			"deterministic_rounds", gateCfg.DeterministicRounds,
@@ -1871,7 +1872,7 @@ func discoverSDKToolSources(sdkExts []builtSDKExtension) (tools.GitTokenSource, 
 	return gitTokenSource, deliver, assignmentFreshness, assignmentMeta
 }
 
-func buildAdvisorAgent(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, artifacts artifact.Service, admission *dag.Admission) adkagent.Agent {
+func buildAdvisorAgent(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, artifacts artifact.Service) adkagent.Agent {
 	var advisorAgent adkagent.Agent
 	if cfg.Gates.JudgeEnabled() {
 		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
@@ -1879,17 +1880,14 @@ func buildAdvisorAgent(ctx context.Context, cfg *config.Config, res *artifactsrc
 				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
 			} else if ab, berr := agent.LoadBundle(ctx, res, "agents/advisor"); berr != nil {
 				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
+			} else if built, aerr := agent.BuildChat(ab, ab.PinPrompt(res), am, nil, nil, "", nil, ""); aerr != nil {
+				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
 			} else {
-				// ask_advisor runs the advisor as its own nested runner.Run - never a DAG node's own model call.
-				// Stamped, then wrapped: SetDefaultAgent isn't promoted through AdmittingLLM's embedded interface.
+				// ask_advisor nests its own runner.Run, but synchronously inside a node's
+				// tool call; unwrapped, since nesting an Admit in its reservation deadlocks it.
 				setDefaultAgent(am, "advisor")
-				wrapped := dag.NewAdmittingLLM(am, admission, lightweightSpec(cfg, cfg.Gates.Judge.Model), nil)
-				if built, aerr := agent.BuildChat(ab, ab.PinPrompt(res), wrapped, nil, nil, "", nil, ""); aerr != nil {
-					slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
-				} else {
-					advisorAgent = built
-					slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
-				}
+				advisorAgent = built
+				slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
 			}
 		}
 	}
@@ -2118,7 +2116,7 @@ func setupCloneFunc(cfg *config.Config, jail *workspace.Jail, workspaceCaps work
 
 // buildCompaction builds the per-node compaction resolver (and its optional fallback
 // summarizer) from the session.compaction config.
-func buildCompaction(cfg *config.Config, res *artifactsrc.Resolver, artifacts artifact.Service, admission *dag.Admission) (func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, error) {
+func buildCompaction(cfg *config.Config, res *artifactsrc.Resolver, artifacts artifact.Service) (func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, error) {
 	var fallbackSummarizer model.LLM
 	compCfg := cfg.Session.Compaction
 	if compCfg.Enabled && compCfg.Model != "" {
@@ -2130,10 +2128,9 @@ func buildCompaction(cfg *config.Config, res *artifactsrc.Resolver, artifacts ar
 		if fallbackSummarizer, err = inference.NewModelWithEffort(cprov, compCfg.Model, artifacts, cfg.ModelCost(compCfg.Model), cfg.ModelEffort(compCfg.Model)); err != nil {
 			return nil, fmt.Errorf("compaction: model: %w", err)
 		}
-		// Fallback only: ResolveSummarizer prefers the active worker model, whose call
-		// site carries the node's own coords stamp.
+		// Fallback only (ResolveSummarizer prefers the worker model); unwrapped -
+		// ADK compacts mid-turn, inside the node's own held reservation.
 		setDefaultAgent(fallbackSummarizer, "compaction")
-		fallbackSummarizer = dag.NewAdmittingLLM(fallbackSummarizer, admission, lightweightSpec(cfg, compCfg.Model), nil)
 		slog.Info("context compaction enabled", "component", "startup", "fallback_summariser", compCfg.Model)
 	} else if compCfg.Enabled {
 		slog.Info("context compaction enabled", "component", "startup", "summariser", "active worker model (no fallback configured)")

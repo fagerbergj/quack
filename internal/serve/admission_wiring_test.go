@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/skillsource"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -132,6 +134,61 @@ func TestBuildAgents_PlanJudgeReservesAndReleases(t *testing.T) {
 		t.Fatal("plan judge call did not release its session")
 	}
 	admission.Release(occupySpec)
+}
+
+// TestBootInitAgents_WrapsClassifyModel: initAgents is the actual call site that
+// wraps judgeModelRef's client - buildGateJudge/buildAgents alone don't touch it.
+func TestBootInitAgents_WrapsClassifyModel(t *testing.T) {
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	builtinSkillSrc := newSkillSource(nil)
+	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
+	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
+		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
+		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
+	}
+	cfg := &config.Config{
+		Providers: map[string]config.ProviderConfig{"judge-test": newPlanJudgeStubProvider(t)},
+		Models: map[string]config.ModelConfig{
+			"judge-model": {Provider: "judge-test"},
+		},
+		Gates: config.GatesConfig{
+			Rubric: "be good",
+			Judge: config.JudgeConfig{
+				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
+				Threshold: 0.7, MaxIterations: 2,
+			},
+		},
+		Workspace: config.WorkspaceConfig{Sandbox: "none"},
+	}
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+
+	admission := dag.NewAdmission(map[string]int{"judge-model": 1}, nil, nil, 0)
+	b := &boot{cfg: cfg, admission: admission}
+	var judgeModelRef atomic.Pointer[model.LLM]
+	_, _, nodeServers, _, _, _, _, _, _, err := b.initAgents(st, skillTS, builtinSkillSrc, newScopedSkillTS,
+		nil, jail, nil, nil, nil, nil, nil, &judgeModelRef, nil)
+	if err != nil {
+		t.Fatalf("initAgents: %v", err)
+	}
+	defer nodeServers.closeAll()
+
+	m := judgeModelRef.Load()
+	if m == nil || *m == nil {
+		t.Fatal("initAgents did not store a classify model")
+	}
+	if _, ok := (*m).(*dag.AdmittingLLM); !ok {
+		t.Fatalf("judgeModelRef holds %T, want it wrapped in *dag.AdmittingLLM", *m)
+	}
 }
 
 // TestClassifyModel_ReservesAndReleases: also the code path behind title
@@ -289,141 +346,6 @@ func TestOrchestratorWrap_Unchanged(t *testing.T) {
 	admission.Release(occupySpec)
 }
 
-// TestBuildCompaction_FallbackSummarizerReservesAndReleases: the fallback
-// runs from a node's compaction hook, outside its own worker reservation.
-func TestBuildCompaction_FallbackSummarizerReservesAndReleases(t *testing.T) {
-	cfg := &config.Config{
-		Providers: map[string]config.ProviderConfig{"comp-test": newTextStubProvider(t, "ok")},
-		Models: map[string]config.ModelConfig{
-			"comp-model": {Provider: "comp-test"},
-		},
-	}
-	cfg.Session.Compaction.Enabled = true
-	cfg.Session.Compaction.Provider = "comp-test"
-	cfg.Session.Compaction.Model = "comp-model"
-
-	admission := dag.NewAdmission(map[string]int{"comp-model": 1}, nil, nil, 0)
-	occupySpec := dag.AdmissionSpec{Model: "comp-model"}
-	if !admission.Admit(context.Background(), occupySpec, nil) {
-		t.Fatal("could not pre-occupy the compaction model's sole session")
-	}
-
-	res := artifactsrc.New("", nil, 0)
-	compactionFor, err := buildCompaction(cfg, res, nil, admission)
-	if err != nil {
-		t.Fatalf("buildCompaction: %v", err)
-	}
-	comp := compactionFor(config.AgentConfig{ContextWindow: 1000}, nil)
-	if comp.Summarizer == nil {
-		t.Fatal("Compaction.Summarizer is nil, want the wrapped fallback")
-	}
-
-	result := make(chan error, 1)
-	go func() {
-		for _, gerr := range comp.Summarizer.GenerateContent(context.Background(), &model.LLMRequest{}, false) {
-			if gerr != nil {
-				result <- gerr
-				return
-			}
-		}
-		result <- nil
-	}()
-
-	select {
-	case err := <-result:
-		t.Fatalf("fallback summarizer call returned (err=%v) while its sole session was held", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	admission.Release(occupySpec)
-
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("fallback summarizer call: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("fallback summarizer call never completed after its session was released")
-	}
-
-	if !admission.Admit(context.Background(), occupySpec, nil) {
-		t.Fatal("fallback summarizer call did not release its session")
-	}
-	admission.Release(occupySpec)
-}
-
-// TestBuildAdvisorAgent_ReservesAndReleases: ask_advisor runs as its own
-// nested runner.Run, outside any DAG node's round, so it must reserve too.
-func TestBuildAdvisorAgent_ReservesAndReleases(t *testing.T) {
-	cfg := &config.Config{
-		Providers: map[string]config.ProviderConfig{"judge-test": newTextStubProvider(t, "ok")},
-		Models: map[string]config.ModelConfig{
-			"judge-model": {Provider: "judge-test"},
-		},
-		Gates: config.GatesConfig{
-			Rubric: "be good",
-			Judge: config.JudgeConfig{
-				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
-				Threshold: 0.7, MaxIterations: 2,
-			},
-		},
-	}
-	res := artifactsrc.New("", nil, 0)
-
-	admission := dag.NewAdmission(map[string]int{"judge-model": 1}, nil, nil, 0)
-	occupySpec := dag.AdmissionSpec{Model: "judge-model"}
-	if !admission.Admit(context.Background(), occupySpec, nil) {
-		t.Fatal("could not pre-occupy the advisor model's sole session")
-	}
-
-	advisorAgent := buildAdvisorAgent(context.Background(), cfg, res, nil, admission)
-	if advisorAgent == nil {
-		t.Fatal("buildAdvisorAgent returned nil, want a built advisor")
-	}
-
-	r, err := runner.New(runner.Config{
-		AppName: "advisor-test-app", Agent: advisorAgent,
-		SessionService: session.InMemoryService(), AutoCreateSession: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "should I do X?"}}}
-
-	result := make(chan error, 1)
-	go func() {
-		for _, rerr := range r.Run(context.Background(), "u1", "s1", content, adkagent.RunConfig{}) {
-			if rerr != nil {
-				result <- rerr
-				return
-			}
-		}
-		result <- nil
-	}()
-
-	select {
-	case err := <-result:
-		t.Fatalf("advisor call returned (err=%v) while its sole session was held", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	admission.Release(occupySpec)
-
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("advisor call: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("advisor call never completed after its session was released")
-	}
-
-	if !admission.Admit(context.Background(), occupySpec, nil) {
-		t.Fatal("advisor call did not release its session")
-	}
-	admission.Release(occupySpec)
-}
-
 // newEmbeddingStubProvider serves a fixed OpenAI-compatible /embeddings response,
 // for a memory store's construction-time dimension probe.
 func newEmbeddingStubProvider(t *testing.T) config.ProviderConfig {
@@ -437,13 +359,13 @@ func newEmbeddingStubProvider(t *testing.T) config.ProviderConfig {
 	return config.ProviderConfig{Kind: "openai", Endpoint: srv.URL, APIKey: "k"}
 }
 
-// TestOpenMemoryStores_WrapsConsolidator: the consolidator fires from a
-// background sweep, so it must reserve capacity like any other caller.
+// TestOpenMemoryStores_WrapsConsolidator: a commit's reconcile pass calls the
+// consolidation model, so it must block while the model's sole session is held.
 func TestOpenMemoryStores_WrapsConsolidator(t *testing.T) {
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
 			"embed-test":  newEmbeddingStubProvider(t),
-			"consol-test": newTextStubProvider(t, "ok"),
+			"consol-test": newTextStubProvider(t, `{"ops":[]}`),
 		},
 		Models: map[string]config.ModelConfig{
 			"consol-model": {Provider: "consol-test"},
@@ -468,7 +390,60 @@ func TestOpenMemoryStores_WrapsConsolidator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initMemory: %v", err)
 	}
-	if taskStore == nil {
-		t.Fatal("initMemory did not build the task memory store")
+
+	occupySpec := dag.AdmissionSpec{Model: "consol-model"}
+	if !admission.Admit(context.Background(), occupySpec, nil) {
+		t.Fatal("could not pre-occupy the consolidation model's sole session")
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, cerr := taskStore.Commit(context.Background(), memory.Scope{Repo: "test-repo"}, "tester",
+			memory.Provenance{}, []memory.Candidate{{Content: "a fact"}}, "")
+		result <- cerr
+	}()
+
+	select {
+	case err := <-result:
+		t.Fatalf("commit returned (err=%v) while the consolidation model's sole session was held", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	admission.Release(occupySpec)
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("commit never completed after the session was released")
+	}
+
+	if !admission.Admit(context.Background(), occupySpec, nil) {
+		t.Fatal("commit did not release the consolidation model's session")
+	}
+	admission.Release(occupySpec)
+}
+
+// TestBuildAdvisorAgent_Unwrapped: no admission assertions here on purpose -
+// ask_advisor runs inside a node's own held slot, so it stays unwrapped.
+func TestBuildAdvisorAgent_Unwrapped(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.ProviderConfig{"judge-test": newTextStubProvider(t, "ok")},
+		Models: map[string]config.ModelConfig{
+			"judge-model": {Provider: "judge-test"},
+		},
+		Gates: config.GatesConfig{
+			Rubric: "be good",
+			Judge: config.JudgeConfig{
+				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
+				Threshold: 0.7, MaxIterations: 2,
+			},
+		},
+	}
+	res := artifactsrc.New("", nil, 0)
+	if advisorAgent := buildAdvisorAgent(context.Background(), cfg, res, nil); advisorAgent == nil {
+		t.Fatal("buildAdvisorAgent returned nil, want a built advisor")
 	}
 }

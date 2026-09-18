@@ -13,7 +13,7 @@ func TestBuildCompactionCarriesResolver(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Session.Compaction.Enabled = true
 	res := artifactsrc.New("", nil, 0)
-	compactionFor, err := buildCompaction(cfg, res, nil, nil)
+	compactionFor, err := buildCompaction(cfg, res, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
