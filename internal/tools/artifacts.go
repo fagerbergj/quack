@@ -93,7 +93,8 @@ func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoor
 				"exactly once; a real conflict fails and returns the current content and revision to retry against. " +
 				"Structured artifacts are re-validated before the write. On a structured artifact, `old`/`new` match " +
 				"against each field's decoded text, not the raw serialized JSON - `new` can contain raw newlines, quotes, " +
-				"or backslashes with no escaping. There is no need to rewrite the whole record with write_<kind> just to change one field.",
+				"or backslashes with no escaping. There is no need to rewrite the whole record with write_<kind> just to change one field. " +
+				"This is how you append a long deliverable's next section after write_artifact writes the skeleton.",
 		},
 		func(ctx agent.Context, a editArtifactArgs) (string, error) {
 			if len(a.Edits) == 0 {
@@ -144,7 +145,10 @@ func writeArtifactDescription() string {
 	for _, spec := range recordstore.KindsForClass(recordstore.Blob) {
 		kinds = append(kinds, spec.Name())
 	}
-	return fmt.Sprintf("Write a new revision of a blob artifact (%s - not a structured kind; use write_<kind> for those). The registry derives the id.", strings.Join(kinds, ", "))
+	return fmt.Sprintf("Write a new revision of a blob artifact (%s - not a structured kind; use write_<kind> for those). The registry derives the id. "+
+		"A long deliverable is written in sections: write_artifact the skeleton, then edit_artifact to append each section. "+
+		"Your final reply is the deliverable, or - when it lives in the artifact - a short summary naming the artifact. "+
+		"A reply cut off by the model's output limit is continued automatically; never restart from the top.", strings.Join(kinds, ", "))
 }
 
 // NewWriteArtifactTool: blob writes only; structured kinds go through write_<kind>. hint is the

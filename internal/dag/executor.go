@@ -789,7 +789,9 @@ func toInt(v any) int {
 }
 
 // buildTask assembles a node's worker prompt from user request, dependencies, and task.
-func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool) string {
+// cfg carries the Artifacts/User/ChatID connection so a dependency's full
+// artifact can replace a pointer-only answer (prod chat effc2636).
+func buildTask(ctx context.Context, plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool, cfg vetting.Config) string {
 	background := plan.WorkerBackground
 	if background == "" {
 		background = plan.UserMessage
@@ -811,7 +813,7 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 			if gateFailed[dep] {
 				sb.WriteString("⚠ WARNING: the following input FAILED independent quality vetting (unverified claims or missing citations). Treat its claims with suspicion and do not present them as verified:\n\n")
 			}
-			sb.WriteString(out)
+			sb.WriteString(dependencyContent(ctx, plan, cfg, dep, out))
 			sb.WriteString("\n\n---\n\n")
 		} else {
 			sb.WriteString("⚠ NOTE: upstream node \"" + dep + "\" produced NO answer - it failed. You have no data for its part of the task; explicitly state that this piece is unavailable rather than omitting it or fabricating content.\n\n---\n\n")
@@ -825,6 +827,24 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 	sb.WriteString(node.Task)
 	sb.WriteString(ctxDetail)
 	return sb.String()
+}
+
+// dependencyContent: dep's full artifact in place of its answer when dep
+// saved one and it outgrew the answer; unchanged otherwise (today's behaviour).
+func dependencyContent(ctx context.Context, plan Plan, cfg vetting.Config, dep, answer string) string {
+	depCfg := cfg
+	depCfg.Artifact, depCfg.IsReviewer = "", false
+	for _, n := range plan.Nodes {
+		if n.ID == dep {
+			depCfg.Artifact, depCfg.IsReviewer = n.Artifact, n.AgentName == reviewerAgent
+			break
+		}
+	}
+	content, _, ok := vetting.LatestArtifactContent(ctx, depCfg, dep)
+	if !ok || len(content) <= len(answer) {
+		return answer
+	}
+	return content
 }
 
 // matchedContext: detail for context items a node's task names by name.

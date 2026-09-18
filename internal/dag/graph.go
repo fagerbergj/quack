@@ -273,7 +273,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			upstream := upstreamFromInput(in, node.DependsOn)
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			cfg.UpstreamAnswers = renderUpstreamForJudge(upstream, node.DependsOn, gateFailed)
-			prompt := buildTask(plan, effectiveNode, upstream, gateFailed)
+			// User scopes the recordstore reads buildTask does for dependency
+			// artifacts (vetting.newGateRun stamps the same field the same way).
+			if s := ctx.Session(); s != nil {
+				cfg.User = s.UserID()
+			}
+			prompt := buildTask(ctx, plan, effectiveNode, upstream, gateFailed, cfg)
 			if refreshed {
 				prompt += refreshedNote
 			}

@@ -97,6 +97,14 @@ const AskToolName = "ask_user"
 
 const memoryCommitTimeout = 3 * time.Minute
 
+// maxTruncationContinuations: continuation turns for a MAX_TOKENS-cut worker
+// round before the round is judged truncated regardless (prod chat 3f4d9045).
+const maxTruncationContinuations = 2
+
+// truncationTailChars: trailing chars of a cut-off answer quoted back to the
+// worker so it knows exactly where to resume, never restart.
+const truncationTailChars = 200
+
 // envScaffoldRe strips a leading <env>...</env> preamble an ACP agent echoes into its answer.
 var envScaffoldRe = regexp.MustCompile(`(?s)^\s*<env>.*?</env>\s*`)
 
@@ -284,6 +292,28 @@ func deliveryTarget(ctx context.Context, cfg Config) (id string, revision int, o
 	return targetID, rev, true
 }
 
+// LatestArtifactContent: nodeID's full delivered artifact - deliveryTarget's typed
+// kind, else the generic "text:<nodeID>" every gate writes; for dag's inlining.
+func LatestArtifactContent(ctx context.Context, cfg Config, nodeID string) (content string, revision int, ok bool) {
+	c := recordClient(cfg)
+	if c == nil {
+		return "", 0, false
+	}
+	targetID, _, found := deliveryTarget(ctx, cfg)
+	if !found {
+		var err error
+		targetID, err = recordstore.IdentityFor(kindText, nil, nodeID)
+		if err != nil {
+			return "", 0, false
+		}
+	}
+	data, rev, exists, lerr := c.Latest(ctx, targetID)
+	if lerr != nil || !exists {
+		return "", 0, false
+	}
+	return string(data), rev, true
+}
+
 // deliveryIdempotencyKey: target artifact id + revision (#1090 V4 §4.9) -
 // unambiguous since "@" never appears in an artifact id (ids use ":").
 func deliveryIdempotencyKey(targetID string, revision int) string {
@@ -348,6 +378,9 @@ type gateRun struct {
 	repeatFailed     func() (error, bool)
 	queueAttempt     int
 	delivered        bool
+	// lastRunID: runID of the worker call that produced the round's candidate
+	// text - checkTruncation's starting point for the round's finish reason.
+	lastRunID string
 }
 
 // newGateRun: everything RunGatedRefine sets up before the gate loop - the
@@ -488,6 +521,7 @@ type gateExit struct {
 // runWorkerOnce: one traced worker run with the shared error tri-state - a
 // repeat-guard abort is a hard failure; a mid-flight CancelNode is not.
 func (g *gateRun) runWorkerOnce(input any, runID, stage, termMsg, failMsg string, extra []any) (string, *gateExit) {
+	g.lastRunID = runID
 	answer, err := runWorkerNodeTraced(g.ctx, g.nodeCtx, g.cfg, g.workerModel, g.workerNode, input, runID, stage, g.promptEmit)
 	if err == nil {
 		return answer, nil
@@ -599,9 +633,11 @@ func (g *gateRun) continueWorker(sfx, answer string) (string, *gateExit) {
 		act := g.actFor(answer)
 		g.log.Warn("work not finished; continuing the worker with its tools",
 			"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
+		runID := fmt.Sprintf("worker-cont%d%s", attempt, sfx)
+		g.lastRunID = runID
 		var err error
 		answer, err = runWorkerNodeTraced(g.ctx, g.nodeCtx, g.cfg, g.workerModel, g.workerNode, buildContinuationPrompt(g.cfg.Task, act, g.cfg.Checks, g.cfg.ReadOnly, hasDeliverTarget, g.cfg.IsReviewer, g.cfg.ExistingPR)+g.markerLine,
-			fmt.Sprintf("worker-cont%d%s", attempt, sfx), "continuation", g.promptEmit)
+			runID, "continuation", g.promptEmit)
 		if err != nil {
 			if lerr, ok := g.repeatFailed(); ok {
 				g.log.Error("worker continuation terminated: repeat guard", "attempt", attempt, "err", lerr)
@@ -845,16 +881,25 @@ type judgeRounds struct {
 	episodicState         *episodicRoundState
 	episodicRoundsWritten int
 	outcome               *judgeRoundOutcome
+	// lastAnswerRunID: runID of the worker call that produced the current
+	// round's `answer` - checkTruncation's key into the session scan.
+	lastAnswerRunID string
+	// truncated: this round's answer is still cut off (MAX_TOKENS) after the
+	// continuation budget - runJudge folds it into complete_output=0.
+	truncated bool
 }
 
 // runJudgeRounds: the judge/revise loop - judge, fold deterministic criteria, revise on fail.
 func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (outcome judgeRoundOutcome) {
-	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, markerLine: g.markerLine, advisorToken: g.advisorToken, turnID: g.turnID, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log}
+	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, markerLine: g.markerLine, advisorToken: g.advisorToken, turnID: g.turnID, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log, lastAnswerRunID: g.lastRunID}
 	// receivedMemories rides every return path so commitFinal resumes counting from here.
 	defer func() { outcome.receivedMemories = j.receivedMemories }()
 	// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
 	for round := 1; j.judge != nil && j.cfg.JudgeRounds > 0 && round <= j.cfg.JudgeRounds+1; round++ {
 		if !j.roundGate(round) {
+			break
+		}
+		if !j.checkTruncation(round) {
 			break
 		}
 		runID, judgeCtx, jspan, ledgerCtx, act := j.prepareJudge(round)
@@ -929,6 +974,81 @@ func (j *judgeRounds) roundGate(round int) bool {
 	return true
 }
 
+// checkTruncation: MAX_TOKENS on the round's call means the text was cut off
+// (prod chat 3f4d9045) - continue it, then fail complete_output if still cut off.
+func (j *judgeRounds) checkTruncation(round int) bool {
+	j.truncated = false
+	finish := workerRunFinishReason(j.ctx.Session(), j.ctx.InvocationID(), j.nodeID, j.lastAnswerRunID)
+	for n := 1; finish == genai.FinishReasonMaxTokens; n++ {
+		if n > maxTruncationContinuations {
+			j.truncated = true
+			return true
+		}
+		runID := fmt.Sprintf("worker-trunc%d-r%d%s", n, round, j.sfx)
+		cont, err := runWorkerNodeTraced(j.ctx, j.nodeCtx, j.cfg, j.workerModel, j.workerNode,
+			buildTruncationContinuationPrompt(j.answer)+j.markerLine, runID, "continuation", j.promptEmit)
+		if err != nil {
+			if lerr, ok := j.repeatFailed(); ok {
+				j.log.Error("truncation continuation terminated: repeat guard", "round", round, "continuation", n, "err", lerr)
+				j.outcome = &judgeRoundOutcome{err: lerr}
+				return false
+			}
+			j.log.Error("truncation continuation failed; judging the cut-off answer", "round", round, "continuation", n, "err", err)
+			j.truncated = true
+			return true
+		}
+		j.answer += cont
+		j.lastAnswerRunID = runID
+		j.log.Info("continued a cut-off worker reply", "round", round, "continuation", n)
+		// Mirrors draftOrResume/continueWorker's own pause check: a worker-raised
+		// HITL park returns via outcome.err (already wraps ErrNodePaused), not outcome.paused.
+		if paused, ierr := pauseIfWorkerRaisedHITL(j.ctx, j.nodeID, j.ctrl, j.emit, j.log); paused {
+			j.outcome = &judgeRoundOutcome{err: ierr}
+			return false
+		}
+		finish = workerRunFinishReason(j.ctx.Session(), j.ctx.InvocationID(), j.nodeID, runID)
+	}
+	return true
+}
+
+// workerRunFinishReason: runID's FinishReason, scanned from the session the
+// same way dagStream keys SSE - workflow.RunNode's typed return drops it.
+func workerRunFinishReason(sess session.Session, invocationID, nodeID, runID string) genai.FinishReason {
+	if sess == nil {
+		return genai.FinishReasonUnspecified
+	}
+	var last genai.FinishReason
+	for ev := range sess.Events().All() {
+		if ev == nil || ev.InvocationID != invocationID || ev.NodeInfo == nil || !pathHasNode(ev, nodeID) {
+			continue
+		}
+		seg := ev.NodeInfo.Path
+		if i := strings.LastIndexByte(seg, '/'); i >= 0 {
+			seg = seg[i+1:]
+		}
+		if stream.RunIDFromBranch(seg) != runID {
+			continue
+		}
+		if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
+			last = ev.FinishReason
+		}
+	}
+	return last
+}
+
+// buildTruncationContinuationPrompt: quotes the cut-off answer's trailing
+// words so the worker resumes exactly there, never repeats or restarts.
+func buildTruncationContinuationPrompt(answer string) string {
+	tail := answer
+	if len(tail) > truncationTailChars {
+		tail = tail[len(tail)-truncationTailChars:]
+	}
+	return "Your last reply was cut off by the model's output-length limit. It ended with:\n\n\"..." + tail + "\"\n\n" +
+		"Do NOT repeat any text you already delivered - continue writing from exactly where you stopped. " +
+		"If you are writing a long deliverable to your artifact (write_artifact/edit_artifact), append the " +
+		"remainder there with edit_artifact, then reply with just the remainder text. Never restart from the top."
+}
+
 // prepareJudge: per-round act/memories scan, the always-written episodic
 // revision, the judge span, and the ledger coords.
 func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Context, jspan *stageSpan, ledgerCtx context.Context, act workerActivity) {
@@ -984,6 +1104,13 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 	det, skip := computeDeterministicCriteria(judgeCtx, j.answer, act, j.cfg)
 	if skip != "" {
 		j.checksSkipReason = skip
+	}
+	// checkTruncation already spent the continuation budget - a still-cut-off
+	// answer fails by weakest-link, never silently judged as if complete.
+	if j.truncated {
+		det["complete_output"] = criterionScore{Score: 0, Reason: fmt.Sprintf(
+			"deterministic: the answer is still cut off by the model's output-length limit after %d automatic continuation(s)",
+			maxTruncationContinuations)}
 	}
 	// Terminal round only (no revise ever reads its feedback): a deterministic
 	// criterion below threshold decides by weakest-link, so skip the judge call.
@@ -1151,6 +1278,7 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 		return true, nil
 	}
 	j.answer = revised
+	j.lastAnswerRunID = reviseRunID
 	return true, nil
 }
 
@@ -2029,6 +2157,7 @@ var deterministicCriterionSpec = map[string]struct {
 	fix        string
 }{
 	"sufficient_length":            {"The answer must be non-empty.", "Write a substantive answer."},
+	"complete_output":              {"The reply must finish, not be cut off by the model's output-length limit, even after the automatic continuation budget.", "Write a shorter answer, or put the long deliverable in your artifact (write_artifact/edit_artifact) and reply with a summary."},
 	"grounded_in_retrieval":        {"Claims must trace to retrieval performed this session (web fetch/search or file reads), not model memory.", "Research the task and cite what you retrieve; call ask_user if blocked on information only the user has."},
 	"checks_pass":                  {"The node's configured or derived build/test checks must exit zero.", "Fix the failing check(s) named in the failure output."},
 	"no_vacuous_tests":             {"An added test file must exercise a real production identifier, not assert trivially.", "Rewrite the test to call/assert against actual production code."},
