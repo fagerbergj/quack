@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1190,13 +1191,10 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 
 		na, err := buildNativeNode(name, ac, prov, taskStore, advisorAgent, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg)
 		if err != nil {
-			if ac.Optional {
-				// Degrade honestly: an optional agent whose extension isn't enabled
-				// (its tools unresolved) is dropped from the roster, not a boot error.
-				slog.Warn("optional agent unavailable; dropped from the roster", "component", "startup", "agent", name, "err", err)
-				continue
+			if !dropOptionalAgent(name, ac, err) {
+				return nil, nil, nodeServers, nil, nil, nil, nil, err
 			}
-			return nil, nil, nodeServers, nil, nil, nil, nil, err
+			continue
 		}
 		clientMap[name] = na
 	}
@@ -1768,7 +1766,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 	}
 	protoAgent, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil)
 	if err != nil {
-		return nil, fmtErr(name, "%v", err)
+		return nil, fmtErr(name, "%w", err)
 	}
 	na := nativeAgent{
 		Agent: protoAgent,
@@ -2529,6 +2527,16 @@ func contentText(c *genai.Content) string {
 		}
 	}
 	return b.String()
+}
+
+// dropOptionalAgent: an optional agent whose extension isn't enabled (its tools unresolved) is
+// dropped from the roster with a warning; any other build error still fails boot.
+func dropOptionalAgent(name string, ac config.AgentConfig, err error) bool {
+	if !ac.Optional || !errors.Is(err, tools.ErrUnknownTool) {
+		return false
+	}
+	slog.Warn("optional agent unavailable; dropped from the roster", "component", "startup", "agent", name, "err", err)
+	return true
 }
 
 func fmtErr(agentName, format string, args ...any) error {

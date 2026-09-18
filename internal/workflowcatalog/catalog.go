@@ -140,8 +140,10 @@ type augmentedRef struct {
 
 func (a *augmentedRef) LoadInstructions(ctx context.Context, name string) (string, error) {
 	var shapes []Shape
-	if p := a.shapesRef.Load(); p != nil {
-		shapes = *p
+	if a.shapesRef != nil { // tests build sources with no ref
+		if p := a.shapesRef.Load(); p != nil {
+			shapes = *p
+		}
 	}
 	if len(shapes) == 0 {
 		// Skip compose entirely - otherwise a shapeless deployment logs its

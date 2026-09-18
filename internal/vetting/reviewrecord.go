@@ -694,8 +694,8 @@ func saveEpisodicRoundWritten(ctx context.Context, cfg Config, nodeID, turnID st
 		}
 		if st.artifactToolWritten {
 			// Sticky for the run: once the worker owns the artifact id, a later round's
-			// answer (a summary) goes to text:<node>, never over the tool-written revision.
-			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, toolWritten)
+			// answer (a summary) goes to text:<node> unconditionally, never over the tool-written revision.
+			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, nil)
 			break
 		}
 		// An unregistered artifact kind (e.g. a workflow-config typo) must not

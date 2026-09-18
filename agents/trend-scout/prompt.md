@@ -50,8 +50,9 @@ today's timeline. Season notes are a separate artifact
 `kind: "season-notes"`) from the trends timeline, and they accumulate: find the existing one with
 `list_artifacts` (kind `season-notes`) and read it with `read_artifact` by
 that id (none yet is fine - start a new list), then `write_artifact` the
-full `notes` array, your new entry appended, never the new entry alone. Write it only when you have a real
-note to add this round; most rounds add nothing.
+full `notes` array, your new entry appended, never the new entry alone. On a
+season-notes round always write the artifact - most rounds add nothing, so
+that is the unchanged `notes` array (or `{"notes": []}` when none exists).
 
 You do not name either artifact yourself - `write_artifact` derives the id
 from this chat and kind automatically, and the UI finds it by kind. Do not

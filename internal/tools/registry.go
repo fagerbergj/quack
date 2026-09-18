@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -75,6 +76,9 @@ var registry = map[string]constructor{
 	"grep_artifacts": newGrepArtifacts,
 }
 
+// ErrUnknownTool: a tools: entry no builtin or enabled extension provides.
+var ErrUnknownTool = errors.New("unknown tool")
+
 // Build: resolves tool names to ADK tools.
 func Build(names []string, d Deps) ([]tool.Tool, error) {
 	if d.Client == nil {
@@ -116,7 +120,7 @@ func buildOneTool(name string, d Deps, repeats *repeatStates, scrub func(tool.To
 		}
 		t = et
 	} else {
-		return nil, fmt.Errorf("tools: unknown builtin tool %q", name)
+		return nil, fmt.Errorf("tools: unknown builtin tool %q: %w", name, ErrUnknownTool)
 	}
 	t = scrub(t)
 	tier, guarded := parseGuardTier(d.Guards[name])
