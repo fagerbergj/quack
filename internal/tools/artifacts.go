@@ -399,15 +399,8 @@ outer:
 	return capFetchReturn(strings.Join(hits, "\n")) + footer
 }
 
-// BuildNativeArtifactTools assembles one node's full artifact tool set -
-// the single place both the orchestrator and native gated nodes
-// (internal/dag/graph.go) construct these, so the two surfaces can't drift (#1123).
-//
-// blobHint and structuredHint are separate because their kinds' own save-side
-// lookups key off different values: write_artifact's Blob kinds (document,
-// pr_body, and per-extension kinds like lineup) off vetting.DocumentHint,
-// write_<kind>'s code_review off vetting.SubjectHint - one shared hint would
-// land a tool write at an id its own kind's save path never looks up.
+// BuildNativeArtifactTools is the one place orchestrator and gated nodes build artifact tools (#1123).
+// blobHint (DocumentHint) and structuredHint (SubjectHint) differ because each kind's save path looks up its own id.
 func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *RoundCoords, blobHint, structuredHint string) ([]tool.Tool, error) {
 	if coords == nil {
 		coords = &RoundCoords{}
