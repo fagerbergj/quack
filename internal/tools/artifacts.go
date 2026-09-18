@@ -278,32 +278,37 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 			if prov != "" {
 				prov += "\n\n"
 			}
-			// LoadVersion carries no stored mime; a historical revision falls back
-			// to a UTF-8 sniff (ponytail: a binary kind with a valid-UTF-8-looking old
-			// revision would misprint, not corrupt - no data-loss risk).
-			isText := (mime != "" && (strings.HasPrefix(mime, "text/") || mime == "application/json")) ||
-				(mime == "" && utf8.Valid(data))
-			if isText && (a.Offset > 0 || a.Lines > 0) {
-				start := a.Offset
-				if start < 1 {
-					start = 1
-				}
-				return prov + windowLines(strings.Split(string(data), "\n"), start, a.Lines, strings.Count(string(data), "\n")+1), nil
-			}
-			if len(data) > artifactref.InlineMaxBytes {
-				return prov + fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; pass offset/lines to read a window.",
-					len(data), artifactref.InlineMaxBytes), nil
-			}
-			text := string(data)
-			if !isText {
-				text = base64.StdEncoding.EncodeToString(data)
-			}
-			if mime == "" {
-				return prov + text, nil
-			}
-			return prov + fmt.Sprintf("mime: %s\n\n%s", mime, text), nil
+			return prov + shapeReadArtifact(data, mime, a), nil
 		},
 	)
+}
+
+// shapeReadArtifact: read_artifact's body once the artifact is found -
+// windowed, too-large-refusal, or whole (base64 if binary).
+func shapeReadArtifact(data []byte, mime string, a readArtifactArgs) string {
+	// LoadVersion carries no stored mime; a historical revision falls back to
+	// a UTF-8 sniff (ponytail: a misprint risk on a binary kind, not data loss).
+	isText := (mime != "" && (strings.HasPrefix(mime, "text/") || mime == "application/json")) ||
+		(mime == "" && utf8.Valid(data))
+	if isText && (a.Offset > 0 || a.Lines > 0) {
+		start := a.Offset
+		if start < 1 {
+			start = 1
+		}
+		return windowLines(strings.Split(string(data), "\n"), start, a.Lines, strings.Count(string(data), "\n")+1)
+	}
+	if len(data) > artifactref.InlineMaxBytes {
+		return fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; pass offset/lines to read a window.",
+			len(data), artifactref.InlineMaxBytes)
+	}
+	text := string(data)
+	if !isText {
+		text = base64.StdEncoding.EncodeToString(data)
+	}
+	if mime == "" {
+		return text
+	}
+	return fmt.Sprintf("mime: %s\n\n%s", mime, text)
 }
 
 // grepArtifactsArgs is grep_artifacts' input.
