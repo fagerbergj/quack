@@ -883,6 +883,9 @@ export class ChatStore {
           })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
+        // A mid-run worker/judge swap re-admits without a fresh node_start
+        // (that fires once, at first dispatch) - flip back to running here.
+        onNodeAdmitted: nodeId => updateNodeState(nodeId, { status: 'running' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
         // shows true elapsed time instead of restarting from the replay moment.
         onNodeStart: (nodeId, _agent, startedAtMs, traceId, resumedFrom) => updateNodeState(nodeId, { status: 'running', startedAt: anchorTime(startedAtMs), traceId, resumedFrom }),

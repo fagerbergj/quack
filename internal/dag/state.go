@@ -23,6 +23,9 @@ var transitions = map[NodeStatus]map[NodeStatus]bool{
 		StatusFailed:    true,
 	},
 	StatusRunning: {
+		// A running node re-queues at every admission wait, not just its
+		// first: worker->judge and judge->worker slot swaps wait again mid-run.
+		StatusQueued:     true,
 		StatusPaused:     true,
 		StatusNeedsInput: true,
 		StatusDone:       true,

@@ -13,6 +13,7 @@ func TestCanTransition(t *testing.T) {
 		{"queued to running", StatusQueued, StatusRunning, true},
 		{"queued to cancelled", StatusQueued, StatusCancelled, true},
 		{"queued to failed (stale on restart)", StatusQueued, StatusFailed, true},
+		{"running to queued (re-admission wait)", StatusRunning, StatusQueued, true},
 		{"running to paused", StatusRunning, StatusPaused, true},
 		{"running to needs_input", StatusRunning, StatusNeedsInput, true},
 		{"running to done", StatusRunning, StatusDone, true},
@@ -59,7 +60,7 @@ func TestAllowedTargets(t *testing.T) {
 		want []NodeStatus
 	}{
 		{"queued", StatusQueued, []NodeStatus{StatusCancelled, StatusFailed, StatusQueued, StatusRunning}},
-		{"running", StatusRunning, []NodeStatus{StatusCancelled, StatusDone, StatusFailed, StatusNeedsInput, StatusPaused}},
+		{"running", StatusRunning, []NodeStatus{StatusCancelled, StatusDone, StatusFailed, StatusNeedsInput, StatusPaused, StatusQueued}},
 		{"paused", StatusPaused, []NodeStatus{StatusCancelled, StatusRunning}},
 		{"needs_input", StatusNeedsInput, []NodeStatus{StatusCancelled, StatusRunning}},
 		{"done", StatusDone, []NodeStatus{StatusQueued}},

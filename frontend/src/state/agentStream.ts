@@ -169,6 +169,9 @@ export interface AgentStreamHandlers {
   // DAG lifecycle
   onDagPlan?: (plan: DagPlanPayload) => void
   onNodeQueued?: (nodeId: string) => void
+  // A node that had fired node_queued resumed running (a mid-run
+  // worker/judge slot swap, not the node's first dispatch - that's node_start).
+  onNodeAdmitted?: (nodeId: string) => void
   // resumedFrom: present only when this dispatch reused an existing node id -
   // the prior context it continues on.
   onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number, traceId?: string, resumedFrom?: string) => void
@@ -322,6 +325,10 @@ function handleNodeQueued(parsed: unknown, handlers: AgentStreamHandlers): void 
   if (hasStringField(parsed, 'node_id')) handlers.onNodeQueued?.(parsed.node_id)
 }
 
+function handleNodeAdmitted(parsed: unknown, handlers: AgentStreamHandlers): void {
+  if (hasStringField(parsed, 'node_id')) handlers.onNodeAdmitted?.(parsed.node_id)
+}
+
 function handleNodeStart(parsed: unknown, handlers: AgentStreamHandlers): void {
   const p = parsed as { node_id?: string; agent?: string; started_at_ms?: number; trace_id?: string; resumed_from?: string }
   if (typeof p.node_id === 'string') {
@@ -471,6 +478,7 @@ const HANDLERS: Record<string, (parsed: unknown, handlers: AgentStreamHandlers) 
   response_created: handleResponseCreated,
   dag_plan: handleDagPlan,
   node_queued: handleNodeQueued,
+  node_admitted: handleNodeAdmitted,
   node_start: handleNodeStart,
   node_done: handleNodeDone,
   node_failed: handleNodeFailed,

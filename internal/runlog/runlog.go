@@ -313,6 +313,11 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 	case stream.NodeQueuedData:
 		nodeID, to = d.NodeID, dag.StatusQueued
 		n.NodeID, n.Status, n.InstanceID = d.NodeID, string(to), st.InstanceID()
+	case stream.NodeAdmittedData:
+		// Resumed after a mid-run admission wait - status only, so a prior
+		// node_start's started_at/trace_id are never clobbered.
+		nodeID, to = d.NodeID, dag.StatusRunning
+		n.NodeID, n.Status = d.NodeID, string(to)
 	case stream.NodeStartData:
 		nodeID, to = d.NodeID, dag.StatusRunning
 		n.NodeID, n.Status, n.StartedAt, n.InstanceID = d.NodeID, string(to), &t, st.InstanceID()

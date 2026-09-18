@@ -78,6 +78,7 @@ func (f *fakeNodeStore) get(chatID, nodeID string) (status, reason, question str
 func TestNodeTransitions(t *testing.T) {
 	legal := [][2]NodeStatus{
 		{StatusQueued, StatusRunning},
+		{StatusRunning, StatusQueued}, // re-admission wait (worker/judge slot swap)
 		{StatusRunning, StatusPaused},
 		{StatusPaused, StatusRunning},
 		{StatusRunning, StatusDone},

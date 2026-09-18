@@ -16,6 +16,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -302,3 +303,82 @@ func TestJudgePhaseNoDeadlockOnSimultaneousTransition(t *testing.T) {
 }
 
 func idFor(i int) string { return string(rune('a' + i)) }
+
+// TestSetupAdmissionReQueuesOnMidRunWait proves the #1480 fix: a node
+// already running that blocks re-acquiring its slot (the worker/judge swap)
+// fires node_queued, then node_admitted once let back in - both legal moves
+// against dag.CanTransition, not just SSE noise nothing acts on.
+func TestSetupAdmissionReQueuesOnMidRunWait(t *testing.T) {
+	admission := NewAdmission(map[string]int{"w": 1}, nil, nil, 0)
+	spec := AdmissionSpec{Model: "w"}
+
+	holderReady := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	go func() {
+		admission.Admit(context.Background(), spec, nil)
+		close(holderReady)
+		<-releaseHolder
+		admission.Release(spec)
+	}()
+	<-holderReady
+
+	var mu sync.Mutex
+	status := StatusRunning // simulates a node already past its first admission
+	var events []string
+	ctx := stream.WithYield(context.Background(), func(ev stream.SSEEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, ev.Name)
+		var to NodeStatus
+		switch ev.Name {
+		case stream.EventNodeQueued:
+			to = StatusQueued
+		case stream.EventNodeAdmitted:
+			to = StatusRunning
+		default:
+			return
+		}
+		if !CanTransition(status, to) {
+			t.Errorf("illegal transition %s -> %s", status, to)
+		}
+		status = to
+	})
+
+	cfg := &vetting.Config{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		free, err := setupAdmission(ctx, "n1", cfg, admission, spec, AdmissionSpec{})
+		if err != nil {
+			t.Errorf("setupAdmission: %v", err)
+			return
+		}
+		free()
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		got := status
+		mu.Unlock()
+		if got == StatusQueued {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("node never persisted queued while blocked on admission")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(releaseHolder)
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	if status != StatusRunning {
+		t.Errorf("status after re-admission = %s, want running", status)
+	}
+	if len(events) != 2 || events[0] != stream.EventNodeQueued || events[1] != stream.EventNodeAdmitted {
+		t.Errorf("events = %v, want [%s %s]", events, stream.EventNodeQueued, stream.EventNodeAdmitted)
+	}
+}
