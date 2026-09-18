@@ -1166,6 +1166,12 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 
 		na, err := buildNativeNode(name, ac, prov, taskStore, advisorAgent, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg)
 		if err != nil {
+			if ac.Optional {
+				// Degrade honestly: an optional agent whose extension isn't enabled
+				// (its tools unresolved) is dropped from the roster, not a boot error.
+				slog.Warn("optional agent unavailable; dropped from the roster", "component", "startup", "agent", name, "err", err)
+				continue
+			}
 			return nil, nil, nodeServers, nil, nil, nil, nil, err
 		}
 		clientMap[name] = na

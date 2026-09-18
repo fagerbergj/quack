@@ -1,0 +1,109 @@
+{
+  "week": 2,
+  "summary": "One claim that matters: a quarterback. Burrow is Questionable and the bench has none. Rolling waivers put you 6th of 10 this week; a claim moves you to 10th.",
+  "candidates": [
+    {
+      "rank": 1,
+      "player": {
+        "id": "6804",
+        "name": "Jordan Love",
+        "pos": "QB",
+        "team": "GB",
+        "inj": null,
+        "prac": null,
+        "proj": 19.6
+      },
+      "proj": 19.6,
+      "owned_pct": 62.6,
+      "adds_24h": 0,
+      "drop": "Jordyn Tyson (IR)",
+      "why": "Insurance for Burrow and a bench upgrade. Rolling waivers: you are 6th of 10, claim him first; the second QB is the fallback."
+    },
+    {
+      "rank": null,
+      "player": {
+        "id": "8161",
+        "name": "Malik Willis",
+        "pos": "QB",
+        "team": "MIA",
+        "inj": null,
+        "prac": null,
+        "proj": 18.2
+      },
+      "proj": 18.2,
+      "owned_pct": 28.9,
+      "adds_24h": 0,
+      "drop": "Jordyn Tyson (IR)",
+      "why": "Fallback claim if Love is gone."
+    },
+    {
+      "rank": null,
+      "player": {
+        "id": "8134",
+        "name": "Khalil Shakir",
+        "pos": "WR",
+        "team": "BUF",
+        "inj": null,
+        "prac": null,
+        "proj": 10.9
+      },
+      "proj": 10.9,
+      "owned_pct": 63.6,
+      "adds_24h": 118431,
+      "drop": "Devaughn Vele",
+      "why": "Trending add of the day at 64% owned; a WR4 with a floor. Only if Love is gone."
+    },
+    {
+      "rank": null,
+      "player": {
+        "id": "5001",
+        "name": "Dalton Schultz",
+        "pos": "TE",
+        "team": "HOU",
+        "inj": null,
+        "prac": null,
+        "proj": 10.4
+      },
+      "proj": 10.4,
+      "owned_pct": 35.9,
+      "adds_24h": 0,
+      "drop": "Devaughn Vele",
+      "why": "Streaming TE2 if Loveland sits; otherwise skip."
+    },
+    {
+      "rank": null,
+      "player": {
+        "id": "8136",
+        "name": "Rachaad White",
+        "pos": "RB",
+        "team": "WAS",
+        "inj": null,
+        "prac": null,
+        "proj": 8.8
+      },
+      "proj": 8.8,
+      "owned_pct": 62.0,
+      "adds_24h": 0,
+      "drop": "Devaughn Vele",
+      "why": "Depth only; below your bench RBs."
+    },
+    {
+      "rank": null,
+      "player": {
+        "id": "GB",
+        "name": "Green Bay Packers DEF",
+        "pos": "DEF",
+        "team": "GB",
+        "inj": null,
+        "prac": null,
+        "proj": 8.6
+      },
+      "proj": 8.6,
+      "owned_pct": 27.1,
+      "adds_24h": 0,
+      "drop": "New England Patriots DEF",
+      "why": "Same projection as your DEF; not worth the claim."
+    }
+  ],
+  "source_note": "Owned %: Sleeper research week 2. Adds: Sleeper trending, 24h. Waiver type: rolling (priority 6 of 10); FAAB not in use."
+}

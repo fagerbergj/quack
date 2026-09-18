@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/season-notes.json",
+  "title": "season-notes",
+  "description": "One running artifact per league: recurring learnings, written only by the trends job.",
+  "type": "object",
+  "properties": {
+    "updated": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "notes"
+  ]
+}

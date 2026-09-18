@@ -1,0 +1,359 @@
+{
+  "week": 2,
+  "team": "Substation Supremacy",
+  "team_record": "0-1",
+  "opponent": "Pitts and Giggles",
+  "opponent_record": "1-0",
+  "my_proj": 120.8,
+  "opp_proj": 124.1,
+  "summary": "One open question: Joe Burrow's status. Everything else holds. Hover a verdict for the reasoning; the percentage is the chance the recommended player outscores the best alternative this week.",
+  "starters": [
+    {
+      "slot": "QB",
+      "player": {
+        "id": "6770",
+        "name": "Joe Burrow",
+        "pos": "QB",
+        "team": "CIN",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 17.8
+      },
+      "proj": 17.8,
+      "verdict": "start",
+      "confidence": 55,
+      "why": "55%: Questionable (no practice note yet), so this is the chance he plays a full game. No QB on the bench; if he is out Sunday morning, claim Jordan Love (19.6) from the waiver card."
+    },
+    {
+      "slot": "RB",
+      "player": {
+        "id": "4034",
+        "name": "Christian McCaffrey",
+        "pos": "RB",
+        "team": "SF",
+        "inj": null,
+        "prac": null,
+        "proj": 19.8
+      },
+      "proj": 19.8,
+      "verdict": "start",
+      "confidence": null,
+      "why": "Best projection at the slot by a clear margin; no bench player is close."
+    },
+    {
+      "slot": "RB",
+      "player": {
+        "id": "11584",
+        "name": "Bucky Irving",
+        "pos": "RB",
+        "team": "TB",
+        "inj": null,
+        "prac": null,
+        "proj": 13.8
+      },
+      "proj": 13.8,
+      "verdict": "start",
+      "confidence": 64,
+      "why": "64% to outscore Chuba Hubbard: +3.2 projection, more touches and the better matchup."
+    },
+    {
+      "slot": "WR",
+      "player": {
+        "id": "6794",
+        "name": "Justin Jefferson",
+        "pos": "WR",
+        "team": "MIN",
+        "inj": null,
+        "prac": null,
+        "proj": 17.5
+      },
+      "proj": 17.5,
+      "verdict": "start",
+      "confidence": null,
+      "why": "Best projection at the slot by a clear margin; no bench player is close."
+    },
+    {
+      "slot": "WR",
+      "player": {
+        "id": "11632",
+        "name": "Malik Nabers",
+        "pos": "WR",
+        "team": "NYG",
+        "inj": null,
+        "prac": null,
+        "proj": 13.8
+      },
+      "proj": 13.8,
+      "verdict": "start",
+      "confidence": null,
+      "why": "Best projection at the slot by a clear margin; no bench player is close."
+    },
+    {
+      "slot": "TE",
+      "player": {
+        "id": "12517",
+        "name": "Colston Loveland",
+        "pos": "TE",
+        "team": "CHI",
+        "inj": null,
+        "prac": null,
+        "proj": 11.6
+      },
+      "proj": 11.6,
+      "verdict": "start",
+      "confidence": null,
+      "why": "Only TE on the roster; no decision to make."
+    },
+    {
+      "slot": "FLEX",
+      "player": {
+        "id": "8148",
+        "name": "Jameson Williams",
+        "pos": "WR",
+        "team": "DET",
+        "inj": null,
+        "prac": null,
+        "proj": 12.6
+      },
+      "proj": 12.6,
+      "verdict": "start",
+      "confidence": 52,
+      "why": "52% to outscore Devaughn Vele: projection edge only 0.4. Both play Sunday afternoon; revisit after inactives."
+    },
+    {
+      "slot": "K",
+      "player": {
+        "id": "1945",
+        "name": "Chris Boswell",
+        "pos": "K",
+        "team": "PIT",
+        "inj": null,
+        "prac": null,
+        "proj": 5.4
+      },
+      "proj": 5.4,
+      "verdict": "start",
+      "confidence": null,
+      "why": "Only K on the roster; no decision to make."
+    },
+    {
+      "slot": "DEF",
+      "player": {
+        "id": "NE",
+        "name": "New England Patriots DEF",
+        "pos": "DEF",
+        "team": "NE",
+        "inj": null,
+        "prac": null,
+        "proj": 8.5
+      },
+      "proj": 8.5,
+      "verdict": "start",
+      "confidence": null,
+      "why": "Only DEF on the roster. Kansas City is on waivers at the same projection if you want a swap."
+    }
+  ],
+  "bench": [
+    {
+      "player": {
+        "id": "7594",
+        "name": "Chuba Hubbard",
+        "pos": "RB",
+        "team": "CAR",
+        "inj": null,
+        "prac": null,
+        "proj": 12.4
+      },
+      "proj": 12.4,
+      "why": "36% to outscore Irving; the RB2 call is Irving by a touch. First man up."
+    },
+    {
+      "player": {
+        "id": "8142",
+        "name": "Alec Pierce",
+        "pos": "WR",
+        "team": "IND",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 11.6
+      },
+      "proj": 11.6,
+      "why": "Questionable; the FLEX alternative if he clears. 48% vs Williams."
+    },
+    {
+      "player": {
+        "id": "7021",
+        "name": "Rico Dowdle",
+        "pos": "RB",
+        "team": "PIT",
+        "inj": null,
+        "prac": null,
+        "proj": 11.1
+      },
+      "proj": 11.1,
+      "why": "Behind Hubbard now; fine week 1 fill-in."
+    },
+    {
+      "player": {
+        "id": "11586",
+        "name": "Blake Corum",
+        "pos": "RB",
+        "team": "LAR",
+        "inj": null,
+        "prac": null,
+        "proj": 10.6
+      },
+      "proj": 10.6,
+      "why": "Handcuff value only."
+    },
+    {
+      "player": {
+        "id": "11834",
+        "name": "Devaughn Vele",
+        "pos": "WR",
+        "team": "NO",
+        "inj": null,
+        "prac": null,
+        "proj": 9.6
+      },
+      "proj": 9.6,
+      "why": "First drop candidate for a QB claim."
+    }
+  ],
+  "reserve": [
+    {
+      "player": {
+        "id": "13281",
+        "name": "Jordyn Tyson",
+        "pos": "WR",
+        "team": "NO",
+        "inj": "IR",
+        "prac": null,
+        "proj": 0
+      },
+      "why": "Injured reserve; outside the roster count."
+    }
+  ],
+  "reserve_slots": 1,
+  "opponent_starters": [
+    {
+      "slot": "QB",
+      "player": {
+        "id": "11563",
+        "name": "Bo Nix",
+        "pos": "QB",
+        "team": "DEN",
+        "inj": null,
+        "prac": null,
+        "proj": 15.7
+      },
+      "proj": 15.7
+    },
+    {
+      "slot": "RB",
+      "player": {
+        "id": "6813",
+        "name": "Jonathan Taylor",
+        "pos": "RB",
+        "team": "IND",
+        "inj": null,
+        "prac": null,
+        "proj": 18.8
+      },
+      "proj": 18.8
+    },
+    {
+      "slot": "RB",
+      "player": {
+        "id": "12507",
+        "name": "Omarion Hampton",
+        "pos": "RB",
+        "team": "LAC",
+        "inj": null,
+        "prac": null,
+        "proj": 13.7
+      },
+      "proj": 13.7
+    },
+    {
+      "slot": "WR",
+      "player": {
+        "id": "6786",
+        "name": "CeeDee Lamb",
+        "pos": "WR",
+        "team": "DAL",
+        "inj": null,
+        "prac": null,
+        "proj": 18.5
+      },
+      "proj": 18.5
+    },
+    {
+      "slot": "WR",
+      "player": {
+        "id": "7569",
+        "name": "Nico Collins",
+        "pos": "WR",
+        "team": "HOU",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 14.2
+      },
+      "proj": 14.2
+    },
+    {
+      "slot": "TE",
+      "player": {
+        "id": "8130",
+        "name": "Trey McBride",
+        "pos": "TE",
+        "team": "ARI",
+        "inj": null,
+        "prac": null,
+        "proj": 14.6
+      },
+      "proj": 14.6
+    },
+    {
+      "slot": "FLEX",
+      "player": {
+        "id": "11635",
+        "name": "Ladd McConkey",
+        "pos": "WR",
+        "team": "LAC",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 13.1
+      },
+      "proj": 13.1
+    },
+    {
+      "slot": "K",
+      "player": {
+        "id": "4227",
+        "name": "Harrison Butker",
+        "pos": "K",
+        "team": "KC",
+        "inj": null,
+        "prac": null,
+        "proj": 6.3
+      },
+      "proj": 6.3
+    },
+    {
+      "slot": "DEF",
+      "player": {
+        "id": "SF",
+        "name": "San Francisco 49ers DEF",
+        "pos": "DEF",
+        "team": "SF",
+        "inj": null,
+        "prac": null,
+        "proj": 9.2
+      },
+      "proj": 9.2
+    }
+  ],
+  "source_note": "Projections: Sleeper week 2 PPR, fetched 2h ago. Injury and practice fields: Sleeper player records. Lock: Thu 20:15 ET.",
+  "bench_slots": 5
+}

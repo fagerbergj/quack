@@ -79,6 +79,11 @@ func nativeAgentGitHubWriteGrants(t *testing.T, cfg *config.Config, mutating map
 			ExtTools:        extToolsByName,
 		})
 		if err != nil {
+			if ac.Optional {
+				// Mirrors buildAgents' own degrade-honestly path (serve.go): an
+				// optional agent whose extension is off in this config just drops out.
+				continue
+			}
 			t.Fatalf("agent %q: resolve tools the way the runtime would: %v", name, err)
 		}
 		for _, tl := range built {
