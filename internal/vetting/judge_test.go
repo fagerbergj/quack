@@ -569,6 +569,28 @@ func (j artifactReadingJudge) GenerateContent(_ context.Context, req *model.LLMR
 	}
 }
 
+// TestJudgeRepoUnreadPassDiscardRound: the pre-existing repo-tools zero-reads
+// rule (judgereads.go's unreadPass), driven through a real round via the
+// text-JSON fallback so v.Passed is actually true, not just the predicate test.
+func TestJudgeRepoUnreadPassDiscardRound(t *testing.T) {
+	var calls int32
+	var second string
+	readTool := newSpyReadTool(t, "package main", new(int32)) // present but never called
+	factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
+	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "I implemented game.go",
+		workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("model calls = %d, want 2 (one discard, one re-judge)", calls)
+	}
+	if !v.Passed {
+		t.Errorf("final verdict Passed = false, want true (accepted on second offence)")
+	}
+}
+
 // TestJudgeArtifactReadDiscard covers #1497's second zero-reads rule: a PASS
 // that never read an artifact the worker wrote this round is discarded and
 // re-judged once, naming the ids; reading first, or writing nothing, leave the verdict alone.
