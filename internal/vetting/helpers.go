@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
@@ -152,6 +153,10 @@ type Config struct {
 	ReleaseJudge  func()
 	AdmitWorker   func(ctx context.Context) bool
 	ReleaseWorker func()
+	// JudgeArtifactTools: this node's list_artifacts/read_artifact, scoped to
+	// the chat and set by the dag when it builds the gated node - nil only
+	// when no artifact service is configured for the run at all.
+	JudgeArtifactTools []tool.Tool
 }
 
 // HasWorkspaceClone reports whether this node's worker actually has a repo
@@ -272,6 +277,11 @@ type workerActivity struct {
 	paths       map[string]bool // successful fs ops paths, normalizePath'd
 
 	written []string // jail-relative paths for buildChangedFilesSection
+
+	// artifactsWritten: ids the worker wrote/edited via a native artifact tool
+	// this round (write_artifact/edit_artifact/write_<kind>) - feeds the
+	// artifact-read zero-reads discard rule.
+	artifactsWritten []string
 
 	committed bool
 	pushed    bool

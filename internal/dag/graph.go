@@ -18,6 +18,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -60,6 +61,18 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
+	// judgeArtifactTools: one list_artifacts/read_artifact pair for the whole
+	// run, chat- not node-scoped (#1497), shared by every node's judge rounds.
+	var judgeArtifactTools []tool.Tool
+	if artifacts != nil {
+		// No WithLedger: these tools are read-only and never call Save*, so
+		// there is no parent_revision write to stamp a WAL entry for.
+		rc := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
+		var jerr error
+		if judgeArtifactTools, jerr = vetting.NewJudgeArtifactTools(rc); jerr != nil {
+			return nil, nil, fmt.Errorf("dag: judge artifact tools: %w", jerr)
+		}
+	}
 	for _, n := range plan.Nodes {
 		ag, ok := agents[n.AgentName]
 		if !ok {
@@ -100,6 +113,7 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		cfg.Ledger = walLedger
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
+		cfg.JudgeArtifactTools = judgeArtifactTools
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup, sessions)
 	}
 	return nodesByID, subAgents, nil
