@@ -1,7 +1,11 @@
 package serve
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/skillsource"
+	"github.com/fagerbergj/quack/internal/workflowcatalog"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -49,6 +54,16 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 			},
 		},
 		Workspace: config.WorkspaceConfig{Sandbox: "none"},
+		Workflows: []config.WorkflowShape{
+			{
+				Name: "resolves-shape", Trigger: "resolves trigger", Shape: "s", Agents: []string{"tester"},
+				Nodes: []config.WorkflowNode{{ID: "n1", Agent: "tester", Task: "do it"}},
+			},
+			{
+				Name: "drops-shape", Trigger: "drops trigger", Shape: "s", Agents: []string{"broken-optional"},
+				Nodes: []config.WorkflowNode{{ID: "n1", Agent: "broken-optional", Task: "do it"}},
+			},
+		},
 	}
 
 	var setupFn dag.SetupFunc
@@ -65,5 +80,34 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 	}
 	if _, ok := clientMap["broken-optional"]; ok {
 		t.Error(`clientMap["broken-optional"] present - an optional agent with unresolved tools must be dropped`)
+	}
+
+	// finalizeCatalogShapes (serve.go) must remove "drops-shape" - it names the
+	// dropped agent - from BOTH catalog consumers, and log why, while
+	// "resolves-shape" (names the agent that built fine) survives.
+	var buf bytes.Buffer
+	prevLog := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prevLog)
+
+	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
+	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
+	shapesRef.Store(&rawShapes)
+	swappable := newSwappableSkillSource(builtinSkillSrc)
+	b := &boot{cfg: cfg}
+	planSkillSrc := b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef, swappable, jail)
+	if planSkillSrc == nil {
+		t.Fatal("finalizeCatalogShapes returned a nil skill source")
+	}
+
+	filtered := *shapesRef.Load()
+	if _, ok := workflowcatalog.Lookup(filtered, "drops-shape"); ok {
+		t.Error(`shapesRef still names "drops-shape" - its agent was dropped, the extension dispatch catalog must not offer it`)
+	}
+	if _, ok := workflowcatalog.Lookup(filtered, "resolves-shape"); !ok {
+		t.Error(`shapesRef lost "resolves-shape" - its agent built fine, it must stay bindable`)
+	}
+	if !strings.Contains(buf.String(), "shape names a dropped optional agent") || !strings.Contains(buf.String(), "drops-shape") {
+		t.Errorf("expected a warning naming the dropped shape, got:\n%s", buf.String())
 	}
 }

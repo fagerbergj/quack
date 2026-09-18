@@ -1,7 +1,9 @@
 package workflowcatalog
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,5 +181,78 @@ func TestLookupFindsByName(t *testing.T) {
 	}
 	if _, ok := Lookup(shapes, "c"); ok {
 		t.Error("Lookup(c) = true, want false")
+	}
+}
+
+// TestDropAgents is a table test of the shape-removal decision: a shape
+// naming a dropped agent (via Agents or a bound node) is removed, one warning
+// per drop; everything else, and an empty dropped set, passes through untouched.
+func TestDropAgents(t *testing.T) {
+	tests := []struct {
+		name    string
+		shapes  []Shape
+		dropped map[string]bool
+		want    []string // surviving shape names, in order
+		warns   int
+	}{
+		{
+			name:    "no dropped agents is a no-op",
+			shapes:  []Shape{{Name: "a", Agents: []string{"web-researcher"}}},
+			dropped: nil,
+			want:    []string{"a"},
+		},
+		{
+			name:    "shape's Agents list names a dropped agent",
+			shapes:  []Shape{{Name: "sleeper-lineup", Agents: []string{"lineup-analyst"}}},
+			dropped: map[string]bool{"lineup-analyst": true},
+			want:    nil,
+			warns:   1,
+		},
+		{
+			name: "a bound node's agent names a dropped agent",
+			shapes: []Shape{{
+				Name:   "sleeper-lineup",
+				Agents: []string{"lineup-analyst"},
+				Nodes:  []config.WorkflowNode{{ID: "n1", Agent: "lineup-analyst"}},
+			}},
+			dropped: map[string]bool{"lineup-analyst": true},
+			want:    nil,
+			warns:   1,
+		},
+		{
+			name: "unrelated shape survives alongside a dropped one",
+			shapes: []Shape{
+				{Name: "sleeper-lineup", Agents: []string{"lineup-analyst"}},
+				{Name: "document-ingest", Agents: []string{"image-reader"}},
+			},
+			dropped: map[string]bool{"lineup-analyst": true},
+			want:    []string{"document-ingest"},
+			warns:   1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			defer slog.SetDefault(prev)
+
+			got := DropAgents(tt.shapes, tt.dropped)
+			gotNames := make([]string, len(got))
+			for i, s := range got {
+				gotNames[i] = s.Name
+			}
+			if len(gotNames) != len(tt.want) {
+				t.Fatalf("DropAgents names = %v, want %v", gotNames, tt.want)
+			}
+			for i := range tt.want {
+				if gotNames[i] != tt.want[i] {
+					t.Errorf("DropAgents names = %v, want %v", gotNames, tt.want)
+				}
+			}
+			if got := strings.Count(buf.String(), "shape names a dropped optional agent"); got != tt.warns {
+				t.Errorf("warnings logged = %d, want %d:\n%s", got, tt.warns, buf.String())
+			}
+		})
 	}
 }

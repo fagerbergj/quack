@@ -613,6 +613,10 @@ type skillsInit struct {
 	skillSrc         skill.Source
 	skillTS          *skilltoolset.SkillToolset
 	newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error)
+	// swappable is the plugin-registry-derived skill source builtinSkillSrc
+	// wraps - finalizeCatalogShapes re-wraps this SAME instance with the
+	// post-buildAgents filtered shapes for the orchestrator's own skillSrc.
+	swappable *swappableSkillSource
 	// rebuildSkills swaps in a freshly-admitted roster and returns which
 	// (if any) non-seed rows were refused this pass - review#2: rebuild uses
 	// the SAME per-row admission as boot, not an all-or-nothing gate.
@@ -628,7 +632,7 @@ type skillsInit struct {
 // resolves the plugin registry and builds the skill sources and toolsets.
 // st (nilable) is reused for the registry's own DB connection when
 // plugins.store names the same store as session.store (#1427 P3).
-func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store) (skillsInit, error) {
+func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store, rawShapes []workflowcatalog.Shape) (skillsInit, error) {
 	reg, rows, err := b.bootPluginRegistry(ctx, st)
 	if err != nil {
 		return skillsInit{}, err
@@ -651,7 +655,10 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	// agents' next round with no rebuild plumbing beyond this one pointer.
 	liveSkillSrc := newSkillSource(plugins)
 	swappable := newSwappableSkillSource(liveSkillSrc)
-	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision))
+	// RAW (unfiltered) shapes: only backs per-agent named-skill loading and
+	// the judge below, neither of which reads the catalog table -
+	// finalizeCatalogShapes rebuilds the planner's own filtered copy.
+	builtinSkillSrc := workflowcatalog.Wrap(skill.Source(swappable), rawShapes)
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
@@ -689,8 +696,25 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
 		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
 		mcpDeclared: func() map[string]bool { return *mcpDeclaredPtr.Load() },
-		reg:         reg,
+		reg:         reg, swappable: swappable,
 	}, nil
+}
+
+// finalizeCatalogShapes drops shapes naming an agent buildAgents left out of
+// clientMap (DropAgents warns per drop) and republishes the result to both
+// catalog consumers - both were built before buildAgents could know that.
+func (b *boot) finalizeCatalogShapes(rawShapes []workflowcatalog.Shape, clientMap map[string]adkagent.Agent, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], swappable *swappableSkillSource, jail *workspace.Jail) skill.Source {
+	dropped := map[string]bool{}
+	for name, ac := range b.cfg.Agents {
+		if ac.Optional {
+			if _, ok := clientMap[name]; !ok {
+				dropped[name] = true
+			}
+		}
+	}
+	filtered := workflowcatalog.DropAgents(rawShapes, dropped)
+	shapesRef.Store(&filtered)
+	return skillsource.New(workflowcatalog.Wrap(skill.Source(swappable), filtered), jail, localUserID)
 }
 
 // opens the task/user memory stores and the shared boot event log
@@ -706,11 +730,11 @@ func (b *boot) initMemory(ctx context.Context, st *store.Store, artifacts artifa
 }
 
 // builds the SDK extensions, plugin MCP tools, and the ledger recovery path
-func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, plugins []plugin.Plugin) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, error) {
+func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, error) {
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
-	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore)
+	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -901,7 +925,14 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
-	skills, err := b.initSkills(ctx, jail, st)
+	// Computed once for both catalog consumers (planner, extension dispatch);
+	// both are built before buildAgents runs, so shapesRef starts unfiltered
+	// and finalizeCatalogShapes corrects it below, well before either reads it.
+	rawShapes := workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision)
+	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
+	shapesRef.Store(&rawShapes)
+
+	skills, err := b.initSkills(ctx, jail, st, rawShapes)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -909,7 +940,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins)
+	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins, &shapesRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -917,7 +948,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
+	planSkillSrc := b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef, skills.swappable, jail)
+	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, planSkillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
 	if err != nil {
 		return nil, nil, "", err
 	}

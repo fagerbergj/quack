@@ -483,6 +483,46 @@ plugins:
 #   # (internal/inference/openaimodel) doesn't decode inline PDF data yet, so
 #   # this shape is the intended wiring, not yet an end-to-end working one.
 
+# Fixed job shapes the Sleeper extension dispatches by name (RunConfig.Workflow);
+# bound (nodes:) so a dispatch skips the planner call entirely.
+workflows:
+  - name: sleeper-lineup
+    trigger: "Run the Sleeper lineup job for a league (extensions.sleeper dispatch)"
+    agents: [lineup-analyst]
+    shape: "ONE `lineup-analyst` node (terminal - writes the lineup artifact)"
+    nodes:
+      - id: lineup
+        agent: lineup-analyst
+        task: "Decide the start/sit call for every roster slot this week for the Sleeper league and team named below, using the sleeper:start-sit skill.\n\n{{ask}}"
+        artifact: lineup
+  - name: sleeper-waivers
+    trigger: "Run the Sleeper waivers job for a league (extensions.sleeper dispatch)"
+    agents: [waiver-scout]
+    shape: "ONE `waiver-scout` node (terminal - writes the waivers artifact)"
+    nodes:
+      - id: waivers
+        agent: waiver-scout
+        task: "Rank this week's best waiver-wire adds for the Sleeper league and team named below, sizing each claim with the sleeper:waivers skill.\n\n{{ask}}"
+        artifact: waivers
+  - name: sleeper-trends
+    trigger: "Run the Sleeper trends job for a league (extensions.sleeper dispatch)"
+    agents: [trend-scout]
+    shape: "ONE `trend-scout` node (terminal - writes the trends artifact)"
+    nodes:
+      - id: trends
+        agent: trend-scout
+        task: "Build this week's dated trends timeline for the Sleeper league named below, using the sleeper:injury-and-news skill.\n\n{{ask}}"
+        artifact: trends
+  - name: sleeper-season-notes
+    trigger: "Update the Sleeper season notes for a league from this week's trends (extensions.sleeper dispatch)"
+    agents: [trend-scout]
+    shape: "ONE `trend-scout` node (terminal - writes the season-notes artifact)"
+    nodes:
+      - id: season-notes
+        agent: trend-scout
+        task: "Review this week's trends findings for the Sleeper league named below and append any genuinely recurring, league-specific learning to its season notes.\n\n{{ask}}"
+        artifact: season-notes
+
 # The agents' working disk (filesystem/git tools). One configured root; a
 # per-user jail lives under it (<root>/<user_id>/ - "local" today, the OIDC
 # subject later). Not bound to any agent's tools: list yet - see

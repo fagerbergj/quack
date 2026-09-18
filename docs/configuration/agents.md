@@ -34,7 +34,7 @@ agents:
 
 `memory.bucket` buckets the agent into shared memory (`coding` or `research`, empty/absent means no bucket) — memory is shared by subject, not siloed per agent, so what the code-explorer learns about a repo reaches the code-implementer and the code-reviewer too.
 
-`optional: true` marks an agent whose tools depend on a compiled-but-possibly-disabled extension (e.g. the Sleeper agents' `sleeper_*` tools need `extensions.sleeper` enabled): if it fails to build, `buildAgents` warns and drops it from the roster instead of failing boot, so a deployment that never enables that extension still boots with the rest of the roster intact.
+`optional: true` marks an agent whose tools depend on a compiled-but-possibly-disabled extension (e.g. the Sleeper agents' `sleeper_*` tools need `extensions.sleeper` enabled): if it fails to build, `buildAgents` warns and drops it from the roster instead of failing boot, so a deployment that never enables that extension still boots with the rest of the roster intact. A `workflows:` shape naming a dropped optional agent is removed too - see [Extending the workflow catalog](#extending-the-workflow-catalog).
 
 ## Native agents vs. external ACP agents
 
@@ -126,5 +126,7 @@ This renders as a new row directly beneath the shipped table, so the planner sti
 Each shape needs all four fields - `name` (a short id, also the future storage key), `trigger` and `shape` (the table's two columns), and `agents` (every agent name `shape` mentions). A shape missing any of them is dropped with a startup warning naming it; the rest of the catalog still loads. A shape naming an agent that isn't configured under `agents:` fails startup outright, naming both the shape and the missing agent - a plan the executor can't run must never ship. A shape whose `trigger` collides with an existing row (shipped or an earlier custom one) is refused with a warning rather than composed - precedence goes to whichever loaded first, never to "whichever the model reads".
 
 Composition happens once, at server startup, from `internal/workflowcatalog` - the planner always sees the same deterministic table, not a per-plan lookup that can fail or drift mid-run. A deployment with no `workflows:` gets `skills/plan-work/SKILL.md` completely unchanged.
+
+A shape naming an `optional: true` agent (above) that `buildAgents` dropped at startup - its tools didn't resolve - is itself removed from BOTH the planner table and any extension's dispatch catalog, with a startup warning naming the shape and the dropped agent: a job the executor can never run must never reach either consumer.
 
 A shape can also carry an optional `nodes:` list - `{id, agent, task, depends_on, rubric}`, with `task` free to use the literal token `{{ask}}` for the dispatching request's own text. When present, a dispatch naming that shape (an extension's `Run.Workflow`) binds straight to that DAG instead of nudging the planner - no LLM call decomposes the request, because the shape never varies. `trigger`/`shape` still render in the table either way, so the shape stays visible to an ordinary chat request too. A malformed `nodes:` list (unknown agent, a dependency cycle, a duplicate id, a node missing `id`/`agent`/`task`) fails startup outright, naming the shape - the same "never ship what the executor can't run" rule as an unconfigured agent above.

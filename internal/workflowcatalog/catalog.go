@@ -65,6 +65,41 @@ func Lookup(shapes []Shape, name string) (Shape, bool) {
 	return Shape{}, false
 }
 
+// DropAgents removes any shape naming an agent in dropped (its Agents list
+// or a bound node's Agent) - a shape an unresolved optional agent could
+// never serve, dropped from BOTH catalog consumers with one warning each.
+func DropAgents(shapes []Shape, dropped map[string]bool) []Shape {
+	if len(dropped) == 0 {
+		return shapes
+	}
+	out := make([]Shape, 0, len(shapes))
+	for _, s := range shapes {
+		if agent, ok := shapeDroppedAgent(s, dropped); ok {
+			slog.Warn("workflow catalog: shape names a dropped optional agent; shape removed",
+				"component", "workflowcatalog", "shape", s.Name, "agent", agent)
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// shapeDroppedAgent returns the first agent of s (its own list, then each
+// bound node) that dropped names, if any.
+func shapeDroppedAgent(s Shape, dropped map[string]bool) (string, bool) {
+	for _, a := range s.Agents {
+		if dropped[a] {
+			return a, true
+		}
+	}
+	for _, n := range s.Nodes {
+		if dropped[n.Agent] {
+			return n.Agent, true
+		}
+	}
+	return "", false
+}
+
 // askPlaceholder is the only substitution a bound node's task template
 // supports - deliberately no templating engine, per the design's "minimal"
 // call: the first (and only) consumer is a one-or-two-node ingest pipeline.

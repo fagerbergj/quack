@@ -11,8 +11,13 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/tools"
+	"github.com/fagerbergj/quack/internal/workflowcatalog"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// sleeperWorkflowShapeNames: the four bound shapes config/quack.yaml's
+// workflows: declares for the Sleeper extension's dispatch (docs/configuration/agents.md).
+var sleeperWorkflowShapeNames = []string{"sleeper-lineup", "sleeper-waivers", "sleeper-trends", "sleeper-season-notes"}
 
 // sleeperExtToolsByName builds the real sleeper extension the way
 // buildOneSDKExtension does for an enabled config, and indexes its Tools() by
@@ -79,6 +84,79 @@ func TestSleeperAgentsResolveToolsWhenExtensionEnabled(t *testing.T) {
 			ExtTools:        extToolsByName,
 		}); err != nil {
 			t.Errorf("agent %q: tools did not resolve with extensions.sleeper enabled: %v", name, err)
+		}
+	}
+
+	// None of the three agents dropped, so DropAgents is a no-op: every
+	// sleeper-* shape stays in the catalog AND is bindable (has bound nodes).
+	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
+	filtered := workflowcatalog.DropAgents(rawShapes, nil)
+	for _, name := range sleeperWorkflowShapeNames {
+		s, ok := workflowcatalog.Lookup(filtered, name)
+		if !ok {
+			t.Errorf("shape %q missing from config/quack.yaml's workflows: with extensions.sleeper enabled", name)
+			continue
+		}
+		if nodes, ok := workflowcatalog.Bind(s, "test ask"); !ok || len(nodes) == 0 {
+			t.Errorf("shape %q not bindable (workflowcatalog.Bind found no nodes)", name)
+		}
+	}
+}
+
+// TestSleeperWorkflowShapesAbsentWhenExtensionDisabled is the boot test's
+// other half: with extensions.sleeper off (the shipped default), the three
+// Sleeper agents' tools never resolve, buildAgents drops them, and
+// finalizeCatalogShapes' DropAgents must remove every shape naming one -
+// a planner or extension dispatch must never see a job it can't run.
+func TestSleeperWorkflowShapesAbsentWhenExtensionDisabled(t *testing.T) {
+	requireStageDeliverEnv(t)
+	cfg, err := config.Load("../../config/quack.yaml")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace.NewJail: %v", err)
+	}
+
+	dropped := map[string]bool{}
+	for _, name := range []string{"lineup-analyst", "waiver-scout", "trend-scout"} {
+		ac := cfg.Agents[name]
+		prov, ok := cfg.Provider(ac.Provider)
+		if !ok {
+			t.Fatalf("agent %q: unknown provider %q", name, ac.Provider)
+		}
+		wm, err := inference.NewModel(prov, ac.Model, nil, cfg.ModelCost(ac.Model))
+		if err != nil {
+			t.Fatalf("agent %q: model: %v", name, err)
+		}
+		toolNames := resolveToolNames(ac.Tools, true, true)
+		// No ExtTools: extensions.sleeper is off by default, exactly as a
+		// fresh clone boots - sleeper_* never resolves.
+		if _, err := tools.Build(toolNames, tools.Deps{
+			WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
+			Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
+			Summarizer:      wm,
+			Workspace:       jail,
+			WorkspaceUserID: "local",
+		}); err != nil {
+			if !ac.Optional {
+				t.Fatalf("agent %q: tools failed to resolve and it isn't optional: %v", name, err)
+			}
+			dropped[name] = true
+			continue
+		}
+		t.Errorf("agent %q: tools resolved with extensions.sleeper disabled - test fixture drifted from the real config", name)
+	}
+	if len(dropped) != 3 {
+		t.Fatalf("want all three Sleeper agents dropped with extensions.sleeper disabled, got %v", dropped)
+	}
+
+	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
+	filtered := workflowcatalog.DropAgents(rawShapes, dropped)
+	for _, name := range sleeperWorkflowShapeNames {
+		if _, ok := workflowcatalog.Lookup(filtered, name); ok {
+			t.Errorf("shape %q present after dropping the Sleeper agents; DropAgents should have removed it", name)
 		}
 	}
 }

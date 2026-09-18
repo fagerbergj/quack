@@ -63,7 +63,10 @@ type builtSDKExtension struct {
 type sdkBuildDeps struct {
 	cfg           *config.Config
 	factories     map[string]extsdk.Factory
-	shapes        []workflowcatalog.Shape
+	// shapesRef: read lazily by newExtDispatch, since buildAgents (and so the
+	// dropped-agent filter, internal/serve/serve.go's finalizeCatalogShapes)
+	// hasn't run yet when this deps struct is built - see that func's doc.
+	shapesRef     *atomic.Pointer[[]workflowcatalog.Shape]
 	orchRef       *atomic.Pointer[orchestrator.Orchestrator]
 	st            *store.Store
 	hub           *stream.Hub
@@ -78,8 +81,8 @@ type sdkBuildDeps struct {
 // buildSDKExtensions validates and mounts every configured extension module in stable
 // name order (enabled:false modules stay dormant; nil is not an error). The
 // orchRef/judgeModelRef pointers are read lazily inside the Dispatch/Classify closures.
-func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore) ([]builtSDKExtension, error) {
-	d := sdkBuildDeps{cfg: cfg, factories: extsdk.Registered(), shapes: workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision),
+func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, error) {
+	d := sdkBuildDeps{cfg: cfg, factories: extsdk.Registered(), shapesRef: shapesRef,
 		orchRef: orchRef, st: st, hub: hub, eventLog: eventLog, artifacts: artifacts, judgeModelRef: judgeModelRef,
 		taskMem: taskMem, userMem: userMem, ledgerStore: ledgerStore}
 	names := make([]string, 0, len(cfg.Extensions.Modules))
@@ -150,7 +153,7 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 
 	var extHolder atomic.Pointer[extsdk.Extension]
 	host := extsdk.Host{
-		Dispatch:      newExtDispatch(name, d.orchRef, d.st, d.hub, d.eventLog, &extHolder, d.shapes, d.artifacts),
+		Dispatch:      newExtDispatch(name, d.orchRef, d.st, d.hub, d.eventLog, &extHolder, d.shapesRef, d.artifacts),
 		Log:           slog.Default().With("component", "ext."+name),
 		DataDir:       dataDir,
 		Version:       Version,
@@ -435,9 +438,21 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 	return found, foundName, nil
 }
 
+// loadShapes reads shapesRef's current catalog, tolerating a nil ref or an
+// unset pointer (both mean "no shapes configured yet") the way a nil slice does.
+func loadShapes(shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) []workflowcatalog.Shape {
+	if shapesRef == nil {
+		return nil
+	}
+	if p := shapesRef.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
 // newExtDispatch builds the sdk.DispatchFunc an extension's Host carries. Prep (chat
 // row, turn) is synchronous; the run is a goroutine, so Dispatch returns early.
-func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
+func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], shapesRef *atomic.Pointer[[]workflowcatalog.Shape], artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if hub.Draining() {
 			return fmt.Errorf("extensions.%s: server is shutting down; dispatch will need to be retried", name)
@@ -448,7 +463,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		var shape workflowcatalog.Shape
 		if req.Run.Workflow != "" {
 			var ok bool
-			shape, ok = workflowcatalog.Lookup(shapes, req.Run.Workflow)
+			shape, ok = workflowcatalog.Lookup(loadShapes(shapesRef), req.Run.Workflow)
 			if !ok {
 				return fmt.Errorf("extensions.%s: workflow %q is not in the configured workflow catalog", name, req.Run.Workflow)
 			}
