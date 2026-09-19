@@ -1,7 +1,9 @@
 package plugin
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,11 +178,17 @@ func TestResolve_PresentButUnlistedAgentDoesNotFail(t *testing.T) {
 }
 
 // A namespace block that omits the agents/workflows keys entirely leaves
-// Plugin.Agents/Workflows nil - the pre-manifest-list, directory-presence
-// fallback (config.SeedPluginAgents/SeedPluginShapes) stays in effect.
+// Plugin.Agents/Workflows nil - nothing seeds from AgentsDir/WorkflowsDir,
+// same as an explicit empty list, and every present bundle still gets the
+// unlisted warning (proven via a captured log below).
 func TestResolve_ManifestListsOmittedLeaveNil(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{"schemaVersion":1}}}`)
 	writeFile(t, filepath.Join(root, "agents", "scout", "agent-card.json"), `{"name":"scout"}`)
+
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(orig)
 
 	got, err := Resolve([]string{root})
 	if err != nil {
@@ -188,6 +196,9 @@ func TestResolve_ManifestListsOmittedLeaveNil(t *testing.T) {
 	}
 	if got[0].Agents != nil {
 		t.Errorf("Agents = %v, want nil (key omitted)", got[0].Agents)
+	}
+	if !strings.Contains(buf.String(), "scout") || !strings.Contains(buf.String(), "not listed") {
+		t.Errorf("log output %q must warn about the unlisted scout bundle even with the key omitted", buf.String())
 	}
 }
 

@@ -220,7 +220,9 @@ func TestServerValidate_ListsPluginSeededAgentsAndShapes(t *testing.T) {
 	// A local plugin root's registry name is its directory's base name, never
 	// plugin.json's own "name" field - so this dir must be named "acme".
 	pluginDir := mustMkdir(t, filepath.Join(dir, "acme"))
-	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"$schema":"x","name":"acme"}`), 0o644); err != nil {
+	body := `{"$schema":"x","name":"acme","extensions":{"io.github.fagerbergj.quack":{"schemaVersion":1,` +
+		`"agents":["scout"],"workflows":["acme-job"]}}}`
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	agentDir := mustMkdir(t, filepath.Join(pluginDir, "agents", "scout"))
@@ -351,7 +353,8 @@ workspace:
 func writeAcmeScoutPlugin(t *testing.T, dir string) string {
 	t.Helper()
 	pluginDir := mustMkdir(t, filepath.Join(dir, "acme"))
-	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"$schema":"x","name":"acme"}`), 0o644); err != nil {
+	body := `{"$schema":"x","name":"acme","extensions":{"io.github.fagerbergj.quack":{"schemaVersion":1,"agents":["scout"]}}}`
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	agentDir := mustMkdir(t, filepath.Join(pluginDir, "agents", "scout"))
@@ -508,7 +511,8 @@ plugins:
 func TestServerValidate_PluginShapeMissingAgentErrors(t *testing.T) {
 	dir := t.TempDir()
 	pluginDir := mustMkdir(t, filepath.Join(dir, "acme"))
-	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"$schema":"x","name":"acme"}`), 0o644); err != nil {
+	body := `{"$schema":"x","name":"acme","extensions":{"io.github.fagerbergj.quack":{"schemaVersion":1,"workflows":["acme-job"]}}}`
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	workflowsDir := mustMkdir(t, filepath.Join(pluginDir, "workflows"))

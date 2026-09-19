@@ -42,12 +42,11 @@ type Plugin struct {
 	// file, config.WorkflowShape's own schema), or "" when the plugin ships none.
 	WorkflowsDir string
 
-	// Agents is the namespace block's "agents" list (nil when the manifest
-	// doesn't declare one, in which case AgentsDir is seeded by presence).
+	// Agents is the namespace block's "agents" list - the seeding contract.
+	// Nil (list omitted, or no namespace block at all) means nothing seeds from AgentsDir.
 	Agents []string
 
-	// Workflows is the namespace block's "workflows" list (nil when the
-	// manifest doesn't declare one, in which case WorkflowsDir is seeded by presence).
+	// Workflows is the namespace block's "workflows" list, same contract as Agents.
 	Workflows []string
 
 	// Modules are the compiled-in Go modules this plugin declares. quack
@@ -86,8 +85,8 @@ type nsBlock struct {
 	SchemaVersion int      `json:"schemaVersion"`
 	Modules       []Module `json:"modules"`
 	Config        string   `json:"config"`
-	// Agents/Workflows: the manifest's own agents/workflows lists, source of
-	// truth over directory presence - nil (key omitted) means undeclared.
+	// Agents/Workflows: the only input to seeding - nil (key omitted) means
+	// nothing seeds, same as an explicit empty list.
 	Agents    []string `json:"agents"`
 	Workflows []string `json:"workflows"`
 }
@@ -254,15 +253,11 @@ func applyNamespace(p *Plugin, raw json.RawMessage) error {
 	default:
 		return fmt.Errorf("config %q is not \"required\" or \"optional\"", ns.Config)
 	}
-	if ns.Agents != nil {
-		if err := checkManifestList(p.Name, "agents", ns.Agents, dirEntryNames(p.AgentsDir)); err != nil {
-			return err
-		}
+	if err := checkManifestList(p.Name, "agents", ns.Agents, dirEntryNames(p.AgentsDir)); err != nil {
+		return err
 	}
-	if ns.Workflows != nil {
-		if err := checkManifestList(p.Name, "workflows", ns.Workflows, yamlEntryNames(p.WorkflowsDir)); err != nil {
-			return err
-		}
+	if err := checkManifestList(p.Name, "workflows", ns.Workflows, yamlEntryNames(p.WorkflowsDir)); err != nil {
+		return err
 	}
 	p.Modules = ns.Modules
 	p.Agents = ns.Agents

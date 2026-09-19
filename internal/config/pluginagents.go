@@ -102,12 +102,9 @@ func mergeAgentConfig(base, override AgentConfig) AgentConfig {
 	return merged
 }
 
-// allowSet builds a non-nil listed's membership set; nil stays nil, meaning
-// "unfiltered" to allowSet's caller.
+// allowSet builds listed's membership set - nil or empty both yield an
+// empty, non-nil set, so an unlisted plugin seeds nothing rather than everything present.
 func allowSet(listed []string) map[string]bool {
-	if listed == nil {
-		return nil
-	}
 	allowed := make(map[string]bool, len(listed))
 	for _, n := range listed {
 		allowed[n] = true
@@ -115,8 +112,8 @@ func allowSet(listed []string) map[string]bool {
 	return allowed
 }
 
-// SeedPluginAgents merges c.Agents from agentsDir's bundles named in listed
-// (nil falls back to directory presence); an override in c.Agents wins field by field via mergeAgentConfig.
+// SeedPluginAgents merges c.Agents from agentsDir's bundles named in listed -
+// the manifest's list is the only input, so a nil/empty listed seeds nothing. An override in c.Agents wins field by field via mergeAgentConfig.
 func (c *Config) SeedPluginAgents(pluginName, agentsDir string, listed []string) ([]string, error) {
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
@@ -132,7 +129,7 @@ func (c *Config) SeedPluginAgents(pluginName, agentsDir string, listed []string)
 			continue
 		}
 		name := e.Name()
-		if allowed != nil && !allowed[name] {
+		if !allowed[name] {
 			continue
 		}
 		bundleDir := filepath.Join(agentsDir, name)
@@ -168,7 +165,7 @@ func (c *Config) SeedPluginAgents(pluginName, agentsDir string, listed []string)
 }
 
 // SeedPluginShapes merges c.Workflows from workflowsDir's *.yaml files named
-// in listed (nil falls back to presence); a Name that already exists is skipped, not duplicated.
+// in listed (nil/empty seeds nothing); a Name that already exists is skipped, not duplicated.
 func (c *Config) SeedPluginShapes(pluginName, workflowsDir string, listed []string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(workflowsDir, "*.yaml"))
 	if err != nil {
@@ -182,7 +179,7 @@ func (c *Config) SeedPluginShapes(pluginName, workflowsDir string, listed []stri
 	}
 	var attempted []string
 	for _, f := range files {
-		if allowed != nil && !allowed[strings.TrimSuffix(filepath.Base(f), ".yaml")] {
+		if !allowed[strings.TrimSuffix(filepath.Base(f), ".yaml")] {
 			continue
 		}
 		raw, err := os.ReadFile(f)

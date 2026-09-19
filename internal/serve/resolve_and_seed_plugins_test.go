@@ -39,7 +39,8 @@ func TestResolvePlugins_MalformedNamespaceBlockPropagates(t *testing.T) {
 // b.cfg and the returned shapes match workflowcatalog.FromConfig(b.cfg.Workflows).
 func TestResolveAndSeedPlugins_Success(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{"$schema":"x","name":"acme"}`), 0o644); err != nil {
+	body := `{"$schema":"x","name":"acme","extensions":{"io.github.fagerbergj.quack":{"schemaVersion":1,"agents":["scout"]}}}`
+	if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	writeGenericAgentBundle(t, filepath.Join(root, "agents"), "scout")
@@ -68,7 +69,8 @@ func TestResolveAndSeedPlugins_Success(t *testing.T) {
 // (here: a malformed agent.yaml) instead of swallowing it.
 func TestResolveAndSeedPlugins_SeedErrorPropagates(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{"$schema":"x","name":"acme"}`), 0o644); err != nil {
+	body := `{"$schema":"x","name":"acme","extensions":{"io.github.fagerbergj.quack":{"schemaVersion":1,"agents":["scout"]}}}`
+	if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	agentsDir := filepath.Join(root, "agents")

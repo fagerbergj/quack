@@ -58,7 +58,7 @@ func TestSeedPluginAgents_ModelRoleAndDefaults(t *testing.T) {
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\ntools: [web_search]\ncontext_window: 4096\njudge_rounds: 2\n")
 
-	names, err := c.SeedPluginAgents("acme", agentsDir, nil)
+	names, err := c.SeedPluginAgents("acme", agentsDir, []string{"scout"})
 	if err != nil {
 		t.Fatalf("SeedPluginAgents: %v", err)
 	}
@@ -103,19 +103,21 @@ func TestSeedPluginAgents_ListedFiltersOutUnlistedBundle(t *testing.T) {
 	}
 }
 
-// An empty-but-non-nil listed (a manifest declaring "agents": []) seeds
-// nothing - distinct from nil, which falls back to directory presence.
-func TestSeedPluginAgents_EmptyNonNilListedSeedsNothing(t *testing.T) {
-	c := baseConfigForPluginSeed(t)
-	agentsDir := t.TempDir()
-	writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\n")
+// listed is the only input to seeding: nil and an explicit empty list both
+// seed nothing, present bundles included.
+func TestSeedPluginAgents_NilOrEmptyListedSeedsNothing(t *testing.T) {
+	for _, listed := range [][]string{nil, {}} {
+		c := baseConfigForPluginSeed(t)
+		agentsDir := t.TempDir()
+		writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\n")
 
-	names, err := c.SeedPluginAgents("acme", agentsDir, []string{})
-	if err != nil {
-		t.Fatalf("SeedPluginAgents: %v", err)
-	}
-	if len(names) != 0 {
-		t.Errorf("names = %v, want none", names)
+		names, err := c.SeedPluginAgents("acme", agentsDir, listed)
+		if err != nil {
+			t.Fatalf("SeedPluginAgents(listed=%v): %v", listed, err)
+		}
+		if len(names) != 0 {
+			t.Errorf("names = %v, want none for listed=%v", names, listed)
+		}
 	}
 }
 
@@ -131,7 +133,7 @@ func TestSeedPluginAgents_DeploymentOverrideWinsFieldByField(t *testing.T) {
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\ntools: [web_search]\njudge_rounds: 3\n")
 
-	if _, err := c.SeedPluginAgents("acme", agentsDir, nil); err != nil {
+	if _, err := c.SeedPluginAgents("acme", agentsDir, []string{"scout"}); err != nil {
 		t.Fatalf("SeedPluginAgents: %v", err)
 	}
 	ac := c.Agents["scout"]
@@ -157,7 +159,7 @@ func TestSeedPluginAgents_UnknownModelRoleErrorsNamingPlugin(t *testing.T) {
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "model_role: wizard\n")
 
-	_, err := c.SeedPluginAgents("acme", agentsDir, nil)
+	_, err := c.SeedPluginAgents("acme", agentsDir, []string{"scout"})
 	if err == nil {
 		t.Fatal("expected an error for an unknown model_role")
 	}
@@ -174,7 +176,7 @@ func TestSeedPluginShapes_AppearsAndValidates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	names, err := c.SeedPluginShapes("acme", workflowsDir, nil)
+	names, err := c.SeedPluginShapes("acme", workflowsDir, []string{"acme-job"})
 	if err != nil {
 		t.Fatalf("SeedPluginShapes: %v", err)
 	}
@@ -224,7 +226,7 @@ func TestSeedPluginShapes_DedupesAgainstExistingConfigShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	names, err := c.SeedPluginShapes("acme", workflowsDir, nil)
+	names, err := c.SeedPluginShapes("acme", workflowsDir, []string{"acme-job"})
 	if err != nil {
 		t.Fatalf("SeedPluginShapes: %v", err)
 	}
@@ -253,10 +255,10 @@ func TestSeedPluginShapes_DedupesAgainstEarlierPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := c.SeedPluginShapes("first-plugin", firstDir, nil); err != nil {
+	if _, err := c.SeedPluginShapes("first-plugin", firstDir, []string{"acme-job"}); err != nil {
 		t.Fatalf("SeedPluginShapes(first): %v", err)
 	}
-	names, err := c.SeedPluginShapes("second-plugin", secondDir, nil)
+	names, err := c.SeedPluginShapes("second-plugin", secondDir, []string{"acme-job"})
 	if err != nil {
 		t.Fatalf("SeedPluginShapes(second): %v", err)
 	}
@@ -278,7 +280,7 @@ func TestSeedPluginShapes_MissingAgentFailsNamingPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := c.SeedPluginShapes("acme", workflowsDir, nil)
+	_, err := c.SeedPluginShapes("acme", workflowsDir, []string{"acme-job"})
 	if err == nil {
 		t.Fatal("expected an error for a shape naming an unconfigured agent")
 	}
@@ -298,7 +300,7 @@ func TestSeedPluginShapes_MalformedShapeDroppedNotFatal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	names, err := c.SeedPluginShapes("acme", workflowsDir, nil)
+	names, err := c.SeedPluginShapes("acme", workflowsDir, []string{"acme-job"})
 	if err != nil {
 		t.Fatalf("SeedPluginShapes: %v", err)
 	}
@@ -315,7 +317,7 @@ func TestSeedPluginAgents_NoAgentYAMLUsesZeroDefaults(t *testing.T) {
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "")
 
-	if _, err := c.SeedPluginAgents("acme", agentsDir, nil); err != nil {
+	if _, err := c.SeedPluginAgents("acme", agentsDir, []string{"scout"}); err != nil {
 		t.Fatalf("SeedPluginAgents: %v", err)
 	}
 	ac := c.Agents["scout"]
@@ -396,7 +398,7 @@ func TestSeedPluginAgents_NilAgentsMapInitializes(t *testing.T) {
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "")
 
-	if _, err := c.SeedPluginAgents("acme", agentsDir, nil); err != nil {
+	if _, err := c.SeedPluginAgents("acme", agentsDir, []string{"scout"}); err != nil {
 		t.Fatalf("SeedPluginAgents with nil c.Agents: %v", err)
 	}
 	if _, ok := c.Agents["scout"]; !ok {
@@ -418,7 +420,7 @@ func TestSeedPluginAgents_SkipsNonDirAndCardlessEntries(t *testing.T) {
 	}
 	writeAgentBundle(t, agentsDir, "scout", "")
 
-	names, err := c.SeedPluginAgents("acme", agentsDir, nil)
+	names, err := c.SeedPluginAgents("acme", agentsDir, []string{"README.md", "empty-dir", "scout"})
 	if err != nil {
 		t.Fatalf("SeedPluginAgents: %v", err)
 	}
@@ -436,7 +438,7 @@ func TestSeedPluginAgents_ValidateAgentModelErrorNamesPlugin(t *testing.T) {
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\n")
 
-	_, err := c.SeedPluginAgents("acme", agentsDir, nil)
+	_, err := c.SeedPluginAgents("acme", agentsDir, []string{"scout"})
 	if err == nil || !strings.Contains(err.Error(), "acme") {
 		t.Fatalf("SeedPluginAgents = %v, want an error naming the plugin", err)
 	}
@@ -464,7 +466,7 @@ func TestSeedPluginShapes_ReadFileErrorNamesPlugin(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workflowsDir, "acme-job.yaml"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := c.SeedPluginShapes("acme", workflowsDir, nil)
+	_, err := c.SeedPluginShapes("acme", workflowsDir, []string{"acme-job"})
 	if err == nil || !strings.Contains(err.Error(), "acme") {
 		t.Fatalf("SeedPluginShapes(dir named *.yaml) = %v, want an error naming the plugin", err)
 	}
@@ -476,7 +478,7 @@ func TestSeedPluginShapes_MalformedYAMLDecodeErrorNamesPlugin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workflowsDir, "acme-job.yaml"), []byte("name: [unterminated"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := c.SeedPluginShapes("acme", workflowsDir, nil)
+	_, err := c.SeedPluginShapes("acme", workflowsDir, []string{"acme-job"})
 	if err == nil || !strings.Contains(err.Error(), "acme") {
 		t.Fatalf("SeedPluginShapes(malformed yaml) = %v, want an error naming the plugin", err)
 	}
@@ -518,7 +520,7 @@ func TestSeedPluginAgents_OverrideWithoutBundleWaitsForPluginDefault(t *testing.
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\ntools: [web_search]\n")
 
-	if _, err := c.SeedPluginAgents("acme", agentsDir, nil); err != nil {
+	if _, err := c.SeedPluginAgents("acme", agentsDir, []string{"scout"}); err != nil {
 		t.Fatalf("SeedPluginAgents: %v", err)
 	}
 	if err := c.RequireAgentBundlesAndModels(); err != nil {
@@ -577,7 +579,7 @@ func TestSeedPluginAgents_OverrideToolsReplacesNotMerges(t *testing.T) {
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\ntools: [web_search, web_fetch, current_date]\n")
 
-	if _, err := c.SeedPluginAgents("acme", agentsDir, nil); err != nil {
+	if _, err := c.SeedPluginAgents("acme", agentsDir, []string{"scout"}); err != nil {
 		t.Fatalf("SeedPluginAgents: %v", err)
 	}
 	ac := c.Agents["scout"]
@@ -594,7 +596,7 @@ func TestSeedPluginAgents_CoderRoleFallsBackToResearcherModel(t *testing.T) {
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "fixer", "model_role: coder\n")
 
-	if _, err := c.SeedPluginAgents("acme", agentsDir, nil); err != nil {
+	if _, err := c.SeedPluginAgents("acme", agentsDir, []string{"fixer"}); err != nil {
 		t.Fatalf("SeedPluginAgents: %v", err)
 	}
 	if got := c.Agents["fixer"].Model; got != "m" {
