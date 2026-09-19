@@ -115,10 +115,8 @@ func allowSet(listed []string) map[string]bool {
 	return allowed
 }
 
-// SeedPluginAgents merges one plugin's agents/<bundle>/ directories into
-// c.Agents; an existing entry (a deployment override) wins field by field via
-// mergeAgentConfig. listed, when non-nil, restricts seeding to those names -
-// the manifest's list, or nil to fall back to directory presence. Re-validates with validateAgentModel.
+// SeedPluginAgents merges c.Agents from agentsDir's bundles named in listed
+// (nil falls back to directory presence); an override in c.Agents wins field by field via mergeAgentConfig.
 func (c *Config) SeedPluginAgents(pluginName, agentsDir string, listed []string) ([]string, error) {
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
@@ -169,11 +167,8 @@ func (c *Config) SeedPluginAgents(pluginName, agentsDir string, listed []string)
 	return names, nil
 }
 
-// SeedPluginShapes merges one plugin's workflows/*.yaml files into
-// c.Workflows, re-validated by validateWorkflows. A shape whose Name already
-// exists (a config entry, or an earlier plugin's) is skipped, not duplicated.
-// listed, when non-nil, restricts seeding to those filenames (the manifest's
-// list); nil falls back to directory presence.
+// SeedPluginShapes merges c.Workflows from workflowsDir's *.yaml files named
+// in listed (nil falls back to presence); a Name that already exists is skipped, not duplicated.
 func (c *Config) SeedPluginShapes(pluginName, workflowsDir string, listed []string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(workflowsDir, "*.yaml"))
 	if err != nil {
