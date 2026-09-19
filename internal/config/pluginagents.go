@@ -129,7 +129,7 @@ func (c *Config) SeedPluginAgents(pluginName, agentsDir string) ([]string, error
 		base := AgentConfig{
 			Bundle:        bundleDir,
 			Provider:      "default",
-			Model:         os.Getenv(modelRoleEnv[defaults.ModelRole]),
+			Model:         expandEnv(modelRoleEnv[defaults.ModelRole]),
 			ContextWindow: defaults.ContextWindow,
 			Tools:         defaults.Tools,
 			Skills:        defaults.Skills,

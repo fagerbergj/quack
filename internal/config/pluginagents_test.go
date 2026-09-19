@@ -526,3 +526,19 @@ func TestSeedPluginAgents_OverrideToolsReplacesNotMerges(t *testing.T) {
 		t.Errorf("tools = %v, want exactly the override's [current_date] - override replaces, not merges", ac.Tools)
 	}
 }
+
+// model_role: coder takes the same QUACK_CODER_MODEL -> QUACK_RESEARCHER_MODEL
+// fallback config's own agents get, so a coder-less deployment still seeds it.
+func TestSeedPluginAgents_CoderRoleFallsBackToResearcherModel(t *testing.T) {
+	c := baseConfigForPluginSeed(t)
+	t.Setenv("QUACK_CODER_MODEL", "")
+	agentsDir := t.TempDir()
+	writeAgentBundle(t, agentsDir, "fixer", "model_role: coder\n")
+
+	if _, err := c.SeedPluginAgents("acme", agentsDir); err != nil {
+		t.Fatalf("SeedPluginAgents: %v", err)
+	}
+	if got := c.Agents["fixer"].Model; got != "m" {
+		t.Errorf("model = %q, want the researcher fallback m", got)
+	}
+}
