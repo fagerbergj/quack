@@ -148,17 +148,17 @@ func TestLoadRubricFileCustomYAMLPath(t *testing.T) {
 func TestLoadBundleRubricSpecs_ErrorBranches(t *testing.T) {
 	ctx := context.Background()
 	hardRes := artifactsrc.New("langfuse", hardErrSource{}, time.Minute)
-	if _, _, _, _, err := LoadBundleRubricSpecs(ctx, hardRes, "agents/code-reviewer"); err == nil {
+	if _, _, _, _, err := LoadBundleRubricSpecs(ctx, hardRes, "agents/web-researcher"); err == nil {
 		t.Fatal("want an error for a hard resolver failure")
 	}
 
 	brokenRes := artifactsrc.New("langfuse", bodySource{body: "not: [valid"}, time.Minute)
-	if _, _, _, _, err := LoadBundleRubricSpecs(ctx, brokenRes, "agents/code-reviewer"); err == nil {
+	if _, _, _, _, err := LoadBundleRubricSpecs(ctx, brokenRes, "agents/web-researcher"); err == nil {
 		t.Fatal("want a parse error for invalid stored YAML")
 	}
 
 	emptyRes := artifactsrc.New("langfuse", bodySource{body: "criteria: {}\n"}, time.Minute)
-	rendered, specs, fixes, art, err := LoadBundleRubricSpecs(ctx, emptyRes, "agents/code-reviewer")
+	rendered, specs, fixes, art, err := LoadBundleRubricSpecs(ctx, emptyRes, "agents/web-researcher")
 	if err != nil || rendered != "" || specs != nil || fixes != nil || art.Name != "" {
 		t.Errorf("LoadBundleRubricSpecs(no criteria) = (%q, %v, %v, %+v, %v), want all zero", rendered, specs, fixes, art, err)
 	}

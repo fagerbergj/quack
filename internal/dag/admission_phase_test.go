@@ -79,13 +79,11 @@ func TestJudgePhaseFreesWorkerSlotForSecondNode(t *testing.T) {
 	blocking := &blockingJudgeStub{judging: make(chan struct{}), release: make(chan struct{}), score: 0.9}
 	ag1, _ := llmagent.New(llmagent.Config{Name: "w1", Model: blocking, Description: "w", Instruction: "ROLE:w Answer."})
 	wn1, _ := vetting.NewWorkerNode(ag1)
-	gn1 := newGatedNode(plan, plan.Nodes[0], wn1, nil, nil, nil, vetting.NewJudgeFactory(blocking, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, judgeSpec, nil)
-
+	gn1 := newGatedNode(plan, plan.Nodes[0], wn1, nil, nil, nil, vetting.NewJudgeFactory(blocking, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, judgeSpec, nil, false)
 	sig := &signalingStub{workerStarted: make(chan struct{})}
 	ag2, _ := llmagent.New(llmagent.Config{Name: "w2", Model: sig, Description: "w", Instruction: "ROLE:w Answer."})
 	wn2, _ := vetting.NewWorkerNode(ag2)
-	gn2 := newGatedNode(plan, plan.Nodes[1], wn2, nil, nil, nil, vetting.NewJudgeFactory(sig, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, AdmissionSpec{}, nil)
-
+	gn2 := newGatedNode(plan, plan.Nodes[1], wn2, nil, nil, nil, vetting.NewJudgeFactory(sig, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, AdmissionSpec{}, nil, false)
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			var wg sync.WaitGroup
@@ -141,8 +139,7 @@ func TestJudgePhaseCancelReleasesExactlyOnce(t *testing.T) {
 	blocking := &blockingJudgeStub{judging: make(chan struct{}), release: make(chan struct{}), score: 0.9}
 	ag1, _ := llmagent.New(llmagent.Config{Name: "w1", Model: blocking, Description: "w", Instruction: "ROLE:w Answer."})
 	wn1, _ := vetting.NewWorkerNode(ag1)
-	gn1 := newGatedNode(plan, plan.Nodes[0], wn1, nil, nil, nil, vetting.NewJudgeFactory(blocking, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, judgeSpec, nil)
-
+	gn1 := newGatedNode(plan, plan.Nodes[0], wn1, nil, nil, nil, vetting.NewJudgeFactory(blocking, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, judgeSpec, nil, false)
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			cctx, cancel := ctx.WithAgentCancel()
@@ -196,8 +193,7 @@ func TestJudgePhasePauseReleasesExactlyOnce(t *testing.T) {
 	blocking := &blockingJudgeStub{judging: make(chan struct{}), release: make(chan struct{}), score: 0.4}
 	ag1, _ := llmagent.New(llmagent.Config{Name: "w1", Model: blocking, Description: "w", Instruction: "ROLE:w Answer."})
 	wn1, _ := vetting.NewWorkerNode(ag1)
-	gn1 := newGatedNode(plan, plan.Nodes[0], wn1, nil, nil, nil, vetting.NewJudgeFactory(blocking, nil, nil), cfg, nil, controls, chatID, nil, nil, admission, workerSpec, judgeSpec, nil)
-
+	gn1 := newGatedNode(plan, plan.Nodes[0], wn1, nil, nil, nil, vetting.NewJudgeFactory(blocking, nil, nil), cfg, nil, controls, chatID, nil, nil, admission, workerSpec, judgeSpec, nil, false)
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			var wg sync.WaitGroup
@@ -263,7 +259,7 @@ func TestJudgePhaseNoDeadlockOnSimultaneousTransition(t *testing.T) {
 		stub := okStub{}
 		ag, _ := llmagent.New(llmagent.Config{Name: nodes[i].AgentName, Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 		wn, _ := vetting.NewWorkerNode(ag)
-		gates[i] = newGatedNode(plan, nodes[i], wn, nil, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, judgeSpec, nil)
+		gates[i] = newGatedNode(plan, nodes[i], wn, nil, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, judgeSpec, nil, false)
 	}
 
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
@@ -348,7 +344,7 @@ func TestSetupAdmissionReQueuesOnMidRunWait(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		free, err := setupAdmission(ctx, "n1", cfg, admission, spec, AdmissionSpec{})
+		free, err := setupAdmission(ctx, "n1", cfg, admission, spec, AdmissionSpec{}, false)
 		if err != nil {
 			t.Errorf("setupAdmission: %v", err)
 			return

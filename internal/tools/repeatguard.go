@@ -497,6 +497,9 @@ func (w *repeatGuardedToolset) Tools(ctx agent.ReadonlyContext) ([]tool.Tool, er
 		if out[i], err = repeatWrap(t, w.states, w.tripped); err != nil {
 			return nil, err
 		}
+		// #1478: toolset-expanded tools never pass Build's registry, so without
+		// this a skill load leaves no tool.call. Zero coords: the round's ctx carries them.
+		out[i], _ = emitWrap(out[i], ledger.Coords{})
 	}
 	return out, nil
 }
