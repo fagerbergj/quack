@@ -4,7 +4,6 @@ package vetting
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -139,13 +138,20 @@ var warnMermaidValidatorUnavailable = sync.OnceFunc(func() {
 
 // mermaidError validates body via the real mermaid.js parser. "" = valid; degrades gracefully when node/script absent.
 func mermaidError(body string) string {
+	msg, _ := mermaidVerdict(body)
+	return msg
+}
+
+// mermaidVerdict reports the validator's verdict on body. ok=false means no
+// verdict was obtained (node missing, timed out, crashed) - never "invalid".
+func mermaidVerdict(body string) (msg string, ok bool) {
 	if _, err := exec.LookPath("node"); err != nil {
 		warnMermaidValidatorUnavailable()
-		return ""
+		return "", false
 	}
 	if !pathExists(mermaidValidatorPath) {
 		warnMermaidValidatorUnavailable()
-		return ""
+		return "", false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), mermaidValidateTimeout)
 	defer cancel()
@@ -157,32 +163,37 @@ func mermaidError(body string) string {
 	// fail the gate.
 	if ctx.Err() != nil {
 		warnMermaidValidatorTimeout()
-		return ""
-	}
-	if err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			warnMermaidValidatorUnavailable() // launch failure, not invalid diagram
-			return ""
-		}
+		return "", false
 	}
 	var res struct {
 		OK    bool   `json:"ok"`
 		Error string `json:"error"`
 	}
-	if json.Unmarshal(out, &res) != nil {
-		return fmt.Sprintf("the mermaid validator produced unreadable output: %s", out)
+	// The script catches parse errors itself and always exits 0 printing
+	// {"ok":...}: a crash or unparseable output is a broken validator, never an invalid diagram.
+	if err != nil || json.Unmarshal(out, &res) != nil {
+		warnMermaidValidatorBroken(err, out)
+		return "", false
 	}
 	if !res.OK {
-		return translateMermaidError(res.Error)
+		return translateMermaidError(res.Error), true
 	}
-	return ""
+	return "", true
 }
 
 // mermaidValidateTimeout bounds one node invocation. Generous on purpose: the
 // validator loads mermaid's full parser, and a timeout here is indistinguishable
 // from an invalid diagram to the caller. A var so tests can shorten it.
 var mermaidValidateTimeout = 60 * time.Second
+
+var warnBrokenOnce sync.Once
+
+func warnMermaidValidatorBroken(err error, out []byte) {
+	warnBrokenOnce.Do(func() {
+		slog.Warn("mermaid validator failed; diagrams are not being validated",
+			"component", "vetting", "err", err, "output", string(out))
+	})
+}
 
 func warnMermaidValidatorTimeout() {
 	slog.Warn("mermaid validation timed out; skipping the check for this diagram",

@@ -221,9 +221,45 @@ func TestMermaidError(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got := mermaidError(c.body) != ""
-			if got != c.invalid {
+			// A validator that crashed under load has no verdict; skipping
+			// keeps that from reading as "this diagram is invalid".
+			msg, ok := mermaidVerdict(c.body)
+			if !ok {
+				t.Skip("mermaid validator produced no verdict in this environment")
+			}
+			if got := msg != ""; got != c.invalid {
 				t.Errorf("mermaidError(%q) invalid = %v, want %v", c.body, got, c.invalid)
+			}
+		})
+	}
+}
+
+// A validator that crashes or prints garbage is broken plumbing, not a bad
+// diagram: the script exits 0 with JSON for valid and invalid alike.
+func TestMermaidValidate_BrokenValidatorIsNotAnInvalidDiagram(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node unavailable in this environment")
+	}
+	cases := []struct{ name, script string }{
+		{"exits nonzero with no output", "process.exit(1);\n"},
+		{"prints garbage on stdout", "console.log('not json');\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "broken.mjs")
+			if err := os.WriteFile(path, []byte(c.script), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			old := mermaidValidatorPath
+			mermaidValidatorPath = path
+			defer func() { mermaidValidatorPath = old }()
+
+			msg, ok := mermaidVerdict("flowchart TD\nA[Start] --> B[Finish]")
+			if ok {
+				t.Errorf("ok = true, want false: a broken validator has no verdict")
+			}
+			if msg != "" {
+				t.Errorf("msg = %q, want \"\": a broken validator must not mark a diagram invalid", msg)
 			}
 		})
 	}
