@@ -129,7 +129,7 @@ func TestSeedPluginAgentsAndShapes_UnconditionalPluginSeeds(t *testing.T) {
 	cfg.Agents["scout"] = config.AgentConfig{Model: "m"}
 	agentsDir := t.TempDir()
 	writeGenericAgentBundle(t, agentsDir, "scout")
-	p := plugin.Plugin{Name: "acme", AgentsDir: agentsDir}
+	p := plugin.Plugin{Name: "acme", AgentsDir: agentsDir, Agents: []string{"scout"}}
 
 	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
 	if err != nil {
@@ -167,7 +167,7 @@ func TestSeedPluginAgentsAndShapes_AgentSeedErrorPropagates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(agentsDir, "scout", "agent.yaml"), []byte("tools: [unterminated"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := plugin.Plugin{Name: "acme", AgentsDir: agentsDir}
+	p := plugin.Plugin{Name: "acme", AgentsDir: agentsDir, Agents: []string{"scout"}}
 	if _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p}); err == nil {
 		t.Fatal("expected the malformed agent.yaml error to propagate")
 	}
@@ -182,7 +182,7 @@ func TestSeedPluginAgentsAndShapes_ShapeSeedErrorPropagates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workflowsDir, "acme-job.yaml"), []byte(shape), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := plugin.Plugin{Name: "acme", WorkflowsDir: workflowsDir}
+	p := plugin.Plugin{Name: "acme", WorkflowsDir: workflowsDir, Workflows: []string{"acme-job"}}
 	if _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p}); err == nil {
 		t.Fatal("expected the missing-agent shape error to propagate")
 	}

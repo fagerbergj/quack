@@ -39,12 +39,12 @@ func SeedPluginAgentsAndShapes(cfg *config.Config, plugins []plugin.Plugin) ([]P
 		}
 		var agents, shapes []string
 		if p.AgentsDir != "" {
-			if agents, err = cfg.SeedPluginAgents(p.Name, p.AgentsDir); err != nil {
+			if agents, err = cfg.SeedPluginAgents(p.Name, p.AgentsDir, p.Agents); err != nil {
 				return nil, err
 			}
 		}
 		if p.WorkflowsDir != "" {
-			if shapes, err = cfg.SeedPluginShapes(p.Name, p.WorkflowsDir); err != nil {
+			if shapes, err = cfg.SeedPluginShapes(p.Name, p.WorkflowsDir, p.Workflows); err != nil {
 				return nil, err
 			}
 		}
@@ -61,8 +61,14 @@ func pluginGateEnabled(cfg *config.Config, p plugin.Plugin) (bool, error) {
 	if len(p.Modules) == 0 {
 		return true, nil
 	}
+	return pluginModuleGateEnabled(cfg.Extensions.Modules, p)
+}
+
+// pluginModuleGateEnabled is pluginGateEnabled's modules-map form, for
+// admitPlugins/ResolveConfiguredPlugins, which carry the map but not a full *config.Config.
+func pluginModuleGateEnabled(modules map[string]yaml.Node, p plugin.Plugin) (bool, error) {
 	for _, m := range p.Modules {
-		enabled, err := moduleEnabled(cfg, m.Name)
+		enabled, err := moduleEnabledIn(modules, m.Name)
 		if err != nil {
 			return false, err
 		}
@@ -77,7 +83,12 @@ func pluginGateEnabled(cfg *config.Config, p plugin.Plugin) (bool, error) {
 // explicitly disabled - the same decision buildOneSDKExtension makes before
 // mounting the module itself; both call this one helper.
 func moduleEnabled(cfg *config.Config, name string) (bool, error) {
-	node, ok := cfg.Extensions.Modules[name]
+	return moduleEnabledIn(cfg.Extensions.Modules, name)
+}
+
+// moduleEnabledIn is moduleEnabled's modules-map form - see pluginModuleGateEnabled.
+func moduleEnabledIn(modules map[string]yaml.Node, name string) (bool, error) {
+	node, ok := modules[name]
 	if !ok {
 		return false, nil
 	}
@@ -115,10 +126,12 @@ func ResolveConfiguredPlugins(cfg *config.Config) (resolved []plugin.Plugin, unr
 	if err != nil {
 		return nil, unresolvable, err
 	}
+	claims := newManifestClaims()
 	for _, p := range plugins {
+		plugin.WarnUnlistedManifestEntries(p)
 		// Every row here came from plugins.seed, so a refusal is fatal -
 		// the same treatment admitPlugins gives a seed row at boot.
-		if err := checkPlugin(p, cfg.Extensions.Modules); err != nil {
+		if err := admitOnePlugin(p, cfg.Extensions.Modules, claims); err != nil {
 			return nil, unresolvable, err
 		}
 	}

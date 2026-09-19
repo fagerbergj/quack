@@ -7,8 +7,8 @@ quack loads plugins packaged per the [Agent Plugins](https://agent-plugins.org/)
 | Skills | `skills/` | Yes (spec §7.1) |
 | MCP servers | `mcp.json` | Yes (spec §7.2) |
 | quack extension declarations | `plugin.json` → `extensions["io.github.fagerbergj.quack"]` | No (spec §8) |
-| Agent bundles | `agents/<bundle>/` | No - quack's own layout addition |
-| Workflow shapes | `workflows/*.yaml` | No - quack's own layout addition |
+| Agent bundles | `agents/<bundle>/`, listed in the namespace block's `agents` | No - quack's own layout addition |
+| Workflow shapes | `workflows/*.yaml`, listed in the namespace block's `workflows` | No - quack's own layout addition |
 
 Skills are pulled from a dynamic **plugin registry** at run time (epic #1427): each plugin is a registry row, cloned to disk, fetched at boot and refreshable from the UI or REST with no rebuild. A fetched plugin's `mcp.json` loads exactly like a local root's - adding the row is the trust boundary, not a separate MCP approval step (see [Security](#security)). Compiled extension modules still come only from the binary, as described below.
 
@@ -154,6 +154,8 @@ quack does **not** use a `io.github.fagerbergj.quack/` extension directory. §8 
 | `schemaVersion` | yes | Must be `1`. Any other value is a boot error. |
 | `modules` | no | Host-coupled Go modules this plugin declares. `name` is the `sdk.Register` name; `path` is the Go import path, carried so a failure can name the import to add. |
 | `config` | no | `"required"` or `"optional"` (default). See below. |
+| `agents` | no | Agent bundle names to seed - the only input to seeding. Each must be an actual bundle at `agents/<name>/agent-card.json`, or the plugin is refused naming the entry; a bundle present but absent from this list (including when the key is omitted entirely) is skipped and logged, not seeded. |
+| `workflows` | no | Workflow shape names to seed, same contract as `agents` against `workflows/<name>.yaml` - whose internal `name:` must equal `<name>`, or the plugin is refused naming the file. |
 
 Unknown fields inside the block are rejected. Validation and failure handling inside a namespace belong to its owner (§8), and this block declares compiled code, so quack is strict about it.
 
@@ -222,7 +224,9 @@ A plugin can also ship its own agent roster and DAG shapes, seeded into `config.
     <shape-name>.yaml   # one file per shape, the exact `workflows:` entry schema
 ```
 
-Both are discovered by presence, the same way `skills/` is: `internal/plugin.Resolve` sets `AgentsDir`/`WorkflowsDir` on a resolved `Plugin` when those directories exist, no manifest listing required. A subdirectory of `agents/` is a bundle only if it has an `agent-card.json`; every `*.yaml` file under `workflows/` is one shape.
+`internal/plugin.Resolve` sets `AgentsDir`/`WorkflowsDir` on a resolved `Plugin` when those directories exist, the same way `skills/` is found, but the namespace block's `agents`/`workflows` lists are what actually seed: listed and present seeds (unless a config-authored `agents:`/`workflows:` entry of the same name already exists, which still wins), listed and missing refuses the plugin, present but unlisted only warns and does not seed. A plugin that omits a list (or declares it empty) seeds nothing from that directory - the manifest is the only input, not a fallback to what's on disk. Two plugins listing the same agent or workflow name is also a refusal, naming both by their registry row name - manifest lists never silently merge. A subdirectory of `agents/` is a bundle only if it has an `agent-card.json`; every `*.yaml` file under `workflows/` is one shape whose internal `name:` must equal its filename.
+
+These list/missing/collision checks run at plugin admission (`internal/serve`'s `admitPlugins`/`ResolveConfiguredPlugins`), not inside `Resolve` itself: a `plugins.seed` row's refusal still fails boot, but a REST-added row's refusal only drops that one plugin, the same #1430 rule every other plugin refusal already follows.
 
 ### `agent.yaml`
 

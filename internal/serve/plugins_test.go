@@ -187,6 +187,176 @@ func TestAdmitPlugins_PersistsRefusalOnTheRegistryRow(t *testing.T) {
 	}
 }
 
+// pluginWithAgent builds a plugin.Plugin whose AgentsDir/Agents list exactly
+// one real, valid bundle - the fixture admitPlugins' manifest checks need
+// (CheckManifestLists must pass) to reach the cross-plugin collision check.
+func pluginWithAgent(t *testing.T, pluginName, agentName string) plugin.Plugin {
+	t.Helper()
+	dir := t.TempDir()
+	writeGenericAgentBundle(t, dir, agentName)
+	return plugin.Plugin{Name: pluginName, Root: t.TempDir(), AgentsDir: dir, Agents: []string{agentName}}
+}
+
+// Two REST-added (non-seed) rows listing the same agent name: the second
+// collides and is dropped, warned and recorded in refusals; the first stays
+// admitted, and boot itself never fails for a non-seed row (#1430) - the
+// exact scenario review finding 4 flagged as bricking boot before this fix.
+func TestAdmitPlugins_CrossPluginCollisionDropsNonSeedRow(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	a := pluginWithAgent(t, "a", "scout")
+	b := pluginWithAgent(t, "b", "scout")
+	rowA := pluginreg.Plugin{Name: "a", Source: pluginreg.SourceLocal, Entry: "a"}
+	rowB := pluginreg.Plugin{Name: "b", Source: pluginreg.SourceLocal, Entry: "b"}
+	if err := reg.Put(context.Background(), rowA); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Put(context.Background(), rowB); err != nil {
+		t.Fatal(err)
+	}
+
+	admitted, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{rowA, rowB}, []plugin.Plugin{a, b}, nil, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	if len(admitted) != 1 || admitted[0].Name != "a" {
+		t.Fatalf("admitted = %+v, want only a", admitted)
+	}
+	if refusals["b"] == nil || !strings.Contains(refusals["b"].Error(), "scout") {
+		t.Fatalf("refusals[b] = %v, want a collision error naming scout", refusals["b"])
+	}
+}
+
+// Same collision, but b is a plugins.seed row: admitPlugins must fail boot
+// outright, not drop it - #1430's seed-row treatment applies to a manifest
+// collision exactly like any other refusal. b loses the claim here because a
+// (non-seed) is FIRST in plugins - admitPlugins claims in argument order, so
+// every caller must feed it pluginreg.OrderBySeed's seed-first ordering for a
+// seed row to reliably win; see TestAdmitPlugins_SeedRowWinsCollisionWhenFedFirst.
+func TestAdmitPlugins_CrossPluginCollisionFatalForSeedRow(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	a := pluginWithAgent(t, "a", "scout")
+	b := pluginWithAgent(t, "b", "scout")
+	rowA := pluginreg.Plugin{Name: "a", Source: pluginreg.SourceLocal, Entry: "a"}
+	rowB := pluginreg.Plugin{Name: "b", Source: pluginreg.SourceLocal, Entry: "b"}
+
+	_, _, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{rowA, rowB}, []plugin.Plugin{a, b}, []string{"b"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "scout") {
+		t.Fatalf("admitPlugins = %v, want a fatal collision error naming scout for the seed row", err)
+	}
+}
+
+// The production-guaranteed order (pluginreg.OrderBySeed puts seed rows
+// first): a seed row claiming a name before a same-named REST row wins - the
+// REST row is dropped, not fatal.
+func TestAdmitPlugins_SeedRowWinsCollisionWhenFedFirst(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	seed := pluginWithAgent(t, "seed", "scout")
+	rest := pluginWithAgent(t, "rest", "scout")
+	rowSeed := pluginreg.Plugin{Name: "seed", Source: pluginreg.SourceLocal, Entry: "seed"}
+	rowRest := pluginreg.Plugin{Name: "rest", Source: pluginreg.SourceLocal, Entry: "rest"}
+
+	admitted, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{rowSeed, rowRest}, []plugin.Plugin{seed, rest}, []string{"seed"}, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	if len(admitted) != 1 || admitted[0].Name != "seed" {
+		t.Fatalf("admitted = %+v, want only seed", admitted)
+	}
+	if refusals["rest"] == nil || !strings.Contains(refusals["rest"].Error(), "scout") {
+		t.Fatalf("refusals[rest] = %v, want a collision error naming scout", refusals["rest"])
+	}
+}
+
+// A plugin whose module is not configured (gated off) never seeds, so its
+// listed names must not block a different, actually-enabled plugin from
+// claiming the same name.
+func TestAdmitPlugins_GatedOffPluginDoesNotClaimNames(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	off := pluginWithAgent(t, "off", "scout")
+	// "usage" is a linked module (checkModuleLinked passes) with no
+	// extensions.usage: configured here, so the gate itself is what's off.
+	off.Modules = []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack-extensions/usage"}}
+	on := pluginWithAgent(t, "on", "scout")
+	rowOff := pluginreg.Plugin{Name: "off", Source: pluginreg.SourceLocal, Entry: "off"}
+	rowOn := pluginreg.Plugin{Name: "on", Source: pluginreg.SourceLocal, Entry: "on"}
+
+	admitted, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{rowOff, rowOn}, []plugin.Plugin{off, on}, nil, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	if len(refusals) != 0 {
+		t.Fatalf("refusals = %v, want none - a gated-off plugin's own listed names are never a collision", refusals)
+	}
+	names := make(map[string]bool, len(admitted))
+	for _, p := range admitted {
+		names[p.Name] = true
+	}
+	if !names["off"] || !names["on"] {
+		t.Fatalf("admitted = %+v, want both off (dormant) and on", admitted)
+	}
+}
+
+// A REST-added row listing an agent that doesn't exist on disk is dropped
+// like any other refusal, not a fatal boot error - review finding 4's core
+// scenario: a third-party plugin over POST /plugins must never brick boot.
+func TestAdmitPlugins_ListedButMissingDropsNonSeedRow(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	bad := plugin.Plugin{Name: "bad", Root: t.TempDir(), AgentsDir: t.TempDir(), Agents: []string{"ghost"}}
+	row := pluginreg.Plugin{Name: "bad", Source: pluginreg.SourceLocal, Entry: "bad"}
+
+	admitted, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{row}, []plugin.Plugin{bad}, nil, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	if len(admitted) != 0 || refusals["bad"] == nil || !strings.Contains(refusals["bad"].Error(), "ghost") {
+		t.Fatalf("admitted=%v refusals=%v, want bad dropped with a ghost-naming refusal", admitted, refusals)
+	}
+}
+
+// A manifest listing the same name twice is its own plugin's contract
+// error - a distinct "listed twice" message, never the cross-plugin
+// "plugin X and plugin X both list it" self-collision phrasing.
+func TestAdmitPlugins_DuplicateNameInOwnListErrorsDistinctly(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	dup := pluginWithAgent(t, "dup", "scout")
+	dup.Agents = []string{"scout", "scout"}
+	row := pluginreg.Plugin{Name: "dup", Source: pluginreg.SourceLocal, Entry: "dup"}
+
+	_, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{row}, []plugin.Plugin{dup}, nil, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	got := refusals["dup"]
+	if got == nil || !strings.Contains(got.Error(), "listed twice") {
+		t.Fatalf("refusals[dup] = %v, want a \"listed twice\" error", got)
+	}
+	if strings.Contains(got.Error(), "plugin \"dup\" and plugin \"dup\"") {
+		t.Errorf("error %q must not use the self-referential cross-plugin phrasing", got.Error())
+	}
+}
+
+// A duplicate inside one plugin's own list is a manifest error, not a
+// collision, so the module gate never excuses it.
+func TestAdmitPlugins_DuplicateNameRefusedEvenWhenGatedOff(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	off := pluginWithAgent(t, "off", "scout")
+	off.Modules = []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack-extensions/usage"}}
+	off.Agents = []string{"scout", "scout"}
+	row := pluginreg.Plugin{Name: "off", Source: pluginreg.SourceLocal, Entry: "off"}
+
+	admitted, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{row}, []plugin.Plugin{off}, nil, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	got := refusals["off"]
+	if got == nil || !strings.Contains(got.Error(), "listed twice") {
+		t.Fatalf("refusals[off] = %v, want a \"listed twice\" error for a gated-off plugin too", got)
+	}
+	if len(admitted) != 0 {
+		t.Fatalf("admitted = %+v, want none", admitted)
+	}
+}
+
 // mcpJSONBody is a minimal, schema-valid mcp.json declaring one stdio server.
 const mcpJSONBody = `{"$schema":"https://agent-plugins.org/schemas/1.1.0/mcp.schema.json","mcpServers":{"foo":{"type":"stdio","command":"echo"}}}`
 

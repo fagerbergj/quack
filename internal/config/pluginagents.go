@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -101,10 +102,19 @@ func mergeAgentConfig(base, override AgentConfig) AgentConfig {
 	return merged
 }
 
-// SeedPluginAgents merges one plugin's agents/<bundle>/ directories into
-// c.Agents; an existing entry (a deployment override) wins field by field
-// via mergeAgentConfig. Re-validates with validateAgentModel.
-func (c *Config) SeedPluginAgents(pluginName, agentsDir string) ([]string, error) {
+// allowSet builds listed's membership set - nil or empty both yield an
+// empty, non-nil set, so an unlisted plugin seeds nothing rather than everything present.
+func allowSet(listed []string) map[string]bool {
+	allowed := make(map[string]bool, len(listed))
+	for _, n := range listed {
+		allowed[n] = true
+	}
+	return allowed
+}
+
+// SeedPluginAgents merges c.Agents from agentsDir's bundles named in listed -
+// the manifest's list is the only input, so a nil/empty listed seeds nothing. An override in c.Agents wins field by field via mergeAgentConfig.
+func (c *Config) SeedPluginAgents(pluginName, agentsDir string, listed []string) ([]string, error) {
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
 		return nil, fmt.Errorf("plugin %q: read agents dir: %w", pluginName, err)
@@ -112,12 +122,16 @@ func (c *Config) SeedPluginAgents(pluginName, agentsDir string) ([]string, error
 	if c.Agents == nil {
 		c.Agents = map[string]AgentConfig{}
 	}
+	allowed := allowSet(listed)
 	var names []string
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		name := e.Name()
+		if !allowed[name] {
+			continue
+		}
 		bundleDir := filepath.Join(agentsDir, name)
 		if _, err := os.Stat(filepath.Join(bundleDir, "agent-card.json")); err != nil {
 			continue
@@ -150,21 +164,24 @@ func (c *Config) SeedPluginAgents(pluginName, agentsDir string) ([]string, error
 	return names, nil
 }
 
-// SeedPluginShapes merges one plugin's workflows/*.yaml files into
-// c.Workflows, re-validated by validateWorkflows. A shape whose Name already
-// exists (a config entry, or an earlier plugin's) is skipped, not duplicated.
-func (c *Config) SeedPluginShapes(pluginName, workflowsDir string) ([]string, error) {
+// SeedPluginShapes merges c.Workflows from workflowsDir's *.yaml files named
+// in listed (nil/empty seeds nothing); a Name that already exists is skipped, not duplicated.
+func (c *Config) SeedPluginShapes(pluginName, workflowsDir string, listed []string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(workflowsDir, "*.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("plugin %q: read workflows dir: %w", pluginName, err)
 	}
 	sort.Strings(files)
+	allowed := allowSet(listed)
 	existing := make(map[string]bool, len(c.Workflows))
 	for _, w := range c.Workflows {
 		existing[w.Name] = true
 	}
 	var attempted []string
 	for _, f := range files {
+		if !allowed[strings.TrimSuffix(filepath.Base(f), ".yaml")] {
+			continue
+		}
 		raw, err := os.ReadFile(f)
 		if err != nil {
 			return nil, fmt.Errorf("plugin %q: workflow %q: %w", pluginName, filepath.Base(f), err)

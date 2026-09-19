@@ -15,7 +15,9 @@
           "path": "github.com/fagerbergj/quack-extensions/sleeper"
         }
       ],
-      "config": "optional"
+      "config": "optional",
+      "agents": ["lineup-analyst", "waiver-scout", "trend-scout"],
+      "workflows": ["sleeper-lineup", "sleeper-waivers", "sleeper-trends", "sleeper-season-notes"]
     }
   }
 }
