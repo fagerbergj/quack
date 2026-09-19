@@ -354,6 +354,13 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 		cfg.AdmitWorker = func(context.Context) bool { return true }
 	} else {
 		cfg.ReleaseWorker = func() { admission.Release(spec); held = AdmissionSpec{} }
+		cfg.AdmitWorker = func(actx context.Context) bool {
+			if !admit(actx, spec) {
+				return false
+			}
+			held = spec
+			return true
+		}
 	}
 	cfg.AdmitJudge = func(actx context.Context) bool {
 		if !admit(actx, judgeSpec) {
@@ -363,13 +370,6 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 		return true
 	}
 	cfg.ReleaseJudge = func() { admission.Release(judgeSpec); held = AdmissionSpec{} }
-	cfg.AdmitWorker = func(actx context.Context) bool {
-		if !admit(actx, spec) {
-			return false
-		}
-		held = spec
-		return true
-	}
 	return func() { admission.Release(held) }, nil
 }
 

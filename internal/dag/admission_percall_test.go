@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"google.golang.org/adk/v2/model"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // toolPhaseModel: a fakeLLM that fires toolPhase the moment its single
@@ -78,4 +80,36 @@ func TestPerCallHoldsOverlapToolPhases(t *testing.T) {
 	<-bGen.entered
 	close(bGen.release)
 	<-bTool
+}
+
+// TestPerCallNoOpHooksSurviveWiring pins the #1519 round-2 fix: with
+// perCall=true the no-op ReleaseWorker/AdmitWorker must survive the
+// judge-hook wiring below them, else a gated native worker re-holds its
+// whole-run slot after the first judge round and self-deadlocks.
+func TestPerCallNoOpHooksSurviveWiring(t *testing.T) {
+	admission := NewAdmission(map[string]int{"w": 1}, nil, nil, 0)
+	spec := AdmissionSpec{Model: "w"}
+	cfg := &vetting.Config{}
+	free, err := setupAdmission(context.Background(), "n1", cfg, admission, spec, AdmissionSpec{}, true)
+	if err != nil {
+		t.Fatalf("setupAdmission(perCall=true): %v", err)
+	}
+	free()
+	// pre-fix, AdmitWorker was re-assigned unconditionally and re-hold
+	// spec; a full pool then blocks. The no-op must admit instantly.
+	done := make(chan bool, 1)
+	go func() { done <- cfg.AdmitWorker(context.Background()) }()
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Error("perCall AdmitWorker returned false; want the no-op true")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("perCall AdmitWorker blocked re-holding the whole-run slot")
+	}
+	// judge hooks still wired for both modes
+	if !cfg.AdmitJudge(context.Background()) {
+		t.Error("perCall AdmitJudge failed")
+	}
+	cfg.ReleaseWorker()
 }
