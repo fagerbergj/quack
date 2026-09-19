@@ -57,7 +57,7 @@ A seed entry, or an entry POSTed to `/api/v1/plugins`, is one of:
 
 Every registry row has a **name**, which prefixes its skills as `<name>:<skill>`:
 
-- A `github:` entry's name is the repo component (`github:fagerbergj/dotagents` -> `dotagents`), never `plugin.json`'s own `name` field.
+- A `github:` entry's name is the repo component (`github:fagerbergj/dotagents` -> `dotagents`) - or, with a `#path`, the last path segment (`github:fagerbergj/quack-extensions#sleeper/plugin` -> `sleeper`; a trailing `plugin` names its parent, `#sleeper` -> `sleeper`), so one repo can host several plugins. Never `plugin.json`'s own `name` field.
 - A local entry's name is the base name of its path (`/opt/checkouts/my-checkout` -> `my-checkout:<skill>`), also never the manifest's name.
 - `update` and `updates` are reserved outright: they collide with the fixed REST path segments `/api/v1/plugins/update` and `/api/v1/plugins/updates`, and `POST /api/v1/plugins` refuses either name. `quack` is reserved from `POST /api/v1/plugins` the same way, but a `plugins.seed` entry may be named `quack` - that is how a fetched copy shadows the embedded baseline (see below). `DELETE /api/v1/plugins/quack` is refused either way, seed or REST: the embedded baseline itself is never removable.
 
