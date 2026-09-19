@@ -100,7 +100,7 @@ func nativeAgentGitHubWriteGrants(t *testing.T, cfg *config.Config, mutating map
 // to a tool that can push/comment/review/create-issue on GitHub. Currently green because no agent's tools: list names github_comment, github_reply_to_review_comment or github_react_to_comment - the only extension tools the github App exposes.
 func TestNoNativeAgentGrantedGitHubWriteTool(t *testing.T) {
 	requireStageDeliverEnv(t)
-	cfg, err := config.Load("../../config/quack.yaml")
+	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestNoNativeAgentGrantedGitHubWriteTool(t *testing.T) {
 // mutating tool (issue #669's own example) to any agent must fail it. Uses a synthetic config rather than editing the shipped one.
 func TestGitHubWriteGrantCheckCatchesHypotheticalGrant(t *testing.T) {
 	requireStageDeliverEnv(t)
-	cfg, err := config.Load("../../config/quack.yaml")
+	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}

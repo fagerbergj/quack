@@ -80,7 +80,7 @@ sequenceDiagram
 | File | Change | Why |
 | --- | --- | --- |
 | `internal/dag/planner.go:118` | add `MaxDepth int` field to `Plan`, default 6, checked in `Build` before recursing | bound recursive fan-out |
-| `agents/code-reviewer/prompt.md` | one-line pointer to the new skill | wire the new skill |
+| `.agents/plugins/github/agents/code-reviewer/prompt.md` | one-line pointer to the new skill | wire the new skill |
 
 **`<details>` for deep detail** - collapsed by default, one blank line after `<summary>` (required for the body to render as markdown):
 

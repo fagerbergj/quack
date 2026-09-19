@@ -19,7 +19,7 @@ import (
 // the boot-resolved vetting.Config, not just its scalar grading facts.
 func TestResolveGateCfg_SetsMemoryArtifactAndPlugins(t *testing.T) {
 	ctx := context.Background()
-	bundle, err := agent.LoadBundle(ctx, nil, "agents/code-reviewer")
+	bundle, err := agent.LoadBundle(ctx, nil, "../../.agents/plugins/github/agents/code-reviewer")
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestResolveGateCfg_SetsMemoryArtifactAndPlugins(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	gateCfgs := newGateConfigs(1)
 
-	if _, err := resolveGateCfg(cfg, nil, vetting.Config{}, "code-reviewer", config.AgentConfig{Bundle: "agents/code-reviewer"},
+	if _, err := resolveGateCfg(cfg, nil, vetting.Config{}, "code-reviewer", config.AgentConfig{Bundle: "../../.agents/plugins/github/agents/code-reviewer"},
 		true, "## remember", memArt, bundle, gateCfgs, reg); err != nil {
 		t.Fatalf("resolveGateCfg: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestBuildACPNode_WiresPreambleAndMemoryArtifact(t *testing.T) {
 	}
 	builtinSkillSrc := newSkillSource(nil)
 	cfg := &config.Config{Gates: config.GatesConfig{DeterministicChecks: config.StageConfig{MaxRounds: 1}}}
-	ac := config.AgentConfig{Bundle: "agents/code-reviewer", Acp: &config.AcpAgentConfig{Command: []string{"/bin/true"}}}
+	ac := config.AgentConfig{Bundle: "../../.agents/plugins/github/agents/code-reviewer", Acp: &config.AcpAgentConfig{Command: []string{"/bin/true"}}}
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	gateCfgs := newGateConfigs(1)
 	taskStore := &memory.Store{} // never dereferenced by buildACPNode - only nil-checked
@@ -73,19 +73,19 @@ func TestBuildACPNode_WiresPreambleAndMemoryArtifact(t *testing.T) {
 	}
 	opts := acp.OptionsForTesting(a)
 
-	bundle, err := agent.LoadBundle(ctx, nil, "agents/code-reviewer")
+	bundle, err := agent.LoadBundle(ctx, nil, "../../.agents/plugins/github/agents/code-reviewer")
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}
-	wantMem, _, err := agent.LoadBundleMemory(ctx, nil, "agents/code-reviewer")
+	wantMem, wantMemArt, err := agent.LoadBundleMemory(ctx, nil, "../../.agents/plugins/github/agents/code-reviewer")
 	if err != nil {
 		t.Fatalf("LoadBundleMemory: %v", err)
 	}
 	if wantMem == "" {
 		t.Fatal("fixture bundle agents/code-reviewer has no memory.md - test proves nothing")
 	}
-	if opts.MemoryArtifact.Name != "memory/code-reviewer" || opts.MemoryArtifact.VersionID == "" {
-		t.Errorf("Options.MemoryArtifact = %+v, want a resolved memory/code-reviewer artifact", opts.MemoryArtifact)
+	if opts.MemoryArtifact.Name != wantMemArt.Name || opts.MemoryArtifact.VersionID == "" {
+		t.Errorf("Options.MemoryArtifact = %+v, want %+v", opts.MemoryArtifact, wantMemArt)
 	}
 
 	if opts.PreambleArtifact == nil {

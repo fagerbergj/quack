@@ -80,7 +80,7 @@ func sleeperExtToolsByName(t *testing.T) map[string]tool.Tool {
 // four shapes, each agent's real tool set resolves, and every shape binds.
 func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 	requireStageDeliverEnv(t)
-	cfg, err := config.Load("../../config/quack.yaml")
+	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 // of cfg entirely - not seeded then dropped, simply never added.
 func TestSleeperPluginAbsentWhenExtensionDisabled(t *testing.T) {
 	requireStageDeliverEnv(t)
-	cfg, err := config.Load("../../config/quack.yaml")
+	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}

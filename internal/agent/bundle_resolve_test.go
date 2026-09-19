@@ -16,7 +16,10 @@ import (
 // reload of the bundle.
 func TestBundlePromptResolvesPerRound(t *testing.T) {
 	t.Chdir(t.TempDir())
-	dir := filepath.Join("agents", "code-reviewer")
+	// Must be a still-genuinely-shipped agents/<x> name (BundleName's string
+	// check names an artifact regardless of cwd; the shipped registry scan
+	// then also needs to find it, whichever cwd happened to run it first).
+	dir := filepath.Join("agents", "web-researcher")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +29,7 @@ func TestBundlePromptResolvesPerRound(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("agent-card.json", `{"name":"code-reviewer","description":"reviews"}`)
+	write("agent-card.json", `{"name":"web-researcher","description":"researches"}`)
 	write("prompt.md", "FIRST PROMPT\n")
 
 	ctx := context.Background()
