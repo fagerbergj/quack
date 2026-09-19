@@ -5,6 +5,8 @@ import (
 	"iter"
 
 	"google.golang.org/adk/v2/model"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // AdmittingLLM wraps an LLM so a generate call holds admission capacity only
@@ -15,31 +17,46 @@ import (
 // session their own nodes are waiting for).
 type AdmittingLLM struct {
 	model.LLM
-	admission *Admission
-	spec      AdmissionSpec
-	onQueued  func()
+	admission  *Admission
+	spec       AdmissionSpec
+	onQueued   func()
+	onAdmitted func()
 }
 
-// NewAdmittingLLM returns inner unwrapped when there is nothing to enforce,
-// so an unlimited model keeps its original call path. A spec with no Model
-// can only mean an unregistered one (config validation already rejects). onQueued may be nil.
-func NewAdmittingLLM(inner model.LLM, admission *Admission, spec AdmissionSpec, onQueued func()) model.LLM {
+// NewAdmittingLLM returns inner unwrapped when there is nothing to enforce, so an unlimited model keeps its call path.
+// onQueued/onAdmitted may be nil: state events for UI persistence (#1484).
+func NewAdmittingLLM(inner model.LLM, admission *Admission, spec AdmissionSpec, onQueued, onAdmitted func()) model.LLM {
 	if admission == nil || spec.Model == "" {
 		return inner
 	}
 	if onQueued == nil {
 		onQueued = func() {}
 	}
-	return &AdmittingLLM{LLM: inner, admission: admission, spec: spec, onQueued: onQueued}
+	if onAdmitted == nil {
+		onAdmitted = func() {}
+	}
+	return &AdmittingLLM{LLM: inner, admission: admission, spec: spec, onQueued: onQueued, onAdmitted: onAdmitted}
+}
+
+// SetLedgerCoords forwards to the wrapped model so per-round stamps still
+// reach the inference model behind this hold (#1482 wraps the worker base).
+func (a *AdmittingLLM) SetLedgerCoords(c ledger.Coords) {
+	if cs, ok := a.LLM.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
+		cs.SetLedgerCoords(c)
+	}
 }
 
 func (a *AdmittingLLM) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		// Admitted inside the iterator, not at call time: the sequence is lazy,
 		// so reserving earlier would hold a session a caller may never consume.
-		if !a.admission.Admit(ctx, a.spec, a.onQueued) {
+		queued := false
+		if !a.admission.Admit(ctx, a.spec, func() { queued = true; a.onQueued() }) {
 			yield(nil, ctx.Err())
 			return
+		}
+		if queued {
+			a.onAdmitted()
 		}
 		released := false
 		release := func() {
