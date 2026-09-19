@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/serve"
@@ -725,12 +726,13 @@ func newServerValidateCmd() *cobra.Command {
 	return c
 }
 
-// staleAgentBundles catches a stale or typo'd `bundle:` path up front -
-// boot only discovers a missing bundle dir later, at LoadBundle time.
+// staleAgentBundles catches a stale or typo'd `bundle:` path up front, via
+// bundledir.ReadFile's own disk-then-embedded resolution (raw os.Stat would
+// misreport a shipped bundle served from the embedded copy as missing).
 func staleAgentBundles(cfg *config.Config) []string {
 	var stale []string
 	for name, ac := range cfg.Agents {
-		if st, err := os.Stat(ac.Bundle); err != nil || !st.IsDir() {
+		if _, err := bundledir.ReadFile(bundledir.PathJoin(ac.Bundle, "agent-card.json")); err != nil {
 			stale = append(stale, name)
 		}
 	}

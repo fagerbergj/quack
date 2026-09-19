@@ -164,6 +164,55 @@ func TestServerValidate_OfflineNoNetworkNoFileWrites(t *testing.T) {
 	}
 }
 
+// staleAgentBundles must resolve a bundle: path the way LoadBundle does
+// (bundledir: disk in cwd, then the embedded copy) - validating from a
+// directory with no repo checkout must still find every shipped agent's
+// embedded bundle, not misreport all seven as missing.
+func TestServerValidate_ShippedBundlesResolveFromEmbeddedWhenCwdHasNoRepo(t *testing.T) {
+	cfgAbs, err := filepath.Abs("../../config/quack.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(origWD); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	for k, v := range map[string]string{
+		"QUACK_LLM_ENDPOINT": "http://localhost:1", "QUACK_LLM_API_KEY": "x",
+		"QUACK_RESEARCHER_MODEL": "qwen3.8-27b", "QUACK_CODER_MODEL": "qwen3.8-27b",
+		"QUACK_JUDGE_MODEL": "gemma4-26b-a4b", "QUACK_MEDIA_MODEL": "qwen3-omni-30b", "QUACK_IMAGE_MODEL": "qwen3-vl-32b",
+		"QUACK_EMBED_MODEL": "qwen3-embed", "QUACK_ORCH_MODEL": "qwen3.8-27b",
+		"QUACK_SEARXNG_URL": "http://s", "QUACK_CRAWL4AI_URL": "http://c", "QUACK_EXA_API_KEY": "x",
+		"QUACK_DATABASE_URL": "postgres://localhost/db", "QUACK_WORKSPACE_ROOT": filepath.Join(t.TempDir(), "workspace"),
+	} {
+		t.Setenv(k, v)
+	}
+
+	var out bytes.Buffer
+	c := newServerValidateCmd()
+	c.SetOut(&out)
+	c.SetArgs([]string{cfgAbs, "--json"})
+	if err := c.Execute(); err != nil {
+		t.Fatalf("server validate: %v\noutput:\n%s", err, out.String())
+	}
+	var got serverValidateResult
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if len(got.StaleBundles) != 0 {
+		t.Errorf("StaleBundles = %v, want none - every shipped agent must resolve from the embedded copy", got.StaleBundles)
+	}
+}
+
 // `server validate` resolves plugins.seed and lists each plugin's seeded
 // agents and shapes in both --json and plain-text output.
 func TestServerValidate_ListsPluginSeededAgentsAndShapes(t *testing.T) {
