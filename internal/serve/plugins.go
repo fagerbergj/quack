@@ -283,12 +283,9 @@ func (c manifestClaims) claim(p plugin.Plugin) error {
 }
 
 func claimNames(p plugin.Plugin, kind string, names []string, seen map[string]string) error {
-	own := make(map[string]bool, len(names))
+	// A name listed twice within this plugin is plugin.CheckManifestLists'
+	// to refuse, before and regardless of the module gate.
 	for _, name := range names {
-		if own[name] {
-			return &plugin.NamespaceError{Root: p.Root, Err: fmt.Errorf("%s entry %q listed twice", kind, name)}
-		}
-		own[name] = true
 		if owner, ok := seen[name]; ok {
 			return &plugin.NamespaceError{Root: p.Root, Err: fmt.Errorf("%s entry %q: plugin %q and plugin %q both list it", kind, name, owner, p.Name)}
 		}

@@ -335,6 +335,28 @@ func TestAdmitPlugins_DuplicateNameInOwnListErrorsDistinctly(t *testing.T) {
 	}
 }
 
+// A duplicate inside one plugin's own list is a manifest error, not a
+// collision, so the module gate never excuses it.
+func TestAdmitPlugins_DuplicateNameRefusedEvenWhenGatedOff(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	off := pluginWithAgent(t, "off", "scout")
+	off.Modules = []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack-extensions/usage"}}
+	off.Agents = []string{"scout", "scout"}
+	row := pluginreg.Plugin{Name: "off", Source: pluginreg.SourceLocal, Entry: "off"}
+
+	admitted, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{row}, []plugin.Plugin{off}, nil, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	got := refusals["off"]
+	if got == nil || !strings.Contains(got.Error(), "listed twice") {
+		t.Fatalf("refusals[off] = %v, want a \"listed twice\" error for a gated-off plugin too", got)
+	}
+	if len(admitted) != 0 {
+		t.Fatalf("admitted = %+v, want none", admitted)
+	}
+}
+
 // mcpJSONBody is a minimal, schema-valid mcp.json declaring one stdio server.
 const mcpJSONBody = `{"$schema":"https://agent-plugins.org/schemas/1.1.0/mcp.schema.json","mcpServers":{"foo":{"type":"stdio","command":"echo"}}}`
 

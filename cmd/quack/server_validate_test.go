@@ -456,9 +456,8 @@ plugins:
 	}
 }
 
-// A manifest agents list naming a bundle that doesn't exist on disk fails
-// plugin.Resolve, and `server validate` must surface that error naming the
-// plugin and the missing entry.
+// A manifest agents list naming a bundle that doesn't exist on disk is
+// refused at plugin admission, and `server validate` must surface that error naming the plugin and the missing entry.
 func TestServerValidate_ManifestListedAgentMissingErrors(t *testing.T) {
 	dir := t.TempDir()
 	pluginDir := mustMkdir(t, filepath.Join(dir, "acme"))

@@ -242,8 +242,14 @@ func applyNamespace(p *Plugin, raw json.RawMessage) error {
 // CheckManifestLists fails (NamespaceError-class, naming the entry) when a
 // listed agent/workflow isn't actually present - called from internal/serve's admission path, not Resolve.
 func CheckManifestLists(p Plugin) (err error) {
+	if err := checkNoDuplicates("agents", p.Agents); err != nil {
+		return &NamespaceError{Root: p.Root, Err: err}
+	}
+	if err := checkNoDuplicates("workflows", p.Workflows); err != nil {
+		return &NamespaceError{Root: p.Root, Err: err}
+	}
 	agentsPresent := dirEntryNames(p.AgentsDir)
-	workflowsPresent, err := yamlEntryNames(p.Name, p.WorkflowsDir, p.Workflows)
+	workflowsPresent, err := yamlEntryNames(p.Name, p.WorkflowsDir, p.Workflows, false)
 	if err != nil {
 		return &NamespaceError{Root: p.Root, Err: err}
 	}
@@ -261,9 +267,22 @@ func CheckManifestLists(p Plugin) (err error) {
 func WarnUnlistedManifestEntries(p Plugin) {
 	warnUnlisted(p.Name, "agents", p.Agents, dirEntryNames(p.AgentsDir))
 	// A listed shape's own parse/mismatch failure is CheckManifestLists' to
-	// report; yamlEntryNames itself already warns about unlisted ones.
-	workflowsPresent, _ := yamlEntryNames(p.Name, p.WorkflowsDir, p.Workflows)
+	// report; this is the one pass that warns about the unlisted ones.
+	workflowsPresent, _ := yamlEntryNames(p.Name, p.WorkflowsDir, p.Workflows, true)
 	warnUnlisted(p.Name, "workflows", p.Workflows, workflowsPresent)
+}
+
+// checkNoDuplicates fails on a name listed twice in one plugin's own list -
+// a manifest error on its own, so it is refused whether or not the module gate is on.
+func checkNoDuplicates(kind string, listed []string) error {
+	seen := make(map[string]bool, len(listed))
+	for _, name := range listed {
+		if seen[name] {
+			return fmt.Errorf("%s entry %q listed twice", kind, name)
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 // checkListedPresent fails when a listed name isn't actually present.
@@ -284,7 +303,7 @@ func warnUnlisted(pluginName, kind string, listed []string, present map[string]b
 	}
 	for name := range present {
 		if !listedSet[name] {
-			slog.Warn("plugin bundle present but not listed in manifest; not seeded",
+			slog.Warn("plugin entry present but not listed in manifest; not seeded",
 				"component", "plugin", "plugin", pluginName, "kind", kind, "name", name)
 		}
 	}
@@ -316,7 +335,7 @@ func dirEntryNames(dir string) map[string]bool {
 
 // yamlEntryNames lists workflows/*.yaml stems whose internal name: matches
 // the stem. A LISTED entry that fails to parse or mismatch errors; an unlisted one only warns and is excluded.
-func yamlEntryNames(pluginName, dir string, listed []string) (map[string]bool, error) {
+func yamlEntryNames(pluginName, dir string, listed []string, warnInvalid bool) (map[string]bool, error) {
 	out := map[string]bool{}
 	if dir == "" {
 		return out, nil
@@ -345,8 +364,10 @@ func yamlEntryNames(pluginName, dir string, listed []string) (map[string]bool, e
 			}
 			return out, fmt.Errorf("workflows/%s: name %q does not match its filename", e.Name(), name)
 		}
-		slog.Warn("plugin workflow shape invalid; skipped, not seeded",
-			"component", "plugin", "plugin", pluginName, "file", e.Name())
+		if warnInvalid {
+			slog.Warn("plugin workflow shape invalid; skipped, not seeded",
+				"component", "plugin", "plugin", pluginName, "file", e.Name())
+		}
 	}
 	return out, nil
 }
