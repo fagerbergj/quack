@@ -283,7 +283,12 @@ func (c manifestClaims) claim(p plugin.Plugin) error {
 }
 
 func claimNames(p plugin.Plugin, kind string, names []string, seen map[string]string) error {
+	own := make(map[string]bool, len(names))
 	for _, name := range names {
+		if own[name] {
+			return &plugin.NamespaceError{Root: p.Root, Err: fmt.Errorf("%s entry %q listed twice", kind, name)}
+		}
+		own[name] = true
 		if owner, ok := seen[name]; ok {
 			return &plugin.NamespaceError{Root: p.Root, Err: fmt.Errorf("%s entry %q: plugin %q and plugin %q both list it", kind, name, owner, p.Name)}
 		}
@@ -330,6 +335,9 @@ func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []plugi
 	refusals := make(map[string]error)
 	out := make([]plugin.Plugin, 0, len(plugins))
 	claims := newManifestClaims()
+	// claims.claim resolves a name collision to whichever plugin reaches it
+	// first in plugins' order; every caller relies on pluginreg.OrderBySeed
+	// having already put every seed row ahead of REST-added ones.
 	for _, p := range plugins {
 		plugin.WarnUnlistedManifestEntries(p)
 		if err := admitOnePlugin(p, modules, claims); err != nil {

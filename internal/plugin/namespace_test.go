@@ -213,6 +213,29 @@ func TestCheckManifestLists_WorkflowNameMismatchFails(t *testing.T) {
 	}
 }
 
+// An UNLISTED workflow yaml that mismatches its filename or fails to parse
+// must not refuse the plugin - only a LISTED entry's own contract is
+// enforced; a stray, half-written shape file is warned about, not fatal.
+func TestCheckManifestLists_UnlistedWorkflowMismatchOrMalformedDoesNotFail(t *testing.T) {
+	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
+		"schemaVersion":1,"workflows":["alpha"]
+	}}}`)
+	writeFile(t, filepath.Join(root, "workflows", "alpha.yaml"), "name: alpha")
+	writeFile(t, filepath.Join(root, "workflows", "mismatched.yaml"), "name: something-else")
+	writeFile(t, filepath.Join(root, "workflows", "broken.yaml"), "name: [unterminated")
+
+	got, err := Resolve([]string{root})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if err := CheckManifestLists(got[0]); err != nil {
+		t.Fatalf("CheckManifestLists = %v, want no error - only alpha is listed", err)
+	}
+	if len(got[0].Workflows) != 1 || got[0].Workflows[0] != "alpha" {
+		t.Errorf("Workflows = %v, want [alpha]", got[0].Workflows)
+	}
+}
+
 // An agents/ bundle present on disk but absent from the manifest's list is
 // not an error - CheckManifestLists passes, and it is simply excluded from p.Agents.
 func TestResolve_PresentButUnlistedAgentDoesNotFail(t *testing.T) {

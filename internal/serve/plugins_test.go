@@ -228,7 +228,10 @@ func TestAdmitPlugins_CrossPluginCollisionDropsNonSeedRow(t *testing.T) {
 
 // Same collision, but b is a plugins.seed row: admitPlugins must fail boot
 // outright, not drop it - #1430's seed-row treatment applies to a manifest
-// collision exactly like any other refusal.
+// collision exactly like any other refusal. b loses the claim here because a
+// (non-seed) is FIRST in plugins - admitPlugins claims in argument order, so
+// every caller must feed it pluginreg.OrderBySeed's seed-first ordering for a
+// seed row to reliably win; see TestAdmitPlugins_SeedRowWinsCollisionWhenFedFirst.
 func TestAdmitPlugins_CrossPluginCollisionFatalForSeedRow(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	a := pluginWithAgent(t, "a", "scout")
@@ -239,6 +242,28 @@ func TestAdmitPlugins_CrossPluginCollisionFatalForSeedRow(t *testing.T) {
 	_, _, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{rowA, rowB}, []plugin.Plugin{a, b}, []string{"b"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "scout") {
 		t.Fatalf("admitPlugins = %v, want a fatal collision error naming scout for the seed row", err)
+	}
+}
+
+// The production-guaranteed order (pluginreg.OrderBySeed puts seed rows
+// first): a seed row claiming a name before a same-named REST row wins - the
+// REST row is dropped, not fatal.
+func TestAdmitPlugins_SeedRowWinsCollisionWhenFedFirst(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	seed := pluginWithAgent(t, "seed", "scout")
+	rest := pluginWithAgent(t, "rest", "scout")
+	rowSeed := pluginreg.Plugin{Name: "seed", Source: pluginreg.SourceLocal, Entry: "seed"}
+	rowRest := pluginreg.Plugin{Name: "rest", Source: pluginreg.SourceLocal, Entry: "rest"}
+
+	admitted, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{rowSeed, rowRest}, []plugin.Plugin{seed, rest}, []string{"seed"}, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	if len(admitted) != 1 || admitted[0].Name != "seed" {
+		t.Fatalf("admitted = %+v, want only seed", admitted)
+	}
+	if refusals["rest"] == nil || !strings.Contains(refusals["rest"].Error(), "scout") {
+		t.Fatalf("refusals[rest] = %v, want a collision error naming scout", refusals["rest"])
 	}
 }
 
@@ -285,6 +310,28 @@ func TestAdmitPlugins_ListedButMissingDropsNonSeedRow(t *testing.T) {
 	}
 	if len(admitted) != 0 || refusals["bad"] == nil || !strings.Contains(refusals["bad"].Error(), "ghost") {
 		t.Fatalf("admitted=%v refusals=%v, want bad dropped with a ghost-naming refusal", admitted, refusals)
+	}
+}
+
+// A manifest listing the same name twice is its own plugin's contract
+// error - a distinct "listed twice" message, never the cross-plugin
+// "plugin X and plugin X both list it" self-collision phrasing.
+func TestAdmitPlugins_DuplicateNameInOwnListErrorsDistinctly(t *testing.T) {
+	reg := pluginreg.NewFSRegistry(t.TempDir())
+	dup := pluginWithAgent(t, "dup", "scout")
+	dup.Agents = []string{"scout", "scout"}
+	row := pluginreg.Plugin{Name: "dup", Source: pluginreg.SourceLocal, Entry: "dup"}
+
+	_, refusals, err := admitPlugins(context.Background(), reg, []pluginreg.Plugin{row}, []plugin.Plugin{dup}, nil, nil)
+	if err != nil {
+		t.Fatalf("admitPlugins: %v", err)
+	}
+	got := refusals["dup"]
+	if got == nil || !strings.Contains(got.Error(), "listed twice") {
+		t.Fatalf("refusals[dup] = %v, want a \"listed twice\" error", got)
+	}
+	if strings.Contains(got.Error(), "plugin \"dup\" and plugin \"dup\"") {
+		t.Errorf("error %q must not use the self-referential cross-plugin phrasing", got.Error())
 	}
 }
 

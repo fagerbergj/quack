@@ -243,7 +243,7 @@ func applyNamespace(p *Plugin, raw json.RawMessage) error {
 // listed agent/workflow isn't actually present - called from internal/serve's admission path, not Resolve.
 func CheckManifestLists(p Plugin) (err error) {
 	agentsPresent := dirEntryNames(p.AgentsDir)
-	workflowsPresent, err := yamlEntryNames(p.WorkflowsDir)
+	workflowsPresent, err := yamlEntryNames(p.Name, p.WorkflowsDir, p.Workflows)
 	if err != nil {
 		return &NamespaceError{Root: p.Root, Err: err}
 	}
@@ -260,10 +260,9 @@ func CheckManifestLists(p Plugin) (err error) {
 // entry - fired even with no namespace block at all, which means an empty list, not "everything".
 func WarnUnlistedManifestEntries(p Plugin) {
 	warnUnlisted(p.Name, "agents", p.Agents, dirEntryNames(p.AgentsDir))
-	workflowsPresent, err := yamlEntryNames(p.WorkflowsDir)
-	if err != nil {
-		return // malformed shape - CheckManifestLists reports it, not this diagnostic pass
-	}
+	// A listed shape's own parse/mismatch failure is CheckManifestLists' to
+	// report; yamlEntryNames itself already warns about unlisted ones.
+	workflowsPresent, _ := yamlEntryNames(p.Name, p.WorkflowsDir, p.Workflows)
 	warnUnlisted(p.Name, "workflows", p.Workflows, workflowsPresent)
 }
 
@@ -315,9 +314,9 @@ func dirEntryNames(dir string) map[string]bool {
 	return out
 }
 
-// yamlEntryNames lists workflows/*.yaml file stems whose internal name:
-// field matches the stem - the identity every other check keys on; a mismatch errors rather than being silently admitted.
-func yamlEntryNames(dir string) (map[string]bool, error) {
+// yamlEntryNames lists workflows/*.yaml stems whose internal name: matches
+// the stem. A LISTED entry that fails to parse or mismatch errors; an unlisted one only warns and is excluded.
+func yamlEntryNames(pluginName, dir string, listed []string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if dir == "" {
 		return out, nil
@@ -326,19 +325,28 @@ func yamlEntryNames(dir string) (map[string]bool, error) {
 	if err != nil {
 		return out, nil
 	}
+	listedSet := make(map[string]bool, len(listed))
+	for _, n := range listed {
+		listedSet[n] = true
+	}
 	for _, e := range entries {
 		stem, ok := strings.CutSuffix(e.Name(), ".yaml")
 		if !ok || e.IsDir() {
 			continue
 		}
 		name, err := workflowShapeName(filepath.Join(dir, e.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("workflows/%s: %w", e.Name(), err)
+		if err == nil && name == stem {
+			out[stem] = true
+			continue
 		}
-		if name != stem {
-			return nil, fmt.Errorf("workflows/%s: name %q does not match its filename", e.Name(), name)
+		if listedSet[stem] {
+			if err != nil {
+				return out, fmt.Errorf("workflows/%s: %w", e.Name(), err)
+			}
+			return out, fmt.Errorf("workflows/%s: name %q does not match its filename", e.Name(), name)
 		}
-		out[stem] = true
+		slog.Warn("plugin workflow shape invalid; skipped, not seeded",
+			"component", "plugin", "plugin", pluginName, "file", e.Name())
 	}
 	return out, nil
 }
