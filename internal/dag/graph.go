@@ -84,31 +84,35 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		}
 		worker := ag
 		workerModel := models[n.AgentName]
+		node := n
+		var spec AdmissionSpec
+		if specFor != nil {
+			spec = specFor(node.AgentName)
+		}
 		var workerTools []tool.Tool
 		var release func(paused bool)
 		var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 		var refreshPrompt func(context.Context) artifactsrc.Artifact
+		perCall := false // native workers hold admission per model call; ACP nodes per subprocess round
 		if scoped, ok := ag.(nodeScopedWorker); ok {
 			w, m, wt, src, rp, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
 			worker, workerModel, workerTools, setRoundCoords, refreshPrompt, release = w, m, wt, src, rp, rel
+			// #1482: the per-call hold lives on the model buildWorker wraps, so the slot
+			// frees between this node's model calls (tool phases overlap).
+			perCall = true
 		}
-		worker, err := withRoundAbort(worker, controls, chatID, n.ID)
+		worker, err := withRoundAbort(worker, controls, chatID, node.ID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("dag: node %q: round-abort wrap: %w", n.ID, err)
+			return nil, nil, fmt.Errorf("dag: node %q: round-abort wrap: %w", node.ID, err)
 		}
 		workerNode, err := vetting.NewWorkerNode(worker)
 		if err != nil {
 			return nil, nil, err
 		}
-		node := n
 		cfg := nodeGateConfig(ctx, plan, node, worker, cfgFor, chatID, source)
-		var spec AdmissionSpec
-		if specFor != nil {
-			spec = specFor(node.AgentName)
-		}
 		cfg.Artifacts = artifacts
 		// buildTask's dependency-artifact lookup scopes recordstore reads by this,
 		// same as vetting.newGateRun's own cfg.User stamp for the node's own rounds.
@@ -117,7 +121,7 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup, perCall)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -237,7 +241,7 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 }
 
 func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), release func(paused bool), admission *Admission, spec, judgeSpec AdmissionSpec,
-	refreshSetup func(context.Context, Node, vetting.Config) bool) workflow.Node {
+	refreshSetup func(context.Context, Node, vetting.Config) bool, perCall bool) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			// paused stays false on every path except the HITL-park return below:
@@ -247,7 +251,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				defer func() { release(paused) }()
 			}
 			if admission != nil {
-				free, aerr := setupAdmission(ctx, node.ID, &cfg, admission, spec, judgeSpec)
+				free, aerr := setupAdmission(ctx, node.ID, &cfg, admission, spec, judgeSpec, perCall)
 				if aerr != nil {
 					return "", aerr
 				}
@@ -319,9 +323,8 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 		workflow.NodeConfig{})
 }
 
-// setupAdmission: reserve the node's worker slot, then wire the four
-// admission hooks RunGatedRefine uses to swap the held spec for the judge's during judge calls.
-func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, admission *Admission, spec, judgeSpec AdmissionSpec) (func(), error) {
+// setupAdmission wires RunGatedRefine's four judge-swap hooks. perCall (native models wrapped in AdmittingLLM, #1482) skips the whole-run worker admit and no-ops the worker hooks; ACP nodes keep it - their subprocess round is the hold unit.
+func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, admission *Admission, spec, judgeSpec AdmissionSpec, perCall bool) (func(), error) {
 	yield, hasYield := stream.YieldFromContext(ctx)
 	// admit wraps one Admit call so every wait - not just the node's first -
 	// persists queued while blocked and running again once let back in.
@@ -338,13 +341,20 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 		}
 		return ok
 	}
-	if !admit(ctx, spec) {
+	if !perCall && !admit(ctx, spec) {
 		return nil, ctx.Err()
 	}
 	// held tracks the currently-reserved spec, swapped by RunGatedRefine
 	// between spec and judgeSpec, so the release below always frees what's actually held.
 	held := spec
-	cfg.ReleaseWorker = func() { admission.Release(spec); held = AdmissionSpec{} }
+	if perCall {
+		// The worker hold is per model call (held inside AdmittingLLM), never here.
+		held = AdmissionSpec{}
+		cfg.ReleaseWorker = func() {}
+		cfg.AdmitWorker = func(context.Context) bool { return true }
+	} else {
+		cfg.ReleaseWorker = func() { admission.Release(spec); held = AdmissionSpec{} }
+	}
 	cfg.AdmitJudge = func(actx context.Context) bool {
 		if !admit(actx, judgeSpec) {
 			return false

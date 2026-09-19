@@ -37,7 +37,7 @@ func TestAdmittingLLMReleasesBetweenTurns(t *testing.T) {
 	spec := AdmissionSpec{Model: "m"}
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
 	f := &fakeLLM{entered: make(chan struct{}), release: make(chan struct{})}
-	llm := NewAdmittingLLM(f, a, spec, nil)
+	llm := NewAdmittingLLM(f, a, spec, nil, nil)
 
 	done := make(chan struct{})
 	go func() { defer close(done); drainLLM(llm.GenerateContent(context.Background(), nil, false)) }()
@@ -71,7 +71,7 @@ func TestAdmittingLLMDoesNotDeadlockNodesOnSameModel(t *testing.T) {
 	spec := AdmissionSpec{Model: "m"}
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
 	f := &fakeLLM{entered: make(chan struct{}), release: make(chan struct{})}
-	llm := NewAdmittingLLM(f, a, spec, nil)
+	llm := NewAdmittingLLM(f, a, spec, nil, nil)
 
 	turnDone := make(chan struct{})
 	go func() {
@@ -113,7 +113,7 @@ func TestAdmittingLLMReleasesBeforeYieldingCompleteResponse(t *testing.T) {
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
 	f := &fakeLLM{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	close(f.release) // nothing to block entry on for this test
-	llm := NewAdmittingLLM(f, a, spec, nil)
+	llm := NewAdmittingLLM(f, a, spec, nil, nil)
 
 	sawComplete := false
 	for resp, err := range llm.GenerateContent(context.Background(), nil, false) {
@@ -141,11 +141,11 @@ func TestAdmittingLLMReleasesBeforeYieldingCompleteResponse(t *testing.T) {
 
 func TestNewAdmittingLLMUnwrapsWhenUnenforced(t *testing.T) {
 	f := &fakeLLM{}
-	if got := NewAdmittingLLM(f, nil, AdmissionSpec{Model: "m"}, nil); got != model.LLM(f) {
+	if got := NewAdmittingLLM(f, nil, AdmissionSpec{Model: "m"}, nil, nil); got != model.LLM(f) {
 		t.Error("nil admission should return the inner LLM unwrapped")
 	}
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
-	if got := NewAdmittingLLM(f, a, AdmissionSpec{}, nil); got != model.LLM(f) {
+	if got := NewAdmittingLLM(f, a, AdmissionSpec{}, nil, nil); got != model.LLM(f) {
 		t.Error("an unregistered orchestrator model should return the inner LLM unwrapped")
 	}
 }

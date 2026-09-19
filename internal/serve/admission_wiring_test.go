@@ -201,7 +201,7 @@ func TestClassifyModel_ReservesAndReleases(t *testing.T) {
 	}
 	admission := dag.NewAdmission(map[string]int{"judge-model": 1}, nil, nil, 0)
 	fake := &blockingLLM{entered: make(chan struct{}), release: make(chan struct{}), text: "a title"}
-	wrapped := dag.NewAdmittingLLM(fake, admission, lightweightSpec(cfg, "judge-model"), nil)
+	wrapped := dag.NewAdmittingLLM(fake, admission, lightweightSpec(cfg, "judge-model"), nil, nil)
 
 	result := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -319,7 +319,7 @@ func TestOrchestratorWrap_Unchanged(t *testing.T) {
 	}
 	admission := dag.NewAdmission(map[string]int{"orch-model": 1}, nil, nil, 0)
 	fake := &blockingLLM{entered: make(chan struct{}), release: make(chan struct{})}
-	orchLLM := dag.NewAdmittingLLM(fake, admission, orchestratorSpec(cfg), nil)
+	orchLLM := dag.NewAdmittingLLM(fake, admission, orchestratorSpec(cfg), nil, nil)
 
 	done := make(chan struct{})
 	go func() {

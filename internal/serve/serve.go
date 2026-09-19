@@ -844,7 +844,7 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 			}
 		}
 		// Classify fires outside any DAG node's round, so it must reserve its own capacity.
-		classifyModel = dag.NewAdmittingLLM(classifyModel, b.admission, lightweightSpec(b.cfg, b.cfg.Gates.Judge.Model), nil)
+		classifyModel = dag.NewAdmittingLLM(classifyModel, b.admission, lightweightSpec(b.cfg, b.cfg.Gates.Judge.Model), nil, nil)
 		judgeModelRef.Store(&classifyModel)
 	}
 	b.cleanups = append(b.cleanups, func() {
@@ -1057,7 +1057,7 @@ func buildUserMemoryHookAgent(ctx context.Context, h config.UserMemoryHookConfig
 	// Fires from a fire-and-forget goroutine after the orchestrator's own turn ends,
 	// via its own nested runner.Run - never a DAG node's own model call.
 	setDefaultAgent(m, "memory-hook")
-	var wm model.LLM = dag.NewAdmittingLLM(m, admission, lightweightSpec(cfg, h.Model), nil)
+	var wm model.LLM = dag.NewAdmittingLLM(m, admission, lightweightSpec(cfg, h.Model), nil, nil)
 	b, err := agent.LoadBundle(ctx, res, "agents/memory-agent")
 	if err != nil {
 		return nil, fmt.Errorf("bundle: %w", err)
@@ -1219,7 +1219,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 			continue
 		}
 
-		na, err := buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg)
+		na, err := buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg, admission)
 		if err != nil {
 			if !dropOptionalAgent(name, ac, err) {
 				return nil, nil, nodeServers, nil, nil, nil, nil, err
@@ -1308,7 +1308,7 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			safetyJudge = tools.NewSafetyJudge(safetyModel)
 			// Wrapped: a plan judge round fires between turns, never inside a held
 			// node reservation, so it must reserve its own capacity.
-			planJudge = vetting.NewPlanJudge(dag.NewAdmittingLLM(planModel, admission, judgeSpec(cfg), nil), cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel, taskStore, ledgerStore)
+			planJudge = vetting.NewPlanJudge(dag.NewAdmittingLLM(planModel, admission, judgeSpec(cfg), nil, nil), cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel, taskStore, ledgerStore)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
 			"deterministic_rounds", gateCfg.DeterministicRounds,
@@ -1493,10 +1493,12 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 }
 
 type nativeNodeBuilder struct {
+	name               string
 	prov               config.ProviderConfig
 	ac                 config.AgentConfig
 	artifacts          artifact.Service
 	cfg                *config.Config
+	admission          *dag.Admission
 	toolNames          []string
 	urlCache           *tools.URLCache
 	sessions           session.Service
@@ -1521,15 +1523,23 @@ type nativeNodeBuilder struct {
 	res                *artifactsrc.Resolver
 }
 
-func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
+func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
 	base, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("model: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("model: %w", err)
 	}
 	// A prompt store can bind a different model/provider/effort per round (#1421 P2):
 	// wrapping in Overridable lets the round-start refresh swap targets without
 	// rebuilding the ADK agent, which holds this LLM for its whole lifetime.
 	wm := inference.NewOverridable(base)
+	// #1482: per-call admission OUTSIDE the overridable, so a round-bound model
+	// swap (overridable.Set installs a raw target) still routes through the hold.
+	// The slot frees between this node's model calls; tool phases overlap others.
+	var wrapped model.LLM = wm
+	if b.admission != nil && nodeID != "" {
+		wrapped = dag.NewAdmittingLLM(wm, b.admission, admissionSpecFor(b.cfg)(b.name),
+			func() { sink(stream.NodeQueued(nodeID)) }, func() { sink(stream.NodeAdmitted(nodeID)) })
+	}
 	// Shared with the skill toolset below so load_skill counts against this node's registry-tool budget.
 	repeats := tools.NewRepeatStates()
 	var builtins []tool.Tool
@@ -1537,7 +1547,7 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 		if builtins, err = tools.Build(b.toolNames, tools.Deps{
 			WebSearch:          tools.Backend{Kind: b.cfg.Tools["web_search"].Kind, URL: b.cfg.Tools["web_search"].URL, Key: b.cfg.Tools["web_search"].APIKey()},
 			Fetch:              tools.Backend{Kind: b.cfg.Tools["web_fetch"].Kind, URL: b.cfg.Tools["web_fetch"].URL},
-			Summarizer:         wm,
+			Summarizer:         wrapped,
 			Cache:              b.urlCache,
 			Sessions:           b.sessions,
 			Workspace:          b.jail,
@@ -1558,7 +1568,7 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			NodeID:             nodeID,
 			Coords:             coords,
 		}); err != nil {
-			return nil, nil, nil, fmt.Errorf("tools: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("tools: %w", err)
 		}
 	}
 	if b.memSvc != nil {
@@ -1568,11 +1578,11 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
 	builtins = append(builtins, extraTools...)
 	skillTS := tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped)
-	wag, err := agent.Build(b.bundle, prompts, wm, builtins, []tool.Toolset{skillTS}, b.memGuidance, b.skillFms, b.grading, drain)
+	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, []tool.Toolset{skillTS}, b.memGuidance, b.skillFms, b.grading, drain)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("build: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
-	return wag, wm, builtins, nil
+	return wag, wrapped, wm, builtins, nil
 }
 
 func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
@@ -1599,7 +1609,7 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 			*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
 		}
 	}
-	wag, wm, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, extraTools...)
+	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, extraTools...)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -1616,7 +1626,7 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 	// The deterministic worker session created by this node's first dispatch outlives it
 	// - reaped only at chat archive/delete (ReapNodeSessions), so a later reuse finds it.
 	release := b.nodeServers.track(srv)
-	refresh := b.bindPromptRefresher(prompts, wm.(*inference.OverridableModel))
+	refresh := b.bindPromptRefresher(prompts, overridable)
 	return client, wm, builtins, setRoundCoords, refresh, release, nil
 }
 
@@ -1731,7 +1741,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
-func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry) (adkagent.Agent, error) {
+func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry, admission *dag.Admission) (adkagent.Agent, error) {
 	toolNames := resolveToolNames(ac.Tools, taskStore != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
@@ -1764,10 +1774,12 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 	}
 
 	b := &nativeNodeBuilder{
+		name:               name,
 		prov:               prov,
 		ac:                 ac,
 		artifacts:          artifacts,
 		cfg:                cfg,
+		admission:          admission,
 		toolNames:          toolNames,
 		urlCache:           urlCache,
 		sessions:           sessions,
@@ -1791,7 +1803,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		nodeServers:        nodeServers,
 		res:                res,
 	}
-	protoAgent, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil)
+	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil)
 	if err != nil {
 		return nil, fmtErr(name, "%w", err)
 	}
@@ -1868,7 +1880,7 @@ func openMemoryStores(ctx context.Context, cfg *config.Config, st *store.Store, 
 		// Commit runs from a background goroutine (user memory hook) or a tool call
 		// whose ctx lost its node coords - never a DAG node's own model call.
 		setDefaultAgent(consolidator, "memory")
-		consolidator = dag.NewAdmittingLLM(consolidator, admission, lightweightSpec(cfg, rm.Consolidation.Model), nil)
+		consolidator = dag.NewAdmittingLLM(consolidator, admission, lightweightSpec(cfg, rm.Consolidation.Model), nil, nil)
 		s, err := memory.New(context.Background(), rm.Kind, rm.URL, embedder, consolidator, rm.Collection, domain, rm.TopK, rm.MinScore)
 		if err != nil {
 			return nil, err
@@ -2018,7 +2030,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	executorRef.Store(executor)
 	// Orchestrator turns take a session from the worker nodes' pool, held only while
 	// generating (holding across the DAG would deadlock them); wraps AFTER setDefaultAgent.
-	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
+	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil, nil)
 	// Hard backstop under ADK's own compaction - see BudgetedLLM's doc for why.
 	orchLLM = dag.NewBudgetedLLM(orchLLM, cfg.Orchestrator.ContextWindow)
 	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
@@ -2037,7 +2049,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 			// kv 0, not orchestratorSpec: a compaction pass is a one-shot summarise
 			// call, not the turn whose window that spec sizes.
 			orchComp, cerr := agent.NativeCompactionConfig(agent.Compaction{
-				Summarizer:         dag.NewAdmittingLLM(llm, admission, lightweightSpec(cfg, cfg.Orchestrator.Model), nil),
+				Summarizer:         dag.NewAdmittingLLM(llm, admission, lightweightSpec(cfg, cfg.Orchestrator.Model), nil, nil),
 				ContextWindow:      cfg.Orchestrator.ContextWindow,
 				Enabled:            true,
 				TokenThreshold:     orchCompCfg.TokenThreshold,
