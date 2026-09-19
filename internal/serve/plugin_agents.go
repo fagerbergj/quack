@@ -39,12 +39,12 @@ func SeedPluginAgentsAndShapes(cfg *config.Config, plugins []plugin.Plugin) ([]P
 		}
 		var agents, shapes []string
 		if p.AgentsDir != "" {
-			if agents, err = cfg.SeedPluginAgents(p.Name, p.AgentsDir); err != nil {
+			if agents, err = cfg.SeedPluginAgents(p.Name, p.AgentsDir, p.Agents); err != nil {
 				return nil, err
 			}
 		}
 		if p.WorkflowsDir != "" {
-			if shapes, err = cfg.SeedPluginShapes(p.Name, p.WorkflowsDir); err != nil {
+			if shapes, err = cfg.SeedPluginShapes(p.Name, p.WorkflowsDir, p.Workflows); err != nil {
 				return nil, err
 			}
 		}

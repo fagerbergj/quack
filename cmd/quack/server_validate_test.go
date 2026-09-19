@@ -453,6 +453,56 @@ plugins:
 	}
 }
 
+// A manifest agents list naming a bundle that doesn't exist on disk fails
+// plugin.Resolve, and `server validate` must surface that error naming the
+// plugin and the missing entry.
+func TestServerValidate_ManifestListedAgentMissingErrors(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := mustMkdir(t, filepath.Join(dir, "acme"))
+	body := `{"$schema":"x","name":"acme","extensions":{"io.github.fagerbergj.quack":{"schemaVersion":1,` +
+		`"agents":["ghost"]}}}`
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "quack.yaml")
+	cfg := `
+providers:
+  default:
+    kind: openai
+    endpoint: http://localhost:1
+    api_key: x
+orchestrator:
+  provider: default
+  model: m
+models:
+  m:
+    provider: default
+    role: worker
+stores:
+  default:
+    kind: sqlite
+    url: ` + filepath.Join(dir, "store.db") + `
+session:
+  store: default
+workspace:
+  root: ` + filepath.Join(dir, "workspace") + `
+plugins:
+  seed:
+    - ` + pluginDir + `
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newServerValidateCmd()
+	c.SilenceUsage = true
+	c.SetArgs([]string{cfgPath})
+	err := c.Execute()
+	if err == nil || !strings.Contains(err.Error(), "acme") || !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("server validate = %v, want an error naming the plugin and the missing entry", err)
+	}
+}
+
 // A plugin workflow shape naming an unconfigured agent fails
 // SeedPluginAgentsAndShapes, and `server validate` must surface that error.
 func TestServerValidate_PluginShapeMissingAgentErrors(t *testing.T) {

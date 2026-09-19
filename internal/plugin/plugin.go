@@ -42,6 +42,14 @@ type Plugin struct {
 	// file, config.WorkflowShape's own schema), or "" when the plugin ships none.
 	WorkflowsDir string
 
+	// Agents is the namespace block's "agents" list (nil when the manifest
+	// doesn't declare one, in which case AgentsDir is seeded by presence).
+	Agents []string
+
+	// Workflows is the namespace block's "workflows" list (nil when the
+	// manifest doesn't declare one, in which case WorkflowsDir is seeded by presence).
+	Workflows []string
+
 	// Modules are the compiled-in Go modules this plugin declares. quack
 	// cannot load Go code dynamically, so these are checked against the
 	// linked registry at boot, never loaded.
@@ -78,6 +86,10 @@ type nsBlock struct {
 	SchemaVersion int      `json:"schemaVersion"`
 	Modules       []Module `json:"modules"`
 	Config        string   `json:"config"`
+	// Agents/Workflows: the manifest's own agents/workflows lists, source of
+	// truth over directory presence - nil (key omitted) means undeclared.
+	Agents    []string `json:"agents"`
+	Workflows []string `json:"workflows"`
 }
 
 // codexManifest is .codex-plugin/plugin.json: the same identity fields as the
@@ -111,16 +123,38 @@ func (e *NamespaceError) Unwrap() error { return e.Err }
 // returned as an error, because it declares compiled-in Go code and silently dropping it would boot a server missing the module it promised.
 func Resolve(roots []string) ([]Plugin, error) {
 	var out []Plugin
+	seenAgents := map[string]string{}
+	seenWorkflows := map[string]string{}
 	for _, root := range roots {
 		p, err := resolveRoot(root)
 		if err != nil {
 			return nil, err
 		}
-		if p != nil {
-			out = append(out, *p)
+		if p == nil {
+			continue
 		}
+		if err := checkNoCrossPluginCollision(p, "agents", p.Agents, seenAgents); err != nil {
+			return nil, err
+		}
+		if err := checkNoCrossPluginCollision(p, "workflows", p.Workflows, seenWorkflows); err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
 	}
 	return out, nil
+}
+
+// checkNoCrossPluginCollision refuses two plugins listing the same agent or
+// workflow name - the manifest-list era replaces the old silent config merge
+// with a hard failure naming both plugins, same class as a malformed namespace block.
+func checkNoCrossPluginCollision(p *Plugin, kind string, names []string, seen map[string]string) error {
+	for _, name := range names {
+		if owner, ok := seen[name]; ok {
+			return &NamespaceError{Root: p.Root, Err: fmt.Errorf("%s entry %q: plugin %q and plugin %q both list it", kind, name, owner, p.Name)}
+		}
+		seen[name] = p.Name
+	}
+	return nil
 }
 
 // resolveRoot returns nil, nil for a root that is skipped.
@@ -175,8 +209,7 @@ func fromRootManifest(abs string) (*Plugin, error) {
 
 	p := &Plugin{Name: m.Name, Root: abs}
 	// §6.2: an absent skills/ is not an error - a plugin may carry only MCP
-	// servers or only module declarations. agents/ and workflows/ (quack's own
-	// layout additions) are discovered the same presence-based way, no listing.
+	// servers or module declarations. agents/ and workflows/ are discovered the same way, gated by the namespace block's lists below.
 	dir := filepath.Join(abs, "skills")
 	if st, err := os.Stat(dir); err == nil && st.IsDir() {
 		p.SkillsDir = dir
@@ -221,8 +254,78 @@ func applyNamespace(p *Plugin, raw json.RawMessage) error {
 	default:
 		return fmt.Errorf("config %q is not \"required\" or \"optional\"", ns.Config)
 	}
+	if ns.Agents != nil {
+		if err := checkManifestList(p.Name, "agents", ns.Agents, dirEntryNames(p.AgentsDir)); err != nil {
+			return err
+		}
+	}
+	if ns.Workflows != nil {
+		if err := checkManifestList(p.Name, "workflows", ns.Workflows, yamlEntryNames(p.WorkflowsDir)); err != nil {
+			return err
+		}
+	}
 	p.Modules = ns.Modules
+	p.Agents = ns.Agents
+	p.Workflows = ns.Workflows
 	return nil
+}
+
+// checkManifestList validates one declared agents/workflows list against
+// what's on disk: a listed name absent from present fails outright (boot
+// refuses the plugin); a present name absent from the list only warns.
+func checkManifestList(pluginName, kind string, listed []string, present map[string]bool) error {
+	listedSet := make(map[string]bool, len(listed))
+	for _, name := range listed {
+		listedSet[name] = true
+		if !present[name] {
+			return fmt.Errorf("%s entry %q not found in plugin", kind, name)
+		}
+	}
+	for name := range present {
+		if !listedSet[name] {
+			slog.Warn("plugin bundle present but not listed in manifest; not seeded",
+				"component", "plugin", "plugin", pluginName, "kind", kind, "name", name)
+		}
+	}
+	return nil
+}
+
+// dirEntryNames lists agents/<name>/ subdirectory names, or an empty map for
+// a plugin with no agents/ directory - never an error, same as dirExists.
+func dirEntryNames(dir string) map[string]bool {
+	out := map[string]bool{}
+	if dir == "" {
+		return out
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			out[e.Name()] = true
+		}
+	}
+	return out
+}
+
+// yamlEntryNames lists workflows/<name>.yaml file stems, same no-error
+// contract as dirEntryNames.
+func yamlEntryNames(dir string) map[string]bool {
+	out := map[string]bool{}
+	if dir == "" {
+		return out
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if name, ok := strings.CutSuffix(e.Name(), ".yaml"); ok && !e.IsDir() {
+			out[name] = true
+		}
+	}
+	return out
 }
 
 // fromCodexManifest reads <root>/.codex-plugin/plugin.json. Its "skills"
