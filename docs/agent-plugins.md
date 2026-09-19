@@ -238,9 +238,15 @@ model_role: researcher   # researcher | coder | judge
 
 `model_role` substitutes for a "default model" concept config doesn't have (`models:` is keyed by resolved model id, not role): it maps to whichever `QUACK_RESEARCHER_MODEL`/`QUACK_CODER_MODEL`/`QUACK_JUDGE_MODEL` env var the deployment already set for its shipped agents of that role (`internal/config`'s `modelRoleEnv`). Provider defaults to the provider named `default` - the convention every shipped agent already uses; a deployment on a different provider name overrides it explicitly.
 
+**The deployment must have the matching `QUACK_*_MODEL` env var set** for `model_role` to resolve to anything - there is no other default. An unset var resolves to an empty model, and boot or `server validate` fails naming the agent, exactly like a config-authored agent left with no `model:`. Set an explicit `model:` override (below) on a deployment with no matching `QUACK_*_MODEL` role.
+
 ### Precedence
 
 A deployment's `agents.<name>:` entry - already in `config.Agents` before a plugin's bundles are seeded - overrides the plugin's `agent.yaml` defaults field by field (`provider`, `model`, `context_window`, `tools`, `skills`, `judge_rounds`, `memory`, `gated`, `judge`, `acp`, `inputs`); an unset field keeps the plugin's own value. `bundle` and `optional: true` are never overridable - every plugin agent is implicitly optional, so `buildAgents`' existing drop-on-unresolved-tools path (`tools.ErrUnknownTool`) still applies unchanged if a bundle's tools somehow fail to resolve even with its extension on.
+
+`tools:` **replaces** the plugin's list wholesale, never merges with it - the documented way to drop a tool whose backend the deployment doesn't run. `tools.ErrUnknownTool` (an unrecognized tool *name*) is what triggers the optional-agent drop; a recognized tool that fails to *build* because its backend isn't configured (e.g. `web_search` with no SearXNG url or Exa key) is a hard boot error by design - a real misconfiguration, not a signal the extension is off. Override `agents.<name>.tools` to the subset the deployment can actually build.
+
+An override may leave `bundle:` (and `model:`, `provider:`) unset entirely, trusting the plugin to supply them - `config.Load` defers requiring them until after plugin seeding runs, so the override alone is never rejected before the plugin gets a chance to complete it. If the plugin's module ends up disabled (or the plugin is absent), the agent stays incomplete and boot/`server validate` fails with the same clear "empty bundle path" error a broken config-authored entry gets.
 
 A plugin workflow shape is appended to the raw `workflows:` list and validated by the exact same `validateWorkflows` path a config-authored shape gets (agent existence, bound-node artifact kinds, DAG acyclicity) - a shape naming a missing agent fails boot naming the plugin, not just the shape.
 

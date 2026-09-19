@@ -72,7 +72,7 @@ func runEval(cmd *cobra.Command, target, model, role, sourceServer string, asJSO
 	if _, err := os.Stat(cfgPath); err != nil {
 		return fmt.Errorf("no %s found - an eval run needs a LOCAL quack.yaml (run `quack init` first)", cfgPath)
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, err := config.LoadDeferringAgentCompleteness(cfgPath)
 	if err != nil {
 		return err
 	}

@@ -422,3 +422,107 @@ func TestSeedPluginShapes_MalformedYAMLDecodeErrorNamesPlugin(t *testing.T) {
 		t.Fatalf("SeedPluginShapes(malformed yaml) = %v, want an error naming the plugin", err)
 	}
 }
+
+// deferredConfigForPluginSeed is baseConfigForPluginSeed's LoadDeferring
+// variant: an agents: entry may omit bundle/model, since a plugin merge is
+// expected to complete it before RequireAgentBundlesAndModels runs.
+func deferredConfigForPluginSeed(t *testing.T, agentsBlock string) *Config {
+	t.Helper()
+	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
+	path := writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://localhost:1 }
+models:
+  m: { provider: default, role: worker }
+  m2: { provider: default, role: worker }
+stores:
+  main: { kind: sqlite, url: /tmp/x.db }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+`+agentsBlock+`
+workspace:
+  root: `+t.TempDir()+`
+`)
+	c, err := LoadDeferringAgentCompleteness(path)
+	if err != nil {
+		t.Fatalf("LoadDeferringAgentCompleteness: %v", err)
+	}
+	return c
+}
+
+// The bug this locks in: a deployment override that omits bundle: (the
+// documented field-by-field precedence - the plugin supplies it) must not
+// be rejected before SeedPluginAgents gets to fill it in.
+func TestSeedPluginAgents_OverrideWithoutBundleWaitsForPluginDefault(t *testing.T) {
+	c := deferredConfigForPluginSeed(t, "  scout:\n    provider: default\n    model: m2\n    context_window: 8192\n")
+	agentsDir := t.TempDir()
+	writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\ntools: [web_search]\n")
+
+	if _, err := c.SeedPluginAgents("acme", agentsDir); err != nil {
+		t.Fatalf("SeedPluginAgents: %v", err)
+	}
+	if err := c.RequireAgentBundlesAndModels(); err != nil {
+		t.Fatalf("RequireAgentBundlesAndModels: %v", err)
+	}
+	ac := c.Agents["scout"]
+	if ac.Bundle != filepath.Join(agentsDir, "scout") {
+		t.Errorf("bundle = %q, want the plugin's bundle dir (the override never set one)", ac.Bundle)
+	}
+	if ac.Model != "m2" {
+		t.Errorf("model = %q, want the override's m2, not the plugin's role-resolved model", ac.Model)
+	}
+}
+
+// The same override, but no plugin ever seeds "scout" (absent or disabled) -
+// the agent stays incomplete, and RequireAgentBundlesAndModels must still
+// give the same clear error Load() gave before deferral existed.
+func TestRequireAgentBundlesAndModels_StillIncompleteWithoutPluginErrors(t *testing.T) {
+	c := deferredConfigForPluginSeed(t, "  scout:\n    provider: default\n    model: m\n")
+	err := c.RequireAgentBundlesAndModels()
+	if err == nil || !strings.Contains(err.Error(), `agent "scout" has empty bundle path`) {
+		t.Fatalf("RequireAgentBundlesAndModels = %v, want the empty-bundle-path error", err)
+	}
+}
+
+// A non-deferred Load must keep failing an incomplete agent immediately -
+// deferral is opt-in (LoadDeferringAgentCompleteness), never the default.
+func TestLoad_EmptyBundleStillFailsEagerly(t *testing.T) {
+	path := writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://localhost:1 }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: sqlite, url: /tmp/x.db }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  scout:
+    provider: default
+    model: m
+workspace:
+  root: `+t.TempDir()+`
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load: want an eager empty-bundle-path error for a non-deferred config")
+	}
+}
+
+// A deployment override's tools: list REPLACES the plugin's, not merges -
+// the documented way to drop a tool whose backend isn't configured (e.g.
+// trend-scout's web_search on a deployment with no SearXNG/Exa key).
+func TestSeedPluginAgents_OverrideToolsReplacesNotMerges(t *testing.T) {
+	c := baseConfigForPluginSeed(t)
+	c.Agents["scout"] = AgentConfig{Tools: []string{"current_date"}}
+	agentsDir := t.TempDir()
+	writeAgentBundle(t, agentsDir, "scout", "model_role: researcher\ntools: [web_search, web_fetch, current_date]\n")
+
+	if _, err := c.SeedPluginAgents("acme", agentsDir); err != nil {
+		t.Fatalf("SeedPluginAgents: %v", err)
+	}
+	ac := c.Agents["scout"]
+	if len(ac.Tools) != 1 || ac.Tools[0] != "current_date" {
+		t.Errorf("tools = %v, want exactly the override's [current_date] - override replaces, not merges", ac.Tools)
+	}
+}

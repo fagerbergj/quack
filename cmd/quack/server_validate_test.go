@@ -300,6 +300,111 @@ plugins:
 	}
 }
 
+// writeOverrideOnlyPluginConfig lays down the exact rig-reported scenario:
+// agents.scout: overrides provider/model/context_window but names no
+// bundle:, trusting the plugin to supply it. seedPlugin controls whether
+// the acme plugin (declared above) is actually listed under plugins.seed.
+func writeOverrideOnlyPluginConfig(t *testing.T, dir, pluginDir string, seedPlugin bool) string {
+	t.Helper()
+	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
+	seed := ""
+	if seedPlugin {
+		seed = "plugins:\n  seed:\n    - " + pluginDir + "\n"
+	}
+	cfgPath := filepath.Join(dir, "quack.yaml")
+	cfg := `
+providers:
+  default:
+    kind: openai
+    endpoint: http://localhost:1
+    api_key: x
+orchestrator:
+  provider: default
+  model: m
+models:
+  m:
+    provider: default
+    role: worker
+  m2:
+    provider: default
+    role: worker
+agents:
+  scout:
+    provider: default
+    model: m2
+    context_window: 8192
+stores:
+  default:
+    kind: sqlite
+    url: ` + filepath.Join(dir, "store.db") + `
+session:
+  store: default
+workspace:
+  root: ` + filepath.Join(dir, "workspace") + `
+` + seed
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return cfgPath
+}
+
+func writeAcmeScoutPlugin(t *testing.T, dir string) string {
+	t.Helper()
+	pluginDir := mustMkdir(t, filepath.Join(dir, "acme"))
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"$schema":"x","name":"acme"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentDir := mustMkdir(t, filepath.Join(pluginDir, "agents", "scout"))
+	if err := os.WriteFile(filepath.Join(agentDir, "agent-card.json"), []byte(`{"name":"scout"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "agent.yaml"), []byte("model_role: researcher\ntools: [web_search]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return pluginDir
+}
+
+// The rig bug: agents.scout overrides fields but names no bundle:, trusting
+// the plugin to supply it - with the plugin seeded, validate must succeed
+// and the override's model/context_window must win over the plugin's.
+func TestServerValidate_OverrideWithoutBundleValidWhenPluginPresent(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := writeAcmeScoutPlugin(t, dir)
+	cfgPath := writeOverrideOnlyPluginConfig(t, dir, pluginDir, true)
+
+	var out bytes.Buffer
+	c := newServerValidateCmd()
+	c.SetOut(&out)
+	c.SetArgs([]string{cfgPath, "--json"})
+	if err := c.Execute(); err != nil {
+		t.Fatalf("server validate --json: %v\noutput:\n%s", err, out.String())
+	}
+	var got serverValidateResult
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if len(got.StaleBundles) != 0 {
+		t.Errorf("StaleBundles = %v, want none - the plugin supplies scout's bundle", got.StaleBundles)
+	}
+}
+
+// Same override-only config, but the plugin is never seeded (absent or its
+// module disabled) - scout stays incomplete, and validate must still give
+// the same clear "empty bundle path" error it always gave a broken config.
+func TestServerValidate_OverrideWithoutBundleErrorsWhenPluginAbsent(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := writeAcmeScoutPlugin(t, dir)
+	cfgPath := writeOverrideOnlyPluginConfig(t, dir, pluginDir, false)
+
+	c := newServerValidateCmd()
+	c.SilenceUsage = true
+	c.SetArgs([]string{cfgPath})
+	err := c.Execute()
+	if err == nil || !strings.Contains(err.Error(), `agent "scout" has empty bundle path`) {
+		t.Fatalf("server validate = %v, want the empty-bundle-path error", err)
+	}
+}
+
 // A plugins.seed row declaring an unlinked module fails ResolveConfiguredPlugins,
 // and `server validate` must surface that error rather than reporting ok.
 func TestServerValidate_UnlinkedPluginModuleErrors(t *testing.T) {

@@ -59,7 +59,7 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	if _, err := os.Stat(cfgPath); err != nil {
 		return fmt.Errorf("no %s found - `quack experiment run` needs a LOCAL quack.yaml (run `quack init` first)", cfgPath)
 	}
-	cfg, err := config.Load(cfgPath)
+	cfg, err := config.LoadDeferringAgentCompleteness(cfgPath)
 	if err != nil {
 		return err
 	}

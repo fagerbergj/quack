@@ -432,7 +432,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 
 // InProcess builds the server on an ephemeral loopback port for co-hosted CLI use.
 func InProcess(ctx context.Context, configPath string) (baseURL string, stop func() error, err error) {
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadDeferringAgentCompleteness(configPath)
 	if err != nil {
 		return "", nil, fmt.Errorf("config load failed: %w", err)
 	}
@@ -487,7 +487,7 @@ type shutdownHooks struct {
 
 // build loads config and constructs the HTTP handler, shared by Run and InProcess.
 func build(ctx context.Context, configPath string, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadDeferringAgentCompleteness(configPath)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("config load failed: %w", err)
 	}
@@ -660,6 +660,12 @@ func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (plug
 		return nil, nil, nil, err
 	}
 	logPluginSeeds(seedResults)
+	// The merge is done now: every agent must have a bundle/model, whether a
+	// plugin supplied it or the config itself did (deferred by
+	// LoadDeferringAgentCompleteness so a plugin override reaches this far).
+	if err := b.cfg.RequireAgentBundlesAndModels(); err != nil {
+		return nil, nil, nil, err
+	}
 	return reg, plugins, workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision), nil
 }
 

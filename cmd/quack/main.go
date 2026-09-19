@@ -691,7 +691,7 @@ func newServerValidateCmd() *cobra.Command {
 			if len(args) == 1 {
 				path = args[0]
 			}
-			cfg, err := config.Load(path)
+			cfg, err := config.LoadDeferringAgentCompleteness(path)
 			if err != nil {
 				return err
 			}
@@ -701,6 +701,9 @@ func newServerValidateCmd() *cobra.Command {
 			}
 			seeded, err := serve.SeedPluginAgentsAndShapes(cfg, plugins)
 			if err != nil {
+				return err
+			}
+			if err := cfg.RequireAgentBundlesAndModels(); err != nil {
 				return err
 			}
 			stale := staleAgentBundles(cfg)

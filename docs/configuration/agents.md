@@ -44,7 +44,7 @@ agents:
 
 A bundle doesn't have to live under `agents/` and get a hand-written `agents:` entry - a plugin can ship its own bundles under `.agents/plugins/<name>/agents/` and workflow shapes under `.agents/plugins/<name>/workflows/`, seeded into `config.Agents`/`config.Workflows` at boot (the Sleeper agents - `lineup-analyst`, `waiver-scout`, `trend-scout` - are the shipped example, in `.agents/plugins/sleeper/`). Full manifest schema, layout, and gating: [Agent bundles and workflow shapes](../agent-plugins.md#agent-bundles-and-workflow-shapes).
 
-Two things carry over from the config-authored path above: a plugin agent is **implicitly `optional: true`** (never overridable), and a deployment's own `agents.<name>:` entry - written exactly like `web-researcher`'s above - **overrides the plugin's `agent.yaml` defaults field by field**, so a deployment can pin a plugin agent to a specific model or tool list without forking the plugin.
+Two things carry over from the config-authored path above: a plugin agent is **implicitly `optional: true`** (never overridable), and a deployment's own `agents.<name>:` entry - written exactly like `web-researcher`'s above - **overrides the plugin's `agent.yaml` defaults field by field**, so a deployment can pin a plugin agent to a specific model or tool list without forking the plugin. The override may leave `bundle:` unset - it's only required once plugin seeding has had a chance to fill it in - so a deployment overrides just what it needs to (a model, a trimmed `tools:` list) without repeating the plugin's own path.
 
 ## Native agents vs. external ACP agents
 
