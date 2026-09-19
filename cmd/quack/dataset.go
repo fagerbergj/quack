@@ -60,7 +60,10 @@ func runDatasetExport(cmd *cobra.Command, chatID, repo, since, dataset string, l
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(defaultConfigPath())
+	// Deferring: this path reads only the langfuse client, never agent bundles,
+	// so a plugin override-only entry (bundle seeded at boot, not in the file)
+	// must not hard-fail the export.
+	cfg, err := config.LoadDeferringAgentCompleteness(defaultConfigPath())
 	if err != nil {
 		return err
 	}
