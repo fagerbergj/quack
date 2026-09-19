@@ -1537,6 +1537,8 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	// The slot frees between this node's model calls; tool phases overlap others.
 	var wrapped model.LLM = wm
 	if b.admission != nil && nodeID != "" {
+		// sink may only be nil when nodeID == "" (the startup proto path, which
+		// skips the wrap), so the closures below are always on a live sink.
 		wrapped = dag.NewAdmittingLLM(wm, b.admission, admissionSpecFor(b.cfg)(b.name),
 			func() { sink(stream.NodeQueued(nodeID)) }, func() { sink(stream.NodeAdmitted(nodeID)) })
 	}

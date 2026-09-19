@@ -28,7 +28,7 @@ plugins:
 
 - `store` - which registry backend holds the rows. Omitted or `""` uses the built-in filesystem backend (`<root>/<name>/entry.json`). Any other value must name a `stores:` entry of kind `sqlite` or `postgres`; that store's URL must not be empty (except under `quack sandbox`'s `LoadForSandbox`, which skips this and every other live-inference-plumbing check). A database-backed store holds rows in a `plugin_rows` table - the clones themselves still live on disk under `root`, exactly as the filesystem backend lays them out.
 - `root` - where clones live. Defaults to `<workspace.root>/.quack/plugins` (a dot-dir so it never collides with repo checkouts on the same volume).
-- `seed` - entries inserted into the registry if their name is absent at boot. After that, the UI and REST own the list; a config restart does not re-add a row someone removed, and does not remove a row someone added.
+- `seed` - entries inserted into the registry if their name is absent at boot. After that, the UI and REST own the list; a config restart does not re-add a row someone removed, and does not remove a row someone added. Setting `seed` **replaces** the stock defaults (dotagents, ponytail, usage) - it is not an extension of them; list the defaults explicitly if you still want them.
 
 `plugins:` as a bare YAML list (the pre-registry local-root form) is treated as `seed:` with the filesystem backend:
 

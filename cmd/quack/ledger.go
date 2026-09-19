@@ -16,7 +16,7 @@ import (
 
 // newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list and
 // export talk to a running server; show/rebuild/recover have no REST surface
-// and run server-side against the SAME stores a LOCAL quack.yaml would boot `quack serve` against (config.Load(defaultConfigPath()), like `quack eval`) - there is no notion of "the active registered server" here, since the point is direct store access, not an HTTP round-trip.
+// and run server-side against the SAME stores a LOCAL quack.yaml would boot `quack serve` against (config.LoadDeferringAgentCompleteness(defaultConfigPath()), like `quack eval`) - there is no notion of "the active registered server" here, since the point is direct store access, not an HTTP round-trip.
 func newLedgerCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "ledger",

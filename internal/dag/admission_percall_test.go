@@ -97,6 +97,10 @@ func TestPerCallNoOpHooksSurviveWiring(t *testing.T) {
 	free()
 	// pre-fix, AdmitWorker was re-assigned unconditionally and re-hold
 	// spec; a full pool then blocks. The no-op must admit instantly.
+	// Occupy the single w slot so only a genuine re-hold would block.
+	if !admission.Admit(context.Background(), spec, nil) {
+		t.Fatal("test setup: could not pre-hold the w slot")
+	}
 	done := make(chan bool, 1)
 	go func() { done <- cfg.AdmitWorker(context.Background()) }()
 	select {

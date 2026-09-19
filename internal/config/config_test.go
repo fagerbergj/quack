@@ -840,6 +840,13 @@ func TestRealConfigLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shipped config/quack.yaml failed to load: %v", err)
 	}
+	// Negative control: the shipped config is override-only (agent bundles come
+	// from the github plugin's seed), so strict Load MUST reject it - the ledger
+	// /dataset CLI sites depend on using the deferring loader, and this is the
+	// test that fails if one of them is ever switched back to Load.
+	if _, err := Load("../../config/quack.yaml"); err == nil {
+		t.Error("strict Load accepted the shipped override-only config; the deferring loader is no longer what makes it load")
+	}
 	if s, ok := c.Store(c.Session.Store); !ok || s.Kind != "postgres" {
 		t.Errorf("session store %q did not resolve to postgres: %+v ok=%v", c.Session.Store, s, ok)
 	}
