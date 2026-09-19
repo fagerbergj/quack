@@ -406,9 +406,12 @@ func TestSeedPluginAgents_NilAgentsMapInitializes(t *testing.T) {
 	}
 }
 
-// A stray non-directory entry and a directory missing agent-card.json are
-// both skipped, not treated as bundles.
-func TestSeedPluginAgents_SkipsNonDirAndCardlessEntries(t *testing.T) {
+// Even when a stray non-directory entry or a cardless directory is itself
+// listed, SeedPluginAgents' own defense-in-depth still skips it rather than
+// trusting the caller's list blindly - plugin.CheckManifestLists is expected
+// to have already refused a plugin in this state upstream, but this proves
+// SeedPluginAgents never relies on that alone.
+func TestSeedPluginAgents_ListedButNonBundleEntriesStillSkipped(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
 	c.skipRuntimeValidation = true // no model_role, no override - skip the empty-model check
 	agentsDir := t.TempDir()
@@ -425,7 +428,7 @@ func TestSeedPluginAgents_SkipsNonDirAndCardlessEntries(t *testing.T) {
 		t.Fatalf("SeedPluginAgents: %v", err)
 	}
 	if len(names) != 1 || names[0] != "scout" {
-		t.Fatalf("names = %v, want only [scout] (stray file and cardless dir skipped)", names)
+		t.Fatalf("names = %v, want only [scout] (stray file and cardless dir skipped despite being listed)", names)
 	}
 }
 

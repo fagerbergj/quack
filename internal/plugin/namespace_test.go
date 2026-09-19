@@ -126,41 +126,95 @@ func TestResolve_ManifestListsDecodeAndMatchPresentEntries(t *testing.T) {
 }
 
 // A listed agent whose agents/<name>/ directory is absent is a
-// NamespaceError-class failure naming the plugin and the entry - boot refuses
-// the plugin rather than silently seeding nothing.
-func TestResolve_ManifestListedAgentMissingFails(t *testing.T) {
+// NamespaceError-class failure naming the entry - CheckManifestLists runs
+// from internal/serve's admission path, not Resolve (#1430: a REST-added
+// row's refusal must drop only that row, not brick boot).
+func TestCheckManifestLists_ListedAgentMissingFails(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
 		"schemaVersion":1,"agents":["ghost"]
 	}}}`)
-	_, err := Resolve([]string{root})
+	got, err := Resolve([]string{root})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	err = CheckManifestLists(got[0])
 	var nsErr *NamespaceError
 	if !errors.As(err, &nsErr) {
-		t.Fatalf("Resolve = %v, want a *NamespaceError for a listed-but-missing agent", err)
+		t.Fatalf("CheckManifestLists = %v, want a *NamespaceError for a listed-but-missing agent", err)
 	}
 	if !strings.Contains(err.Error(), "ghost") {
 		t.Errorf("error %q must name the missing entry", err.Error())
 	}
 }
 
+// A listed agent whose directory exists but has no agent-card.json is also
+// listed-but-missing: "present" means "is a bundle", the same predicate
+// config.SeedPluginAgents seeds by - not just "a directory with this name".
+func TestCheckManifestLists_ListedAgentDirWithoutCardFails(t *testing.T) {
+	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
+		"schemaVersion":1,"agents":["scout"]
+	}}}`)
+	writeFile(t, filepath.Join(root, "agents", "scout", "prompt.md"), "body") // no agent-card.json
+
+	got, err := Resolve([]string{root})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	err = CheckManifestLists(got[0])
+	var nsErr *NamespaceError
+	if !errors.As(err, &nsErr) {
+		t.Fatalf("CheckManifestLists = %v, want a *NamespaceError for a cardless bundle dir", err)
+	}
+	if !strings.Contains(err.Error(), "scout") {
+		t.Errorf("error %q must name the missing entry", err.Error())
+	}
+}
+
 // Same failure for a listed workflow shape whose workflows/<name>.yaml is absent.
-func TestResolve_ManifestListedWorkflowMissingFails(t *testing.T) {
+func TestCheckManifestLists_ListedWorkflowMissingFails(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
 		"schemaVersion":1,"workflows":["ghost-job"]
 	}}}`)
-	_, err := Resolve([]string{root})
+	got, err := Resolve([]string{root})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	err = CheckManifestLists(got[0])
 	var nsErr *NamespaceError
 	if !errors.As(err, &nsErr) {
-		t.Fatalf("Resolve = %v, want a *NamespaceError for a listed-but-missing workflow", err)
+		t.Fatalf("CheckManifestLists = %v, want a *NamespaceError for a listed-but-missing workflow", err)
 	}
 	if !strings.Contains(err.Error(), "ghost-job") {
 		t.Errorf("error %q must name the missing entry", err.Error())
 	}
 }
 
+// A workflows/<stem>.yaml whose internal name: field does not match its
+// filename stem fails: listing, dedupe, seeding, and collision detection all
+// key on the same string, so a mismatch would let a manifest list one name
+// and silently seed a shape under another.
+func TestCheckManifestLists_WorkflowNameMismatchFails(t *testing.T) {
+	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
+		"schemaVersion":1,"workflows":["alpha"]
+	}}}`)
+	writeFile(t, filepath.Join(root, "workflows", "alpha.yaml"), "name: not-alpha")
+
+	got, err := Resolve([]string{root})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	err = CheckManifestLists(got[0])
+	var nsErr *NamespaceError
+	if !errors.As(err, &nsErr) {
+		t.Fatalf("CheckManifestLists = %v, want a *NamespaceError for a stem/name mismatch", err)
+	}
+	if !strings.Contains(err.Error(), "alpha") {
+		t.Errorf("error %q must name the file", err.Error())
+	}
+}
+
 // An agents/ bundle present on disk but absent from the manifest's list is
-// not an error - Resolve succeeds, and it is simply excluded from p.Agents
-// (server_validate_test.go/plugin_agents_test.go cover the resulting "not
-// seeded" behavior; the warning itself isn't observable through Resolve's return value).
+// not an error - CheckManifestLists passes, and it is simply excluded from p.Agents.
 func TestResolve_PresentButUnlistedAgentDoesNotFail(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
 		"schemaVersion":1,"agents":["scout"]
@@ -172,6 +226,9 @@ func TestResolve_PresentButUnlistedAgentDoesNotFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	if err := CheckManifestLists(got[0]); err != nil {
+		t.Fatalf("CheckManifestLists: %v", err)
+	}
 	if len(got[0].Agents) != 1 || got[0].Agents[0] != "scout" {
 		t.Errorf("Agents = %v, want [scout] (the unlisted \"extra\" bundle must not be added)", got[0].Agents)
 	}
@@ -180,15 +237,10 @@ func TestResolve_PresentButUnlistedAgentDoesNotFail(t *testing.T) {
 // A namespace block that omits the agents/workflows keys entirely leaves
 // Plugin.Agents/Workflows nil - nothing seeds from AgentsDir/WorkflowsDir,
 // same as an explicit empty list, and every present bundle still gets the
-// unlisted warning (proven via a captured log below).
+// unlisted warning.
 func TestResolve_ManifestListsOmittedLeaveNil(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{"schemaVersion":1}}}`)
 	writeFile(t, filepath.Join(root, "agents", "scout", "agent-card.json"), `{"name":"scout"}`)
-
-	var buf bytes.Buffer
-	orig := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	defer slog.SetDefault(orig)
 
 	got, err := Resolve([]string{root})
 	if err != nil {
@@ -197,43 +249,38 @@ func TestResolve_ManifestListsOmittedLeaveNil(t *testing.T) {
 	if got[0].Agents != nil {
 		t.Errorf("Agents = %v, want nil (key omitted)", got[0].Agents)
 	}
-	if !strings.Contains(buf.String(), "scout") || !strings.Contains(buf.String(), "not listed") {
-		t.Errorf("log output %q must warn about the unlisted scout bundle even with the key omitted", buf.String())
-	}
+	assertUnlistedWarning(t, got[0], "scout")
 }
 
-// Two plugins listing the same agent name fail with a NamespaceError-class
-// error naming both plugins and the entry, instead of silently merging into
-// one mixed agent.
-func TestResolve_CrossPluginAgentCollisionFails(t *testing.T) {
-	a := manifest(t, `{"$schema":"x","name":"a","extensions":{"`+Namespace+`":{"schemaVersion":1,"agents":["scout"]}}}`)
-	writeFile(t, filepath.Join(a, "agents", "scout", "agent-card.json"), `{"name":"scout"}`)
-	b := manifest(t, `{"$schema":"x","name":"b","extensions":{"`+Namespace+`":{"schemaVersion":1,"agents":["scout"]}}}`)
-	writeFile(t, filepath.Join(b, "agents", "scout", "agent-card.json"), `{"name":"scout"}`)
+// The unlisted-bundle warning fires even when the plugin has no quack
+// namespace block at all - an absent block means empty lists, not "seed
+// everything present", so this can never be a silent regression to the old
+// discover-by-presence behavior.
+func TestWarnUnlistedManifestEntries_NoNamespaceBlockStillWarns(t *testing.T) {
+	root := manifest(t, `{"$schema":"x","name":"p"}`)
+	writeFile(t, filepath.Join(root, "agents", "scout", "agent-card.json"), `{"name":"scout"}`)
 
-	_, err := Resolve([]string{a, b})
-	var nsErr *NamespaceError
-	if !errors.As(err, &nsErr) {
-		t.Fatalf("Resolve = %v, want a *NamespaceError for a cross-plugin collision", err)
+	got, err := Resolve([]string{root})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
 	}
-	if !strings.Contains(err.Error(), "\"a\"") || !strings.Contains(err.Error(), "\"b\"") || !strings.Contains(err.Error(), "scout") {
-		t.Errorf("error %q must name both plugins and the entry", err.Error())
+	if got[0].Agents != nil {
+		t.Errorf("Agents = %v, want nil (no namespace block)", got[0].Agents)
 	}
+	assertUnlistedWarning(t, got[0], "scout")
 }
 
-// Same collision, for two plugins' workflows lists.
-func TestResolve_CrossPluginWorkflowCollisionFails(t *testing.T) {
-	a := manifest(t, `{"$schema":"x","name":"a","extensions":{"`+Namespace+`":{"schemaVersion":1,"workflows":["job"]}}}`)
-	writeFile(t, filepath.Join(a, "workflows", "job.yaml"), "name: job")
-	b := manifest(t, `{"$schema":"x","name":"b","extensions":{"`+Namespace+`":{"schemaVersion":1,"workflows":["job"]}}}`)
-	writeFile(t, filepath.Join(b, "workflows", "job.yaml"), "name: job")
+// assertUnlistedWarning captures slog output around WarnUnlistedManifestEntries(p)
+// and asserts it names wantName as present-but-unlisted.
+func assertUnlistedWarning(t *testing.T, p Plugin, wantName string) {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(orig)
 
-	_, err := Resolve([]string{a, b})
-	var nsErr *NamespaceError
-	if !errors.As(err, &nsErr) {
-		t.Fatalf("Resolve = %v, want a *NamespaceError for a cross-plugin collision", err)
-	}
-	if !strings.Contains(err.Error(), "\"a\"") || !strings.Contains(err.Error(), "\"b\"") || !strings.Contains(err.Error(), "job") {
-		t.Errorf("error %q must name both plugins and the entry", err.Error())
+	WarnUnlistedManifestEntries(p)
+	if !strings.Contains(buf.String(), wantName) || !strings.Contains(buf.String(), "not listed") {
+		t.Errorf("log output %q must warn about the unlisted %q bundle", buf.String(), wantName)
 	}
 }

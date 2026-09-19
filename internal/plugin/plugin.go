@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Namespace is quack's client-extension namespace (Agent Plugins §8). It is
@@ -122,38 +124,16 @@ func (e *NamespaceError) Unwrap() error { return e.Err }
 // returned as an error, because it declares compiled-in Go code and silently dropping it would boot a server missing the module it promised.
 func Resolve(roots []string) ([]Plugin, error) {
 	var out []Plugin
-	seenAgents := map[string]string{}
-	seenWorkflows := map[string]string{}
 	for _, root := range roots {
 		p, err := resolveRoot(root)
 		if err != nil {
 			return nil, err
 		}
-		if p == nil {
-			continue
+		if p != nil {
+			out = append(out, *p)
 		}
-		if err := checkNoCrossPluginCollision(p, "agents", p.Agents, seenAgents); err != nil {
-			return nil, err
-		}
-		if err := checkNoCrossPluginCollision(p, "workflows", p.Workflows, seenWorkflows); err != nil {
-			return nil, err
-		}
-		out = append(out, *p)
 	}
 	return out, nil
-}
-
-// checkNoCrossPluginCollision refuses two plugins listing the same agent or
-// workflow name - the manifest-list era replaces the old silent config merge
-// with a hard failure naming both plugins, same class as a malformed namespace block.
-func checkNoCrossPluginCollision(p *Plugin, kind string, names []string, seen map[string]string) error {
-	for _, name := range names {
-		if owner, ok := seen[name]; ok {
-			return &NamespaceError{Root: p.Root, Err: fmt.Errorf("%s entry %q: plugin %q and plugin %q both list it", kind, name, owner, p.Name)}
-		}
-		seen[name] = p.Name
-	}
-	return nil
 }
 
 // resolveRoot returns nil, nil for a root that is skipped.
@@ -253,28 +233,55 @@ func applyNamespace(p *Plugin, raw json.RawMessage) error {
 	default:
 		return fmt.Errorf("config %q is not \"required\" or \"optional\"", ns.Config)
 	}
-	if err := checkManifestList(p.Name, "agents", ns.Agents, dirEntryNames(p.AgentsDir)); err != nil {
-		return err
-	}
-	if err := checkManifestList(p.Name, "workflows", ns.Workflows, yamlEntryNames(p.WorkflowsDir)); err != nil {
-		return err
-	}
 	p.Modules = ns.Modules
 	p.Agents = ns.Agents
 	p.Workflows = ns.Workflows
 	return nil
 }
 
-// checkManifestList validates one declared agents/workflows list against
-// what's on disk: a listed name absent from present fails outright (boot
-// refuses the plugin); a present name absent from the list only warns.
-func checkManifestList(pluginName, kind string, listed []string, present map[string]bool) error {
-	listedSet := make(map[string]bool, len(listed))
+// CheckManifestLists fails (NamespaceError-class, naming the entry) when a
+// listed agent/workflow isn't actually present - called from internal/serve's admission path, not Resolve.
+func CheckManifestLists(p Plugin) (err error) {
+	agentsPresent := dirEntryNames(p.AgentsDir)
+	workflowsPresent, err := yamlEntryNames(p.WorkflowsDir)
+	if err != nil {
+		return &NamespaceError{Root: p.Root, Err: err}
+	}
+	if err := checkListedPresent("agents", p.Agents, agentsPresent); err != nil {
+		return &NamespaceError{Root: p.Root, Err: err}
+	}
+	if err := checkListedPresent("workflows", p.Workflows, workflowsPresent); err != nil {
+		return &NamespaceError{Root: p.Root, Err: err}
+	}
+	return nil
+}
+
+// WarnUnlistedManifestEntries logs one warning per present-but-unlisted
+// entry - fired even with no namespace block at all, which means an empty list, not "everything".
+func WarnUnlistedManifestEntries(p Plugin) {
+	warnUnlisted(p.Name, "agents", p.Agents, dirEntryNames(p.AgentsDir))
+	workflowsPresent, err := yamlEntryNames(p.WorkflowsDir)
+	if err != nil {
+		return // malformed shape - CheckManifestLists reports it, not this diagnostic pass
+	}
+	warnUnlisted(p.Name, "workflows", p.Workflows, workflowsPresent)
+}
+
+// checkListedPresent fails when a listed name isn't actually present.
+func checkListedPresent(kind string, listed []string, present map[string]bool) error {
 	for _, name := range listed {
-		listedSet[name] = true
 		if !present[name] {
 			return fmt.Errorf("%s entry %q not found in plugin", kind, name)
 		}
+	}
+	return nil
+}
+
+// warnUnlisted logs one warning per present name absent from listed.
+func warnUnlisted(pluginName, kind string, listed []string, present map[string]bool) {
+	listedSet := make(map[string]bool, len(listed))
+	for _, name := range listed {
+		listedSet[name] = true
 	}
 	for name := range present {
 		if !listedSet[name] {
@@ -282,11 +289,11 @@ func checkManifestList(pluginName, kind string, listed []string, present map[str
 				"component", "plugin", "plugin", pluginName, "kind", kind, "name", name)
 		}
 	}
-	return nil
 }
 
-// dirEntryNames lists agents/<name>/ subdirectory names, or an empty map for
-// a plugin with no agents/ directory - never an error, same as dirExists.
+// dirEntryNames lists agents/<name>/ names that are actually bundles (carry
+// agent-card.json) - the same predicate config.SeedPluginAgents seeds by, so
+// "present" here can never diverge from what would actually seed.
 func dirEntryNames(dir string) map[string]bool {
 	out := map[string]bool{}
 	if dir == "" {
@@ -297,30 +304,59 @@ func dirEntryNames(dir string) map[string]bool {
 		return out
 	}
 	for _, e := range entries {
-		if e.IsDir() {
-			out[e.Name()] = true
+		if !e.IsDir() {
+			continue
 		}
+		if _, err := os.Stat(filepath.Join(dir, e.Name(), "agent-card.json")); err != nil {
+			continue
+		}
+		out[e.Name()] = true
 	}
 	return out
 }
 
-// yamlEntryNames lists workflows/<name>.yaml file stems, same no-error
-// contract as dirEntryNames.
-func yamlEntryNames(dir string) map[string]bool {
+// yamlEntryNames lists workflows/*.yaml file stems whose internal name:
+// field matches the stem - the identity every other check keys on; a mismatch errors rather than being silently admitted.
+func yamlEntryNames(dir string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if dir == "" {
-		return out
+		return out, nil
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return out
+		return out, nil
 	}
 	for _, e := range entries {
-		if name, ok := strings.CutSuffix(e.Name(), ".yaml"); ok && !e.IsDir() {
-			out[name] = true
+		stem, ok := strings.CutSuffix(e.Name(), ".yaml")
+		if !ok || e.IsDir() {
+			continue
 		}
+		name, err := workflowShapeName(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("workflows/%s: %w", e.Name(), err)
+		}
+		if name != stem {
+			return nil, fmt.Errorf("workflows/%s: name %q does not match its filename", e.Name(), name)
+		}
+		out[stem] = true
 	}
-	return out
+	return out, nil
+}
+
+// workflowShapeName reads only the "name" field of a workflow shape yaml -
+// config.WorkflowShape owns the full schema, this just needs identity.
+func workflowShapeName(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var shape struct {
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal(raw, &shape); err != nil {
+		return "", err
+	}
+	return shape.Name, nil
 }
 
 // fromCodexManifest reads <root>/.codex-plugin/plugin.json. Its "skills"

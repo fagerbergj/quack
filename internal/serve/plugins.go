@@ -261,6 +261,56 @@ func checkPlugin(p plugin.Plugin, modules map[string]yaml.Node) error {
 	return checkConfigRequired(p, modules)
 }
 
+// manifestClaims tracks, across one admission pass, which plugin already
+// claimed each manifest-listed agent/workflow name - the manifest-list era's
+// replacement for the old silent config merge.
+type manifestClaims struct {
+	agents    map[string]string
+	workflows map[string]string
+}
+
+func newManifestClaims() manifestClaims {
+	return manifestClaims{agents: map[string]string{}, workflows: map[string]string{}}
+}
+
+// claim refuses (NamespaceError-class) when another admitted plugin already
+// claimed one of p's listed names - p.Name is already the registry row name here (resolveRegistryPlugins stamps it).
+func (c manifestClaims) claim(p plugin.Plugin) error {
+	if err := claimNames(p, "agents", p.Agents, c.agents); err != nil {
+		return err
+	}
+	return claimNames(p, "workflows", p.Workflows, c.workflows)
+}
+
+func claimNames(p plugin.Plugin, kind string, names []string, seen map[string]string) error {
+	for _, name := range names {
+		if owner, ok := seen[name]; ok {
+			return &plugin.NamespaceError{Root: p.Root, Err: fmt.Errorf("%s entry %q: plugin %q and plugin %q both list it", kind, name, owner, p.Name)}
+		}
+		seen[name] = p.Name
+	}
+	return nil
+}
+
+// admitOnePlugin adds the manifest-list checks to checkPlugin's refusals: a
+// listed-but-missing entry always refuses; a name collision only when p's module gate is enabled.
+func admitOnePlugin(p plugin.Plugin, modules map[string]yaml.Node, claims manifestClaims) error {
+	if err := checkPlugin(p, modules); err != nil {
+		return err
+	}
+	if err := plugin.CheckManifestLists(p); err != nil {
+		return err
+	}
+	gated, err := pluginModuleGateEnabled(modules, p)
+	if err != nil {
+		return err
+	}
+	if !gated {
+		return nil
+	}
+	return claims.claim(p)
+}
+
 // seedPluginNames is the set of registry-row names plugins.seed configures -
 // admitPlugins' fatal-vs-drop boundary.
 func seedPluginNames(seed []string) map[string]bool {
@@ -279,8 +329,10 @@ func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []plugi
 	seedNames := seedPluginNames(seed)
 	refusals := make(map[string]error)
 	out := make([]plugin.Plugin, 0, len(plugins))
+	claims := newManifestClaims()
 	for _, p := range plugins {
-		if err := checkPlugin(p, modules); err != nil {
+		plugin.WarnUnlistedManifestEntries(p)
+		if err := admitOnePlugin(p, modules, claims); err != nil {
 			if seedNames[p.Name] {
 				return nil, nil, err
 			}
