@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -17,6 +18,11 @@ import (
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 	"google.golang.org/genai"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -680,6 +686,84 @@ func TestRepeatWrapToolsetRefusesRepeatedLoadSkill(t *testing.T) {
 	}
 }
 
+// #1478: a toolset-expanded tool (load_skill) must leave a tool.call ledger entry carrying the
+// round's coords from its ctx - registry-built tools get this via Build's emitWrap, toolset tools
+// get it via repeatGuardedToolset's own emitWrap.
+func TestRepeatWrapToolsetEmitsLedgerEntry(t *testing.T) {
+	t.Parallel()
+	capExp := &repeatLedgerCapture{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	src := skill.NewFileSystemSource(fstest.MapFS{
+		"demo/SKILL.md": &fstest.MapFile{Data: []byte(
+			"---\nname: demo\ndescription: a demo skill for the ledger test.\n---\n\nBody.\n")},
+	})
+	ts, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := RepeatWrapToolset(ts, newRepeatStates(), nil)
+	// The round's ctx carries the full coords (vetting/node.go stamps them before the run).
+	c := &repeatCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1", Node: "node-1", Agent: "w"})},
+		sid: "s1", state: &fakeState{m: map[string]any{}}}
+
+	var loadSkill runnableTool
+	wtools, err := wrapped.Tools(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wt := range wtools {
+		if wt.Name() == "load_skill" {
+			loadSkill, _ = wt.(runnableTool)
+			break
+		}
+	}
+	if loadSkill == nil {
+		t.Fatal("load_skill not found in wrapped toolset")
+	}
+	if _, err := loadSkill.Run(c, map[string]any{"name": "demo"}); err != nil {
+		t.Fatalf("load_skill: %v", err)
+	}
+	capExp.mu.Lock()
+	defer capExp.mu.Unlock()
+	var got string
+	for _, a := range capExp.attrs {
+		if a[otelobs.GenAIOperationName] == otelobs.GenAIOperationExecuteTool {
+			got = a[otelobs.GenAIToolName] + " agent=" + a[otelobs.GenAIAgentName]
+		}
+	}
+	if got != "load_skill agent=w" {
+		t.Fatalf("ledger events %v: want a load_skill execute_tool with agent w", got)
+	}
+}
+
+// repeatLedgerCapture collects string attrs of every logged record (mirrors
+// internal/dag's ledgerCaptureExporter, trimmed to this test's assertions).
+type repeatLedgerCapture struct {
+	mu    sync.Mutex
+	attrs []map[string]string
+}
+
+func (c *repeatLedgerCapture) Export(_ context.Context, records []sdklog.Record) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, r := range records {
+		a := map[string]string{}
+		r.WalkAttributes(func(kv attribute.KeyValue) bool {
+			if kv.Value.Type() == attribute.STRING {
+				a[string(kv.Key)] = kv.Value.AsString()
+			}
+			return true
+		})
+		c.attrs = append(c.attrs, a)
+	}
+	return nil
+}
+func (c *repeatLedgerCapture) Shutdown(context.Context) error   { return nil }
+func (c *repeatLedgerCapture) ForceFlush(context.Context) error { return nil }
+
 // fakeToolset is a minimal tool.Toolset stand-in, with no ProcessRequest of its own.
 type fakeToolset struct {
 	name  string
@@ -721,8 +805,10 @@ func TestRepeatWrapToolsetPassthroughs(t *testing.T) {
 	if wt[0] != tool.Tool(stubTool{}) {
 		t.Fatalf("non-runnable tool was wrapped instead of passed through: %T", wt[0])
 	}
-	if _, ok := wt[1].(*repeatGuard); !ok {
-		t.Fatalf("runnable tool was not wrapped: %T", wt[1])
+	if et, ok := wt[1].(*emitTool); !ok {
+		t.Fatalf("runnable tool not wrapped in emitTool (#1478): %T", wt[1])
+	} else if _, ok := et.inner.(*repeatGuard); !ok {
+		t.Fatalf("emitTool does not wrap repeatGuard: %T", et.inner)
 	}
 
 	rgt, ok := wrapped.(*repeatGuardedToolset)

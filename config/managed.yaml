@@ -62,6 +62,16 @@ orchestrator:
   model: ${QUACK_ORCH_MODEL}
   tools: [web_search, web_fetch, summarize, current_date]
 
+# plugins.seed: explicit because the shipped default (dotagents, ponytail, the
+# compiled-in usage manifest) would otherwise be REPLACED, not extended, by
+# adding .agents/plugins/github here - see internal/config's defaultSkillPlugins.
+plugins:
+  seed:
+    - github:fagerbergj/dotagents           # general-purpose skills
+    - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline
+    - .agents/plugins/usage                 # manifest for the compiled-in usage extension
+    - .agents/plugins/github                # its code-implementer/reviewer/explorer agents seed only once extensions.github below is configured
+
 agents:
   web-researcher:
     bundle: agents/web-researcher
@@ -74,13 +84,13 @@ agents:
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, stage_memory]
     # no skills scoped: see config/quack.yaml's web-researcher comment
+  # code-implementer/reviewer/explorer: override-only - bundle/tools/skills come
+  # from .agents/plugins/github's agent.yaml, seeded once extensions.github below
+  # is configured. optional: true so a disabled extension drops these three, not boot.
   code-implementer:
-    bundle: agents/code-implementer   # card + prompt.md (ACP preamble) + rubric.yaml
-    provider: default
+    optional: true
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
-    model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
-    context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
     # External ACP coder (internal/acp): the pi-acp shim drives pi from
     # PI_ACP_CONFIG; git push stays denied inside the subprocess (delivery stays
@@ -88,12 +98,9 @@ agents:
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
   code-reviewer:
-    bundle: agents/code-reviewer      # card + prompt.md (values + VERDICT/FINDINGS contract) + rubric.yaml
-    provider: default
+    optional: true
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
-    model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
-    context_window: 65536
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty
     # External ACP reviewer, read_only: runs the change with its own tools, never
     # commits; the gate parses its VERDICT/FINDINGS tail into the posted review.
@@ -101,13 +108,9 @@ agents:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
   code-explorer:
-    bundle: agents/code-explorer      # card + prompt.md (read-only exploration) + rubric.yaml
-    provider: default
+    optional: true
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
-    model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
-    context_window: 65536
-    judge_rounds: 2             # exploration is largely one-pass; 2 rounds is plenty
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
@@ -163,7 +166,9 @@ workspace:
   sandbox: bwrap
 
 # GitHub App extension: webhook receiver + App-authed git creds + the App-mention
-# trigger. Uncomment and set the env vars to enable it on this deployment. Uses the
+# trigger - and, once uncommented and enabled, the .agents/plugins/github plugin's
+# code-implementer/code-reviewer/code-explorer agents above. Uncomment and set the
+# env vars to enable it on this deployment. Uses the
 # App CLIENT ID as the JWT issuer (the App's CLIENT SECRET is unused - that's OAuth
 # only) and the private key inline as PEM contents via env (private_key_path is the
 # alternative for a mounted .pem file). Secrets MUST be ${VAR} refs - a literal is a

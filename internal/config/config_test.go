@@ -836,7 +836,7 @@ func TestRealConfigLoads(t *testing.T) {
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
-	c, err := Load("../../config/quack.yaml")
+	c, err := LoadDeferringAgentCompleteness("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("shipped config/quack.yaml failed to load: %v", err)
 	}
@@ -859,7 +859,7 @@ func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
-	c, err := Load("../../config/quack.yaml")
+	c, err := LoadDeferringAgentCompleteness("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("shipped config/quack.yaml failed to load: %v", err)
 	}
@@ -910,7 +910,7 @@ func TestManagedConfigLoads(t *testing.T) {
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
-	c, err := Load("../../config/managed.yaml")
+	c, err := LoadDeferringAgentCompleteness("../../config/managed.yaml")
 	if err != nil {
 		t.Fatalf("shipped config/managed.yaml failed to load: %v", err)
 	}
@@ -2155,7 +2155,7 @@ func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 		"        depends_on: [transcribe]\n" +
 		`        task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"` + "\n"
 	rawWithShape := string(raw)[:idx] + "\n" + documentIngestItem + string(raw)[idx:]
-	c, err := Load(writeTemp(t, rawWithShape+`
+	c, err := LoadDeferringAgentCompleteness(writeTemp(t, rawWithShape+`
 extensions:
   remarkable:
     base_url: ${RMFAKECLOUD_URL}

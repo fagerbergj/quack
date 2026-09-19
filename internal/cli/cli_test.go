@@ -13,8 +13,11 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
+// loadConfigForTest defers agent completeness: coding agents are now
+// override-only (no bundle:), same as a real boot's LoadDeferringAgentCompleteness
+// before plugin seeding fills them in.
 func loadConfigForTest(path string) (*config.Config, error) {
-	return config.Load(path)
+	return config.LoadDeferringAgentCompleteness(path)
 }
 
 func TestRegistryRoundTrip(t *testing.T) {

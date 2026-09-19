@@ -41,10 +41,17 @@ type Entry struct {
 	Root string
 }
 
-// Name is the registry-row name: the repo for a github entry, the base of the
-// path for a local one (the raw path has separators, unusable as a dir name).
+// Name: repo for a github entry, except with #path the last path segment names the row (a trailing "plugin" names its parent, #1512), so one repo can host several plugins.
 func (e Entry) Name() string {
 	if e.Source == SourceGitHub {
+		if e.Path != "" {
+			if base := filepath.Base(e.Path); base != "plugin" {
+				return base
+			}
+			if parent := filepath.Base(filepath.Dir(e.Path)); parent != "." {
+				return parent
+			}
+		}
 		return e.Repo
 	}
 	return filepath.Base(e.Raw)
