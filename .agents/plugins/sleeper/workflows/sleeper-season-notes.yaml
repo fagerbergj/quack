@@ -1,0 +1,9 @@
+name: sleeper-season-notes
+trigger: "Update the Sleeper season notes for a league from this week's trends (extensions.sleeper dispatch)"
+agents: [trend-scout]
+shape: "ONE `trend-scout` node (terminal - writes the season-notes artifact)"
+nodes:
+  - id: season-notes
+    agent: trend-scout
+    task: "Review this week's trends findings for the Sleeper league named below and append any genuinely recurring, league-specific learning to its season notes.\n\n{{ask}}"
+    artifact: season-notes

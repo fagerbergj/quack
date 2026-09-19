@@ -6,23 +6,58 @@ import (
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"google.golang.org/adk/v2/tool"
+	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// sleeperWorkflowShapeNames: the four bound shapes config/quack.yaml's
-// workflows: declares for the Sleeper extension's dispatch (docs/configuration/agents.md).
+// sleeperPluginRoot: resolved relative to this test's own cwd
+// (internal/serve, go test's package-dir convention), not repo root or
+// config/quack.yaml's own relative plugins.seed entry.
+const sleeperPluginRoot = "../../.agents/plugins/sleeper"
+
+// sleeperWorkflowShapeNames: the four bound shapes .agents/plugins/sleeper/workflows/ declares.
 var sleeperWorkflowShapeNames = []string{"sleeper-lineup", "sleeper-waivers", "sleeper-trends", "sleeper-season-notes"}
 
+// resolveSleeperPlugin resolves the sleeper plugin root directly - the
+// registry's own relative plugins.seed entries resolve against the SERVER's
+// cwd, not a test binary's package-dir cwd, so tests bypass the registry.
+func resolveSleeperPlugin(t *testing.T) plugin.Plugin {
+	t.Helper()
+	plugins, err := plugin.Resolve([]string{sleeperPluginRoot})
+	if err != nil {
+		t.Fatalf("plugin.Resolve(sleeper): %v", err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("plugin.Resolve(sleeper) = %v, want exactly one plugin", plugins)
+	}
+	return plugins[0]
+}
+
+// enableSleeperExtension sets cfg.Extensions.Modules["sleeper"] to an
+// enabled block, the same shape config.Load would produce from an
+// uncommented extensions.sleeper: { enabled: true } in quack.yaml.
+func enableSleeperExtension(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	var node yaml.Node
+	if err := node.Encode(map[string]any{"enabled": true, "default_user": "x", "default_league": "1"}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Extensions.Modules == nil {
+		cfg.Extensions.Modules = map[string]yaml.Node{}
+	}
+	cfg.Extensions.Modules["sleeper"] = node
+}
+
 // sleeperExtToolsByName builds the real sleeper extension the way
-// buildOneSDKExtension does for an enabled config, and indexes its Tools() by
-// name - the same map buildAgents would hand tools.Build via ExtTools once
-// extensions.sleeper is on.
+// buildOneSDKExtension does for an enabled config, indexed by tool name -
+// the same map buildAgents hands tools.Build via ExtTools once enabled.
 func sleeperExtToolsByName(t *testing.T) map[string]tool.Tool {
 	t.Helper()
 	factory, ok := extsdk.Registered()["sleeper"]
@@ -40,19 +75,33 @@ func sleeperExtToolsByName(t *testing.T) map[string]tool.Tool {
 	return byName
 }
 
-// TestSleeperAgentsResolveToolsWhenExtensionEnabled mirrors
-// nativeAgentGitHubWriteGrants (stagedeliver_test.go): build each Sleeper
-// agent's real tool set against the real, enabled extension's ExtTools, the
-// way buildAgents does, and confirm every declared tool actually resolves -
-// config.Load parsing the tools: list isn't enough, tools.Build is the real gate.
-func TestSleeperAgentsResolveToolsWhenExtensionEnabled(t *testing.T) {
+// TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled: with
+// extensions.sleeper enabled, the plugin seeds exactly its three agents and
+// four shapes, each agent's real tool set resolves, and every shape binds.
+func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.Load("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	extToolsByName := sleeperExtToolsByName(t)
+	enableSleeperExtension(t, cfg)
+	p := resolveSleeperPlugin(t)
 
+	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	if err != nil {
+		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
+	}
+	if len(results) != 1 || results[0].Plugin != "sleeper" {
+		t.Fatalf("results = %+v, want one sleeper entry", results)
+	}
+	if got := results[0].Agents; len(got) != 3 {
+		t.Errorf("seeded agents = %v, want exactly 3", got)
+	}
+	if got := results[0].Shapes; len(got) != 4 {
+		t.Errorf("seeded shapes = %v, want exactly 4", got)
+	}
+
+	extToolsByName := sleeperExtToolsByName(t)
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("workspace.NewJail: %v", err)
@@ -61,7 +110,7 @@ func TestSleeperAgentsResolveToolsWhenExtensionEnabled(t *testing.T) {
 	for _, name := range []string{"lineup-analyst", "waiver-scout", "trend-scout"} {
 		ac, ok := cfg.Agents[name]
 		if !ok {
-			t.Fatalf("config/quack.yaml missing agent %q", name)
+			t.Fatalf("sleeper plugin did not seed agent %q", name)
 		}
 		if !ac.Optional {
 			t.Errorf("agent %q: want optional: true - its tools need extensions.sleeper enabled to resolve", name)
@@ -94,7 +143,7 @@ func TestSleeperAgentsResolveToolsWhenExtensionEnabled(t *testing.T) {
 	for _, name := range sleeperWorkflowShapeNames {
 		s, ok := workflowcatalog.Lookup(filtered, name)
 		if !ok {
-			t.Errorf("shape %q missing from config/quack.yaml's workflows: with extensions.sleeper enabled", name)
+			t.Errorf("shape %q missing from the catalog with extensions.sleeper enabled", name)
 			continue
 		}
 		if nodes, ok := workflowcatalog.Bind(s, "test ask"); !ok || len(nodes) == 0 {
@@ -103,60 +152,34 @@ func TestSleeperAgentsResolveToolsWhenExtensionEnabled(t *testing.T) {
 	}
 }
 
-// TestSleeperWorkflowShapesAbsentWhenExtensionDisabled is the boot test's
-// other half: with extensions.sleeper off (the shipped default), the three
-// Sleeper agents' tools never resolve, buildAgents drops them, and
-// finalizeCatalogShapes' DropAgents must remove every shape naming one -
-// a planner or extension dispatch must never see a job it can't run.
-func TestSleeperWorkflowShapesAbsentWhenExtensionDisabled(t *testing.T) {
+// TestSleeperPluginAbsentWhenExtensionDisabled: with extensions.sleeper off
+// (the shipped default), the gate keeps the plugin's agents and shapes OUT
+// of cfg entirely - not seeded then dropped, simply never added.
+func TestSleeperPluginAbsentWhenExtensionDisabled(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.Load("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	jail, err := workspace.NewJail(t.TempDir())
-	if err != nil {
-		t.Fatalf("workspace.NewJail: %v", err)
-	}
+	p := resolveSleeperPlugin(t)
 
-	dropped := map[string]bool{}
-	for _, name := range []string{"lineup-analyst", "waiver-scout", "trend-scout"} {
-		ac := cfg.Agents[name]
-		prov, ok := cfg.Provider(ac.Provider)
-		if !ok {
-			t.Fatalf("agent %q: unknown provider %q", name, ac.Provider)
-		}
-		wm, err := inference.NewModel(prov, ac.Model, nil, cfg.ModelCost(ac.Model))
-		if err != nil {
-			t.Fatalf("agent %q: model: %v", name, err)
-		}
-		toolNames := resolveToolNames(ac.Tools, true)
-		// No ExtTools: extensions.sleeper is off by default, exactly as a
-		// fresh clone boots - sleeper_* never resolves.
-		if _, err := tools.Build(toolNames, tools.Deps{
-			WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
-			Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
-			Summarizer:      wm,
-			Workspace:       jail,
-			WorkspaceUserID: "local",
-		}); err != nil {
-			if !ac.Optional {
-				t.Fatalf("agent %q: tools failed to resolve and it isn't optional: %v", name, err)
-			}
-			dropped[name] = true
-			continue
-		}
-		t.Errorf("agent %q: tools resolved with extensions.sleeper disabled - test fixture drifted from the real config", name)
+	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	if err != nil {
+		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
 	}
-	if len(dropped) != 3 {
-		t.Fatalf("want all three Sleeper agents dropped with extensions.sleeper disabled, got %v", dropped)
+	if len(results) != 0 {
+		t.Fatalf("results = %+v, want none with extensions.sleeper unconfigured", results)
+	}
+	for _, name := range []string{"lineup-analyst", "waiver-scout", "trend-scout"} {
+		if _, ok := cfg.Agents[name]; ok {
+			t.Errorf("agent %q seeded despite extensions.sleeper being unconfigured", name)
+		}
 	}
 
 	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
-	filtered := workflowcatalog.DropAgents(rawShapes, dropped)
 	for _, name := range sleeperWorkflowShapeNames {
-		if _, ok := workflowcatalog.Lookup(filtered, name); ok {
-			t.Errorf("shape %q present after dropping the Sleeper agents; DropAgents should have removed it", name)
+		if _, ok := workflowcatalog.Lookup(rawShapes, name); ok {
+			t.Errorf("shape %q present with extensions.sleeper unconfigured", name)
 		}
 	}
 }
@@ -168,7 +191,7 @@ func TestSleeperAgentBundlesDeclareArtifactKinds(t *testing.T) {
 	ctx := context.Background()
 	want := map[string]string{"lineup-analyst": "lineup", "waiver-scout": "waivers", "trend-scout": "trends"}
 	for name, kind := range want {
-		b, err := agent.LoadBundle(ctx, nil, "agents/"+name)
+		b, err := agent.LoadBundle(ctx, nil, sleeperPluginRoot+"/agents/"+name)
 		if err != nil {
 			t.Fatalf("LoadBundle(%s): %v", name, err)
 		}

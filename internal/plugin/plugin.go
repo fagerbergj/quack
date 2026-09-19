@@ -1,6 +1,6 @@
 // Package plugin discovers plugins packaged per the Agent Plugins standard (https://agent-plugins.org/) or its Codex predecessor. A resolved root can
-// contribute skills (skills/, spec §7.1), MCP servers (mcp.json, spec §7.2),
-// and quack's own client-extension declarations (plugin.json's extensions[Namespace], spec §8). Distribution is out of scope - see internal/pluginreg for the fetch/clone side.
+// contribute skills (skills/, spec §7.1), MCP servers (mcp.json, spec §7.2), quack's own client-extension declarations (plugin.json's extensions[Namespace], spec §8), and - Agent Plugins format only - agent bundles (agents/) and workflow shapes (workflows/), quack's own layout additions.
+// Distribution is out of scope - see internal/pluginreg for the fetch/clone side.
 package plugin
 
 import (
@@ -33,6 +33,14 @@ type Plugin struct {
 	// SkillsDir is the absolute skills directory, or "" when the plugin
 	// ships none.
 	SkillsDir string
+
+	// AgentsDir is the absolute agents/ directory (agent-card.json/prompt.md
+	// bundles, one subdirectory per bundle), or "" when the plugin ships none.
+	AgentsDir string
+
+	// WorkflowsDir is the absolute workflows/ directory (one *.yaml shape per
+	// file, config.WorkflowShape's own schema), or "" when the plugin ships none.
+	WorkflowsDir string
 
 	// Modules are the compiled-in Go modules this plugin declares. quack
 	// cannot load Go code dynamically, so these are checked against the
@@ -167,10 +175,17 @@ func fromRootManifest(abs string) (*Plugin, error) {
 
 	p := &Plugin{Name: m.Name, Root: abs}
 	// §6.2: an absent skills/ is not an error - a plugin may carry only MCP
-	// servers or only module declarations.
+	// servers or only module declarations. agents/ and workflows/ (quack's own
+	// layout additions) are discovered the same presence-based way, no listing.
 	dir := filepath.Join(abs, "skills")
 	if st, err := os.Stat(dir); err == nil && st.IsDir() {
 		p.SkillsDir = dir
+	}
+	if dir := filepath.Join(abs, "agents"); dirExists(dir) {
+		p.AgentsDir = dir
+	}
+	if dir := filepath.Join(abs, "workflows"); dirExists(dir) {
+		p.WorkflowsDir = dir
 	}
 	// §8: namespaces quack does not implement are ignored WITHOUT validating
 	// their contents - only our own key is ever decoded.
@@ -180,7 +195,7 @@ func fromRootManifest(abs string) (*Plugin, error) {
 		}
 	}
 	slog.Info("plugin resolved", "component", "plugin", "format", "agent-plugins", "root", abs, "name", m.Name,
-		"skills", p.SkillsDir != "", "modules", len(p.Modules))
+		"skills", p.SkillsDir != "", "agents", p.AgentsDir != "", "workflows", p.WorkflowsDir != "", "modules", len(p.Modules))
 	return p, nil
 }
 
@@ -234,6 +249,11 @@ func fromCodexManifest(abs string) (*Plugin, error) {
 	}
 	slog.Info("plugin resolved", "component", "plugin", "format", "codex", "root", abs, "name", m.Name)
 	return &Plugin{Name: m.Name, Root: abs, SkillsDir: dir}, nil
+}
+
+func dirExists(dir string) bool {
+	st, err := os.Stat(dir)
+	return err == nil && st.IsDir()
 }
 
 // containedPath joins rel under base and refuses any result that escapes it.

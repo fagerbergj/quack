@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/serve"
@@ -690,13 +691,37 @@ func newServerValidateCmd() *cobra.Command {
 			if len(args) == 1 {
 				path = args[0]
 			}
-			if _, err := config.Load(path); err != nil {
+			cfg, err := config.LoadDeferringAgentCompleteness(path)
+			if err != nil {
 				return err
 			}
+			plugins, unresolvable, err := serve.ResolveConfiguredPlugins(cfg)
+			if err != nil {
+				return err
+			}
+			seeded, err := serve.SeedPluginAgentsAndShapes(cfg, plugins)
+			if err != nil {
+				return err
+			}
+			if err := cfg.RequireAgentBundlesAndModels(); err != nil {
+				return err
+			}
+			stale := staleAgentBundles(cfg)
 			if asJSON {
-				return cli.WriteJSON(cmd.OutOrStdout(), serverValidateResult{Path: path, Status: "ok"})
+				return cli.WriteJSON(cmd.OutOrStdout(), serverValidateResult{
+					Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, StaleBundles: stale,
+				})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: OK\n", path)
+			for _, r := range seeded {
+				fmt.Fprintf(cmd.OutOrStdout(), "  plugin %s: agents %v, shapes %v\n", r.Plugin, r.Agents, r.Shapes)
+			}
+			for _, name := range unresolvable {
+				fmt.Fprintf(cmd.OutOrStdout(), "  plugin %s: not resolvable offline (not cloned locally; run a real boot or fetch first)\n", name)
+			}
+			for _, name := range stale {
+				fmt.Fprintf(cmd.OutOrStdout(), "  agent %s: bundle path does not exist on disk\n", name)
+			}
 			return nil
 		},
 	}
@@ -704,11 +729,30 @@ func newServerValidateCmd() *cobra.Command {
 	return c
 }
 
+// staleAgentBundles catches a stale or typo'd `bundle:` path up front, via
+// bundledir.ReadFile's own disk-then-embedded resolution (raw os.Stat would
+// misreport a shipped bundle served from the embedded copy as missing).
+func staleAgentBundles(cfg *config.Config) []string {
+	var stale []string
+	for name, ac := range cfg.Agents {
+		if _, err := bundledir.ReadFile(bundledir.PathJoin(ac.Bundle, "agent-card.json")); err != nil {
+			stale = append(stale, name)
+		}
+	}
+	sort.Strings(stale)
+	return stale
+}
+
 // serverValidateResult is `server validate --json`'s shape; validate only
 // ever reaches it on success (an invalid config returns an error instead).
 type serverValidateResult struct {
-	Path   string `json:"path"`
-	Status string `json:"status"`
+	Path    string                   `json:"path"`
+	Status  string                   `json:"status"`
+	Plugins []serve.PluginSeedResult `json:"plugins,omitempty"`
+	// Unresolvable names a plugins.seed row validate couldn't check offline.
+	Unresolvable []string `json:"unresolvable,omitempty"`
+	// StaleBundles names a configured agent whose bundle path is missing.
+	StaleBundles []string `json:"stale_bundles,omitempty"`
 }
 
 // newServerInitCmd: `quack server init` - the server-config wizard (LLM

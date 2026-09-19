@@ -1,12 +1,14 @@
 # Agent Plugins in quack
 
-quack loads plugins packaged per the [Agent Plugins](https://agent-plugins.org/) specification, version 1.1.0. One plugin root can carry three things:
+quack loads plugins packaged per the [Agent Plugins](https://agent-plugins.org/) specification, version 1.1.0. One plugin root can carry these things:
 
 | Component | Location | Portable? |
 | --- | --- | --- |
 | Skills | `skills/` | Yes (spec §7.1) |
 | MCP servers | `mcp.json` | Yes (spec §7.2) |
 | quack extension declarations | `plugin.json` → `extensions["io.github.fagerbergj.quack"]` | No (spec §8) |
+| Agent bundles | `agents/<bundle>/` | No - quack's own layout addition |
+| Workflow shapes | `workflows/*.yaml` | No - quack's own layout addition |
 
 Skills are pulled from a dynamic **plugin registry** at run time (epic #1427): each plugin is a registry row, cloned to disk, fetched at boot and refreshable from the UI or REST with no rebuild. A fetched plugin's `mcp.json` loads exactly like a local root's - adding the row is the trust boundary, not a separate MCP approval step (see [Security](#security)). Compiled extension modules still come only from the binary, as described below.
 
@@ -89,6 +91,8 @@ A fetch failure - unreachable remote, moved/deleted ref, etc. - is stored on the
 A fetch or update rebuilds the skill roster with no server restart: native agents' skill toolsets re-list on their next round, and an ACP-agent spawn rebuilds `skill_paths` from the registry on every round.
 
 MCP servers are different: they're enumerated once at boot and their tools baked into each native agent's toolset for that process's whole life, the same way local-root MCP servers always worked. A fetch or update that changes a plugin's `mcp.json` does **not** spawn or re-enumerate anything live - the new servers start at the next restart. The wire row's `declares_mcp_servers` flags whether the plugin *currently* ships a server, so this is visible without checking the logs; the tools an agent can call this session are still whatever booted.
+
+Agent bundles and workflow shapes are boot-only too: seeding happens once, during startup, from whatever `plugins.seed` resolved to at that moment. A plugin added, updated, or removed at runtime (REST) does not change the roster or the planner table until the next restart - unlike skills, there is no rebuild hook for either.
 
 ### Admission
 
@@ -199,6 +203,58 @@ binary; add its blank import to internal/serve/extensions_registry.go
 ```
 
 The manifest is documentation the compiler is checked against.
+
+## Agent bundles and workflow shapes
+
+A plugin can also ship its own agent roster and DAG shapes, seeded into `config.Config` at boot the same way skills are - `agents:` and `workflows:` stay the deployment's own mechanisms; a plugin only adds entries to them before `buildAgents`/`workflowcatalog.FromConfig` run.
+
+### Layout
+
+```text
+.agents/plugins/<name>/
+  agents/<bundle>/
+    agent-card.json   # required - the same A2A card any bundle carries
+    prompt.md          # required
+    rubric.yaml         # optional
+    memory.md           # optional
+    agent.yaml           # plugin-only: tools, skills, judge_rounds, context_window, model_role
+  workflows/
+    <shape-name>.yaml   # one file per shape, the exact `workflows:` entry schema
+```
+
+Both are discovered by presence, the same way `skills/` is: `internal/plugin.Resolve` sets `AgentsDir`/`WorkflowsDir` on a resolved `Plugin` when those directories exist, no manifest listing required. A subdirectory of `agents/` is a bundle only if it has an `agent-card.json`; every `*.yaml` file under `workflows/` is one shape.
+
+### `agent.yaml`
+
+The plugin-bundle-only sibling of `agent-card.json`/`prompt.md` (a shipped bundle under `agents/` never carries this file):
+
+```yaml
+tools: [sleeper_roster, sleeper_matchup, current_date]
+skills: [sleeper:start-sit]
+judge_rounds: 1
+context_window: 65536
+model_role: researcher   # researcher | coder | judge
+```
+
+`model_role` substitutes for a "default model" concept config doesn't have (`models:` is keyed by resolved model id, not role): it maps to whichever `QUACK_RESEARCHER_MODEL`/`QUACK_CODER_MODEL`/`QUACK_JUDGE_MODEL` env var the deployment already set for its shipped agents of that role (`internal/config`'s `modelRoleEnv`). Provider defaults to the provider named `default` - the convention every shipped agent already uses; a deployment on a different provider name overrides it explicitly.
+
+**The deployment must have the matching `QUACK_*_MODEL` env var set** for `model_role` to resolve to anything - there is no other default. An unset var resolves to an empty model, and boot or `server validate` fails naming the agent, exactly like a config-authored agent left with no `model:`. Set an explicit `model:` override (below) on a deployment with no matching `QUACK_*_MODEL` role.
+
+### Precedence
+
+A deployment's `agents.<name>:` entry - already in `config.Agents` before a plugin's bundles are seeded - overrides the plugin's `agent.yaml` defaults field by field (`provider`, `model`, `context_window`, `tools`, `skills`, `judge_rounds`, `memory`, `gated`, `judge`, `acp`, `inputs`); an unset field keeps the plugin's own value. `bundle` and `optional: true` are never overridable - every plugin agent is implicitly optional, so `buildAgents`' existing drop-on-unresolved-tools path (`tools.ErrUnknownTool`) still applies unchanged if a bundle's tools somehow fail to resolve even with its extension on.
+
+`tools:` **replaces** the plugin's list wholesale, never merges with it - the documented way to drop a tool whose backend the deployment doesn't run. `tools.ErrUnknownTool` (an unrecognized tool *name*) is what triggers the optional-agent drop; a recognized tool that fails to *build* because its backend isn't configured (e.g. `web_search` with no SearXNG url or Exa key) is a hard boot error by design - a real misconfiguration, not a signal the extension is off. Override `agents.<name>.tools` to the subset the deployment can actually build.
+
+An override may leave `bundle:` (and `model:`, `provider:`) unset entirely, trusting the plugin to supply them - `config.Load` defers requiring them until after plugin seeding runs, so the override alone is never rejected before the plugin gets a chance to complete it. If the plugin's module ends up disabled (or the plugin is absent), the agent stays incomplete and boot/`server validate` fails with the same clear "empty bundle path" error a broken config-authored entry gets.
+
+A plugin workflow shape is appended to the raw `workflows:` list and validated by the exact same `validateWorkflows` path a config-authored shape gets (agent existence, bound-node artifact kinds, DAG acyclicity) - a shape naming a missing agent fails boot naming the plugin, not just the shape.
+
+### Gating
+
+A plugin whose `plugin.json` namespace block names a linked module (see [Host-coupled surfaces](#host-coupled-surfaces--compiled-in-go-modules) above) seeds its agents and shapes only when that module is configured under `extensions:` and not explicitly `enabled: false` - the same check `buildOneSDKExtension` makes before mounting the module itself. A plugin naming no module seeds unconditionally. Gating is absence, not a drop: a disabled extension's agents and shapes never enter `config.Agents`/`config.Workflows` in the first place, so there is nothing for the roster or planner table to warn about. Boot logs one info line per plugin that actually seeded something, naming the agents and shapes.
+
+`quack server validate` resolves plugins the same way and lists each plugin's seeded agents and shapes in its output.
 
 ## Configuration
 

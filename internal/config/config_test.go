@@ -2133,16 +2133,16 @@ func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read shipped config: %v", err)
 	}
-	// The shipped file already has a real, non-empty workflows: key (the
-	// Sleeper shapes) - a second top-level workflows: key would be a YAML
-	// duplicate-key error, so this example must join that SAME list by
-	// splicing another item in just before the next top-level section.
+	// The shipped file ships no workflows: key by default (#1505 moved the
+	// Sleeper shapes into their plugin), so this example injects its own,
+	// spliced in just before the next top-level section.
 	const anchor = "\n# The agents' working disk"
 	idx := strings.Index(string(raw), anchor)
 	if idx == -1 {
 		t.Fatal("shipped config/quack.yaml missing the workspace section anchor this test injects before")
 	}
-	documentIngestItem := "  - name: document-ingest\n" +
+	documentIngestItem := "workflows:\n" +
+		"  - name: document-ingest\n" +
 		`    trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"` + "\n" +
 		"    agents: [image-reader, synthesizer]\n" +
 		"    shape: \"ONE `image-reader` node (transcribes the attached document) -> ONE `synthesizer` node (terminal - writes the structured summary)\"\n" +

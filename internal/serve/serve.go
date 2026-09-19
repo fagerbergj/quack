@@ -432,7 +432,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 
 // InProcess builds the server on an ephemeral loopback port for co-hosted CLI use.
 func InProcess(ctx context.Context, configPath string) (baseURL string, stop func() error, err error) {
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadDeferringAgentCompleteness(configPath)
 	if err != nil {
 		return "", nil, fmt.Errorf("config load failed: %w", err)
 	}
@@ -487,7 +487,7 @@ type shutdownHooks struct {
 
 // build loads config and constructs the HTTP handler, shared by Run and InProcess.
 func build(ctx context.Context, configPath string, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadDeferringAgentCompleteness(configPath)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("config load failed: %w", err)
 	}
@@ -626,25 +626,53 @@ type skillsInit struct {
 	reg pluginreg.FetchRegistry
 }
 
-// resolves the plugin registry and builds the skill sources and toolsets.
-// st (nilable) is reused for the registry's own DB connection when
-// plugins.store names the same store as session.store (#1427 P3).
-func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
+// resolvePlugins resolves and admits every registry row once, before
+// rawShapes/buildAgents so plugin agents/shapes seed into cfg first. st
+// (nilable) reuses the registry's DB connection per plugins.store (#1427 P3).
+func (b *boot) resolvePlugins(ctx context.Context, st *store.Store) (pluginreg.FetchRegistry, []pluginreg.Plugin, []plugin.Plugin, error) {
 	reg, rows, err := b.bootPluginRegistry(ctx, st)
 	if err != nil {
-		return skillsInit{}, err
+		return nil, nil, nil, err
 	}
-	// One resolution of the registry roots drives all three component types.
 	// admitPlugins fails boot only on a plugins.seed (config) refusal -
 	// a REST-added row's refusal just drops that plugin (#1430 severe).
 	plugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
 	if err != nil {
-		return skillsInit{}, err
+		return nil, nil, nil, err
 	}
 	plugins, _, err = admitPlugins(ctx, reg, rows, plugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
 	if err != nil {
-		return skillsInit{}, err
+		return nil, nil, nil, err
 	}
+	return reg, rows, plugins, nil
+}
+
+// resolveAndSeedPlugins resolves plugins, seeds their agents/shapes into
+// b.cfg, and returns the raw catalog shapes - so both are in b.cfg before
+// rawShapes/buildAgents run, behind one error check for buildFromConfig.
+func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (pluginreg.FetchRegistry, []plugin.Plugin, []workflowcatalog.Shape, error) {
+	reg, _, plugins, err := b.resolvePlugins(ctx, st)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	seedResults, err := SeedPluginAgentsAndShapes(b.cfg, plugins)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	logPluginSeeds(seedResults)
+	// The merge is done now: every agent must have a bundle/model, whether a
+	// plugin supplied it or the config itself did (deferred by
+	// LoadDeferringAgentCompleteness so a plugin override reaches this far).
+	if err := b.cfg.RequireAgentBundlesAndModels(); err != nil {
+		return nil, nil, nil, err
+	}
+	return reg, plugins, workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision), nil
+}
+
+// buildSkillsInit builds the skill sources and toolsets over an
+// already-resolved plugin set (see resolvePlugins) - buildFromConfig calls
+// this directly so plugin agents/shapes can be seeded into cfg first.
+func (b *boot) buildSkillsInit(jail *workspace.Jail, reg pluginreg.FetchRegistry, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
 	var mcpDeclaredPtr atomic.Pointer[map[string]bool]
 	mcpDeclaredPtr.Store(mcpDeclaredNames(plugins))
 	// swappable is builtinSkillSrc's registry-derived half; every consumer
@@ -918,13 +946,16 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 
+	reg, plugins, rawShapes, err := b.resolveAndSeedPlugins(ctx, st)
+	if err != nil {
+		return nil, nil, "", err
+	}
 	// Both catalog consumers below are built before buildAgents runs, so this
 	// starts unfiltered; finalizeCatalogShapes corrects it once buildAgents returns.
-	rawShapes := workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision)
 	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
 	shapesRef.Store(&rawShapes)
 
-	skills, err := b.initSkills(ctx, jail, st, &shapesRef)
+	skills, err := b.buildSkillsInit(jail, reg, plugins, &shapesRef)
 	if err != nil {
 		return nil, nil, "", err
 	}

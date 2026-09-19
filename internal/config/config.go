@@ -61,6 +61,10 @@ type Config struct {
 	// endpoint, orchestrator/agent model, session/artifacts store URL). Every other check (workspace, gates shape, dag, server, etc.) still runs, so
 	// `quack sandbox` validates the SAME workspace config an ACP agent gets, without demanding inference plumbing it never calls.
 	skipRuntimeValidation bool
+	// deferAgentCompleteness - set by LoadDeferringAgentCompleteness - skips
+	// requiring a non-empty bundle/model per agent until the caller runs
+	// RequireAgentBundlesAndModels, once a plugin merge may have filled them in.
+	deferAgentCompleteness bool
 }
 
 // SkillsConfig is the deprecated home of the plugin-root list; use the
@@ -996,17 +1000,24 @@ func expandEnv(key string) string {
 }
 
 func Load(path string) (*Config, error) {
-	return load(path, false)
+	return load(path, false, false)
 }
 
 // LoadForSandbox loads path the same way Load does (parse, expand, the full workspace/gates/dag/server validation and defaulting) but skips the checks that require live inference plumbing - provider endpoint, orchestrator/agent model, session/artifacts store url - which `quack sandbox` never needs: it
 // runs a shell command inside an agent's Caps/WrapArgv/spawnEnv, never calling a model or a store. So a deployment config with those left as empty env vars
 // (e.g. a CI image with no QUACK_*_MODEL/QUACK_DATABASE_URL set) should still resolve one agent's acp/workspace config instead of failing on a sibling agent's unrelated empty model.
 func LoadForSandbox(path string) (*Config, error) {
-	return load(path, true)
+	return load(path, true, false)
 }
 
-func load(path string, skipRuntimeValidation bool) (*Config, error) {
+// LoadDeferringAgentCompleteness loads path like Load but skips requiring a
+// non-empty bundle/model per agent - the caller must call
+// RequireAgentBundlesAndModels itself once plugin seeding has merged in.
+func LoadDeferringAgentCompleteness(path string) (*Config, error) {
+	return load(path, false, true)
+}
+
+func load(path string, skipRuntimeValidation, deferAgentCompleteness bool) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
@@ -1034,6 +1045,7 @@ func load(path string, skipRuntimeValidation bool) (*Config, error) {
 	sum := sha256.Sum256(raw)
 	c.Revision = hex.EncodeToString(sum[:])[:12]
 	c.skipRuntimeValidation = skipRuntimeValidation
+	c.deferAgentCompleteness = deferAgentCompleteness
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -1341,7 +1353,20 @@ func (c *Config) validateArtifactsStore() error {
 	return nil
 }
 
+// validateAgentModel checks REFERENCES only when c.deferAgentCompleteness -
+// requiredness defers to RequireAgentBundlesAndModels, so a plugin-override
+// entry isn't rejected before SeedPluginAgents fills in what it left empty.
 func (c *Config) validateAgentModel() error {
+	return c.validateAgentFields(!c.deferAgentCompleteness)
+}
+
+// RequireAgentBundlesAndModels re-runs validateAgentModel's requiredness
+// checks - call once cfg.Agents holds its final, plugin-merged set.
+func (c *Config) RequireAgentBundlesAndModels() error {
+	return c.validateAgentFields(true)
+}
+
+func (c *Config) validateAgentFields(requireComplete bool) error {
 	for name, a := range c.Agents {
 		if a.Model != "" {
 			var err error
@@ -1349,14 +1374,20 @@ func (c *Config) validateAgentModel() error {
 				return err
 			}
 		}
-		if _, ok := c.Providers[a.Provider]; !ok {
+		if a.Provider != "" {
+			if _, ok := c.Providers[a.Provider]; !ok {
+				return fmt.Errorf("config: agent %q provider %q is not defined under providers", name, a.Provider)
+			}
+		} else if requireComplete {
 			return fmt.Errorf("config: agent %q provider %q is not defined under providers", name, a.Provider)
 		}
-		if a.Bundle == "" {
-			return fmt.Errorf("config: agent %q has empty bundle path", name)
-		}
-		if a.Model == "" && !c.skipRuntimeValidation {
-			return fmt.Errorf("config: agent %q has empty model", name)
+		if requireComplete {
+			if a.Bundle == "" {
+				return fmt.Errorf("config: agent %q has empty bundle path", name)
+			}
+			if a.Model == "" && !c.skipRuntimeValidation {
+				return fmt.Errorf("config: agent %q has empty model", name)
+			}
 		}
 		if a.Acp != nil && len(a.Acp.Command) == 0 {
 			return fmt.Errorf("config: agent %q has an acp block with an empty command", name)
