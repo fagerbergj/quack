@@ -42,9 +42,11 @@ agents:
 
 ### Plugin agents
 
-A bundle doesn't have to live under `agents/` and get a hand-written `agents:` entry - a plugin can ship its own bundles under `.agents/plugins/<name>/agents/` and workflow shapes under `.agents/plugins/<name>/workflows/`, seeded into `config.Agents`/`config.Workflows` at boot (the Sleeper agents - `lineup-analyst`, `waiver-scout`, `trend-scout` - are the shipped example, in `.agents/plugins/sleeper/`). The plugin's `plugin.json` namespace block lists which bundles and shapes actually seed - the manifest's `agents`/`workflows` lists are the contract, not just what's present on disk. Full manifest schema, layout, and gating: [Agent bundles and workflow shapes](../agent-plugins.md#agent-bundles-and-workflow-shapes).
+A bundle doesn't have to live under `agents/` and get a hand-written `agents:` entry - a plugin can ship its own bundles under `.agents/plugins/<name>/agents/` and workflow shapes under `.agents/plugins/<name>/workflows/`, seeded into `config.Agents`/`config.Workflows` at boot. The shipped examples are the Sleeper agents (`lineup-analyst`, `waiver-scout`, `trend-scout`, native agents, in `.agents/plugins/sleeper/`) and the GitHub extension's coding agents (`code-implementer`, `code-reviewer`, `code-explorer`, external ACP agents - see below - in `.agents/plugins/github/`). The plugin's `plugin.json` namespace block lists which bundles and shapes actually seed - the manifest's `agents`/`workflows` lists are the contract, not just what's present on disk. Full manifest schema, layout, and gating: [Agent bundles and workflow shapes](../agent-plugins.md#agent-bundles-and-workflow-shapes).
 
-Two things carry over from the config-authored path above: a plugin agent is **implicitly `optional: true`** (never overridable), and a deployment's own `agents.<name>:` entry - written exactly like `web-researcher`'s above - **overrides the plugin's `agent.yaml` defaults field by field**, so a deployment can pin a plugin agent to a specific model or tool list without forking the plugin. The override may leave `bundle:` unset - it's only required once plugin seeding has had a chance to fill it in - so a deployment overrides just what it needs to (a model, a trimmed `tools:` list) without repeating the plugin's own path.
+Two things carry over from the config-authored path above: a plugin agent is **implicitly `optional: true`** once the plugin actually seeds it (never overridable), and a deployment's own `agents.<name>:` entry - written exactly like `web-researcher`'s above - **overrides the plugin's `agent.yaml` defaults field by field**, so a deployment can pin a plugin agent to a specific model or tool list without forking the plugin. The override may leave `bundle:` unset - it's only required once plugin seeding has had a chance to fill it in - so a deployment overrides just what it needs to (a model, a trimmed `tools:` list, an `acp:`/`memory:` block the plugin's own `agent.yaml` schema doesn't cover) without repeating the plugin's own path.
+
+An override that leaves `bundle:` unset must set **`optional: true` itself** too, not just rely on a successful merge to add it: if the plugin never seeds the name (its module disabled, or the plugin absent), an override with no bundle and no `optional: true` is a config error (`agent "x" has empty bundle path`) the same as any other incomplete agent; with `optional: true` already on the raw entry, an unseeded name is dropped from the roster instead - the same "boots with the rest of the roster intact" contract `optional: true` already has for a native agent's disabled extension. `config/quack.yaml`'s `code-implementer`/`code-reviewer`/`code-explorer` entries are the worked example: no `bundle:`, `optional: true`, and only the `memory:`/`acp:` fields the plugin's `agent.yaml` doesn't carry.
 
 ## Native agents vs. external ACP agents
 
@@ -52,18 +54,20 @@ quack runs two different kinds of worker:
 
 **Native (llmagent) agents** — `web-researcher`, `synthesizer`, `media-reader`, `image-reader`, and the orchestrator itself — run in-process as ADK `llmagent`s, using the `tools:` list above.
 
-**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `tools/pi-acp` shim driving pi, by default). They carry an `acp:` block instead of a `tools:` list:
+**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `tools/pi-acp` shim driving pi, by default). Their bundles ship in the GitHub extension's plugin (`.agents/plugins/github/`, see [Plugin agents](#plugin-agents) above), so a deployment's own entry is override-only - `bundle:`, `model` (via `model_role: coder`), `tools:`, `skills:`, `judge_rounds` and `context_window` all come from the plugin's `agent.yaml`; the entry just adds the `acp:` block and `memory:` bucket the plugin schema doesn't carry:
 
 ```yaml
 code-implementer:
-  bundle: agents/code-implementer
-  provider: default
-  model: ${QUACK_CODER_MODEL}
+  optional: true
+  memory:
+    bucket: coding
   acp:
     command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
     mcp_servers:
       - https://mcp.context7.com/mcp
 ```
+
+The three agents only seed once `extensions.github` is configured and enabled (the module `.agents/plugins/github/plugin.json` declares) - a deployment with the GitHub extension off has no code agents at all, dropped cleanly rather than failing boot.
 
 - `command` — the subprocess argv.
 - `env` — extra subprocess environment, overriding quack's generated defaults.

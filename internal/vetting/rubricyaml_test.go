@@ -7,14 +7,27 @@ import (
 	"testing"
 )
 
-// TestBundledRubricsLoadAndValidate loads every shipped agents/*/rubric.yaml
-// and validates it - #941: a rubric that fails to validate is a startup
-// error, so this catches an authoring mistake in any of the nine converted rubrics before it ever reaches a running judge.
-func TestBundledRubricsLoadAndValidate(t *testing.T) {
+// bundledRubricYAMLs globs every rubric.yaml under the shipped agents/ tree
+// plus every plugin's own agents/ (e.g. .agents/plugins/github) - the two
+// roots a bundle can live under, same pair prompt_golden_test.go walks.
+func bundledRubricYAMLs(t *testing.T) []string {
+	t.Helper()
 	matches, err := filepath.Glob("../../agents/*/rubric.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
+	pluginMatches, err := filepath.Glob("../../.agents/plugins/*/agents/*/rubric.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(matches, pluginMatches...)
+}
+
+// TestBundledRubricsLoadAndValidate loads every shipped agents/*/rubric.yaml
+// and validates it - #941: a rubric that fails to validate is a startup
+// error, so this catches an authoring mistake in any of the nine converted rubrics before it ever reaches a running judge.
+func TestBundledRubricsLoadAndValidate(t *testing.T) {
+	matches := bundledRubricYAMLs(t)
 	if len(matches) < 9 {
 		t.Fatalf("found %d rubric.yaml files, want at least 9 (one per converted agent)", len(matches))
 	}
@@ -39,10 +52,7 @@ func TestBundledRubricsLoadAndValidate(t *testing.T) {
 // entirely unanchored (#claims_grounded was shipped this way) - and every integer level of its configured scale must have its OWN descriptor, not
 // just some subset: a scale with more levels than bands is the same phantom-precision bug in a different shape.
 func TestBundledRubricsNoEmptyBands(t *testing.T) {
-	matches, err := filepath.Glob("../../agents/*/rubric.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	matches := bundledRubricYAMLs(t)
 	for _, path := range matches {
 		raw, err := os.ReadFile(path)
 		if err != nil {

@@ -21,12 +21,15 @@ func TestAgentBundlesLoad(t *testing.T) {
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
-	c, err := config.Load("../../config/quack.yaml")
+	c, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 	bundles := []string{"agents/orchestrator"}
 	for _, a := range c.Agents {
+		if a.Bundle == "" {
+			continue // plugin-override entry; the github plugin's own tests cover its bundle load
+		}
 		bundles = append(bundles, a.Bundle)
 	}
 	for _, b := range bundles {
@@ -40,14 +43,14 @@ func TestAgentBundlesLoad(t *testing.T) {
 // the card's name matches its config key (buildAgents keys gate configs by that name), and
 // the rubric.md override loads non-empty via buildAgents' path (vetting.LoadBundleRubric).
 func TestCodeImplementerBundle(t *testing.T) {
-	b, err := agent.LoadBundle(context.Background(), nil, "../../agents/code-implementer")
+	b, err := agent.LoadBundle(context.Background(), nil, "../../.agents/plugins/github/agents/code-implementer")
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}
 	if b.Card.Name != "code-implementer" {
 		t.Errorf("card name = %q, want %q", b.Card.Name, "code-implementer")
 	}
-	rubric, err := vetting.LoadBundleRubric(context.Background(), nil, "../../agents/code-implementer")
+	rubric, err := vetting.LoadBundleRubric(context.Background(), nil, "../../.agents/plugins/github/agents/code-implementer")
 	if err != nil {
 		t.Fatalf("LoadBundleRubric: %v", err)
 	}
@@ -77,7 +80,7 @@ func TestCodeImplementerBundle(t *testing.T) {
 // the imperative and the structured tail a conditional fallback, not a
 // standing instruction that invites writing every finding twice.
 func TestCodeReviewerBundlePrefersStaging(t *testing.T) {
-	b, err := agent.LoadBundle(context.Background(), nil, "../../agents/code-reviewer")
+	b, err := agent.LoadBundle(context.Background(), nil, "../../.agents/plugins/github/agents/code-reviewer")
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}

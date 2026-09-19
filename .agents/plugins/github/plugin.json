@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
+  "name": "github",
+  "version": "0.1.0",
+  "description": "Code-related agents (implementer, reviewer, explorer) for the GitHub extension's ACP coding workflow.",
+  "license": "MIT",
+  "repository": "https://github.com/fagerbergj/quack-extensions",
+  "keywords": ["quack", "github", "coding"],
+  "extensions": {
+    "io.github.fagerbergj.quack": {
+      "schemaVersion": 1,
+      "modules": [
+        {
+          "name": "github",
+          "path": "github.com/fagerbergj/quack-extensions/github"
+        }
+      ],
+      "config": "required",
+      "agents": ["code-implementer", "code-reviewer", "code-explorer"]
+    }
+  }
+}

@@ -52,7 +52,19 @@ func SeedPluginAgentsAndShapes(cfg *config.Config, plugins []plugin.Plugin) ([]P
 			results = append(results, PluginSeedResult{Plugin: p.Name, Agents: agents, Shapes: shapes})
 		}
 	}
+	dropUnclaimedOptionalAgents(cfg)
 	return results, nil
+}
+
+// dropUnclaimedOptionalAgents removes a bundle:-less override no plugin
+// seeded (its module disabled) - Optional's own "drop, don't fail boot" contract, applied before RequireAgentBundlesAndModels instead of at build time.
+func dropUnclaimedOptionalAgents(cfg *config.Config) {
+	for name, ac := range cfg.Agents {
+		if ac.Optional && ac.Bundle == "" {
+			delete(cfg.Agents, name)
+			slog.Warn("optional agent has no plugin-supplied bundle; dropped from the roster", "component", "startup", "agent", name)
+		}
+	}
 }
 
 // pluginGateEnabled: a plugin naming no linked module seeds unconditionally;

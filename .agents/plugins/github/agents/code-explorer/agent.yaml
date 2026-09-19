@@ -1,0 +1,3 @@
+judge_rounds: 2
+context_window: 65536
+model_role: coder

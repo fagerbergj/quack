@@ -32,7 +32,7 @@ const maxJudgeScreenshots = 6
 const renderCheckScreenshotDir = "render-check"
 
 // frontendScreenshotsCriterion is the rubric criterion name that scores
-// attached screenshots (agents/code-reviewer/rubric.yaml). Only nodes whose
+// attached screenshots (.agents/plugins/github/agents/code-reviewer/rubric.yaml). Only nodes whose
 // resolved rubric declares it get screenshots - an implementer's rubric has no such criterion, so attaching there would only cost tokens for nothing.
 const frontendScreenshotsCriterion = "frontend_screenshots_reviewed"
 
