@@ -166,7 +166,9 @@ func (hardErrSource) Seed(context.Context, string, artifactsrc.Artifact) error {
 // read as "no memory.md" (fs.ErrNotExist is the only case that means that).
 func TestLoadBundleMemoryPropagatesHardResolverError(t *testing.T) {
 	res := artifactsrc.New("langfuse", hardErrSource{}, time.Minute)
-	if _, _, err := LoadBundleMemory(context.Background(), res, "agents/code-reviewer"); err == nil {
+	// dir must read literally "agents/<x>" (BundleName is a string check, no
+	// "../../" prefix) so the resolver is even consulted instead of a plain disk read.
+	if _, _, err := LoadBundleMemory(context.Background(), res, "agents/web-researcher"); err == nil {
 		t.Fatal("want an error; got nil")
 	}
 }

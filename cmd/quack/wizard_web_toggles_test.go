@@ -48,7 +48,7 @@ func TestEmitServerConfig_WebTogglesBoot(t *testing.T) {
 			if err := os.WriteFile(cfgPath, []byte(rendered), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			cfg, err := config.Load(cfgPath) // the `server validate` path
+			cfg, err := config.LoadDeferringAgentCompleteness(cfgPath) // the `server validate`/boot path
 			if err != nil {
 				t.Fatalf("server validate: %v\n---\n%s", err, rendered)
 			}

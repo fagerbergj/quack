@@ -29,7 +29,7 @@ func (s *stubSource) Get(context.Context, string) (Artifact, bool, error) {
 func (s *stubSource) Seed(context.Context, string, Artifact) error { return nil }
 
 func TestStaticResolvesShippedFile(t *testing.T) {
-	art, err := (*Resolver)(nil).Resolve(context.Background(), "system/code-reviewer")
+	art, err := (*Resolver)(nil).Resolve(context.Background(), "system/web-researcher")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestStaticResolvesShippedFile(t *testing.T) {
 		t.Error("body is empty")
 	}
 	// Same bytes, same version: the id is the content hash, nothing else.
-	again, err := Static("system/code-reviewer")
+	again, err := Static("system/web-researcher")
 	if err != nil || again.VersionID != art.VersionID {
 		t.Errorf("version id not stable: %q vs %q (err %v)", again.VersionID, art.VersionID, err)
 	}
@@ -132,7 +132,7 @@ func TestResolvePropagatesHardError(t *testing.T) {
 func TestNamesDerivedFromShippedFiles(t *testing.T) {
 	names := Names()
 	for _, want := range []string{
-		"system/code-reviewer", "memory/code-reviewer", "rubric/code-reviewer",
+		"system/web-researcher", "memory/web-researcher", "rubric/web-researcher",
 		"rubric/global", "rubric/constitution",
 		"system/judge", "system/compaction", "system/compaction.summary", "system/acp.environment",
 	} {
@@ -143,8 +143,8 @@ func TestNamesDerivedFromShippedFiles(t *testing.T) {
 			t.Errorf("StaticPath(%q) not found", want)
 		}
 	}
-	if p, _ := StaticPath("system/code-reviewer"); p != "agents/code-reviewer/prompt.md" {
-		t.Errorf("system/code-reviewer maps to %q", p)
+	if p, _ := StaticPath("system/web-researcher"); p != "agents/web-researcher/prompt.md" {
+		t.Errorf("system/web-researcher maps to %q", p)
 	}
 	if p, _ := StaticPath("rubric/global"); p != "config/rubric.md" {
 		t.Errorf("rubric/global maps to %q", p)
@@ -272,8 +272,8 @@ func TestChainSource_SeedDelegatesToLast(t *testing.T) {
 
 func TestBundleName(t *testing.T) {
 	for _, c := range []struct{ kind, dir, want string }{
-		{"system", "agents/code-reviewer", "system/code-reviewer"},
-		{"memory", "agents/code-reviewer/", "memory/code-reviewer"},
+		{"system", "agents/web-researcher", "system/web-researcher"},
+		{"memory", "agents/web-researcher/", "memory/web-researcher"},
 		{"system", "/opt/custom-bundle", ""}, // outside agents/, no artifact name
 		{"memory", "agents/advisor", ""},     // shipped bundle with no memory.md
 	} {
@@ -291,7 +291,7 @@ func TestResolveBundleFile(t *testing.T) {
 
 	src := &stubSource{art: Artifact{Body: "from store"}, ok: true}
 	res := New("langfuse", src, time.Minute)
-	art, err := ResolveBundleFile(ctx, res, "system", "agents/code-reviewer", "prompt.md")
+	art, err := ResolveBundleFile(ctx, res, "system", "agents/web-researcher", "prompt.md")
 	if err != nil {
 		t.Fatalf("ResolveBundleFile (store): %v", err)
 	}

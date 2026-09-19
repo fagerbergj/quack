@@ -35,7 +35,10 @@ func TestExampleConfigsLoad(t *testing.T) {
 			for _, kv := range tc.env {
 				t.Setenv(kv[0], kv[1])
 			}
-			c, err := Load(filepath.Join("..", "..", "docs", "configuration", "examples", tc.file))
+			// Deferred: remote-full.yaml/docker-compose.yaml's code-implementer/
+			// reviewer/explorer are override-only (the github plugin supplies
+			// bundle/model), same as config/quack.yaml itself.
+			c, err := LoadDeferringAgentCompleteness(filepath.Join("..", "..", "docs", "configuration", "examples", tc.file))
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}

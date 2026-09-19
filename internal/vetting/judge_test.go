@@ -1824,7 +1824,7 @@ func (j *consistentFailJudge) GenerateContent(_ context.Context, _ *model.LLMReq
 }
 
 // requireFixOnFailSpecs: verification_over_assertion opted into the
-// inconsistent-failure re-ask, matching agents/code-reviewer/rubric.yaml.
+// inconsistent-failure re-ask, matching .agents/plugins/github/agents/code-reviewer/rubric.yaml.
 var requireFixOnFailSpecs = map[string]criterionSpec{
 	"verification_over_assertion": {Name: "verification_over_assertion", RequireFixOnFail: true},
 }

@@ -1003,11 +1003,10 @@ func Load(path string) (*Config, error) {
 	return load(path, false, false)
 }
 
-// LoadForSandbox loads path the same way Load does (parse, expand, the full workspace/gates/dag/server validation and defaulting) but skips the checks that require live inference plumbing - provider endpoint, orchestrator/agent model, session/artifacts store url - which `quack sandbox` never needs: it
-// runs a shell command inside an agent's Caps/WrapArgv/spawnEnv, never calling a model or a store. So a deployment config with those left as empty env vars
-// (e.g. a CI image with no QUACK_*_MODEL/QUACK_DATABASE_URL set) should still resolve one agent's acp/workspace config instead of failing on a sibling agent's unrelated empty model.
+// LoadForSandbox loads path like Load but skips checks `quack sandbox` never needs: live inference
+// plumbing (endpoint/model/store urls) and per-agent bundle/model completeness - it only reads one named agent's acp/workspace config, never ac.Bundle, so a sibling's incomplete config (empty env var, unseeded plugin override) can't block it.
 func LoadForSandbox(path string) (*Config, error) {
-	return load(path, true, false)
+	return load(path, true, true)
 }
 
 // LoadDeferringAgentCompleteness loads path like Load but skips requiring a

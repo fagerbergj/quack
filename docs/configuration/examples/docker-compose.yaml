@@ -73,21 +73,22 @@ agents:
       bucket: research
     judge_rounds: 1
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
+  # code-implementer/reviewer/explorer: override-only (bundle/tools/skills come
+  # from .agents/plugins/github's agent.yaml) and only seed once extensions.github
+  # is configured below - this compose stack ships no App credentials, so add
+  # that block (see ../../extensions/github.md) and a plugins.seed row for
+  # .agents/plugins/github (config/quack.yaml's own plugins.seed shows the row) to actually get these three.
   code-implementer:
-    bundle: agents/code-implementer
-    provider: default
+    optional: true
     model: qwen3.8-27b   # the coder role; the QUACK_CODER_MODEL env fallback only applies when the value is left as ${QUACK_CODER_MODEL}
-    context_window: 65536
     memory:
       bucket: coding
     judge_rounds: 1
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
   code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
+    optional: true
     model: qwen3.8-27b
-    context_window: 65536
     memory:
       bucket: coding
     judge_rounds: 1
@@ -95,10 +96,8 @@ agents:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
   code-explorer:
-    bundle: agents/code-explorer
-    provider: default
+    optional: true
     model: qwen3.8-27b
-    context_window: 65536
     memory:
       bucket: coding
     judge_rounds: 2
