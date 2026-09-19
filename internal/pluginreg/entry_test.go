@@ -87,19 +87,27 @@ func TestParseEntryMalformed(t *testing.T) {
 }
 
 func TestEntryName(t *testing.T) {
-	e, err := ParseEntry("github:fagerbergj/dotagents@v2#skills")
-	if err != nil {
-		t.Fatal(err)
+	t.Parallel()
+	cases := []struct {
+		entry string
+		name  string
+	}{
+		{"github:fagerbergj/dotagents", "dotagents"},
+		{"github:fagerbergj/quack-extensions#sleeper/plugin", "sleeper"},
+		{"github:fagerbergj/quack-extensions#sleeper", "sleeper"},
+		{"github:fagerbergj/quack-extensions#github/plugin", "github"},
+		{"github:fagerbergj/quack-extensions#plugin", "quack-extensions"}, // bare "plugin" root falls back to the repo
+		{"github:fagerbergj/dotagents@v2#skills", "skills"},
+		{".agents/local/dotagents", "dotagents"},
 	}
-	if e.Name() != "dotagents" {
-		t.Fatalf("Name() = %q, want dotagents", e.Name())
-	}
-	local, err := ParseEntry(".agents/local/dotagents")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if local.Name() != "dotagents" {
-		t.Fatalf("local Name() = %q, want the path's last element", local.Name())
+	for _, tc := range cases {
+		e, err := ParseEntry(tc.entry)
+		if err != nil {
+			t.Fatalf("ParseEntry(%q): %v", tc.entry, err)
+		}
+		if e.Name() != tc.name {
+			t.Fatalf("%q: Name() = %q, want %q", tc.entry, e.Name(), tc.name)
+		}
 	}
 }
 
