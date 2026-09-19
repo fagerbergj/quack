@@ -64,6 +64,18 @@ orchestrator:
   model: ${QUACK_ORCH_MODEL}
   tools: [commit_memory]   # user memory on: recall + commit of personal facts
 
+# plugins.seed: explicit because it replaces, not extends, the shipped
+# default (dotagents, ponytail, the compiled-in usage manifest) - see
+# config/quack.yaml's own plugins.seed comment. .agents/plugins/github is
+# what lets code-implementer/reviewer/explorer below actually seed once
+# extensions.github is enabled.
+plugins:
+  seed:
+    - github:fagerbergj/dotagents
+    - github:DietrichGebert/ponytail@v4.9.0
+    - .agents/plugins/usage
+    - .agents/plugins/github
+
 agents:
   web-researcher:
     bundle: agents/web-researcher
@@ -75,37 +87,28 @@ agents:
       bucket: research
     judge_rounds: 1
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
+  # code-implementer/reviewer/explorer: override-only - bundle/model/tools/
+  # judge_rounds/context_window come from .agents/plugins/github's own
+  # agent.yaml, seeded once extensions.github below is enabled.
   code-implementer:
-    bundle: agents/code-implementer
-    provider: default
-    model: ${QUACK_CODER_MODEL}
-    context_window: 65536
+    optional: true
     memory:
       bucket: coding
-    judge_rounds: 1
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
         - https://mcp.context7.com/mcp
   code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
-    model: ${QUACK_CODER_MODEL}
-    context_window: 65536
+    optional: true
     memory:
       bucket: coding
-    judge_rounds: 1
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
   code-explorer:
-    bundle: agents/code-explorer
-    provider: default
-    model: ${QUACK_CODER_MODEL}
-    context_window: 65536
+    optional: true
     memory:
       bucket: coding
-    judge_rounds: 2
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
@@ -197,7 +200,8 @@ workspace:
       token: ${QUACK_GITHUB_TOKEN}
 
 # The GitHub App extension: webhook receiver, App-authed git credentials, the
-# label workflow + @quack mentions. See ../../extensions/github.md.
+# label workflow + @quack mentions - and, enabled here, the .agents/plugins/github
+# plugin's code-implementer/reviewer/explorer agents above. See ../../extensions/github.md.
 extensions:
   github:
     client_id: ${QUACK_GITHUB_APP_CLIENT_ID}

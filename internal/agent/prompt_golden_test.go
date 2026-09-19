@@ -106,7 +106,7 @@ func TestGoldenAgentPrompts(t *testing.T) {
 // workspace layer, are what differ from a native agent's prompt; only this
 // golden covers that branch.
 func TestGoldenACPPreamble(t *testing.T) {
-	const dir = "agents/code-reviewer"
+	const dir = "../../.agents/plugins/github/agents/code-reviewer"
 	b, err := LoadBundle(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatal(err)

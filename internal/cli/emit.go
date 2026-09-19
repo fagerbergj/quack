@@ -126,6 +126,10 @@ func EmitServerConfig(a InitAnswers) string {
 	}
 	b.WriteString("\n")
 
+	if a.Coding {
+		emitCodingPlugins(&b)
+	}
+
 	b.WriteString("tools:\n")
 	if toolEnabled(a.WebSearch, a.SearchKind) {
 		emitTool(&b, "web_search", a.SearchKind, a.SearchURL)
@@ -151,9 +155,15 @@ func EmitServerConfig(a InitAnswers) string {
 	return b.String()
 }
 
-// emitCodingAgents renders the three coding agents, mirroring the reference
-// config/quack.yaml roster: each is an EXTERNAL agent over ACP (the pi-acp shim
-// drives the model bound here), explorer and reviewer read-only. quack has no native repo/exec tools - they left the registry with the ACP switch - so these agents carry no tools: list at all.
+// codingPluginSeed restates the shipped default plugin list plus
+// .agents/plugins/github: plugins.seed replaces the default, not extends it.
+var codingPluginSeed = []string{
+	"github:fagerbergj/dotagents", "github:DietrichGebert/ponytail@v4.9.0",
+	".agents/plugins/usage", ".agents/plugins/github",
+}
+
+// emitCodingAgents renders the three coding agents as override-only entries -
+// bundle/tools/skills come from .agents/plugins/github's agent.yaml.
 func emitCodingAgents(b *strings.Builder, a InitAnswers) {
 	model := a.CoderModel
 	if model == "" {
@@ -165,15 +175,31 @@ func emitCodingAgents(b *strings.Builder, a InitAnswers) {
 			b.WriteString("      read_only: true\n")
 		}
 	}
-	emitAgent(b, "code-implementer", model, 65536, "")
+	emitCodingAgentOverride(b, "code-implementer", model)
 	b.WriteString("    judge_rounds: 8   # coding converges via the judge+revise grind\n")
 	acp(false)
-	emitAgent(b, "code-explorer", model, 65536, "")
+	emitCodingAgentOverride(b, "code-explorer", model)
 	b.WriteString("    judge_rounds: 2\n")
 	acp(true)
-	emitAgent(b, "code-reviewer", model, 65536, "")
+	emitCodingAgentOverride(b, "code-reviewer", model)
 	b.WriteString("    judge_rounds: 2\n")
 	acp(true)
+}
+
+// emitCodingAgentOverride writes an agents.<name>: header with no bundle: -
+// the github plugin supplies it - just the model override and optional: true.
+func emitCodingAgentOverride(b *strings.Builder, name, model string) {
+	fmt.Fprintf(b, "  %s:\n    provider: default\n    model: %s\n    optional: true\n", name, model)
+}
+
+// emitCodingPlugins renders the plugins.seed list Coding needs so
+// .agents/plugins/github actually seeds its three agents.
+func emitCodingPlugins(b *strings.Builder) {
+	b.WriteString("plugins:\n  seed:\n")
+	for _, p := range codingPluginSeed {
+		fmt.Fprintf(b, "    - %s\n", p)
+	}
+	b.WriteString("\n")
 }
 
 // emitWorkspace renders the workspace section the coding agents need: the

@@ -169,7 +169,7 @@ func TestEmitServerConfigToolsBuild(t *testing.T) {
 	if err := os.WriteFile(path, []byte(cli.EmitServerConfig(a)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadDeferringAgentCompleteness(path)
 	if err != nil {
 		t.Fatalf("emitted config failed to load: %v", err)
 	}

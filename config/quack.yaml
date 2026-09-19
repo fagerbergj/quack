@@ -167,14 +167,14 @@ agents:
     tools: [web_search, web_fetch, grep_artifacts, summarize, current_date, load_memory, stage_memory, ask_user,
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
     # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
+  # code-implementer/reviewer/explorer: override-only - bundle, tools, skills,
+  # judge_rounds and context_window come from .agents/plugins/github's own
+  # agent.yaml, seeded only once extensions.github below is configured.
+  # optional: true so a disabled extension drops these three, not boot.
   code-implementer:
-    bundle: agents/code-implementer   # card + prompt.md (ACP preamble: ponytail discipline, commit-only) + rubric.yaml
-    provider: default
+    optional: true
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
-    model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
-    context_window: 65536
-    judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
     # The worker is an EXTERNAL coding agent over ACP (internal/acp): the pi-acp shim
     # drives pi from PI_ACP_CONFIG (endpoint, model, context/output limits, skill
     # paths). git push stays denied inside the subprocess, so delivery stays gate-owned;
@@ -184,13 +184,9 @@ agents:
       mcp_servers:
         - https://mcp.context7.com/mcp
   code-reviewer:
-    bundle: agents/code-reviewer      # card + prompt.md (ACP preamble: values + VERDICT/FINDINGS output contract) + rubric.yaml
-    provider: default
+    optional: true
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
-    model: ${QUACK_CODER_MODEL}       # reviews code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
-    context_window: 65536
-    judge_rounds: 1             # 1 round: a review is one-pass, and we're diagnosing the gate
     # External ACP reviewer, read_only: it runs the change with its own tools but never
     # commits/pushes; its ANSWER carries the review - the gate parses the structured
     # VERDICT/FINDINGS tail into a staged review with inline comments
@@ -199,13 +195,9 @@ agents:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
   code-explorer:
-    bundle: agents/code-explorer      # card + prompt.md (ACP preamble: read-only exploration, cite <repo>@<path>) + rubric.yaml
-    provider: default
+    optional: true
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
-    model: ${QUACK_CODER_MODEL}       # reads code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
-    context_window: 65536
-    judge_rounds: 2             # exploration is largely one-pass; 2 rounds closes a gate gap
     # External ACP explorer, read_only: reads the provisioned worktree and, with
     # allow_clone, shallow-clones third-party repos into $TMPDIR to read those too.
     # Never commits. Judged by its bundle rubric (exploration quality), not web citations.
@@ -416,6 +408,7 @@ plugins:
     - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline
     - .agents/plugins/usage                 # manifest for the compiled-in usage extension
     - .agents/plugins/sleeper               # skills always load; its agents/workflows seed only once extensions.sleeper below is configured
+    - .agents/plugins/github                # its code-implementer/reviewer/explorer agents seed only once extensions.github below is configured
 
 # workflows: a top-level key (not nested under skills:) that either teaches
 # plan-work's "Common workflows" table a deployment-specific DAG shape, or -
@@ -628,7 +621,9 @@ workspace:
 # have no GitHub App - uncomment and set the env vars to enable it.
 #
 # extensions.github wires the GitHub App extension: a webhook receiver, App-authed
-# git credentials, and the App-mention trigger. It needs EXACTLY ONE issuer
+# git credentials, and the App-mention trigger - and, once this block is present and
+# enabled, the .agents/plugins/github plugin's own code-implementer/code-reviewer/
+# code-explorer agents (docs/agent-plugins.md). It needs EXACTLY ONE issuer
 # (client_id - GitHub's recommendation - or the legacy numeric app_id) and EXACTLY
 # ONE private-key source (inline private_key PEM via ${VAR}, or private_key_path to
 # a mounted .pem). The App's CLIENT SECRET is NOT used (that's OAuth only). Secrets

@@ -93,7 +93,7 @@ func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 // reason about, not a regex). Pins that structured_verdict's own text names
 // both directions of the contradiction (a blocking/security label under an approve verdict, and a request_changes verdict backed by only nits) so a live judge is actually told to check it.
 func TestStructuredVerdictRubricCatchesSeverityCoherence(t *testing.T) {
-	rubric, err := readRubricText("../../agents/code-reviewer/rubric.yaml")
+	rubric, err := readRubricText("../../.agents/plugins/github/agents/code-reviewer/rubric.yaml")
 	if err != nil {
 		t.Fatalf("read code-reviewer rubric: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestStructuredVerdictRubricCatchesSeverityCoherence(t *testing.T) {
 // code (a plain fenced block, NOT a GitHub ```suggestion block - the reviewer prompt forbids those for now, staging can't validate their exact-anchor
 // discipline yet), while a purely observational finding (a question, a naming nit) must be explicitly exempt from that requirement.
 func TestConstructiveActionableRubricScoresCodeBlocks(t *testing.T) {
-	rubric, err := readRubricText("../../agents/code-reviewer/rubric.yaml")
+	rubric, err := readRubricText("../../.agents/plugins/github/agents/code-reviewer/rubric.yaml")
 	if err != nil {
 		t.Fatalf("read code-reviewer rubric: %v", err)
 	}

@@ -67,7 +67,8 @@ func buildRecovererOrWarn(cmd *cobra.Command, dryRun bool) cli.DeliveryRecoverer
 	if dryRun {
 		return nil
 	}
-	cfg, err := config.Load(defaultConfigPath())
+	// Deferring: this path reads only the delivery wiring, never agent bundles.
+	cfg, err := config.LoadDeferringAgentCompleteness(defaultConfigPath())
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "ledger recover: load config: %v; continuing without a recoverer, delivery orphans will be reported Unresolved\n", err)
 		return nil
@@ -194,7 +195,8 @@ func openLedgerAndStores() (ls ledger.LedgerStore, st *store.Store, artifacts *s
 	if _, statErr := os.Stat(cfgPath); statErr != nil {
 		return nil, nil, nil, fmt.Errorf("no %s found - `quack ledger` needs a LOCAL quack.yaml pointing at the same stores your server uses", cfgPath)
 	}
-	cfg, err := config.Load(cfgPath)
+	// Deferring: this path reads stores and artifacts, never agent bundles.
+	cfg, err := config.LoadDeferringAgentCompleteness(cfgPath)
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -16,7 +16,7 @@ import (
 // synthesizer owns it, and structured_verdict is dropped from a slice's own
 // scoring), so the prompt must say so explicitly.
 func TestCodeReviewerPromptScopesSliceVerdict(t *testing.T) {
-	b, err := os.ReadFile("../../agents/code-reviewer/prompt.md")
+	b, err := os.ReadFile("../../.agents/plugins/github/agents/code-reviewer/prompt.md")
 	if err != nil {
 		t.Fatalf("read prompt.md: %v", err)
 	}

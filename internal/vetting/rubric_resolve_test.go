@@ -75,9 +75,9 @@ func TestFromConfigNoJudgeSkipsRubric(t *testing.T) {
 // back rendered; a bundle without one is absence, not an error.
 func TestLoadBundleRubricResolvesAndAbsent(t *testing.T) {
 	ctx := context.Background()
-	got, err := LoadBundleRubric(ctx, nil, "agents/code-reviewer")
+	got, err := LoadBundleRubric(ctx, nil, "agents/web-researcher")
 	if err != nil || !strings.Contains(got, "#") {
-		t.Errorf("code-reviewer rubric = %q (%v)", got, err)
+		t.Errorf("web-researcher rubric = %q (%v)", got, err)
 	}
 	got, err = LoadBundleRubric(ctx, nil, "agents/advisor")
 	if err != nil || got != "" {
@@ -90,12 +90,12 @@ func TestLoadBundleRubricResolvesAndAbsent(t *testing.T) {
 // (a bundle with no rubric.yaml records no rubric/<agent> entry at all).
 func TestLoadBundleRubricSpecsArtifactProvenance(t *testing.T) {
 	ctx := context.Background()
-	_, _, _, art, err := LoadBundleRubricSpecs(ctx, nil, "agents/code-reviewer")
+	_, _, _, art, err := LoadBundleRubricSpecs(ctx, nil, "agents/web-researcher")
 	if err != nil {
 		t.Fatalf("LoadBundleRubricSpecs: %v", err)
 	}
-	if art.Name != "rubric/code-reviewer" || art.Source != "static" || art.VersionID == "" {
-		t.Errorf("code-reviewer rubric artifact = %+v, want {rubric/code-reviewer static <hash>}", art)
+	if art.Name != "rubric/web-researcher" || art.Source != "static" || art.VersionID == "" {
+		t.Errorf("web-researcher rubric artifact = %+v, want {rubric/web-researcher static <hash>}", art)
 	}
 	_, _, _, art, err = LoadBundleRubricSpecs(ctx, nil, "agents/advisor")
 	if err != nil {
