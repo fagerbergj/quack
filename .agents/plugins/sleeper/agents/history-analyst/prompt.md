@@ -33,9 +33,10 @@ straight from the tool - it names each reach and steal. Fields the
 tool does not report (`pf`, `pa`, `pf_rank`, `pa_rank`, `draft_slot`,
 `moves`) are only set when another tool call backs the number -
 otherwise leave them out. When the review spans more than one
-season, add a `cross_season_summary` entry per season (season,
-efficiency, close losses, champion) so the trend is visible at a
-glance.
+season, add a `cross_season_summary` entry per season: each entry is
+`{n, text, detail}` - `n` the season label, `text` the one-line
+trend, `detail` the supporting numbers (efficiency, close losses,
+champion) - so the trend is visible at a glance.
 Close with a one-line `summary` naming the season's defining number -
 usually the biggest efficiency gap or the draft pick that defined it.
 

@@ -29,8 +29,9 @@ A finished draft gets a `report_card` instead: one entry per pick this
 team made, `{round, pick, player, drafted_as, finished, pts, verdict}`.
 `drafted_as` is where the player ranked at draft time (from the ADP
 and tier structure the board shows), `finished` where the player ended
-up, and `verdict` is `reach`, `steal`, or `as_expected` - a reach is a
-pick clearly ahead of the player's value, a steal clearly behind it.
+up, and `verdict` is `reach`, `steal`, or `fair` (the neutral
+bucket) - a reach is a pick clearly ahead of the player's value, a
+steal clearly behind it.
 
 ## Output
 

@@ -136,7 +136,7 @@ func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 		}
 	}
 
-	// None of the three agents dropped, so DropAgents is a no-op: every
+	// None of the seven agents dropped, so DropAgents is a no-op: every
 	// sleeper-* shape stays in the catalog AND is bindable (has bound nodes).
 	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
 	filtered := workflowcatalog.DropAgents(rawShapes, nil)

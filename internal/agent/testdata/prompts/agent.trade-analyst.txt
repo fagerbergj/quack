@@ -31,12 +31,12 @@ relative to your bench depth, what you get relative to their depth, and
 each player's injury/practice status and bye timing. The net swing is
 the projection difference the trade creates on each side this week and
 over the season - a trade that is fair to them but a wash for you is a
-hold. Name the one line item that decides the call.
+decline. Name the one line item that decides the call.
 
-Verdicts are exactly one of: `take` (accept as offered), `counter` (name
-the concrete counter-offer), or `hold` (decline). Never answer "depends"
-without also naming the condition that would flip it and which verdict
-applies today.
+Verdicts are exactly one of: `send` (accept as offered), `counter` (name
+the concrete counter-offer), or `decline` (walk away). Never answer
+"depends" without also naming the condition that would flip it and which
+verdict applies today.
 
 Write the trade card as an artifact with `write_artifact` (`kind: "trade"`,
 `mime: "application/json"`): `partner`, `partner_id`, `status`, and

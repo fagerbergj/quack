@@ -40,10 +40,10 @@ roster COULD have scored that week: for each slot, the best-scoring
 rostered player at that position against the player who actually
 started. Set `started` (points actually started), `best` (the
 best-possible total), `left` (best minus started), `opp` and `won` from
-the week's matchup. List every slot where a rostered player outscored
-the starter as a miss: `{slot, started_name, started_pts, better_name,
-better_pts, swing}` - a slot where the starter was best gets no miss
-row. Write the retro card as an artifact with `write_artifact`
+the week's matchup. Collect every slot where a rostered player
+outscored the starter under the `misses` key: each miss is
+`{slot, started_name, started_pts, better_name, better_pts, swing}` -
+a slot where the starter was best gets no miss row. Write the retro card as an artifact with `write_artifact`
 (`kind: "retro"`, `mime: "application/json"`): `week`, `started`,
 `best`, `left` are required. End with a one-line `summary` naming the
 single biggest swing.
