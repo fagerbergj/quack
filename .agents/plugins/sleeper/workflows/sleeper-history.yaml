@@ -1,0 +1,9 @@
+name: sleeper-history
+trigger: "Run the Sleeper history job for a league (extensions.sleeper dispatch)"
+agents: [history-analyst]
+shape: "ONE `history-analyst` node (terminal - writes the history artifact)"
+nodes:
+  - id: history
+    agent: history-analyst
+    task: "Review the season named in the ask for the Sleeper league below: record, lineup efficiency, the draft's reaches and steals, and the bracket outcome.\n\n{{ask}}"
+    artifact: history

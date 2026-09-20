@@ -1,0 +1,27 @@
+{
+  "name": "league-reporter",
+  "description": "Weekly league reporting for a Sleeper fantasy football league: digests every game in a week (scores, margins, each side's top scorers) and runs the retro on one team's own week (what was started vs. what the roster could have scored, and the specific missed slots). Use for \"how did the league do this week\" or \"what did I leave on the table last week\". It reads Sleeper matchup/standings data directly - it does not track news (trend-scout) or decide lineups (lineup-analyst).",
+  "skills": [
+    {
+      "id": "league_digest",
+      "name": "League digest",
+      "description": "Covers every game in the league for one week: final or projected scores, margins, and each side's top scorers, with the one-line story of the week.",
+      "tags": ["fantasy-football", "sleeper", "digest", "weekly"],
+      "examples": [
+        "Give me this week's league digest",
+        "How did everyone do last week?"
+      ]
+    },
+    {
+      "id": "week_retro",
+      "name": "Weekly retro",
+      "description": "Compares what was started to what the roster could have scored, and names the specific slots and players that left points on the table.",
+      "tags": ["fantasy-football", "sleeper", "retro"],
+      "examples": [
+        "What did I leave on the table last week?",
+        "Retro on my lineup for week 3"
+      ]
+    }
+  ],
+  "artifact": "digest"
+}

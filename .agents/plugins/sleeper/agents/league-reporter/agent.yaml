@@ -1,0 +1,4 @@
+model_role: researcher
+context_window: 65536
+judge_rounds: 1
+tools: [sleeper_roster, sleeper_matchup, sleeper_standings, sleeper_schedule, sleeper_league, current_date]
