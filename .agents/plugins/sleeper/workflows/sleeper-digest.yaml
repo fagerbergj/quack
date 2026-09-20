@@ -1,0 +1,9 @@
+name: sleeper-digest
+trigger: "Run the Sleeper digest job for a league (extensions.sleeper dispatch)"
+agents: [league-reporter]
+shape: "ONE `league-reporter` node (terminal - writes the digest artifact)"
+nodes:
+  - id: digest
+    agent: league-reporter
+    task: "Cover every game in the Sleeper league named below for the week in the ask, with scores, margins, and each side's top scorers.\n\n{{ask}}"
+    artifact: digest

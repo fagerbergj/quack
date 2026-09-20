@@ -10,7 +10,7 @@ import (
 
 // Blob-class, not Structured: ArtifactKindNames() (what agent-card.json's
 // "artifact" may name) only ever lists Blob kinds.
-var kindNames = []string{"lineup", "waivers", "trends", "season-notes"}
+var kindNames = []string{"lineup", "waivers", "trends", "season-notes", "trade", "trade-finder", "digest", "retro", "draft", "history"}
 
 func init() {
 	for _, kind := range kindNames {

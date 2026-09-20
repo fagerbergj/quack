@@ -1,0 +1,9 @@
+name: sleeper-draft
+trigger: "Run the Sleeper draft job for a league (extensions.sleeper dispatch)"
+agents: [draft-analyst]
+shape: "ONE `draft-analyst` node (terminal - writes the draft artifact)"
+nodes:
+  - id: draft
+    agent: draft-analyst
+    task: "Read the draft board for the Sleeper league named below and plan the remaining picks (or grade the finished draft, per its status).\n\n{{ask}}"
+    artifact: draft

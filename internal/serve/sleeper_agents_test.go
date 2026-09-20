@@ -22,8 +22,8 @@ import (
 // config/quack.yaml's own relative plugins.seed entry.
 const sleeperPluginRoot = "../../.agents/plugins/sleeper"
 
-// sleeperWorkflowShapeNames: the four bound shapes .agents/plugins/sleeper/workflows/ declares.
-var sleeperWorkflowShapeNames = []string{"sleeper-lineup", "sleeper-waivers", "sleeper-trends", "sleeper-season-notes"}
+// sleeperWorkflowShapeNames: the ten bound shapes .agents/plugins/sleeper/workflows/ declares.
+var sleeperWorkflowShapeNames = []string{"sleeper-lineup", "sleeper-waivers", "sleeper-trends", "sleeper-season-notes", "sleeper-trade", "sleeper-trade-finder", "sleeper-digest", "sleeper-retro", "sleeper-draft", "sleeper-history"}
 
 // resolveSleeperPlugin resolves the sleeper plugin root directly - the
 // registry's own relative plugins.seed entries resolve against the SERVER's
@@ -76,8 +76,8 @@ func sleeperExtToolsByName(t *testing.T) map[string]tool.Tool {
 }
 
 // TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled: with
-// extensions.sleeper enabled, the plugin seeds exactly its three agents and
-// four shapes, each agent's real tool set resolves, and every shape binds.
+// extensions.sleeper enabled, the plugin seeds exactly its seven agents and
+// ten shapes, each agent's real tool set resolves, and every shape binds.
 func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
@@ -94,11 +94,11 @@ func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 	if len(results) != 1 || results[0].Plugin != "sleeper" {
 		t.Fatalf("results = %+v, want one sleeper entry", results)
 	}
-	if got := results[0].Agents; len(got) != 3 {
-		t.Errorf("seeded agents = %v, want exactly 3", got)
+	if got := results[0].Agents; len(got) != 7 {
+		t.Errorf("seeded agents = %v, want exactly 7", got)
 	}
-	if got := results[0].Shapes; len(got) != 4 {
-		t.Errorf("seeded shapes = %v, want exactly 4", got)
+	if got := results[0].Shapes; len(got) != 10 {
+		t.Errorf("seeded shapes = %v, want exactly 10", got)
 	}
 
 	extToolsByName := sleeperExtToolsByName(t)
@@ -107,7 +107,7 @@ func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 		t.Fatalf("workspace.NewJail: %v", err)
 	}
 
-	for _, name := range []string{"lineup-analyst", "waiver-scout", "trend-scout"} {
+	for _, name := range []string{"lineup-analyst", "waiver-scout", "trend-scout", "trade-analyst", "league-reporter", "history-analyst", "draft-analyst"} {
 		ac, ok := cfg.Agents[name]
 		if !ok {
 			t.Fatalf("sleeper plugin did not seed agent %q", name)
@@ -170,7 +170,7 @@ func TestSleeperPluginAbsentWhenExtensionDisabled(t *testing.T) {
 	if len(results) != 0 {
 		t.Fatalf("results = %+v, want none with extensions.sleeper unconfigured", results)
 	}
-	for _, name := range []string{"lineup-analyst", "waiver-scout", "trend-scout"} {
+	for _, name := range []string{"lineup-analyst", "waiver-scout", "trend-scout", "trade-analyst", "league-reporter", "history-analyst", "draft-analyst"} {
 		if _, ok := cfg.Agents[name]; ok {
 			t.Errorf("agent %q seeded despite extensions.sleeper being unconfigured", name)
 		}
@@ -184,12 +184,20 @@ func TestSleeperPluginAbsentWhenExtensionDisabled(t *testing.T) {
 	}
 }
 
-// TestSleeperAgentBundlesDeclareArtifactKinds locks the three cards' declared
+// TestSleeperAgentBundlesDeclareArtifactKinds locks the seven cards' declared
 // default output kind to what internal/sleeperkinds registers - the
 // agent.LoadBundle validation this whole PR exists to make real.
 func TestSleeperAgentBundlesDeclareArtifactKinds(t *testing.T) {
 	ctx := context.Background()
-	want := map[string]string{"lineup-analyst": "lineup", "waiver-scout": "waivers", "trend-scout": "trends"}
+	want := map[string]string{
+		"lineup-analyst":  "lineup",
+		"waiver-scout":    "waivers",
+		"trend-scout":     "trends",
+		"trade-analyst":   "trade",
+		"league-reporter": "digest",
+		"history-analyst": "history",
+		"draft-analyst":   "draft",
+	}
 	for name, kind := range want {
 		b, err := agent.LoadBundle(ctx, nil, sleeperPluginRoot+"/agents/"+name)
 		if err != nil {

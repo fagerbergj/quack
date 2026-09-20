@@ -688,12 +688,13 @@ workspace:
 #
 #   # extensions.sleeper wires the Sleeper fantasy-football extension: read-only
 #   # Sleeper API tools, its own UI page under the nav rail, and (once this
-#   # block is present and enabled) the .agents/plugins/sleeper plugin's own
-#   # lineup-analyst/waiver-scout/trend-scout agents and sleeper-* workflow
-#   # shapes (docs/agent-plugins.md). No secrets required, so this block is
-#   # safe to uncomment as-is; enabled: false here is the shipped default -
-#   # flip it (and set default_user/default_league to the deployment's own
-#   # Sleeper account) to actually run it.
+#   # block is present and enabled) the .agents/plugins/sleeper plugin's seven
+#   # job agents (lineup-analyst, waiver-scout, trend-scout, trade-analyst,
+#   # league-reporter, history-analyst, draft-analyst) and their sleeper-*
+#   # workflow shapes (docs/agent-plugins.md). No secrets required, so this
+#   # block is safe to uncomment as-is; enabled: false here is the shipped
+#   # default - flip it (and set default_user/default_league to the
+#   # deployment's own Sleeper account) to actually run it.
 #   sleeper:
 #     enabled: false
 #     default_user: jffagerberg          # Sleeper username or user_id; tools fall back to it when a chat names none

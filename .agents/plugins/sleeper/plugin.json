@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
   "name": "sleeper",
-  "version": "0.1.0",
-  "description": "Fantasy-football decision skills (start/sit, waivers, injury and news) for the Sleeper extension's agents.",
+  "version": "0.2.0",
+  "description": "Fantasy-football decision skills and the Sleeper extension's job agents: lineup, waivers, injury and news, trades, league digest/retro, season review, and draft.",
   "license": "MIT",
   "repository": "https://github.com/fagerbergj/quack-extensions",
   "keywords": ["quack", "sleeper", "fantasy-football"],
@@ -16,8 +16,8 @@
         }
       ],
       "config": "optional",
-      "agents": ["lineup-analyst", "waiver-scout", "trend-scout"],
-      "workflows": ["sleeper-lineup", "sleeper-waivers", "sleeper-trends", "sleeper-season-notes"]
+      "agents": ["lineup-analyst", "waiver-scout", "trend-scout", "trade-analyst", "league-reporter", "history-analyst", "draft-analyst"],
+      "workflows": ["sleeper-lineup", "sleeper-waivers", "sleeper-trends", "sleeper-season-notes", "sleeper-trade", "sleeper-trade-finder", "sleeper-digest", "sleeper-retro", "sleeper-draft", "sleeper-history"]
     }
   }
 }
