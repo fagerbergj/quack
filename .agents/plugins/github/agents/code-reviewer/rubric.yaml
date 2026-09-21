@@ -74,14 +74,42 @@ criteria:
     anchors:
     - quote
     - omission
+  delivery_checked:
+    definition: >
+      The review checks the change against what it set out to deliver - each acceptance item in the linked issue (artifact `linked-issue-<n>`) and each thing the pull request description says it does - and against the existing siblings of any pattern it extends. An item the diff neither delivers nor defers to a linked follow-up is reported as a `blocking:` finding, not omitted and not filed as a note.
+    guidance: >
+      Build the list yourself before reading the review's. Open the linked issue and the pull request with `read_artifact`; where the diff adds another instance of an existing pattern (an agent bundle, a handler, a plugin), open one sibling in the repository and list the parts it carries. Then compare. A review can be accurate line by line and still approve half a feature, and this criterion is where that shows. A change with no linked issue whose description claims nothing beyond the diff has nothing to miss: score it 3.
+    steps:
+    - List the delivery items - the acceptance items in each `linked-issue-<n>` artifact and the claims in the pull request description.
+    - For each item, find it in the diff, or find where the change defers it to a linked follow-up. Note every item that is neither.
+    - Where the diff adds an instance of an existing pattern, open a sibling and list the parts the new instance lacks.
+    - Check the review reports each gap you found as a `blocking:` finding, and that `verified` accounts for the items one by one rather than restating the description.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every delivery item and sibling part is accounted for, and each gap is a blocking finding - or there was nothing to miss.
+    - min: 2.0
+      max: 2.0
+      meaning: every gap is reported as a blocking finding, but `verified` does not account for the delivery items one by one.
+    - min: 1.0
+      max: 1.0
+      meaning: one gap is missing from the findings, or is filed as a note or a suggestion.
+    - min: 0.0
+      max: 0.0
+      meaning: the review approves while an acceptance item or a sibling's part is absent and unreported.
+    anchors:
+    - quote
+    - omission
+    require_fix_on_fail: true
   severity_grounded:
     definition: >
-      Every severity label rests on something objective, and the review says what. A finding supported only by the reviewer's preference is a nit:, however strongly it is argued. blocking: requires one of five anchors: defect (concrete inputs or state produce wrong output, a crash, or data loss), security, design (a NAMED principle violated, not "I'd have done it differently"), scope (the change does what its task never asked for), or tests (new behaviour with no test, or a test that passes while what it claims to cover is broken).
+      Every severity label rests on something objective, and the review says what. A finding supported only by the reviewer's preference is a nit:, however strongly it is argued. blocking: requires one of six anchors: defect (concrete inputs or state produce wrong output, a crash, or data loss - whether the producer is code, a prompt, a schema or a config file), delivery (something the change set out to deliver is absent and not deferred to a linked follow-up, or what it produces does not match what consumes it), security, design (a NAMED principle violated, not "I'd have done it differently"), scope (the change does what its task never asked for), or tests (new behaviour with no test, or a test that passes while what it claims to cover is broken).
     guidance: >
       Score whether each label is supported, not whether you would have chosen it. Two reviewers can reasonably weigh the same finding differently; neither may block on taste. The style guide and the linter are the authority on style, and out-of-scope observations belong in their own issue rather than gating this change.
     steps:
-    - For each `blocking:` finding, name which of the five anchors it claims, then open the code and check the anchor actually holds. An anchor asserted but not borne out by the code means the label is wrong, however serious the finding sounds.
-    - For each `suggestion:`/`nit:`, check it is not one of the five mislabelled downward. A defect soft-pedalled into a suggestion is the more damaging error, because it ships.
+    - For each `blocking:` finding, name which of the six anchors it claims, then open the code and check the anchor actually holds. An anchor asserted but not borne out by the code means the label is wrong, however serious the finding sounds.
+    - For each `suggestion:`/`nit:`/note, check it is not one of the six mislabelled downward. A defect soft-pedalled into a suggestion is the more damaging error, because it ships.
+    - Read each non-blocking finding's own words. One that says what breaks ("renders as empty rows", "the key the page reads is never written") names wrong output and carries the defect or delivery anchor, whatever kind of file it sits in.
     - "Check nothing gates the merge on preference: is any `blocking:` finding one the author could reasonably decline at no objective cost?"
     bands:
     - min: 3.0
