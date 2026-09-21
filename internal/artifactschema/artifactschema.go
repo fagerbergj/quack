@@ -72,15 +72,10 @@ func checkKind(kind string) error {
 	if spec.System || (spec.Class == recordstore.Structured && !spec.AgentWritable) {
 		return fmt.Errorf("kind %q is written by quack itself and cannot carry an extension schema", kind)
 	}
-	// artifact_valid and the consuming page both look the artifact up by the
-	// chat's hint id, which only a hint-identity kind is stored under.
+	// artifact_valid and the consuming page look the artifact up by the chat's hint id.
+	// This also keeps schemas off text and bytes, where a refused answer falls back to.
 	if !spec.RequiresHint {
 		return fmt.Errorf("kind %q is not hint-identified, so its artifact cannot be found to validate", kind)
-	}
-	// text and bytes are where a refused or unstructured answer falls back to,
-	// so a schema on either could lose a node's output outright.
-	if kind == "text" || kind == "bytes" {
-		return fmt.Errorf("kind %q is quack's fallback kind and cannot carry an extension schema", kind)
 	}
 	return nil
 }
