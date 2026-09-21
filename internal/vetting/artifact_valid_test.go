@@ -1,0 +1,154 @@
+package vetting
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"google.golang.org/adk/v2/artifact"
+
+	"github.com/fagerbergj/quack/internal/artifactschema"
+	"github.com/fagerbergj/quack/internal/recordstore"
+)
+
+func nameRequiredArtifactSchema(t *testing.T, kind string) *artifactschema.Registry {
+	t.Helper()
+	reg, err := artifactschema.Build(map[string]map[string]json.RawMessage{
+		"fake-ext": {kind: json.RawMessage(`{"type":"object","required":["name"]}`)},
+	})
+	if err != nil {
+		t.Fatalf("artifactschema.Build: %v", err)
+	}
+	return reg
+}
+
+func artifactValidTestConfig(t *testing.T, schemas *artifactschema.Registry) Config {
+	t.Helper()
+	return Config{
+		Artifact:  kindDocument,
+		Schemas:   schemas,
+		Artifacts: artifact.InMemoryService(),
+		User:      "u1",
+		ChatID:    "chat-a",
+	}
+}
+
+func TestArtifactValidCriterion_AbsentWithoutSchema(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nil) // no extension declared a schema for kindDocument
+	if _, ok := artifactValidCriterion(context.Background(), cfg); ok {
+		t.Error("artifactValidCriterion applies with no registered schema, want it absent")
+	}
+}
+
+func TestArtifactValidCriterion_AbsentWithoutDeclaredKind(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	cfg.Artifact = "" // node declares no artifact kind at all
+	if _, ok := artifactValidCriterion(context.Background(), cfg); ok {
+		t.Error("artifactValidCriterion applies with no declared artifact kind, want it absent")
+	}
+}
+
+func TestArtifactValidCriterion_FailsWhenNothingWritten(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	c, ok := artifactValidCriterion(context.Background(), cfg)
+	if !ok {
+		t.Fatal("artifactValidCriterion should apply - kindDocument has a registered schema")
+	}
+	if c.Score != 0 {
+		t.Errorf("Score = %v, want 0 (no artifact exists this run)", c.Score)
+	}
+	if !strings.Contains(c.Reason, "no artifact was written") {
+		t.Errorf("Reason = %q, want it to say no artifact was written", c.Reason)
+	}
+}
+
+func TestArtifactValidCriterion_PassesWhenValid(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	c := recordClient(cfg)
+	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"name":"trade idea"}`), "application/json", DocumentHint(cfg.ChatID), recordstore.Lineage{}); err != nil {
+		t.Fatalf("SaveBlob (test setup): %v", err)
+	}
+	got, ok := artifactValidCriterion(context.Background(), cfg)
+	if !ok {
+		t.Fatal("artifactValidCriterion should apply")
+	}
+	if got.Score != 1 {
+		t.Errorf("Score = %v, want 1 (valid artifact exists)", got.Score)
+	}
+}
+
+func TestArtifactValidCriterion_FailsWithViolationsWhenInvalid(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	c := recordClient(cfg)
+	// recordClient carries cfg.Schemas too, so a direct SaveBlob of invalid
+	// content is itself refused - bypass enforcement here to set up a
+	// pre-existing invalid revision (e.g. written before the schema existed).
+	c = c.WithSchemas(nil)
+	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"other":1}`), "application/json", DocumentHint(cfg.ChatID), recordstore.Lineage{}); err != nil {
+		t.Fatalf("SaveBlob (test setup): %v", err)
+	}
+	got, ok := artifactValidCriterion(context.Background(), cfg)
+	if !ok {
+		t.Fatal("artifactValidCriterion should apply")
+	}
+	if got.Score != 0 {
+		t.Errorf("Score = %v, want 0", got.Score)
+	}
+	if !strings.Contains(got.Reason, "required") {
+		t.Errorf("Reason = %q, want it to carry the schema violation", got.Reason)
+	}
+}
+
+func TestFoldDeterministic_ArtifactValidCriterionIncluded(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg)
+	if _, ok := det["artifact_valid"]; !ok {
+		t.Fatal("computeDeterministicCriteria: artifact_valid missing for a node with a schema'd declared kind")
+	}
+	v := mergeDeterministic(verdict{Criteria: map[string]criterionScore{"answers_question": {Score: 1}}}, det, cfg)
+	c, ok := v.Criteria["artifact_valid"]
+	if !ok || c.Definition == "" || c.Fix == "" {
+		t.Errorf("merged artifact_valid criterion = %+v, want a definition/fix stamped", c)
+	}
+}
+
+func TestFoldDeterministic_ArtifactValidAbsentWithoutDeclaredKind(t *testing.T) {
+	cfg := Config{} // no Artifact, no Schemas
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg)
+	if _, ok := det["artifact_valid"]; ok {
+		t.Error("artifact_valid present for a node with no declared artifact kind")
+	}
+}
+
+// TestSaveEpisodicRound_FallbackNeverStoresInvalidDocument: a schema-violating
+// fallback answer falls through to text:<node> instead of landing as the artifact.
+func TestSaveEpisodicRound_FallbackNeverStoresInvalidDocument(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	base := reviewerCfgWithArtifacts(t, svc, true)
+	base.IsReviewer = false
+	base.Artifact = kindDocument
+	base.NodeID = "doc-schema-fallback"
+	base.Schemas = nameRequiredArtifactSchema(t, kindDocument)
+
+	prose := "This is the node's plain-text answer, not JSON at all."
+	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, prose, StagedDelivery{}, nil)
+
+	docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := recordClient(base)
+	if _, _, ok, err := rc.Latest(context.Background(), docID); err != nil || ok {
+		t.Fatalf("document revision exists (ok=%v err=%v), want the schema-invalid fallback to leave no document revision", ok, err)
+	}
+
+	textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _, ok, err := rc.Latest(context.Background(), textID)
+	if err != nil || !ok || string(raw) != prose {
+		t.Fatalf("text:<node> fallback: raw=%q ok=%v err=%v, want the prose answer saved there instead", raw, ok, err)
+	}
+}

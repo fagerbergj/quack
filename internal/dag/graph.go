@@ -414,6 +414,7 @@ func setupMemStages(ctx adkagent.Context, chatID, nodeID, token string, cfg *vet
 		ms.NodeID = nodeID
 		ms.ToolWritten = vetting.NewToolWrittenStage()
 		ms.Ledger = cfg.Ledger
+		ms.Schemas = cfg.Schemas
 	}
 	vetting.RegisterMemSession(secret, ms)
 	return func() { vetting.UnregisterMemSession(secret) }

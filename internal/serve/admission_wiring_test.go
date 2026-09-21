@@ -101,7 +101,7 @@ func TestBuildAgents_PlanJudgeReservesAndReleases(t *testing.T) {
 
 	var setupFn dag.SetupFunc
 	_, _, nodeServers, _, planJudge, _, _, err := buildAgents(cfg, nil, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil, nil, nil, admission)
+		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil, nil, nil, admission, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestBootInitAgents_WrapsClassifyModel(t *testing.T) {
 	b := &boot{cfg: cfg, admission: admission}
 	var judgeModelRef atomic.Pointer[model.LLM]
 	_, _, nodeServers, _, _, _, _, _, _, err := b.initAgents(st, skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, jail, nil, nil, nil, nil, nil, &judgeModelRef, nil)
+		nil, jail, nil, nil, nil, nil, nil, &judgeModelRef, nil, nil)
 	if err != nil {
 		t.Fatalf("initAgents: %v", err)
 	}

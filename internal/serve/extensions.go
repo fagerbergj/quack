@@ -22,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
@@ -321,6 +322,18 @@ func findRecoverer(exts []builtSDKExtension) (extsdk.DeliveryRecoverer, string) 
 		v, ok := e.ext.(extsdk.DeliveryRecoverer)
 		return v, ok
 	})
+}
+
+// buildArtifactSchemas collects every extsdk.ArtifactSchemas extension's
+// schemas - unlike findFirstExt, a kind two extensions both name is an error.
+func buildArtifactSchemas(exts []builtSDKExtension) (*artifactschema.Registry, error) {
+	bySource := make(map[string]map[string]json.RawMessage, len(exts))
+	for _, e := range exts {
+		if as, ok := e.ext.(extsdk.ArtifactSchemas); ok {
+			bySource[e.name] = as.ArtifactSchemas()
+		}
+	}
+	return artifactschema.Build(bySource)
 }
 
 // sdkGitCredentialAdapter bridges sdk.GitCredentialSource to

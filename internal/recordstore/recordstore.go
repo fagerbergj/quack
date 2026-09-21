@@ -29,6 +29,7 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
@@ -184,6 +185,9 @@ type Client struct {
 	// nil = no WAL; Save* behaves exactly as before #1100. Set only via
 	// WithLedger, by a caller that has already restricted it to a transactional (postgres) backend - see vetting.Config.Ledger's doc.
 	ledgerStore ledger.LedgerStore
+	// schemas: per-kind JSON Schemas an SDK extension declared (WithSchemas);
+	// nil = no enforcement, Save*/Edit behave exactly as before this existed.
+	schemas *artifactschema.Registry
 }
 
 // New scopes a client to one session over svc (the artifact.Service the
@@ -198,6 +202,33 @@ func New(svc artifact.Service, appName, userID, sessionID string) *Client {
 func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 	c.ledgerStore = store
 	return c
+}
+
+// WithSchemas arms schema enforcement on c and returns c: a Save*/Edit whose
+// kind has a registered schema must satisfy it or the write is refused.
+func (c *Client) WithSchemas(reg *artifactschema.Registry) *Client {
+	c.schemas = reg
+	return c
+}
+
+// SchemaViolation is returned by Save*/Edit when kind's registered artifact
+// schema rejects the content - the write never reaches the backing store.
+type SchemaViolation struct {
+	Kind       string
+	Violations []string
+}
+
+func (e *SchemaViolation) Error() string {
+	return fmt.Sprintf("recordstore: %s failed its schema (%d violation(s))", e.Kind, len(e.Violations))
+}
+
+// checkSchema is a no-op unless c.schemas has kind registered.
+func (c *Client) checkSchema(kind string, content []byte) error {
+	violations := c.schemas.Validate(kind, content)
+	if violations == nil {
+		return nil
+	}
+	return &SchemaViolation{Kind: kind, Violations: violations}
 }
 
 // artifactRevisionPayload is the artifact.revision WAL entry's payload
@@ -449,6 +480,9 @@ func (c *Client) SaveStructured(ctx context.Context, kind string, doc any, hint 
 			return "", 0, fmt.Errorf("recordstore: %s failed validation: %w", kind, err)
 		}
 	}
+	if err := c.checkSchema(kind, raw); err != nil {
+		return "", 0, err
+	}
 	instance, err := spec.Identity(raw, hint)
 	if err != nil {
 		return "", 0, fmt.Errorf("recordstore: %s identity: %w", kind, err)
@@ -468,6 +502,9 @@ func (c *Client) SaveBlob(ctx context.Context, kind string, data []byte, mime, h
 	}
 	if spec.Class != Blob {
 		return "", 0, fmt.Errorf("recordstore: kind %q is not a blob", kind)
+	}
+	if err := c.checkSchema(kind, data); err != nil {
+		return "", 0, err
 	}
 	instance, err := spec.Identity(data, hint)
 	if err != nil {
@@ -845,6 +882,9 @@ func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops [
 		if verr := spec.Validate(merged); verr != nil {
 			return 0, nil, fmt.Errorf("recordstore: edit %s: result fails validation: %w", id, verr)
 		}
+	}
+	if err := c.checkSchema(kind, merged); err != nil {
+		return 0, nil, err
 	}
 	lineage.BaseRevision = baseRevision
 	rev, err := c.saveAtOrAdopt(ctx, id, kind, spec.Class, mime, merged, lineage, latestRev, attempt)

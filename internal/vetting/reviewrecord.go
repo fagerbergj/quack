@@ -361,6 +361,9 @@ func recordClient(cfg Config) *recordstore.Client {
 	if cfg.Ledger != nil {
 		c = c.WithLedger(cfg.Ledger)
 	}
+	if cfg.Schemas != nil {
+		c = c.WithSchemas(cfg.Schemas)
+	}
 	return c
 }
 

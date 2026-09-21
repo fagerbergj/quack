@@ -15,6 +15,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
@@ -78,6 +79,9 @@ type Config struct {
 	// recording.store configured); recordstore and the gate then write
 	// projections directly.
 	Ledger ledger.LedgerStore
+	// Schemas: boot-collected extsdk.ArtifactSchemas registry; nil = no
+	// extension declared a schema, so no recordstore write here is checked.
+	Schemas *artifactschema.Registry
 	// Artifact: episodic record name this node writes on gate pass ("body" or
 	// "" for none). "review" is written for IsReviewer nodes regardless of
 	// this field - it names only the reMarkable-style extra record (#1006).

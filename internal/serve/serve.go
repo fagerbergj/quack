@@ -35,6 +35,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/auth"
 	"github.com/fagerbergj/quack/internal/bundledir"
@@ -752,13 +753,17 @@ func (b *boot) initMemory(ctx context.Context, st *store.Store, artifacts artifa
 }
 
 // builds the SDK extensions, plugin MCP tools, and the ledger recovery path
-func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, error) {
+func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, *artifactschema.Registry, error) {
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
 	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
+	}
+	artifactSchemas, err := buildArtifactSchemas(sdkExts)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 	extTools := sdkExtensionTools(sdkExts)
 	// Plugin-declared MCP servers are the portable half of the same tool
@@ -792,11 +797,11 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 			slog.Warn("ledger recovery failed; unresolved intents stay unresolved", "component", "startup", "err", err)
 		}
 	}
-	return sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, nil
+	return sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, nil
 }
 
 // builds the configured agents (and their gate config, executor lookups, and classify model)
-func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM], reg pluginreg.FetchRegistry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
+func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM], reg pluginreg.FetchRegistry, artifactSchemas *artifactschema.Registry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
 	var executorRef atomic.Pointer[dag.Executor]
 	nodeCancelled := func(chatID, nodeID string) bool {
 		ex := executorRef.Load()
@@ -827,7 +832,7 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 		}
 	}
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore, reg, b.admission)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore, reg, b.admission, artifactSchemas)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("agent build failed: %w", err)
 	}
@@ -963,11 +968,11 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins, &shapesRef)
+	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins, &shapesRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skills.skillTS, skills.builtinSkillSrc, skills.newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef, skills.reg)
+	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skills.skillTS, skills.builtinSkillSrc, skills.newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef, skills.reg, artifactSchemas)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1131,7 +1136,7 @@ func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
+func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := newNodeScope(jail)
@@ -1169,7 +1174,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 	}
 	workspaceCaps.HomeDir = homeDir
 
-	gateCfg, judgeFactory, planJudge, judgeModel, safetyJudge, err := buildGateJudge(cfg, res, jail, workspaceCaps, taskStore, ledgerStore, skillTS, artifacts, deliver, gitTokenSource, admission)
+	gateCfg, judgeFactory, planJudge, judgeModel, safetyJudge, err := buildGateJudge(cfg, res, jail, workspaceCaps, taskStore, ledgerStore, skillTS, artifacts, deliver, gitTokenSource, admission, artifactSchemas)
 	if err != nil {
 		return nil, nil, nodeServers, nil, nil, nil, nil, err
 	}
@@ -1233,7 +1238,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 
 // buildGateJudge assembles the trust-gate config and judge models when the gate is enabled;
 // zero values and nil stand in for the disabled case.
-func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspace.Jail, workspaceCaps workspace.Caps, taskStore *memory.Store, ledgerStore ledger.LedgerStore, skillTS *skilltoolset.SkillToolset, artifacts artifact.Service, deliver vetting.DeliverFunc, gitTokenSource tools.GitTokenSource, admission *dag.Admission) (vetting.Config, vetting.JudgeFactory, vetting.PlanJudge, model.LLM, tools.SafetyJudge, error) {
+func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspace.Jail, workspaceCaps workspace.Caps, taskStore *memory.Store, ledgerStore ledger.LedgerStore, skillTS *skilltoolset.SkillToolset, artifacts artifact.Service, deliver vetting.DeliverFunc, gitTokenSource tools.GitTokenSource, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (vetting.Config, vetting.JudgeFactory, vetting.PlanJudge, model.LLM, tools.SafetyJudge, error) {
 	var gateCfg vetting.Config
 	var judgeFactory vetting.JudgeFactory
 	var planJudge vetting.PlanJudge
@@ -1251,6 +1256,7 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 		gateCfg.WorkspaceCaps = workspaceCaps
 		gateCfg.CheckTimeout = time.Duration(cfg.Workspace.CheckTimeoutSeconds) * time.Second
 		gateCfg.Deliver = deliver
+		gateCfg.Schemas = artifactSchemas
 		if gitTokenSource != nil {
 			gateCfg.GitCredentials = gitCredentialAdapter{gitTokenSource}
 		}
@@ -1521,6 +1527,7 @@ type nativeNodeBuilder struct {
 	compactionFor      func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction
 	nodeServers        *perNodeServers
 	res                *artifactsrc.Resolver
+	schemas            *artifactschema.Registry
 }
 
 func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
@@ -1601,6 +1608,9 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 		// must record parent_revision, but only over a transactional ledger.
 		if pg, ok := b.ledgerStore.(*ledger.PGStore); ok {
 			rc = rc.WithLedger(pg)
+		}
+		if b.schemas != nil {
+			rc = rc.WithSchemas(b.schemas)
 		}
 		coords = &tools.RoundCoords{}
 		var terr error
@@ -1804,6 +1814,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		compactionFor:      compactionFor,
 		nodeServers:        nodeServers,
 		res:                res,
+		schemas:            gateCfg.Schemas,
 	}
 	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil)
 	if err != nil {

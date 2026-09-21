@@ -18,8 +18,19 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
+
+// schemaRefusal mirrors the MCP surface's own copy (internal/acp/memorymcp.go)
+// so a model sees the same refusal text on either tool path.
+func schemaRefusal(err error) (string, bool) {
+	var sv *recordstore.SchemaViolation
+	if errors.As(err, &sv) {
+		return artifactschema.FormatRefusal(sv.Kind, sv.Violations), true
+	}
+	return "", false
+}
 
 // listArtifactsArgs is list_artifacts' input.
 type listArtifactsArgs struct {
@@ -123,6 +134,9 @@ func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoor
 					}
 					return string(b), nil
 				}
+				if msg, ok := schemaRefusal(err); ok {
+					return "", errors.New(msg)
+				}
 				return "", fmt.Errorf("edit_artifact: %w", err)
 			}
 			return fmt.Sprintf("ok: %s revision %d", a.ID, rev), nil
@@ -180,6 +194,9 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoo
 			}
 			id, rev, err := c.SaveBlob(ctx, a.Kind, data, a.Mime, blobHint, lineage)
 			if err != nil {
+				if msg, ok := schemaRefusal(err); ok {
+					return "", errors.New(msg)
+				}
 				return "", fmt.Errorf("write_artifact: %w", err)
 			}
 			return fmt.Sprintf("ok: id=%s revision=%d", id, rev), nil
@@ -209,6 +226,9 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 			}
 			id, rev, err := c.SaveStructured(ctx, kind, args, structuredHint, lineage)
 			if err != nil {
+				if msg, ok := schemaRefusal(err); ok {
+					return "", errors.New(msg)
+				}
 				return "", fmt.Errorf("write_%s: %w", kind, err)
 			}
 			return fmt.Sprintf("ok: id=%s revision=%d", id, rev), nil

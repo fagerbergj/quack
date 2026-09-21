@@ -24,6 +24,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -2196,7 +2197,45 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly, cfg.Deliver != nil, cfg.IsReviewer, cfg.ExistingPR) {
 		det[name] = c
 	}
+	// Schema validity: absent (not a 1.0 pass) for a node with no registered kind.
+	avc, avcOK := artifactValidCriterion(ctx, cfg)
+	setIfApplicable(det, "artifact_valid", avc, avcOK)
 	return det, checksSkipReason
+}
+
+// setIfApplicable adds c under name only when ok, as a call rather than an
+// inline if - keeps computeDeterministicCriteria's own branch count down.
+func setIfApplicable(det map[string]criterionScore, name string, c criterionScore, ok bool) {
+	if ok {
+		det[name] = c
+	}
+}
+
+// artifactValidCriterion checks cfg.Artifact's latest revision against its
+// registered schema - ok=false when the kind has none registered.
+func artifactValidCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
+	if cfg.Artifact == "" || !cfg.Schemas.Has(cfg.Artifact) {
+		return criterionScore{}, false
+	}
+	c := recordClient(cfg)
+	if c == nil {
+		return criterionScore{Score: 0, Reason: fmt.Sprintf(
+			"deterministic: kind %q has a registered schema but no artifact store is available", cfg.Artifact)}, true
+	}
+	id, err := recordstore.IdentityFor(cfg.Artifact, nil, DocumentHint(cfg.ChatID))
+	if err != nil {
+		return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: %v", err)}, true
+	}
+	raw, _, _, _, ok, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil || !ok {
+		return criterionScore{Score: 0, Reason: fmt.Sprintf(
+			"deterministic: kind %q has a registered schema but no artifact was written this run", cfg.Artifact)}, true
+	}
+	if violations := cfg.Schemas.Validate(cfg.Artifact, raw); len(violations) > 0 {
+		return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: kind %q artifact fails its schema:\n%s",
+			cfg.Artifact, artifactschema.FormatViolations(violations))}, true
+	}
+	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: kind %q artifact satisfies its registered schema", cfg.Artifact)}, true
 }
 
 // deterministicCriterionSpec: definition/fix declared per deterministic
@@ -2217,6 +2256,7 @@ var deterministicCriterionSpec = map[string]struct {
 	"delivery_complete":            {"The task's delivery step (commit/push/PR) must actually show in the session ledger.", "Complete the delivery step the task asked for - commit, push, or open the PR."},
 	"review_posted":                {"A review task must actually submit its verdict via github_submit_review.", "Post the review with github_add_review_comment/github_submit_review, not just in the answer text."},
 	"behaviour_verified":           {"A code-review task must execute the change (tests, a throwaway harness) before judging it.", "Run the change - its tests or a small harness - before asserting it works."},
+	"artifact_valid":               {"A node whose artifact kind has a registered schema must write content that satisfies it.", "Fix the violations named in the failure and write/edit the artifact again."},
 }
 
 // citesSourcesBands: the cites_sources tier legend, moved out of the reason
