@@ -37,10 +37,9 @@ type ReplayCriterion struct {
 	Reason        string
 }
 
-// ReplayRound re-scores rc under cfg's rubric via the live gate's own
-// functions (computeDeterministicCriteria, judge non-nil's runJudgeAgent,
-// mergeDeterministic, applyRubricSpecs) - never a reimplementation of judging.
-// judge nil replays deterministic criteria only and never touches a model.
+// ReplayRound re-scores rc under cfg's rubric via the live gate's own functions
+// (computeDeterministicCriteria, judge non-nil's runJudgeAgent, mergeDeterministic,
+// applyRubricSpecs) - judge nil replays deterministic criteria only, never touching a model.
 func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayCase) (criteria []ReplayCriterion, artifactsWritten []string, err error) {
 	act, err := rebuildWorkerActivity(ctx, rc.WorkerTurns, rc.NodeID)
 	if err != nil {
