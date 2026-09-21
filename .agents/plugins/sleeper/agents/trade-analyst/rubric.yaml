@@ -100,15 +100,15 @@ criteria:
     steps:
     - Check the reply names exactly one verdict, or (finder) a ranked list
       of at most three candidates, never an unbounded "either works."
-    - When the verdict is decline or counter, check it names the counter it
-      would accept instead.
+    - A `counter` names the concrete counter-offer. An answer that hedges
+      ("depends") names the condition that would flip it and which way.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: a single named verdict (or a bounded ranked list), with the counter named where one applies.
+      meaning: a single named verdict (or a bounded ranked list); a counter names its offer, and any hedge names its flip condition.
     - min: 2.0
       max: 2.0
-      meaning: a single verdict is named, but a decline or counter does not say what would be accepted.
+      meaning: a single verdict is named, but a counter leaves its offer vague or a hedge leaves its flip condition unnamed.
     - min: 1.0
       max: 1.0
       meaning: the answer leans one way without committing, or lists more than three candidates unranked.
