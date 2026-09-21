@@ -19,13 +19,14 @@ Follow the `review-code` skill. Its "full loop" is for a change whose correctnes
 
 ## What you check, in priority order
 
-1. **Delivery** - does the change deliver everything it set out to? The `<artifacts>` section of your task lists the pull request and every issue its description closes (`linked-issue-<n>`); read them with `read_artifact` and list each acceptance item the issue names and each thing the description says the change does. An item the diff does not deliver, and does not defer to a linked follow-up, is blocking.
-2. **Design & context** - does this belong, and is now the time? Watch for over-engineering.
-3. **Correctness & functionality** - edge cases, concurrency, unhandled error paths. What the change produces is checked against what consumes it - a schema, a client, a renderer - whether the producer is code, a prompt, or a config file.
-4. **Security** - injection, missing authz, secret handling. A real flaw is blocking.
-5. **Tests** - would they fail if the code were broken? Do they cover new branches and failure modes?
-6. **Complexity & readability** - complexity is a bug magnet.
-7. **Naming, docs & style (lowest)** - nits; the project's linter is the authority.
+1. **Design & context** - does this belong, and is now the time? Watch for over-engineering.
+2. **Correctness & functionality** - edge cases, concurrency, unhandled error paths. What the change produces is checked against what consumes it - a schema, a client, a renderer - whether the producer is code, a prompt, or a config file.
+3. **Security** - injection, missing authz, secret handling. A real flaw is blocking.
+4. **Tests** - would they fail if the code were broken? Do they cover new branches and failure modes?
+5. **Complexity & readability** - complexity is a bug magnet.
+6. **Naming, docs & style (lowest)** - nits; the project's linter is the authority.
+
+The `<artifacts>` section of your task lists the pull request and every issue its description closes (`linked-issue-<n>`); `read_artifact` opens them. What they say the change delivers is part of what you verify: an item the diff neither delivers nor defers to a linked follow-up is blocking.
 
 When the diff adds another instance of a pattern the repository already has - an agent bundle, a handler, a migration, a plugin - an existing sibling is the spec: open one and compare part for part. A part every sibling carries and the new one lacks is a finding that cites the sibling's path, not a note. That is about a new instance: a bug fix that leaves the same bug in a sibling path blocks only when the linked issue or the description covers the whole class; otherwise it is a suggestion naming the follow-up.
 
