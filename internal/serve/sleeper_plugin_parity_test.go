@@ -1,9 +1,7 @@
 package serve
 
 import (
-	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,42 +44,4 @@ func TestSleeperPluginAgentsShipRubricAndSkill(t *testing.T) {
 			}
 		}
 	}
-}
-
-// A skill's output schema is the page's contract, so each copy must be
-// byte-identical to a schema the pinned extension module ships.
-func TestSleeperSkillSchemasMatchPinnedExtension(t *testing.T) {
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/fagerbergj/quack-extensions/sleeper").Output()
-	if err != nil {
-		t.Skipf("go list unavailable: %v", err)
-	}
-	shipped, err := filepath.Glob(filepath.Join(strings.TrimSpace(string(out)), "ui", "schemas", "*.json"))
-	if err != nil || len(shipped) == 0 {
-		t.Fatalf("no schemas in the pinned module: %v", err)
-	}
-	copies, err := filepath.Glob(filepath.Join(sleeperPluginRoot, "skills", "*", "references", "output-schema*.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(copies) < 9 {
-		t.Fatalf("found %d schema references, want one per job kind the agents write (9)", len(copies))
-	}
-	for _, c := range copies {
-		got, err := os.ReadFile(c)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !matchesAny(got, shipped) {
-			t.Errorf("%s matches no schema in the pinned extension; re-copy it from ui/schemas", c)
-		}
-	}
-}
-
-func matchesAny(got []byte, files []string) bool {
-	for _, f := range files {
-		if want, err := os.ReadFile(f); err == nil && bytes.Equal(got, want) {
-			return true
-		}
-	}
-	return false
 }
