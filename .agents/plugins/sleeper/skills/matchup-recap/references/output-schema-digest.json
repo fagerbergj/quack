@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/digest.json",
+  "title": "digest",
+  "description": "Weekly preview (before games) or recap (after), with every league matchup.",
+  "type": "object",
+  "properties": {
+    "week": {
+      "type": "integer"
+    },
+    "past": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "games": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "home",
+          "away",
+          "home_pts",
+          "away_pts"
+        ],
+        "properties": {
+          "home": {
+            "type": "string"
+          },
+          "away": {
+            "type": "string"
+          },
+          "home_pts": {
+            "type": "number"
+          },
+          "away_pts": {
+            "type": "number"
+          },
+          "margin": {
+            "type": "number"
+          },
+          "mine": {
+            "type": "boolean"
+          },
+          "top_scorers": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "source_note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "week",
+    "past",
+    "games"
+  ]
+}

@@ -1,0 +1,164 @@
+scale:
+  min: 0
+  max: 3
+  pass: 2
+notes: >
+  The judge sees the session's tool results, so every score, record, and
+  margin the answer cites is checkable against a `sleeper_matchup`,
+  `sleeper_standings`, or `sleeper_roster` call in the transcript. A figure
+  with no such call behind it is invented, not imprecise. Per
+  `sleeper:matchup-recap`'s `references/playoff-odds-from-records.md`, this
+  agent has no simulator - any playoff-line or odds figure must trace to the
+  closed-form Pythagorean/regression method with the method stated in one
+  line, never a bare percentage. Per `references/points-against-and-luck.md`,
+  a close-game record on its own is weak evidence; a "lucky"/"unlucky" claim
+  needs the all-play luck-gap method or a stated point margin behind it, not
+  just a won/loss tally.
+criteria:
+  scores_and_records_verified:
+    definition: >
+      Every score, record, and margin cited (digest or retro) traces to a
+      `sleeper_matchup`, `sleeper_standings`, or `sleeper_roster` call in
+      this session - never asserted from memory or inferred from a final
+      score alone.
+    steps:
+    - List every score, record, and margin the answer states.
+    - Check each one traces to a tool call in the session transcript.
+    - For any claim about game flow (a comeback, a blowout run), check the
+      answer only makes it when the underlying play-by-play data supports
+      it, not from a final score alone.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every cited score, record, and margin traces to a tool call, and no game-flow claim goes beyond what the final score supports.
+    - min: 2.0
+      max: 2.0
+      meaning: every number traces to a tool call, but one game-flow claim (e.g. "comeback") goes beyond what the data shows.
+    - min: 1.0
+      max: 1.0
+      meaning: one cited score, record, or margin does not trace to a tool call in the session.
+    - min: 0.0
+      max: 0.0
+      meaning: multiple numbers are invented or do not match the tool data.
+    anchors:
+    - quote
+    - omission
+  luck_and_playoff_line_computed:
+    definition: >
+      Any playoff-line, playoff-odds, or "lucky"/"unlucky" claim is computed
+      by a stated method (the closed-form Pythagorean/regression method for
+      a playoff line; the all-play luck-gap method or a stated point margin
+      for a luck claim) - never asserted as a bare label or a bare
+      percentage with no method behind it.
+    steps:
+    - Check any playoff-line or playoff-odds figure states its method in one
+      line and traces to the Pythagorean/regression inputs (or a named
+      simulation) rather than appearing as an unexplained number.
+    - Check any "lucky"/"unlucky"/"due for regression" label is backed by
+      the all-play luck-gap method, a stated point margin, or an explicit
+      small-sample caveat - not just a won-loss tally in close games.
+    - Check no claim treats a close-game record on its own as strong
+      evidence of skill or luck.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every playoff-line/odds figure states its method, and every luck claim is backed by the luck-gap method, a point margin, or an explicit caveat.
+    - min: 2.0
+      max: 2.0
+      meaning: figures are computed correctly, but one method statement is thin or a luck claim's backing is implicit rather than stated.
+    - min: 1.0
+      max: 1.0
+      meaning: one playoff-line/odds figure or luck claim is asserted with no stated method.
+    - min: 0.0
+      max: 0.0
+      meaning: a playoff-line/odds figure is a bare unexplained number, or a luck claim rests only on a small-sample close-game record treated as strong evidence.
+    anchors:
+    - quote
+    - omission
+  retro_process_vs_luck:
+    definition: >
+      For a retro, each missed-slot call (`misses`) is graded against the
+      information available at the time the lineup was set, and the answer
+      distinguishes a bad process (ignored evidence that was available) from
+      bad luck (a reasonable call that simply didn't pay off). Not
+      applicable to a digest round - score this 3 for a digest-only round.
+    steps:
+    - For each row in `misses`, check the answer states whether the miss was
+      foreseeable from information available before kickoff (injury,
+      practice status, matchup) or was an unforeseeable outcome.
+    - Check the answer does not uniformly blame either the manager or bad
+      luck for every miss - the split should reflect what the tool data
+      actually shows per slot.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every miss is graded against pre-kickoff information, with process and luck explicitly distinguished per slot (or the round is a digest, not a retro).
+    - min: 2.0
+      max: 2.0
+      meaning: most misses are graded correctly, but one miss doesn't distinguish process from luck.
+    - min: 1.0
+      max: 1.0
+      meaning: misses are listed but not graded against what was knowable at the time.
+    - min: 0.0
+      max: 0.0
+      meaning: every miss is treated as either pure manager error or pure bad luck, with no case-by-case distinction.
+    anchors:
+    - quote
+    - omission
+  concise_and_concrete:
+    definition: >
+      The digest or retro is short and story-first: a league-chat digest
+      runs roughly 200-500 words with depth on 2-3 stories rather than a
+      stat dump or every section filled out by rote, and every notable claim
+      carries a specific number.
+    steps:
+    - Check the reply and summary are concentrated on a few real stories,
+      not an exhaustive recitation of every stat available.
+    - Check every notable claim (a story, a hedge, a call) carries a
+      specific number rather than a vague qualitative statement.
+    - Check the digest/retro states at least one of record movement, seed
+      impact, or playoff-line movement.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: short and story-first, every notable claim carries a number, and standings/seed/playoff-line impact is stated.
+    - min: 2.0
+      max: 2.0
+      meaning: mostly concise and concrete, but one claim is vague or the standings impact is thin.
+    - min: 1.0
+      max: 1.0
+      meaning: the write-up is a stat dump or a rote section-by-section recitation with little story.
+    - min: 0.0
+      max: 0.0
+      meaning: no concrete numbers back the claims, or the answer never states what the week meant for standings/playoffs.
+    anchors:
+    - quote
+    - omission
+  artifact_delivered:
+    definition: >
+      The round's deliverable is a `digest` or `retro` artifact written via
+      write_artifact, not just a card described in the chat reply - it
+      parses as JSON and carries the schema's required top-level fields
+      (`week`/`past`/`games` for a digest; `week`/`started`/`best`/`left`
+      for a retro).
+    steps:
+    - Check a `digest` or `retro` artifact exists for this round
+      (list_artifacts/read_artifact), separate from the reply's own text.
+    - Parse the artifact's content as JSON.
+    - Check the required top-level fields for the round's kind are present.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: the artifact exists, parses as JSON, and every required top-level field is present.
+    - min: 2.0
+      max: 2.0
+      meaning: the artifact exists and parses, but one required field is missing or empty.
+    - min: 1.0
+      max: 1.0
+      meaning: no artifact was written this round - the card only exists as prose in the reply.
+    - min: 0.0
+      max: 0.0
+      meaning: the round's content does not parse as JSON at all, or no digest/retro content exists anywhere.
+    anchors:
+    - quote
+    - omission
