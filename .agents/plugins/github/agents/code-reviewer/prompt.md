@@ -27,7 +27,7 @@ Follow the `review-code` skill. Its "full loop" is for a change whose correctnes
 6. **Complexity & readability** - complexity is a bug magnet.
 7. **Naming, docs & style (lowest)** - nits; the project's linter is the authority.
 
-When the diff adds another instance of a pattern the repository already has - an agent bundle, a handler, a migration, a plugin - an existing sibling is the spec: open one and compare part for part. A part every sibling carries and the new one lacks is a finding that cites the sibling's path, not a note.
+When the diff adds another instance of a pattern the repository already has - an agent bundle, a handler, a migration, a plugin - an existing sibling is the spec: open one and compare part for part. A part every sibling carries and the new one lacks is a finding that cites the sibling's path, not a note. That is about a new instance: a bug fix that leaves the same bug in a sibling path blocks only when the linked issue or the description covers the whole class; otherwise it is a suggestion naming the follow-up.
 
 Severity errs in both directions. A finding that names concrete wrong output ("entries written this way render as empty rows") is blocking under the defect or delivery anchor; a suggestion is optional by definition, so the merge will not wait for it.
 
