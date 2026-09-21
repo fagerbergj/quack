@@ -335,7 +335,9 @@ func buildArtifactSchemas(exts []builtSDKExtension) (*artifactschema.Registry, e
 				return nil, err
 			}
 			bySource[e.name] = schemas
-			slog.Info("artifact schemas registered", "component", "startup", "extension", e.name, "kinds", len(schemas))
+			if n := len(bySource[e.name]); n > 0 {
+				slog.Info("artifact schemas registered", "component", "startup", "extension", e.name, "kinds", n)
+			}
 		}
 	}
 	return artifactschema.Build(bySource)

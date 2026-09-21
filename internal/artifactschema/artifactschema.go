@@ -4,6 +4,7 @@ package artifactschema
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -70,6 +71,11 @@ func checkKind(kind string) error {
 	}
 	if spec.System || (spec.Class == recordstore.Structured && !spec.AgentWritable) {
 		return fmt.Errorf("kind %q is written by quack itself and cannot carry an extension schema", kind)
+	}
+	// artifact_valid and the consuming page both look the artifact up by the
+	// chat's hint id, which only a hint-identity kind is stored under.
+	if !spec.RequiresHint {
+		return fmt.Errorf("kind %q is not hint-identified, so its artifact cannot be found to validate", kind)
 	}
 	// text and bytes are where a refused or unstructured answer falls back to,
 	// so a schema on either could lose a node's output outright.
@@ -165,4 +171,14 @@ func (r *Registry) Schema(kind string) json.RawMessage {
 		return nil
 	}
 	return r.raw[kind]
+}
+
+// RefusalFromError renders a recordstore schema violation as the tool error
+// every write surface returns, so the native and MCP paths cannot drift.
+func RefusalFromError(err error) (string, bool) {
+	var sv *recordstore.SchemaViolation
+	if errors.As(err, &sv) {
+		return FormatRefusal(sv.Kind, sv.Violations, sv.Schema), true
+	}
+	return "", false
 }

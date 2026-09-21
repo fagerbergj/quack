@@ -21,9 +21,10 @@ func testIdentity(_ []byte, hint string) (string, error) { return hint, nil }
 
 func init() {
 	for _, kind := range []string{"test-kind-a", "test-kind-b", "test-kind-c", "test-kind-d"} {
-		recordstore.Register(kind, recordstore.KindSpec{Class: recordstore.Blob, Identity: testIdentity})
+		recordstore.Register(kind, recordstore.KindSpec{Class: recordstore.Blob, Identity: testIdentity, RequiresHint: true})
 	}
 	recordstore.Register("test-system-kind", recordstore.KindSpec{Class: recordstore.Blob, Identity: testIdentity, System: true})
+	recordstore.Register("test-content-hash-kind", recordstore.KindSpec{Class: recordstore.Blob, Identity: testIdentity})
 }
 
 func TestBuild_DuplicateKindNamesBothExtensions(t *testing.T) {
@@ -196,5 +197,14 @@ func TestBuild_RefusesFallbackAndGateOnlyKinds(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), kind) || !strings.Contains(err.Error(), "ext-a") {
 			t.Errorf("Build(%q) err = %v, want a refusal naming the extension and kind", kind, err)
 		}
+	}
+}
+
+// A kind stored under a content hash cannot be found by the chat's hint id,
+// so a schema on it would fail artifact_valid on every run.
+func TestBuild_RefusesAKindThatIsNotHintIdentified(t *testing.T) {
+	_, err := Build(map[string]map[string]json.RawMessage{"ext-a": {"test-content-hash-kind": json.RawMessage(nameRequiredSchema)}})
+	if err == nil || !strings.Contains(err.Error(), "test-content-hash-kind") || !strings.Contains(err.Error(), "ext-a") {
+		t.Fatalf("Build err = %v, want a refusal naming the extension and kind", err)
 	}
 }

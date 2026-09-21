@@ -25,16 +25,6 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// schemaRefusal mirrors the native tool surface's own copy
-// (internal/tools/artifacts.go) so a model sees the same text either way.
-func schemaRefusal(err error) (string, bool) {
-	var sv *recordstore.SchemaViolation
-	if errors.As(err, &sv) {
-		return artifactschema.FormatRefusal(sv.Kind, sv.Violations, sv.Schema), true
-	}
-	return "", false
-}
-
 // toolCheckMermaid: stateless, offered to every session regardless of
 // Memory/Review/PRStage - see mcpToolNames.
 const toolCheckMermaid = "check_mermaid"
@@ -241,7 +231,7 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("conflict - re-read and retry.\ncurrent revision: %d\ncurrent content:\n%s", conflict.Revision, string(conflict.Content))}},
 				}, out, nil
 			}
-			if msg, ok := schemaRefusal(err); ok {
+			if msg, ok := artifactschema.RefusalFromError(err); ok {
 				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, nil, nil
 			}
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "edit_artifact: " + err.Error()}}}, nil, nil
@@ -299,7 +289,7 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 		}
 		id, rev, err := c.SaveBlob(ctx, args.Kind, data, args.Mime, hint, lineage)
 		if err != nil {
-			if msg, ok := schemaRefusal(err); ok {
+			if msg, ok := artifactschema.RefusalFromError(err); ok {
 				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, nil, nil
 			}
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "write_artifact: " + err.Error()}}}, nil, nil
@@ -341,7 +331,7 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 		}
 		id, rev, err := c.SaveStructured(ctx, kind, args, hint, lineage)
 		if err != nil {
-			if msg, ok := schemaRefusal(err); ok {
+			if msg, ok := artifactschema.RefusalFromError(err); ok {
 				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, nil, nil
 			}
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: writeKindPrefix + kind + ": " + err.Error()}}}, nil, nil
