@@ -79,10 +79,10 @@ func TestOrchestratorRun_WriteArtifact_SchemaViolationRefused(t *testing.T) {
 	const userID, chatID = "u1", "c1"
 
 	sessions := session.InMemoryService()
-	stub := &writeArtifactStub{kind: "text", bytes: `{"other":1}`}
+	stub := &writeArtifactStub{kind: "document", bytes: `{"other":1}`}
 	o := New(sessions, stub, "you are the orchestrator", dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
 	o.SetArtifacts(svc)
-	o.SetSchemas(nameRequiredOrchSchema(t, "text"))
+	o.SetSchemas(nameRequiredOrchSchema(t, "document"))
 
 	var texts []string
 	for ev, err := range o.Run(ctx, userID, chatID, SourceApp, "write the artifact", nil) {
@@ -97,7 +97,7 @@ func TestOrchestratorRun_WriteArtifact_SchemaViolationRefused(t *testing.T) {
 		}
 	}
 	joined := strings.Join(texts, " ")
-	if !strings.Contains(joined, `kind "text" failed its schema`) {
+	if !strings.Contains(joined, `kind "document" failed its schema`) {
 		t.Fatalf("orchestrator run output = %q, want the write refused for its schema violation", joined)
 	}
 

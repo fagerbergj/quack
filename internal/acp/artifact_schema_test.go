@@ -36,7 +36,7 @@ func TestWriteArtifactMCP_SchemaValid_Succeeds(t *testing.T) {
 	svc := artifact.InMemoryService()
 	vetting.RegisterMemSession(secret, vetting.MemSession{
 		Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1",
-		Schemas: nameSchemaRegistryMCP(t, "text"),
+		Schemas: nameSchemaRegistryMCP(t, "document"),
 	})
 	defer vetting.UnregisterMemSession(secret)
 
@@ -45,7 +45,7 @@ func TestWriteArtifactMCP_SchemaValid_Succeeds(t *testing.T) {
 	cs := connectMCP(t, ts, secret)
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_artifact", Arguments: map[string]any{
-		"kind": "text", "mime": "application/json", "bytes": `{"name":"trade idea"}`,
+		"kind": "document", "mime": "application/json", "bytes": `{"name":"trade idea"}`,
 	}})
 	if err != nil {
 		t.Fatalf("CallTool write_artifact: %v", err)
@@ -64,7 +64,7 @@ func TestWriteArtifactMCP_SchemaViolation_RefusesAndCarriesSchema(t *testing.T) 
 	svc := artifact.InMemoryService()
 	vetting.RegisterMemSession(secret, vetting.MemSession{
 		Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1",
-		Schemas: nameSchemaRegistryMCP(t, "text"),
+		Schemas: nameSchemaRegistryMCP(t, "document"),
 	})
 	defer vetting.UnregisterMemSession(secret)
 
@@ -73,7 +73,7 @@ func TestWriteArtifactMCP_SchemaViolation_RefusesAndCarriesSchema(t *testing.T) 
 	cs := connectMCP(t, ts, secret)
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_artifact", Arguments: map[string]any{
-		"kind": "text", "mime": "application/json", "bytes": `{"other":1}`,
+		"kind": "document", "mime": "application/json", "bytes": `{"other":1}`,
 	}})
 	if err != nil {
 		t.Fatalf("CallTool write_artifact: %v", err)
@@ -90,7 +90,7 @@ func TestWriteArtifactMCP_SchemaViolation_RefusesAndCarriesSchema(t *testing.T) 
 	}
 
 	rc := recordstore.New(svc, "quack", "u1", "chat-a")
-	items, err := rc.List(ctx, "text")
+	items, err := rc.List(ctx, "document")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestWriteArtifactMCP_InvalidJSON_Refuses(t *testing.T) {
 	svc := artifact.InMemoryService()
 	vetting.RegisterMemSession(secret, vetting.MemSession{
 		Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1",
-		Schemas: nameSchemaRegistryMCP(t, "text"),
+		Schemas: nameSchemaRegistryMCP(t, "document"),
 	})
 	defer vetting.UnregisterMemSession(secret)
 
@@ -114,7 +114,7 @@ func TestWriteArtifactMCP_InvalidJSON_Refuses(t *testing.T) {
 	cs := connectMCP(t, ts, secret)
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_artifact", Arguments: map[string]any{
-		"kind": "text", "mime": "application/json", "bytes": "not json",
+		"kind": "document", "mime": "application/json", "bytes": "not json",
 	}})
 	if err != nil {
 		t.Fatalf("CallTool write_artifact: %v", err)
@@ -131,10 +131,10 @@ func TestWriteArtifactMCP_UnregisteredKindUnaffected(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
 	svc := artifact.InMemoryService()
-	// Registry only knows about "text" - "bytes" has no declared schema.
+	// Registry only knows about "document" - "bytes" has no declared schema.
 	vetting.RegisterMemSession(secret, vetting.MemSession{
 		Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1",
-		Schemas: nameSchemaRegistryMCP(t, "text"),
+		Schemas: nameSchemaRegistryMCP(t, "document"),
 	})
 	defer vetting.UnregisterMemSession(secret)
 
@@ -159,12 +159,12 @@ func TestEditArtifactMCP_SchemaViolation_RefusesAndPriorRevisionIntact(t *testin
 	svc := artifact.InMemoryService()
 	vetting.RegisterMemSession(secret, vetting.MemSession{
 		Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1",
-		Schemas: nameSchemaRegistryMCP(t, "text"),
+		Schemas: nameSchemaRegistryMCP(t, "document"),
 	})
 	defer vetting.UnregisterMemSession(secret)
 
 	rc := recordstore.New(svc, "quack", "u1", "chat-a")
-	id, rev, err := rc.SaveBlob(ctx, "text", []byte(`{"name":"x"}`), "application/json", "", recordstore.Lineage{NodeID: "n1"})
+	id, rev, err := rc.SaveBlob(ctx, "document", []byte(`{"name":"x"}`), "application/json", "doc-1", recordstore.Lineage{NodeID: "n1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestEditArtifactMCP_SchemaViolation_RefusesAndPriorRevisionIntact(t *testin
 	if !res.IsError {
 		t.Fatalf("edit_artifact producing schema-invalid content should be refused, got: %s", toolResultText(t, res))
 	}
-	if !strings.Contains(toolResultText(t, res), `kind "text" failed its schema`) {
+	if !strings.Contains(toolResultText(t, res), `kind "document" failed its schema`) {
 		t.Errorf("result = %q, want it to name the kind and the schema failure", toolResultText(t, res))
 	}
 

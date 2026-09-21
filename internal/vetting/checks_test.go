@@ -143,7 +143,7 @@ func TestChecksPassCriterionSkipReason_RecordsOnSpan(t *testing.T) {
 func TestFoldDeterministicFoldsChecksPass(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"false"}, "")
 	v := verdict{Criteria: map[string]criterionScore{"answers_question": {Score: 1}}}
-	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, "")
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, "", time.Time{})
 	got := mergeDeterministic(v, det, cfg)
 	c, ok := got.Criteria["checks_pass"]
 	if !ok {
@@ -160,7 +160,7 @@ func TestFoldDeterministicFoldsChecksPass(t *testing.T) {
 func TestFoldDeterministicNodeWithoutChecksUntouched(t *testing.T) {
 	cfg := Config{} // no Checks configured
 	v := verdict{Criteria: map[string]criterionScore{"answers_question": {Score: 1}}}
-	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, "")
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, "", time.Time{})
 	got := mergeDeterministic(v, det, cfg)
 	if _, ok := got.Criteria["checks_pass"]; ok {
 		t.Fatal("checks_pass should not appear for a node with no Checks configured")
@@ -170,7 +170,7 @@ func TestFoldDeterministicNodeWithoutChecksUntouched(t *testing.T) {
 func TestFoldDeterministicPassingChecksDoNotFail(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"true"}, "")
 	v := verdict{Criteria: map[string]criterionScore{"answers_question": {Score: 0.9}}}
-	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, "")
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, "", time.Time{})
 	got := mergeDeterministic(v, det, cfg)
 	c, ok := got.Criteria["checks_pass"]
 	if !ok {

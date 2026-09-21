@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/recordstore"
@@ -38,7 +39,7 @@ func artifactValidTestConfig(t *testing.T, schemas *artifactschema.Registry) Con
 
 func TestArtifactValidCriterion_AbsentWithoutSchema(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nil) // no extension declared a schema for kindDocument
-	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID); ok {
+	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}); ok {
 		t.Error("artifactValidCriterion applies with no registered schema, want it absent")
 	}
 }
@@ -46,14 +47,14 @@ func TestArtifactValidCriterion_AbsentWithoutSchema(t *testing.T) {
 func TestArtifactValidCriterion_AbsentWithoutDeclaredKind(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
 	cfg.Artifact = "" // node declares no artifact kind at all
-	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID); ok {
+	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}); ok {
 		t.Error("artifactValidCriterion applies with no declared artifact kind, want it absent")
 	}
 }
 
 func TestArtifactValidCriterion_FailsWhenNothingWritten(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
-	c, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID)
+	c, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{})
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply - kindDocument has a registered schema")
 	}
@@ -72,7 +73,7 @@ func TestArtifactValidCriterion_PassesWhenValid(t *testing.T) {
 		recordstore.Lineage{NodeID: artifactValidTestNodeID}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID)
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{})
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply")
 	}
@@ -92,7 +93,7 @@ func TestArtifactValidCriterion_FailsWithViolationsWhenInvalid(t *testing.T) {
 		recordstore.Lineage{NodeID: artifactValidTestNodeID}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID)
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{})
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply")
 	}
@@ -115,7 +116,7 @@ func TestArtifactValidCriterion_ScopedToThisNode_IgnoresOtherNodesRevision(t *te
 		recordstore.Lineage{NodeID: "old-node"}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg, "new-node")
+	got, ok := artifactValidCriterion(context.Background(), cfg, "new-node", time.Time{})
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply")
 	}
@@ -129,7 +130,7 @@ func TestArtifactValidCriterion_ScopedToThisNode_IgnoresOtherNodesRevision(t *te
 
 func TestFoldDeterministic_ArtifactValidCriterionIncluded(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
-	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, artifactValidTestNodeID)
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, artifactValidTestNodeID, time.Time{})
 	if _, ok := det["artifact_valid"]; !ok {
 		t.Fatal("computeDeterministicCriteria: artifact_valid missing for a node with a schema'd declared kind")
 	}
@@ -142,7 +143,7 @@ func TestFoldDeterministic_ArtifactValidCriterionIncluded(t *testing.T) {
 
 func TestFoldDeterministic_ArtifactValidAbsentWithoutDeclaredKind(t *testing.T) {
 	cfg := Config{} // no Artifact, no Schemas
-	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, artifactValidTestNodeID)
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, artifactValidTestNodeID, time.Time{})
 	if _, ok := det["artifact_valid"]; ok {
 		t.Error("artifact_valid present for a node with no declared artifact kind")
 	}
@@ -177,5 +178,28 @@ func TestSaveEpisodicRound_FallbackNeverStoresInvalidDocument(t *testing.T) {
 	raw, _, ok, err := rc.Latest(context.Background(), textID)
 	if err != nil || !ok || string(raw) != prose {
 		t.Fatalf("text:<node> fallback: raw=%q ok=%v err=%v, want the prose answer saved there instead", raw, ok, err)
+	}
+}
+
+// Node ids are workflow constants and Sleeper chat ids are stable across
+// re-runs, so an earlier run's valid artifact must not pass this run.
+func TestArtifactValidCriterion_IgnoresAnEarlierRunsRevision(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	c := recordClient(cfg)
+	runStart := time.Now().UTC()
+	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"name":"last week"}`), "application/json", DocumentHint(cfg.ChatID),
+		recordstore.Lineage{NodeID: artifactValidTestNodeID, SavedAt: runStart.Add(-7 * 24 * time.Hour)}); err != nil {
+		t.Fatalf("SaveBlob (test setup): %v", err)
+	}
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, runStart)
+	if !ok || got.Score != 0 {
+		t.Fatalf("score = %v (applies=%v), want 0: the only revision predates this run", got.Score, ok)
+	}
+	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"name":"this week"}`), "application/json", DocumentHint(cfg.ChatID),
+		recordstore.Lineage{NodeID: artifactValidTestNodeID, SavedAt: runStart.Add(time.Second)}); err != nil {
+		t.Fatalf("SaveBlob (test setup): %v", err)
+	}
+	if got, _ := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, runStart); got.Score != 1 {
+		t.Fatalf("score = %v, want 1 once this run has written a valid artifact (%s)", got.Score, got.Reason)
 	}
 }

@@ -335,6 +335,11 @@ func dependencyArtifactCandidates(cfg Config, dep string) []string {
 // bestDependencyRevision: cid's newest revision authored by dep - a chat-scoped
 // id can carry every node's and every turn's writes, so this stops (and stops loading) at the first NodeID match, newest-first.
 func bestDependencyRevision(ctx context.Context, c *recordstore.Client, cid, dep string) (revision int, content string, savedAt time.Time, ok bool) {
+	return newestRevisionWhere(ctx, c, cid, func(l recordstore.Lineage) bool { return l.NodeID == dep })
+}
+
+// newestRevisionWhere scans cid newest-first and stops at the first revision whose lineage matches.
+func newestRevisionWhere(ctx context.Context, c *recordstore.Client, cid string, match func(recordstore.Lineage) bool) (revision int, content string, savedAt time.Time, ok bool) {
 	if spec, sok := recordstore.SpecFor(recordstore.KindOf(cid)); sok && spec.System {
 		return 0, "", time.Time{}, false
 	}
@@ -344,7 +349,7 @@ func bestDependencyRevision(ctx context.Context, c *recordstore.Client, cid, dep
 	}
 	for _, v := range versions {
 		data, lineage, exists, lerr := c.LoadVersionWithMeta(ctx, cid, v)
-		if lerr != nil || !exists || lineage.NodeID != dep {
+		if lerr != nil || !exists || !match(lineage) {
 			continue
 		}
 		return v, string(data), lineage.SavedAt, true
@@ -403,6 +408,7 @@ type gateRun struct {
 	nodeID           string
 	log              *slog.Logger
 	turnID           string
+	startedAt        time.Time // node run start; scopes artifact_valid to this run's writes
 	markerLine       string
 	advisorToken     string
 	nodeDir          string
@@ -438,6 +444,7 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 	// turnID: closest stand-in for the store row's turn_id (#1090 V4.2) - no
 	// chat-turn id is plumbed this deep; the ADK invocation id is per-run.
 	g.turnID = ctx.InvocationID()
+	g.startedAt = time.Now().UTC()
 	appendNodeEvent(nodeCtx, cfg, nodeID, g.turnID, ledger.KindNodeStarted, 0)
 	// Re-attach advisor-thread marker for tool-bearing rounds.
 	if token, ok := ParseAdvisorThread(prompt); ok {
@@ -902,6 +909,7 @@ type judgeRounds struct {
 	markerLine       string
 	advisorToken     string
 	turnID           string
+	startedAt        time.Time // node run start; scopes artifact_valid to this run's writes
 	sfx              string
 	receivedMemories []memory.Delivered
 	sink             func(stream.SSEEvent)
@@ -929,7 +937,7 @@ type judgeRounds struct {
 
 // runJudgeRounds: the judge/revise loop - judge, fold deterministic criteria, revise on fail.
 func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (outcome judgeRoundOutcome) {
-	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, markerLine: g.markerLine, advisorToken: g.advisorToken, turnID: g.turnID, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log, lastAnswerRunID: g.lastRunID}
+	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, markerLine: g.markerLine, advisorToken: g.advisorToken, turnID: g.turnID, startedAt: g.startedAt, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log, lastAnswerRunID: g.lastRunID}
 	// receivedMemories rides every return path so commitFinal resumes counting from here.
 	defer func() { outcome.receivedMemories = j.receivedMemories }()
 	// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
@@ -1152,7 +1160,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 // skipped on the terminal round when a criterion already fails by weakest-link.
 func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context, ledgerCtx context.Context, act workerActivity) (verdict, map[string]criterionScore, error) {
 	// Compute deterministic criteria before judge runs.
-	det, skip := computeDeterministicCriteria(judgeCtx, j.answer, act, j.cfg, j.nodeID)
+	det, skip := computeDeterministicCriteria(judgeCtx, j.answer, act, j.cfg, j.nodeID, j.startedAt)
 	if skip != "" {
 		j.checksSkipReason = skip
 	}
@@ -2153,7 +2161,7 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 // computeDeterministicCriteria: computes code-owned criteria before judge runs.
 // checksSkipReason is the raw checksPassCriterion skip reason ("" if checks
 // ran), for the caller to attach to GateResult (#780).
-func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config, nodeID string) (det map[string]criterionScore, checksSkipReason string) {
+func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config, nodeID string, since time.Time) (det map[string]criterionScore, checksSkipReason string) {
 	det = map[string]criterionScore{}
 	if ls := lengthScore(answer); ls < 1.0 {
 		det["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf(
@@ -2198,7 +2206,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det[name] = c
 	}
 	// Schema validity: absent (not a 1.0 pass) for a node with no registered kind.
-	avc, avcOK := artifactValidCriterion(ctx, cfg, nodeID)
+	avc, avcOK := artifactValidCriterion(ctx, cfg, nodeID, since)
 	setIfApplicable(det, "artifact_valid", avc, avcOK)
 	return det, checksSkipReason
 }
@@ -2213,7 +2221,7 @@ func setIfApplicable(det map[string]criterionScore, name string, c criterionScor
 
 // artifactValidCriterion checks the latest revision nodeID itself wrote (a
 // chat-scoped id can carry other nodes' writes too) against its schema.
-func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string) (criterionScore, bool) {
+func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string, since time.Time) (criterionScore, bool) {
 	if cfg.Artifact == "" || !cfg.Schemas.Has(cfg.Artifact) {
 		return criterionScore{}, false
 	}
@@ -2226,7 +2234,11 @@ func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string) (cri
 	if err != nil {
 		return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: %v", err)}, true
 	}
-	_, content, _, ok := bestDependencyRevision(ctx, c, id, nodeID)
+	// Node ids are workflow constants and Sleeper chat ids are stable, so an
+	// earlier run's valid artifact would otherwise pass a run that wrote nothing.
+	_, content, _, ok := newestRevisionWhere(ctx, c, id, func(l recordstore.Lineage) bool {
+		return l.NodeID == nodeID && !l.SavedAt.Before(since)
+	})
 	if !ok {
 		return criterionScore{Score: 0, Reason: fmt.Sprintf(
 			"deterministic: kind %q has a registered schema but this node wrote no artifact this run", cfg.Artifact)}, true

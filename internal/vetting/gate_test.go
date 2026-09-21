@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRecordSearchResults(t *testing.T) {
@@ -113,7 +114,7 @@ func TestCiteReasonScoreUnchanged(t *testing.T) {
 	if wantScore := (1.0 + 0.0 + 0.0) / 3; score != wantScore {
 		t.Errorf("score = %.3f, want %.3f - citeReason must not perturb citationScore's contract", score, wantScore)
 	}
-	det, _ := computeDeterministicCriteria(t.Context(), answer, act, Config{}, "")
+	det, _ := computeDeterministicCriteria(t.Context(), answer, act, Config{}, "", time.Time{})
 	if det["cites_sources"].Score != score {
 		t.Errorf("cites_sources score = %.3f, want %.3f (identical to citationScore's own output)", det["cites_sources"].Score, score)
 	}
@@ -256,7 +257,7 @@ func TestLengthScore(t *testing.T) {
 // 5: an empty answer's sufficient_length reason states both the actual
 // length and the length that would pass, not just a bare char count.
 func TestSufficientLengthReasonStatesActualAndRequired(t *testing.T) {
-	det, _ := computeDeterministicCriteria(t.Context(), "   ", workerActivity{}, Config{}, "")
+	det, _ := computeDeterministicCriteria(t.Context(), "   ", workerActivity{}, Config{}, "", time.Time{})
 	c, ok := det["sufficient_length"]
 	if !ok {
 		t.Fatal("sufficient_length missing for an empty answer")
@@ -442,7 +443,7 @@ func TestNormalizeScaleAllOnesIsRawNotNormalized(t *testing.T) {
 // hole where a worker's question-as-answer text sailed through (citationScore abstained, the judge waved it through). Weakest-link must be 0, and the feedback must point at BOTH ways out (retrieve, or ask_user).
 func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	det, _ := computeDeterministicCriteria(context.Background(), "Which city are you moving to?", workerActivity{}, Config{RequireRetrieval: true}, "")
+	det, _ := computeDeterministicCriteria(context.Background(), "Which city are you moving to?", workerActivity{}, Config{RequireRetrieval: true}, "", time.Time{})
 	got := mergeDeterministic(v, det, Config{RequireRetrieval: true})
 	if got.Score != 0 {
 		t.Fatalf("score = %v, want 0 (weakest-link on grounded_in_retrieval)", got.Score)
@@ -461,7 +462,7 @@ func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
 // re-cites upstream URLs (the pre-existing citationScore abstention stands).
 func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	det, _ := computeDeterministicCriteria(context.Background(), "Combined findings: [x](https://ex.com/a).", workerActivity{}, Config{}, "")
+	det, _ := computeDeterministicCriteria(context.Background(), "Combined findings: [x](https://ex.com/a).", workerActivity{}, Config{}, "", time.Time{})
 	got := mergeDeterministic(v, det, Config{})
 	if _, present := got.Criteria["grounded_in_retrieval"]; present {
 		t.Fatal("grounded_in_retrieval applied to a non-retrieval agent")
@@ -480,7 +481,7 @@ func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 		"reads": {paths: map[string]bool{"repo/main.go": true}},
 	} {
 		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-		det, _ := computeDeterministicCriteria(context.Background(), "The entrypoint is [main.go](repo/main.go).", act, Config{RequireRetrieval: true}, "")
+		det, _ := computeDeterministicCriteria(context.Background(), "The entrypoint is [main.go](repo/main.go).", act, Config{RequireRetrieval: true}, "", time.Time{})
 		got := mergeDeterministic(v, det, Config{RequireRetrieval: true})
 		if _, present := got.Criteria["grounded_in_retrieval"]; present {
 			t.Errorf("%s: grounded_in_retrieval penalty applied despite workspace grounding", name)
@@ -494,7 +495,7 @@ func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
 	act := workerActivity{seen: map[string]string{"https://ex.com/a": "snippet"}}
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	det, _ := computeDeterministicCriteria(context.Background(), "Answer citing [x](https://ex.com/a).", act, Config{RequireRetrieval: true}, "")
+	det, _ := computeDeterministicCriteria(context.Background(), "Answer citing [x](https://ex.com/a).", act, Config{RequireRetrieval: true}, "", time.Time{})
 	got := mergeDeterministic(v, det, Config{RequireRetrieval: true})
 	if _, present := got.Criteria["grounded_in_retrieval"]; present {
 		t.Fatal("grounded_in_retrieval penalty applied despite recorded retrieval")
