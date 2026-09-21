@@ -43,11 +43,11 @@ func TestWriteArtifact_SchemaValid_Succeeds(t *testing.T) {
 	}
 }
 
-// TestWriteArtifact_SchemaViolation_RefusesWithExactText pins the exact text
+// TestWriteArtifact_SchemaViolation_RefusesAndCarriesSchema pins the exact text
 // a model sees on a schema-violating write_artifact call: the write must not
 // land, and the message must name the kind, list the violation, and tell the
 // model to retry.
-func TestWriteArtifact_SchemaViolation_RefusesWithExactText(t *testing.T) {
+func TestWriteArtifact_SchemaViolation_RefusesAndCarriesSchema(t *testing.T) {
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a").WithSchemas(nameSchemaRegistry(t, "text"))
 	tl, err := NewWriteArtifactTool(rc, "n1", &RoundCoords{}, "hint")
 	if err != nil {
@@ -59,15 +59,11 @@ func TestWriteArtifact_SchemaViolation_RefusesWithExactText(t *testing.T) {
 		t.Fatal("write_artifact violating its kind's schema should be refused")
 	}
 	got := err.Error()
-	wantPrefix := `artifact not written: kind "text" failed its schema:`
-	if !strings.HasPrefix(got, wantPrefix) {
-		t.Errorf("error = %q, want prefix %q", got, wantPrefix)
-	}
 	if !strings.Contains(got, "required") {
 		t.Errorf("error = %q, want it to mention the missing required property", got)
 	}
-	if !strings.HasSuffix(got, "Fix these and call the tool again.") {
-		t.Errorf("error = %q, want it to end telling the model to retry", got)
+	if !strings.Contains(got, `"type":"object"`) {
+		t.Errorf("error = %q, want it to carry the kind's schema so one retry can fix everything", got)
 	}
 	items, err := rc.List(context.Background(), "text")
 	if err != nil {

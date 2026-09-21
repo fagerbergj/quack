@@ -27,7 +27,7 @@ import (
 func schemaRefusal(err error) (string, bool) {
 	var sv *recordstore.SchemaViolation
 	if errors.As(err, &sv) {
-		return artifactschema.FormatRefusal(sv.Kind, sv.Violations), true
+		return artifactschema.FormatRefusal(sv.Kind, sv.Violations, sv.Schema), true
 	}
 	return "", false
 }

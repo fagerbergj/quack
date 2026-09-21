@@ -216,6 +216,7 @@ func (c *Client) WithSchemas(reg *artifactschema.Registry) *Client {
 type SchemaViolation struct {
 	Kind       string
 	Violations []string
+	Schema     json.RawMessage
 }
 
 func (e *SchemaViolation) Error() string {
@@ -228,7 +229,7 @@ func (c *Client) checkSchema(kind string, content []byte) error {
 	if violations == nil {
 		return nil
 	}
-	return &SchemaViolation{Kind: kind, Violations: violations}
+	return &SchemaViolation{Kind: kind, Violations: violations, Schema: c.schemas.Schema(kind)}
 }
 
 // artifactRevisionPayload is the artifact.revision WAL entry's payload

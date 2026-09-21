@@ -16,6 +16,7 @@ import (
 // nil-safe and behaves as empty, so an unconfigured boot needs no special-casing.
 type Registry struct {
 	schemas map[string]*jsonschema.Resolved
+	raw     map[string]json.RawMessage
 }
 
 // Build compiles every schema the given extensions declare, keyed by
@@ -29,6 +30,7 @@ func Build(bySource map[string]map[string]json.RawMessage) (*Registry, error) {
 
 	owner := map[string]string{}
 	schemas := map[string]*jsonschema.Resolved{}
+	raw := map[string]json.RawMessage{}
 	for _, source := range sourceNames {
 		kinds := make([]string, 0, len(bySource[source]))
 		for kind := range bySource[source] {
@@ -45,12 +47,13 @@ func Build(bySource map[string]map[string]json.RawMessage) (*Registry, error) {
 			}
 			owner[kind] = source
 			schemas[kind] = resolved
+			raw[kind] = bySource[source][kind]
 		}
 	}
 	if len(schemas) == 0 {
 		return nil, nil
 	}
-	return &Registry{schemas: schemas}, nil
+	return &Registry{schemas: schemas, raw: raw}, nil
 }
 
 func compile(raw json.RawMessage) (*jsonschema.Resolved, error) {
@@ -137,7 +140,19 @@ func FormatViolations(violations []string) string {
 
 // FormatRefusal is the exact text a model sees when a write fails kind's
 // schema - identical on the native and MCP tool surfaces.
-func FormatRefusal(kind string, violations []string) string {
-	return fmt.Sprintf("artifact not written: kind %q failed its schema:\n%s\nFix these and call the tool again.",
-		kind, FormatViolations(violations))
+func FormatRefusal(kind string, violations []string, schema json.RawMessage) string {
+	msg := fmt.Sprintf("artifact not written: kind %q failed its schema:\n%s", kind, FormatViolations(violations))
+	if len(schema) > 0 {
+		// The validator stops at the first violation, so the schema itself lets one retry fix the rest.
+		msg += fmt.Sprintf("\nThe schema this kind must satisfy:\n%s", schema)
+	}
+	return msg + "\nFix the content to match and call the tool again."
+}
+
+// Schema returns kind's registered schema document, nil when there is none.
+func (r *Registry) Schema(kind string) json.RawMessage {
+	if r == nil {
+		return nil
+	}
+	return r.raw[kind]
 }

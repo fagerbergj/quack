@@ -129,7 +129,7 @@ func TestFormatRefusal_CapsViolations(t *testing.T) {
 	for i := range violations {
 		violations[i] = "violation"
 	}
-	msg := FormatRefusal("digest", violations)
+	msg := FormatRefusal("digest", violations, nil)
 	if !strings.Contains(msg, `kind "digest"`) {
 		t.Errorf("FormatRefusal = %q, want it to name the kind", msg)
 	}
@@ -145,7 +145,7 @@ func TestFormatRefusal_CapsViolations(t *testing.T) {
 }
 
 func TestFormatRefusal_NoCapUnderLimit(t *testing.T) {
-	msg := FormatRefusal("digest", []string{"path: problem"})
+	msg := FormatRefusal("digest", []string{"path: problem"}, json.RawMessage(`{"type":"object"}`))
 	if strings.Contains(msg, "more") {
 		t.Errorf("FormatRefusal under the cap = %q, want no '...and N more'", msg)
 	}

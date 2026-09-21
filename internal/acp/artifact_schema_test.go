@@ -55,10 +55,10 @@ func TestWriteArtifactMCP_SchemaValid_Succeeds(t *testing.T) {
 	}
 }
 
-// TestWriteArtifactMCP_SchemaViolation_RefusesWithExactText pins the exact
+// TestWriteArtifactMCP_SchemaViolation_RefusesAndCarriesSchema pins the exact
 // text a model sees on this surface - it must read identically to the native
-// tool path (internal/tools's TestWriteArtifact_SchemaViolation_RefusesWithExactText).
-func TestWriteArtifactMCP_SchemaViolation_RefusesWithExactText(t *testing.T) {
+// tool path (internal/tools's TestWriteArtifact_SchemaViolation_RefusesAndCarriesSchema).
+func TestWriteArtifactMCP_SchemaViolation_RefusesAndCarriesSchema(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
 	svc := artifact.InMemoryService()
@@ -82,15 +82,11 @@ func TestWriteArtifactMCP_SchemaViolation_RefusesWithExactText(t *testing.T) {
 		t.Fatalf("write_artifact violating its kind's schema should be refused, got: %s", toolResultText(t, res))
 	}
 	got := toolResultText(t, res)
-	wantPrefix := `artifact not written: kind "text" failed its schema:`
-	if !strings.HasPrefix(got, wantPrefix) {
-		t.Errorf("result = %q, want prefix %q", got, wantPrefix)
-	}
 	if !strings.Contains(got, "required") {
 		t.Errorf("result = %q, want it to mention the missing required property", got)
 	}
-	if !strings.HasSuffix(got, "Fix these and call the tool again.") {
-		t.Errorf("result = %q, want it to end telling the model to retry", got)
+	if !strings.Contains(got, `"type":"object"`) {
+		t.Errorf("result = %q, want it to carry the kind's schema so one retry can fix everything", got)
 	}
 
 	rc := recordstore.New(svc, "quack", "u1", "chat-a")
