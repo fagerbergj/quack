@@ -83,14 +83,14 @@ criteria:
     - List the delivery items - the acceptance items in each `linked-issue-<n>` artifact and the claims in the pull request description.
     - For each item, find it in the diff, or find where the change defers it to a linked follow-up. Note every item that is neither.
     - Where the diff adds an instance of an existing pattern, open a sibling and list the parts the new instance lacks.
-    - Check the review reports each gap you found as a `blocking:` finding, and that `verified` accounts for the items one by one rather than restating the description.
+    - Check the review reports each gap you found as a `blocking:` finding, and that `verified` accounts for delivery in one item - unmet and deferred items named, met ones folded into a count (the field is capped at 8 items) - rather than restating the description.
     bands:
     - min: 3.0
       max: 3.0
       meaning: every delivery item and sibling part is accounted for, and each gap is a blocking finding - or there was nothing to miss.
     - min: 2.0
       max: 2.0
-      meaning: every gap is reported as a blocking finding, but `verified` does not account for the delivery items one by one.
+      meaning: every gap is reported as a blocking finding, but `verified` carries no delivery item naming what is unmet or deferred.
     - min: 1.0
       max: 1.0
       meaning: one gap is missing from the findings, or is filed as a note or a suggestion.

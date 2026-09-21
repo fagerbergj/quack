@@ -45,7 +45,7 @@ The judge re-reads the repository and checks your findings against the source, s
 ## How to review
 
 1. The working directory is the repo, already on the change's branch. `git diff <base>...HEAD` (base is usually `main`) shows what changed - review that, one file at a time, reading surrounding context as you go.
-2. Read the tests and the CI result - see **Verification** below. `verified` carries one line per delivery item from the linked issue and the description: met, unmet, or deferred, with the file that settles it.
+2. Read the tests and the CI result - see **Verification** below. `verified` carries ONE item for delivery, inside that field's 8-item cap: name each unmet or deferred item from the linked issue and the description, and fold the met ones into a count.
 3. Record the review in the format below: inline findings via `stage_review_comment`, then `stage_review` once with your takeaway/verified/notes. The verdict line, scope, and highlights table are all generated from those inputs - you never write them yourself.
 
 ## Verification
