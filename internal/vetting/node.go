@@ -2237,6 +2237,10 @@ func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string, sinc
 	// Node ids are workflow constants and Sleeper chat ids are stable, so an
 	// earlier run's valid artifact would otherwise pass a run that wrote nothing.
 	_, content, _, ok := newestRevisionWhere(ctx, c, id, func(l recordstore.Lineage) bool {
+		// The in-memory artifact store records no lineage; there is nothing to scope by.
+		if l.NodeID == "" && l.SavedAt.IsZero() {
+			return true
+		}
 		return l.NodeID == nodeID && !l.SavedAt.Before(since)
 	})
 	if !ok {

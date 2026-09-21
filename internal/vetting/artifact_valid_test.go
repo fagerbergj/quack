@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"encoding/json"
+	"google.golang.org/adk/v2/artifact"
 	"strings"
 	"testing"
 	"time"
@@ -201,5 +202,21 @@ func TestArtifactValidCriterion_IgnoresAnEarlierRunsRevision(t *testing.T) {
 	}
 	if got, _ := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, runStart); got.Score != 1 {
 		t.Fatalf("score = %v, want 1 once this run has written a valid artifact (%s)", got.Score, got.Reason)
+	}
+}
+
+// The default in-memory artifact store records no lineage. A node that wrote
+// a valid artifact there must pass, or every schema'd node fails on a default deployment.
+func TestArtifactValidCriterion_PassesOnAStoreWithoutLineage(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	cfg.Artifacts = artifact.InMemoryService()
+	c := recordClient(cfg)
+	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"name":"written this run"}`), "application/json", DocumentHint(cfg.ChatID),
+		recordstore.Lineage{NodeID: artifactValidTestNodeID, SavedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("SaveBlob (test setup): %v", err)
+	}
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Now().UTC().Add(-time.Minute))
+	if !ok || got.Score != 1 {
+		t.Fatalf("score = %v (applies=%v), want 1 on a store that keeps no lineage: %s", got.Score, ok, got.Reason)
 	}
 }
