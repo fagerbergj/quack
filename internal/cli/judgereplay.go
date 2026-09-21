@@ -7,8 +7,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/tool"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
@@ -24,11 +26,15 @@ type ReplayOptions struct {
 }
 
 // ReplayCriterionReport is one criterion's recorded-vs-replayed comparison.
+// Pass/fail is decided by Threshold - the live gate's own bar - never RubricMark.
 type ReplayCriterionReport struct {
 	Name           string  `json:"name"`
-	RecordedScore  float64 `json:"recorded_score"`
-	ReplayedScore  float64 `json:"replayed_score"`
-	PassMark       float64 `json:"pass_mark"`
+	HasRecorded    bool    `json:"has_recorded"`
+	RecordedScore  float64 `json:"recorded_score,omitempty"`
+	HasReplayed    bool    `json:"has_replayed"`
+	ReplayedScore  float64 `json:"replayed_score,omitempty"`
+	RubricMark     float64 `json:"rubric_mark,omitempty"`
+	Threshold      float64 `json:"threshold"`
 	RecordedPassed bool    `json:"recorded_passed"`
 	ReplayedPassed bool    `json:"replayed_passed"`
 	Deterministic  bool    `json:"deterministic"`
@@ -43,25 +49,26 @@ type ReplayRoundReport struct {
 	Round    string                  `json:"round"`
 	Criteria []ReplayCriterionReport `json:"criteria"`
 	Flipped  bool                    `json:"flipped"`
-	Skipped  string                  `json:"skipped,omitempty"` // set instead of Criteria when this round couldn't be rebuilt
-	// ArtifactsWritten: this round wrote to these artifacts - the recording
-	// bundle carries no artifact body, so a criterion the live judge scored by
-	// reading one (e.g. cites_sources on a delivered-by-artifact answer) may not reproduce.
+	Skipped  string                  `json:"skipped,omitempty"`
+	Note     string                  `json:"note,omitempty"`
+	// ArtifactsWritten: this round's activity wrote these artifacts - the
+	// recording carries no artifact body, only its ledger pointer.
 	ArtifactsWritten []string `json:"artifacts_written,omitempty"`
 }
 
 // judgedRound is one (node, judge round) this bundle recorded a verdict for.
 type judgedRound struct {
 	node, agent, judgeRound string
-	roundNum                int
+	at                      time.Time // this judge round's own latest activity
 }
 
 // judgedRounds finds every (node, judge round) sess recorded eval.score
 // entries for, filtered by opts, oldest node/round first.
 func judgedRounds(sess *bundle.Session, opts ReplayOptions) []judgedRound {
-	byKey := map[[2]string]bool{}
+	type key struct{ node, round string }
+	byKey := map[key]bool{}
 	for _, sc := range sess.EvaluationResults() {
-		byKey[[2]string{sc.Node, sc.Round}] = true
+		byKey[key{sc.Node, sc.Round}] = true
 	}
 	agentOf := map[string]string{}
 	for _, k := range sess.Streams() {
@@ -71,24 +78,24 @@ func judgedRounds(sess *bundle.Session, opts ReplayOptions) []judgedRound {
 	}
 	out := make([]judgedRound, 0, len(byKey))
 	for k := range byKey {
-		node, round := k[0], k[1]
-		if opts.Node != "" && node != opts.Node {
+		if opts.Node != "" && k.node != opts.Node {
 			continue
 		}
-		n, ok := judgeRoundNum(round)
-		if !ok {
+		if _, ok := judgeRoundNum(k.round); !ok {
 			continue
 		}
-		if opts.Round != 0 && n != opts.Round {
-			continue
+		if opts.Round != 0 {
+			if n, _ := judgeRoundNum(k.round); n != opts.Round {
+				continue
+			}
 		}
-		out = append(out, judgedRound{node: node, agent: agentOf[node], judgeRound: round, roundNum: n})
+		out = append(out, judgedRound{node: k.node, agent: agentOf[k.node], judgeRound: k.round, at: judgeRoundTime(sess, k.node, k.round)})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].node != out[j].node {
 			return out[i].node < out[j].node
 		}
-		return out[i].roundNum < out[j].roundNum
+		return out[i].at.Before(out[j].at)
 	})
 	return out
 }
@@ -106,26 +113,87 @@ func judgeRoundNum(round string) (int, bool) {
 	return i, true
 }
 
-// workerTurnsFor rebuilds jr's worker activity input: the graded round's
-// task/answer, and one RawTurn (each round's LAST recorded llm.call) per
-// worker round up to and including it (worker-r0 .. worker-r(roundNum-1)).
-func workerTurnsFor(sess *bundle.Session, jr judgedRound) (task, answer string, turns []vetting.RawTurn, ok bool) {
-	workerRound := fmt.Sprintf("worker-r%d", jr.roundNum-1)
-	key := bundle.StreamKey{Node: jr.node, Agent: jr.agent, Round: workerRound}
-	task, answer, _, ok = sess.RoundTaskAnswer(key)
-	if !ok {
-		return "", "", nil, false
+// judgeRoundTime is (node, round)'s latest activity - the judge stream's
+// last chat turn, or its eval.score entries' latest timestamp (forced close).
+func judgeRoundTime(sess *bundle.Session, node, round string) time.Time {
+	turns := sess.ChatTurns(bundle.StreamKey{Node: node, Agent: "judge", Round: round})
+	if n := len(turns); n > 0 {
+		return turns[n-1].At
 	}
-	for i := 0; i <= jr.roundNum-1; i++ {
-		rk := bundle.StreamKey{Node: jr.node, Agent: jr.agent, Round: fmt.Sprintf("worker-r%d", i)}
-		ct := sess.ChatTurns(rk)
-		if len(ct) == 0 {
+	var latest time.Time
+	for _, sc := range sess.EvaluationResults() {
+		if sc.Node == node && sc.Round == round && sc.Timestamp.After(latest) {
+			latest = sc.Timestamp
+		}
+	}
+	return latest
+}
+
+// nodeRound is one non-judge round's recorded task/answer/time, chronology-matched
+// to a judge round rather than assumed from its round-id string (hitl/confirm/cont/revise/-sN all vary).
+type nodeRound struct {
+	task, answer string
+	at           time.Time
+}
+
+// nodeRoundsBefore returns node's own non-judge rounds with activity at or
+// before judgeAt, oldest first - workerTurnsFor's task/answer source.
+func nodeRoundsBefore(sess *bundle.Session, node string, judgeAt time.Time) []nodeRound {
+	var out []nodeRound
+	for _, k := range sess.Streams() {
+		if k.Node != node || k.Agent == "" || k.Agent == "judge" {
 			continue
 		}
-		last := ct[len(ct)-1]
-		turns = append(turns, vetting.RawTurn{Input: last.Input, Output: last.Output})
+		task, answer, at, ok := sess.RoundTaskAnswer(k)
+		if !ok || at.After(judgeAt) {
+			continue
+		}
+		out = append(out, nodeRound{task: task, answer: answer, at: at})
 	}
-	return task, answer, turns, true
+	sort.Slice(out, func(i, j int) bool { return out[i].at.Before(out[j].at) })
+	return out
+}
+
+// activityTurnsBefore gathers every stream's (any node - the live gate scans
+// the whole chat session) last llm.call at or before judgeAt, time-ordered.
+func activityTurnsBefore(sess *bundle.Session, judgeAt time.Time) []vetting.RawTurn {
+	type timedTurn struct {
+		turn vetting.RawTurn
+		at   time.Time
+	}
+	var found []timedTurn
+	for _, k := range sess.Streams() {
+		if k.Agent == "judge" {
+			continue
+		}
+		turns := sess.ChatTurns(k)
+		var last *bundle.ChatTurn
+		for i := range turns {
+			if turns[i].At.After(judgeAt) {
+				break
+			}
+			last = &turns[i]
+		}
+		if last != nil {
+			found = append(found, timedTurn{vetting.RawTurn{Input: last.Input, Output: last.Output}, last.At})
+		}
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].at.Before(found[j].at) })
+	out := make([]vetting.RawTurn, len(found))
+	for i, f := range found {
+		out[i] = f.turn
+	}
+	return out
+}
+
+// workerTurnsFor rebuilds jr's gate inputs: the node's earliest-round task,
+// its latest-before-jr.at answer, and the whole session's activity turns.
+func workerTurnsFor(sess *bundle.Session, jr judgedRound) (task, answer string, turns []vetting.RawTurn, ok bool) {
+	rounds := nodeRoundsBefore(sess, jr.node, jr.at)
+	if len(rounds) == 0 {
+		return "", "", nil, false
+	}
+	return rounds[0].task, rounds[len(rounds)-1].answer, activityTurnsBefore(sess, jr.at), true
 }
 
 // recordedFor returns jr's recorded per-criterion scores.
@@ -139,20 +207,12 @@ func recordedFor(sess *bundle.Session, jr judgedRound) map[string]float64 {
 	return out
 }
 
-// question is the whole chat's original request - the judge prompt's
-// BACKGROUND section; a node's own task is scored separately (workerTurnsFor).
-func question(sess *bundle.Session) string {
-	turns := sess.UserTurns()
-	if len(turns) == 0 {
-		return ""
-	}
-	return turns[0]
-}
-
 // RubricConfigFor builds cfg's gate Config for one agent bundle: the same
-// base+bundle-override rubric resolution serve.go's perAgentGateCfg does,
-// plus ReadOnly/RequireRetrieval approximated from the agent's own ac.Tools.
-func RubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricOverride string) (vetting.Config, error) {
+// base+bundle-override rubric resolution serve.go's perAgentGateCfg does.
+func RubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricOverride string, judgeArtifactTools []tool.Tool) (vetting.Config, error) {
+	if agentName == "" {
+		return vetting.Config{}, fmt.Errorf("judge replay: no recorded worker agent for this node (an ACP invoke record may be missing from the bundle)")
+	}
 	base, err := vetting.FromConfig(ctx, nil, cfg.Gates)
 	if err != nil {
 		return vetting.Config{}, err
@@ -165,22 +225,15 @@ func RubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricO
 	if err != nil {
 		return vetting.Config{}, err
 	}
+	base.Rubric = rr.Rendered
 	base.RubricSpecs, base.RubricFixes, base.RubricPassMarks = rr.Specs, rr.Fixes, rr.PassMarks
-	base.ReadOnly = true
-	for _, tn := range ac.Tools {
-		if tn == "git_push" {
-			base.ReadOnly = false
-		}
-		if tn == "web_search" || tn == "web_fetch" {
-			base.RequireRetrieval = true
-		}
-	}
+	base.ReadOnly, base.RequireRetrieval = vetting.AgentToolPolicy(ac.Tools, ac.Acp)
+	base.JudgeArtifactTools = judgeArtifactTools
 	return base, nil
 }
 
 // BuildReplayJudge builds the local quack.yaml's configured judge model as a
-// JudgeFactory with no read/skill tools - a replayed round reads only the
-// recording, never a live repo or skill store. nil, nil, nil when the gate has no judge configured.
+// JudgeFactory with no read/skill tools. nil, nil when no judge is configured.
 func BuildReplayJudge(cfg *config.Config, newModel func(config.ProviderConfig, string) (model.LLM, error)) (vetting.JudgeFactory, error) {
 	if !cfg.Gates.JudgeEnabled() {
 		return nil, nil
@@ -196,58 +249,16 @@ func BuildReplayJudge(cfg *config.Config, newModel func(config.ProviderConfig, s
 	return vetting.NewJudgeFactory(judge, nil, nil), nil
 }
 
-// RunJudgeReplay replays every judged round opts selects from sess, printing
-// (or, asJSON, encoding) each round's recorded-vs-replayed comparison. Returns
-// a non-zero exit code the moment any criterion's pass/fail flips.
-func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Session, opts ReplayOptions, judge vetting.JudgeFactory, out io.Writer, asJSON bool) int {
-	q := question(sess)
+// RunJudgeReplay replays opts' judged rounds; judgeArtifactTools nil (a local
+// bundle) replays an artifact-writing round deterministic-only. Exit != 0 on any flip.
+func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Session, opts ReplayOptions, judge vetting.JudgeFactory, judgeArtifactTools []tool.Tool, out io.Writer, asJSON bool) int {
 	rounds := judgedRounds(sess, opts)
 	reports := make([]ReplayRoundReport, 0, len(rounds))
 	exit := 0
 	cfgCache := map[string]vetting.Config{}
 	for _, jr := range rounds {
-		rep := ReplayRoundReport{Node: jr.node, Agent: jr.agent, Round: jr.judgeRound}
-		task, answer, turns, ok := workerTurnsFor(sess, jr)
-		if !ok {
-			rep.Skipped = fmt.Sprintf("no recorded worker-r%d round to rebuild this judge round's answer from", jr.roundNum-1)
-			reports = append(reports, rep)
-			exit = maxInt(exit, 1)
-			continue
-		}
-		gc, ok := cfgCache[jr.agent]
-		if !ok {
-			var err error
-			gc, err = RubricConfigFor(ctx, cfg, jr.agent, opts.RubricPath)
-			if err != nil {
-				rep.Skipped = err.Error()
-				reports = append(reports, rep)
-				exit = maxInt(exit, 1)
-				continue
-			}
-			cfgCache[jr.agent] = gc
-		}
-		jf := judge
-		if opts.DeterministicOnly {
-			jf = nil
-		}
-		criteria, artifactsWritten, err := vetting.ReplayRound(ctx, gc, jf, vetting.ReplayCase{NodeID: jr.node, Task: task, Question: q, Answer: answer, WorkerTurns: turns})
-		if err != nil {
-			rep.Skipped = err.Error()
-			reports = append(reports, rep)
-			exit = maxInt(exit, 1)
-			continue
-		}
-		rep.ArtifactsWritten = artifactsWritten
-		recorded := recordedFor(sess, jr)
-		rep.Criteria = compareCriteria(criteria, recorded)
-		for _, c := range rep.Criteria {
-			if c.Flipped {
-				rep.Flipped = true
-			}
-		}
-		if rep.Flipped {
-			exit = 2
-		}
+		rep, code := replayOneRound(ctx, cfg, sess, jr, opts, judge, judgeArtifactTools, cfgCache)
+		exit = maxInt(exit, code)
 		reports = append(reports, rep)
 	}
 	if asJSON {
@@ -258,16 +269,86 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	return exit
 }
 
-func compareCriteria(criteria []vetting.ReplayCriterion, recorded map[string]float64) []ReplayCriterionReport {
-	out := make([]ReplayCriterionReport, 0, len(criteria))
-	for _, c := range criteria {
+// replayOneRound replays jr, returning its report and an exit code
+// contribution (0 clean, 1 skipped/error, 2 a flip).
+func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Session, jr judgedRound, opts ReplayOptions, judge vetting.JudgeFactory, judgeArtifactTools []tool.Tool, cfgCache map[string]vetting.Config) (ReplayRoundReport, int) {
+	rep := ReplayRoundReport{Node: jr.node, Agent: jr.agent, Round: jr.judgeRound}
+	task, answer, turns, ok := workerTurnsFor(sess, jr)
+	if !ok {
+		rep.Skipped = "no recorded worker round precedes this judge round to rebuild its answer from"
+		return rep, 1
+	}
+	gc, ok := cfgCache[jr.agent]
+	if !ok {
+		var err error
+		gc, err = RubricConfigFor(ctx, cfg, jr.agent, opts.RubricPath, judgeArtifactTools)
+		if err != nil {
+			rep.Skipped = err.Error()
+			return rep, 1
+		}
+		cfgCache[jr.agent] = gc
+	}
+	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns}
+
+	jf := judge
+	if opts.DeterministicOnly {
+		jf = nil
+	}
+	if jf != nil && judgeArtifactTools == nil {
+		// Pre-check deterministic-only (cheap: no model call) to see whether
+		// this round's activity wrote an artifact the judge can't read here.
+		pre, err := vetting.ReplayRound(ctx, gc, nil, rc)
+		if err == nil && len(pre.ArtifactsWritten) > 0 {
+			jf = nil
+			rep.Note = fmt.Sprintf("wrote artifact(s) %v; no artifact tools available (local bundle - use --from-server to give the judge read access), replayed deterministic-only", pre.ArtifactsWritten)
+		}
+	}
+	res, err := vetting.ReplayRound(ctx, gc, jf, rc)
+	if err != nil {
+		rep.Skipped = err.Error()
+		return rep, 1
+	}
+	rep.ArtifactsWritten = res.ArtifactsWritten
+	rep.Criteria = compareCriteria(res, recordedFor(sess, jr))
+	for _, c := range rep.Criteria {
+		if c.Flipped {
+			rep.Flipped = true
+		}
+	}
+	if rep.Flipped {
+		return rep, 2
+	}
+	return rep, 0
+}
+
+// compareCriteria pairs replayed criteria with recorded, deciding pass/fail
+// by res.Threshold; a recorded criterion replay never reproduced is its own flip class.
+func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64) []ReplayCriterionReport {
+	out := make([]ReplayCriterionReport, 0, len(res.Criteria)+len(recorded))
+	seen := map[string]bool{}
+	for _, c := range res.Criteria {
+		seen[c.Name] = true
 		rec, hasRec := recorded[c.Name]
-		recPass := hasRec && rec >= c.PassMark
-		replPass := c.Score >= c.PassMark
+		recPass := hasRec && rec >= res.Threshold
+		replPass := c.Score >= res.Threshold
 		out = append(out, ReplayCriterionReport{
-			Name: c.Name, RecordedScore: rec, ReplayedScore: c.Score, PassMark: c.PassMark,
-			RecordedPassed: recPass, ReplayedPassed: replPass, Deterministic: c.Deterministic,
-			Reason: c.Reason, Flipped: hasRec && recPass != replPass,
+			Name: c.Name, HasRecorded: hasRec, RecordedScore: rec, HasReplayed: true, ReplayedScore: c.Score,
+			RubricMark: c.RubricMark, Threshold: res.Threshold, RecordedPassed: recPass, ReplayedPassed: replPass,
+			Deterministic: c.Deterministic, Reason: c.Reason, Flipped: hasRec && recPass != replPass,
+		})
+	}
+	extra := make([]string, 0)
+	for name := range recorded {
+		if !seen[name] {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(extra)
+	for _, name := range extra {
+		rec := recorded[name]
+		out = append(out, ReplayCriterionReport{
+			Name: name, HasRecorded: true, RecordedScore: rec, HasReplayed: false, Threshold: res.Threshold,
+			RecordedPassed: rec >= res.Threshold, Reason: "recorded, not replayed", Flipped: true,
 		})
 	}
 	return out
@@ -280,18 +361,28 @@ func renderReplayReports(out io.Writer, reports []ReplayRoundReport) {
 			fmt.Fprintf(out, "  skipped: %s\n", r.Skipped)
 			continue
 		}
-		if len(r.ArtifactsWritten) > 0 {
-			fmt.Fprintf(out, "  note: wrote artifact(s) %v this round - their content isn't in the recording bundle, so any criterion the judge scored by reading one may not reproduce\n", r.ArtifactsWritten)
+		if r.Note != "" {
+			fmt.Fprintf(out, "  note: %s\n", r.Note)
 		}
 		for _, c := range r.Criteria {
 			flag := " "
 			if c.Flipped {
 				flag = "!"
 			}
-			fmt.Fprintf(out, "  %s %-24s recorded=%.2f(%s) replayed=%.2f(%s) pass_mark=%.2f  %s\n",
-				flag, c.Name, c.RecordedScore, passWord(c.RecordedPassed), c.ReplayedScore, passWord(c.ReplayedPassed), c.PassMark, c.Reason)
+			fmt.Fprintf(out, "  %s %-24s recorded=%-12s replayed=%-12s rubric_mark=%.2f threshold=%.2f  %s\n",
+				flag, c.Name, scoreCell(c.HasRecorded, c.RecordedScore, c.RecordedPassed),
+				scoreCell(c.HasReplayed, c.ReplayedScore, c.ReplayedPassed), c.RubricMark, c.Threshold, c.Reason)
 		}
 	}
+}
+
+// scoreCell renders one recorded/replayed cell: "-" when absent, else the
+// score with its pass/fail word.
+func scoreCell(has bool, score float64, passed bool) string {
+	if !has {
+		return "-"
+	}
+	return fmt.Sprintf("%.2f(%s)", score, passWord(passed))
 }
 
 func passWord(passed bool) string {

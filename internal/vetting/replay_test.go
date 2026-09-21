@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -30,25 +31,28 @@ func TestReplayRound_DeterministicCitation(t *testing.T) {
 	fetchResp := replayContent(genai.RoleUser, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: "1", Name: "web_fetch",
 		Response: map[string]any{"results": []any{map[string]any{"url": "https://example.com/a"}}}}})
 	rc := ReplayCase{
-		NodeID: "node-1", Task: "task", Question: "q",
+		NodeID: "node-1", Task: "task",
 		Answer:      "See [source](https://example.com/a) for details.",
 		WorkerTurns: []RawTurn{{Input: replayJSON(t, []*genai.Content{fetchCall, fetchResp})}},
 	}
-	criteria, artifacts, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
+	res, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
 	if err != nil {
 		t.Fatalf("ReplayRound: %v", err)
 	}
-	if len(artifacts) != 0 {
-		t.Errorf("artifactsWritten = %v, want none (no write_artifact call)", artifacts)
+	if res.Threshold != 0.5 {
+		t.Errorf("Threshold = %v, want cfg.Threshold (0.5)", res.Threshold)
+	}
+	if len(res.ArtifactsWritten) != 0 {
+		t.Errorf("ArtifactsWritten = %v, want none (no write_artifact call)", res.ArtifactsWritten)
 	}
 	var got *ReplayCriterion
-	for i := range criteria {
-		if criteria[i].Name == "cites_sources" {
-			got = &criteria[i]
+	for i := range res.Criteria {
+		if res.Criteria[i].Name == "cites_sources" {
+			got = &res.Criteria[i]
 		}
 	}
 	if got == nil {
-		t.Fatalf("criteria = %+v, want cites_sources", criteria)
+		t.Fatalf("criteria = %+v, want cites_sources", res.Criteria)
 	}
 	if got.Score != 1.0 || !got.Deterministic {
 		t.Errorf("cites_sources = %+v, want score=1.0 deterministic=true", got)
@@ -64,22 +68,22 @@ func TestReplayRound_ArtifactWrittenFlagged(t *testing.T) {
 		NodeID: "node-1", Answer: "Delivered as artifact text:abc123.",
 		WorkerTurns: []RawTurn{{Input: replayJSON(t, []*genai.Content{writeCall, writeResp})}},
 	}
-	_, artifacts, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
+	res, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
 	if err != nil {
 		t.Fatalf("ReplayRound: %v", err)
 	}
-	if len(artifacts) != 1 || artifacts[0] != "text:abc123" {
-		t.Errorf("artifactsWritten = %v, want [text:abc123]", artifacts)
+	if len(res.ArtifactsWritten) != 1 || res.ArtifactsWritten[0] != "text:abc123" {
+		t.Errorf("ArtifactsWritten = %v, want [text:abc123]", res.ArtifactsWritten)
 	}
 }
 
 func TestReplayRound_MalformedTurnIsSkippedNotFatal(t *testing.T) {
 	rc := ReplayCase{NodeID: "node-1", Answer: "plain answer, no citations", WorkerTurns: []RawTurn{{Input: "not json"}}}
-	criteria, _, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
+	res, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
 	if err != nil {
 		t.Fatalf("ReplayRound: %v", err)
 	}
-	for _, c := range criteria {
+	for _, c := range res.Criteria {
 		if c.Name == "cites_sources" {
 			t.Errorf("cites_sources present for an answer with no citations: %+v", c)
 		}
@@ -105,6 +109,9 @@ criteria:
 	}
 	if pm := rr.PassMarks["cites_sources"]; pm != 0.85 {
 		t.Errorf("PassMarks[cites_sources] = %v, want 0.85", pm)
+	}
+	if !strings.Contains(rr.Rendered, "existence check") {
+		t.Errorf("Rendered = %q, want it to contain the criterion's own definition text", rr.Rendered)
 	}
 	if _, ok := rr.Specs["cites_sources"]; !ok {
 		t.Errorf("Specs missing cites_sources: %+v", rr.Specs)

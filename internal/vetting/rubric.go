@@ -155,18 +155,21 @@ func LoadBundleRubricSpecs(ctx context.Context, res *artifactsrc.Resolver, bundl
 	return rendered, rubricDocSpecs(doc), rubricDocFixes(doc), art, nil
 }
 
-// ReplayRubric is a rubric.yaml's replay-relevant contents: LoadBundleRubricSpecs'
-// specs/fixes plus each criterion's own pass mark - unlike the live gate's
-// loadRubric, always a structured doc, never a raw prose override.
+// ReplayRubric is a rubric.yaml's replay-relevant contents: Rendered for
+// cfg.Rubric, LoadBundleRubricSpecs' specs/fixes, and each mark.
 type ReplayRubric struct {
+	Rendered  string
 	Specs     map[string]criterionSpec
 	Fixes     map[string]string
 	PassMarks map[string]float64
 }
 
+func replayRubricFrom(doc rubricDoc) ReplayRubric {
+	return ReplayRubric{Rendered: renderRubricMarkdown(doc), Specs: rubricDocSpecs(doc), Fixes: rubricDocFixes(doc), PassMarks: rubricDocPassMarks(doc)}
+}
+
 // LoadReplayRubric loads overridePath when set (a rubric.yaml anywhere on
-// disk, e.g. the replay command's --rubric), else bundleDir's own rubric.yaml
-// (LoadBundleRubricSpecs' resolution: disk first, then the embedded default).
+// disk, e.g. the replay command's --rubric), else bundleDir's own rubric.yaml.
 func LoadReplayRubric(ctx context.Context, res *artifactsrc.Resolver, bundleDir, overridePath string) (ReplayRubric, error) {
 	if overridePath != "" {
 		raw, err := os.ReadFile(overridePath)
@@ -177,7 +180,7 @@ func LoadReplayRubric(ctx context.Context, res *artifactsrc.Resolver, bundleDir,
 		if err != nil {
 			return ReplayRubric{}, err
 		}
-		return ReplayRubric{Specs: rubricDocSpecs(doc), Fixes: rubricDocFixes(doc), PassMarks: rubricDocPassMarks(doc)}, nil
+		return replayRubricFrom(doc), nil
 	}
 	art, err := artifactsrc.ResolveBundleFile(ctx, res, "rubric", bundleDir, "rubric.yaml")
 	if err != nil {
@@ -190,5 +193,23 @@ func LoadReplayRubric(ctx context.Context, res *artifactsrc.Resolver, bundleDir,
 	if err != nil {
 		return ReplayRubric{}, err
 	}
-	return ReplayRubric{Specs: rubricDocSpecs(doc), Fixes: rubricDocFixes(doc), PassMarks: rubricDocPassMarks(doc)}, nil
+	return replayRubricFrom(doc), nil
+}
+
+// AgentToolPolicy derives ReadOnly/RequireRetrieval from an agent's declared
+// tools/ACP config - shared by serve.go's perAgentGateCfg and judge replay.
+func AgentToolPolicy(tools []string, acp *config.AcpAgentConfig) (readOnly, requireRetrieval bool) {
+	readOnly = true
+	for _, tn := range tools {
+		if tn == "git_push" {
+			readOnly = false
+		}
+		if tn == "web_search" || tn == "web_fetch" {
+			requireRetrieval = true
+		}
+	}
+	if acp != nil {
+		readOnly = acp.ReadOnly
+	}
+	return readOnly, requireRetrieval
 }

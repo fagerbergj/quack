@@ -12,52 +12,56 @@ import (
 	"google.golang.org/genai"
 )
 
-// RawTurn is one recorded llm.call's Input/Output - one per worker round
-// (the round's LAST recorded call, whose Input already carries that round's
-// whole tool-loop history), verbatim JSON as the ledger stored them.
+// RawTurn is one recorded llm.call's Input/Output, verbatim JSON as the
+// ledger stored them - one entry per contributing round or stream.
 type RawTurn struct {
 	Input, Output string
 }
 
-// ReplayCase is one judged round's gate inputs, rebuilt from a recording:
-// the node's task, the chat's question, the graded answer, and the worker's
-// rounds up to and including this one (oldest first, for worker activity).
+// ReplayCase is one judged round's gate inputs. Task is the built prompt
+// live sends the worker - the same text also stands in for the judge's question.
 type ReplayCase struct {
-	NodeID, Task, Question, Answer string
-	WorkerTurns                    []RawTurn
+	NodeID, Task, Answer string
+	WorkerTurns          []RawTurn
 }
 
-// ReplayCriterion is one criterion's freshly computed score and rubric pass
-// mark; the caller pairs it with the round's recorded score to decide flips.
+// ReplayCriterion is one criterion's freshly computed score. RubricMark is its
+// own declared scale.pass, informational - ReplayRoundResult.Threshold decides pass/fail.
 type ReplayCriterion struct {
 	Name          string
 	Score         float64
-	PassMark      float64
+	RubricMark    float64
 	Deterministic bool
 	Reason        string
 }
 
-// ReplayRound re-scores rc under cfg's rubric via the live gate's own functions
-// (computeDeterministicCriteria, judge non-nil's runJudgeAgent, mergeDeterministic,
-// applyRubricSpecs) - judge nil replays deterministic criteria only, never touching a model.
-func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayCase) (criteria []ReplayCriterion, artifactsWritten []string, err error) {
+// ReplayRoundResult is one round's replayed criteria plus Threshold, the
+// single global pass bar buildEnvelope actually gates on (envelope.go).
+type ReplayRoundResult struct {
+	Criteria         []ReplayCriterion
+	Threshold        float64
+	ArtifactsWritten []string
+}
+
+// ReplayRound re-scores rc under cfg's rubric via the live gate's own functions -
+// judge nil replays deterministic criteria only, never touching a model.
+func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayCase) (ReplayRoundResult, error) {
+	cfg.Task = rc.Task
 	act, err := rebuildWorkerActivity(ctx, rc.WorkerTurns, rc.NodeID)
 	if err != nil {
-		return nil, nil, err
+		return ReplayRoundResult{}, err
 	}
 	augmentFromAnswer(&act, cfg, rc.Answer)
-	// The recording carries no artifact body, only its pointer - a criterion
-	// the live judge scored by reading one may not reproduce; flag it.
-	artifactsWritten = act.artifactsWritten
+	res := ReplayRoundResult{Threshold: cfg.Threshold, ArtifactsWritten: act.artifactsWritten}
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
 
 	v := verdict{}
 	if judge != nil {
-		question := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{Text: rc.Question}}}
+		question := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{Text: rc.Task}}}
 		v, err = runJudgeAgent(ctx, judge, cfg, question, rc.Answer, act, det, nil, func(*genai.Part) bool { return true })
 		if err != nil {
-			return nil, artifactsWritten, fmt.Errorf("vetting: replay judge round: %w", err)
+			return res, fmt.Errorf("vetting: replay judge round: %w", err)
 		}
 	}
 	v = mergeDeterministic(v, det, cfg)
@@ -67,21 +71,19 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	for name := range v.Criteria {
 		names = append(names, name)
 	}
-	out := make([]ReplayCriterion, 0, len(names))
+	res.Criteria = make([]ReplayCriterion, 0, len(names))
 	for _, name := range names {
 		c := v.Criteria[name]
-		pass := cfg.Threshold
-		if pm, ok := cfg.RubricPassMarks[name]; ok {
-			pass = pm
-		}
-		out = append(out, ReplayCriterion{Name: name, Score: c.Score, PassMark: pass, Deterministic: c.Deterministic, Reason: criterionText(c)})
+		res.Criteria = append(res.Criteria, ReplayCriterion{
+			Name: name, Score: c.Score, RubricMark: cfg.RubricPassMarks[name],
+			Deterministic: c.Deterministic, Reason: criterionText(c),
+		})
 	}
-	return out, artifactsWritten, nil
+	return res, nil
 }
 
 // rebuildWorkerActivity replays turns' recorded contents through a fresh
-// in-memory ADK session and scans it with activityFromSessionAt - the
-// gate's own event walk, not a reimplementation of it.
+// in-memory session, scanned by the gate's own activityFromSessionAt.
 func rebuildWorkerActivity(ctx context.Context, turns []RawTurn, nodeDir string) (workerActivity, error) {
 	svc := session.InMemoryService()
 	resp, err := svc.Create(ctx, &session.CreateRequest{AppName: "judge-replay", UserID: "replay", SessionID: "replay"})
@@ -111,7 +113,7 @@ func appendReplayContent(ctx context.Context, svc session.Service, sess session.
 }
 
 // decodeContents parses a recorded llm.call Input string (a JSON array of
-// genai.Content); malformed or empty input yields no events, never a fatal replay error.
+// genai.Content); malformed input yields no events, never a fatal error.
 func decodeContents(raw string) []*genai.Content {
 	if raw == "" {
 		return nil
@@ -123,7 +125,7 @@ func decodeContents(raw string) []*genai.Content {
 	return contents
 }
 
-// decodeContent parses a recorded llm.call Output string (a single genai.Content).
+// decodeContent parses a recorded llm.call Output string (one genai.Content).
 func decodeContent(raw string) *genai.Content {
 	if raw == "" {
 		return nil
@@ -136,8 +138,7 @@ func decodeContent(raw string) *genai.Content {
 }
 
 // CountingJudgeFactory wraps factory, incrementing *calls on invocation -
-// lets a caller outside this package prove a judge factory is never
-// reached, without needing its unexported per-round call types itself.
+// lets a caller outside this package prove a judge factory was never reached.
 func CountingJudgeFactory(factory JudgeFactory, calls *int) JudgeFactory {
 	return func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
 		*calls++

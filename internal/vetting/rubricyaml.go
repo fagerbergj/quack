@@ -235,8 +235,7 @@ func rubricDocSpecs(doc rubricDoc) map[string]criterionSpec {
 }
 
 // rubricDocPassMarks returns each criterion's own declared pass mark as a
-// 0-1 fraction of its scale ((pass-min)/(max-min)) - judge replay's per-criterion
-// decision; the live gate doesn't read this (buildEnvelope gates on one global Threshold instead).
+// 0-1 fraction of its scale - informational only; the live gate ignores it.
 func rubricDocPassMarks(doc rubricDoc) map[string]float64 {
 	out := make(map[string]float64, len(doc.Criteria))
 	for name, c := range doc.Criteria {

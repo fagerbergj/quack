@@ -13,9 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// TestNewJudgeReplayCmd_Flags checks the command tree and flag wiring - the
-// RunE closure itself is exercised end-to-end by TestRunJudgeReplay_NoConfig
-// and internal/cli's own tests (network/model plumbing lives there).
+// TestNewJudgeReplayCmd_Flags checks the command tree and flag wiring; the
+// RunE closure itself is exercised end-to-end below.
 func TestNewJudgeReplayCmd_Flags(t *testing.T) {
 	c := newJudgeCmd()
 	replay, _, err := c.Find([]string{"replay"})
@@ -45,8 +44,7 @@ func TestRunJudgeReplay_NoConfig(t *testing.T) {
 }
 
 // TestRunJudgeReplay_DeterministicOnlyEndToEnd drives the real command
-// handler (resolveBundle -> bundle.Load -> config load -> cli.RunJudgeReplay)
-// against a local bundle file and a minimal on-disk quack.yaml + rubric.yaml.
+// handler against a local bundle file and an on-disk quack.yaml + rubric.yaml.
 func TestRunJudgeReplay_DeterministicOnlyEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	rubricPath := filepath.Join(dir, "rubric.yaml")
