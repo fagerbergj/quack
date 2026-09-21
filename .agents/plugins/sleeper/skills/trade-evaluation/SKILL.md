@@ -75,15 +75,10 @@ deficiency. Each pattern is sourced in `report.md` section 3.
 ## Resources (load only when the case calls for it)
 
 - `output-schema-trade.json` — the extension UI's schema for the `trade`
-  artifact (a specific offer). Required top-level: `partner`, `partner_id`,
-  `status`, `offers`; each offer's `give`/`get` arrays are keyed `give`/
-  `get`, never any other spelling. Write the artifact to match it exactly.
+  artifact (a specific offer). The artifact carries exactly this
+  schema's properties; read it before writing.
 - `output-schema-trade-finder.json` — the schema for the `trade-finder`
-  artifact (a league-wide scan). Required top-level: `league`, `week`,
-  `suggestions`; each suggestion is keyed `give`/`get` (singular objects,
-  not arrays), never `I give`/`I get` or any other spelling, and no
-  top-level section beyond `league`/`week`/`updated`/`suggestions` belongs
-  in this artifact.
+  artifact (a league-wide scan). Same rule.
 - `value-charts-and-limits.md` — what a chart's numbers are grounded in, why
   charts go stale, and the 12-team-vs-10-team mismatch. Load before citing
   any chart figure.

@@ -92,32 +92,29 @@ criteria:
     anchors:
     - quote
     - omission
-  verdict_and_artifact:
+  verdict_stated:
     definition: >
       The answer lands on exactly one of send/counter/decline (a finder run:
-      a ranked, bounded candidate list), and the deliverable is the
-      `trade`/`trade-finder` artifact - parses as JSON with the required
-      top-level fields - not just prose in the reply.
+      a ranked, bounded candidate list). Whether the card was written as an
+      artifact is `artifact_delivered`'s job, not this criterion's.
     steps:
     - Check the reply names exactly one verdict, or (finder) a ranked list
       of at most three candidates, never an unbounded "either works."
-    - Check a `trade` (or `trade-finder`) artifact exists for this round.
-    - Parse the artifact. For a trade card check `partner`, `partner_id`,
-      `status`, and a non-empty `offers` array; for a finder card check
-      `league`, `week`, and a non-empty `suggestions` array.
+    - When the verdict is decline or counter, check it names the counter it
+      would accept instead.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: a single named verdict (or bounded ranked list) and a schema-valid artifact both exist.
+      meaning: a single named verdict (or a bounded ranked list), with the counter named where one applies.
     - min: 2.0
       max: 2.0
-      meaning: the artifact exists and the verdict is present, but one required field is missing or empty.
+      meaning: a single verdict is named, but a decline or counter does not say what would be accepted.
     - min: 1.0
       max: 1.0
-      meaning: the verdict is there but no artifact was written - the card exists only as reply prose.
+      meaning: the answer leans one way without committing, or lists more than three candidates unranked.
     - min: 0.0
       max: 0.0
-      meaning: no verdict, or no trade content that parses as JSON anywhere.
+      meaning: no verdict - "either works" or a bare restatement of the offer.
     anchors:
     - quote
     - omission

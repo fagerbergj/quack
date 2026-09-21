@@ -67,10 +67,9 @@ separation depends on.
 ## Resources (load only when the case calls for it)
 
 - `output-schema-digest.json` — the extension UI's schema for the `digest`
-  artifact. Required top-level: `week`, `past`, `games`. Write the artifact
-  to match it exactly.
-- `output-schema-retro.json` — the schema for the `retro` artifact. Required
-  top-level: `week`, `started`, `best`, `left`.
+  artifact. The artifact carries exactly this schema's properties; read
+  it before writing.
+- `output-schema-retro.json` — the schema for the `retro` artifact. Same rule.
 - `recap-structure.md` — the matchup-block field order, length-norm
   citations by element, and the usage-over-points rule for forward calls.
   Load for any digest or preview write-up.
