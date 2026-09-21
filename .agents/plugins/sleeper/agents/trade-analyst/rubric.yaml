@@ -92,32 +92,60 @@ criteria:
     anchors:
     - quote
     - omission
-  verdict_and_artifact:
+  verdict_stated:
     definition: >
       The answer lands on exactly one of send/counter/decline (a finder run:
-      a ranked, bounded candidate list), and the deliverable is the
-      `trade`/`trade-finder` artifact - parses as JSON with the required
-      top-level fields - not just prose in the reply.
+      a ranked, bounded candidate list). Whether the card was written as an
+      artifact is `artifact_delivered`'s job, not this criterion's.
     steps:
     - Check the reply names exactly one verdict, or (finder) a ranked list
       of at most three candidates, never an unbounded "either works."
-    - Check a `trade` (or `trade-finder`) artifact exists for this round.
-    - Parse the artifact. For a trade card check `partner`, `partner_id`,
-      `status`, and a non-empty `offers` array; for a finder card check
-      `league`, `week`, and a non-empty `suggestions` array.
+    - A `counter` names the concrete counter-offer. An answer that hedges
+      ("depends") names the condition that would flip it and which way.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: a single named verdict (or bounded ranked list) and a schema-valid artifact both exist.
+      meaning: a single named verdict (or a bounded ranked list); a counter names its offer, and any hedge names its flip condition.
     - min: 2.0
       max: 2.0
-      meaning: the artifact exists and the verdict is present, but one required field is missing or empty.
+      meaning: a single verdict is named, but a counter leaves its offer vague or a hedge leaves its flip condition unnamed.
     - min: 1.0
       max: 1.0
-      meaning: the verdict is there but no artifact was written - the card exists only as reply prose.
+      meaning: the answer leans one way without committing, or lists more than three candidates unranked.
     - min: 0.0
       max: 0.0
-      meaning: no verdict, or no trade content that parses as JSON anywhere.
+      meaning: no verdict - "either works" or a bare restatement of the offer.
+    anchors:
+    - quote
+    - omission
+  artifact_delivered:
+    definition: >
+      The round's deliverable is a `trade` or `trade-finder` artifact
+      written via write_artifact, matching the extension UI schema exactly -
+      `give`/`get` keyed exactly `give` and `get` (never "I give"/"I get" or
+      any other spelling), and no top-level section beyond what the schema
+      defines (`partner`/`partner_id`/`status`/`offers`/... for a trade card,
+      `league`/`week`/`updated`/`suggestions` for a finder card).
+    steps:
+    - Check a `trade` or `trade-finder` artifact exists for this round
+      (list_artifacts/read_artifact), separate from the reply's own text.
+    - Parse the artifact's content as JSON.
+    - Check every object key matches the schema exactly - flag any renamed
+      or invented key (e.g. "I give"/"I get") or any top-level section the
+      schema does not define.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: the artifact exists, parses as JSON, and every key matches the schema exactly with no invented sections.
+    - min: 2.0
+      max: 2.0
+      meaning: the artifact exists and parses, but one required field is missing or empty.
+    - min: 1.0
+      max: 1.0
+      meaning: no artifact was written this round - the trade content only exists as prose in the reply.
+    - min: 0.0
+      max: 0.0
+      meaning: the round's content does not parse as JSON at all, or a key is renamed/invented against the schema (e.g. "I give"/"I get" instead of give/get).
     anchors:
     - quote
     - omission

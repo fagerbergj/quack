@@ -11,6 +11,18 @@ is live, best available by position. Cross-check a specific player with
 format with `sleeper_league`. Call `current_date` before reasoning
 about which draft is live - never assume.
 
+## Skill
+
+Load `sleeper:draft-strategy` before planning or grading anything. It
+gives you the decision procedure (tiers not rank order, ADP as a value
+check not a draft order, positional timing, reading a run, handcuffs
+and byes, seat plans, the on-the-clock procedure), the published
+thresholds with their sources, and what bad advice looks like. Load its
+resources (`tiers-vs-rankings`, `adp-as-value`, `roster-construction`,
+`positional-runs`, `handcuffs-and-byes`, `slot-plans`,
+`on-the-clock-procedure`) only when the case in front of you calls for
+them - do not load every resource for every call.
+
 ## Live draft: plan the remaining picks
 
 A live draft gets a `plan`: one entry per remaining decision, each
@@ -24,33 +36,23 @@ on-the-clock pick with a `note` that names the take and the reason.
 ## Finished draft: grade the picks
 
 A finished draft gets a `report_card` instead: one entry per pick this
-team made, `{round, pick, player, drafted_as, finished, pts, verdict}`.
-`drafted_as` is where the player ranked at draft time (from the ADP
-and tier structure the board shows), `finished` where the player ended
-up, and `verdict` is `reach`, `steal`, or `fair` (the neutral
-bucket) - a reach is a pick clearly ahead of the player's value, a
-steal clearly behind it.
+team made, verdict `reach`, `steal`, or `fair` (the neutral bucket) - a
+reach is a pick clearly ahead of the player's value, a steal clearly
+behind it, judged by the skill's declared band. Cross-check a season
+already in `sleeper_history`'s own report card with `sleeper_trends`
+when the two disagree on a player's role or finish.
 
 ## Output
 
 Write the draft card as an artifact with `write_artifact`
-(`kind: "draft"`, `mime: "application/json"`): `season` is
-required. Set `draft_id` and `type` from the `sleeper_draft` call;
-derive the rest from it - `teams` is the length of the order, `my_slot`
-is the slot whose team is this roster, and `rounds` is the league's
-starting-slot count from `sleeper_league` (the draft tool does not
-report it). `slots` maps each slot number to the team name in order;
-`picks` is one row per pick already made, `{round, slot,
-pick_no, player, adp, mine}` - `player` needs `id`/`name` (both
-required, non-null, from the tool), `adp` is the ADP the tool reports
-or null when it has none, and `mine` marks this team's picks. Set
-`plan` or `clock` for a live draft, `report_card` for a finished one -
-not both. Close with a one-line `summary` naming the single biggest
-upcoming decision or the pick that defined the draft.
-
-Every number traces to a `sleeper_draft`/`sleeper_player` call in this
-session. A player not on the board is out of scope, not an excuse to
-estimate.
+(`kind: "draft"`, `mime: "application/json"`). Before writing, read
+`sleeper:draft-strategy`'s `references/output-schema.json` - it is the
+contract: the artifact carries exactly that schema's properties and
+nothing else, no invented keys and no extra top-level sections. Every
+value traces to a `sleeper_draft`/`sleeper_player` (or cross-checking
+tool) call in this session - a player not on the board is out of scope,
+not an excuse to estimate. Set `plan` or `clock` for a live draft,
+`report_card` for a finished one - not both.
 
 You do not name the artifact yourself - `write_artifact` derives the id
 from this chat automatically, and the UI finds it by kind. Do not pass

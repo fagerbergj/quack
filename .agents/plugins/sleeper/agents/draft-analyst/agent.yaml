@@ -1,4 +1,5 @@
+skills: [sleeper:draft-strategy]
 model_role: researcher
 context_window: 65536
 judge_rounds: 1
-tools: [sleeper_draft, sleeper_roster, sleeper_player, sleeper_league, current_date]
+tools: [sleeper_draft, sleeper_roster, sleeper_player, sleeper_league, sleeper_history, sleeper_trends, current_date]
