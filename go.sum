@@ -114,10 +114,10 @@ github.com/fagerbergj/quack-extensions/noop v0.2.1 h1:cRXBG8t2WK6033d7V45T6wM1vp
 github.com/fagerbergj/quack-extensions/noop v0.2.1/go.mod h1:7BXMzyrBTwHY0WA9UasafAEjNkBpe1W1bQWj0i6ZK/o=
 github.com/fagerbergj/quack-extensions/remarkable v0.3.2 h1:uz2etUD4mY+l6zDI9qgzQ1lIf8TsBowCt5059K1sC9Y=
 github.com/fagerbergj/quack-extensions/remarkable v0.3.2/go.mod h1:5Pt4oqCshn4vHm71g9IsSA2In0t4fIo7dSfgR5gtyhs=
-github.com/fagerbergj/quack-extensions/sdk v0.14.0 h1:CWjzRwvdMQ5kaH4LFrwCzSGomJuYDTf+harelMT73Yo=
-github.com/fagerbergj/quack-extensions/sdk v0.14.0/go.mod h1:Cuuy2hqcxn6CTcSjlTOPl0WCjBuzx+JNH8XTfnshGtg=
-github.com/fagerbergj/quack-extensions/sleeper v0.2.0 h1:X1R6/c7eyAKf2FxjPxk2/VLCB/6AF2Vy5PO8lWINpPU=
-github.com/fagerbergj/quack-extensions/sleeper v0.2.0/go.mod h1:XZzyW97TgSRzE4yRBmq9s0NphIteifWCbPw/4Zv1Cnk=
+github.com/fagerbergj/quack-extensions/sdk v0.15.0 h1:fM5pVv+jICvz5WM9Xq8aGx9Lld5CU412FonNo6OALSE=
+github.com/fagerbergj/quack-extensions/sdk v0.15.0/go.mod h1:i2aSobKkN6OrUkXrPFFczWwLOwpXtKaXKArDnnT8rKI=
+github.com/fagerbergj/quack-extensions/sleeper v0.2.1 h1:J+e6lc3Pk0mo1ec82W8HNVSNH6rRnFmqVGCKVE1Kay0=
+github.com/fagerbergj/quack-extensions/sleeper v0.2.1/go.mod h1:ek3bkOYOUBd4BSSZFQaeNIOQgY7Ij1/HdYhTKI34bBA=
 github.com/fagerbergj/quack-extensions/usage v0.3.4 h1:4xdNA74Gh0Xmk9FL0BqmNDZ6NJUSV9kxibjQCoGmgKg=
 github.com/fagerbergj/quack-extensions/usage v0.3.4/go.mod h1:BkcGnSo+SnxzI4KoHQaq/MWEqmA3Wk9NOPPB8Y1EzSk=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=

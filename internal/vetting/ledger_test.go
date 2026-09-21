@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
@@ -400,7 +401,7 @@ func TestGitCloneCountsAsRetrieval(t *testing.T) {
 	}
 	// The clone is retrieval: grounded_in_retrieval must not fire on it.
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	det, _ := computeDeterministicCriteria(ctx, "The repo's entrypoint is cmd/main.go.", act, Config{RequireRetrieval: true})
+	det, _ := computeDeterministicCriteria(ctx, "The repo's entrypoint is cmd/main.go.", act, Config{RequireRetrieval: true}, "", time.Time{})
 	got := mergeDeterministic(v, det, Config{RequireRetrieval: true})
 	if _, present := got.Criteria["grounded_in_retrieval"]; present {
 		t.Error("grounded_in_retrieval fired despite a recorded clone")

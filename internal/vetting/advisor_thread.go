@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/adk/v2/artifact"
 
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 )
@@ -83,6 +84,8 @@ type MemSession struct {
 	// Ledger: same fail-closed WAL path as recordClient's cfg.Ledger, so a
 	// tool-initiated write records parent_revision like a gate write (#1153).
 	Ledger ledger.LedgerStore
+	// Schemas: same registered-schema enforcement as recordClient's cfg.Schemas.
+	Schemas *artifactschema.Registry
 	// NodeID stamps Lineage.NodeID on writes made through list_artifacts/
 	// edit_artifact/write_artifact/write_<kind> - provenance only, never
 	// part of an artifact's id (#1090 §4.1).

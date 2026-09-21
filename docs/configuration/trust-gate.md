@@ -25,6 +25,8 @@ If both `deterministic_checks.max_rounds` and the judge are off, the gate is dis
 
 Free, mechanical checks that drive cheap targeted revisions before anything expensive runs: citation backing, length, and - for a code-implementer node - the repo's own build/vet/test commands. `deterministic_checks.max_rounds` caps how many revise cycles these checks alone can trigger.
 
+`artifact_valid` is one of these checks, and only applies to a node whose declared artifact kind has a schema registered by an SDK extension (`sdk.ArtifactSchemas`, see [agent-plugins.md](../agent-plugins.md)). It passes only when the node's artifact for this run exists and satisfies that schema; on failure the criterion's feedback carries the same violation list a schema-refused write would show the worker, so the revise round has something concrete to fix. A node whose kind has no registered schema never gets this criterion at all.
+
 The check commands themselves come from `workspace.check_commands` - an allowlist of command **prefixes** the planner may complete into a node's `checks` (e.g. `go build`, `npm test`). When the planner sets none, the gate derives them from that same allowlist, each further gated on the binary actually existing on the host (so a runtime without `go`/`npm` just derives nothing instead of failing nodes). They run via the shared jailed pipeline runner, `workspace.RunPipeline`, inside the node's own workdir - see [workspace](workspace/index.md).
 
 ## 2. Independent judge

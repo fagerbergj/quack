@@ -53,7 +53,7 @@ func TestWorkerModelHoldsPerCall(t *testing.T) {
 	var setupFn dag.SetupFunc
 	res := artifactsrc.New("stub", &stubBindingSource{}, time.Nanosecond)
 	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, res, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifact.InMemoryService(), nil, nil, admission)
+		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifact.InMemoryService(), nil, nil, admission, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}

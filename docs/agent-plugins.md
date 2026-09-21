@@ -194,7 +194,9 @@ This half is portable on purpose. A quack plugin whose capability is a tool is i
 
 ### Host-coupled surfaces → compiled-in Go modules
 
-`RegisterRoutes`, `UI()`, `RunObserver`, `Starter`/`Stopper`, `Deliverer` and `GitCredentialSource` mount HTTP handlers inside quack's own server, add nav entries to its SPA, and observe run outcomes. None of that is expressible as an MCP tool, and none of it is portable. Those are `sdk.Extension` implementations pinned in `go.mod` and blank-imported in `internal/serve/extensions_registry.go`.
+`RegisterRoutes`, `UI()`, `RunObserver`, `Starter`/`Stopper`, `Deliverer`, `GitCredentialSource` and `ArtifactSchemas` mount HTTP handlers inside quack's own server, add nav entries to its SPA, observe run outcomes, and declare the JSON Schema an artifact kind must satisfy. None of that is expressible as an MCP tool, and none of it is portable. Those are `sdk.Extension` implementations pinned in `go.mod` and blank-imported in `internal/serve/extensions_registry.go`.
+
+An extension implementing `ArtifactSchemas() map[string]json.RawMessage` names each artifact kind it reads and the draft 2020-12 JSON Schema that kind's content must satisfy. quack collects these at boot into one registry; two extensions declaring the same kind, or a schema that fails to compile, fails boot naming both. From then on, `write_artifact`/`write_<kind>`/`edit_artifact` (both the native tool surface and the ACP loopback MCP surface) refuse a write to a schema'd kind whose resulting content does not validate — nothing is stored, and the tool's error lists the violations. A gated node whose declared artifact kind has a schema also gets a deterministic `artifact_valid` criterion (see `docs/configuration/trust-gate.md`).
 
 Go has no safe dynamic loading, and quack does not pretend otherwise. The manifest does not load anything — it *declares*, and boot checks the declaration against what the linker actually produced:
 

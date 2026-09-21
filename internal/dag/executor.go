@@ -17,6 +17,7 @@ import (
 	"google.golang.org/genai"
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -40,6 +41,9 @@ type Executor struct {
 	// gated to a postgres-backed ledger only by SetWALLedger's caller - see
 	// vetting.Config.Ledger's doc. nil = no WAL.
 	walLedger ledger.LedgerStore
+	// schemas: registered-schema enforcement for every gate node this executor
+	// builds (SetSchemas) - stamped regardless of that node's own gated setting.
+	schemas   *artifactschema.Registry
 	admission *Admission
 	specFor   func(agentName string) AdmissionSpec
 	// judgeSpec: one judge model serves every agent, so it's a single spec, not per-agent.
@@ -70,6 +74,10 @@ func (e *Executor) SetArtifacts(svc artifact.Service) { e.artifacts = svc }
 // this executor builds (#1090 §4.9/#1100). Pass nil unless store is
 // postgres-backed: the FS ledger's AppendIntent is best-effort, not fail-closed (see vetting Config.Ledger doc).
 func (e *Executor) SetWALLedger(store ledger.LedgerStore) { e.walLedger = store }
+
+// SetSchemas wires registered-schema enforcement into every gate node this
+// executor builds - unconditional, like SetArtifacts, not gate policy.
+func (e *Executor) SetSchemas(reg *artifactschema.Registry) { e.schemas = reg }
 
 // ResetNodeCancels: clears user-cancelled node flags for the next turn.
 func (e *Executor) ResetNodeCancels(chatID string) { e.controls.resetCancelled(chatID) }
@@ -237,7 +245,7 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 	gateNodes, _, err := buildGateNodes(ctx, plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.specFor, e.judgeSpec, artifacts, e.walLedger, nil, sink) // a subset run never re-runs setup, so nothing to refresh
+		}, e.admission, e.specFor, e.judgeSpec, artifacts, e.walLedger, e.schemas, nil, sink) // a subset run never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}

@@ -16,6 +16,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/recordstore"
@@ -56,7 +57,7 @@ type nodeScopedWorker interface {
 // buildGateNodes: one gated node per plan node. source is the run's origin (extension name or a fixed
 // app value) - observability only, see vetting.Config.Source. userID scopes the recordstore.Client behind
 // a native node's artifact tools (#1123) and must match the userID the rest of the chat's artifacts (e.g. the orchestrator's own writes) were saved under, or a node's list/read/edit silently sees nothing.
-func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(context.Context, string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
+func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(context.Context, string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore, schemas *artifactschema.Registry,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
@@ -118,6 +119,9 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		// same as vetting.newGateRun's own cfg.User stamp for the node's own rounds.
 		cfg.User = userID
 		cfg.Ledger = walLedger
+		// Store invariant, not grading opinion: armed regardless of cfgFor's own
+		// gated:false or gates-disabled result, same as Artifacts/User/Ledger above.
+		cfg.Schemas = schemas
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools
@@ -414,6 +418,7 @@ func setupMemStages(ctx adkagent.Context, chatID, nodeID, token string, cfg *vet
 		ms.NodeID = nodeID
 		ms.ToolWritten = vetting.NewToolWrittenStage()
 		ms.Ledger = cfg.Ledger
+		ms.Schemas = cfg.Schemas
 	}
 	vetting.RegisterMemSession(secret, ms)
 	return func() { vetting.UnregisterMemSession(secret) }

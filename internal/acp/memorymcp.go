@@ -19,6 +19,7 @@ import (
 	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -230,6 +231,9 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("conflict - re-read and retry.\ncurrent revision: %d\ncurrent content:\n%s", conflict.Revision, string(conflict.Content))}},
 				}, out, nil
 			}
+			if msg, ok := artifactschema.RefusalFromError(err); ok {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, nil, nil
+			}
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "edit_artifact: " + err.Error()}}}, nil, nil
 		}
 		if sess.ToolWritten != nil {
@@ -285,6 +289,9 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 		}
 		id, rev, err := c.SaveBlob(ctx, args.Kind, data, args.Mime, hint, lineage)
 		if err != nil {
+			if msg, ok := artifactschema.RefusalFromError(err); ok {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, nil, nil
+			}
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "write_artifact: " + err.Error()}}}, nil, nil
 		}
 		if sess.ToolWritten != nil {
@@ -324,6 +331,9 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 		}
 		id, rev, err := c.SaveStructured(ctx, kind, args, hint, lineage)
 		if err != nil {
+			if msg, ok := artifactschema.RefusalFromError(err); ok {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, nil, nil
+			}
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: writeKindPrefix + kind + ": " + err.Error()}}}, nil, nil
 		}
 		if sess.ToolWritten != nil {
@@ -340,6 +350,9 @@ func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 	c := recordstore.New(sess.Artifacts, sess.AppName, sess.UserID, sess.ChatID)
 	if sess.Ledger != nil {
 		c = c.WithLedger(sess.Ledger)
+	}
+	if sess.Schemas != nil {
+		c = c.WithSchemas(sess.Schemas)
 	}
 	registerListArtifactsTool(srv, c)
 	registerEditArtifactTool(srv, c, sess)

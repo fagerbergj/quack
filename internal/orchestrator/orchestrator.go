@@ -30,6 +30,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -64,6 +65,7 @@ type Orchestrator struct {
 	memAgent    adkagent.Agent
 	artifacts   artifact.Service
 	ledgerStore ledger.LedgerStore
+	schemas     *artifactschema.Registry
 	// nodeSessions best-effort reaps a chat's per-DAG-node ADK sessions
 	// (deterministic "<chatID>:<nodeID>" ids - see internal/agent.WorkerSessionID)
 	// alongside the chat-level one ResetSession already deletes. nil (e.g.
@@ -121,6 +123,10 @@ func (o *Orchestrator) SetArtifacts(svc artifact.Service) { o.artifacts = svc }
 // orchestrator's own write_<kind>/write_artifact tools, so a direct-chat
 // write records parent_revision like every gated node does (#1153). Mirrors dag.Executor.SetWALLedger.
 func (o *Orchestrator) SetLedger(store ledger.LedgerStore) { o.ledgerStore = store }
+
+// SetSchemas wires registered-schema enforcement into the orchestrator's own
+// write_artifact/write_<kind>/edit_artifact tools. Mirrors SetLedger.
+func (o *Orchestrator) SetSchemas(reg *artifactschema.Registry) { o.schemas = reg }
 
 // failSoftListArtifacts: load_artifacts calls List on every LLM request
 // (ADK's loadartifactstool.ProcessRequest), and a List error fails the whole

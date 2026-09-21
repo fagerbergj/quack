@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Regression: the node stopped short of the PR (nothing committed, pushed, or
@@ -214,7 +215,7 @@ func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 	v := verdict{Score: 0.7, Criteria: map[string]criterionScore{"task_completeness": {Score: 0.7}}}
 	// A terminal node: it has a delivery target, so the demand still applies.
 	deliver := func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) { return nil, nil }
-	det, _ := computeDeterministicCriteria(context.Background(), strings.Repeat("the game is done. ", 40), workerActivity{written: []string{"a.ts"}}, Config{Task: prTask, Deliver: deliver})
+	det, _ := computeDeterministicCriteria(context.Background(), strings.Repeat("the game is done. ", 40), workerActivity{written: []string{"a.ts"}}, Config{Task: prTask, Deliver: deliver}, "", time.Time{})
 	got := mergeDeterministic(v, det, Config{Task: prTask, Deliver: deliver})
 	if c, ok := got.Criteria["delivery_complete"]; !ok || c.Score != 0 {
 		t.Fatalf("delivery_complete = %+v (present=%v), want a hard 0", c, ok)
@@ -555,7 +556,7 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 // judge thought of the prose.
 func TestFoldDeterministicHardFailsUnpostedReview(t *testing.T) {
 	v := verdict{Score: 0.9, Criteria: map[string]criterionScore{"review_quality": {Score: 0.9}}}
-	det, _ := computeDeterministicCriteria(context.Background(), "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask, IsReviewer: true})
+	det, _ := computeDeterministicCriteria(context.Background(), "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask, IsReviewer: true}, "", time.Time{})
 	got := mergeDeterministic(v, det, Config{Task: reviewTask, IsReviewer: true})
 	if c := got.Criteria["review_posted"]; c.Score != 0 {
 		t.Fatalf("review_posted = %+v, want Score 0", c)

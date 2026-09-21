@@ -132,6 +132,9 @@ func (s *orchRun) buildMemoryArtifactTools(githubSetup *dag.Setup) string {
 		if s.o.ledgerStore != nil {
 			rc = rc.WithLedger(s.o.ledgerStore)
 		}
+		if s.o.schemas != nil {
+			rc = rc.WithSchemas(s.o.schemas)
+		}
 		listTool, err := tools.NewListArtifactsTool(rc)
 		if err != nil {
 			return "orchestrator: list_artifacts tool: " + err.Error()
