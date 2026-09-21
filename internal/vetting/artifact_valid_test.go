@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"google.golang.org/adk/v2/artifact"
-
 	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
+
+const artifactValidTestNodeID = "n1"
 
 func nameRequiredArtifactSchema(t *testing.T, kind string) *artifactschema.Registry {
 	t.Helper()
@@ -26,9 +26,11 @@ func nameRequiredArtifactSchema(t *testing.T, kind string) *artifactschema.Regis
 func artifactValidTestConfig(t *testing.T, schemas *artifactschema.Registry) Config {
 	t.Helper()
 	return Config{
-		Artifact:  kindDocument,
-		Schemas:   schemas,
-		Artifacts: artifact.InMemoryService(),
+		Artifact: kindDocument,
+		Schemas:  schemas,
+		// bestDependencyRevision needs real per-write lineage (NodeID) to scope
+		// by, which a plain artifact.InMemoryService() never records.
+		Artifacts: newMetaAwareInMemory(),
 		User:      "u1",
 		ChatID:    "chat-a",
 	}
@@ -36,7 +38,7 @@ func artifactValidTestConfig(t *testing.T, schemas *artifactschema.Registry) Con
 
 func TestArtifactValidCriterion_AbsentWithoutSchema(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nil) // no extension declared a schema for kindDocument
-	if _, ok := artifactValidCriterion(context.Background(), cfg); ok {
+	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID); ok {
 		t.Error("artifactValidCriterion applies with no registered schema, want it absent")
 	}
 }
@@ -44,32 +46,33 @@ func TestArtifactValidCriterion_AbsentWithoutSchema(t *testing.T) {
 func TestArtifactValidCriterion_AbsentWithoutDeclaredKind(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
 	cfg.Artifact = "" // node declares no artifact kind at all
-	if _, ok := artifactValidCriterion(context.Background(), cfg); ok {
+	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID); ok {
 		t.Error("artifactValidCriterion applies with no declared artifact kind, want it absent")
 	}
 }
 
 func TestArtifactValidCriterion_FailsWhenNothingWritten(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
-	c, ok := artifactValidCriterion(context.Background(), cfg)
+	c, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID)
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply - kindDocument has a registered schema")
 	}
 	if c.Score != 0 {
 		t.Errorf("Score = %v, want 0 (no artifact exists this run)", c.Score)
 	}
-	if !strings.Contains(c.Reason, "no artifact was written") {
-		t.Errorf("Reason = %q, want it to say no artifact was written", c.Reason)
+	if !strings.Contains(c.Reason, "wrote no artifact") {
+		t.Errorf("Reason = %q, want it to say this node wrote no artifact", c.Reason)
 	}
 }
 
 func TestArtifactValidCriterion_PassesWhenValid(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
 	c := recordClient(cfg)
-	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"name":"trade idea"}`), "application/json", DocumentHint(cfg.ChatID), recordstore.Lineage{}); err != nil {
+	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"name":"trade idea"}`), "application/json", DocumentHint(cfg.ChatID),
+		recordstore.Lineage{NodeID: artifactValidTestNodeID}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg)
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID)
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply")
 	}
@@ -85,10 +88,11 @@ func TestArtifactValidCriterion_FailsWithViolationsWhenInvalid(t *testing.T) {
 	// content is itself refused - bypass enforcement here to set up a
 	// pre-existing invalid revision (e.g. written before the schema existed).
 	c = c.WithSchemas(nil)
-	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"other":1}`), "application/json", DocumentHint(cfg.ChatID), recordstore.Lineage{}); err != nil {
+	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"other":1}`), "application/json", DocumentHint(cfg.ChatID),
+		recordstore.Lineage{NodeID: artifactValidTestNodeID}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg)
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID)
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply")
 	}
@@ -100,9 +104,32 @@ func TestArtifactValidCriterion_FailsWithViolationsWhenInvalid(t *testing.T) {
 	}
 }
 
+// TestArtifactValidCriterion_ScopedToThisNode_IgnoresOtherNodesRevision is
+// B3's regression: a chat-scoped id can carry another node's (or an earlier
+// run's) valid revision - a node that wrote nothing itself this run must not
+// inherit that pass.
+func TestArtifactValidCriterion_ScopedToThisNode_IgnoresOtherNodesRevision(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	c := recordClient(cfg)
+	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"name":"from an earlier node"}`), "application/json", DocumentHint(cfg.ChatID),
+		recordstore.Lineage{NodeID: "old-node"}); err != nil {
+		t.Fatalf("SaveBlob (test setup): %v", err)
+	}
+	got, ok := artifactValidCriterion(context.Background(), cfg, "new-node")
+	if !ok {
+		t.Fatal("artifactValidCriterion should apply")
+	}
+	if got.Score != 0 {
+		t.Errorf("Score = %v, want 0 - new-node wrote nothing, old-node's revision must not count", got.Score)
+	}
+	if !strings.Contains(got.Reason, "wrote no artifact") {
+		t.Errorf("Reason = %q, want it to say this node wrote no artifact", got.Reason)
+	}
+}
+
 func TestFoldDeterministic_ArtifactValidCriterionIncluded(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
-	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg)
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, artifactValidTestNodeID)
 	if _, ok := det["artifact_valid"]; !ok {
 		t.Fatal("computeDeterministicCriteria: artifact_valid missing for a node with a schema'd declared kind")
 	}
@@ -115,7 +142,7 @@ func TestFoldDeterministic_ArtifactValidCriterionIncluded(t *testing.T) {
 
 func TestFoldDeterministic_ArtifactValidAbsentWithoutDeclaredKind(t *testing.T) {
 	cfg := Config{} // no Artifact, no Schemas
-	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg)
+	det, _ := computeDeterministicCriteria(context.Background(), "some answer", workerActivity{}, cfg, artifactValidTestNodeID)
 	if _, ok := det["artifact_valid"]; ok {
 		t.Error("artifact_valid present for a node with no declared artifact kind")
 	}

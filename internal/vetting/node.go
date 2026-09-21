@@ -1152,7 +1152,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 // skipped on the terminal round when a criterion already fails by weakest-link.
 func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context, ledgerCtx context.Context, act workerActivity) (verdict, map[string]criterionScore, error) {
 	// Compute deterministic criteria before judge runs.
-	det, skip := computeDeterministicCriteria(judgeCtx, j.answer, act, j.cfg)
+	det, skip := computeDeterministicCriteria(judgeCtx, j.answer, act, j.cfg, j.nodeID)
 	if skip != "" {
 		j.checksSkipReason = skip
 	}
@@ -2153,7 +2153,7 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 // computeDeterministicCriteria: computes code-owned criteria before judge runs.
 // checksSkipReason is the raw checksPassCriterion skip reason ("" if checks
 // ran), for the caller to attach to GateResult (#780).
-func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config) (det map[string]criterionScore, checksSkipReason string) {
+func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config, nodeID string) (det map[string]criterionScore, checksSkipReason string) {
 	det = map[string]criterionScore{}
 	if ls := lengthScore(answer); ls < 1.0 {
 		det["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf(
@@ -2198,7 +2198,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det[name] = c
 	}
 	// Schema validity: absent (not a 1.0 pass) for a node with no registered kind.
-	avc, avcOK := artifactValidCriterion(ctx, cfg)
+	avc, avcOK := artifactValidCriterion(ctx, cfg, nodeID)
 	setIfApplicable(det, "artifact_valid", avc, avcOK)
 	return det, checksSkipReason
 }
@@ -2211,9 +2211,9 @@ func setIfApplicable(det map[string]criterionScore, name string, c criterionScor
 	}
 }
 
-// artifactValidCriterion checks cfg.Artifact's latest revision against its
-// registered schema - ok=false when the kind has none registered.
-func artifactValidCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
+// artifactValidCriterion checks the latest revision nodeID itself wrote (a
+// chat-scoped id can carry other nodes' writes too) against its schema.
+func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string) (criterionScore, bool) {
 	if cfg.Artifact == "" || !cfg.Schemas.Has(cfg.Artifact) {
 		return criterionScore{}, false
 	}
@@ -2226,12 +2226,12 @@ func artifactValidCriterion(ctx context.Context, cfg Config) (criterionScore, bo
 	if err != nil {
 		return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: %v", err)}, true
 	}
-	raw, _, _, _, ok, lerr := c.LatestWithMeta(ctx, id)
-	if lerr != nil || !ok {
+	_, content, _, ok := bestDependencyRevision(ctx, c, id, nodeID)
+	if !ok {
 		return criterionScore{Score: 0, Reason: fmt.Sprintf(
-			"deterministic: kind %q has a registered schema but no artifact was written this run", cfg.Artifact)}, true
+			"deterministic: kind %q has a registered schema but this node wrote no artifact this run", cfg.Artifact)}, true
 	}
-	if violations := cfg.Schemas.Validate(cfg.Artifact, raw); len(violations) > 0 {
+	if violations := cfg.Schemas.Validate(cfg.Artifact, []byte(content)); len(violations) > 0 {
 		return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: kind %q artifact fails its schema:\n%s",
 			cfg.Artifact, artifactschema.FormatViolations(violations))}, true
 	}

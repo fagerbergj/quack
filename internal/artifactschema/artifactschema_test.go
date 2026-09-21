@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 const nameRequiredSchema = `{
@@ -13,15 +15,26 @@ const nameRequiredSchema = `{
 	"properties": {"name": {"type": "string"}}
 }`
 
+// testIdentity: instance = hint verbatim - the same shape sleeperkinds' real
+// kinds use, so these test-registered kinds behave like a real extension's.
+func testIdentity(_ []byte, hint string) (string, error) { return hint, nil }
+
+func init() {
+	for _, kind := range []string{"test-kind-a", "test-kind-b", "test-kind-c", "test-kind-d"} {
+		recordstore.Register(kind, recordstore.KindSpec{Class: recordstore.Blob, Identity: testIdentity})
+	}
+	recordstore.Register("test-system-kind", recordstore.KindSpec{Class: recordstore.Blob, Identity: testIdentity, System: true})
+}
+
 func TestBuild_DuplicateKindNamesBothExtensions(t *testing.T) {
 	_, err := Build(map[string]map[string]json.RawMessage{
-		"ext-a": {"trade": json.RawMessage(nameRequiredSchema)},
-		"ext-b": {"trade": json.RawMessage(nameRequiredSchema)},
+		"ext-a": {"test-kind-a": json.RawMessage(nameRequiredSchema)},
+		"ext-b": {"test-kind-a": json.RawMessage(nameRequiredSchema)},
 	})
 	if err == nil {
 		t.Fatal("Build: want an error for a kind two extensions both declare")
 	}
-	for _, want := range []string{"trade", "ext-a", "ext-b"} {
+	for _, want := range []string{"test-kind-a", "ext-a", "ext-b"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Build error = %q, want it to name %q", err, want)
 		}
@@ -30,12 +43,12 @@ func TestBuild_DuplicateKindNamesBothExtensions(t *testing.T) {
 
 func TestBuild_InvalidJSONNamesExtensionAndKind(t *testing.T) {
 	_, err := Build(map[string]map[string]json.RawMessage{
-		"ext-a": {"digest": json.RawMessage(`{not json`)},
+		"ext-a": {"test-kind-b": json.RawMessage(`{not json`)},
 	})
 	if err == nil {
 		t.Fatal("Build: want an error for unparseable schema JSON")
 	}
-	for _, want := range []string{"ext-a", "digest"} {
+	for _, want := range []string{"ext-a", "test-kind-b"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Build error = %q, want it to name %q", err, want)
 		}
@@ -44,12 +57,40 @@ func TestBuild_InvalidJSONNamesExtensionAndKind(t *testing.T) {
 
 func TestBuild_UnresolvableSchemaNamesExtensionAndKind(t *testing.T) {
 	_, err := Build(map[string]map[string]json.RawMessage{
-		"ext-a": {"retro": json.RawMessage(`{"$ref": "#/$defs/missing"}`)},
+		"ext-a": {"test-kind-c": json.RawMessage(`{"$ref": "#/$defs/missing"}`)},
 	})
 	if err == nil {
 		t.Fatal("Build: want an error for a schema with a dangling $ref")
 	}
-	for _, want := range []string{"ext-a", "retro"} {
+	for _, want := range []string{"ext-a", "test-kind-c"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Build error = %q, want it to name %q", err, want)
+		}
+	}
+}
+
+func TestBuild_UnregisteredKindNamesExtensionAndKind(t *testing.T) {
+	_, err := Build(map[string]map[string]json.RawMessage{
+		"ext-a": {"trade_finder_typo": json.RawMessage(nameRequiredSchema)},
+	})
+	if err == nil {
+		t.Fatal("Build: want an error for a kind recordstore does not know")
+	}
+	for _, want := range []string{"ext-a", "trade_finder_typo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Build error = %q, want it to name %q", err, want)
+		}
+	}
+}
+
+func TestBuild_SystemKindNamesExtensionAndKind(t *testing.T) {
+	_, err := Build(map[string]map[string]json.RawMessage{
+		"ext-a": {"test-system-kind": json.RawMessage(nameRequiredSchema)},
+	})
+	if err == nil {
+		t.Fatal("Build: want an error for a System kind (reserved for internal writes)")
+	}
+	for _, want := range []string{"ext-a", "test-system-kind"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Build error = %q, want it to name %q", err, want)
 		}
@@ -79,23 +120,23 @@ func mustRegistry(t *testing.T, kind, schema string) *Registry {
 }
 
 func TestRegistry_ValidateValidContent(t *testing.T) {
-	reg := mustRegistry(t, "digest", nameRequiredSchema)
-	if v := reg.Validate("digest", []byte(`{"name": "week 3"}`)); v != nil {
+	reg := mustRegistry(t, "test-kind-d", nameRequiredSchema)
+	if v := reg.Validate("test-kind-d", []byte(`{"name": "week 3"}`)); v != nil {
 		t.Errorf("Validate valid content = %v, want nil", v)
 	}
 }
 
 func TestRegistry_ValidateInvalidJSON(t *testing.T) {
-	reg := mustRegistry(t, "digest", nameRequiredSchema)
-	v := reg.Validate("digest", []byte(`not json`))
+	reg := mustRegistry(t, "test-kind-d", nameRequiredSchema)
+	v := reg.Validate("test-kind-d", []byte(`not json`))
 	if len(v) != 1 || !strings.Contains(v[0], "not valid JSON") {
 		t.Errorf("Validate invalid JSON = %v, want one violation naming invalid JSON", v)
 	}
 }
 
 func TestRegistry_ValidateSchemaViolation(t *testing.T) {
-	reg := mustRegistry(t, "digest", nameRequiredSchema)
-	v := reg.Validate("digest", []byte(`{"other": 1}`))
+	reg := mustRegistry(t, "test-kind-d", nameRequiredSchema)
+	v := reg.Validate("test-kind-d", []byte(`{"other": 1}`))
 	if len(v) != 1 {
 		t.Fatalf("Validate missing-required = %v, want exactly one violation", v)
 	}
@@ -105,7 +146,7 @@ func TestRegistry_ValidateSchemaViolation(t *testing.T) {
 }
 
 func TestRegistry_ValidateUnregisteredKind(t *testing.T) {
-	reg := mustRegistry(t, "digest", nameRequiredSchema)
+	reg := mustRegistry(t, "test-kind-d", nameRequiredSchema)
 	if v := reg.Validate("some-other-kind", []byte(`garbage`)); v != nil {
 		t.Errorf("Validate unregistered kind = %v, want nil (untouched)", v)
 	}
@@ -116,37 +157,33 @@ func TestRegistry_ValidateUnregisteredKind(t *testing.T) {
 
 func TestRegistry_NilSafe(t *testing.T) {
 	var reg *Registry
-	if reg.Has("digest") {
+	if reg.Has("test-kind-d") {
 		t.Error("nil *Registry.Has = true")
 	}
-	if v := reg.Validate("digest", []byte(`{}`)); v != nil {
+	if v := reg.Validate("test-kind-d", []byte(`{}`)); v != nil {
 		t.Errorf("nil *Registry.Validate = %v, want nil", v)
 	}
 }
 
-func TestFormatRefusal_CapsViolations(t *testing.T) {
-	violations := make([]string, MaxViolationLines+3)
-	for i := range violations {
-		violations[i] = "violation"
-	}
-	msg := FormatRefusal("digest", violations, nil)
-	if !strings.Contains(msg, `kind "digest"`) {
+func TestFormatRefusal_NamesKindAndListsEachViolation(t *testing.T) {
+	violations := []string{"root: violation one", "root: violation two"}
+	msg := FormatRefusal("test-kind-d", violations, nil)
+	if !strings.Contains(msg, `kind "test-kind-d"`) {
 		t.Errorf("FormatRefusal = %q, want it to name the kind", msg)
 	}
-	if strings.Count(msg, "- violation") != MaxViolationLines {
-		t.Errorf("FormatRefusal shows %d violation lines, want %d", strings.Count(msg, "- violation"), MaxViolationLines)
-	}
-	if !strings.Contains(msg, "...and 3 more") {
-		t.Errorf("FormatRefusal = %q, want a trailing count of the remaining 3", msg)
+	for _, v := range violations {
+		if !strings.Contains(msg, "- "+v) {
+			t.Errorf("FormatRefusal = %q, want it to list %q", msg, v)
+		}
 	}
 	if !strings.Contains(msg, "call the tool again") {
 		t.Errorf("FormatRefusal = %q, want it to tell the model to retry", msg)
 	}
 }
 
-func TestFormatRefusal_NoCapUnderLimit(t *testing.T) {
-	msg := FormatRefusal("digest", []string{"path: problem"}, json.RawMessage(`{"type":"object"}`))
-	if strings.Contains(msg, "more") {
-		t.Errorf("FormatRefusal under the cap = %q, want no '...and N more'", msg)
+func TestFormatRefusal_CarriesTheSchema(t *testing.T) {
+	msg := FormatRefusal("test-kind-d", []string{"path: problem"}, json.RawMessage(`{"type":"object"}`))
+	if !strings.Contains(msg, `{"type":"object"}`) {
+		t.Errorf("FormatRefusal = %q, want it to carry the schema", msg)
 	}
 }

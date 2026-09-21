@@ -29,7 +29,6 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
 
-	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
@@ -187,7 +186,14 @@ type Client struct {
 	ledgerStore ledger.LedgerStore
 	// schemas: per-kind JSON Schemas an SDK extension declared (WithSchemas);
 	// nil = no enforcement, Save*/Edit behave exactly as before this existed.
-	schemas *artifactschema.Registry
+	schemas SchemaRegistry
+}
+
+// SchemaRegistry is the subset of artifactschema.Registry a Client needs -
+// declared here so artifactschema can import recordstore without a cycle.
+type SchemaRegistry interface {
+	Validate(kind string, content []byte) []string
+	Schema(kind string) json.RawMessage
 }
 
 // New scopes a client to one session over svc (the artifact.Service the
@@ -206,7 +212,7 @@ func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 
 // WithSchemas arms schema enforcement on c and returns c: a Save*/Edit whose
 // kind has a registered schema must satisfy it or the write is refused.
-func (c *Client) WithSchemas(reg *artifactschema.Registry) *Client {
+func (c *Client) WithSchemas(reg SchemaRegistry) *Client {
 	c.schemas = reg
 	return c
 }
@@ -223,8 +229,11 @@ func (e *SchemaViolation) Error() string {
 	return fmt.Sprintf("recordstore: %s failed its schema (%d violation(s))", e.Kind, len(e.Violations))
 }
 
-// checkSchema is a no-op unless c.schemas has kind registered.
+// checkSchema is a no-op unless WithSchemas was called and has kind registered.
 func (c *Client) checkSchema(kind string, content []byte) error {
+	if c.schemas == nil {
+		return nil
+	}
 	violations := c.schemas.Validate(kind, content)
 	if violations == nil {
 		return nil

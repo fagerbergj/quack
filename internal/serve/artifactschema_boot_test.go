@@ -76,3 +76,27 @@ func TestBuildArtifactSchemas_IgnoresExtensionsWithoutTheInterface(t *testing.T)
 		t.Error("registry built from a non-ArtifactSchemas extension reports a kind registered")
 	}
 }
+
+// panickingSchemaExtension implements extsdk.ArtifactSchemas by panicking -
+// an extension bug (e.g. sleeper's own ArtifactSchemas reading a missing
+// embedded file) must fail boot with a named error, not crash with a stack.
+type panickingSchemaExtension struct{}
+
+func (panickingSchemaExtension) Tools() []tool.Tool                       { return nil }
+func (panickingSchemaExtension) RegisterRoutes(authed, public chi.Router) {}
+func (panickingSchemaExtension) ArtifactSchemas() map[string]json.RawMessage {
+	panic("embedded schema file missing")
+}
+
+func TestBuildArtifactSchemas_RecoversExtensionPanicIntoNamedError(t *testing.T) {
+	exts := []builtSDKExtension{{name: "ext-panics", ext: panickingSchemaExtension{}}}
+	_, err := buildArtifactSchemas(exts)
+	if err == nil {
+		t.Fatal("buildArtifactSchemas: want an error, not a propagated panic")
+	}
+	for _, want := range []string{"ext-panics", "embedded schema file missing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("buildArtifactSchemas error = %q, want it to contain %q", err, want)
+		}
+	}
+}

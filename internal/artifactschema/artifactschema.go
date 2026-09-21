@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 // Registry maps an artifact kind to its compiled schema. A nil *Registry is
@@ -41,6 +43,9 @@ func Build(bySource map[string]map[string]json.RawMessage) (*Registry, error) {
 			if other, dup := owner[kind]; dup {
 				return nil, fmt.Errorf("artifact schema: kind %q registered by both %s and %s", kind, other, source)
 			}
+			if err := checkKind(kind); err != nil {
+				return nil, fmt.Errorf("artifact schema: extension %s: %w", source, err)
+			}
 			resolved, err := compile(bySource[source][kind])
 			if err != nil {
 				return nil, fmt.Errorf("artifact schema: extension %s: kind %q: %w", source, kind, err)
@@ -54,6 +59,19 @@ func Build(bySource map[string]map[string]json.RawMessage) (*Registry, error) {
 		return nil, nil
 	}
 	return &Registry{schemas: schemas, raw: raw}, nil
+}
+
+// checkKind rejects a kind no artifact-write path could ever produce (a
+// typo) or one recordstore reserves for its own internal writes.
+func checkKind(kind string) error {
+	spec, ok := recordstore.SpecFor(kind)
+	if !ok {
+		return fmt.Errorf("kind %q is not a registered artifact kind", kind)
+	}
+	if spec.System {
+		return fmt.Errorf("kind %q is a system kind and cannot carry an extension schema", kind)
+	}
+	return nil
 }
 
 func compile(raw json.RawMessage) (*jsonschema.Resolved, error) {
@@ -115,25 +133,12 @@ func formatViolation(err error) string {
 	return path + ": " + msg
 }
 
-// MaxViolationLines caps how many violations FormatRefusal lists before
-// collapsing the rest into a count.
-const MaxViolationLines = 12
-
-// FormatViolations renders capped "- path: problem" lines - shared by every
-// caller reporting a schema failure, so the wording never drifts.
+// FormatViolations renders "- path: problem" lines, one per violation -
+// shared by every caller reporting a schema failure, so wording never drifts.
 func FormatViolations(violations []string) string {
-	shown := violations
-	var more int
-	if len(shown) > MaxViolationLines {
-		more = len(shown) - MaxViolationLines
-		shown = shown[:MaxViolationLines]
-	}
-	lines := make([]string, 0, len(shown)+1)
-	for _, v := range shown {
-		lines = append(lines, "- "+v)
-	}
-	if more > 0 {
-		lines = append(lines, fmt.Sprintf("...and %d more", more))
+	lines := make([]string, len(violations))
+	for i, v := range violations {
+		lines[i] = "- " + v
 	}
 	return strings.Join(lines, "\n")
 }

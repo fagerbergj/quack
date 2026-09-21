@@ -859,9 +859,9 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 }
 
 // assembles the orchestrator, re-enters resumed nodes, and starts the extensions and sweeps
-func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, clientMap map[string]adkagent.Agent, modelMap map[string]model.LLM, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, gateCfgs *gateConfigs, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resumeNodes []store.ResumableNode, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc) (*orchestrator.Orchestrator, error) {
+func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, clientMap map[string]adkagent.Agent, modelMap map[string]model.LLM, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, gateCfgs *gateConfigs, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resumeNodes []store.ResumableNode, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
 	agentInfos, mediaAgents, roster := buildAgentInfos(ctx, b.cfg, b.res, clientMap)
-	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, roster, agentInfos, mediaAgents, setupFn, b.admission)
+	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, roster, agentInfos, mediaAgents, setupFn, b.admission, artifactSchemas)
 	if err != nil {
 		return nil, err
 	}
@@ -977,7 +977,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", err
 	}
 	b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef)
-	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn)
+	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn, artifactSchemas)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1256,7 +1256,6 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 		gateCfg.WorkspaceCaps = workspaceCaps
 		gateCfg.CheckTimeout = time.Duration(cfg.Workspace.CheckTimeoutSeconds) * time.Second
 		gateCfg.Deliver = deliver
-		gateCfg.Schemas = artifactSchemas
 		if gitTokenSource != nil {
 			gateCfg.GitCredentials = gitCredentialAdapter{gitTokenSource}
 		}
@@ -1320,6 +1319,9 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			"deterministic_rounds", gateCfg.DeterministicRounds,
 			"judge", cfg.Gates.Judge.Model, "judge_rounds", gateCfg.JudgeRounds, "threshold", gateCfg.Threshold)
 	}
+	// Store invariant, not gate policy: armed even with gates disabled, so the
+	// native tool builder (nativeNodeBuilder.schemas) is never silently disarmed.
+	gateCfg.Schemas = artifactSchemas
 	return gateCfg, judgeFactory, planJudge, judgeModel, safetyJudge, nil
 }
 
@@ -1997,7 +1999,7 @@ func buildAgentInfos(ctx context.Context, cfg *config.Config, res *artifactsrc.R
 	return agentInfos, mediaAgents, rosterSB.String()
 }
 
-func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, st *store.Store, llm model.LLM, clientMap map[string]adkagent.Agent, modelMap map[string]model.LLM, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, gateCfgs *gateConfigs, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], executorRef *atomic.Pointer[dag.Executor], hooks *shutdownHooks, roster string, agentInfos []dag.AgentInfo, mediaAgents map[string]bool, setupFn dag.SetupFunc, admission *dag.Admission) (*orchestrator.Orchestrator, error) {
+func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, st *store.Store, llm model.LLM, clientMap map[string]adkagent.Agent, modelMap map[string]model.LLM, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, gateCfgs *gateConfigs, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], executorRef *atomic.Pointer[dag.Executor], hooks *shutdownHooks, roster string, agentInfos []dag.AgentInfo, mediaAgents map[string]bool, setupFn dag.SetupFunc, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
 	orchBundle, err := agent.LoadBundle(ctx, res, "agents/orchestrator")
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator bundle load failed: %w", err)
@@ -2039,6 +2041,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	if ledgerStore != nil {
 		executor.SetWALLedger(ledgerStore)
 	}
+	executor.SetSchemas(artifactSchemas)
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
 	// Orchestrator turns take a session from the worker nodes' pool, held only while
@@ -2078,6 +2081,9 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	}
 	if ledgerStore != nil {
 		orch.SetLedger(ledgerStore)
+	}
+	if artifactSchemas != nil {
+		orch.SetSchemas(artifactSchemas)
 	}
 	orchRef.Store(orch)
 	if hooks != nil {

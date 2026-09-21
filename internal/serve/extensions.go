@@ -330,11 +330,26 @@ func buildArtifactSchemas(exts []builtSDKExtension) (*artifactschema.Registry, e
 	bySource := make(map[string]map[string]json.RawMessage, len(exts))
 	for _, e := range exts {
 		if as, ok := e.ext.(extsdk.ArtifactSchemas); ok {
-			bySource[e.name] = as.ArtifactSchemas()
-			slog.Info("artifact schemas registered", "component", "startup", "extension", e.name, "kinds", len(bySource[e.name]))
+			schemas, err := safeArtifactSchemas(e.name, as)
+			if err != nil {
+				return nil, err
+			}
+			bySource[e.name] = schemas
+			slog.Info("artifact schemas registered", "component", "startup", "extension", e.name, "kinds", len(schemas))
 		}
 	}
 	return artifactschema.Build(bySource)
+}
+
+// safeArtifactSchemas recovers a panic from an extension's own
+// ArtifactSchemas() into a named boot error, not a crash with its stack.
+func safeArtifactSchemas(name string, as extsdk.ArtifactSchemas) (schemas map[string]json.RawMessage, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("artifact schema: extension %s: ArtifactSchemas panicked: %v", name, r)
+		}
+	}()
+	return as.ArtifactSchemas(), nil
 }
 
 // sdkGitCredentialAdapter bridges sdk.GitCredentialSource to
