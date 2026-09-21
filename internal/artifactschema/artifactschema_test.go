@@ -187,3 +187,14 @@ func TestFormatRefusal_CarriesTheSchema(t *testing.T) {
 		t.Errorf("FormatRefusal = %q, want it to carry the schema", msg)
 	}
 }
+
+// A schema on quack's own kinds could only break quack's own writes: the
+// fallback kinds a refused answer lands in, and gate-only structured kinds.
+func TestBuild_RefusesFallbackAndGateOnlyKinds(t *testing.T) {
+	for _, kind := range []string{"text", "bytes", "judge_round"} {
+		_, err := Build(map[string]map[string]json.RawMessage{"ext-a": {kind: json.RawMessage(nameRequiredSchema)}})
+		if err == nil || !strings.Contains(err.Error(), kind) || !strings.Contains(err.Error(), "ext-a") {
+			t.Errorf("Build(%q) err = %v, want a refusal naming the extension and kind", kind, err)
+		}
+	}
+}
