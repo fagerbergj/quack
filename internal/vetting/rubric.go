@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
@@ -152,4 +153,42 @@ func LoadBundleRubricSpecs(ctx context.Context, res *artifactsrc.Resolver, bundl
 		return "", nil, nil, artifactsrc.Artifact{}, nil // treat empty as absent
 	}
 	return rendered, rubricDocSpecs(doc), rubricDocFixes(doc), art, nil
+}
+
+// ReplayRubric is a rubric.yaml's replay-relevant contents: LoadBundleRubricSpecs'
+// specs/fixes plus each criterion's own pass mark - unlike the live gate's
+// loadRubric, always a structured doc, never a raw prose override.
+type ReplayRubric struct {
+	Specs     map[string]criterionSpec
+	Fixes     map[string]string
+	PassMarks map[string]float64
+}
+
+// LoadReplayRubric loads overridePath when set (a rubric.yaml anywhere on
+// disk, e.g. the replay command's --rubric), else bundleDir's own rubric.yaml
+// (LoadBundleRubricSpecs' resolution: disk first, then the embedded default).
+func LoadReplayRubric(ctx context.Context, res *artifactsrc.Resolver, bundleDir, overridePath string) (ReplayRubric, error) {
+	if overridePath != "" {
+		raw, err := os.ReadFile(overridePath)
+		if err != nil {
+			return ReplayRubric{}, fmt.Errorf("vetting: read rubric %q: %w", overridePath, err)
+		}
+		doc, err := loadRubricYAML(raw, overridePath)
+		if err != nil {
+			return ReplayRubric{}, err
+		}
+		return ReplayRubric{Specs: rubricDocSpecs(doc), Fixes: rubricDocFixes(doc), PassMarks: rubricDocPassMarks(doc)}, nil
+	}
+	art, err := artifactsrc.ResolveBundleFile(ctx, res, "rubric", bundleDir, "rubric.yaml")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ReplayRubric{}, fmt.Errorf("vetting: agent bundle %q has no rubric.yaml; pass --rubric", bundleDir)
+		}
+		return ReplayRubric{}, fmt.Errorf("vetting: read bundle rubric %q: %w", bundleDir, err)
+	}
+	doc, err := loadRubricYAML([]byte(art.Body), bundledir.PathJoin(bundleDir, "rubric.yaml"))
+	if err != nil {
+		return ReplayRubric{}, err
+	}
+	return ReplayRubric{Specs: rubricDocSpecs(doc), Fixes: rubricDocFixes(doc), PassMarks: rubricDocPassMarks(doc)}, nil
 }

@@ -45,6 +45,14 @@ Every judge round also gets `list_artifacts`/`read_artifact`, scoped to the node
 
 A worker round that ends with `finish_reason: MAX_TOKENS` is never judged as-is - the answer was cut off mid-sentence, not finished. The gate runs an automatic continuation turn in the same session (quoting the answer's trailing ~200 characters so the worker resumes instead of restarting), up to `maxTruncationContinuations` (2, a fixed constant) times per round. If the answer is still cut off after that budget, the round is judged with a deterministic `complete_output` criterion scored 0, so a truncated answer can never pass by weakest-link scoring regardless of what the judge would have scored the visible text.
 
+## Judge replay
+
+`quack judge replay <chat-id-or-bundle.zip>` re-grades a recorded chat's already-judged rounds under the working-copy rubric, without re-running the agent or the original judge call - the fast loop for proving a rubric or gate-code change against real traffic (see [`docs/design/judging.md`](../design/judging.md)). It loads the recording the same way `quack eval`/`quack ledger export` do, then calls the gate's own `computeDeterministicCriteria`/`mergeDeterministic`/`applyRubricSpecs` and (unless `--deterministic-only`) the judge model - never a reimplementation of judging - and prints each criterion's recorded vs. replayed score and pass/fail, exiting non-zero the moment any flips.
+
+It rebuilds, per judged round: the question (the chat's original user turn), the node's own task and the answer that round graded, and the worker's retrieval activity (fetched/seen URLs, workspace ops) - replayed from the round's recorded `llm.call` entries through a fresh in-memory session and the SAME `activityFromSessionAt` walk the live gate uses, not a parallel extractor. `--rubric <path>` overrides the graded node's own bundled `rubric.yaml`; each criterion's pass mark comes from its own `scale.pass` (not yet wired into the live gate's single global `threshold` - replay is the first consumer).
+
+What it cannot rebuild: an answer that only points at a written artifact ("delivered as artifact `text:...`") - the recording bundle carries the artifact's ledger pointer, never its body, so a criterion the live judge scored by reading that artifact (grounding/citations on an artifact-delivered round) may not reproduce. Replay detects this (the round's activity shows a `write_artifact`/`edit_artifact` call) and flags it in the output rather than silently comparing against an incomplete view. It is also read-only: it never writes to the source chat, its artifacts, or its ledger.
+
 ## Rubrics
 
 `rubric_path` is the default scoring guide; an agent's own bundle can override it with a `rubric.yaml` sitting next to its `prompt.md` (see [agents.md](agents.md)). `constitution_path` is the fixed, standing set of principles layered under every rubric - grounded claims, no fabrication - that no per-node rubric can remove.
