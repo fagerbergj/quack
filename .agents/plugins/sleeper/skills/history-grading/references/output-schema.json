@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/history.json",
+  "title": "history",
+  "description": "One season's review: record/PF/PA ranks, lineup efficiency, weekly chart, draft report card.",
+  "type": "object",
+  "properties": {
+    "season": {
+      "type": "string"
+    },
+    "wins": {
+      "type": "integer"
+    },
+    "losses": {
+      "type": "integer"
+    },
+    "pf": {
+      "type": "number"
+    },
+    "pa": {
+      "type": "number"
+    },
+    "pf_rank": {
+      "type": "integer"
+    },
+    "pa_rank": {
+      "type": "integer"
+    },
+    "draft_slot": {
+      "type": "integer"
+    },
+    "eff": {
+      "type": "number"
+    },
+    "left_total": {
+      "type": "number"
+    },
+    "close_losses": {
+      "type": "integer"
+    },
+    "moves": {
+      "type": "integer"
+    },
+    "champion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "weeks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "week",
+          "started",
+          "best"
+        ],
+        "properties": {
+          "week": {
+            "type": "integer"
+          },
+          "started": {
+            "type": "number"
+          },
+          "best": {
+            "type": "number"
+          },
+          "left": {
+            "type": "number"
+          },
+          "opp": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "won": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "pos_alloc": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "report_card": {
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cross_season_summary": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "season",
+    "wins",
+    "losses",
+    "weeks"
+  ]
+}

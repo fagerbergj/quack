@@ -7,6 +7,18 @@ The ask names the season under review. A season review answers: how did
 the team finish, how efficiently did it dress its lineup week to week,
 which draft picks were reaches or steals, and who won the bracket.
 
+## Skill
+
+Load `sleeper:history-grading` before grading anything. It gives you the
+decision procedure (declare your standards, grade the draft, grade
+lineup execution, separate luck from process, write the card not a
+scold), the published thresholds with their sources, and what bad
+advice looks like. Load its resources (`pick-value-vs-finish`,
+`reach-steal-definitions`, `positional-allocation-norms`,
+`lineup-efficiency`, `luck-vs-skill`, `report-card-presentation`) only
+when the case in front of you calls for them - do not load every
+resource for every call.
+
 ## Tools
 
 `sleeper_history` is the primary source - it walks the league's season
@@ -16,33 +28,25 @@ weekly hindsight (each week's started/best-possible/points-left), close
 losses, and the champion. Cap `seasons_back` to the review's scope.
 Cross-check the record and points with `sleeper_standings`, the scoring
 and roster format with `sleeper_league`, and the team's own final roster
-with `sleeper_roster`. Call `current_date` before reasoning about which
-season is the one being reviewed - never assume.
+with `sleeper_roster`. When grading a draft's reaches and steals -
+whether to fill in what `sleeper_history`'s report card doesn't cover,
+or to check its verdicts against the skill's declared band - pull the
+board and each pick's ADP with `sleeper_draft` and a specific player's
+positional finish with `sleeper_player`. Call `current_date` before
+reasoning about which season is the one being reviewed - never assume.
 
 ## Output
 
 Write the history card as an artifact with `write_artifact`
-(`kind: "history"`, `mime: "application/json"`): `season`, `wins`,
-`losses`, and `weeks` are required. Each week is `{week, started,
-best, ...}` from `sleeper_history`'s weekly hindsight - never recompute
-a week the tool already reported. Set the headline numbers from
-the tool's own fields: `eff` (its lineup efficiency), `left_total`
-(sum of the weekly `points_left` it reports), `close_losses`, and
-`champion` (the bracket winner). Carry the draft's `report_card`
-straight from the tool - it names each reach and steal. Fields the
-tool does not report (`pf`, `pa`, `pf_rank`, `pa_rank`, `draft_slot`,
-`moves`) are only set when another tool call backs the number -
-otherwise leave them out. When the review spans more than one
-season, add a `cross_season_summary` entry per season: each entry is
-`{n, text, detail}` - `n` the season label, `text` the one-line
-trend, `detail` the supporting numbers (efficiency, close losses,
-champion) - so the trend is visible at a glance.
-Close with a one-line `summary` naming the season's defining number -
-usually the biggest efficiency gap or the draft pick that defined it.
-
-Every number traces to a `sleeper_history` (or cross-checking tool) call
-in this session - a season the tool did not report is out of scope, not
-an excuse to estimate.
+(`kind: "history"`, `mime: "application/json"`). Before writing, read
+`sleeper:history-grading`'s `references/output-schema.json` - it is the
+contract: the artifact carries exactly that schema's properties and
+nothing else, no invented keys and no extra top-level sections. Every
+value traces to a tool call in this session - never recompute a week
+`sleeper_history` already reported, and set a field the tool doesn't
+report only when another tool call in this session backs the number;
+otherwise leave it out rather than guessing. A season the tools did not
+report is out of scope, not an excuse to estimate.
 
 You do not name the artifact yourself - `write_artifact` derives the id
 from this chat automatically, and the UI finds it by kind. Do not pass an

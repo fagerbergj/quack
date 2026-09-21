@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/draft.json",
+  "title": "draft",
+  "description": "Draft analysis: current-season board + on-the-clock + plan, or a past-season report card.",
+  "type": "object",
+  "properties": {
+    "season": {
+      "type": "string"
+    },
+    "draft_id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "rounds": {
+      "type": "integer"
+    },
+    "teams": {
+      "type": "integer"
+    },
+    "my_slot": {
+      "type": "integer"
+    },
+    "slots": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "picks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "round",
+          "slot",
+          "pick_no",
+          "player"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "pick_no": {
+            "type": "integer"
+          },
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "adp": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "mine": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "clock": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "pick_no": {
+          "type": "integer"
+        },
+        "pick_label": {
+          "type": "string"
+        },
+        "seconds_left": {
+          "type": "integer"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "plan": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "report_card": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "round",
+          "pick",
+          "player",
+          "verdict"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer"
+          },
+          "pick": {
+            "type": "integer"
+          },
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "drafted_as": {
+            "type": "string"
+          },
+          "finished": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pts": {
+            "type": "number"
+          },
+          "verdict": {
+            "enum": [
+              "steal",
+              "reach",
+              "fair"
+            ]
+          }
+        }
+      }
+    },
+    "pos_alloc": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "season"
+  ]
+}
