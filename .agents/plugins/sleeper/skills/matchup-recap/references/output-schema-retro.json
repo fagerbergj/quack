@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/retro.json",
+  "title": "retro",
+  "description": "Hindsight: started vs best possible lineup for one past week, graded.",
+  "type": "object",
+  "properties": {
+    "week": {
+      "type": "integer"
+    },
+    "started": {
+      "type": "number"
+    },
+    "best": {
+      "type": "number"
+    },
+    "left": {
+      "type": "number"
+    },
+    "opp": {
+      "type": "number"
+    },
+    "won": {
+      "type": "boolean"
+    },
+    "misses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "slot",
+          "started_name",
+          "started_pts",
+          "better_name",
+          "better_pts"
+        ],
+        "properties": {
+          "slot": {
+            "type": "string"
+          },
+          "started_name": {
+            "type": "string"
+          },
+          "started_pts": {
+            "type": "number"
+          },
+          "better_name": {
+            "type": "string"
+          },
+          "better_pts": {
+            "type": "number"
+          },
+          "swing": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "week",
+    "started",
+    "best",
+    "left"
+  ]
+}

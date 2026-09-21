@@ -1,4 +1,5 @@
+skills: [sleeper:trade-evaluation]
 model_role: researcher
 context_window: 65536
 judge_rounds: 1
-tools: [sleeper_roster, sleeper_player, sleeper_matchup, sleeper_trends, sleeper_schedule, sleeper_league, sleeper_standings, current_date]
+tools: [sleeper_roster, sleeper_player, sleeper_matchup, sleeper_trends, sleeper_schedule, sleeper_league, sleeper_standings, sleeper_transactions, current_date]

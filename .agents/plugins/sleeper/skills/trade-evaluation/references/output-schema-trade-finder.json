@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/trade-finder.json",
+  "title": "trade-finder",
+  "description": "Trades scanned across every other roster for one week - its own kind so a finder run never overwrites a per-partner trade talk.",
+  "type": "object",
+  "properties": {
+    "league": {
+      "type": "string"
+    },
+    "week": {
+      "type": "integer"
+    },
+    "updated": {
+      "type": "string"
+    },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "partner",
+          "give",
+          "get"
+        ],
+        "properties": {
+          "partner": {
+            "type": "string"
+          },
+          "partner_id": {
+            "type": "string"
+          },
+          "partner_owner": {
+            "type": "string"
+          },
+          "record": {
+            "type": "string"
+          },
+          "give": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "give_proj": {
+            "type": "number"
+          },
+          "get": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "get_proj": {
+            "type": "number"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "league",
+    "week",
+    "suggestions"
+  ]
+}
