@@ -331,6 +331,7 @@ func buildArtifactSchemas(exts []builtSDKExtension) (*artifactschema.Registry, e
 	for _, e := range exts {
 		if as, ok := e.ext.(extsdk.ArtifactSchemas); ok {
 			bySource[e.name] = as.ArtifactSchemas()
+			slog.Info("artifact schemas registered", "component", "startup", "extension", e.name, "kinds", len(bySource[e.name]))
 		}
 	}
 	return artifactschema.Build(bySource)
