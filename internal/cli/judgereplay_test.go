@@ -213,3 +213,87 @@ func TestRunJudgeReplayDeterministicOnlyNeverTouchesJudge(t *testing.T) {
 		t.Fatalf("judge factory invoked %d time(s) under --deterministic-only, want 0", calls)
 	}
 }
+
+func TestRunJudgeReplayNodeAndRoundFilters(t *testing.T) {
+	ctx := context.Background()
+	bundlePath := buildFixtureBundle(t, 1.0)
+	sess, err := bundle.Load(bundlePath)
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	opts := ReplayOptions{RubricPath: rubricFile(t, 0.85), DeterministicOnly: true}
+
+	var buf bytes.Buffer
+	RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{Node: "node-1", RubricPath: opts.RubricPath, DeterministicOnly: true}, nil, &buf, true)
+	var reports []ReplayRoundReport
+	if err := json.Unmarshal(buf.Bytes(), &reports); err != nil || len(reports) != 1 {
+		t.Fatalf("--node node-1: %d report(s), err=%v: %s", len(reports), err, buf.String())
+	}
+
+	buf.Reset()
+	RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{Node: "no-such-node", RubricPath: opts.RubricPath, DeterministicOnly: true}, nil, &buf, true)
+	if err := json.Unmarshal(buf.Bytes(), &reports); err != nil || len(reports) != 0 {
+		t.Fatalf("--node no-such-node: %d report(s), want 0: %s", len(reports), buf.String())
+	}
+
+	buf.Reset()
+	RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{Round: 2, RubricPath: opts.RubricPath, DeterministicOnly: true}, nil, &buf, true)
+	if err := json.Unmarshal(buf.Bytes(), &reports); err != nil || len(reports) != 0 {
+		t.Fatalf("--round 2 (only judge-r1 recorded): %d report(s), want 0: %s", len(reports), buf.String())
+	}
+}
+
+func TestRunJudgeReplaySkipsRoundWithNoWorkerAnswer(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	entries := []ledger.Entry{
+		{Seq: 1, ChatID: "chat-1", NodeID: "node-1", Round: "judge-r1", Kind: ledger.KindEvalScore, At: now,
+			Payload: mustPayload(t, ledger.EvalScorePayload{Criterion: "cites_sources", Score: 1.0})},
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "entries.jsonl")
+	var buf bytes.Buffer
+	for _, e := range entries {
+		b, _ := json.Marshal(e)
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := bundle.Load(path)
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	buf.Reset()
+	code := RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{DeterministicOnly: true}, nil, &buf, false)
+	if code == 0 {
+		t.Errorf("exit code = 0, want non-zero for an unrebuildable round")
+	}
+	if !strings.Contains(buf.String(), "skipped:") {
+		t.Errorf("output has no skipped note:\n%s", buf.String())
+	}
+}
+
+func TestRubricConfigForUnknownAgent(t *testing.T) {
+	if _, err := RubricConfigFor(context.Background(), &config.Config{}, "no-such-agent", ""); err == nil {
+		t.Fatal("RubricConfigFor for an agent absent from quack.yaml: err = nil, want an error")
+	}
+}
+
+func TestBuildReplayJudgeDisabledReturnsNil(t *testing.T) {
+	judge, err := BuildReplayJudge(&config.Config{}, func(config.ProviderConfig, string) (model.LLM, error) {
+		t.Fatal("newModel called though gates.judge is disabled")
+		return nil, nil
+	})
+	if err != nil || judge != nil {
+		t.Errorf("BuildReplayJudge with no judge configured = (%v, %v), want (nil, nil)", judge, err)
+	}
+}
+
+func TestBuildReplayJudgeUnknownProvider(t *testing.T) {
+	cfg := &config.Config{Gates: config.GatesConfig{Judge: config.JudgeConfig{Model: "m", MaxRounds: 1, Provider: "missing"}}}
+	if _, err := BuildReplayJudge(cfg, func(config.ProviderConfig, string) (model.LLM, error) { return nil, nil }); err == nil {
+		t.Fatal("BuildReplayJudge with an unknown provider: err = nil, want an error")
+	}
+}
