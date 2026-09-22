@@ -154,3 +154,48 @@ func TestEnvironmentOnlyCriteriaAreDeterministicCriteria(t *testing.T) {
 		}
 	}
 }
+
+// The recording holds the worker's raw output; live judges it after StripThinking.
+func TestReplayRound_StripsThinkingBeforeJudging(t *testing.T) {
+	var prompt string
+	judge := NewJudgeFactory(recordingJudge{prompt: &prompt}, nil, nil)
+	rc := ReplayCase{NodeID: "n1", Task: "say hi", Answer: "<think>secret plan: pad the answer</think>hello"}
+	res, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, judge, rc)
+	if err != nil {
+		t.Fatalf("ReplayRound: %v", err)
+	}
+	if strings.Contains(prompt, "secret plan") || strings.Contains(prompt, "<think>") {
+		t.Fatalf("judge prompt still carries the thinking block: %.200s", prompt)
+	}
+	if !strings.Contains(prompt, "hello") {
+		t.Fatalf("judge prompt lost the answer itself: %.200s", prompt)
+	}
+	_ = res
+}
+
+// checks_pass fails closed on the replay host (Checks set, no Workspace); that failure is the
+// host's, so it must stay out of the judge's known-failures section.
+func TestReplayRound_EnvironmentOnlyFailureNeverReachesJudge(t *testing.T) {
+	var prompt string
+	judge := NewJudgeFactory(recordingJudge{prompt: &prompt}, nil, nil)
+	rc := ReplayCase{NodeID: "n1", Task: "build it", Answer: "done"}
+	res, err := ReplayRound(context.Background(), Config{Threshold: 0.5, Checks: []string{"go test ./..."}}, judge, rc)
+	if err != nil {
+		t.Fatalf("ReplayRound: %v", err)
+	}
+	var sawChecks bool
+	for _, c := range res.Criteria {
+		if c.Name == "checks_pass" {
+			sawChecks = true
+			if c.Score >= 0.5 {
+				t.Fatalf("checks_pass = %v, want the fail-closed host score so the case exercises the filter", c.Score)
+			}
+		}
+	}
+	if !sawChecks {
+		t.Fatalf("criteria %+v lack checks_pass; the case did not exercise the environment-only path", res.Criteria)
+	}
+	if strings.Contains(prompt, "checks_pass") {
+		t.Fatalf("judge prompt mentions checks_pass, a failure computed on the replay host: %.300s", prompt)
+	}
+}
