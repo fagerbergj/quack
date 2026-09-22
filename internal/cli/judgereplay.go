@@ -21,11 +21,12 @@ import (
 
 // ReplayOptions is `quack judge replay`'s filters and mode.
 type ReplayOptions struct {
-	Node              string // "" = every judged node
-	Round             int    // 0 = every judge round; else just judge-r<Round>
-	RubricPath        string // "" = the graded node's own bundled rubric.yaml
-	DeterministicOnly bool   // skip the judge model entirely
-	Repeat            int    // judge each round this many times and report the spread (1 = once)
+	Node              string             // "" = every judged node
+	Round             int                // 0 = every judge round; else just judge-r<Round>
+	RubricPath        string             // "" = the graded node's own bundled rubric.yaml
+	DeterministicOnly bool               // skip the judge model entirely
+	Repeat            int                // judge each round this many times and report the spread (1 = once)
+	Pages             vetting.PageLoader // stored web pages for the shadow locate tier; nil skips it
 }
 
 // ReplayCriterionReport is one criterion's recorded-vs-replayed comparison.
@@ -62,6 +63,18 @@ type ReplayRoundReport struct {
 	// ArtifactsWritten: this round's activity wrote these artifacts - the
 	// recording carries no artifact body, only its ledger pointer.
 	ArtifactsWritten []string `json:"artifacts_written,omitempty"`
+	// Units: the shadow locate tier's rows, one per specific; only with stored page access.
+	Units []UnitRow `json:"units,omitempty"`
+}
+
+// UnitRow is one specific's locate result, as the design's failed-round table shows it.
+type UnitRow struct {
+	Kind     string `json:"kind"`
+	Unit     string `json:"unit"`
+	Specific string `json:"specific"`
+	Citation string `json:"citation,omitempty"`
+	State    string `json:"state"`
+	Window   string `json:"window,omitempty"`
 }
 
 // judgedRound is one (node, judge round) this bundle recorded a verdict for.
@@ -313,7 +326,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		}
 		cfgCache[jr.agent] = gc
 	}
-	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns}
+	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, Pages: opts.Pages}
 
 	jf := judge
 	if opts.DeterministicOnly {
@@ -333,6 +346,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		return rep, 1
 	}
 	rep.ArtifactsWritten = res.ArtifactsWritten
+	rep.Units = unitRows(res.Units)
 	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
 	var incomplete bool
 	rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
@@ -416,6 +430,41 @@ func stddev(xs []float64) float64 {
 	return math.Sqrt(v / float64(len(xs)))
 }
 
+func unitRows(checks []vetting.UnitCheck) []UnitRow {
+	rows := make([]UnitRow, 0, len(checks))
+	for _, c := range checks {
+		rows = append(rows, UnitRow{Kind: c.Unit.Kind, Unit: clip(c.Unit.Text, 160), Specific: c.Specific.Value,
+			Citation: c.Citation, State: c.State, Window: clip(c.Window, 200)})
+	}
+	return rows
+}
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+// renderUnits prints the shadow tier's tally and only the rows a judge would need to see.
+func renderUnits(out io.Writer, rows []UnitRow) {
+	if len(rows) == 0 {
+		return
+	}
+	tally := map[string]int{}
+	for _, r := range rows {
+		tally[r.State]++
+	}
+	fmt.Fprintf(out, "  units: %d specific(s): located=%d unlocated=%d uncited=%d no_stored_text=%d\n",
+		len(rows), tally["located"], tally["unlocated"], tally["uncited"], tally["no_stored_text"])
+	for _, r := range rows {
+		if r.State == "located" {
+			continue
+		}
+		fmt.Fprintf(out, "    %-14s %-24q in %s\n", r.State, r.Specific, clip(r.Unit, 100))
+	}
+}
+
 // compareCriteria decides pass/fail by res.Threshold: an environment-only
 // recorded criterion is always informational; an added failing one is its own flip class.
 func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64, judgeRan bool) []ReplayCriterionReport {
@@ -473,6 +522,7 @@ func renderReplayReports(out io.Writer, reports []ReplayRoundReport) {
 		if r.Note != "" {
 			fmt.Fprintf(out, "  note: %s\n", r.Note)
 		}
+		renderUnits(out, r.Units)
 		for _, c := range r.Criteria {
 			flag := " "
 			if c.Flipped {

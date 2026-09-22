@@ -199,3 +199,20 @@ func TestReplayRound_EnvironmentOnlyFailureNeverReachesJudge(t *testing.T) {
 		t.Fatalf("judge prompt mentions checks_pass, a failure computed on the replay host: %.300s", prompt)
 	}
 }
+
+// With stored pages supplied, a replay carries the shadow tier's rows; without them it stays silent.
+func TestReplayRound_ShadowUnitsOnlyWithPages(t *testing.T) {
+	rc := ReplayCase{NodeID: "n1", Task: "t", Answer: "Users rose 30% ([r](https://x.example/p)).\n\nUncited 5% claim."}
+	res, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
+	if err != nil || len(res.Units) != 0 {
+		t.Fatalf("without pages: units=%d err=%v, want none", len(res.Units), err)
+	}
+	rc.Pages = fakePages{pageID(t, "https://x.example/p"): []byte("users rose 30% in a year")}
+	res, err = ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
+	if err != nil || len(res.Units) != 2 {
+		t.Fatalf("with pages: units=%d err=%v, want 2 (30%% located, 5%% uncited)", len(res.Units), err)
+	}
+	if res.Units[0].State != "located" || res.Units[1].State != "uncited" {
+		t.Fatalf("states = %s/%s, want located/uncited", res.Units[0].State, res.Units[1].State)
+	}
+}

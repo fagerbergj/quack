@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"strings"
@@ -128,4 +130,22 @@ func formatArtifactSummaries(items []schema.ArtifactSummary, kind string) string
 		return "(no artifacts)"
 	}
 	return b.String()
+}
+
+// RESTPages serves stored web pages to the shadow locate tier over the server's
+// artifact API: an artifact id is its REST name, and revision 0 is the latest.
+type RESTPages struct {
+	Client *Client
+	ChatID string
+}
+
+func (p RESTPages) Latest(ctx context.Context, id string) ([]byte, int, bool, error) {
+	body, err := p.Client.FetchArtifact(ctx, p.ChatID, id, 0)
+	if errors.Is(err, ErrNotFound) {
+		return nil, 0, false, nil
+	}
+	if err != nil {
+		return nil, 0, false, err
+	}
+	return body, 0, true, nil
 }

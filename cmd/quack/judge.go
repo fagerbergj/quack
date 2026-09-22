@@ -92,6 +92,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repea
 	}
 
 	opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly, Repeat: repeat}
+	opts.Pages = replayPagesFor(ctx, target, sourceServer)
 	code := cli.RunJudgeReplay(ctx, cfg, sess, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cmd.OutOrStdout(), asJSON)
 	exitIfNonZero(code)
 	return nil
@@ -110,4 +111,17 @@ func judgeArtifactToolsFor(ctx context.Context, sourceServer, target string) (to
 	}
 	tools, err = cli.RESTArtifactTools(c, target)
 	return tools, true, err
+}
+
+// replayPagesFor: stored web pages for the shadow locate tier come from the
+// server's artifact API when the target is a chat id; a local bundle has none.
+func replayPagesFor(ctx context.Context, target, sourceServer string) vetting.PageLoader {
+	if st, err := os.Stat(target); err == nil && !st.IsDir() {
+		return nil
+	}
+	c, err := cli.NewClient(ctx, sourceServer)
+	if err != nil {
+		return nil
+	}
+	return cli.RESTPages{Client: c, ChatID: target}
 }

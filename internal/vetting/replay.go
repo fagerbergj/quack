@@ -25,6 +25,7 @@ type RawTurn struct {
 type ReplayCase struct {
 	NodeID, Task, Answer string
 	WorkerTurns          []RawTurn
+	Pages                PageLoader // stored web pages, for the shadow locate tier; nil skips it
 }
 
 // ReplayCriterion is one criterion's freshly computed score. RubricMark is its
@@ -43,6 +44,7 @@ type ReplayRoundResult struct {
 	Criteria         []ReplayCriterion
 	Threshold        float64
 	ArtifactsWritten []string
+	Units            []UnitCheck // shadow locate tier over the answer's units; empty without rc.Pages
 }
 
 // ReplayRound re-scores rc under cfg's rubric via the live gate's own functions -
@@ -58,6 +60,9 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	}
 	augmentFromAnswer(&act, cfg, rc.Answer)
 	res := ReplayRoundResult{Threshold: cfg.Threshold, ArtifactsWritten: act.artifactsWritten}
+	if rc.Pages != nil {
+		res.Units = CheckUnits(ctx, FindUnits(rc.Answer), WebPageEvidence{Store: rc.Pages})
+	}
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
 	// Environment-only failures here are the replay host's, not the round's; the
