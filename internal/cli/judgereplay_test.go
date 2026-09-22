@@ -600,27 +600,25 @@ func TestRunJudgeReplayLocalBundleJudgeCallsArtifactStub(t *testing.T) {
 // TestRecordedForKeepsOnlyTheLatestRun proves a queued re-run recording two
 // distinct judge-r1 verdicts under the same round label doesn't mix their criteria.
 func TestRecordedForKeepsOnlyTheLatestRun(t *testing.T) {
+	// Live emits every run's scores under ResponseID = the round label, so only
+	// timestamps around the second run's judge turn can tell the runs apart.
 	now := time.Now()
 	entries := []ledger.Entry{
 		{Seq: 1, ChatID: "chat-1", NodeID: "node-1", Round: "judge-r1", Kind: ledger.KindEvalScore, At: now,
-			Payload: mustPayload(t, ledger.EvalScorePayload{ResponseID: "run-1", Criterion: "cites_sources", Score: 0.2})},
+			Payload: mustPayload(t, ledger.EvalScorePayload{ResponseID: "judge-r1", Criterion: "cites_sources", Score: 0.2})},
 		{Seq: 2, ChatID: "chat-1", NodeID: "node-1", Round: "judge-r1", Kind: ledger.KindEvalScore, At: now.Add(time.Second),
-			Payload: mustPayload(t, ledger.EvalScorePayload{ResponseID: "run-1", Criterion: "grounded", Score: 0.2})},
-		{Seq: 3, ChatID: "chat-1", NodeID: "node-1", Round: "judge-r1", Kind: ledger.KindEvalScore, At: now.Add(time.Minute),
-			Payload: mustPayload(t, ledger.EvalScorePayload{ResponseID: "run-2", Criterion: "cites_sources", Score: 0.9})},
+			Payload: mustPayload(t, ledger.EvalScorePayload{ResponseID: "judge-r1", Criterion: "grounded", Score: 0.2})},
+		{Seq: 3, ChatID: "chat-1", NodeID: "node-1", Agent: "judge", Round: "judge-r1", Kind: ledger.KindLLMCall, At: now.Add(30 * time.Second),
+			Payload: mustPayload(t, ledger.LLMCallPayload{Input: "judge the re-run", Output: "verdict"})},
+		{Seq: 4, ChatID: "chat-1", NodeID: "node-1", Round: "judge-r1", Kind: ledger.KindEvalScore, At: now.Add(time.Minute),
+			Payload: mustPayload(t, ledger.EvalScorePayload{ResponseID: "judge-r1", Criterion: "cites_sources", Score: 0.9})},
 	}
 	sess, err := bundle.Load(writeEntries(t, entries))
 	if err != nil {
 		t.Fatalf("load bundle: %v", err)
 	}
 	rec := recordedFor(sess, judgedRound{node: "node-1", judgeRound: "judge-r1"})
-	if len(rec) != 1 {
-		t.Fatalf("recorded = %+v, want only run-2's one criterion", rec)
-	}
-	if rec["cites_sources"] != 0.9 {
-		t.Errorf("cites_sources = %v, want run-2's 0.9, not run-1's stale 0.2", rec["cites_sources"])
-	}
-	if _, ok := rec["grounded"]; ok {
-		t.Errorf("recorded = %+v, want run-1's grounded dropped (it belongs to the abandoned first run)", rec)
+	if len(rec) != 1 || rec["cites_sources"] != 0.9 {
+		t.Fatalf("recorded = %+v, want only the re-run's cites_sources=0.9 (the first run's two scores precede its judge turn)", rec)
 	}
 }

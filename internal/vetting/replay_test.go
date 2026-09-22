@@ -144,3 +144,13 @@ func TestCountingJudgeFactory_CountsInvocations(t *testing.T) {
 		t.Errorf("calls = %d, want 1", calls)
 	}
 }
+
+// The environment-only list is a hand-picked subset of the deterministic table; a name the table
+// does not declare would silently turn a rebuildable criterion into an informational one.
+func TestEnvironmentOnlyCriteriaAreDeterministicCriteria(t *testing.T) {
+	for name := range EnvironmentOnlyCriteria {
+		if _, ok := deterministicCriterionSpec[name]; !ok {
+			t.Errorf("EnvironmentOnlyCriteria names %q, which deterministicCriterionSpec does not declare", name)
+		}
+	}
+}

@@ -196,19 +196,16 @@ func workerTurnsFor(sess *bundle.Session, jr judgedRound) (task, answer string, 
 	return rounds[0].task, rounds[len(rounds)-1].answer, activityTurnsBefore(sess, jr.at), true
 }
 
-// recordedFor returns jr's recorded per-criterion scores from only the
-// latest run (grouped by ResponseID) - a re-run can share the same round label.
+// recordedFor returns jr's latest run's per-criterion scores. A re-run shares the round label AND the
+// ResponseID (live passes the round id), so the split is by time: scores at or after the judge's last turn.
 func recordedFor(sess *bundle.Session, jr judgedRound) map[string]float64 {
-	var latestResponseID string
-	var latestAt time.Time
-	for _, sc := range sess.EvaluationResults() {
-		if sc.Node == jr.node && sc.Round == jr.judgeRound && !sc.Timestamp.Before(latestAt) {
-			latestResponseID, latestAt = sc.ResponseID, sc.Timestamp
-		}
+	var cutoff time.Time
+	if turns := sess.ChatTurns(bundle.StreamKey{Node: jr.node, Agent: "judge", Round: jr.judgeRound}); len(turns) > 0 {
+		cutoff = turns[len(turns)-1].At
 	}
 	out := map[string]float64{}
 	for _, sc := range sess.EvaluationResults() {
-		if sc.Node == jr.node && sc.Round == jr.judgeRound && sc.ResponseID == latestResponseID {
+		if sc.Node == jr.node && sc.Round == jr.judgeRound && !sc.Timestamp.Before(cutoff) {
 			out[sc.Criterion] = sc.Score
 		}
 	}
