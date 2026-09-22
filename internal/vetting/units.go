@@ -17,13 +17,14 @@ type Unit struct {
 
 // A Specific is a claim detail a reader could check: found by pattern, never by a model.
 type Specific struct {
-	Kind  string // "number", "percent", "currency", "date", "quote", "name"
+	Kind  string // "number", "percent", "currency", "date", "quote"
 	Value string // as written
 	Norm  string // digits-only or lower-cased form used to locate it in evidence
 }
 
 var (
 	fenceRe       = regexp.MustCompile("(?s)```.*?```")
+	headingRe     = regexp.MustCompile(`^\s*#{1,6}\s`)
 	listItemRe    = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 	tableRowRe    = regexp.MustCompile(`^\s*\|.*\|\s*$`)
 	tableRuleRe   = regexp.MustCompile(`^\s*\|?\s*:?-{2,}`)
@@ -34,9 +35,8 @@ var (
 	percentRe     = regexp.MustCompile(`-?\d[\d,]*(?:\.\d+)?\s?%`)
 	currencyRe    = regexp.MustCompile(`(?:[$€£]\s?\d[\d,]*(?:\.\d+)?[KMBkmb]?|\d[\d,]*(?:\.\d+)?[KMBkmb]?\s?(?:USD|EUR|GBP))`)
 	dateRe        = regexp.MustCompile(`\b(?:\d{4}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:, \d{4})?|\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{4})\b`)
-	numberRe      = regexp.MustCompile(`(?:^|[^\w.$€£%-])(-?\d[\d,]*(?:\.\d+)?)(?:[^\w%]|$)`)
+	numberRe      = regexp.MustCompile(`(?:^|[^\w.$€£%-])(-?\d[\d,]*(?:\.\d+)?)(?:[^\w%-]|$)`)
 	quoteRe       = regexp.MustCompile(`"([^"]{4,})"`)
-	nameRe        = regexp.MustCompile(`\b[A-Z][a-z]+(?: [A-Z][a-z]+)+\b`)
 	nonDigitRe    = regexp.MustCompile(`[^\d.]`)
 )
 
@@ -69,6 +69,8 @@ func blockUnits(lines []string, pi int, refs map[string]string) []Unit {
 	}
 	for _, ln := range lines {
 		switch {
+		case headingRe.MatchString(ln):
+			flush() // a heading names a section; it makes no checkable claim
 		case tableRowRe.MatchString(ln):
 			flush()
 			if !tableRuleRe.MatchString(ln) {
@@ -101,7 +103,14 @@ func sentenceUnits(prose string, pi int, refs map[string]string) []Unit {
 
 func newUnit(kind, text string, pi int, refs map[string]string) Unit {
 	text = strings.TrimSpace(text)
-	return Unit{Kind: kind, Text: text, Paragraph: pi, Specifics: findSpecifics(text), Citations: citationsIn(text, refs)}
+	return Unit{Kind: kind, Text: text, Paragraph: pi, Specifics: findSpecifics(withoutLinks(text)), Citations: citationsIn(text, refs)}
+}
+
+// withoutLinks drops link targets and bare URLs so a date or number inside a
+// URL path is never taken for a claim's specific; the link text stays.
+func withoutLinks(text string) string {
+	text = markdownLinkRe.ReplaceAllStringFunc(text, func(m string) string { return m[:strings.Index(m, "](")+1] })
+	return bareURLRe.ReplaceAllString(text, " ")
 }
 
 // pairFollowing gives an uncited unit the nearest following citation in its block:
@@ -191,9 +200,7 @@ func findSpecifics(text string) []Specific {
 	take("currency", currencyRe, 0)
 	take("quote", quoteRe, 1)
 	take("number", numberRe, 1)
-	for _, m := range nameRe.FindAllString(taken, -1) {
-		out = append(out, Specific{Kind: "name", Value: m, Norm: strings.ToLower(m)})
-	}
+	// ponytail: no proper-name specifics - Title Case matched headings and phrases; add a real detector if names prove worth checking.
 	return out
 }
 

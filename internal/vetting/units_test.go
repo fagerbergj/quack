@@ -32,8 +32,8 @@ func TestFindUnits_SentencesListRowsAndSpecifics(t *testing.T) {
 			t.Errorf("first unit %s = %q, want %q (specifics %+v)", k, got[k], v, first.Specifics)
 		}
 	}
-	if !hasSpecific(units[1], "name", "alice johnson") {
-		t.Errorf("name not found in %+v", units[1].Specifics)
+	if len(units[1].Specifics) != 0 {
+		t.Errorf("a sentence with only a proper name has no specifics, got %+v", units[1].Specifics)
 	}
 	if !hasSpecific(units[3], "quote", "fastest quarter") {
 		t.Errorf("quote not found in %+v", units[3].Specifics)
@@ -71,4 +71,20 @@ func hasSpecific(u Unit, kind, norm string) bool {
 		}
 	}
 	return false
+}
+
+func TestFindUnits_IgnoresHeadingsLinkTargetsAndQualifiers(t *testing.T) {
+	text := "# Report for 2025-01-01\n\nA 10-team league ([chart](https://x.example/2026-09-15/wk2)) scored 45 points in 2024."
+	units := FindUnits(text)
+	if len(units) != 1 {
+		t.Fatalf("units = %d, want 1 (the heading is not a unit): %+v", len(units), units)
+	}
+	var norms []string
+	for _, s := range units[0].Specifics {
+		norms = append(norms, s.Kind+":"+s.Norm)
+	}
+	want := "number:45 number:2024"
+	if strings.Join(norms, " ") != want {
+		t.Fatalf("specifics = %v, want %q (no date from the URL, no 10 from 10-team)", norms, want)
+	}
 }
