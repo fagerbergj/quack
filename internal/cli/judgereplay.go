@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ type ReplayOptions struct {
 	Round             int    // 0 = every judge round; else just judge-r<Round>
 	RubricPath        string // "" = the graded node's own bundled rubric.yaml
 	DeterministicOnly bool   // skip the judge model entirely
+	Repeat            int    // judge each round this many times and report the spread (1 = once)
 }
 
 // ReplayCriterionReport is one criterion's recorded-vs-replayed comparison.
@@ -40,6 +43,11 @@ type ReplayCriterionReport struct {
 	Deterministic  bool    `json:"deterministic"`
 	Reason         string  `json:"reason,omitempty"`
 	Flipped        bool    `json:"flipped"`
+	// Samples: every replayed score when --repeat > 1; Mean/SD/PassRate summarise them.
+	Samples  []float64 `json:"samples,omitempty"`
+	Mean     float64   `json:"mean,omitempty"`
+	SD       float64   `json:"sd,omitempty"`
+	PassRate float64   `json:"pass_rate,omitempty"`
 }
 
 // ReplayRoundReport is one judged round's comparison.
@@ -326,6 +334,8 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	}
 	rep.ArtifactsWritten = res.ArtifactsWritten
 	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
+	var incomplete bool
+	rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
 	for _, c := range rep.Criteria {
 		if c.Flipped {
 			rep.Flipped = true
@@ -334,7 +344,76 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	if rep.Flipped {
 		return rep, 2
 	}
+	if incomplete {
+		return rep, 1 // a requested measurement that lost a pass is not a clean run
+	}
 	return rep, 0
+}
+
+// noteRepeatSpread runs the --repeat measurement when it applies and folds a failed pass into the
+// round note, keeping replayOneRound's own branching flat.
+func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, res vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport, note string) (string, bool) {
+	if jf == nil || repeat < 2 {
+		return note, false
+	}
+	if err := addRepeatSpread(ctx, gc, jf, rc, res, repeat, crit); err != nil {
+		return strings.TrimSpace(note + " repeat: " + err.Error()), true
+	}
+	return note, false
+}
+
+// addRepeatSpread judges the round repeat-1 more times and fills each judge-scored criterion's
+// Samples/Mean/SD/PassRate: the judge's own noise on a fixed answer, which no single verdict shows.
+func addRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, first vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport) error {
+	samples := map[string][]float64{}
+	for _, c := range first.Criteria {
+		if !c.Deterministic {
+			samples[c.Name] = append(samples[c.Name], c.Score)
+		}
+	}
+	for i := 1; i < repeat; i++ {
+		res, err := vetting.ReplayRound(ctx, gc, jf, rc)
+		if err != nil {
+			return fmt.Errorf("pass %d: %w", i+1, err)
+		}
+		for _, c := range res.Criteria {
+			if _, ok := samples[c.Name]; ok {
+				samples[c.Name] = append(samples[c.Name], c.Score)
+			}
+		}
+	}
+	for i := range crit {
+		xs := samples[crit[i].Name]
+		if len(xs) < 2 {
+			continue
+		}
+		crit[i].Samples, crit[i].Mean, crit[i].SD = xs, mean(xs), stddev(xs)
+		var passes int
+		for _, x := range xs {
+			if x >= first.Threshold {
+				passes++
+			}
+		}
+		crit[i].PassRate = float64(passes) / float64(len(xs))
+	}
+	return nil
+}
+
+func mean(xs []float64) float64 {
+	var t float64
+	for _, x := range xs {
+		t += x
+	}
+	return t / float64(len(xs))
+}
+
+// stddev is the population standard deviation; --repeat samples are the whole set, not a draw.
+func stddev(xs []float64) float64 {
+	m, v := mean(xs), 0.0
+	for _, x := range xs {
+		v += (x - m) * (x - m)
+	}
+	return math.Sqrt(v / float64(len(xs)))
 }
 
 // compareCriteria decides pass/fail by res.Threshold: an environment-only
@@ -402,6 +481,10 @@ func renderReplayReports(out io.Writer, reports []ReplayRoundReport) {
 			fmt.Fprintf(out, "  %s %-24s recorded=%-12s replayed=%-12s rubric_mark=%.2f threshold=%.2f  %s\n",
 				flag, c.Name, scoreCell(c.HasRecorded, c.RecordedScore, c.RecordedPassed),
 				scoreCell(c.HasReplayed, c.ReplayedScore, c.ReplayedPassed), c.RubricMark, c.Threshold, c.Reason)
+			if len(c.Samples) > 1 {
+				fmt.Fprintf(out, "    spread n=%d mean=%.2f sd=%.2f min=%.2f max=%.2f pass=%.0f%%\n",
+					len(c.Samples), c.Mean, c.SD, slices.Min(c.Samples), slices.Max(c.Samples), 100*c.PassRate)
+			}
 		}
 	}
 }
