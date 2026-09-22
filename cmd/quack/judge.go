@@ -27,7 +27,7 @@ func newJudgeCmd() *cobra.Command {
 func newJudgeReplayCmd() *cobra.Command {
 	var node, rubricPath, sourceServer string
 	var round, repeat int
-	var deterministicOnly, asJSON bool
+	var deterministicOnly, asJSON, verify bool
 	c := &cobra.Command{
 		Use:   "replay <chat-id-or-bundle.zip>",
 		Short: "Re-grade a recorded chat's judged rounds under the working-copy rubric",
@@ -42,7 +42,7 @@ func newJudgeReplayCmd() *cobra.Command {
 			"skips the judge model entirely, so it runs with no model endpoint configured.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJudgeReplay(cmd, args[0], node, round, repeat, rubricPath, sourceServer, deterministicOnly, asJSON)
+			return runJudgeReplay(cmd, args[0], node, round, repeat, rubricPath, sourceServer, deterministicOnly, verify, asJSON)
 		},
 	}
 	c.Flags().StringVar(&node, "node", "", "only this node id (default: every judged node)")
@@ -51,11 +51,12 @@ func newJudgeReplayCmd() *cobra.Command {
 	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: active registered server)")
 	c.Flags().BoolVar(&deterministicOnly, "deterministic-only", false, "replay only the code-owned criteria; never touches the judge model")
 	c.Flags().IntVar(&repeat, "repeat", 1, "judge each round N times and print every judge-scored criterion's spread (mean, sd, pass rate)")
+	c.Flags().BoolVar(&verify, "verify", false, "run the shadow verify tier: the judge model reads each located specific's evidence window and answers with a quote code checks (model calls; works with --deterministic-only)")
 	asJSONFlag(c, &asJSON)
 	return c
 }
 
-func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repeat int, rubricPath, sourceServer string, deterministicOnly, asJSON bool) error {
+func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repeat int, rubricPath, sourceServer string, deterministicOnly, verify, asJSON bool) error {
 	ctx := cmd.Context()
 	cfgPath := defaultConfigPath()
 	if _, err := os.Stat(cfgPath); err != nil {
@@ -93,6 +94,13 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repea
 
 	opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly, Repeat: repeat}
 	opts.Pages = replayPagesFor(ctx, target, sourceServer)
+	if verify && opts.Pages != nil {
+		if opts.Verifier, err = cli.BuildReplayVerifier(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
+			return inference.NewModelWithEffort(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
+		}); err != nil {
+			return err
+		}
+	}
 	code := cli.RunJudgeReplay(ctx, cfg, sess, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cmd.OutOrStdout(), asJSON)
 	exitIfNonZero(code)
 	return nil

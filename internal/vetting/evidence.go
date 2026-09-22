@@ -15,8 +15,9 @@ type UnitCheck struct {
 	Unit     Unit
 	Specific Specific
 	Citation string
-	State    string // "located", "unlocated", "uncited", "no_stored_text"
-	Window   string // evidence text around the match, empty unless located
+	State    string  // "located", "unlocated", "uncited", "no_stored_text"
+	Window   string  // evidence text around the match, empty unless located
+	Verdict  Verdict // the verify tier's answer, zero until it runs
 }
 
 // PageLoader is the one record-store call the resolver needs: recordstore.Client

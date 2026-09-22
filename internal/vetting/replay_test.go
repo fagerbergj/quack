@@ -215,4 +215,9 @@ func TestReplayRound_ShadowUnitsOnlyWithPages(t *testing.T) {
 	if res.Units[0].State != "located" || res.Units[1].State != "uncited" {
 		t.Fatalf("states = %s/%s, want located/uncited", res.Units[0].State, res.Units[1].State)
 	}
+	rc.Verifier = &Verifier{LLM: textLLM{text: `{"items":[{"n":1,"state":"supported","quote":"users rose 30% in a year"}]}`}}
+	res, err = ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
+	if err != nil || res.Units[0].Verdict.State != "supported" || res.Units[1].Verdict.State != "" {
+		t.Fatalf("with a verifier: %+v err=%v, want the located row supported and the uncited row untouched", res.Units, err)
+	}
 }

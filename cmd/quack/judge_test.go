@@ -39,7 +39,7 @@ func TestRunJudgeReplay_NoConfig(t *testing.T) {
 	}
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
-	if err := runJudgeReplay(c, bundlePath, "", 0, 1, "", "", true, false); err == nil || !strings.Contains(err.Error(), "quack init") {
+	if err := runJudgeReplay(c, bundlePath, "", 0, 1, "", "", true, false, false); err == nil || !strings.Contains(err.Error(), "quack init") {
 		t.Fatal("runJudgeReplay with no quack.yaml: err = nil, want an error naming `quack init`")
 	}
 }
@@ -77,7 +77,7 @@ criteria:
 	bundlePath := writeJudgeFixtureBundle(t)
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
-	if err := runJudgeReplay(c, bundlePath, "", 0, 1, rubricPath, "", true, false); err != nil {
+	if err := runJudgeReplay(c, bundlePath, "", 0, 1, rubricPath, "", true, false, false); err != nil {
 		t.Fatalf("runJudgeReplay: %v", err)
 	}
 }
