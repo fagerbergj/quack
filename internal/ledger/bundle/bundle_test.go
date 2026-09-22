@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"google.golang.org/genai"
 	"os"
 	"path/filepath"
 	"strings"
@@ -446,5 +447,14 @@ func TestStreamsAndChatTurns(t *testing.T) {
 	}
 	if _, _, _, ok := sess.RoundTaskAnswer(StreamKey{Node: "missing"}); ok {
 		t.Errorf("RoundTaskAnswer on an unknown key: ok = true, want false")
+	}
+}
+
+// A recorded output carries the model's reasoning as thought parts; the answer
+// a round graded is only the non-thought text, as live's reply was.
+func TestPartsTextSkipsThoughtParts(t *testing.T) {
+	parts := []*genai.Part{{Text: "planning: pad the report", Thought: true}, {Text: "# Report\nfindings"}}
+	if got := partsText(parts); got != "# Report\nfindings" {
+		t.Fatalf("partsText = %q, want the non-thought text only", got)
 	}
 }
