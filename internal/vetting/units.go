@@ -208,7 +208,45 @@ func normalizeSpecific(kind, v string) string {
 	switch kind {
 	case "number", "percent", "currency":
 		return strings.TrimSuffix(nonDigitRe.ReplaceAllString(v, ""), ".")
-	default:
+	case "date":
+		if iso := canonicalDate(v); iso != "" {
+			return iso
+		}
 		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return strings.ToLower(strings.TrimSpace(markupRe.ReplaceAllString(v, "")))
+	}
+}
+
+var markupRe = regexp.MustCompile("[*_`]+")
+
+var monthNum = map[string]string{"jan": "01", "feb": "02", "mar": "03", "apr": "04", "may": "05", "jun": "06", "jul": "07", "aug": "08", "sep": "09", "oct": "10", "nov": "11", "dec": "12"}
+
+var dateParts = regexp.MustCompile(`(?i)^(?:(\d{4})-(\d{2})-(\d{2})|([a-z]{3})[a-z]*\.? (\d{1,2})(?:, (\d{4}))?|(\d{1,2}) ([a-z]{3})[a-z]* (\d{4}))$`)
+
+// canonicalDate renders any date form FindUnits accepts as YYYY-MM-DD; a month-day
+// with no year yields MM-DD so it can still match either rendering.
+func canonicalDate(v string) string {
+	m := dateParts.FindStringSubmatch(strings.TrimSpace(v))
+	if m == nil {
+		return ""
+	}
+	pad := func(d string) string {
+		if len(d) == 1 {
+			return "0" + d
+		}
+		return d
+	}
+	switch {
+	case m[1] != "":
+		return m[1] + "-" + m[2] + "-" + m[3]
+	case m[4] != "":
+		md := monthNum[strings.ToLower(m[4])] + "-" + pad(m[5])
+		if m[6] != "" {
+			return m[6] + "-" + md
+		}
+		return md
+	default:
+		return m[9] + "-" + monthNum[strings.ToLower(m[8])] + "-" + pad(m[7])
 	}
 }

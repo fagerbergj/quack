@@ -81,12 +81,52 @@ func LocateSpecific(text string, s Specific) (string, bool) {
 	if needle == "" {
 		return "", false
 	}
-	i := indexSpecific(hay, needle, s.Kind)
+	if s.Kind == "quote" {
+		hay = markupRe.ReplaceAllString(hay, "")
+	}
+	i := -1
+	for _, n := range needleForms(s) {
+		if i = indexSpecific(hay, n, s.Kind); i >= 0 {
+			needle = n
+			break
+		}
+	}
 	if i < 0 {
 		return "", false
 	}
 	lo, hi := max(0, i-locateWindow), min(len(hay), i+len(needle)+locateWindow)
 	return strings.TrimSpace(hay[lo:hi]), true
+}
+
+// needleForms: a date is looked for in every rendering a page might use
+// (2026-09-15, sep 15, 2026, september 15, 2026, 15 sep 2026); other kinds as-is.
+func needleForms(s Specific) []string {
+	if s.Kind != "date" {
+		return []string{s.Norm}
+	}
+	parts := strings.Split(s.Norm, "-")
+	if len(parts) == 2 { // month-day without a year
+		parts = append([]string{""}, parts...)
+	}
+	if len(parts) != 3 {
+		return []string{s.Norm}
+	}
+	year, mon, day := parts[0], parts[1], strings.TrimPrefix(parts[2], "0")
+	var name string
+	for k, v := range monthNum {
+		if v == mon {
+			name = k
+		}
+	}
+	long := map[string]string{"jan": "january", "feb": "february", "mar": "march", "apr": "april", "may": "may", "jun": "june", "jul": "july", "aug": "august", "sep": "september", "oct": "october", "nov": "november", "dec": "december"}[name]
+	forms := []string{s.Norm, name + " " + day + ", " + year, long + " " + day + ", " + year, day + " " + name + " " + year, day + " " + long + " " + year, name + " " + day, long + " " + day}
+	var out []string
+	for _, f := range forms {
+		if f = strings.TrimSpace(strings.TrimSuffix(f, ", ")); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // indexSpecific: a figure must stand alone (12 must not match inside 2012).

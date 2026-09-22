@@ -72,3 +72,19 @@ func TestCheckUnits_LocatesThroughStoredPage(t *testing.T) {
 		t.Fatalf("state = %q, want no_stored_text when the page was never fetched", checks[0].State)
 	}
 }
+
+func TestLocateSpecific_DateFormsAndMarkup(t *testing.T) {
+	page := "Published September 15, 2026. Chart **tailored to a 12-team** league."
+	if _, ok := LocateSpecific(page, Specific{Kind: "date", Norm: canonicalDate("Sep 15, 2026")}); !ok {
+		t.Error("an ISO-normalised date should locate its long rendering")
+	}
+	if _, ok := LocateSpecific(page, Specific{Kind: "date", Norm: "2026-09-15"}); !ok {
+		t.Error("2026-09-15 should locate 'September 15, 2026'")
+	}
+	if _, ok := LocateSpecific(page, Specific{Kind: "quote", Norm: normalizeSpecific("quote", "tailored to a **12-team** league")}); !ok {
+		t.Error("markdown emphasis must not break a quote match")
+	}
+	if got := canonicalDate("15 Sep 2026"); got != "2026-09-15" {
+		t.Errorf("canonicalDate = %q", got)
+	}
+}
