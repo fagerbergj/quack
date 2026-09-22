@@ -347,10 +347,12 @@ func userTexts(inputJSON string) []string {
 }
 
 // partsText concatenates a Content's text parts.
+// partsText is the reply as the gate saw it: reasoning parts (thought: true)
+// are recorded in the output but never reached the judge or the user.
 func partsText(parts []*genai.Part) string {
 	var b []byte
 	for _, p := range parts {
-		if p != nil && p.Text != "" {
+		if p != nil && p.Text != "" && !p.Thought {
 			b = append(b, []byte(p.Text)...)
 		}
 	}
