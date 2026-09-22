@@ -19,13 +19,14 @@ type UnitCheck struct {
 	Window   string // evidence text around the match, empty unless located
 }
 
-// pageLoader is the one record-store call the resolver needs; a test can fake it.
-type pageLoader interface {
+// PageLoader is the one record-store call the resolver needs: recordstore.Client
+// satisfies it, and a REST adapter does for replay against a server.
+type PageLoader interface {
 	Latest(ctx context.Context, id string) ([]byte, int, bool, error)
 }
 
 // WebPageEvidence resolves a citation URL to the page text a fetch stored for it.
-type WebPageEvidence struct{ Store pageLoader }
+type WebPageEvidence struct{ Store PageLoader }
 
 const webPageKind = "web_page"
 
