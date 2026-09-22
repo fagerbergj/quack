@@ -82,7 +82,7 @@ func LocateSpecific(text string, s Specific) (string, bool) {
 		return "", false
 	}
 	if s.Kind == "quote" {
-		hay = markupRe.ReplaceAllString(hay, "")
+		return locateQuote(hay, needle)
 	}
 	i := -1
 	for _, n := range needleForms(s) {
@@ -97,6 +97,42 @@ func LocateSpecific(text string, s Specific) (string, bool) {
 	lo, hi := max(0, i-locateWindow), min(len(hay), i+len(needle)+locateWindow)
 	return strings.TrimSpace(hay[lo:hi]), true
 }
+
+var punctVariants = strings.NewReplacer("\u2019", "'", "\u2018", "'", "\u201c", "\"", "\u201d", "\"", "\u2013", "-", "\u2014", "-", "\u00a0", " ")
+
+// locateQuote matches a quoted string segment by segment: an elided quote
+// ("first part ... last part") holds when every segment appears in order, and
+// curly punctuation or emphasis marks on either side do not break it.
+func locateQuote(hay, quote string) (string, bool) {
+	hay = normalizeSpace(punctVariants.Replace(markupRe.ReplaceAllString(hay, "")))
+	quote = normalizeSpace(punctVariants.Replace(markupRe.ReplaceAllString(quote, "")))
+	var segs []string
+	for _, seg := range strings.Split(strings.ReplaceAll(quote, "\u2026", "..."), "...") {
+		if seg = strings.TrimSpace(seg); len(seg) >= 12 {
+			segs = append(segs, seg)
+		}
+	}
+	if len(segs) == 0 {
+		segs = []string{quote}
+	}
+	at, first := 0, -1
+	for _, seg := range segs {
+		i := strings.Index(hay[at:], seg)
+		if i < 0 {
+			return "", false
+		}
+		if first < 0 {
+			first = at + i
+		}
+		at += i + len(seg)
+	}
+	lo, hi := max(0, first-locateWindow), min(len(hay), at+locateWindow)
+	return strings.TrimSpace(hay[lo:hi]), true
+}
+
+var spaceRe = regexp.MustCompile(`\s+`)
+
+func normalizeSpace(s string) string { return spaceRe.ReplaceAllString(s, " ") }
 
 // needleForms: a date is looked for in every rendering a page might use
 // (2026-09-15, sep 15, 2026, september 15, 2026, 15 sep 2026); other kinds as-is.

@@ -88,3 +88,19 @@ func TestLocateSpecific_DateFormsAndMarkup(t *testing.T) {
 		t.Errorf("canonicalDate = %q", got)
 	}
 }
+
+func TestLocateQuote_SegmentsAndPunctuation(t *testing.T) {
+	page := "The Wolf\u2019s Rest Of Season rankings \u2014 built weekly \u2014 drive the chart; values are **not** additive.\n"
+	cases := map[string]bool{
+		"the wolf's rest of season rankings":            true,
+		"the wolf's rest of season ... drive the chart": true,
+		"drive the chart ... rest of season":            false, // out of order
+		"values are not additive":                       true,
+		"the wolf's rest of season rankings are bogus":  false,
+	}
+	for q, want := range cases {
+		if _, got := LocateSpecific(page, Specific{Kind: "quote", Norm: q}); got != want {
+			t.Errorf("locate quote %q = %v, want %v", q, got, want)
+		}
+	}
+}
