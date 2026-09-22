@@ -30,8 +30,8 @@ const verifyBatch = 20
 
 const verifyInstruction = `You check whether a passage of evidence supports a specific detail in a claim. For EVERY numbered item answer one object {"n": <number>, "state": "supported" | "unsupported" | "cannot_tell", "quote": <verbatim text copied from that item's <Evidence>>}. "supported" means the evidence states the same detail (the same figure, date or wording, allowing rounding words like "about"); "unsupported" means the evidence gives a different value or contradicts it; "cannot_tell" means the evidence does not settle it. The quote must be copied exactly from the item's own <Evidence> and, for supported or unsupported, must contain the value you relied on; a quote that is not in the evidence is rejected. Respond with exactly one JSON object {"items": [...]}, nothing else.`
 
-// VerifyChecks runs the verify tier over located checks, batched per cited page,
-// and fills each check's Verdict. A failed call leaves its items not_checked.
+// VerifyChecks runs the verify tier over every check that has a window (located, or
+// unlocated with a second-look window), batched per cited page; a failed call leaves its items not_checked.
 func (v Verifier) VerifyChecks(ctx context.Context, checks []UnitCheck) []UnitCheck {
 	if v.LLM == nil {
 		return checks

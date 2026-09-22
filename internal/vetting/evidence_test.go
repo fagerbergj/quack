@@ -137,3 +137,21 @@ func TestLocateSpecific_NumberWordsAndSecondLookWindow(t *testing.T) {
 		t.Fatalf("25%% should be unlocated with a key-term window for the second look: %+v", got)
 	}
 }
+
+func TestSecondLook_TermsIgnoreLinksAndCitationFollowsTheWindow(t *testing.T) {
+	store := fakePages{
+		pageID(t, "https://example.test/a"): []byte("an example passage about examples and nothing else"),
+		pageID(t, "https://b.test/b"):       []byte("the roster band is stated as ten percent by this chart"),
+	}
+	units := FindUnits("The roster band is 25% ([a](https://example.test/a), [b](https://b.test/b)).")
+	var got *UnitCheck
+	for _, c := range CheckUnits(context.Background(), units, WebPageEvidence{Store: store}) {
+		if c.Specific.Value == "25%" {
+			c := c
+			got = &c
+		}
+	}
+	if got == nil || got.State != "unlocated" || got.Citation != "https://b.test/b" || !strings.Contains(got.Window, "roster band") {
+		t.Fatalf("second look should use the claim's own words (not the URL's) and report the page its window came from: %+v", got)
+	}
+}

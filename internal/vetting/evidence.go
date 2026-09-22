@@ -16,7 +16,7 @@ type UnitCheck struct {
 	Specific Specific
 	Citation string
 	State    string  // "located", "unlocated", "uncited", "no_stored_text"
-	Window   string  // evidence text around the match, empty unless located
+	Window   string  // evidence around the match; for an unlocated figure, around the claim's key terms (second look)
 	Verdict  Verdict // the verify tier's answer, zero until it runs
 }
 
@@ -222,7 +222,9 @@ func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebP
 			return c
 		}
 		if c.Window == "" {
-			c.Window = keyTermWindow(text, c.Unit.Text) // second look: let the verifier read where the claim's terms sit
+			if w := keyTermWindow(text, withoutLinks(c.Unit.Text)); w != "" { // second look: where the claim's own terms sit
+				c.Window, c.Citation = w, cit // the row is reported under the page its window came from
+			}
 		}
 	}
 	return c
