@@ -16,7 +16,7 @@ type UnitCheck struct {
 	Specific Specific
 	Citation string
 	State    string  // "located", "unlocated", "uncited", "no_stored_text"
-	Window   string  // evidence text around the match, empty unless located
+	Window   string  // evidence around the match; for an unlocated figure, around the claim's key terms (second look)
 	Verdict  Verdict // the verify tier's answer, zero until it runs
 }
 
@@ -69,12 +69,27 @@ const locateWindow = 240
 
 var thousandsRe = regexp.MustCompile(`(\d),(\d{3})`)
 
+var numberWords = map[string]string{"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14", "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20", "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80", "ninety": "90", "hundred": "100", "thousand": "1000"}
+
+var wordRe = regexp.MustCompile(`[a-z]+`)
+
+// digitsForWords rewrites spelled-out numbers so "three of nine" carries the 9 a figure check looks for.
+func digitsForWords(text string) string {
+	return wordRe.ReplaceAllStringFunc(strings.ToLower(text), func(w string) string {
+		if d, ok := numberWords[w]; ok {
+			return d
+		}
+		return w
+	})
+}
+
 // LocateSpecific finds s in text after the same normalisation FindUnits applied
 // (thousands separators dropped, case folded) and returns the surrounding window.
 func LocateSpecific(text string, s Specific) (string, bool) {
 	hay := strings.ToLower(text)
 	needle := s.Norm
 	if s.Kind == "number" || s.Kind == "percent" || s.Kind == "currency" {
+		hay = digitsForWords(hay)
 		for thousandsRe.MatchString(hay) {
 			hay = thousandsRe.ReplaceAllString(hay, "$1$2")
 		}
@@ -206,8 +221,28 @@ func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebP
 			c.State, c.Citation, c.Window = "located", cit, w
 			return c
 		}
+		if c.Window == "" {
+			if w := keyTermWindow(text, withoutLinks(c.Unit.Text)); w != "" { // second look: where the claim's own terms sit
+				c.Window, c.Citation = w, cit // the row is reported under the page its window came from
+			}
+		}
 	}
 	return c
+}
+
+var termRe = regexp.MustCompile(`[a-z]{6,}`)
+
+// keyTermWindow cuts the page around the first of the unit's longer words that
+// appears in it, so a figure the page states differently still gets read.
+func keyTermWindow(page, unit string) string {
+	hay := strings.ToLower(page)
+	for _, term := range termRe.FindAllString(strings.ToLower(unit), -1) {
+		if i := strings.Index(hay, term); i >= 0 {
+			lo, hi := max(0, i-locateWindow), min(len(hay), i+len(term)+locateWindow)
+			return strings.TrimSpace(hay[lo:hi])
+		}
+	}
+	return ""
 }
 
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
@@ -217,7 +252,7 @@ func partOfNumber(hay string, j, dir int) bool {
 	if j < 0 || j >= len(hay) {
 		return false
 	}
-	if isDigit(hay[j]) || (dir < 0 && hay[j] == '-' && (j == 0 || hay[j-1] == ' ')) {
+	if isDigit(hay[j]) || (dir < 0 && hay[j] == '-' && (j == 0 || hay[j-1] == ' ' || hay[j-1] == '\n' || hay[j-1] == '\t' || hay[j-1] == '(')) {
 		return true // a sign belongs to the figure: 12 must not match inside -12
 	}
 	k := j + dir

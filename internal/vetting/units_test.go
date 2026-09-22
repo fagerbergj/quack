@@ -105,3 +105,15 @@ func TestFindUnits_ReviewEdges(t *testing.T) {
 		t.Fatalf("citations = %v, want the URL from a titled reference definition", got)
 	}
 }
+
+func TestFindUnits_EmptyReferenceLineAndLinkLabelQuotes(t *testing.T) {
+	units := FindUnits("A claim of 5% per [RSJ, \"Anatomy of a Tier Down\"](https://r.example/t) [1].\n\n[1]:   \n")
+	if len(units) != 1 {
+		t.Fatalf("units = %d, want 1 (an empty reference line must not panic or become a unit)", len(units))
+	}
+	for _, sp := range units[0].Specifics {
+		if sp.Kind == "quote" {
+			t.Fatalf("a quoted title inside a link label is not a claim: %+v", units[0].Specifics)
+		}
+	}
+}

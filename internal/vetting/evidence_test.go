@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"testing"
 
@@ -106,13 +107,51 @@ func TestLocateQuote_SegmentsAndPunctuation(t *testing.T) {
 }
 
 func TestLocateSpecific_SignedFigureAndSecondCitation(t *testing.T) {
-	if _, ok := LocateSpecific("the deficit was -12 last year", Specific{Kind: "number", Norm: "12"}); ok {
-		t.Error("12 must not locate inside -12")
+	for _, page := range []string{"the deficit was -12 last year", "totals:\n-12 on the year", "(-12)"} {
+		if _, ok := LocateSpecific(page, Specific{Kind: "number", Norm: "12"}); ok {
+			t.Errorf("12 must not locate inside -12 in %q", page)
+		}
 	}
 	store := fakePages{pageID(t, "https://a.example/x"): []byte("nothing here"), pageID(t, "https://b.example/y"): []byte("growth of 30% in 2024")}
 	units := FindUnits("Growth was 30% ([a](https://a.example/x), [b](https://b.example/y)).")
 	checks := CheckUnits(context.Background(), units, WebPageEvidence{Store: store})
 	if len(checks) != 1 || checks[0].State != "located" || checks[0].Citation != "https://b.example/y" {
 		t.Fatalf("checks = %+v, want the figure located through the second citation", checks)
+	}
+}
+
+func TestLocateSpecific_NumberWordsAndSecondLookWindow(t *testing.T) {
+	if _, ok := LocateSpecific("only three of nine players saw more touches", Specific{Kind: "number", Norm: "9"}); !ok {
+		t.Error("a spelled-out nine should locate the figure 9")
+	}
+	store := fakePages{pageID(t, "https://p.example/x"): []byte("The roster-need band is stated as ten to fifteen percent of parity by most charts.")}
+	units := FindUnits("Charts allow a 15-25% roster-need band ([c](https://p.example/x)).")
+	checks := CheckUnits(context.Background(), units, WebPageEvidence{Store: store})
+	var got *UnitCheck
+	for i := range checks {
+		if checks[i].Specific.Value == "25%" {
+			got = &checks[i]
+		}
+	}
+	if got == nil || got.State != "unlocated" || !strings.Contains(got.Window, "parity") {
+		t.Fatalf("25%% should be unlocated with a key-term window for the second look: %+v", got)
+	}
+}
+
+func TestSecondLook_TermsIgnoreLinksAndCitationFollowsTheWindow(t *testing.T) {
+	store := fakePages{
+		pageID(t, "https://example.test/a"): []byte("an example passage about examples and nothing else"),
+		pageID(t, "https://b.test/b"):       []byte("the roster band is stated as ten percent by this chart"),
+	}
+	units := FindUnits("The roster band is 25% ([a](https://example.test/a), [b](https://b.test/b)).")
+	var got *UnitCheck
+	for _, c := range CheckUnits(context.Background(), units, WebPageEvidence{Store: store}) {
+		if c.Specific.Value == "25%" {
+			c := c
+			got = &c
+		}
+	}
+	if got == nil || got.State != "unlocated" || got.Citation != "https://b.test/b" || !strings.Contains(got.Window, "roster band") {
+		t.Fatalf("second look should use the claim's own words (not the URL's) and report the page its window came from: %+v", got)
 	}
 }

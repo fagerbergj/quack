@@ -31,7 +31,7 @@ var (
 	tableRuleRe   = regexp.MustCompile(`^\s*\|?\s*:?-{2,}`)
 	bareURLRe     = regexp.MustCompile(`https?://[^\s)\]>"']+`)
 	refMarkerRe   = regexp.MustCompile(`\[(\d{1,3})\]`)
-	refDefRe      = regexp.MustCompile(`^\s*\[(\d{1,3})\]:?\s+(.+)$`) // the target is the first URL on the line
+	refDefRe      = regexp.MustCompile(`^\s*\[(\d{1,3})\]:?(?:\s+(.*))?$`) // the target is the first URL on the line; "[1]:" alone declares nothing
 	sentenceEndRe = regexp.MustCompile(`([.!?])\s+(?:[A-Z"'(\[]|\d)`)
 	percentRe     = regexp.MustCompile(`-?\d[\d,]*(?:\.\d+)?\s?%`)
 	currencyRe    = regexp.MustCompile(`(?:[$€£]\s?\d[\d,]*(?:\.\d+)?[KMBkmb]?|\d[\d,]*(?:\.\d+)?[KMBkmb]?\s?(?:USD|EUR|GBP))`)
@@ -110,7 +110,8 @@ func newUnit(kind, text string, pi int, refs map[string]string) Unit {
 // withoutLinks drops link targets and bare URLs so a date or number inside a
 // URL path is never taken for a claim's specific; the link text stays.
 func withoutLinks(text string) string {
-	text = markdownLinkRe.ReplaceAllStringFunc(text, func(m string) string { return m[:strings.Index(m, "](")+1] })
+	// A link's label is bibliographic ("[RSJ, \"Anatomy of a Tier Down\"](url)"): its quotes are titles, not claims.
+	text = markdownLinkRe.ReplaceAllStringFunc(text, func(m string) string { return strings.ReplaceAll(m[:strings.Index(m, "](")+1], "\"", "") })
 	text = refMarkerRe.ReplaceAllString(text, " ") // a [1] marker is a citation, not a figure
 	return bareURLRe.ReplaceAllString(text, " ")
 }
@@ -166,9 +167,13 @@ func referenceList(text string) map[string]string {
 		if m := refDefRe.FindStringSubmatch(ln); m != nil {
 			target := bareURLRe.FindString(m[2]) // "[1]: \"Title\" (https://...)" resolves to the URL
 			if target == "" {
-				target = strings.Fields(m[2])[0]
+				if f := strings.Fields(m[2]); len(f) > 0 {
+					target = f[0]
+				}
 			}
-			refs[m[1]] = strings.TrimRight(target, ".,;)")
+			if target != "" {
+				refs[m[1]] = strings.TrimRight(target, ".,;)")
+			}
 		}
 	}
 	return refs
@@ -198,8 +203,11 @@ func findSpecifics(text string) []Specific {
 		taken = text[m[1]-1:]
 	}
 	take := func(kind string, re *regexp.Regexp, group int) {
-		for _, m := range re.FindAllStringSubmatch(taken, -1) {
-			v := strings.TrimSpace(m[group])
+		for _, m := range re.FindAllStringSubmatchIndex(taken, -1) {
+			v := strings.TrimSpace(taken[m[2*group]:m[2*group+1]])
+			if strings.HasPrefix(v, "-") && m[2*group] > 0 && isDigit(taken[m[2*group]-1]) {
+				v = v[1:] // "15-25%" is a range, not minus 25
+			}
 			out = append(out, Specific{Kind: kind, Value: v, Norm: normalizeSpecific(kind, v)})
 		}
 		taken = re.ReplaceAllString(taken, " ")

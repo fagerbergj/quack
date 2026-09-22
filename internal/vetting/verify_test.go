@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"iter"
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
@@ -11,15 +12,25 @@ import (
 
 // textLLM answers every call with one fixed text; the verify tier has no tools to call.
 type textLLM struct {
-	text  string
-	calls *int
+	text    string
+	calls   *int
+	prompts *[]string // what each call was shown
 }
 
 func (textLLM) Name() string { return "text-llm" }
 
-func (m textLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+func (m textLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	if m.calls != nil {
 		*m.calls++
+	}
+	if m.prompts != nil {
+		var b []byte
+		for _, c := range req.Contents {
+			for _, p := range c.Parts {
+				b = append(b, p.Text...)
+			}
+		}
+		*m.prompts = append(*m.prompts, string(b))
 	}
 	return func(yield func(*model.LLMResponse, error) bool) {
 		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: m.text}}}}, nil)
@@ -82,5 +93,21 @@ func TestVerifyChecks_UnparseableAnswerIsNotChecked(t *testing.T) {
 	got := v.VerifyChecks(context.Background(), []UnitCheck{locatedCheck("a 3 b", "3", "number", "3", "a 3 b", "https://p")})
 	if got[0].Verdict.State != "not_checked" {
 		t.Fatalf("verdict = %+v, want not_checked, never a negative verdict from a failed verifier", got[0].Verdict)
+	}
+}
+
+func TestVerifyChecks_BatchesItemsOfOnePage(t *testing.T) {
+	calls := 0
+	var prompts []string
+	v := Verifier{LLM: textLLM{text: `{"items":[{"n":1,"state":"supported","quote":"a 3 b"},{"n":2,"state":"supported","quote":"c 4 d"}]}`, calls: &calls, prompts: &prompts}}
+	got := v.VerifyChecks(context.Background(), []UnitCheck{
+		locatedCheck("a 3 b", "3", "number", "3", "a 3 b", "https://p"),
+		locatedCheck("c 4 d", "4", "number", "4", "c 4 d", "https://p"),
+	})
+	if calls != 1 || got[0].Verdict.State != "supported" || got[1].Verdict.State != "supported" {
+		t.Fatalf("calls=%d verdicts=%s/%s, want one call for two items on one page, both supported", calls, got[0].Verdict.State, got[1].Verdict.State)
+	}
+	if !strings.Contains(prompts[0], "1. <Claim>a 3 b</Claim>") || !strings.Contains(prompts[0], "2. <Claim>c 4 d</Claim>") {
+		t.Fatalf("the one prompt must carry both items:\n%s", prompts[0])
 	}
 }
