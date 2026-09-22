@@ -62,7 +62,11 @@ type Config struct {
 	RubricSpecs map[string]criterionSpec
 	// RubricFixes: declared fix text per deterministic criterion the rubric
 	// names (rubricyaml.go's rubricDocFixes) - nil for a raw prose override.
-	RubricFixes      map[string]string
+	RubricFixes map[string]string
+
+	// RubricPassMarks: each criterion's own declared pass mark - informational
+	// only (buildEnvelope gates on one global Threshold); set only by judge replay.
+	RubricPassMarks  map[string]float64
 	RequireRetrieval bool // zero retrieval = ungrounded
 	ReadOnly         bool // no delivery tools - completion is review/exploration
 	IsReviewer       bool // stamped from node agent, never from task wording

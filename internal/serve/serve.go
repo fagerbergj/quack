@@ -2245,21 +2245,8 @@ func perAgentGateCfg(ctx context.Context, res *artifactsrc.Resolver, base vettin
 			"component", "serve", "agent", name, "bucket", ac.Memory.Bucket, "bundle", ac.Bundle)
 	}
 	c.MemoryRole = ac.Memory.Bucket
-	for _, tn := range ac.Tools {
-		if tn == "web_search" || tn == "web_fetch" {
-			c.RequireRetrieval = true
-			break
-		}
-	}
-	c.ReadOnly = true
-	for _, tn := range ac.Tools {
-		if tn == "git_push" {
-			c.ReadOnly = false
-			break
-		}
-	}
+	c.ReadOnly, c.RequireRetrieval = vetting.AgentToolPolicy(ac.Tools, ac.Acp)
 	if ac.Acp != nil {
-		c.ReadOnly = ac.Acp.ReadOnly
 		c.ExternalWorker = true
 	}
 	if override, specs, fixes, art, err := vetting.LoadBundleRubricSpecs(ctx, res, ac.Bundle); err != nil {

@@ -234,6 +234,23 @@ func rubricDocSpecs(doc rubricDoc) map[string]criterionSpec {
 	return out
 }
 
+// rubricDocPassMarks returns each criterion's own declared pass mark as a
+// 0-1 fraction of its scale - informational only; the live gate ignores it.
+func rubricDocPassMarks(doc rubricDoc) map[string]float64 {
+	out := make(map[string]float64, len(doc.Criteria))
+	for name, c := range doc.Criteria {
+		scale := doc.Scale
+		if c.Scale != nil {
+			scale = *c.Scale
+		}
+		if scale.Max <= scale.Min {
+			continue
+		}
+		out[name] = (scale.Pass - scale.Min) / (scale.Max - scale.Min)
+	}
+	return out
+}
+
 // rubricDocFixes returns the declared fix text for each deterministic
 // criterion in doc - mergeDeterministic (node.go) prefers this over its
 // static fallback table when the rubric names the criterion (#941 redirect: "deterministic checks now read definition/bands/fix from the rubric entry instead of declaring them in Go").

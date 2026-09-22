@@ -386,3 +386,49 @@ func (s *Session) EvaluationResults() []EvalScore {
 	copy(out, s.evalScores)
 	return out
 }
+
+// Streams returns every recorded (node, agent, round) stream key - the judge
+// replay's index into which rounds exist, beyond what NodeRuns collapses to one per node.
+func (s *Session) Streams() []StreamKey {
+	out := make([]StreamKey, 0, len(s.streams))
+	for k := range s.streams {
+		out = append(out, k)
+	}
+	return out
+}
+
+// ChatTurn is one recorded llm.call's Input/Output, verbatim JSON strings.
+type ChatTurn struct {
+	Input, Output string
+	At            time.Time
+}
+
+// ChatTurns returns key's recorded llm.call Input/Output pairs, oldest first
+// - a native worker or judge round's full tool-loop conversation, for a caller (judge replay) that needs more than NodeRuns' collapsed task/answer.
+func (s *Session) ChatTurns(key StreamKey) []ChatTurn {
+	st, ok := s.streams[key]
+	if !ok {
+		return nil
+	}
+	out := make([]ChatTurn, len(st.chat))
+	for i, ce := range st.chat {
+		out[i] = ChatTurn{Input: ce.Input, Output: ce.Output, At: ce.ts}
+	}
+	return out
+}
+
+// RoundTaskAnswer extracts key's task/answer the same way NodeRuns does per
+// round (chatRoundRun/acpRoundRun), without collapsing across a node's several rounds - judge replay needs each round's OWN answer, not just the node's latest.
+func (s *Session) RoundTaskAnswer(key StreamKey) (task, answer string, at time.Time, ok bool) {
+	st, exists := s.streams[key]
+	if !exists {
+		return "", "", time.Time{}, false
+	}
+	if rr, ok := chatRoundRun(key, st); ok {
+		return rr.task, rr.answer, rr.answerAt, true
+	}
+	if rr, ok := acpRoundRun(key, st); ok {
+		return rr.task, rr.answer, rr.answerAt, true
+	}
+	return "", "", time.Time{}, false
+}

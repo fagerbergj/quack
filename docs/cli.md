@@ -76,6 +76,7 @@ Runs can be recorded to the ledger and re-driven later - the basis for regressio
 | `quack ledger recover [chat-id] [--dry-run] [--json]` | Settle intents whose projection write is missing (the same pass the server runs at boot); `--dry-run` reports only. |
 | `quack ledger rebuild <chat-id> [--dry-run] [--json]` | Reconcile a chat's artifact metadata and SSE table against the ledger fold. |
 | `quack eval [--from-server <url>]` | Re-run a recorded conversation live with a swapped model and compare judge scores. `--from-server` names where to fetch the recording when the argument is a chat id - distinct from the global `--server` (which this command doesn't otherwise use; the eval run itself always runs from your local `quack.yaml`). |
+| `quack judge replay <chat-id-or-bundle.zip> [--node <id>] [--round N] [--rubric <path>] [--from-server <url>] [--deterministic-only] [--json]` | Re-grade a recording's already-judged rounds under the working-copy rubric, without re-running the agent or the original judge call - proves a rubric or gate-code change against real traffic in seconds instead of a rig cycle. Exits 2 when any criterion's pass/fail flips, 1 when a round could not be replayed or a filter matched nothing, 0 otherwise. `--deterministic-only` replays only the code-owned criteria and never touches a model. See [`docs/configuration/trust-gate.md`](configuration/trust-gate.md#judge-replay). |
 
 ## Datasets and experiments
 

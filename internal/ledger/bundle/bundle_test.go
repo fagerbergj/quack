@@ -410,3 +410,41 @@ func TestNodeRuns_DraftPlusRevise(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamsAndChatTurns(t *testing.T) {
+	path := writeJSONL(t, []entry{
+		chat(t0(), "node-a", "web-researcher", "worker-r0", "gpt", map[string]any{
+			"gen_ai.input.messages":  `[{"role":"user","parts":[{"text":"task"}]}]`,
+			"gen_ai.output.messages": `{"role":"model","parts":[{"text":"draft"}]}`,
+		}),
+		evalResult(t0().Add(time.Minute), "node-a", "judge-r1", "resp-1", "cites_sources", 1),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	key := StreamKey{Node: "node-a", Agent: "web-researcher", Round: "worker-r0"}
+	found := false
+	for _, k := range sess.Streams() {
+		if k == key {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Streams() = %v, want it to include %v", sess.Streams(), key)
+	}
+	turns := sess.ChatTurns(key)
+	if len(turns) != 1 {
+		t.Fatalf("ChatTurns len = %d, want 1", len(turns))
+	}
+	if turns[0].Output == "" {
+		t.Errorf("ChatTurns[0].Output is empty, want the recorded output JSON")
+	}
+	task, answer, _, ok := sess.RoundTaskAnswer(key)
+	if !ok || task != "task" || answer != "draft" {
+		t.Errorf("RoundTaskAnswer = (%q, %q, ok=%v), want (\"task\", \"draft\", true)", task, answer, ok)
+	}
+	if _, _, _, ok := sess.RoundTaskAnswer(StreamKey{Node: "missing"}); ok {
+		t.Errorf("RoundTaskAnswer on an unknown key: ok = true, want false")
+	}
+}
