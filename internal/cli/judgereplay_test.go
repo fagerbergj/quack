@@ -626,15 +626,19 @@ func TestRecordedForKeepsOnlyTheLatestRun(t *testing.T) {
 // sequenceJudgeVerdict submits a different answers_question score on each call -
 // the noisy judge --repeat exists to measure.
 type sequenceJudgeVerdict struct {
-	scores []int
-	calls  *int
+	scores  []int
+	calls   *int
+	prompts *[]string // what each call was shown; the spread is judge noise only if these match
 }
 
 func (sequenceJudgeVerdict) Name() string { return "sequence-judge" }
 
-func (m sequenceJudgeVerdict) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+func (m sequenceJudgeVerdict) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	score := m.scores[*m.calls%len(m.scores)]
 	*m.calls++
+	if m.prompts != nil {
+		*m.prompts = append(*m.prompts, requestText(req))
+	}
 	return func(yield func(*model.LLMResponse, error) bool) {
 		yield(&model.LLMResponse{
 			Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{
@@ -652,11 +656,15 @@ func TestRunJudgeReplayRepeatReportsSpread(t *testing.T) {
 		t.Fatalf("load bundle: %v", err)
 	}
 	calls := 0
-	judge := vetting.NewJudgeFactory(sequenceJudgeVerdict{scores: []int{3, 1, 3}, calls: &calls}, nil, nil)
+	var prompts []string
+	judge := vetting.NewJudgeFactory(sequenceJudgeVerdict{scores: []int{3, 1, 3}, calls: &calls, prompts: &prompts}, nil, nil)
 	var buf bytes.Buffer
 	RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), Repeat: 3}, judge, nil, false, &buf, true)
 	if calls != 3 {
 		t.Fatalf("judge calls = %d, want 3 (one per repeat)", calls)
+	}
+	if prompts[0] != prompts[1] || prompts[1] != prompts[2] {
+		t.Fatalf("each pass must judge the same rebuilt answer; prompts differ:\n%q\n%q\n%q", prompts[0], prompts[1], prompts[2])
 	}
 	reports := decodeReports(t, &buf)
 	var found *ReplayCriterionReport
@@ -671,4 +679,16 @@ func TestRunJudgeReplayRepeatReportsSpread(t *testing.T) {
 	if len(found.Samples) != 3 || found.SD == 0 || found.PassRate <= 0 || found.PassRate >= 1 {
 		t.Errorf("spread = samples %v mean %.2f sd %.2f pass %.2f, want three samples with a non-zero sd and a partial pass rate", found.Samples, found.Mean, found.SD, found.PassRate)
 	}
+}
+
+func requestText(req *model.LLMRequest) string {
+	var b strings.Builder
+	for _, c := range req.Contents {
+		for _, p := range c.Parts {
+			if p != nil {
+				b.WriteString(p.Text)
+			}
+		}
+	}
+	return b.String()
 }

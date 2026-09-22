@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -333,7 +334,8 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	}
 	rep.ArtifactsWritten = res.ArtifactsWritten
 	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
-	rep.Note = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
+	var incomplete bool
+	rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
 	for _, c := range rep.Criteria {
 		if c.Flipped {
 			rep.Flipped = true
@@ -342,19 +344,22 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	if rep.Flipped {
 		return rep, 2
 	}
+	if incomplete {
+		return rep, 1 // a requested measurement that lost a pass is not a clean run
+	}
 	return rep, 0
 }
 
 // noteRepeatSpread runs the --repeat measurement when it applies and folds a failed pass into the
 // round note, keeping replayOneRound's own branching flat.
-func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, res vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport, note string) string {
+func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, res vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport, note string) (string, bool) {
 	if jf == nil || repeat < 2 {
-		return note
+		return note, false
 	}
 	if err := addRepeatSpread(ctx, gc, jf, rc, res, repeat, crit); err != nil {
-		return strings.TrimSpace(note + " repeat: " + err.Error())
+		return strings.TrimSpace(note + " repeat: " + err.Error()), true
 	}
-	return note
+	return note, false
 }
 
 // addRepeatSpread judges the round repeat-1 more times and fills each judge-scored criterion's
@@ -478,7 +483,7 @@ func renderReplayReports(out io.Writer, reports []ReplayRoundReport) {
 				scoreCell(c.HasReplayed, c.ReplayedScore, c.ReplayedPassed), c.RubricMark, c.Threshold, c.Reason)
 			if len(c.Samples) > 1 {
 				fmt.Fprintf(out, "    spread n=%d mean=%.2f sd=%.2f min=%.2f max=%.2f pass=%.0f%%\n",
-					len(c.Samples), c.Mean, c.SD, minOf(c.Samples), maxOf(c.Samples), 100*c.PassRate)
+					len(c.Samples), c.Mean, c.SD, slices.Min(c.Samples), slices.Max(c.Samples), 100*c.PassRate)
 			}
 		}
 	}
@@ -505,20 +510,4 @@ func maxInt(a, b int) int {
 		return b
 	}
 	return a
-}
-
-func minOf(xs []float64) float64 {
-	m := xs[0]
-	for _, x := range xs[1:] {
-		m = math.Min(m, x)
-	}
-	return m
-}
-
-func maxOf(xs []float64) float64 {
-	m := xs[0]
-	for _, x := range xs[1:] {
-		m = math.Max(m, x)
-	}
-	return m
 }
