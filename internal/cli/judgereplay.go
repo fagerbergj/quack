@@ -71,9 +71,14 @@ func judgedRounds(sess *bundle.Session, opts ReplayOptions) []judgedRound {
 		byKey[key{sc.Node, sc.Round}] = true
 	}
 	agentOf := map[string]string{}
+	agentAt := map[string]time.Time{}
 	for _, k := range sess.Streams() {
-		if k.Node != "" && k.Agent != "" && k.Agent != "judge" {
-			agentOf[k.Node] = k.Agent
+		if k.Node == "" || k.Agent == "" || k.Agent == "judge" {
+			continue
+		}
+		// Streams() is map-ordered; a node with two worker agents resolves to the one that answered last.
+		if _, _, at, ok := sess.RoundTaskAnswer(k); ok && !at.Before(agentAt[k.Node]) {
+			agentOf[k.Node], agentAt[k.Node] = k.Agent, at
 		}
 	}
 	out := make([]judgedRound, 0, len(byKey))
@@ -260,6 +265,13 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	rounds := judgedRounds(sess, opts)
 	reports := make([]ReplayRoundReport, 0, len(rounds))
 	exit := 0
+	if len(rounds) == 0 && (opts.Node != "" || opts.Round != 0) {
+		// An empty filtered run must not read as a clean one: exit like a skipped round.
+		if !asJSON {
+			fmt.Fprintln(out, "the --node/--round filter matched no judged round; nothing was replayed")
+		}
+		exit = 1
+	}
 	cfgCache := map[string]vetting.Config{}
 	for _, jr := range rounds {
 		rep, code := replayOneRound(ctx, cfg, sess, jr, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cfgCache)

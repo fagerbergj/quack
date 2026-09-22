@@ -56,6 +56,10 @@ func newJudgeReplayCmd() *cobra.Command {
 
 func runJudgeReplay(cmd *cobra.Command, target string, node string, round int, rubricPath, sourceServer string, deterministicOnly, asJSON bool) error {
 	ctx := cmd.Context()
+	cfgPath := defaultConfigPath()
+	if _, err := os.Stat(cfgPath); err != nil {
+		return fmt.Errorf("no %s found - judge replay needs a LOCAL quack.yaml (run `quack init` first)", cfgPath)
+	}
 	bundlePath, cleanup, err := resolveBundle(ctx, sourceServer, target)
 	if err != nil {
 		return err
@@ -65,11 +69,6 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round int, r
 	sess, err := bundle.Load(bundlePath)
 	if err != nil {
 		return fmt.Errorf("judge replay: load bundle: %w", err)
-	}
-
-	cfgPath := defaultConfigPath()
-	if _, err := os.Stat(cfgPath); err != nil {
-		return fmt.Errorf("no %s found - judge replay needs a LOCAL quack.yaml (run `quack init` first)", cfgPath)
 	}
 	cfg, err := config.LoadDeferringAgentCompleteness(cfgPath)
 	if err != nil {

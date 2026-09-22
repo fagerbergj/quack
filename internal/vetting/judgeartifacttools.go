@@ -154,3 +154,9 @@ func judgeWindowLines(lines []string, offset, want, total int) string {
 	}
 	return fmt.Sprintf("%s\n\n[lines %d-%d of %d (end).]", body, start, end, total)
 }
+
+// BoundJudgeArtifactRead shapes an artifact body for a judge exactly as the live
+// read_artifact tool does (24KB text cap, 500-line windows, base64 for binary).
+func BoundJudgeArtifactRead(data []byte, mime string, offset, lines int) string {
+	return shapeJudgeReadArtifact(data, mime, judgeReadArtifactArgs{Offset: offset, Lines: lines})
+}

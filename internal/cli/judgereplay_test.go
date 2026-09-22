@@ -348,9 +348,9 @@ func TestRunJudgeReplayNodeAndRoundFilters(t *testing.T) {
 	}
 
 	buf.Reset()
-	RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{Node: "no-such-node", RubricPath: rubricPath, DeterministicOnly: true}, nil, nil, false, &buf, true)
-	if reports := decodeReports(t, &buf); len(reports) != 0 {
-		t.Fatalf("--node no-such-node: %d report(s), want 0: %s", len(reports), buf.String())
+	code := RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{Node: "no-such-node", RubricPath: rubricPath, DeterministicOnly: true}, nil, nil, false, &buf, true)
+	if reports := decodeReports(t, &buf); len(reports) != 0 || code != 1 {
+		t.Fatalf("--node no-such-node: %d report(s) exit %d, want 0 reports and exit 1 (an empty filter is not a clean run): %s", len(reports), code, buf.String())
 	}
 
 	buf.Reset()

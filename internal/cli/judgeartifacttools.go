@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/fagerbergj/quack/internal/vetting"
 	"strings"
 
 	"google.golang.org/adk/v2/agent"
@@ -43,7 +44,7 @@ func RESTArtifactTools(c *Client, chatID string) ([]tool.Tool, error) {
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
-			return windowLines(string(body), a.Offset, a.Lines), nil
+			return vetting.BoundJudgeArtifactRead(body, "", a.Offset, a.Lines), nil
 		},
 	)
 	if err != nil {

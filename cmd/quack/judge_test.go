@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestRunJudgeReplay_NoConfig(t *testing.T) {
 	}
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
-	if err := runJudgeReplay(c, bundlePath, "", 0, "", "", true, false); err == nil {
+	if err := runJudgeReplay(c, bundlePath, "", 0, "", "", true, false); err == nil || !strings.Contains(err.Error(), "quack init") {
 		t.Fatal("runJudgeReplay with no quack.yaml: err = nil, want an error naming `quack init`")
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/fagerbergj/quack/internal/stream"
+	"sort"
 	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -47,6 +49,9 @@ type ReplayRoundResult struct {
 // judge nil replays deterministic criteria only, never touching a model.
 func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayCase) (ReplayRoundResult, error) {
 	cfg.Task = rc.Task
+	// Live judges the worker's reply after stream.StripThinking (runWorkerNode);
+	// the recording holds the raw output, so strip it here or clean_output diverges.
+	rc.Answer = stream.StripThinking(rc.Answer)
 	act, err := rebuildWorkerActivity(ctx, rc.WorkerTurns, rc.NodeID)
 	if err != nil {
 		return ReplayRoundResult{}, err
@@ -55,11 +60,19 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	res := ReplayRoundResult{Threshold: cfg.Threshold, ArtifactsWritten: act.artifactsWritten}
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
+	// Environment-only failures here are the replay host's, not the round's; the
+	// live judge never saw them, so they must not reach the judge prompt either.
+	judgeDet := map[string]criterionScore{}
+	for name, c := range det {
+		if !EnvironmentOnlyCriteria[name] {
+			judgeDet[name] = c
+		}
+	}
 
 	v := verdict{}
 	if judge != nil {
 		question := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{Text: rc.Task}}}
-		v, err = runJudgeAgent(ctx, judge, cfg, question, rc.Answer, act, det, nil, func(*genai.Part) bool { return true })
+		v, err = runJudgeAgent(ctx, judge, cfg, question, rc.Answer, act, judgeDet, nil, func(*genai.Part) bool { return true })
 		if err != nil {
 			return res, fmt.Errorf("vetting: replay judge round: %w", err)
 		}
@@ -71,6 +84,7 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	for name := range v.Criteria {
 		names = append(names, name)
 	}
+	sort.Strings(names) // stable report order, so two replays of one chat diff cleanly
 	res.Criteria = make([]ReplayCriterion, 0, len(names))
 	for _, name := range names {
 		c := v.Criteria[name]
