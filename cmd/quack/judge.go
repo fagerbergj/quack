@@ -78,6 +78,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round int, r
 
 	var judge vetting.JudgeFactory
 	var judgeArtifactTools []tool.Tool
+	var hasRealArtifactAccess bool
 	if !deterministicOnly {
 		judge, err = cli.BuildReplayJudge(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
 			return inference.NewModelWithEffort(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
@@ -85,26 +86,28 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round int, r
 		if err != nil {
 			return err
 		}
-		if judgeArtifactTools, err = judgeArtifactToolsFor(ctx, sourceServer, target); err != nil {
+		if judgeArtifactTools, hasRealArtifactAccess, err = judgeArtifactToolsFor(ctx, sourceServer, target); err != nil {
 			return err
 		}
 	}
 
 	opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly}
-	code := cli.RunJudgeReplay(ctx, cfg, sess, opts, judge, judgeArtifactTools, cmd.OutOrStdout(), asJSON)
+	code := cli.RunJudgeReplay(ctx, cfg, sess, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cmd.OutOrStdout(), asJSON)
 	exitIfNonZero(code)
 	return nil
 }
 
-// judgeArtifactToolsFor gives the judge read access to target's own recorded
-// artifacts over sourceServer's REST API - nil for a local bundle file.
-func judgeArtifactToolsFor(ctx context.Context, sourceServer, target string) ([]tool.Tool, error) {
-	if st, err := os.Stat(target); err == nil && !st.IsDir() {
-		return nil, nil
+// judgeArtifactToolsFor gives the judge real REST read access for a chat id,
+// or (a local bundle file) a stub answering "no artifacts available".
+func judgeArtifactToolsFor(ctx context.Context, sourceServer, target string) (tools []tool.Tool, real bool, err error) {
+	if st, statErr := os.Stat(target); statErr == nil && !st.IsDir() {
+		tools, err = cli.StubArtifactTools()
+		return tools, false, err
 	}
 	c, err := cli.NewClient(ctx, sourceServer)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return cli.RESTArtifactTools(c, target)
+	tools, err = cli.RESTArtifactTools(c, target)
+	return tools, true, err
 }

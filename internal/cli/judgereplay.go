@@ -196,11 +196,19 @@ func workerTurnsFor(sess *bundle.Session, jr judgedRound) (task, answer string, 
 	return rounds[0].task, rounds[len(rounds)-1].answer, activityTurnsBefore(sess, jr.at), true
 }
 
-// recordedFor returns jr's recorded per-criterion scores.
+// recordedFor returns jr's recorded per-criterion scores from only the
+// latest run (grouped by ResponseID) - a re-run can share the same round label.
 func recordedFor(sess *bundle.Session, jr judgedRound) map[string]float64 {
+	var latestResponseID string
+	var latestAt time.Time
+	for _, sc := range sess.EvaluationResults() {
+		if sc.Node == jr.node && sc.Round == jr.judgeRound && !sc.Timestamp.Before(latestAt) {
+			latestResponseID, latestAt = sc.ResponseID, sc.Timestamp
+		}
+	}
 	out := map[string]float64{}
 	for _, sc := range sess.EvaluationResults() {
-		if sc.Node == jr.node && sc.Round == jr.judgeRound {
+		if sc.Node == jr.node && sc.Round == jr.judgeRound && sc.ResponseID == latestResponseID {
 			out[sc.Criterion] = sc.Score
 		}
 	}
@@ -249,15 +257,15 @@ func BuildReplayJudge(cfg *config.Config, newModel func(config.ProviderConfig, s
 	return vetting.NewJudgeFactory(judge, nil, nil), nil
 }
 
-// RunJudgeReplay replays opts' judged rounds; judgeArtifactTools nil (a local
-// bundle) replays an artifact-writing round deterministic-only. Exit != 0 on any flip.
-func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Session, opts ReplayOptions, judge vetting.JudgeFactory, judgeArtifactTools []tool.Tool, out io.Writer, asJSON bool) int {
+// RunJudgeReplay replays opts' judged rounds. hasRealArtifactAccess false (a
+// local bundle) replays an artifact-writing round deterministic-only. Exit != 0 on any flip.
+func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Session, opts ReplayOptions, judge vetting.JudgeFactory, judgeArtifactTools []tool.Tool, hasRealArtifactAccess bool, out io.Writer, asJSON bool) int {
 	rounds := judgedRounds(sess, opts)
 	reports := make([]ReplayRoundReport, 0, len(rounds))
 	exit := 0
 	cfgCache := map[string]vetting.Config{}
 	for _, jr := range rounds {
-		rep, code := replayOneRound(ctx, cfg, sess, jr, opts, judge, judgeArtifactTools, cfgCache)
+		rep, code := replayOneRound(ctx, cfg, sess, jr, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cfgCache)
 		exit = maxInt(exit, code)
 		reports = append(reports, rep)
 	}
@@ -271,7 +279,7 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 
 // replayOneRound replays jr, returning its report and an exit code
 // contribution (0 clean, 1 skipped/error, 2 a flip).
-func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Session, jr judgedRound, opts ReplayOptions, judge vetting.JudgeFactory, judgeArtifactTools []tool.Tool, cfgCache map[string]vetting.Config) (ReplayRoundReport, int) {
+func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Session, jr judgedRound, opts ReplayOptions, judge vetting.JudgeFactory, judgeArtifactTools []tool.Tool, hasRealArtifactAccess bool, cfgCache map[string]vetting.Config) (ReplayRoundReport, int) {
 	rep := ReplayRoundReport{Node: jr.node, Agent: jr.agent, Round: jr.judgeRound}
 	task, answer, turns, ok := workerTurnsFor(sess, jr)
 	if !ok {
@@ -294,13 +302,12 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	if opts.DeterministicOnly {
 		jf = nil
 	}
-	if jf != nil && judgeArtifactTools == nil {
-		// Pre-check deterministic-only (cheap: no model call) to see whether
-		// this round's activity wrote an artifact the judge can't read here.
-		pre, err := vetting.ReplayRound(ctx, gc, nil, rc)
-		if err == nil && len(pre.ArtifactsWritten) > 0 {
+	if jf != nil && !hasRealArtifactAccess {
+		// Cheap pre-check: did this round write an artifact the judge can't read here?
+		written, err := vetting.RebuildActivityArtifacts(ctx, gc, rc)
+		if err == nil && len(written) > 0 {
 			jf = nil
-			rep.Note = fmt.Sprintf("wrote artifact(s) %v; no artifact tools available (local bundle - use --from-server to give the judge read access), replayed deterministic-only", pre.ArtifactsWritten)
+			rep.Note = fmt.Sprintf("wrote artifact(s) %v; no real artifact access (local bundle - use --from-server), replayed deterministic-only", written)
 		}
 	}
 	res, err := vetting.ReplayRound(ctx, gc, jf, rc)
@@ -321,8 +328,8 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	return rep, 0
 }
 
-// compareCriteria pairs replayed criteria with recorded, deciding pass/fail by
-// res.Threshold; judgeRan false means an absent judge-scored criterion is expected, not a flip.
+// compareCriteria decides pass/fail by res.Threshold: an environment-only
+// recorded criterion is always informational; an added failing one is its own flip class.
 func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64, judgeRan bool) []ReplayCriterionReport {
 	out := make([]ReplayCriterionReport, 0, len(res.Criteria)+len(recorded))
 	seen := map[string]bool{}
@@ -331,10 +338,17 @@ func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64,
 		rec, hasRec := recorded[c.Name]
 		recPass := hasRec && rec >= res.Threshold
 		replPass := c.Score >= res.Threshold
+		reason, flipped := c.Reason, recPass != replPass
+		if !hasRec {
+			flipped = !replPass
+			if flipped {
+				reason = "added by the working-copy rubric, and fails: " + reason
+			}
+		}
 		out = append(out, ReplayCriterionReport{
 			Name: c.Name, HasRecorded: hasRec, RecordedScore: rec, HasReplayed: true, ReplayedScore: c.Score,
 			RubricMark: c.RubricMark, Threshold: res.Threshold, RecordedPassed: recPass, ReplayedPassed: replPass,
-			Deterministic: c.Deterministic, Reason: c.Reason, Flipped: hasRec && recPass != replPass,
+			Deterministic: c.Deterministic, Reason: reason, Flipped: flipped,
 		})
 	}
 	extra := make([]string, 0)
@@ -347,7 +361,10 @@ func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64,
 	for _, name := range extra {
 		rec := recorded[name]
 		reason, flipped := "recorded, not replayed (judge not run this replay)", false
-		if judgeRan {
+		switch {
+		case vetting.EnvironmentOnlyCriteria[name]:
+			reason, flipped = "recorded, not replayed (not rebuildable from a recording)", false
+		case judgeRan:
 			reason, flipped = "recorded, not replayed", true
 		}
 		out = append(out, ReplayCriterionReport{

@@ -82,6 +82,17 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	return res, nil
 }
 
+// RebuildActivityArtifacts rebuilds rc's worker activity and returns only the
+// artifacts it wrote - cheaper than ReplayRound for that decision alone.
+func RebuildActivityArtifacts(ctx context.Context, cfg Config, rc ReplayCase) ([]string, error) {
+	act, err := rebuildWorkerActivity(ctx, rc.WorkerTurns, rc.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	augmentFromAnswer(&act, cfg, rc.Answer)
+	return act.artifactsWritten, nil
+}
+
 // rebuildWorkerActivity replays turns' recorded contents through a fresh
 // in-memory session, scanned by the gate's own activityFromSessionAt.
 func rebuildWorkerActivity(ctx context.Context, turns []RawTurn, nodeDir string) (workerActivity, error) {

@@ -2275,6 +2275,13 @@ var deterministicCriterionSpec = map[string]struct {
 	"artifact_valid":               {"A node whose artifact kind has a registered schema must write content that satisfies it.", "Fix the violations named in the failure and write/edit the artifact again."},
 }
 
+// EnvironmentOnlyCriteria names deterministic criteria that need a live
+// workspace/checks/reviewer/artifact context - never rebuildable from a recording alone.
+var EnvironmentOnlyCriteria = map[string]bool{
+	"checks_pass": true, "no_vacuous_tests": true, "delivery_complete": true,
+	"review_posted": true, "behaviour_verified": true, "artifact_valid": true,
+}
+
 // citesSourcesBands: the cites_sources tier legend, moved out of the reason
 // string and into structured bands per #941 (must stop being re-emitted per round).
 var citesSourcesBands = []bandSpec{
