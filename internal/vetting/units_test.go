@@ -88,3 +88,10 @@ func TestFindUnits_IgnoresHeadingsLinkTargetsAndQualifiers(t *testing.T) {
 		t.Fatalf("specifics = %v, want %q (no date from the URL, no 10 from 10-team)", norms, want)
 	}
 }
+
+func TestFindUnits_SectionNumbersAreNotFigures(t *testing.T) {
+	units := FindUnits("**2.3 Consolidate or hold** the star in a 12-team league, up 40%.")
+	if len(units) != 1 || len(units[0].Specifics) != 1 || units[0].Specifics[0].Norm != "40" {
+		t.Fatalf("specifics = %+v, want only the 40%% (2.3 numbers the section, 12-team qualifies)", units)
+	}
+}

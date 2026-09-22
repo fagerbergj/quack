@@ -25,6 +25,7 @@ type Specific struct {
 var (
 	fenceRe       = regexp.MustCompile("(?s)```.*?```")
 	headingRe     = regexp.MustCompile(`^\s*#{1,6}\s`)
+	sectionNumRe  = regexp.MustCompile(`^\s*\**\d+(?:\.\d+)+\.?\**\s+`)
 	listItemRe    = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 	tableRowRe    = regexp.MustCompile(`^\s*\|.*\|\s*$`)
 	tableRuleRe   = regexp.MustCompile(`^\s*\|?\s*:?-{2,}`)
@@ -187,7 +188,7 @@ func isReferencesOnly(lines []string) bool {
 // number, a currency amount is not also a number, a date's digits are not numbers.
 func findSpecifics(text string) []Specific {
 	var out []Specific
-	taken := text
+	taken := sectionNumRe.ReplaceAllString(text, "") // "2.3 Consolidate..." numbers a section, it is not a figure
 	take := func(kind string, re *regexp.Regexp, group int) {
 		for _, m := range re.FindAllStringSubmatch(taken, -1) {
 			v := strings.TrimSpace(m[group])
