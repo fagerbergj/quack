@@ -333,11 +333,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	}
 	rep.ArtifactsWritten = res.ArtifactsWritten
 	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
-	if jf != nil && opts.Repeat > 1 {
-		if err := addRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria); err != nil {
-			rep.Note = strings.TrimSpace(rep.Note + " repeat: " + err.Error())
-		}
-	}
+	rep.Note = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
 	for _, c := range rep.Criteria {
 		if c.Flipped {
 			rep.Flipped = true
@@ -347,6 +343,18 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		return rep, 2
 	}
 	return rep, 0
+}
+
+// noteRepeatSpread runs the --repeat measurement when it applies and folds a failed pass into the
+// round note, keeping replayOneRound's own branching flat.
+func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, res vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport, note string) string {
+	if jf == nil || repeat < 2 {
+		return note
+	}
+	if err := addRepeatSpread(ctx, gc, jf, rc, res, repeat, crit); err != nil {
+		return strings.TrimSpace(note + " repeat: " + err.Error())
+	}
+	return note
 }
 
 // addRepeatSpread judges the round repeat-1 more times and fills each judge-scored criterion's
