@@ -107,8 +107,10 @@ func TestLocateQuote_SegmentsAndPunctuation(t *testing.T) {
 }
 
 func TestLocateSpecific_SignedFigureAndSecondCitation(t *testing.T) {
-	if _, ok := LocateSpecific("the deficit was -12 last year", Specific{Kind: "number", Norm: "12"}); ok {
-		t.Error("12 must not locate inside -12")
+	for _, page := range []string{"the deficit was -12 last year", "totals:\n-12 on the year", "(-12)"} {
+		if _, ok := LocateSpecific(page, Specific{Kind: "number", Norm: "12"}); ok {
+			t.Errorf("12 must not locate inside -12 in %q", page)
+		}
 	}
 	store := fakePages{pageID(t, "https://a.example/x"): []byte("nothing here"), pageID(t, "https://b.example/y"): []byte("growth of 30% in 2024")}
 	units := FindUnits("Growth was 30% ([a](https://a.example/x), [b](https://b.example/y)).")

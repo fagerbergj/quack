@@ -84,3 +84,15 @@ func TestVerifyChecks_UnparseableAnswerIsNotChecked(t *testing.T) {
 		t.Fatalf("verdict = %+v, want not_checked, never a negative verdict from a failed verifier", got[0].Verdict)
 	}
 }
+
+func TestVerifyChecks_BatchesItemsOfOnePage(t *testing.T) {
+	calls := 0
+	v := Verifier{LLM: textLLM{text: `{"items":[{"n":1,"state":"supported","quote":"a 3 b"},{"n":2,"state":"supported","quote":"c 4 d"}]}`, calls: &calls}}
+	got := v.VerifyChecks(context.Background(), []UnitCheck{
+		locatedCheck("a 3 b", "3", "number", "3", "a 3 b", "https://p"),
+		locatedCheck("c 4 d", "4", "number", "4", "c 4 d", "https://p"),
+	})
+	if calls != 1 || got[0].Verdict.State != "supported" || got[1].Verdict.State != "supported" {
+		t.Fatalf("calls=%d verdicts=%s/%s, want one call for two items on one page, both supported", calls, got[0].Verdict.State, got[1].Verdict.State)
+	}
+}

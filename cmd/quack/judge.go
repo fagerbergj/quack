@@ -94,11 +94,17 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repea
 
 	opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly, Repeat: repeat}
 	opts.Pages = replayPagesFor(ctx, target, sourceServer)
-	if verify && opts.Pages != nil {
+	if verify {
+		if opts.Pages == nil {
+			return fmt.Errorf("--verify needs stored pages: replay a chat id with --from-server, not a local bundle")
+		}
 		if opts.Verifier, err = cli.BuildReplayVerifier(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
 			return inference.NewModelWithEffort(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
 		}); err != nil {
 			return err
+		}
+		if opts.Verifier == nil {
+			return fmt.Errorf("--verify needs gates.judge configured in %s", cfgPath)
 		}
 	}
 	code := cli.RunJudgeReplay(ctx, cfg, sess, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cmd.OutOrStdout(), asJSON)

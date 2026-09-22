@@ -250,7 +250,7 @@ func partOfNumber(hay string, j, dir int) bool {
 	if j < 0 || j >= len(hay) {
 		return false
 	}
-	if isDigit(hay[j]) || (dir < 0 && hay[j] == '-' && (j == 0 || hay[j-1] == ' ')) {
+	if isDigit(hay[j]) || (dir < 0 && hay[j] == '-' && (j == 0 || hay[j-1] == ' ' || hay[j-1] == '\n' || hay[j-1] == '\t' || hay[j-1] == '(')) {
 		return true // a sign belongs to the figure: 12 must not match inside -12
 	}
 	k := j + dir
