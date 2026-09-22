@@ -38,8 +38,8 @@ func (v Verifier) VerifyChecks(ctx context.Context, checks []UnitCheck) []UnitCh
 	}
 	byPage := map[string][]int{}
 	for i, c := range checks {
-		if c.State == "located" {
-			byPage[c.Citation] = append(byPage[c.Citation], i)
+		if c.State == "located" || (c.State == "unlocated" && c.Window != "") {
+			byPage[c.Citation] = append(byPage[c.Citation], i) // an unlocated figure with a key-term window gets its second look
 		}
 	}
 	pages := make([]string, 0, len(byPage))

@@ -198,8 +198,11 @@ func findSpecifics(text string) []Specific {
 		taken = text[m[1]-1:]
 	}
 	take := func(kind string, re *regexp.Regexp, group int) {
-		for _, m := range re.FindAllStringSubmatch(taken, -1) {
-			v := strings.TrimSpace(m[group])
+		for _, m := range re.FindAllStringSubmatchIndex(taken, -1) {
+			v := strings.TrimSpace(taken[m[2*group]:m[2*group+1]])
+			if strings.HasPrefix(v, "-") && m[2*group] > 0 && isDigit(taken[m[2*group]-1]) {
+				v = v[1:] // "15-25%" is a range, not minus 25
+			}
 			out = append(out, Specific{Kind: kind, Value: v, Norm: normalizeSpecific(kind, v)})
 		}
 		taken = re.ReplaceAllString(taken, " ")

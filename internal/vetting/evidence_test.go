@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"testing"
 
@@ -114,5 +115,23 @@ func TestLocateSpecific_SignedFigureAndSecondCitation(t *testing.T) {
 	checks := CheckUnits(context.Background(), units, WebPageEvidence{Store: store})
 	if len(checks) != 1 || checks[0].State != "located" || checks[0].Citation != "https://b.example/y" {
 		t.Fatalf("checks = %+v, want the figure located through the second citation", checks)
+	}
+}
+
+func TestLocateSpecific_NumberWordsAndSecondLookWindow(t *testing.T) {
+	if _, ok := LocateSpecific("only three of nine players saw more touches", Specific{Kind: "number", Norm: "9"}); !ok {
+		t.Error("a spelled-out nine should locate the figure 9")
+	}
+	store := fakePages{pageID(t, "https://p.example/x"): []byte("The roster-need band is stated as ten to fifteen percent of parity by most charts.")}
+	units := FindUnits("Charts allow a 15-25% roster-need band ([c](https://p.example/x)).")
+	checks := CheckUnits(context.Background(), units, WebPageEvidence{Store: store})
+	var got *UnitCheck
+	for i := range checks {
+		if checks[i].Specific.Value == "25%" {
+			got = &checks[i]
+		}
+	}
+	if got == nil || got.State != "unlocated" || !strings.Contains(got.Window, "parity") {
+		t.Fatalf("25%% should be unlocated with a key-term window for the second look: %+v", got)
 	}
 }
