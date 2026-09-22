@@ -622,3 +622,53 @@ func TestRecordedForKeepsOnlyTheLatestRun(t *testing.T) {
 		t.Fatalf("recorded = %+v, want only the re-run's cites_sources=0.9 (the first run's two scores precede its judge turn)", rec)
 	}
 }
+
+// sequenceJudgeVerdict submits a different answers_question score on each call -
+// the noisy judge --repeat exists to measure.
+type sequenceJudgeVerdict struct {
+	scores []int
+	calls  *int
+}
+
+func (sequenceJudgeVerdict) Name() string { return "sequence-judge" }
+
+func (m sequenceJudgeVerdict) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+	score := m.scores[*m.calls%len(m.scores)]
+	*m.calls++
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{
+			Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{
+				Name: "submit_verdict", Args: map[string]any{"score": score, "feedback": "", "criteria": map[string]any{"answers_question": map[string]any{"score": score}}},
+			}}}},
+			FinishReason: genai.FinishReasonStop, TurnComplete: true,
+		}, nil)
+	}
+}
+
+func TestRunJudgeReplayRepeatReportsSpread(t *testing.T) {
+	ctx := context.Background()
+	sess, err := bundle.Load(buildFixtureBundle(t, "worker-r0", map[string]float64{"cites_sources": 1.0}))
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	calls := 0
+	judge := vetting.NewJudgeFactory(sequenceJudgeVerdict{scores: []int{3, 1, 3}, calls: &calls}, nil, nil)
+	var buf bytes.Buffer
+	RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), Repeat: 3}, judge, nil, false, &buf, true)
+	if calls != 3 {
+		t.Fatalf("judge calls = %d, want 3 (one per repeat)", calls)
+	}
+	reports := decodeReports(t, &buf)
+	var found *ReplayCriterionReport
+	for i, c := range reports[0].Criteria {
+		if c.Name == "answers_question" {
+			found = &reports[0].Criteria[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no answers_question in %s", buf.String())
+	}
+	if len(found.Samples) != 3 || found.SD == 0 || found.PassRate <= 0 || found.PassRate >= 1 {
+		t.Errorf("spread = samples %v mean %.2f sd %.2f pass %.2f, want three samples with a non-zero sd and a partial pass rate", found.Samples, found.Mean, found.SD, found.PassRate)
+	}
+}

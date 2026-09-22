@@ -26,7 +26,7 @@ func newJudgeCmd() *cobra.Command {
 
 func newJudgeReplayCmd() *cobra.Command {
 	var node, rubricPath, sourceServer string
-	var round int
+	var round, repeat int
 	var deterministicOnly, asJSON bool
 	c := &cobra.Command{
 		Use:   "replay <chat-id-or-bundle.zip>",
@@ -42,7 +42,7 @@ func newJudgeReplayCmd() *cobra.Command {
 			"skips the judge model entirely, so it runs with no model endpoint configured.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJudgeReplay(cmd, args[0], node, round, rubricPath, sourceServer, deterministicOnly, asJSON)
+			return runJudgeReplay(cmd, args[0], node, round, repeat, rubricPath, sourceServer, deterministicOnly, asJSON)
 		},
 	}
 	c.Flags().StringVar(&node, "node", "", "only this node id (default: every judged node)")
@@ -50,11 +50,12 @@ func newJudgeReplayCmd() *cobra.Command {
 	c.Flags().StringVar(&rubricPath, "rubric", "", "rubric.yaml to replay against (default: the graded node's own bundled rubric)")
 	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: active registered server)")
 	c.Flags().BoolVar(&deterministicOnly, "deterministic-only", false, "replay only the code-owned criteria; never touches the judge model")
+	c.Flags().IntVar(&repeat, "repeat", 1, "judge each round N times and print every judge-scored criterion's spread (mean, sd, pass rate)")
 	asJSONFlag(c, &asJSON)
 	return c
 }
 
-func runJudgeReplay(cmd *cobra.Command, target string, node string, round int, rubricPath, sourceServer string, deterministicOnly, asJSON bool) error {
+func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repeat int, rubricPath, sourceServer string, deterministicOnly, asJSON bool) error {
 	ctx := cmd.Context()
 	cfgPath := defaultConfigPath()
 	if _, err := os.Stat(cfgPath); err != nil {
@@ -90,7 +91,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round int, r
 		}
 	}
 
-	opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly}
+	opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly, Repeat: repeat}
 	code := cli.RunJudgeReplay(ctx, cfg, sess, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cmd.OutOrStdout(), asJSON)
 	exitIfNonZero(code)
 	return nil
