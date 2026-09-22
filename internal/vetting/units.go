@@ -25,13 +25,13 @@ type Specific struct {
 var (
 	fenceRe       = regexp.MustCompile("(?s)```.*?```")
 	headingRe     = regexp.MustCompile(`^\s*#{1,6}\s`)
-	sectionNumRe  = regexp.MustCompile(`^\s*\**\d+(?:\.\d+)+\.?\**\s+`)
+	sectionNumRe  = regexp.MustCompile(`^\s*\**\d+(?:\.\d+)+\.?\**\s+(?:\*\*)?[A-Z]`) // "2.3 Consolidate", never "2.5 years"
 	listItemRe    = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+`)
 	tableRowRe    = regexp.MustCompile(`^\s*\|.*\|\s*$`)
 	tableRuleRe   = regexp.MustCompile(`^\s*\|?\s*:?-{2,}`)
 	bareURLRe     = regexp.MustCompile(`https?://[^\s)\]>"']+`)
 	refMarkerRe   = regexp.MustCompile(`\[(\d{1,3})\]`)
-	refDefRe      = regexp.MustCompile(`^\s*\[(\d{1,3})\]:?\s+(\S+)`)
+	refDefRe      = regexp.MustCompile(`^\s*\[(\d{1,3})\]:?\s+(.+)$`) // the target is the first URL on the line
 	sentenceEndRe = regexp.MustCompile(`([.!?])\s+(?:[A-Z"'(\[]|\d)`)
 	percentRe     = regexp.MustCompile(`-?\d[\d,]*(?:\.\d+)?\s?%`)
 	currencyRe    = regexp.MustCompile(`(?:[$€£]\s?\d[\d,]*(?:\.\d+)?[KMBkmb]?|\d[\d,]*(?:\.\d+)?[KMBkmb]?\s?(?:USD|EUR|GBP))`)
@@ -111,6 +111,7 @@ func newUnit(kind, text string, pi int, refs map[string]string) Unit {
 // URL path is never taken for a claim's specific; the link text stays.
 func withoutLinks(text string) string {
 	text = markdownLinkRe.ReplaceAllStringFunc(text, func(m string) string { return m[:strings.Index(m, "](")+1] })
+	text = refMarkerRe.ReplaceAllString(text, " ") // a [1] marker is a citation, not a figure
 	return bareURLRe.ReplaceAllString(text, " ")
 }
 
@@ -163,7 +164,11 @@ func referenceList(text string) map[string]string {
 	refs := map[string]string{}
 	for _, ln := range strings.Split(text, "\n") {
 		if m := refDefRe.FindStringSubmatch(ln); m != nil {
-			refs[m[1]] = strings.TrimRight(m[2], ".,;")
+			target := bareURLRe.FindString(m[2]) // "[1]: \"Title\" (https://...)" resolves to the URL
+			if target == "" {
+				target = strings.Fields(m[2])[0]
+			}
+			refs[m[1]] = strings.TrimRight(target, ".,;)")
 		}
 	}
 	return refs
@@ -188,7 +193,10 @@ func isReferencesOnly(lines []string) bool {
 // number, a currency amount is not also a number, a date's digits are not numbers.
 func findSpecifics(text string) []Specific {
 	var out []Specific
-	taken := sectionNumRe.ReplaceAllString(text, "") // "2.3 Consolidate..." numbers a section, it is not a figure
+	taken := text
+	if m := sectionNumRe.FindStringIndex(text); m != nil { // "2.3 Consolidate..." numbers a section, it is not a figure
+		taken = text[m[1]-1:]
+	}
 	take := func(kind string, re *regexp.Regexp, group int) {
 		for _, m := range re.FindAllStringSubmatch(taken, -1) {
 			v := strings.TrimSpace(m[group])

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
@@ -27,6 +28,7 @@ type ReplayOptions struct {
 	DeterministicOnly bool               // skip the judge model entirely
 	Repeat            int                // judge each round this many times and report the spread (1 = once)
 	Pages             vetting.PageLoader // stored web pages for the shadow locate tier; nil skips it
+	Verifier          *vetting.Verifier  // the shadow verify tier over located specifics; nil skips it
 }
 
 // ReplayCriterionReport is one criterion's recorded-vs-replayed comparison.
@@ -75,6 +77,8 @@ type UnitRow struct {
 	Citation string `json:"citation,omitempty"`
 	State    string `json:"state"`
 	Window   string `json:"window,omitempty"`
+	Verify   string `json:"verify,omitempty"` // the verify tier's state, when it ran
+	Quote    string `json:"quote,omitempty"`
 }
 
 // judgedRound is one (node, judge round) this bundle recorded a verdict for.
@@ -280,6 +284,23 @@ func BuildReplayJudge(cfg *config.Config, newModel func(config.ProviderConfig, s
 	return vetting.NewJudgeFactory(judge, nil, nil), nil
 }
 
+// BuildReplayVerifier builds the configured judge model as the tool-less verify
+// tier; nil, nil when no judge is configured.
+func BuildReplayVerifier(cfg *config.Config, newModel func(config.ProviderConfig, string) (model.LLM, error)) (*vetting.Verifier, error) {
+	if !cfg.Gates.JudgeEnabled() {
+		return nil, nil
+	}
+	jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
+	if !ok {
+		return nil, fmt.Errorf("judge replay: gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
+	}
+	llm, err := newModel(jprov, cfg.Gates.Judge.Model)
+	if err != nil {
+		return nil, fmt.Errorf("judge replay: verifier model: %w", err)
+	}
+	return &vetting.Verifier{LLM: llm}, nil
+}
+
 // RunJudgeReplay replays opts' judged rounds. hasRealArtifactAccess false (a
 // local bundle) replays an artifact-writing round deterministic-only. Exit != 0 on any flip.
 func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Session, opts ReplayOptions, judge vetting.JudgeFactory, judgeArtifactTools []tool.Tool, hasRealArtifactAccess bool, out io.Writer, asJSON bool) int {
@@ -326,7 +347,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		}
 		cfgCache[jr.agent] = gc
 	}
-	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, Pages: opts.Pages}
+	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, Pages: opts.Pages, Verifier: opts.Verifier}
 
 	jf := judge
 	if opts.DeterministicOnly {
@@ -434,7 +455,7 @@ func unitRows(checks []vetting.UnitCheck) []UnitRow {
 	rows := make([]UnitRow, 0, len(checks))
 	for _, c := range checks {
 		rows = append(rows, UnitRow{Kind: c.Unit.Kind, Unit: clip(c.Unit.Text, 160), Specific: c.Specific.Value,
-			Citation: c.Citation, State: c.State, Window: clip(c.Window, 200)})
+			Citation: c.Citation, State: c.State, Window: clip(c.Window, 200), Verify: c.Verdict.State, Quote: clip(c.Verdict.Quote, 200)})
 	}
 	return rows
 }
@@ -442,6 +463,9 @@ func unitRows(checks []vetting.UnitCheck) []UnitRow {
 func clip(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n-- // never split a rune
 	}
 	return s[:n] + "..."
 }
@@ -457,11 +481,23 @@ func renderUnits(out io.Writer, rows []UnitRow) {
 	}
 	fmt.Fprintf(out, "  units: %d specific(s): located=%d unlocated=%d uncited=%d no_stored_text=%d\n",
 		len(rows), tally["located"], tally["unlocated"], tally["uncited"], tally["no_stored_text"])
+	verify := map[string]int{}
 	for _, r := range rows {
-		if r.State == "located" {
-			continue
+		if r.Verify != "" {
+			verify[r.Verify]++
 		}
-		fmt.Fprintf(out, "    %-14s %-24q in %s\n", r.State, r.Specific, clip(r.Unit, 100))
+	}
+	if len(verify) > 0 {
+		fmt.Fprintf(out, "  verify: supported=%d unsupported=%d cannot_tell=%d not_checked=%d\n",
+			verify["supported"], verify["unsupported"], verify["cannot_tell"], verify["not_checked"])
+	}
+	for _, r := range rows {
+		switch {
+		case r.Verify == "unsupported":
+			fmt.Fprintf(out, "    unsupported    %-24q in %s\n      evidence: %s\n", r.Specific, clip(r.Unit, 100), clip(r.Quote, 120))
+		case r.State != "located":
+			fmt.Fprintf(out, "    %-14s %-24q in %s\n", r.State, r.Specific, clip(r.Unit, 100))
+		}
 	}
 }
 

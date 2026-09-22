@@ -104,3 +104,15 @@ func TestLocateQuote_SegmentsAndPunctuation(t *testing.T) {
 		}
 	}
 }
+
+func TestLocateSpecific_SignedFigureAndSecondCitation(t *testing.T) {
+	if _, ok := LocateSpecific("the deficit was -12 last year", Specific{Kind: "number", Norm: "12"}); ok {
+		t.Error("12 must not locate inside -12")
+	}
+	store := fakePages{pageID(t, "https://a.example/x"): []byte("nothing here"), pageID(t, "https://b.example/y"): []byte("growth of 30% in 2024")}
+	units := FindUnits("Growth was 30% ([a](https://a.example/x), [b](https://b.example/y)).")
+	checks := CheckUnits(context.Background(), units, WebPageEvidence{Store: store})
+	if len(checks) != 1 || checks[0].State != "located" || checks[0].Citation != "https://b.example/y" {
+		t.Fatalf("checks = %+v, want the figure located through the second citation", checks)
+	}
+}

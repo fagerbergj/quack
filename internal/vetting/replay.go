@@ -26,6 +26,7 @@ type ReplayCase struct {
 	NodeID, Task, Answer string
 	WorkerTurns          []RawTurn
 	Pages                PageLoader // stored web pages, for the shadow locate tier; nil skips it
+	Verifier             *Verifier  // the shadow verify tier over located specifics; nil skips it
 }
 
 // ReplayCriterion is one criterion's freshly computed score. RubricMark is its
@@ -62,6 +63,9 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	res := ReplayRoundResult{Threshold: cfg.Threshold, ArtifactsWritten: act.artifactsWritten}
 	if rc.Pages != nil {
 		res.Units = CheckUnits(ctx, FindUnits(rc.Answer), WebPageEvidence{Store: rc.Pages})
+		if rc.Verifier != nil {
+			res.Units = rc.Verifier.VerifyChecks(ctx, res.Units)
+		}
 	}
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
