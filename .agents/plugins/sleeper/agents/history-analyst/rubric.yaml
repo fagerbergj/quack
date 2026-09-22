@@ -31,16 +31,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one aggregation (e.g. efficiency) is computed the
-        wrong way.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        aggregation (e.g. efficiency) is computed the wrong way.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: most claims trace to tool data, but one figure is
-        asserted with no backing call.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: most claims
+        trace to tool data, but one figure is asserted with no backing call.
     - min: 0.0
       max: 0.0
-      meaning: 'four or more findings, or: multiple figures are invented or do not match the tool data.'
+      meaning: >-
+        four or more findings, or: four or more findings, or: multiple figures are invented or do not
+        match the tool data.
     anchors:
     - quote
     - omission
@@ -67,17 +69,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one section blurs the line without a clear misattribution.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        section blurs the line without a clear misattribution.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: the season is graded with only a partial luck/process
-        split.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: the season
+        is graded with only a partial luck/process split.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a manager is charged for opponent scoring, or a close-loss rate is
-        read as a clutch trait.
+        four or more findings, or: four or more findings, or: a manager is charged for opponent scoring,
+        or a close-loss rate is read as a clutch trait.
     anchors:
     - quote
     - omission
@@ -104,17 +107,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one pattern claim rests on a single instance.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        pattern claim rests on a single instance.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: one criticism is vague (no player, pick, or number
-        named).
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one criticism
+        is vague (no player, pick, or number named).
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: criticisms are generic, or a single week/pick is scolded as if it were
-        a season-long pattern.
+        four or more findings, or: four or more findings, or: criticisms are generic, or a single week/pick
+        is scolded as if it were a season-long pattern.
     anchors:
     - quote
     - omission
@@ -142,17 +147,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: praise is generic or the channel verdict
-        is implicit.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: praise
+        is generic or the channel verdict is implicit.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: the card opens with criticism or a grade letter before
-        the headline numbers.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: the card
+        opens with criticism or a grade letter before the headline numbers.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the answer reads as scolding, with no headline numbers or channel verdict.
+        four or more findings, or: four or more findings, or: the answer reads as scolding, with no headline
+        numbers or channel verdict.
     anchors:
     - quote
     - omission
@@ -178,17 +185,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one required field is missing or empty.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        required field is missing or empty.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: no artifact was written this round - the season card
-        only exists as prose in the reply.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
+        was written this round - the season card only exists as prose in the reply.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the round's content does not parse as JSON at all, or no season content
-        exists anywhere.
+        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
+        at all, or no season content exists anywhere.
     anchors:
     - quote
     - omission

@@ -29,18 +29,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one ranking's rationale leans on a crowd metric more
-        than it should.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        ranking's rationale leans on a crowd metric more than it should.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: an implicit but inconsistent ordering, not stated
-        as a ranking.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: an implicit
+        but inconsistent ordering, not stated as a ranking.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: candidates are an unordered list, or ranked by trending/ownership count
-        alone.
+        four or more findings, or: four or more findings, or: candidates are an unordered list, or ranked
+        by trending/ownership count alone.
     anchors:
     - quote
     - omission
@@ -62,13 +62,17 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one drop''s rationale is thin.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        drop's rationale is thin.
     - min: 1.0
       max: 1.0
-      meaning: 'two or three findings, or one of this kind: one add has no named drop.'
+      meaning: >-
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one add
+        has no named drop.
     - min: 0.0
       max: 0.0
-      meaning: 'four or more findings, or: multiple adds have no named drop.'
+      meaning: 'four or more findings, or: four or more findings, or: multiple adds have no named drop.'
     anchors:
     - quote
     - omission
@@ -97,18 +101,19 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one figure is a bit off-band without being a category
-        error.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        figure is a bit off-band without being a category error.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: a bid is given with no percentage/dollar figure, or
-        is sized against the original budget instead of what remains.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a bid
+        is given with no percentage/dollar figure, or is sized against the original budget instead of
+        what remains.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: sizing ignores the league's actual waiver type, or a K/DEF bid exceeds
-        the published cap with no stated reason.
+        four or more findings, or: four or more findings, or: sizing ignores the league's actual waiver
+        type, or a K/DEF bid exceeds the published cap with no stated reason.
     anchors:
     - quote
     - omission
@@ -133,16 +138,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: the lead time is later than the skill's 1-2 week
-        guidance.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: the
+        lead time is later than the skill's 1-2 week guidance.
     - min: 1.0
       max: 1.0
-      meaning: 'two or three findings, or one of this kind: a bye gap exists but goes unmentioned.'
+      meaning: >-
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a bye
+        gap exists but goes unmentioned.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a double-stacked bye is treated as a single-slot problem, or bye coverage
-        is ignored entirely when relevant.
+        four or more findings, or: four or more findings, or: a double-stacked bye is treated as a single-slot
+        problem, or bye coverage is ignored entirely when relevant.
     anchors:
     - quote
     - omission
@@ -167,18 +174,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one mention reads slightly more like a value claim
-        than it should.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        mention reads slightly more like a value claim than it should.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: a trending number is cited without stating what it
-        actually measures.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a trending
+        number is cited without stating what it actually measures.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a trending/ownership number is used as the stated reason a player is
-        worth adding.
+        four or more findings, or: four or more findings, or: a trending/ownership number is used as the
+        stated reason a player is worth adding.
     anchors:
     - quote
     - omission
@@ -204,17 +211,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one required field is missing or empty.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        required field is missing or empty.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: no artifact was written this round - the candidate
-        list only exists as prose in the reply.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
+        was written this round - the candidate list only exists as prose in the reply.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the round's content does not parse as JSON at all, or no candidate
-        content exists anywhere.
+        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
+        at all, or no candidate content exists anywhere.
     anchors:
     - quote
     - omission

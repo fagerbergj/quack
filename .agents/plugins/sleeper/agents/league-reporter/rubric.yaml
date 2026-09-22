@@ -34,16 +34,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one game-flow claim (e.g. "comeback") goes beyond
-        what the data shows.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        game-flow claim (e.g. "comeback") goes beyond what the data shows.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: one cited score, record, or margin does not trace
-        to a tool call in the session.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one cited
+        score, record, or margin does not trace to a tool call in the session.
     - min: 0.0
       max: 0.0
-      meaning: 'four or more findings, or: multiple numbers are invented or do not match the tool data.'
+      meaning: >-
+        four or more findings, or: four or more findings, or: multiple numbers are invented or do not
+        match the tool data.
     anchors:
     - quote
     - omission
@@ -73,18 +75,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one method statement is thin or a luck claim's backing
-        is implicit rather than stated.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        method statement is thin or a luck claim's backing is implicit rather than stated.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: one playoff-line/odds figure or luck claim is asserted
-        with no stated method.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one playoff-line/odds
+        figure or luck claim is asserted with no stated method.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a playoff-line/odds figure is a bare unexplained number, or a luck
-        claim rests only on a small-sample close-game record treated as strong evidence.
+        four or more findings, or: four or more findings, or: a playoff-line/odds figure is a bare unexplained
+        number, or a luck claim rests only on a small-sample close-game record treated as strong evidence.
     anchors:
     - quote
     - omission
@@ -112,18 +114,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one miss doesn''t distinguish process from
-        luck.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        miss doesn't distinguish process from luck.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: misses are listed but not graded against what was
-        knowable at the time.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: misses
+        are listed but not graded against what was knowable at the time.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: every miss is treated as either pure manager error or pure bad luck,
-        with no case-by-case distinction.
+        four or more findings, or: four or more findings, or: every miss is treated as either pure manager
+        error or pure bad luck, with no case-by-case distinction.
     anchors:
     - quote
     - omission
@@ -152,18 +155,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one claim is vague or the standings impact
-        is thin.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        claim is vague or the standings impact is thin.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: the write-up is a stat dump or a rote section-by-section
-        recitation with little story.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: the write-up
+        is a stat dump or a rote section-by-section recitation with little story.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: no concrete numbers back the claims, or the answer never states what
-        the week meant for standings/playoffs.
+        four or more findings, or: four or more findings, or: no concrete numbers back the claims, or
+        the answer never states what the week meant for standings/playoffs.
     anchors:
     - quote
     - omission
@@ -189,17 +193,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one required field is missing or empty.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        required field is missing or empty.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: no artifact was written this round - the card only
-        exists as prose in the reply.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
+        was written this round - the card only exists as prose in the reply.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the round's content does not parse as JSON at all, or no digest/retro
-        content exists anywhere.
+        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
+        at all, or no digest/retro content exists anywhere.
     anchors:
     - quote
     - omission

@@ -30,17 +30,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one side''s depth is treated as a formality.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        side's depth is treated as a formality.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: the call is scored from this roster alone; the partner's
-        side is asserted, not read.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: the call
+        is scored from this roster alone; the partner's side is asserted, not read.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the partner's roster was never read and the verdict rests on one side's
-        numbers.
+        four or more findings, or: four or more findings, or: the partner's roster was never read and
+        the verdict rests on one side's numbers.
     anchors:
     - quote
     - omission
@@ -63,18 +65,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one traded player is described without a
-        figure.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        traded player is described without a figure.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: projections are mentioned qualitatively ("a step up")
-        with no numbers the judge can trace.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: projections
+        are mentioned qualitatively ("a step up") with no numbers the judge can trace.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: no projection basis at all, or a cited figure does not match the tool
-        data.
+        four or more findings, or: four or more findings, or: no projection basis at all, or a cited figure
+        does not match the tool data.
     anchors:
     - quote
     - omission
@@ -99,17 +102,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one designation or bye is noted without changing
-        the reasoning.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        designation or bye is noted without changing the reasoning.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: a traded player's designation or bye is checked but
-        ignored in the verdict.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a traded
+        player's designation or bye is checked but ignored in the verdict.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: injury/practice/bye status is not checked for a player it plainly affects.
+        four or more findings, or: four or more findings, or: injury/practice/bye status is not checked
+        for a player it plainly affects.
     anchors:
     - quote
     - omission
@@ -136,16 +140,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: a counter leaves its offer vague or a hedge leaves
-        its flip condition unnamed.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: a counter
+        leaves its offer vague or a hedge leaves its flip condition unnamed.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: the answer leans one way without committing, or lists
-        more than three candidates unranked.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: the answer
+        leans one way without committing, or lists more than three candidates unranked.
     - min: 0.0
       max: 0.0
-      meaning: 'four or more findings, or: no verdict - "either works" or a bare restatement of the offer.'
+      meaning: >-
+        four or more findings, or: four or more findings, or: no verdict - "either works" or a bare restatement
+        of the offer.
     anchors:
     - quote
     - omission
@@ -174,17 +180,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one required field is missing or empty.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        required field is missing or empty.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: no artifact was written this round - the trade content
-        only exists as prose in the reply.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
+        was written this round - the trade content only exists as prose in the reply.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the round's content does not parse as JSON at all, or a key is renamed/invented
-        against the schema (e.g. "I give"/"I get" instead of give/get).
+        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
+        at all, or a key is renamed/invented against the schema (e.g. "I give"/"I get" instead of give/get).
     anchors:
     - quote
     - omission

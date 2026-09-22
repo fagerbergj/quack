@@ -49,19 +49,20 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one claimed detail (not an operation or outcome)
-        is stated a little more specifically than the ledger sample strictly confirms, without contradicting
-        it.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        claimed detail (not an operation or outcome) is stated a little more specifically than the ledger
+        sample strictly confirms, without contradicting it.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: a minor claimed detail (not an operation or outcome)
-        is unconfirmed by the ledger, though nothing the answer asserts is contradicted by it.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a minor
+        claimed detail (not an operation or outcome) is unconfirmed by the ledger, though nothing the
+        answer asserts is contradicted by it.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a claimed-but-absent operation, a claimed success over a ledgered FAILED
-        entry, or a quote inconsistent with its read sample.
+        four or more findings, or: four or more findings, or: a claimed-but-absent operation, a claimed
+        success over a ledgered FAILED entry, or a quote inconsistent with its read sample.
     anchors:
     - path
     - omission
@@ -110,25 +111,26 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one dimension is mildly over - a small unrelated
-        tidy-up, one piece of harmless unused flexibility, one function a bit long, one dependency added
-        where the stdlib could have done it with a little more code - but nothing that obscures the change.
-        A single mild flaw on one of the five merged dimensions (diff minimality, YAGNI, complexity budget,
-        deletion-over-addition, native-first) is a noted issue, not a failure.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        dimension is mildly over - a small unrelated tidy-up, one piece of harmless unused flexibility,
+        one function a bit long, one dependency added where the stdlib could have done it with a little
+        more code - but nothing that obscures the change. A single mild flaw on one of the five merged
+        dimensions (diff minimality, YAGNI, complexity budget, deletion-over-addition, native-first) is
+        a noted issue, not a failure.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: two or more dimensions are mildly over at once, or
-        one is moderately over (a function meaningfully past the complexity/length guide, a genuinely
-        unused abstraction, a dependency clearly better served by the stdlib) - a real gap that would
-        need a touch-up before merge, short of obscuring the change.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: two or
+        more dimensions are mildly over at once, or one is moderately over (a function meaningfully past
+        the complexity/length guide, a genuinely unused abstraction, a dependency clearly better served
+        by the stdlib) - a real gap that would need a touch-up before merge, short of obscuring the change.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the diff carries substantial unrelated changes, a new interface/config
-        surface has no current caller, a function is dramatically over budget and does several unrelated
-        things, dead/commented-out code is left in the diff, or a dependency (or hand-rolled reimplementation)
-        duplicates what the stdlib already provides.
+        four or more findings, or: four or more findings, or: the diff carries substantial unrelated changes,
+        a new interface/config surface has no current caller, a function is dramatically over budget and
+        does several unrelated things, dead/commented-out code is left in the diff, or a dependency (or
+        hand-rolled reimplementation) duplicates what the stdlib already provides.
     anchors:
     - path
     - omission
@@ -158,20 +160,20 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one new member is a minor stretch from the type's
-        existing purpose while still plausible there.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        new member is a minor stretch from the type's existing purpose while still plausible there.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: the interface is noticeably larger than it needs to
-        be for what it hides, or more than one member is a stretch from the type's purpose - a real gap,
-        short of a co-located second responsibility.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: the interface
+        is noticeably larger than it needs to be for what it hides, or more than one member is a stretch
+        from the type's purpose - a real gap, short of a co-located second responsibility.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the change bolts a clearly unrelated responsibility onto an existing
-        type/file (two design decisions co-located), or adds a large, shallow API for what the implementation
-        actually does.
+        four or more findings, or: four or more findings, or: the change bolts a clearly unrelated responsibility
+        onto an existing type/file (two design decisions co-located), or adds a large, shallow API for
+        what the implementation actually does.
     anchors:
     - path
     - omission
@@ -211,25 +213,26 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one dimension is mildly over - a harmless unstated
-        wrapper, fan-out a little wide, one interface a bit broader than consumed, one signature needing
-        the body to disambiguate or 5-6 parameters - but nothing that obscures the design. A single mild
-        flaw on one of the four merged dimensions (pass-through layers, fan-out, interface size, signature
-        clarity) is a noted issue, not a failure.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        dimension is mildly over - a harmless unstated wrapper, fan-out a little wide, one interface a
+        bit broader than consumed, one signature needing the body to disambiguate or 5-6 parameters -
+        but nothing that obscures the design. A single mild flaw on one of the four merged dimensions
+        (pass-through layers, fan-out, interface size, signature clarity) is a noted issue, not a failure.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: two or more dimensions are mildly over at once, or
-        one is moderately over (a genuine unexplained wrapper chain of two, fan-out clearly wider than
-        the job needs, an interface visibly larger than what's consumed, a signature that needs real digging
-        to use correctly) - a real gap short of obscuring the design.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: two or
+        more dimensions are mildly over at once, or one is moderately over (a genuine unexplained wrapper
+        chain of two, fan-out clearly wider than the job needs, an interface visibly larger than what's
+        consumed, a signature that needs real digging to use correctly) - a real gap short of obscuring
+        the design.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a chain of one-line delegators with no logic or stated purpose, a function
-        reaching into 7+ unrelated modules with no orchestration role, a large interface (10+ methods)
-        whose consumer uses only a fraction of it, or a signature that is opaque or has 7+ parameters
-        / a parameter threaded through multiple layers that never use it.
+        four or more findings, or: four or more findings, or: a chain of one-line delegators with no logic
+        or stated purpose, a function reaching into 7+ unrelated modules with no orchestration role, a
+        large interface (10+ methods) whose consumer uses only a fraction of it, or a signature that is
+        opaque or has 7+ parameters / a parameter threaded through multiple layers that never use it.
     anchors:
     - path
     - omission
@@ -255,18 +258,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one name is a little generic or one comment merely
-        restates obvious code, without being actively harmful.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        name is a little generic or one comment merely restates obvious code, without being actively harmful.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: several names are generic, or more than one comment
-        merely restates obvious code.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: several
+        names are generic, or more than one comment merely restates obvious code.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: multiple unclear/misleading names, or comments that are stale, redundant,
-        or restate the code throughout the diff.
+        four or more findings, or: four or more findings, or: multiple unclear/misleading names, or comments
+        that are stale, redundant, or restate the code throughout the diff.
     anchors:
     - path
     - omission
@@ -292,18 +295,19 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one handler is a touch heavier than the case warrants
-        without being confusing.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        handler is a touch heavier than the case warrants without being confusing.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: more than one handler is heavier than its case warrants,
-        making the happy path noticeably harder to follow, though still not confusing on its own.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: more than
+        one handler is heavier than its case warrants, making the happy path noticeably harder to follow,
+        though still not confusing on its own.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: trivial, always-safe cases are wrapped in error-handling machinery
-        that obscures the actual logic.
+        four or more findings, or: four or more findings, or: trivial, always-safe cases are wrapped in
+        error-handling machinery that obscures the actual logic.
     anchors:
     - path
     - omission
@@ -347,18 +351,20 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one task-unnamed file's connection to the task is
-        a stretch worth a second look, not a clear miss.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        task-unnamed file's connection to the task is a stretch worth a second look, not a clear miss.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: one of branch/message is generic or thin, or a task-unnamed
-        file's connection to the task is genuinely unclear, but nothing that obscures what happened.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one of
+        branch/message is generic or thin, or a task-unnamed file's connection to the task is genuinely
+        unclear, but nothing that obscures what happened.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the branch name or commit message is a meaningless placeholder (`fix`,
-        `update`, `wip`), OR the commit swept in files with no plausible connection to the task.
+        four or more findings, or: four or more findings, or: the branch name or commit message is a meaningless
+        placeholder (`fix`, `update`, `wip`), OR the commit swept in files with no plausible connection
+        to the task.
     anchors:
     - path
     - omission
@@ -398,19 +404,20 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one minor sub-part of the task is covered more thinly
-        than the rest without being dropped.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        minor sub-part of the task is covered more thinly than the rest without being dropped.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: the core code change landed but the task's stated
-        scope is only partially covered, with no honest note about what's left.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: the core
+        code change landed but the task's stated scope is only partially covered, with no honest note
+        about what's left.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the answer claims a delivery step it cannot perform itself (pushed,
-        opened a PR, merged) with no corresponding ledger entry, or stops short of the code change the
-        task actually asked for.
+        four or more findings, or: four or more findings, or: the answer claims a delivery step it cannot
+        perform itself (pushed, opened a PR, merged) with no corresponding ledger entry, or stops short
+        of the code change the task actually asked for.
     anchors:
     - path
     - omission

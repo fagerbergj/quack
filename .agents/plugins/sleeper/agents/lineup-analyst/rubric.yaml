@@ -31,14 +31,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: the FLEX reasoning defaults to "best RB/WR" rather
-        than ranking the real candidate pool.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: the
+        FLEX reasoning defaults to "best RB/WR" rather than ranking the real candidate pool.
     - min: 1.0
       max: 1.0
-      meaning: 'two or three findings, or one of this kind: one slot is left undecided or ambiguous.'
+      meaning: >-
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one slot
+        is left undecided or ambiguous.
     - min: 0.0
       max: 0.0
-      meaning: 'four or more findings, or: multiple slots undecided, or the FLEX is silently skipped.'
+      meaning: >-
+        four or more findings, or: four or more findings, or: multiple slots undecided, or the FLEX is
+        silently skipped.
     anchors:
     - quote
     - omission
@@ -64,18 +68,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: lock timing is not mentioned for a close call where
-        it would help.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: lock
+        timing is not mentioned for a close call where it would help.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: a recommendation is ambiguous about whether the swap
-        is still actionable.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a recommendation
+        is ambiguous about whether the swap is still actionable.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a recommended swap involves a player already locked, or ignores the
-        Thursday no-report gap.
+        four or more findings, or: four or more findings, or: a recommended swap involves a player already
+        locked, or ignores the Thursday no-report gap.
     anchors:
     - quote
     - omission
@@ -103,18 +107,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one call treats a designation more binary than the
-        data supports.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        call treats a designation more binary than the data supports.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: a designated starter's status is checked but the play-rate
-        context is missing.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a designated
+        starter's status is checked but the play-rate context is missing.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a starter's injury/practice status is not checked, or a Doubtful/Out
-        player starts with no stated reason.
+        four or more findings, or: four or more findings, or: a starter's injury/practice status is not
+        checked, or a Doubtful/Out player starts with no stated reason.
     anchors:
     - quote
     - omission
@@ -137,18 +141,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: most calls cite numbers; one close call states a
-        verdict with no number behind it.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: most
+        calls cite numbers; one close call states a verdict with no number behind it.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: several calls lack the projection numbers that would
-        justify them.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: several
+        calls lack the projection numbers that would justify them.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: verdicts are stated with no supporting numbers, or a cited number does
-        not match the tool data.
+        four or more findings, or: four or more findings, or: verdicts are stated with no supporting numbers,
+        or a cited number does not match the tool data.
     anchors:
     - quote
     - omission
@@ -173,18 +177,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one close call would have benefited from citing it
-        and didn't.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        close call would have benefited from citing it and didn't.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: matchup is over-weighted in one call without being
-        decisive to a bench-the-better-player error.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: matchup
+        is over-weighted in one call without being decisive to a bench-the-better-player error.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a clearly-better healthy player is benched for a worse one on matchup
-        alone.
+        four or more findings, or: four or more findings, or: a clearly-better healthy player is benched
+        for a worse one on matchup alone.
     anchors:
     - quote
     - omission
@@ -208,13 +212,18 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one close call''s confidence framing is thin.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        close call's confidence framing is thin.
     - min: 1.0
       max: 1.0
-      meaning: 'two or three findings, or one of this kind: one call is left as an unresolved hedge.'
+      meaning: >-
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one call
+        is left as an unresolved hedge.
     - min: 0.0
       max: 0.0
-      meaning: 'four or more findings, or: multiple calls are hedged with no pick made.'
+      meaning: 'four or more findings, or: four or more findings, or: multiple calls are hedged with no
+        pick made.'
     anchors:
     - quote
     - omission
@@ -240,17 +249,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one required field is missing or empty.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        required field is missing or empty.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: no artifact was written this round - the lineup card
-        only exists as prose in the reply.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
+        was written this round - the lineup card only exists as prose in the reply.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the round's content does not parse as JSON at all, or no lineup content
-        exists anywhere.
+        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
+        at all, or no lineup content exists anywhere.
     anchors:
     - quote
     - omission

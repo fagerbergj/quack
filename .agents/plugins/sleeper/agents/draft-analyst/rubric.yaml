@@ -32,18 +32,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one call leans on name recognition without
-        it.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        call leans on name recognition without it.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: tier context is missing for more than one call, or
-        is asserted without a tool-traced projection.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: tier context
+        is missing for more than one call, or is asserted without a tool-traced projection.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: recommendations are driven by name/reputation with no tier or projection
-        basis anywhere.
+        four or more findings, or: four or more findings, or: recommendations are driven by name/reputation
+        with no tier or projection basis anywhere.
     anchors:
     - quote
     - omission
@@ -71,17 +72,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one reach lacks a stated justification.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        reach lacks a stated justification.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: one pick is driven by "next on ADP" with no value
-        reasoning.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one pick
+        is driven by "next on ADP" with no value reasoning.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the plan drafts straight off an ADP/rankings list, or uses a mismatched-format
-        ADP as this league's price.
+        four or more findings, or: four or more findings, or: the plan drafts straight off an ADP/rankings
+        list, or uses a mismatched-format ADP as this league's price.
     anchors:
     - quote
     - omission
@@ -107,15 +110,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: no fallback is given.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: no fallback
+        is given.
     - min: 1.0
       max: 1.0
-      meaning: 'two or three findings, or one of this kind: a pick is named but with no tier-drop reasoning.'
+      meaning: >-
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a pick
+        is named but with no tier-drop reasoning.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the answer is a rankings list or generic advice with no single named
-        pick.
+        four or more findings, or: four or more findings, or: the answer is a rankings list or generic
+        advice with no single named pick.
     anchors:
     - quote
     - omission
@@ -143,17 +150,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one instance is asserted without the checklist reasoning.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        instance is asserted without the checklist reasoning.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: a relevant bye collision or handcuff pick is present
-        but unaddressed.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: a relevant
+        bye collision or handcuff pick is present but unaddressed.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a same-bye QB/TE pair or a generic handcuff pick is recommended with
-        no check at all.
+        four or more findings, or: four or more findings, or: a same-bye QB/TE pair or a generic handcuff
+        pick is recommended with no check at all.
     anchors:
     - quote
     - omission
@@ -181,17 +189,19 @@ criteria:
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: 'exactly one finding, and it is of this kind: one required field is missing or empty.'
+      meaning: >-
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        required field is missing or empty.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: no artifact was written this round - the draft content
-        only exists as prose in the reply.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
+        was written this round - the draft content only exists as prose in the reply.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the round's content does not parse as JSON at all, or no draft content
-        exists anywhere.
+        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
+        at all, or no draft content exists anywhere.
     anchors:
     - quote
     - omission

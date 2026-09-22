@@ -45,9 +45,9 @@ criteria:
     - >-
       Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
       a sentence or block that is not the answer: preamble, process narration, self-talk, meta-commentary
-      about skills or formatting, leaked reasoning, or a superseded draft left in place. Record each finding
-      with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name
-      does not count. Pick the band from the number of findings; none is the top band.
+      about skills or formatting, leaked reasoning, or a duplicated/superseded draft left in place. Record
+      each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot
+      quote or name does not count. Pick the band from the number of findings; none is the top band.
     - 'Read the first sentence: direct content, or a preamble / "let me route this to…"?'
     - Scan for leaked routing logic, self-talk, or meta-commentary about skills or delegation.
     - >-
@@ -56,7 +56,9 @@ criteria:
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: >-
+        no finding: the answer begins and ends with the answer, and only the final version of any content
+        appears.
     - min: 2.0
       max: 2.0
       meaning: exactly one finding, and it is one stray sentence (an opener or a meta remark) with the
@@ -69,8 +71,8 @@ criteria:
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or the answer opens with a preamble or planning, or a superseded draft
-        sits beside the final one.
+        four or more findings, or the answer opens with a preamble or planning, or a duplicated/superseded
+        draft sits beside the final one.
     anchors:
     - quote
     - omission

@@ -40,20 +40,22 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: `notes` carries a "What I ran"/"What I checked" list
-        that belongs in `verified` instead, or one reported failure is questionable but not clearly environmental
-        - the substance is right, the packaging has a cosmetic flaw.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: `notes`
+        carries a "What I ran"/"What I checked" list that belongs in `verified` instead, or one reported
+        failure is questionable but not clearly environmental - the substance is right, the packaging
+        has a cosmetic flaw.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: it misses one material issue, or buries a real finding
-        deep among minor points where a reader could miss it.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: it misses
+        one material issue, or buries a real finding deep among minor points where a reader could miss
+        it.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: it misses the change's central defect, reports only cosmetic findings
-        while a real bug/security/test gap goes unmentioned, or reports a sandbox/environment failure
-        as a code concern on a PR whose CI is green.
+        four or more findings, or: four or more findings, or: it misses the change's central defect, reports
+        only cosmetic findings while a real bug/security/test gap goes unmentioned, or reports a sandbox/environment
+        failure as a code concern on a PR whose CI is green.
     anchors:
     - quote
     - omission
@@ -86,18 +88,20 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one is phrased more definitively than the read strictly
-        supports (a reasonable inference stated as flat fact rather than hedged) without being wrong.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        is phrased more definitively than the read strictly supports (a reasonable inference stated as
+        flat fact rather than hedged) without being wrong.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: one finding rests on an assumption not checked against
-        the file, though nothing it says is actually contradicted by the code.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one finding
+        rests on an assumption not checked against the file, though nothing it says is actually contradicted
+        by the code.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: a finding is contradicted by the file it cites, or asserts behavior
-        in a file the reviewer never read.
+        four or more findings, or: four or more findings, or: a finding is contradicted by the file it
+        cites, or asserts behavior in a file the reviewer never read.
     anchors:
     - quote
     - omission
@@ -125,17 +129,20 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one explanation is thinner than the rest (states
-        the risk without the reasoning behind it) without being absent.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        explanation is thinner than the rest (states the risk without the reasoning behind it) without
+        being absent.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: actionable but terse (some findings state what without
-        why), or a finding proposes a specific change in prose without the code to back it.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: actionable
+        but terse (some findings state what without why), or a finding proposes a specific change in prose
+        without the code to back it.
     - min: 0.0
       max: 0.0
-      meaning: 'four or more findings, or: findings are unactionable ("this is bad") with no reasoning
-        at all.'
+      meaning: >-
+        four or more findings, or: four or more findings, or: findings are unactionable ("this is bad")
+        with no reasoning at all.
     anchors:
     - quote
     - omission
@@ -178,18 +185,18 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: `verified` carries no delivery item naming what is
-        unmet or deferred.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: `verified`
+        carries no delivery item naming what is unmet or deferred.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: one gap is missing from the findings, or is filed
-        as a note or a suggestion.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one gap
+        is missing from the findings, or is filed as a note or a suggestion.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: the review approves while an acceptance item or a sibling's part is
-        absent and unreported.
+        four or more findings, or: four or more findings, or: the review approves while an acceptance
+        item or a sibling's part is absent and unreported.
     anchors:
     - quote
     - omission
@@ -236,18 +243,19 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: one anchor is stated tersely (names the category
-        without spelling out why it holds) rather than left unsupported.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
+        anchor is stated tersely (names the category without spelling out why it holds) rather than left
+        unsupported.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: one label unsupported, or one defect soft-pedalled
-        below `blocking:`, or one preference treated as blocking.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: one label
+        unsupported, or one defect soft-pedalled below `blocking:`, or one preference treated as blocking.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: labels are preference-driven, or a defect/security finding is labelled
-        below `blocking:` while style gates the merge.
+        four or more findings, or: four or more findings, or: labels are preference-driven, or a defect/security
+        finding is labelled below `blocking:` while style gates the merge.
     anchors:
     - quote
     - omission
@@ -288,21 +296,22 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: a present, consistent staged verdict, but the takeaway
-        is present and accurate while reading more like a findings recap than a fifteen-second read.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: a present,
+        consistent staged verdict, but the takeaway is present and accurate while reading more like a
+        findings recap than a fifteen-second read.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: mostly clear but missing the takeaway entirely, or
-        the staged verdict slightly mismatches the findings.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: mostly
+        clear but missing the takeaway entirely, or the staged verdict slightly mismatches the findings.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: no takeaway, no staged verdict at all, a staged verdict that contradicts
-        the findings (approves over an unresolved blocking issue, or ANY finding is labeled blocking/security-severity
-        while the verdict is `approve`, or `request_changes` is staged over findings that are all nits/suggestions),
-        or a clean review - empty or non-blocking findings, verification the review calls complete - resolved
-        to `comment` instead of `approve`.
+        four or more findings, or: four or more findings, or: no takeaway, no staged verdict at all, a
+        staged verdict that contradicts the findings (approves over an unresolved blocking issue, or ANY
+        finding is labeled blocking/security-severity while the verdict is `approve`, or `request_changes`
+        is staged over findings that are all nits/suggestions), or a clean review - empty or non-blocking
+        findings, verification the review calls complete - resolved to `comment` instead of `approve`.
     anchors:
     - quote
     - omission
@@ -341,19 +350,19 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: the review verified the claim by reading code, tests,
-        and CI, but ran one thing the claim didn't strictly warrant without saying why - extra diligence,
-        not a shortcut.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: the
+        review verified the claim by reading code, tests, and CI, but ran one thing the claim didn't strictly
+        warrant without saying why - extra diligence, not a shortcut.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: it trusted the description on one axis (code or tests
-        or CI) while verifying the others.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: it trusted
+        the description on one axis (code or tests or CI) while verifying the others.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: it trusted the description: accepted the claim, the tests' presence,
-        or CI's result without reading closely enough to confirm any of them.
+        four or more findings, or: four or more findings, or: it trusted the description: accepted the
+        claim, the tests' presence, or CI's result without reading closely enough to confirm any of them.
     anchors:
     - quote
     require_fix_on_fail: true
@@ -400,19 +409,20 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is of this kind: images attached, show no visible defect, and the
-        review says little or nothing specific about them - not a shortfall, just nothing to report.
+        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: images
+        attached, show no visible defect, and the review says little or nothing specific about them -
+        not a shortfall, just nothing to report.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one of this kind: images attached and DO show a visible defect, but
-        the review says nothing about it or cites only render-check's own pass/fail as its sole visual
-        comment.
+        two or three findings, or one of this kind: two or three findings, or one of this kind: images
+        attached and DO show a visible defect, but the review says nothing about it or cites only render-check's
+        own pass/fail as its sole visual comment.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or: images attached and the review states something about them that the
-        images contradict.
+        four or more findings, or: four or more findings, or: images attached and the review states something
+        about them that the images contradict.
     anchors:
     - quote
     - omission

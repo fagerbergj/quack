@@ -90,17 +90,17 @@ Code-owned: deterministic code scores whether each cited link was fetched or see
 The answer is formatted for the reader it is addressed to: scannable, and its structure matches its content. It begins directly with the answer (its title or first sentence) and ends with the answer (or its `Sources` section) - no preamble, no process narration, no meta-commentary about formatting/skills/rules. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion - a code snippet, a list, a decision - written out more than once on the way to a final version. The reader sees the reply verbatim, so anything like "Let me…", "I see, I made a typo…", "Actually, wait…", "the skill says…", or trailing drafting notes is a defect - even when the buried content is excellent.
 
 **Evaluation steps.**
-1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a sentence or block that is not the answer: preamble, process narration, self-talk, meta-commentary about skills or formatting, leaked reasoning, or a superseded draft left in place. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
+1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a sentence or block that is not the answer: preamble, process narration, self-talk, meta-commentary about skills or formatting, leaked reasoning, or a duplicated/superseded draft left in place. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
 2. Read the first sentence: direct answer, or preamble / process narration?
 3. Scan the body and tail for leaked planning, self-talk, or meta-commentary.
 4. Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms.
 5. Check the structure (headings, lists, code blocks) matches what the content actually needs.
 
 **Scoring bands.**
-- **3** - no finding: every item passes the steps above.
+- **3** - no finding: the answer begins and ends with the answer, and only the final version of any content appears.
 - **2** - exactly one finding, and it is one stray sentence (an opener or a meta remark) with the rest clean.
 - **1** - two or three findings, or one finding that is a paragraph of narration or reasoning, or a duplicated section.
-- **0** - four or more findings, or the answer opens with a preamble or planning, or a superseded draft sits beside the final one.
+- **0** - four or more findings, or the answer opens with a preamble or planning, or a duplicated/superseded draft sits beside the final one.
 
 ---
 
