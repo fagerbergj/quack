@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
@@ -462,6 +463,9 @@ func unitRows(checks []vetting.UnitCheck) []UnitRow {
 func clip(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n-- // never split a rune
 	}
 	return s[:n] + "..."
 }

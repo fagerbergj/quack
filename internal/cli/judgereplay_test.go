@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -691,4 +692,13 @@ func requestText(req *model.LLMRequest) string {
 		}
 	}
 	return b.String()
+}
+
+func TestClipNeverSplitsARune(t *testing.T) {
+	s := strings.Repeat("\u20ac", 100)
+	for n := 1; n < 12; n++ {
+		if c := clip(s, n); !utf8.ValidString(c) {
+			t.Fatalf("clip(%d) produced invalid UTF-8", n)
+		}
+	}
 }

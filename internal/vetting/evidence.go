@@ -185,6 +185,31 @@ func indexSpecific(hay, needle, kind string) int {
 	}
 }
 
+// locateAcross tries every citation the unit carries: a sentence with two
+// links may back its figure with the second. Stored text on any page wins over none.
+func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebPageEvidence, pages map[string]string) UnitCheck {
+	c.State = "no_stored_text"
+	for _, cit := range citations {
+		text, ok := pages[cit]
+		if !ok {
+			if text, ok = res.Resolve(ctx, cit); ok {
+				pages[cit] = text
+			}
+		}
+		if !ok {
+			continue
+		}
+		if c.State == "no_stored_text" {
+			c.State, c.Citation = "unlocated", cit
+		}
+		if w, found := LocateSpecific(text, c.Specific); found {
+			c.State, c.Citation, c.Window = "located", cit, w
+			return c
+		}
+	}
+	return c
+}
+
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 
 // partOfNumber: the byte at j continues a figure (a digit, or a decimal point with a digit past it).
@@ -192,8 +217,8 @@ func partOfNumber(hay string, j, dir int) bool {
 	if j < 0 || j >= len(hay) {
 		return false
 	}
-	if isDigit(hay[j]) {
-		return true
+	if isDigit(hay[j]) || (dir < 0 && hay[j] == '-' && (j == 0 || hay[j-1] == ' ')) {
+		return true // a sign belongs to the figure: 12 must not match inside -12
 	}
 	k := j + dir
 	return hay[j] == '.' && k >= 0 && k < len(hay) && isDigit(hay[k])
@@ -212,22 +237,7 @@ func CheckUnits(ctx context.Context, units []Unit, res WebPageEvidence) []UnitCh
 				out = append(out, c)
 				continue
 			}
-			c.Citation = u.Citations[0]
-			text, ok := pages[c.Citation]
-			if !ok {
-				text, ok = res.Resolve(ctx, c.Citation)
-				if ok {
-					pages[c.Citation] = text
-				}
-			}
-			switch {
-			case !ok:
-				c.State = "no_stored_text"
-			default:
-				c.Window, ok = LocateSpecific(text, s)
-				c.State = map[bool]string{true: "located", false: "unlocated"}[ok]
-			}
-			out = append(out, c)
+			out = append(out, locateAcross(ctx, c, u.Citations, res, pages))
 		}
 	}
 	return out

@@ -95,3 +95,13 @@ func TestFindUnits_SectionNumbersAreNotFigures(t *testing.T) {
 		t.Fatalf("specifics = %+v, want only the 40%% (2.3 numbers the section, 12-team qualifies)", units)
 	}
 }
+
+func TestFindUnits_ReviewEdges(t *testing.T) {
+	units := FindUnits("2.5 years since launch, per the report [1].\n\n[1]: \"Launch Report\" (https://t.example/r)")
+	if len(units) != 1 || len(units[0].Specifics) != 1 || units[0].Specifics[0].Norm != "2.5" {
+		t.Fatalf("units = %+v, want the 2.5 kept (a leading decimal is a figure, not a section number)", units)
+	}
+	if got := units[0].Citations; len(got) != 1 || got[0] != "https://t.example/r" {
+		t.Fatalf("citations = %v, want the URL from a titled reference definition", got)
+	}
+}
