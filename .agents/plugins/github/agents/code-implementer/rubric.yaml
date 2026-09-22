@@ -3,201 +3,414 @@ scale:
   max: 3
   pass: 2
 notes: >
-  A note on `checks_pass`. A deterministic criterion named `checks_pass` may already appear in the verdict, set by code (not by the judge) from actually running the plan node's configured build/test commands. Do not duplicate that judgment here - if the change compiles and its tests describe real behavior, that is enough context for the criteria below; the judge is not re-running the test suite.
+  A note on `checks_pass`. A deterministic criterion named `checks_pass` may already appear in the verdict,
+  set by code (not by the judge) from actually running the plan node's configured build/test commands.
+  Do not duplicate that judgment here - if the change compiles and its tests describe real behavior, that
+  is enough context for the criteria below; the judge is not re-running the test suite.
 
-  The workspace activity ledger. The judge's prompt contains a "Workspace activity" section: the fs/git/run_command operations the worker ACTUALLY performed, reconstructed from its session by code - not from its narration. It is ground truth. An operation or outcome the answer asserts that is not in the ledger did not happen, no matter how confidently it is described. `read_file` entries carry a content sample - use it to spot-check quoted file content the same way you would a fetched page.
+  The workspace activity ledger. The judge's prompt contains a "Workspace activity" section: the fs/git/run_command
+  operations the worker ACTUALLY performed, reconstructed from its session by code - not from its narration.
+  It is ground truth. An operation or outcome the answer asserts that is not in the ledger did not happen,
+  no matter how confidently it is described. `read_file` entries carry a content sample - use it to spot-check
+  quoted file content the same way you would a fetched page.
 criteria:
   claims_match_activity:
     definition: >
-      Every operation and outcome the answer asserts - a commit made, a branch created, a file written or edited, tests/checks run, file contents quoted or paraphrased - is present in the workspace activity ledger.
+      Every operation and outcome the answer asserts - a commit made, a branch created, a file written
+      or edited, tests/checks run, file contents quoted or paraphrased - is present in the workspace activity
+      ledger.
     guidance: >
-      This is the fabrication check for CODE work: an answer that narrates work it never performed is worse than an answer that honestly reports being blocked.
+      This is the fabrication check for CODE work: an answer that narrates work it never performed is
+      worse than an answer that honestly reports being blocked.
     steps:
-    - List every operation/outcome the answer asserts happened (committed, branched, pushed, wrote/edited a file, ran a command, "the file says…").
-    - "For each, find the corresponding ledger entry: a claimed commit needs a `git_commit` entry (and a claimed SHA must match it); a claimed test run needs a `run_command` (or gate-check) entry with a matching exit; a quoted or paraphrased file content needs a `read_file` entry whose sample is consistent with the quote."
-    - A claimed-but-absent operation, a claimed success over a ledgered FAILED entry, or a quote inconsistent with its read sample is fabrication - score 0 regardless of everything else.
-    - "The converse is fine: ledger entries the answer doesn't mention are not a defect, and honestly reported failures/blocks score well here."
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      List every operation/outcome the answer asserts happened (committed, branched, pushed, wrote/edited
+      a file, ran a command, "the file says…").
+    - >-
+      For each, find the corresponding ledger entry: a claimed commit needs a `git_commit` entry (and
+      a claimed SHA must match it); a claimed test run needs a `run_command` (or gate-check) entry with
+      a matching exit; a quoted or paraphrased file content needs a `read_file` entry whose sample is
+      consistent with the quote.
+    - >-
+      A claimed-but-absent operation, a claimed success over a ledgered FAILED entry, or a quote inconsistent
+      with its read sample is fabrication - score 0 regardless of everything else.
+    - >-
+      The converse is fine: ledger entries the answer doesn't mention are not a defect, and honestly reported
+      failures/blocks score well here.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every claimed operation and outcome is present in the ledger, matching what actually happened.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: every claimed operation and outcome is present in the ledger, but one claimed detail (not an operation or outcome) is stated a little more specifically than the ledger sample strictly confirms, without contradicting it.
+      meaning: >-
+        exactly one finding, and it is of this kind: one claimed detail (not an operation or outcome)
+        is stated a little more specifically than the ledger sample strictly confirms, without contradicting
+        it.
     - min: 1.0
       max: 1.0
-      meaning: a minor claimed detail (not an operation or outcome) is unconfirmed by the ledger, though nothing the answer asserts is contradicted by it.
+      meaning: >-
+        two or three findings, or one of this kind: a minor claimed detail (not an operation or outcome)
+        is unconfirmed by the ledger, though nothing the answer asserts is contradicted by it.
     - min: 0.0
       max: 0.0
-      meaning: a claimed-but-absent operation, a claimed success over a ledgered FAILED entry, or a quote inconsistent with its read sample.
+      meaning: >-
+        four or more findings, or: a claimed-but-absent operation, a claimed success over a ledgered FAILED
+        entry, or a quote inconsistent with its read sample.
     anchors:
     - path
     - omission
   complexity_proportionate:
     definition: >
-      The change carries the task's essential complexity and little else (Brooks' essential vs. accidental complexity): where the problem is simple, the diff is simple; added indirection, abstraction, or configuration is justified by the task rather than by anticipation of a future need; where a removal would have served as well as an addition, it removed; and the change doesn't reach for a dependency or hand-rolled utility the standard library or platform already provides.
+      The change carries the task's essential complexity and little else (Brooks' essential vs. accidental
+      complexity): where the problem is simple, the diff is simple; added indirection, abstraction, or
+      configuration is justified by the task rather than by anticipation of a future need; where a removal
+      would have served as well as an addition, it removed; and the change doesn't reach for a dependency
+      or hand-rolled utility the standard library or platform already provides.
     guidance: >
-      This merges five narrower checks that were all really one judgement: is the diff the smallest one that correctly does the job, with nothing added for a future that hasn't arrived. Diff minimality (no unrelated refactors/renames/formatting churn), YAGNI (no interface/config knob/parameter built for a hypothetical caller), a sane per-function complexity budget (cyclomatic ~10, cognitive ~15, roughly 40 lines/function and 800 lines/file as soft guides - not hard walls, a table-driven or mechanically repetitive block is not the same defect as tangled logic), deletion-over-addition (prefer removing dead branches/unused params/redundant checks over working around them, and leave no commented-out or unreachable code), and native-first (stdlib/platform before a new dependency or a hand-rolled reimplementation).
+      This merges five narrower checks that were all really one judgement: is the diff the smallest one
+      that correctly does the job, with nothing added for a future that hasn't arrived. Diff minimality
+      (no unrelated refactors/renames/formatting churn), YAGNI (no interface/config knob/parameter built
+      for a hypothetical caller), a sane per-function complexity budget (cyclomatic ~10, cognitive ~15,
+      roughly 40 lines/function and 800 lines/file as soft guides - not hard walls, a table-driven or
+      mechanically repetitive block is not the same defect as tangled logic), deletion-over-addition (prefer
+      removing dead branches/unused params/redundant checks over working around them, and leave no commented-out
+      or unreachable code), and native-first (stdlib/platform before a new dependency or a hand-rolled
+      reimplementation).
     steps:
-    - Identify which parts of the diff are required by the stated task; flag any hunk that changes something the task didn't ask about with no functional necessity.
-    - Audit every new abstraction (interface, base type, parameterized factory, config flag, optional parameter, new dependency) for a concrete, present-tense consumer this change actually needs.
-    - For each new/changed function, judge whether its branch/nesting/length is inherent to the problem or avoidable by a straightforward extraction or early return.
-    - Check whether the task or surrounding code offered an opportunity to delete something instead of only adding, and that the diff leaves no dead/commented-out code behind.
-    - For any new import or hand-rolled utility, check whether the standard library or an already-vendored dependency already does the job.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      Identify which parts of the diff are required by the stated task; flag any hunk that changes something
+      the task didn't ask about with no functional necessity.
+    - >-
+      Audit every new abstraction (interface, base type, parameterized factory, config flag, optional
+      parameter, new dependency) for a concrete, present-tense consumer this change actually needs.
+    - >-
+      For each new/changed function, judge whether its branch/nesting/length is inherent to the problem
+      or avoidable by a straightforward extraction or early return.
+    - >-
+      Check whether the task or surrounding code offered an opportunity to delete something instead of
+      only adding, and that the diff leaves no dead/commented-out code behind.
+    - >-
+      For any new import or hand-rolled utility, check whether the standard library or an already-vendored
+      dependency already does the job.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: the diff is the smallest one that satisfies the task, every abstraction has a concrete present-tense consumer, functions stay well within complexity/length guides, dead code is removed rather than left behind, and no dependency duplicates the stdlib.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: one dimension is mildly over - a small unrelated tidy-up, one piece of harmless unused flexibility, one function a bit long, one dependency added where the stdlib could have done it with a little more code - but nothing that obscures the change. A single mild flaw on one of the five merged dimensions (diff minimality, YAGNI, complexity budget, deletion-over-addition, native-first) is a noted issue, not a failure.
+      meaning: >-
+        exactly one finding, and it is of this kind: one dimension is mildly over - a small unrelated
+        tidy-up, one piece of harmless unused flexibility, one function a bit long, one dependency added
+        where the stdlib could have done it with a little more code - but nothing that obscures the change.
+        A single mild flaw on one of the five merged dimensions (diff minimality, YAGNI, complexity budget,
+        deletion-over-addition, native-first) is a noted issue, not a failure.
     - min: 1.0
       max: 1.0
-      meaning: two or more dimensions are mildly over at once, or one is moderately over (a function meaningfully past the complexity/length guide, a genuinely unused abstraction, a dependency clearly better served by the stdlib) - a real gap that would need a touch-up before merge, short of obscuring the change.
+      meaning: >-
+        two or three findings, or one of this kind: two or more dimensions are mildly over at once, or
+        one is moderately over (a function meaningfully past the complexity/length guide, a genuinely
+        unused abstraction, a dependency clearly better served by the stdlib) - a real gap that would
+        need a touch-up before merge, short of obscuring the change.
     - min: 0.0
       max: 0.0
-      meaning: the diff carries substantial unrelated changes, a new interface/config surface has no current caller, a function is dramatically over budget and does several unrelated things, dead/commented-out code is left in the diff, or a dependency (or hand-rolled reimplementation) duplicates what the stdlib already provides.
+      meaning: >-
+        four or more findings, or: the diff carries substantial unrelated changes, a new interface/config
+        surface has no current caller, a function is dramatically over budget and does several unrelated
+        things, dead/commented-out code is left in the diff, or a dependency (or hand-rolled reimplementation)
+        duplicates what the stdlib already provides.
     anchors:
     - path
     - omission
   module_shape:
     definition: >
-      Each changed type/file stays focused on one responsibility - the methods/functions in it operate on the same underlying data, and don't bolt an unrelated concern onto an existing type or file - and its public surface (new/changed signatures, exported types, config keys) is small relative to the complexity it hides, rather than a shallow, pass-through API that forces callers to manage complexity that should have stayed internal.
+      Each changed type/file stays focused on one responsibility - the methods/functions in it operate
+      on the same underlying data, and don't bolt an unrelated concern onto an existing type or file -
+      and its public surface (new/changed signatures, exported types, config keys) is small relative to
+      the complexity it hides, rather than a shallow, pass-through API that forces callers to manage complexity
+      that should have stayed internal.
     steps:
-    - For any type/file the change adds methods or fields to, check whether the new members use the same state as the existing ones; flag one that shares no data with its siblings.
-    - List any new or changed public functions/types/parameters, and check whether each does non-trivial work or is mostly a pass-through that could be inlined at the call site.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      For any type/file the change adds methods or fields to, check whether the new members use the same
+      state as the existing ones; flag one that shares no data with its siblings.
+    - >-
+      List any new or changed public functions/types/parameters, and check whether each does non-trivial
+      work or is mostly a pass-through that could be inlined at the call site.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every changed type/file stays focused on one responsibility, and the public surface is minimal and clearly hides real complexity.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: every changed type/file stays focused and the public surface is minimal, but one new member is a minor stretch from the type's existing purpose while still plausible there.
+      meaning: >-
+        exactly one finding, and it is of this kind: one new member is a minor stretch from the type's
+        existing purpose while still plausible there.
     - min: 1.0
       max: 1.0
-      meaning: the interface is noticeably larger than it needs to be for what it hides, or more than one member is a stretch from the type's purpose - a real gap, short of a co-located second responsibility.
+      meaning: >-
+        two or three findings, or one of this kind: the interface is noticeably larger than it needs to
+        be for what it hides, or more than one member is a stretch from the type's purpose - a real gap,
+        short of a co-located second responsibility.
     - min: 0.0
       max: 0.0
-      meaning: the change bolts a clearly unrelated responsibility onto an existing type/file (two design decisions co-located), or adds a large, shallow API for what the implementation actually does.
+      meaning: >-
+        four or more findings, or: the change bolts a clearly unrelated responsibility onto an existing
+        type/file (two design decisions co-located), or adds a large, shallow API for what the implementation
+        actually does.
     anchors:
     - path
     - omission
   coupling:
     definition: >
-      The change's new/changed code keeps its dependencies proportionate to its job: no gratuitous pass-through layer (a function whose body is just a one-line call to another, with no logic or stated reason to exist as its own seam); dependency width (fan-out) matches what the function's task actually requires, not balloon coupling to unrelated modules; an interface or exported struct stays small and consumer-shaped rather than a grab bag forcing consumers to depend on methods they never call; and a public signature is self-explanatory from its types and parameter names alone, with short parameter lists and no pure pass-through parameter threaded through a layer that never reads it.
+      The change's new/changed code keeps its dependencies proportionate to its job: no gratuitous pass-through
+      layer (a function whose body is just a one-line call to another, with no logic or stated reason
+      to exist as its own seam); dependency width (fan-out) matches what the function's task actually
+      requires, not balloon coupling to unrelated modules; an interface or exported struct stays small
+      and consumer-shaped rather than a grab bag forcing consumers to depend on methods they never call;
+      and a public signature is self-explanatory from its types and parameter names alone, with short
+      parameter lists and no pure pass-through parameter threaded through a layer that never reads it.
     steps:
-    - List any new function/method; for each, check whether its body does real work or just forwards its arguments, and if it's a pass-through, look for a stated reason it needs to exist as a seam.
-    - Count the distinct packages/modules a new or changed function calls into, and judge whether that width is inherent to the task or avoidable coupling.
-    - For any interface or exported type the change adds to or creates, count its public methods and check whether the change's own consumer(s) actually use most of them.
-    - "Read each new/changed public signature as if seeing only the signature: judge whether you could guess correct call sites without reading the body, flag any parameter typed `any`/`interface{}`/a loose map where a concrete type belonged, and check the parameter count and whether an intermediate function receives a parameter it never reads itself."
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      List any new function/method; for each, check whether its body does real work or just forwards its
+      arguments, and if it's a pass-through, look for a stated reason it needs to exist as a seam.
+    - >-
+      Count the distinct packages/modules a new or changed function calls into, and judge whether that
+      width is inherent to the task or avoidable coupling.
+    - >-
+      For any interface or exported type the change adds to or creates, count its public methods and check
+      whether the change's own consumer(s) actually use most of them.
+    - >-
+      Read each new/changed public signature as if seeing only the signature: judge whether you could
+      guess correct call sites without reading the body, flag any parameter typed `any`/`interface{}`/a
+      loose map where a concrete type belonged, and check the parameter count and whether an intermediate
+      function receives a parameter it never reads itself.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: no gratuitous pass-through layers, dependency width matches the job, interfaces stay small and consumer-shaped, and every changed public signature is self-explanatory with short parameter lists and no unused forwarded parameters.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: one dimension is mildly over - a harmless unstated wrapper, fan-out a little wide, one interface a bit broader than consumed, one signature needing the body to disambiguate or 5-6 parameters - but nothing that obscures the design. A single mild flaw on one of the four merged dimensions (pass-through layers, fan-out, interface size, signature clarity) is a noted issue, not a failure.
+      meaning: >-
+        exactly one finding, and it is of this kind: one dimension is mildly over - a harmless unstated
+        wrapper, fan-out a little wide, one interface a bit broader than consumed, one signature needing
+        the body to disambiguate or 5-6 parameters - but nothing that obscures the design. A single mild
+        flaw on one of the four merged dimensions (pass-through layers, fan-out, interface size, signature
+        clarity) is a noted issue, not a failure.
     - min: 1.0
       max: 1.0
-      meaning: two or more dimensions are mildly over at once, or one is moderately over (a genuine unexplained wrapper chain of two, fan-out clearly wider than the job needs, an interface visibly larger than what's consumed, a signature that needs real digging to use correctly) - a real gap short of obscuring the design.
+      meaning: >-
+        two or three findings, or one of this kind: two or more dimensions are mildly over at once, or
+        one is moderately over (a genuine unexplained wrapper chain of two, fan-out clearly wider than
+        the job needs, an interface visibly larger than what's consumed, a signature that needs real digging
+        to use correctly) - a real gap short of obscuring the design.
     - min: 0.0
       max: 0.0
-      meaning: a chain of one-line delegators with no logic or stated purpose, a function reaching into 7+ unrelated modules with no orchestration role, a large interface (10+ methods) whose consumer uses only a fraction of it, or a signature that is opaque or has 7+ parameters / a parameter threaded through multiple layers that never use it.
+      meaning: >-
+        four or more findings, or: a chain of one-line delegators with no logic or stated purpose, a function
+        reaching into 7+ unrelated modules with no orchestration role, a large interface (10+ methods)
+        whose consumer uses only a fraction of it, or a signature that is opaque or has 7+ parameters
+        / a parameter threaded through multiple layers that never use it.
     anchors:
     - path
     - omission
   naming_and_comments:
     definition: >
-      Identifiers communicate intent without being unwieldy, and comments explain why (business constraint, historical reason, non-obvious tradeoff) - never restate what the next line already says.
+      Identifiers communicate intent without being unwieldy, and comments explain why (business constraint,
+      historical reason, non-obvious tradeoff) - never restate what the next line already says.
     steps:
-    - Scan new/changed identifiers for vague names (`processData`, `doStuff`, `temp2`) or needless abbreviation.
-    - Scan new/changed comments for ones that just narrate the following line (`i++ // increment i`) versus ones that explain a real reason.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      Scan new/changed identifiers for vague names (`processData`, `doStuff`, `temp2`) or needless abbreviation.
+    - >-
+      Scan new/changed comments for ones that just narrate the following line (`i++ // increment i`) versus
+      ones that explain a real reason.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: names are specific and domain-meaningful; comments (if any) earn their place by explaining a non-obvious reason.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: names are specific and comments earn their place, but one name is a little generic or one comment merely restates obvious code, without being actively harmful.
+      meaning: >-
+        exactly one finding, and it is of this kind: one name is a little generic or one comment merely
+        restates obvious code, without being actively harmful.
     - min: 1.0
       max: 1.0
-      meaning: several names are generic, or more than one comment merely restates obvious code.
+      meaning: >-
+        two or three findings, or one of this kind: several names are generic, or more than one comment
+        merely restates obvious code.
     - min: 0.0
       max: 0.0
-      meaning: multiple unclear/misleading names, or comments that are stale, redundant, or restate the code throughout the diff.
+      meaning: >-
+        four or more findings, or: multiple unclear/misleading names, or comments that are stale, redundant,
+        or restate the code throughout the diff.
     anchors:
     - path
     - omission
   error_handling:
     definition: >
-      Edge cases that can be handled safely inline are - the change doesn't wrap a trivial, always-recoverable case in exception/error-boilerplate that obscures the happy path (e.g. a `try/catch` around one call whose only handler does `return false`, when the callee could simply return that directly).
+      Edge cases that can be handled safely inline are - the change doesn't wrap a trivial, always-recoverable
+      case in exception/error-boilerplate that obscures the happy path (e.g. a `try/catch` around one
+      call whose only handler does `return false`, when the callee could simply return that directly).
     steps:
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
     - Look for new error/exception handling blocks.
-    - For each, judge whether the case is genuinely exceptional (needs surfacing to the caller) or could be defined out of existence (a safe default, a boundary check inline, a normal return value).
+    - >-
+      For each, judge whether the case is genuinely exceptional (needs surfacing to the caller) or could
+      be defined out of existence (a safe default, a boundary check inline, a normal return value).
     bands:
     - min: 3.0
       max: 3.0
-      meaning: error handling is proportionate; no boilerplate wrapping a trivially-recoverable case.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: error handling is proportionate overall, but one handler is a touch heavier than the case warrants without being confusing.
+      meaning: >-
+        exactly one finding, and it is of this kind: one handler is a touch heavier than the case warrants
+        without being confusing.
     - min: 1.0
       max: 1.0
-      meaning: more than one handler is heavier than its case warrants, making the happy path noticeably harder to follow, though still not confusing on its own.
+      meaning: >-
+        two or three findings, or one of this kind: more than one handler is heavier than its case warrants,
+        making the happy path noticeably harder to follow, though still not confusing on its own.
     - min: 0.0
       max: 0.0
-      meaning: trivial, always-safe cases are wrapped in error-handling machinery that obscures the actual logic.
+      meaning: >-
+        four or more findings, or: trivial, always-safe cases are wrapped in error-handling machinery
+        that obscures the actual logic.
     anchors:
     - path
     - omission
   commit_hygiene:
     definition: >
-      The branch name and commit message(s) are specific to THIS change, and the commit is scoped to what the task actually needed. A repo-wide rename or a config value threaded through several layers legitimately touches many files - the judge weighs whether the scope is JUSTIFIED by the task, not just how many files changed.
+      The branch name and commit message(s) are specific to THIS change, and the commit is scoped to what
+      the task actually needed. A repo-wide rename or a config value threaded through several layers legitimately
+      touches many files - the judge weighs whether the scope is JUSTIFIED by the task, not just how many
+      files changed.
     guidance: >
-      The judge prompt carries a computed evidence list - files this session wrote whose path the task text never named - ahead of this section when any exist. Use it rather than re-deriving scope from prose: for each listed file, judge whether the task's own description makes it a plausible, necessary part of the change (e.g. a genuinely repo-wide rename touching many unnamed files is fine; an unrelated file with no connection to the task is not).
+      The judge prompt carries a computed evidence list - files this session wrote whose path the task
+      text never named - ahead of this section when any exist. Use it rather than re-deriving scope from
+      prose: for each listed file, judge whether the task's own description makes it a plausible, necessary
+      part of the change (e.g. a genuinely repo-wide rename touching many unnamed files is fine; an unrelated
+      file with no connection to the task is not).
     steps:
-    - "Check the branch name (from the `git_branch`/`git_commit` ledger entries): does it name the actual change (`fix-pagination-off-by-one`, `add-dry-run-flag`), or is it generic/placeholder (`fix`, `update`, `patch`, `wip`)?"
-    - "Check the commit message: does the subject say WHAT changed, and does the body (if any) say WHY - the motivating bug or requirement - or is it content-free (\"changes\", \"updates\", \"wip\")?"
-    - "Check the evidence list of task-unnamed touched files (if provided): for each, is it a plausible, necessary part of the task's own scope, or unconnected to it? A `git_commit` call the ledger shows was REJECTED for staging too many files, followed by a scoped retry that succeeded, is not a defect - score the commit that actually landed."
-    - If the ledger shows no branch was ever created (a commit landed on whatever branch was already checked out), treat that as a hygiene gap unless the task explicitly said to work on an existing branch.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      Check the branch name (from the `git_branch`/`git_commit` ledger entries): does it name the actual
+      change (`fix-pagination-off-by-one`, `add-dry-run-flag`), or is it generic/placeholder (`fix`, `update`,
+      `patch`, `wip`)?
+    - >-
+      Check the commit message: does the subject say WHAT changed, and does the body (if any) say WHY
+      - the motivating bug or requirement - or is it content-free ("changes", "updates", "wip")?
+    - >-
+      Check the evidence list of task-unnamed touched files (if provided): for each, is it a plausible,
+      necessary part of the task's own scope, or unconnected to it? A `git_commit` call the ledger shows
+      was REJECTED for staging too many files, followed by a scoped retry that succeeded, is not a defect
+      - score the commit that actually landed.
+    - >-
+      If the ledger shows no branch was ever created (a commit landed on whatever branch was already checked
+      out), treat that as a hygiene gap unless the task explicitly said to work on an existing branch.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: branch and commit message are both specific to the change, and every task-unnamed touched file is a plausible, necessary part of the task's own scope.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: branch and message are both specific and every touched file is plausibly in scope, but one task-unnamed file's connection to the task is a stretch worth a second look, not a clear miss.
+      meaning: >-
+        exactly one finding, and it is of this kind: one task-unnamed file's connection to the task is
+        a stretch worth a second look, not a clear miss.
     - min: 1.0
       max: 1.0
-      meaning: one of branch/message is generic or thin, or a task-unnamed file's connection to the task is genuinely unclear, but nothing that obscures what happened.
+      meaning: >-
+        two or three findings, or one of this kind: one of branch/message is generic or thin, or a task-unnamed
+        file's connection to the task is genuinely unclear, but nothing that obscures what happened.
     - min: 0.0
       max: 0.0
-      meaning: the branch name or commit message is a meaningless placeholder (`fix`, `update`, `wip`), OR the commit swept in files with no plausible connection to the task.
+      meaning: >-
+        four or more findings, or: the branch name or commit message is a meaningless placeholder (`fix`,
+        `update`, `wip`), OR the commit swept in files with no plausible connection to the task.
     anchors:
     - path
     - omission
   task_completeness:
     definition: >
-      The change is delivered as far as the task actually required - not just "code compiles and is committed locally" when the task implies more (handing the work off for delivery, not merely describing it).
+      The change is delivered as far as the task actually required - not just "code compiles and is committed
+      locally" when the task implies more (handing the work off for delivery, not merely describing it).
     guidance: >
-      A code-implementer never pushes or opens a pull request itself: it commits with its own git, then calls `stage_pr`/`stage_push` to hand delivery to the gate, which pushes the branch and opens/updates the PR only after the answer passes. Whether that hand-off call happened is a separate deterministic check elsewhere in the verdict (`delivery_complete`) - this criterion is about whether the CODE itself covers what the task asked, and whether the answer is honest about what it did.
+      A code-implementer never pushes or opens a pull request itself: it commits with its own git, then
+      calls `stage_pr`/`stage_push` to hand delivery to the gate, which pushes the branch and opens/updates
+      the PR only after the answer passes. Whether that hand-off call happened is a separate deterministic
+      check elsewhere in the verdict (`delivery_complete`) - this criterion is about whether the CODE
+      itself covers what the task asked, and whether the answer is honest about what it did.
     steps:
-    - "From the task description, decide what \"done\" means here: many tasks are genuinely satisfied by a local commit on a branch; others explicitly or implicitly need the work handed off for delivery (\"open a PR for…\", \"ship this\", \"push a fix\")."
-    - "When delivery was needed, check for a successful `git_commit` entry in the workspace activity ledger - the disk-probed record of the commit an ACP worker made with its own git (there is no separate \"commit tool\" call to look for). Do not expect a `git_push` or PR-creation entry here: the gate pushes and opens the PR after this round, never during it."
-    - Treat an answer that claims to have pushed, opened a PR, or merged as a fabrication - a code-implementer has no tool that does any of those itself. The honest claim is "committed and handed off for delivery"; anything stronger describes a capability it doesn't have.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      From the task description, decide what "done" means here: many tasks are genuinely satisfied by
+      a local commit on a branch; others explicitly or implicitly need the work handed off for delivery
+      ("open a PR for…", "ship this", "push a fix").
+    - >-
+      When delivery was needed, check for a successful `git_commit` entry in the workspace activity ledger
+      - the disk-probed record of the commit an ACP worker made with its own git (there is no separate
+      "commit tool" call to look for). Do not expect a `git_push` or PR-creation entry here: the gate
+      pushes and opens the PR after this round, never during it.
+    - >-
+      Treat an answer that claims to have pushed, opened a PR, or merged as a fabrication - a code-implementer
+      has no tool that does any of those itself. The honest claim is "committed and handed off for delivery";
+      anything stronger describes a capability it doesn't have.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: the task's full scope is addressed in the change, and the answer's delivery claims match what a code-implementer can actually do (committed and handed off, not pushed or merged).
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: the task's full scope is addressed and delivery claims are accurate, but one minor sub-part of the task is covered more thinly than the rest without being dropped.
+      meaning: >-
+        exactly one finding, and it is of this kind: one minor sub-part of the task is covered more thinly
+        than the rest without being dropped.
     - min: 1.0
       max: 1.0
-      meaning: the core code change landed but the task's stated scope is only partially covered, with no honest note about what's left.
+      meaning: >-
+        two or three findings, or one of this kind: the core code change landed but the task's stated
+        scope is only partially covered, with no honest note about what's left.
     - min: 0.0
       max: 0.0
-      meaning: the answer claims a delivery step it cannot perform itself (pushed, opened a PR, merged) with no corresponding ledger entry, or stops short of the code change the task actually asked for.
+      meaning: >-
+        four or more findings, or: the answer claims a delivery step it cannot perform itself (pushed,
+        opened a PR, merged) with no corresponding ledger entry, or stops short of the code change the
+        task actually asked for.
     anchors:
     - path
     - omission

@@ -3,194 +3,254 @@ scale:
   max: 3
   pass: 2
 notes: >
-  Every criterion here is drawn from `research-r1-startsit.md` (R1) via the
-  `sleeper:start-sit` skill - "what bad advice looks like" and the decision
-  procedure it distills. A published threshold not in the skill/report must
-  never be treated as fabricated on its own; check the report before scoring
-  a citation down. When the skill itself says "no published number exists"
-  for a case, an answer that says the same thing is fully grounded - it must
-  not be penalized for lacking a number that does not exist.
+  Every criterion here is drawn from `research-r1-startsit.md` (R1) via the `sleeper:start-sit` skill
+  - "what bad advice looks like" and the decision procedure it distills. A published threshold not in
+  the skill/report must never be treated as fabricated on its own; check the report before scoring a citation
+  down. When the skill itself says "no published number exists" for a case, an answer that says the same
+  thing is fully grounded - it must not be penalized for lacking a number that does not exist.
 criteria:
   every_slot_decided:
     definition: >
-      Every starting slot, including the FLEX, gets an explicit start/sit
-      call - no slot is left undecided or silently skipped.
+      Every starting slot, including the FLEX, gets an explicit start/sit call - no slot is left undecided
+      or silently skipped.
     steps:
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
     - List every starting slot from the roster (including FLEX).
-    - Check each slot has an explicit verdict (current player confirmed, or
-      a named swap).
-    - Check the FLEX specifically was decided by ranking all remaining
-      RB/WR/TE candidates, not defaulted to "best RB not started."
+    - Check each slot has an explicit verdict (current player confirmed, or a named swap).
+    - >-
+      Check the FLEX specifically was decided by ranking all remaining RB/WR/TE candidates, not defaulted
+      to "best RB not started."
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every slot including FLEX decided, with the FLEX ranked across all eligible remaining players.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: every slot decided, but the FLEX reasoning defaults to "best RB/WR" rather than ranking the real candidate pool.
+      meaning: >-
+        exactly one finding, and it is of this kind: the FLEX reasoning defaults to "best RB/WR" rather
+        than ranking the real candidate pool.
     - min: 1.0
       max: 1.0
-      meaning: one slot is left undecided or ambiguous.
+      meaning: 'two or three findings, or one of this kind: one slot is left undecided or ambiguous.'
     - min: 0.0
       max: 0.0
-      meaning: multiple slots undecided, or the FLEX is silently skipped.
+      meaning: 'four or more findings, or: multiple slots undecided, or the FLEX is silently skipped.'
     anchors:
     - quote
     - omission
   locks_respected:
     definition: >
-      The answer accounts for Sleeper's per-game kickoff locks: it never
-      recommends swapping a player whose game has already started, and it
-      flags when a close call's window closes before more information
+      The answer accounts for Sleeper's per-game kickoff locks: it never recommends swapping a player
+      whose game has already started, and it flags when a close call's window closes before more information
       (e.g. Thursday-only reporting, or the 90-minute inactive list) arrives.
     steps:
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
     - Check no recommended swap involves a player already locked.
-    - For a Questionable/Doubtful player with a close kickoff, check the
-      answer states the lock timing (per `start-sit`'s kickoff/timing
-      guidance) rather than treating the decision as open-ended.
+    - >-
+      For a Questionable/Doubtful player with a close kickoff, check the answer states the lock timing
+      (per `start-sit`'s kickoff/timing guidance) rather than treating the decision as open-ended.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: locks are respected throughout, and lock timing is stated wherever it materially affects a close call.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: locks are respected, but lock timing is not mentioned for a close call where it would help.
+      meaning: >-
+        exactly one finding, and it is of this kind: lock timing is not mentioned for a close call where
+        it would help.
     - min: 1.0
       max: 1.0
-      meaning: a recommendation is ambiguous about whether the swap is still actionable.
+      meaning: >-
+        two or three findings, or one of this kind: a recommendation is ambiguous about whether the swap
+        is still actionable.
     - min: 0.0
       max: 0.0
-      meaning: a recommended swap involves a player already locked, or ignores the Thursday no-report gap.
+      meaning: >-
+        four or more findings, or: a recommended swap involves a player already locked, or ignores the
+        Thursday no-report gap.
     anchors:
     - quote
     - omission
   injury_practice_checked:
     definition: >
-      Every starter's injury/practice status is checked and reflected in the
-      call, using the report's play-rate data (`practice-report-semantics`)
-      rather than treating a designation as binary.
+      Every starter's injury/practice status is checked and reflected in the call, using the report's
+      play-rate data (`practice-report-semantics`) rather than treating a designation as binary.
     steps:
-    - For each starter carrying a designation, check the answer names the
-      designation and/or practice status.
-    - Check the call reflects the relevant play rate (e.g. Friday DNP ≈ 29%,
-      not an automatic bench) rather than a binary healthy/hurt read.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      For each starter carrying a designation, check the answer names the designation and/or practice
+      status.
+    - >-
+      Check the call reflects the relevant play rate (e.g. Friday DNP ≈ 29%, not an automatic bench) rather
+      than a binary healthy/hurt read.
     - Check a Doubtful/Out player is not started without a stated reason.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every starter's designation/practice status is checked and correctly weighted against the published play rates.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: every designated starter is checked, but one call treats a designation more binary than the data supports.
+      meaning: >-
+        exactly one finding, and it is of this kind: one call treats a designation more binary than the
+        data supports.
     - min: 1.0
       max: 1.0
-      meaning: a designated starter's status is checked but the play-rate context is missing.
+      meaning: >-
+        two or three findings, or one of this kind: a designated starter's status is checked but the play-rate
+        context is missing.
     - min: 0.0
       max: 0.0
-      meaning: a starter's injury/practice status is not checked, or a Doubtful/Out player starts with no stated reason.
+      meaning: >-
+        four or more findings, or: a starter's injury/practice status is not checked, or a Doubtful/Out
+        player starts with no stated reason.
     anchors:
     - quote
     - omission
   projections_cited:
     definition: >
-      Start/sit calls that turn on scoring expectation cite the actual
-      projection numbers pulled from `sleeper_player`/`sleeper_matchup`, not
-      a vague "should score more."
+      Start/sit calls that turn on scoring expectation cite the actual projection numbers pulled from
+      `sleeper_player`/`sleeper_matchup`, not a vague "should score more."
     steps:
-    - For each non-obvious call, check a projection number (or points-so-far
-      figure) is cited.
-    - Check the number traces to a tool call in this session, not an
-      invented figure.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - For each non-obvious call, check a projection number (or points-so-far figure) is cited.
+    - Check the number traces to a tool call in this session, not an invented figure.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every non-obvious call cites the specific projection numbers used.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: most calls cite numbers; one close call states a verdict with no number behind it.
+      meaning: >-
+        exactly one finding, and it is of this kind: most calls cite numbers; one close call states a
+        verdict with no number behind it.
     - min: 1.0
       max: 1.0
-      meaning: several calls lack the projection numbers that would justify them.
+      meaning: >-
+        two or three findings, or one of this kind: several calls lack the projection numbers that would
+        justify them.
     - min: 0.0
       max: 0.0
-      meaning: verdicts are stated with no supporting numbers, or a cited number does not match the tool data.
+      meaning: >-
+        four or more findings, or: verdicts are stated with no supporting numbers, or a cited number does
+        not match the tool data.
     anchors:
     - quote
     - omission
   opponent_considered:
     definition: >
-      Matchup/opponent context is used only within the bounds the report
-      supports - a tiebreaker for close calls, never a reason to bench a
-      clearly-better healthy player.
+      Matchup/opponent context is used only within the bounds the report supports - a tiebreaker for close
+      calls, never a reason to bench a clearly-better healthy player.
     steps:
-    - Check a close call between similarly-projected players cites matchup
-      as the deciding factor when relevant.
-    - Check no call benches a clearly-better, healthy player for a
-      clearly-worse one on matchup alone.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      Check a close call between similarly-projected players cites matchup as the deciding factor when
+      relevant.
+    - Check no call benches a clearly-better, healthy player for a clearly-worse one on matchup alone.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: matchup is used correctly as a bounded tiebreaker, never to override a clear talent/health gap.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: matchup is used correctly, but one close call would have benefited from citing it and didn't.
+      meaning: >-
+        exactly one finding, and it is of this kind: one close call would have benefited from citing it
+        and didn't.
     - min: 1.0
       max: 1.0
-      meaning: matchup is over-weighted in one call without being decisive to a bench-the-better-player error.
+      meaning: >-
+        two or three findings, or one of this kind: matchup is over-weighted in one call without being
+        decisive to a bench-the-better-player error.
     - min: 0.0
       max: 0.0
-      meaning: a clearly-better healthy player is benched for a worse one on matchup alone.
+      meaning: >-
+        four or more findings, or: a clearly-better healthy player is benched for a worse one on matchup
+        alone.
     anchors:
     - quote
     - omission
   no_hedged_pick:
     definition: >
-      Every call names an action - a start, a sit, or "no change" - never
-      "either could work" left without a pick.
+      Every call names an action - a start, a sit, or "no change" - never "either could work" left without
+      a pick.
     steps:
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
     - Scan every verdict for a genuine pick vs. a hedge.
-    - Check uncertainty is expressed as a confidence number or a named
-      contingency, not as an unresolved "your call."
+    - >-
+      Check uncertainty is expressed as a confidence number or a named contingency, not as an unresolved
+      "your call."
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every call names an action; uncertainty is expressed as confidence or a named contingency, never as a hedge.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: every call names an action, but one close call's confidence framing is thin.
+      meaning: 'exactly one finding, and it is of this kind: one close call''s confidence framing is thin.'
     - min: 1.0
       max: 1.0
-      meaning: one call is left as an unresolved hedge.
+      meaning: 'two or three findings, or one of this kind: one call is left as an unresolved hedge.'
     - min: 0.0
       max: 0.0
-      meaning: multiple calls are hedged with no pick made.
+      meaning: 'four or more findings, or: multiple calls are hedged with no pick made.'
     anchors:
     - quote
     - omission
   artifact_delivered:
     definition: >
-      The round's deliverable is a `lineup` artifact written via
-      write_artifact, not just a lineup card described in the chat reply -
-      it parses as JSON and carries the schema's required top-level fields
+      The round's deliverable is a `lineup` artifact written via write_artifact, not just a lineup card
+      described in the chat reply - it parses as JSON and carries the schema's required top-level fields
       (`week`, `team`, a non-empty `starters` array).
     steps:
-    - Check a `lineup` artifact exists for this round (list_artifacts/
-      read_artifact), separate from the reply's own text.
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
+      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
+      the number of findings; none is the top band.
+    - >-
+      Check a `lineup` artifact exists for this round (list_artifacts/ read_artifact), separate from the
+      reply's own text.
     - Parse the artifact's content as JSON.
     - Check `week`, `team`, and a non-empty `starters` array are present.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: a `lineup` artifact exists, parses as JSON, and every required top-level field is present.
+      meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: the artifact exists and parses, but one required field is missing or empty.
+      meaning: 'exactly one finding, and it is of this kind: one required field is missing or empty.'
     - min: 1.0
       max: 1.0
-      meaning: no artifact was written this round - the lineup card only exists as prose in the reply.
+      meaning: >-
+        two or three findings, or one of this kind: no artifact was written this round - the lineup card
+        only exists as prose in the reply.
     - min: 0.0
       max: 0.0
-      meaning: the round's content does not parse as JSON at all, or no lineup content exists anywhere.
+      meaning: >-
+        four or more findings, or: the round's content does not parse as JSON at all, or no lineup content
+        exists anywhere.
     anchors:
     - quote
     - omission
