@@ -309,7 +309,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		return rep, 1
 	}
 	rep.ArtifactsWritten = res.ArtifactsWritten
-	rep.Criteria = compareCriteria(res, recordedFor(sess, jr))
+	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
 	for _, c := range rep.Criteria {
 		if c.Flipped {
 			rep.Flipped = true
@@ -321,9 +321,9 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	return rep, 0
 }
 
-// compareCriteria pairs replayed criteria with recorded, deciding pass/fail
-// by res.Threshold; a recorded criterion replay never reproduced is its own flip class.
-func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64) []ReplayCriterionReport {
+// compareCriteria pairs replayed criteria with recorded, deciding pass/fail by
+// res.Threshold; judgeRan false means an absent judge-scored criterion is expected, not a flip.
+func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64, judgeRan bool) []ReplayCriterionReport {
 	out := make([]ReplayCriterionReport, 0, len(res.Criteria)+len(recorded))
 	seen := map[string]bool{}
 	for _, c := range res.Criteria {
@@ -346,9 +346,13 @@ func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64)
 	sort.Strings(extra)
 	for _, name := range extra {
 		rec := recorded[name]
+		reason, flipped := "recorded, not replayed (judge not run this replay)", false
+		if judgeRan {
+			reason, flipped = "recorded, not replayed", true
+		}
 		out = append(out, ReplayCriterionReport{
 			Name: name, HasRecorded: true, RecordedScore: rec, HasReplayed: false, Threshold: res.Threshold,
-			RecordedPassed: rec >= res.Threshold, Reason: "recorded, not replayed", Flipped: true,
+			RecordedPassed: rec >= res.Threshold, Reason: reason, Flipped: flipped,
 		})
 	}
 	return out

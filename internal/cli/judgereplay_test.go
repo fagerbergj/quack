@@ -228,11 +228,31 @@ func TestRunJudgeReplayThresholdDecidesPassFail(t *testing.T) {
 	}
 }
 
-func TestRunJudgeReplayRecordedOnlyCriterionIsAFlip(t *testing.T) {
+// TestCompareCriteriaRecordedOnlyIsAFlipOnlyWhenJudgeRan: an unreproduced
+// recorded criterion flips only when the judge actually ran this replay.
+func TestCompareCriteriaRecordedOnlyIsAFlipOnlyWhenJudgeRan(t *testing.T) {
+	res := vetting.ReplayRoundResult{Threshold: 0.7}
+	recorded := map[string]float64{"grounded": 1.0}
+
+	det := compareCriteria(res, recorded, false)
+	if len(det) != 1 || det[0].Flipped {
+		t.Errorf("deterministic-only: grounded = %+v, want present, Flipped=false", det)
+	}
+	if !det[0].HasRecorded || det[0].HasReplayed {
+		t.Errorf("deterministic-only: grounded = %+v, want HasRecorded=true HasReplayed=false", det[0])
+	}
+
+	full := compareCriteria(res, recorded, true)
+	if len(full) != 1 || !full[0].Flipped {
+		t.Errorf("judge ran: grounded = %+v, want present, Flipped=true", full)
+	}
+}
+
+// TestRunJudgeReplayDeterministicOnlyOmitsJudgeScoredCriteriaWithoutFlipping
+// proves it exits clean when the code-owned criteria reproduce, judge-scored ones recorded too.
+func TestRunJudgeReplayDeterministicOnlyOmitsJudgeScoredCriteriaWithoutFlipping(t *testing.T) {
 	ctx := context.Background()
-	// "grounded" is judge-scored, never produced by deterministic-only replay -
-	// a dropped once-recorded criterion must flip, not vanish silently.
-	bundlePath := buildFixtureBundle(t, "worker-r0", map[string]float64{"cites_sources": 1.0, "grounded": 1.0})
+	bundlePath := buildFixtureBundle(t, "worker-r0", map[string]float64{"cites_sources": 1.0, "grounded": 1.0, "answers_question": 1.0})
 	sess, err := bundle.Load(bundlePath)
 	if err != nil {
 		t.Fatalf("load bundle: %v", err)
@@ -240,21 +260,19 @@ func TestRunJudgeReplayRecordedOnlyCriterionIsAFlip(t *testing.T) {
 	opts := ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), DeterministicOnly: true}
 	var buf bytes.Buffer
 	code := RunJudgeReplay(ctx, fixtureConfig(), sess, opts, nil, nil, &buf, true)
-	if code == 0 {
-		t.Fatalf("exit code = 0, want non-zero (recorded-only criterion): %s", buf.String())
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (judge-scored criteria absent by design under --deterministic-only): %s", code, buf.String())
 	}
 	reports := decodeReports(t, &buf)
-	var found *ReplayCriterionReport
-	for i, c := range reports[0].Criteria {
-		if c.Name == "grounded" {
-			found = &reports[0].Criteria[i]
+	names := map[string]bool{}
+	for _, c := range reports[0].Criteria {
+		names[c.Name] = true
+		if c.Name != "cites_sources" && c.Flipped {
+			t.Errorf("%s flipped under --deterministic-only, want informational only: %+v", c.Name, c)
 		}
 	}
-	if found == nil {
-		t.Fatalf("criteria = %+v, want a recorded-only \"grounded\" entry", reports[0].Criteria)
-	}
-	if !found.HasRecorded || found.HasReplayed || !found.Flipped {
-		t.Errorf("grounded = %+v, want HasRecorded=true HasReplayed=false Flipped=true", found)
+	if !names["grounded"] || !names["answers_question"] {
+		t.Errorf("criteria = %+v, want the recorded judge-scored criteria still listed (informational)", reports[0].Criteria)
 	}
 }
 
