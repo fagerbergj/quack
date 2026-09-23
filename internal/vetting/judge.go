@@ -126,6 +126,8 @@ type criterionScore struct {
 	// computeDeterministicCriteria's provenance, never by the judge) - json:"-" so
 	// it never appears in the judge's tool schema or gets round-tripped from its output.
 	Deterministic bool `json:"-"`
+	// Unscored: the judge's entry had no score key, so Score's 0 is not a verdict.
+	Unscored bool `json:"-"`
 	// Definition/Scale/Bands/Evidence: envelope metadata, never set by the judge
 	// (json:"-") - populated by mergeDeterministic or applyRubricSpecs.
 	Definition string         `json:"-"`
@@ -721,6 +723,12 @@ func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, quest
 // self-inconsistent verdicts: a PASS backed by zero judge reads, or a judge-scored criterion below threshold with no `fix` (the prompt requires one only
 // for a genuine failure - see inconsistentJudgeFailures). No-op otherwise.
 func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict, counters judgeReadCounters) verdict {
+	v = dropUnscoredStrays(v, cfg.RubricSpecs)
+	if names := unscoredCriteria(v); len(names) > 0 {
+		slog.Warn("judge left rubric criteria unscored; re-judging once",
+			"component", "vetting", "agent", cfg.Agent, "criteria", names)
+		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unscoredFeedback(names), changedFiles, known, act, received, emit, v)
+	}
 	switch {
 	case unreadPass(counters.repo, v):
 		slog.Warn("judge passed without reading the repo; re-judging once",
@@ -749,6 +757,7 @@ func reJudgeOnce(ctx context.Context, factory JudgeFactory, cfg Config, question
 		slog.Warn("re-judge failed; keeping the original verdict", "component", "vetting", "err", err2)
 		return v
 	}
+	v2 = dropUnscoredStrays(v2, cfg.RubricSpecs)
 	if unreadPass(counters2.repo, v2) {
 		slog.Warn("judge passed without reading the repo again; accepting the verdict",
 			"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
@@ -1526,6 +1535,56 @@ func aggregateVerdict(v verdict) verdict {
 		v.Score = 1
 	}
 	return v
+}
+
+// UnmarshalJSON marks an entry with no score key as Unscored; both the text
+// fallback and the submit_verdict tool decode criteria through encoding/json.
+func (c *criterionScore) UnmarshalJSON(b []byte) error {
+	type plain criterionScore
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(b, &keys) == nil {
+		_, scored := keys["score"]
+		p.Unscored = !scored
+	}
+	*c = criterionScore(p)
+	return nil
+}
+
+// dropUnscoredStrays removes unscored entries the rubric does not define: a
+// judge's aside such as "score_note", which would otherwise fail the round as a 0.
+func dropUnscoredStrays(v verdict, specs map[string]criterionSpec) verdict {
+	if len(specs) == 0 {
+		return v
+	}
+	for name, c := range v.Criteria {
+		if _, known := specs[name]; c.Unscored && !known {
+			slog.Warn("judge returned an unscored key that is not a rubric criterion; dropping it", "component", "vetting", "key", name)
+			delete(v.Criteria, name)
+		}
+	}
+	return aggregateVerdict(v)
+}
+
+// unscoredCriteria: judge criteria the verdict names but gives no score.
+func unscoredCriteria(v verdict) []string {
+	var names []string
+	for name, c := range v.Criteria {
+		if c.Unscored && !c.Deterministic {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// unscoredFeedback: appended to the judge prompt on the re-run for unscoredCriteria.
+func unscoredFeedback(names []string) string {
+	return fmt.Sprintf("Your previous verdict gave %s no score, so it counted as 0. Score %s on the rubric's scale.",
+		strings.Join(names, ", "), strings.Join(names, ", "))
 }
 
 // emitEvaluationResults: records gen_ai.evaluation.result event per criterion. runID stands in for responseID.

@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -1894,5 +1895,88 @@ func TestInconsistentJudgeFailures(t *testing.T) {
 	got := inconsistentJudgeFailures(v, 0.6, specs)
 	if len(got) != 1 || got[0] != "fail_no_fix" {
 		t.Fatalf("inconsistentJudgeFailures = %v, want [fail_no_fix]", got)
+	}
+}
+
+// TestParseVerdict_MissingScoreIsNotAZero: prod chat ext:github:github-fagerbergj-quack-1545
+// round 2 - the judge omitted one criterion's score and added a non-rubric
+// "score_note"; both parsed as 0 and failed a verdict the judge meant to pass.
+func TestParseVerdict_MissingScoreIsNotAZero(t *testing.T) {
+	raw := `{"criteria":{"claims_grounded":{"reason":"all confirmed","score":3},` +
+		`"verification_over_assertion":{"reason":"the top band"},` +
+		`"score_note":{"corrected":"verification_over_assertion corrected to 3"}},"score":3}`
+	v, err := parseVerdict(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := v.Criteria["verification_over_assertion"]; !c.Unscored {
+		t.Errorf("a criterion with no score key must be marked unscored: %+v", c)
+	}
+	if c := v.Criteria["claims_grounded"]; c.Unscored {
+		t.Errorf("a scored criterion must not be marked unscored: %+v", c)
+	}
+	specs := map[string]criterionSpec{"claims_grounded": {}, "verification_over_assertion": {}}
+	v = dropUnscoredStrays(v, specs)
+	if _, ok := v.Criteria["score_note"]; ok {
+		t.Error("an unscored key the rubric does not define is noise and must be dropped")
+	}
+	if got := unscoredCriteria(v); len(got) != 1 || got[0] != "verification_over_assertion" {
+		t.Errorf("unscoredCriteria = %v, want the rubric criterion the judge left unscored", got)
+	}
+}
+
+// TestSubmitVerdictArgs_MissingScoreIsNotAZero: the submit_verdict tool decodes
+// its arguments through the same criterion type, so it gets the same marking.
+func TestSubmitVerdictArgs_MissingScoreIsNotAZero(t *testing.T) {
+	var args verdictArgs
+	if err := json.Unmarshal([]byte(`{"criteria":{"a":{"shortfall":"x"},"b":{"score":0}}}`), &args); err != nil {
+		t.Fatal(err)
+	}
+	if !args.Criteria["a"].Unscored || args.Criteria["b"].Unscored {
+		t.Errorf("unscored marking wrong: %+v", args.Criteria)
+	}
+}
+
+// unscoredThenScoredJudge first submits a rubric criterion with no score plus a
+// non-rubric aside (prod chat ext:github:github-fagerbergj-quack-1545), then scores it.
+type unscoredThenScoredJudge struct{ calls int32 }
+
+func (j *unscoredThenScoredJudge) Name() string { return "unscored-then-scored-judge" }
+
+func (j *unscoredThenScoredJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		crit := map[string]any{"shortfall": "Reading settled the claims."}
+		extra := map[string]any{}
+		if atomic.AddInt32(&j.calls, 1) > 1 {
+			crit["score"] = 3.0
+		} else {
+			extra["score_note"] = map[string]any{"corrected": "verification_over_assertion corrected to 3"}
+		}
+		criteria := map[string]any{"verification_over_assertion": crit}
+		for k, v := range extra {
+			criteria[k] = v
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 3.0, "criteria": criteria, "feedback": ""}), nil)
+	}
+}
+
+func TestFinishJudgeRound_ReasksWhenACriterionIsUnscored(t *testing.T) {
+	judge := &unscoredThenScoredJudge{}
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the change."}}}
+	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6,
+		RubricSpecs: map[string]criterionSpec{"verification_over_assertion": {Name: "verification_over_assertion"}}}
+
+	v, err := runJudgeAgent(t.Context(), NewJudgeFactory(judge, nil, nil), cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 2 {
+		t.Fatalf("judge model called %d times, want 2 (original round + one re-ask for the unscored criterion)", got)
+	}
+	if c := v.Criteria["verification_over_assertion"]; c.Unscored || c.Score != 1.0 {
+		t.Errorf("verification_over_assertion = %+v, want the re-asked score 1.0 (raw 3/3)", c)
+	}
+	if _, ok := v.Criteria["score_note"]; ok {
+		t.Error("the non-rubric aside must not survive as a criterion")
 	}
 }
