@@ -2437,19 +2437,20 @@ func appendLabeledSection(sb *strings.Builder, header, body string) {
 	sb.WriteString(body)
 }
 
-// citationOnlyFailure: only cites_sources below threshold - answer is substantively fine, just needs URL formatting.
+// citationOnlyFailure: only citation-form criteria are below threshold - the answer is
+// substantively fine and needs links attached, not re-research.
 func citationOnlyFailure(v verdict, threshold float64) bool {
 	failing := 0
-	citesFailed := false
 	for name, c := range v.Criteria {
-		if c.Score < threshold {
-			failing++
-			if name == "cites_sources" {
-				citesFailed = true
-			}
+		if c.Score >= threshold {
+			continue
 		}
+		if name != "cites_sources" && name != specificsCitedCriterion {
+			return false
+		}
+		failing++
 	}
-	return citesFailed && failing == 1
+	return failing > 0
 }
 
 // activityFromSession: reconstructs worker's retrieval and workspace ledger from session events.

@@ -1308,6 +1308,11 @@ func boundExcerpt(s string, maxChars int) string {
 	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
 }
 
+// reviseReplyRule closes every revise request: an edited artifact is the deliverable, so
+// re-typing it as the reply cost prod chat cedfc299 26k output tokens (6 min) in one round.
+const reviseReplyRule = "If you edited an artifact, your reply is a short note of what changed that names the artifact: the judge and every later step read the artifact itself, so repeating it in the reply only costs time. " +
+	"Otherwise output only the corrected answer with no preamble or commentary.\n\n"
+
 // buildRevisionContent: re-invokes worker to address judge feedback. Every section bounded (boundExcerpt).
 // #941: the worker gets the structured verdict envelope (definition/bands/anchor per
 // failing criterion), not prose - this is what closes the gap where the worker previously had no rubric access at all. Rubric text itself isn't a parameter: applyRubricSpecs (node.go) already folds each failing criterion's parsed definition/bands into env before this runs.
@@ -1323,16 +1328,15 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 		// formatting pass, not re-research: the worker already fetched the URLs
 		// (listed in the activity section below), so re-fetching them wastes tokens and time. Tell it to attach what it has.
 		sb.WriteString("Your previous answer is substantively fine - the ONLY problem is missing inline citations. " +
-			"You already retrieved the sources listed below (URLs you fetched and searched); attach them inline as Markdown links to the claims they support. " +
-			"Do NOT re-fetch or search again - this is purely a citation-formatting fix. " +
-			"Then output only the corrected answer with no preamble or commentary.\n\n")
+			"You already retrieved the sources listed below (URLs you fetched and searched); attach them inline as Markdown links to the claims they support, in the same sentence or bullet as each figure - edit_artifact the artifact if the answer lives in one. " +
+			"Do NOT re-fetch or search again - this is purely a citation-formatting fix. " + reviseReplyRule)
 	} else {
 		sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +
 			"Below is the structured verdict: each failing criterion's definition, scoring bands, and (where locatable) an anchor into your answer, plus a concrete fix. " +
 			"Address every failure - use your tools to fix the gaps: re-fetch and verify sources, correct or remove unsupported claims, add missing citations. " +
 			"If you wrote any artifact last round (list_artifacts shows your prior revision), read_artifact it and edit_artifact the specific parts this verdict flags - " +
-			"don't regenerate it from scratch; write_<kind> stays available as a full-replace fallback when an edit genuinely doesn't fit. " +
-			"Then output only the corrected answer with no preamble or commentary.\n\n")
+			"don't regenerate it from scratch. write_<kind> replaces a whole artifact in one reply, and a reply's output (reasoning included) is capped, so a full rewrite only fits a short artifact. " +
+			reviseReplyRule)
 	}
 	if constitution != "" {
 		sb.WriteString("Principles:\n")

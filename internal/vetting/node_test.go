@@ -1093,6 +1093,15 @@ func TestCitationOnlyFailure(t *testing.T) {
 		{"all pass", map[string]criterionScore{
 			"grounded": {Score: 0.9}, "cites_sources": {Score: 0.9},
 		}, false},
+		{"specifics_cited only", map[string]criterionScore{
+			"grounded": {Score: 0.9}, "cites_sources": {Score: 0.9}, "specifics_cited": {Score: 0.5},
+		}, true},
+		{"both citation criteria", map[string]criterionScore{
+			"grounded": {Score: 0.9}, "cites_sources": {Score: 0.4}, "specifics_cited": {Score: 0.5},
+		}, true},
+		{"specifics_cited plus a contradiction", map[string]criterionScore{
+			"specifics_supported": {Score: 0}, "specifics_cited": {Score: 0.5},
+		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
