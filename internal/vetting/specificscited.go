@@ -83,7 +83,7 @@ func specificsCitedCriterionScore(ctx context.Context, answer string, act worker
 	}
 	score := float64(backed) / float64(total)
 	c := criterionScore{Score: score, Reason: fmt.Sprintf(
-		"deterministic: %d of %d substantive specifics (figures, percentages, prices, dates) carry a citation in their sentence or block, or appear in the research received", backed, total)}
+		"deterministic: %d of %d substantive specifics (figures, percentages, prices, dates) carry a citation in their sentence or bullet, or the next one after them in the paragraph, or appear in the research received", backed, total)}
 	for i, u := range uncited {
 		if i == specificsCitedEvidence {
 			c.Reason += fmt.Sprintf("; %d more", len(uncited)-i)

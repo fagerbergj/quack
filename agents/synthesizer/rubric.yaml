@@ -216,7 +216,8 @@ criteria:
   specifics_cited:
     definition: >
       Substantive specifics (figures, percentages, prices, dates) carry a citation in their own sentence
-      or block, or appear in the research the node received.
+      or bullet, or the next one after them in the same paragraph, or appear in the research the node
+      received.
     guidance: >
       Code-owned: computed over the answer plus every artifact the worker wrote this round, so a pointer
       answer is scored on its artifact. Absent when the deliverable has fewer than 10 substantive specifics.
