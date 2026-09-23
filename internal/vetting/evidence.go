@@ -17,6 +17,7 @@ type UnitCheck struct {
 	Citation string
 	State    string  // "located", "unlocated", "uncited", "no_stored_text"
 	Window   string  // evidence around the match; for an unlocated figure, around the claim's key terms (second look)
+	page     string  // the cited page's text, for the second look's wider window
 	Verdict  Verdict // the verify tier's answer, zero until it runs
 }
 
@@ -86,6 +87,10 @@ func digitsForWords(text string) string {
 // LocateSpecific finds s in text after the same normalisation FindUnits applied
 // (thousands separators dropped, case folded) and returns the surrounding window.
 func LocateSpecific(text string, s Specific) (string, bool) {
+	return locateSpecificIn(text, s, locateWindow)
+}
+
+func locateSpecificIn(text string, s Specific, width int) (string, bool) {
 	hay := strings.ToLower(text)
 	needle := s.Norm
 	if s.Kind == "number" || s.Kind == "percent" || s.Kind == "currency" {
@@ -98,7 +103,7 @@ func LocateSpecific(text string, s Specific) (string, bool) {
 		return "", false
 	}
 	if s.Kind == "quote" {
-		return locateQuote(hay, needle)
+		return locateQuote(hay, needle, width)
 	}
 	i := -1
 	for _, n := range needleForms(s) {
@@ -110,7 +115,7 @@ func LocateSpecific(text string, s Specific) (string, bool) {
 	if i < 0 {
 		return "", false
 	}
-	lo, hi := max(0, i-locateWindow), min(len(hay), i+len(needle)+locateWindow)
+	lo, hi := max(0, i-width), min(len(hay), i+len(needle)+width)
 	return strings.TrimSpace(hay[lo:hi]), true
 }
 
@@ -119,7 +124,7 @@ var punctVariants = strings.NewReplacer("\u2019", "'", "\u2018", "'", "\u201c", 
 // locateQuote matches a quoted string segment by segment: an elided quote
 // ("first part ... last part") holds when every segment appears in order, and
 // curly punctuation or emphasis marks on either side do not break it.
-func locateQuote(hay, quote string) (string, bool) {
+func locateQuote(hay, quote string, width int) (string, bool) {
 	hay = normalizeSpace(punctVariants.Replace(markupRe.ReplaceAllString(hay, "")))
 	quote = normalizeSpace(punctVariants.Replace(markupRe.ReplaceAllString(quote, "")))
 	var segs []string
@@ -142,7 +147,7 @@ func locateQuote(hay, quote string) (string, bool) {
 		}
 		at += i + len(seg)
 	}
-	lo, hi := max(0, first-locateWindow), min(len(hay), at+locateWindow)
+	lo, hi := max(0, first-width), min(len(hay), at+width)
 	return strings.TrimSpace(hay[lo:hi]), true
 }
 
@@ -218,12 +223,12 @@ func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebP
 			c.State, c.Citation = "unlocated", cit
 		}
 		if w, found := LocateSpecific(text, c.Specific); found {
-			c.State, c.Citation, c.Window = "located", cit, w
+			c.State, c.Citation, c.Window, c.page = "located", cit, w, text
 			return c
 		}
 		if c.Window == "" {
-			if w := keyTermWindow(text, withoutLinks(c.Unit.Text)); w != "" { // second look: where the claim's own terms sit
-				c.Window, c.Citation = w, cit // the row is reported under the page its window came from
+			if w := keyTermWindow(text, withoutLinks(c.Unit.Text), locateWindow); w != "" { // second look: where the claim's own terms sit
+				c.Window, c.Citation, c.page = w, cit, text // the row is reported under the page its window came from
 			}
 		}
 	}
@@ -232,13 +237,25 @@ func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebP
 
 var termRe = regexp.MustCompile(`[a-z]{6,}`)
 
+// wideWindow is the second look's evidence: the same place on the page, cut three times wider.
+func (c UnitCheck) wideWindow() string {
+	w, ok := locateSpecificIn(c.page, c.Specific, 3*locateWindow)
+	if !ok {
+		w = keyTermWindow(c.page, withoutLinks(c.Unit.Text), 3*locateWindow)
+	}
+	if w == "" {
+		return c.Window
+	}
+	return w
+}
+
 // keyTermWindow cuts the page around the first of the unit's longer words that
 // appears in it, so a figure the page states differently still gets read.
-func keyTermWindow(page, unit string) string {
+func keyTermWindow(page, unit string, width int) string {
 	hay := strings.ToLower(page)
 	for _, term := range termRe.FindAllString(strings.ToLower(unit), -1) {
 		if i := strings.Index(hay, term); i >= 0 {
-			lo, hi := max(0, i-locateWindow), min(len(hay), i+len(term)+locateWindow)
+			lo, hi := max(0, i-width), min(len(hay), i+len(term)+width)
 			return strings.TrimSpace(hay[lo:hi])
 		}
 	}

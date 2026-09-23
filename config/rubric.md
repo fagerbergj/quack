@@ -81,7 +81,13 @@ The answer does not contradict itself, and its conclusions follow from the evide
 
 ### `specifics_cited`
 
-Substantive specifics (figures, percentages, prices, dates) carry a citation in their own sentence or block, or appear in the research the node received. Code-owned: computed over the answer plus every artifact the worker wrote this round, so a pointer answer is scored on its artifact. Absent when the deliverable has fewer than 10 substantive specifics. The judge does not score this criterion. Bands: 0.8-1.0 nearly every figure next to its source; 0.6-0.79 a run of figures with no source near them; below 0.6 most figures unsourced.
+Substantive specifics (figures, percentages, prices, dates) carry a citation in their own sentence or bullet, or the next one after them in the same paragraph, or appear in the research the node received. Code-owned: computed over the answer plus every artifact the worker wrote this round, so a pointer answer is scored on its artifact. Absent when the deliverable has fewer than 10 substantive specifics. The judge does not score this criterion. Bands: 0.8-1.0 nearly every figure next to its source; 0.6-0.79 a run of figures with no source near them; below 0.6 most figures unsourced.
+
+---
+
+### `specifics_supported`
+
+Every figure, date or quote the deliverable ties to a cited page is what that page says. Code-owned: each cited specific is looked up in its cited page's stored text and read by a tool-less check that must quote the page; a contradiction is read a second time in a window three times wider before it counts. One confirmed contradiction fails the round. Absent when nothing could be read. The judge does not score this criterion. Bands: 1.0 no cited specific contradicted; below 1.0 at least one contradicted on two reads.
 
 ---
 

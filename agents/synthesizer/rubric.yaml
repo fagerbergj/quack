@@ -216,7 +216,8 @@ criteria:
   specifics_cited:
     definition: >
       Substantive specifics (figures, percentages, prices, dates) carry a citation in their own sentence
-      or block, or appear in the research the node received.
+      or bullet, or the next one after them in the same paragraph, or appear in the research the node
+      received.
     guidance: >
       Code-owned: computed over the answer plus every artifact the worker wrote this round, so a pointer
       answer is scored on its artifact. Absent when the deliverable has fewer than 10 substantive specifics.
@@ -239,3 +240,26 @@ criteria:
       min: 0
       max: 1
       pass: 0.8
+  specifics_supported:
+    definition: >
+      Every figure, date or quote the deliverable ties to a cited page is what that page says.
+    guidance: >
+      Code-owned: each cited specific is looked up in its cited page's stored text and read by a tool-less
+      check that must quote the page; a contradiction is read a second time in a window three times wider
+      before it counts. One confirmed contradiction fails the round. Absent when nothing could be read.
+      The judge does not score this criterion.
+    bands:
+    - min: 1.0
+      max: 1.0
+      meaning: no cited specific is contradicted by its page
+    - min: 0.0
+      max: 0.99
+      meaning: at least one cited specific is contradicted by its page, on two reads
+    deterministic: true
+    fix: >
+      Correct each listed specific to what its cited page says, cite a page that states it, or remove
+      it.
+    scale:
+      min: 0
+      max: 1
+      pass: 1

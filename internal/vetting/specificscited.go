@@ -73,7 +73,7 @@ func specificsCitedScore(units []Unit, received string) (backed, total int, unci
 // specificsCitedCriterionScore: applicable only when the node's rubric declares
 // specifics_cited deterministic, and only once the deliverable carries enough specifics for a ratio to mean anything.
 func specificsCitedCriterionScore(ctx context.Context, answer string, act workerActivity, cfg Config, load PageLoader) (criterionScore, bool) {
-	if spec, ok := cfg.RubricSpecs[specificsCitedCriterion]; !ok || !spec.Deterministic {
+	if !declaresCodeOwned(cfg, specificsCitedCriterion) {
 		return criterionScore{}, false
 	}
 	units := FindUnits(deliverableText(ctx, answer, act, load))
@@ -83,7 +83,7 @@ func specificsCitedCriterionScore(ctx context.Context, answer string, act worker
 	}
 	score := float64(backed) / float64(total)
 	c := criterionScore{Score: score, Reason: fmt.Sprintf(
-		"deterministic: %d of %d substantive specifics (figures, percentages, prices, dates) carry a citation in their sentence or block, or appear in the research received", backed, total)}
+		"deterministic: %d of %d substantive specifics (figures, percentages, prices, dates) carry a citation in their sentence or bullet, or the next one after them in the paragraph, or appear in the research received", backed, total)}
 	for i, u := range uncited {
 		if i == specificsCitedEvidence {
 			c.Reason += fmt.Sprintf("; %d more", len(uncited)-i)
