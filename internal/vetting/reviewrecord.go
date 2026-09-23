@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -420,6 +421,8 @@ type episodicRoundState struct {
 	// artifactToolWritten: the worker tool-wrote cfg.Artifact's id at some round of this run.
 	artifactToolWritten bool
 	textRev             int // "text:<node>" fallback kind's last-known revision (#1095)
+	// textToolWritten: the worker wrote text:<node> itself; its document, never overwritten by a round's answer.
+	textToolWritten bool
 	// triggerAnnotation: the PRIOR round's judge_round id (#1092 design V4 §7
 	// case 3) - stamped as this round's writes' lineage.TriggerAnnotation, then advanced by the caller (node.go) once the round's own judge_round
 	// record is saved, so round r+1's revisions point back at round r's verdict.
@@ -710,7 +713,13 @@ func saveEpisodicRoundWritten(ctx context.Context, cfg Config, nodeID, turnID st
 	default:
 		// No registered structured kind selected (#1095): every gated node's
 		// round output still becomes a revision, generic "text:<node>".
-		saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, resetToolWrittenIDs(cfg))
+		drained := resetToolWrittenIDs(cfg)
+		if textID, err := recordstore.IdentityFor(kindText, nil, nodeID); err == nil && (drained[textID] || slices.Contains(written, textID)) {
+			st.textToolWritten = true
+		}
+		if !st.textToolWritten {
+			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, drained)
+		}
 	}
 	return st
 }
