@@ -484,7 +484,7 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 	// Ledger coords for gate's disk probes.
 	probeCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound, User: cfg.User, Source: cfg.Source})
 	g.activity = func() workerActivity {
-		act := activityFromSessionAt(ctx.Session(), nodeDir)
+		act := activityFromSessionAt(ctx.Session(), nodeDir, cfg.NodeID)
 		augmentFromRepo(probeCtx, &act, cfg)
 		return act
 	}
@@ -2208,7 +2208,20 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	// Schema validity: absent (not a 1.0 pass) for a node with no registered kind.
 	avc, avcOK := artifactValidCriterion(ctx, cfg, nodeID, since)
 	setIfApplicable(det, "artifact_valid", avc, avcOK)
+	scc, sccOK := specificsCitedCriterionScore(ctx, answer, act, cfg, recordReader(cfg))
+	setIfApplicable(det, specificsCitedCriterion, scc, sccOK)
 	return det, checksSkipReason
+}
+
+// recordReader: cfg.RecordReader when set, else the chat's record client (nil when there is no store).
+func recordReader(cfg Config) PageLoader {
+	if cfg.RecordReader != nil {
+		return cfg.RecordReader
+	}
+	if c := recordClient(cfg); c != nil {
+		return c
+	}
+	return nil
 }
 
 // setIfApplicable adds c under name only when ok, as a call rather than an
@@ -2455,10 +2468,11 @@ func writtenRel(nodeDir, cwd, p string) string {
 }
 
 // activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.
-func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity {
+func activityFromSessionAt(sess session.Session, nodeDir, nodeID string) workerActivity {
 	s := &activityScanner{
 		act:              workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
 		nodeDir:          nodeDir,
+		nodeID:           nodeID,
 		writtenSeen:      map[string]bool{},
 		artifactSeen:     map[string]bool{},
 		pendingWs:        map[string]map[string]any{},
@@ -2480,6 +2494,7 @@ func (s *activityScanner) scanEvent(ev *session.Event) {
 	if ev == nil || ev.Content == nil {
 		return
 	}
+	s.otherNode = s.nodeID != "" && ev.NodeInfo != nil && !pathHasNode(ev, s.nodeID)
 	for _, p := range ev.Content.Parts {
 		if p == nil {
 			continue
@@ -2563,6 +2578,8 @@ func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 type activityScanner struct {
 	act           workerActivity
 	nodeDir       string
+	nodeID        string          // artifact writes are credited to this node only; "" = any
+	otherNode     bool            // the event being scanned belongs to another node
 	curCwd        string          // node-relative cwd ("" = node root)
 	writtenSeen   map[string]bool // dedup for written
 	artifactSeen  map[string]bool // dedup for artifactsWritten
@@ -2749,6 +2766,9 @@ func isArtifactWriteTool(name string) bool {
 // edit_artifact conflict reply, which wrote nothing). ACP tool replies land
 // under "output" (translate.go's default case), not "result" - fall back.
 func (s *activityScanner) recordArtifactWrite(resp map[string]any) {
+	if s.otherNode {
+		return
+	}
 	result, _ := resp["result"].(string)
 	if result == "" {
 		result, _ = resp["output"].(string)

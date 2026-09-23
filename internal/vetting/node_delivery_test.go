@@ -37,7 +37,7 @@ func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
 		fnCall("2", "stage_pr", map[string]any{"title": "Add flappy bird v2", "body": "revised"}),
 		fnCall("3", "stage_comment", map[string]any{"slot": "progress", "body": "halfway done"}),
 		fnCall("4", "unstage", map[string]any{"target": "comment:progress"}),
-	), "")
+	), "", "")
 	if len(act.stagedDelivery) != 1 {
 		t.Fatalf("stagedDelivery = %+v, want exactly the surviving pr entry", act.stagedDelivery)
 	}
@@ -56,7 +56,7 @@ func TestStagedThenUnstagedItemNeverReachesDeliver(t *testing.T) {
 	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "stage_comment", map[string]any{"slot": "progress", "body": "halfway"}),
 		fnCall("2", "unstage", map[string]any{"target": "comment:progress"}),
-	), "")
+	), "", "")
 	var called int32
 	commitDelivery(context.Background(), nil, Config{Deliver: func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) {
 		atomic.AddInt32(&called, 1)

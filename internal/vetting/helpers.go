@@ -75,6 +75,9 @@ type Config struct {
 	// it stages into ReviewFanout, and the last reviewer node to finish delivers the merged, worst-of-verdict review exactly once.
 	ReviewFanout *ReviewFanout
 	Artifacts    artifact.Service // nil = read_artifact tool unavailable to this node
+	// RecordReader reads a written artifact's latest body for code-owned checks;
+	// nil = recordClient(cfg) (live), replay hands in its REST-backed loader.
+	RecordReader PageLoader
 	// RoundCoordsSink: called with fresh round/turn/head-sha/trigger-annotation
 	// at the same two points SetAdvisorThreadRound is (draft seed + every judge
 	// round) - lets a native node's already-built artifact tools (which don't have an ACP session/AdvisorToken to poll) get restamped by the gate that actually knows the current round, without vetting importing tools (#1123).
