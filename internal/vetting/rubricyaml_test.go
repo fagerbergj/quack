@@ -299,3 +299,23 @@ func TestEnvelopeFromCriteriaLessVerdictIsEmpty(t *testing.T) {
 		t.Errorf("envelope from a criteria-less verdict should have all-empty arrays, got %+v", env)
 	}
 }
+
+// TestDeterministicCriterionRendersWithoutBands: the judge's rubric names a
+// code-owned criterion as decided elsewhere and gives it nothing to score against.
+func TestDeterministicCriterionRendersWithoutBands(t *testing.T) {
+	doc := rubricDoc{Criteria: map[string]rubricCriterion{
+		"cites_sources": {Definition: "cs def", Deterministic: true, Fix: "fetch it",
+			Steps: []string{"count the links"}, Bands: []bandSpec{{Min: 0, Max: 1, Meaning: "backed"}}},
+	}}
+	rendered := renderRubricMarkdown(doc)
+	for _, want := range []string{"cs def", "Code-owned"} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered rubric missing %q:\n%s", want, rendered)
+		}
+	}
+	for _, leak := range []string{"count the links", "Scoring bands"} {
+		if strings.Contains(rendered, leak) {
+			t.Errorf("rendered rubric gives the judge %q to score a code-owned criterion:\n%s", leak, rendered)
+		}
+	}
+}

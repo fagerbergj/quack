@@ -14,12 +14,12 @@ Score **substance, not style**: length, fluency, and confident phrasing earn no 
 
 ### The 0-3 scale
 
-Four levels apply to every criterion, and every level has its own written descriptor below - there is no in-between value to guess at. The levels split into two passing and two failing, with no neutral middle to default into:
+Every criterion is scored by counting findings, never by weighing adjectives. A finding is one concrete failure of the criterion, recorded with a verbatim quote from the answer (or an omission naming exactly what is missing); a finding you cannot quote or name does not count. Enumerate the items the criterion covers first, apply its steps to each, then pick the band from the count:
 
-- **3** - clean: fully met, nothing to note. *Passes.*
-- **2** - passes with a noted flaw: met, but with one minor, cosmetic issue that doesn't need to block. *Passes.*
-- **1** - deny, small issues: a material gap that needs a touch-up before this clears. *Fails.*
-- **0** - deny, major issues: the central requirement is unmet. *Fails.*
+- **3** - no finding. *Passes.* Do not search for a blemish to justify a 2: none found is the top band.
+- **2** - exactly one finding, and it is minor as the criterion defines minor. *Passes.*
+- **1** - two or three findings, or one finding on a load-bearing item as the criterion defines it. *Fails.*
+- **0** - four or more findings, or the central failure the criterion names. *Fails.*
 
 ---
 
@@ -27,18 +27,19 @@ Four levels apply to every criterion, and every level has its own written descri
 
 Every non-trivial factual claim traces to a source the agent actually retrieved this session (a fetched page or search result), and nothing reads as invented - no specific (name, number, price, date, quote) is stated with more confidence than the answer's own evidence supports. Vague qualifiers like "reportedly" or "it is known" do not substitute for a retrieved source.
 
-You cannot see the agent's retrieval log, and your own knowledge may be stale or incomplete. Judge grounding by whether each claim **carries an inline citation**; do **NOT** lower this score because a cited fact is unfamiliar or recent, and do **NOT** flag a specific as fabricated merely because it postdates your training. A specific is "invented" only when the answer's own text is internally inconsistent or makes a precise claim it never supports - never because it conflicts with your memory.
-
+Two checkable questions per specific: is a citation next to it, and does the answer contradict it. Not this criterion's questions: whether the cited page was fetched (code scores that as `cites_sources`), whether the source really says it (`citation_quality`), or whether you believe it - do **NOT** lower this score because a cited fact is unfamiliar, recent, or absent from your own knowledge.
 **Evaluation steps.**
-1. List the answer's non-trivial factual claims and specifics.
-2. For each, check whether it carries an inline citation, not whether you personally believe it.
-3. For each, judge whether the answer's own evidence justifies the confidence it is stated with.
+1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a specific (name, number, price, date, quote) with no inline citation in its own sentence or the one before it, or a specific the answer's own text contradicts. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
+2. List every specific in the answer.
+3. For each, check for an inline citation in its sentence or the one before it. A cited specific is grounded; whether that page was actually fetched is scored by code under `cites_sources` and is not a finding here.
+4. For each, check the answer's own text does not contradict it elsewhere.
+5. If the agent states `web_fetch` failed for most/all sources, check whether it said so plainly. An honest disclosure of failed retrieval caps this criterion at **1** (not lower); silent synthesis despite failed fetches scores **0**.
 
 **Scoring bands.**
-- **3** - essentially every non-trivial claim traces to retrieved material, and nothing reads as invented.
-- **2** - essentially every claim is traceable and nothing reads as invented, but one minor secondary detail is stated a touch more confidently than its source without being unsupported.
-- **1** - most claims are sourced or plausible; a few lack explicit support, or minor secondary details look loosely stated.
-- **0** - the majority of claims have no retrieved backing, or a name, number, or quote is clearly fabricated or unsupported by the answer's own evidence.
+- **3** - no finding: every item passes the steps above.
+- **2** - exactly one finding, and it is a secondary detail, not a headline figure or a conclusion.
+- **1** - two or three findings, or one finding that is a headline figure or a conclusion.
+- **0** - four or more findings, or a specific is contradicted by the answer's own text, or the majority of specifics carry no citation.
 
 ---
 
@@ -47,15 +48,16 @@ You cannot see the agent's retrieval log, and your own knowledge may be stale or
 The response addresses exactly what the user asked, in full - not a related-but-different question, and not a partial answer that drops part of the request.
 
 **Evaluation steps.**
-1. Decompose the question into its distinct asks and constraints.
-2. Check that each is addressed.
-3. Note any silent narrowing or topic drift.
+1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a distinct ask or constraint in the request that the answer does not address. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
+2. Decompose the question into its distinct asks and constraints.
+3. Check that each is addressed.
+4. Note any silent narrowing or topic drift.
 
 **Scoring bands.**
-- **3** - addresses the request completely.
-- **2** - addresses the request completely, but one part is covered more thinly than the rest without being dropped.
-- **1** - addresses the main ask; minor gaps.
-- **0** - misses the core ask or redirects to a different question.
+- **3** - no finding: every item passes the steps above.
+- **2** - exactly one finding, and the ask is addressed, only more thinly than the others.
+- **1** - two or three findings, or one finding that drops or silently narrows an ask or constraint.
+- **0** - four or more findings, or the core ask is missed, or the answer addresses a different question.
 
 ---
 
@@ -64,32 +66,22 @@ The response addresses exactly what the user asked, in full - not a related-but-
 The answer does not contradict itself, and its conclusions follow from the evidence it presents.
 
 **Evaluation steps.**
-1. Check for self-contradiction across the answer.
-2. Check that conclusions follow from the cited evidence.
-3. Check that uncertainty is stated where evidence is thin.
+1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is two passages of the answer that cannot both be true, or a conclusion sentence whose supporting evidence appears nowhere in the answer. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
+2. List every conclusion sentence and every pair of passages about the same fact.
+3. For each pair, check both can be true at once; quote both when they cannot.
+4. For each conclusion, find the sentence in the answer that supports it; an unsupported conclusion is a finding. A hedge phrased unevenly is not a finding unless the two phrasings cannot both be true.
 
 **Scoring bands.**
-- **3** - fully consistent throughout.
-- **2** - fully consistent, but one hedge in the answer's own phrasing is a little uneven without an actual contradiction.
-- **1** - minor tensions that do not undermine the core conclusion.
-- **0** - clear contradictions, or conclusions the evidence does not support.
+- **3** - no finding: every item passes the steps above.
+- **2** - exactly one finding, and it is a conclusion stated one notch more firmly than its evidence, with no contradiction.
+- **1** - two or three findings, or one finding that is two passages that cannot both be true.
+- **0** - four or more findings, or the main conclusion contradicts the answer's own evidence.
 
 ---
 
 ### `cites_sources`
 
-A citation-existence check (does a followable link/path back this claim at all) runs separately as a deterministic check and can override this score. Here, judge citation **quality and placement**: is the cited source reputable for the claim it backs, is it cited accurately (the source actually says what the claim attributes to it), and does the citation sit next to the claim it supports rather than buried in an unrelated list.
-
-**Evaluation steps.**
-1. For each cited claim, check the source is a reasonable authority for that claim, not a tangential or low-quality page.
-2. Check the claim accurately reflects what the source says.
-3. Check the citation is placed at the claim, not deferred to a block the claim isn't attached to.
-
-**Scoring bands.**
-- **3** - cited claims point at reputable sources, accurately reflect them, and are placed at the claim they support.
-- **2** - sources are reputable and accurate, but one citation sits a sentence or two away from the claim it backs rather than directly at it.
-- **1** - one citation is a weak/tangential source, is loosely paraphrased, or is placed away from the claim it backs.
-- **0** - a citation misrepresents its source, or citations are only deferred to a references block with no inline placement.
+Code-owned: deterministic code scores whether each cited link was fetched or seen this session (see the bands in every research rubric). The judge does not score this criterion; citation quality and placement are `citation_quality` where a rubric declares it.
 
 ---
 
@@ -98,16 +90,17 @@ A citation-existence check (does a followable link/path back this claim at all) 
 The answer is formatted for the reader it is addressed to: scannable, and its structure matches its content. It begins directly with the answer (its title or first sentence) and ends with the answer (or its `Sources` section) - no preamble, no process narration, no meta-commentary about formatting/skills/rules. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion - a code snippet, a list, a decision - written out more than once on the way to a final version. The reader sees the reply verbatim, so anything like "Let me…", "I see, I made a typo…", "Actually, wait…", "the skill says…", or trailing drafting notes is a defect - even when the buried content is excellent.
 
 **Evaluation steps.**
-1. Read the first sentence: direct answer, or preamble / process narration?
-2. Scan the body and tail for leaked planning, self-talk, or meta-commentary.
-3. Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms - a sign of an abandoned draft left in place.
-4. Check the structure (headings, lists, code blocks) matches what the content actually needs, rather than being flat prose or over-decorated.
+1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a sentence or block that is not the answer: preamble, process narration, self-talk, meta-commentary about skills or formatting, leaked reasoning, or a duplicated/superseded draft left in place. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
+2. Read the first sentence: direct answer, or preamble / process narration?
+3. Scan the body and tail for leaked planning, self-talk, or meta-commentary.
+4. Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms.
+5. Check the structure (headings, lists, code blocks) matches what the content actually needs.
 
 **Scoring bands.**
-- **3** - pure answer, well-structured for its content; no preamble, narration, or trailing reasoning; only the final version of any content appears.
-- **2** - a stray opener or a single meta sentence, or structure that doesn't quite fit the content, otherwise clean - one small blemish, not a pattern.
-- **1** - more than one such intrusion (several stray sentences or meta comments), though still short of a real preamble or leaked reasoning.
-- **0** - noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft left in the output.
+- **3** - no finding: the answer begins and ends with the answer, and only the final version of any content appears.
+- **2** - exactly one finding, and it is one stray sentence (an opener or a meta remark) with the rest clean.
+- **1** - two or three findings, or one finding that is a paragraph of narration or reasoning, or a duplicated section.
+- **0** - four or more findings, or the answer opens with a preamble or planning, or a duplicated/superseded draft sits beside the final one.
 
 ---
 

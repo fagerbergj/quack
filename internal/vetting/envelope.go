@@ -54,6 +54,8 @@ type criterionSpec struct {
 	Bands      []bandSpec `json:"bands,omitempty"`
 	// RequireFixOnFail: judge-orchestration only, never shown to the worker.
 	RequireFixOnFail bool `json:"-"`
+	// Deterministic: code owns this criterion; a judge-submitted score for it is dropped.
+	Deterministic bool `json:"-"`
 }
 
 // anchorSpec: where in the answer a criticism points. Typed per #941; kind

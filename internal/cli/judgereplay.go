@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -315,10 +316,12 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		exit = 1
 	}
 	cfgCache := map[string]vetting.Config{}
-	for _, jr := range rounds {
+	for i, jr := range rounds {
 		rep, code := replayOneRound(ctx, cfg, sess, jr, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cfgCache)
 		exit = maxInt(exit, code)
 		reports = append(reports, rep)
+		// stderr progress: a --repeat run over many rounds is otherwise silent until the end
+		fmt.Fprintf(os.Stderr, "replayed %d/%d %s %s exit=%d\n", i+1, len(rounds), rep.Node, rep.Round, code)
 	}
 	if asJSON {
 		_ = WriteJSON(out, reports)

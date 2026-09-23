@@ -176,6 +176,10 @@ func renderRubricMarkdown(doc rubricDoc) string {
 			sb.WriteString(strings.TrimSpace(c.Guidance))
 			sb.WriteString("\n")
 		}
+		if c.Deterministic {
+			sb.WriteString("\nCode-owned: a deterministic check scores this criterion; the judge does not.\n")
+			continue
+		}
 		if len(c.Steps) > 0 {
 			sb.WriteString("\n**Evaluation steps.**\n")
 			for i, step := range c.Steps {
@@ -229,6 +233,7 @@ func rubricDocSpecs(doc rubricDoc) map[string]criterionSpec {
 			Scale:            &scaleSpec{Min: scale.Min, Max: scale.Max},
 			Bands:            c.Bands,
 			RequireFixOnFail: c.RequireFixOnFail,
+			Deterministic:    c.Deterministic,
 		}
 	}
 	return out

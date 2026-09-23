@@ -2254,6 +2254,16 @@ func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string, sinc
 	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: kind %q artifact satisfies its registered schema", cfg.Artifact)}, true
 }
 
+// codeOwnedCriterion: declared deterministic by the node's rubric, or one of the
+// criteria code always owns (a raw-markdown rubric has no specs to declare it).
+func codeOwnedCriterion(name string, specs map[string]criterionSpec) bool {
+	if spec, ok := specs[name]; ok && spec.Deterministic {
+		return true
+	}
+	_, static := deterministicCriterionSpec[name]
+	return static || name == "cites_sources"
+}
+
 // deterministicCriterionSpec: definition/fix declared per deterministic
 // criterion name (#941). A static table rather than editing each of the ~10 constructor sites (checks.go, mermaid.go, shape.go, vacuoustests.go,
 // delivery.go) - the criterion names are a fixed, code-owned set, so one lookup keyed by name is a smaller diff with the same effect.
@@ -2302,6 +2312,12 @@ const citesSourcesFix = "Fetch each source, or remove the citation and any claim
 func mergeDeterministic(v verdict, det map[string]criterionScore, cfg Config) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
+	}
+	// A judge score for a code-owned criterion never stands in: when code computed nothing this round the criterion is absent.
+	for name, c := range v.Criteria {
+		if !c.Deterministic && codeOwnedCriterion(name, cfg.RubricSpecs) {
+			delete(v.Criteria, name)
+		}
 	}
 	for name, c := range det {
 		c.Deterministic = true
