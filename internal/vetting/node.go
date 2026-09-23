@@ -2254,9 +2254,6 @@ func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string, sinc
 	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: kind %q artifact satisfies its registered schema", cfg.Artifact)}, true
 }
 
-// deterministicCriterionSpec: definition/fix declared per deterministic
-// criterion name (#941). A static table rather than editing each of the ~10 constructor sites (checks.go, mermaid.go, shape.go, vacuoustests.go,
-// delivery.go) - the criterion names are a fixed, code-owned set, so one lookup keyed by name is a smaller diff with the same effect.
 // codeOwnedCriterion: declared deterministic by the node's rubric, or one of the
 // criteria code always owns (a raw-markdown rubric has no specs to declare it).
 func codeOwnedCriterion(name string, specs map[string]criterionSpec) bool {
@@ -2267,6 +2264,9 @@ func codeOwnedCriterion(name string, specs map[string]criterionSpec) bool {
 	return static || name == "cites_sources"
 }
 
+// deterministicCriterionSpec: definition/fix declared per deterministic
+// criterion name (#941). A static table rather than editing each of the ~10 constructor sites (checks.go, mermaid.go, shape.go, vacuoustests.go,
+// delivery.go) - the criterion names are a fixed, code-owned set, so one lookup keyed by name is a smaller diff with the same effect.
 var deterministicCriterionSpec = map[string]struct {
 	definition string
 	fix        string
