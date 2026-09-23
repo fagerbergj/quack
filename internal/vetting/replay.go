@@ -25,6 +25,7 @@ type RawTurn struct {
 type ReplayCase struct {
 	NodeID, Task, Answer string
 	WorkerTurns          []RawTurn
+	NodeTurns            []RawTurn  // this node's own turns; nil = credit every artifact write in WorkerTurns
 	Pages                PageLoader // stored web pages, for the shadow locate tier; nil skips it
 	Verifier             *Verifier  // the shadow verify tier over located specifics; nil skips it
 }
@@ -52,10 +53,13 @@ type ReplayRoundResult struct {
 // judge nil replays deterministic criteria only, never touching a model.
 func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayCase) (ReplayRoundResult, error) {
 	cfg.Task = rc.Task
+	if rc.Pages != nil {
+		cfg.RecordReader = rc.Pages // written artifacts are served by the same store as fetched pages
+	}
 	// Live judges the worker's reply after stream.StripThinking (runWorkerNode);
 	// the recording holds the raw output, so strip it here or clean_output diverges.
 	rc.Answer = stream.StripThinking(rc.Answer)
-	act, err := rebuildWorkerActivity(ctx, rc.WorkerTurns, rc.NodeID)
+	act, err := rebuildActivity(ctx, rc)
 	if err != nil {
 		return ReplayRoundResult{}, err
 	}
@@ -108,7 +112,7 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 // RebuildActivityArtifacts rebuilds rc's worker activity and returns only the
 // artifacts it wrote - cheaper than ReplayRound for that decision alone.
 func RebuildActivityArtifacts(ctx context.Context, cfg Config, rc ReplayCase) ([]string, error) {
-	act, err := rebuildWorkerActivity(ctx, rc.WorkerTurns, rc.NodeID)
+	act, err := rebuildActivity(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +141,21 @@ func rebuildWorkerActivity(ctx context.Context, turns []RawTurn, nodeDir string)
 			}
 		}
 	}
-	return activityFromSessionAt(sess, nodeDir), nil
+	return activityFromSessionAt(sess, nodeDir, ""), nil
+}
+
+// rebuildActivity: chat-wide activity, with artifact writes credited from the node's own turns when given.
+func rebuildActivity(ctx context.Context, rc ReplayCase) (workerActivity, error) {
+	act, err := rebuildWorkerActivity(ctx, rc.WorkerTurns, rc.NodeID)
+	if err != nil || rc.NodeTurns == nil {
+		return act, err
+	}
+	own, err := rebuildWorkerActivity(ctx, rc.NodeTurns, rc.NodeID)
+	if err != nil {
+		return act, err
+	}
+	act.artifactsWritten = own.artifactsWritten
+	return act, nil
 }
 
 func appendReplayContent(ctx context.Context, svc session.Service, sess session.Session, c *genai.Content) error {

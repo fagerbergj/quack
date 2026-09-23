@@ -180,39 +180,62 @@ criteria:
       specific (name, number, claim, URL) must trace back to the research it received - not to training-data
       knowledge.
     guidance: >
-      **Caveat - judge's knowledge is stale.** The synthesizer received live research you cannot see.
-      Do **NOT** flag a claim as fabricated merely because it is unfamiliar or postdates your training.
-      A specific is "invented" only when the synthesizer's own output is internally inconsistent or makes
-      a precise claim that its own stated evidence does not support.
+      Two checkable questions per specific: does the answer contradict it, and (when uncited) is it in
+      the received research. Do **NOT** flag a specific because it is unfamiliar or postdates your training.
     steps:
     - >-
       Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      a non-trivial claim or specific (name, number, price, date, quote) with no inline citation, or one
-      stated more confidently than the answer's own evidence supports. Record each finding with a verbatim
+      a specific (name, number, price, date, quote) that another passage of the answer contradicts, or
+      that appears nowhere in the research the synthesizer received. Record each finding with a verbatim
       quote (or an omission naming exactly what is missing); one you cannot quote or name does not count.
       Pick the band from the number of findings; none is the top band.
-    - Identify the named specifics and factual claims in the synthesized answer.
-    - For each, check whether the answer's own text - not your memory - supports the claim.
-    - Flag claims stated with confidence that the answer's own evidence does not justify.
+    - List every specific that appears more than once, or that a later passage restates or derives from.
+    - For each, check the passages agree; quote both when they do not.
+    - >-
+      For a specific with no citation, check it appears in the research inputs; quote the specific when
+      it does not. Whether a specific has a citation next to it is scored by code as `specifics_cited`
+      and is not a finding here.
     bands:
     - min: 3.0
       max: 3.0
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is a secondary detail (not a headline figure or a conclusion) and
-        it is cited, only overstated.
+      meaning: exactly one finding, and it is a secondary detail, not a headline figure or a conclusion.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one finding that is a headline figure, a conclusion, or a specific with
-        no citation at all.
+      meaning: two or three findings, or one finding that is a headline figure or a conclusion.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or a name, number, or quote is contradicted by the answer's own evidence,
-        or the majority of claims carry no citation.
+        four or more findings, or the main conclusion rests on a specific the answer itself contradicts
+        or the research never contained.
     anchors:
     - quote
     - omission
+  specifics_cited:
+    definition: >
+      Substantive specifics (figures, percentages, prices, dates) carry a citation in their own sentence
+      or block, or appear in the research the node received.
+    guidance: >
+      Code-owned: computed over the answer plus every artifact the worker wrote this round, so a pointer
+      answer is scored on its artifact. Absent when the deliverable has fewer than 10 substantive specifics.
+      The judge does not score this criterion.
+    bands:
+    - min: 0.8
+      max: 1.0
+      meaning: nearly every figure sits next to its source or came from the received research
+    - min: 0.6
+      max: 0.79
+      meaning: a run of figures with no source near them
+    - min: 0.0
+      max: 0.59
+      meaning: most figures have no source near them
+    deterministic: true
+    fix: >
+      Put the citation in the same sentence or bullet as each figure it backs; drop figures you cannot
+      source.
+    scale:
+      min: 0
+      max: 1
+      pass: 0.8

@@ -25,21 +25,21 @@ Every criterion is scored by counting findings, never by weighing adjectives. A 
 
 ### `grounded`
 
-Every non-trivial factual claim traces to a source the agent actually retrieved this session (a fetched page or search result), and nothing reads as invented - no specific (name, number, price, date, quote) is stated with more confidence than the answer's own evidence supports. Vague qualifiers like "reportedly" or "it is known" do not substitute for a retrieved source.
+Every non-trivial factual claim traces to a source the agent actually retrieved this session, and nothing reads as invented. Citation presence is code-owned (`specifics_cited`); fetch backing is code-owned (`cites_sources`). The judge's question is narrower: does the answer contradict its own specifics.
 
-Two checkable questions per specific: is a citation next to it, and does the answer contradict it. Not this criterion's questions: whether the cited page was fetched (code scores that as `cites_sources`), whether the source really says it (`citation_quality`), or whether you believe it - do **NOT** lower this score because a cited fact is unfamiliar, recent, or absent from your own knowledge.
+One checkable question per specific: does the answer contradict it elsewhere. Citation presence is code-owned (`specifics_cited`); do **NOT** lower this score because a cited fact is unfamiliar, recent, or absent from your own knowledge.
+
 **Evaluation steps.**
-1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a specific (name, number, price, date, quote) with no inline citation in its own sentence or the one before it, or a specific the answer's own text contradicts. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
-2. List every specific in the answer.
-3. For each, check for an inline citation in its sentence or the one before it. A cited specific is grounded; whether that page was actually fetched is scored by code under `cites_sources` and is not a finding here.
-4. For each, check the answer's own text does not contradict it elsewhere.
-5. If the agent states `web_fetch` failed for most/all sources, check whether it said so plainly. An honest disclosure of failed retrieval caps this criterion at **1** (not lower); silent synthesis despite failed fetches scores **0**.
+1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a specific (name, number, price, date, quote) that another passage of the answer contradicts. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
+2. List every specific that appears more than once, or that a later passage restates or derives from.
+3. For each, check the passages agree; quote both when they do not. Whether a specific has a citation is scored by code as `specifics_cited`; whether the cited page was fetched is `cites_sources`. Neither is a finding here.
+4. If the agent states `web_fetch` failed for most/all sources, check whether it said so plainly. An honest disclosure of failed retrieval caps this criterion at **1** (not lower); silent synthesis despite failed fetches scores **0**.
 
 **Scoring bands.**
 - **3** - no finding: every item passes the steps above.
 - **2** - exactly one finding, and it is a secondary detail, not a headline figure or a conclusion.
 - **1** - two or three findings, or one finding that is a headline figure or a conclusion.
-- **0** - four or more findings, or a specific is contradicted by the answer's own text, or the majority of specifics carry no citation.
+- **0** - four or more findings, or the main conclusion rests on a specific the answer itself contradicts.
 
 ---
 
@@ -76,6 +76,12 @@ The answer does not contradict itself, and its conclusions follow from the evide
 - **2** - exactly one finding, and it is a conclusion stated one notch more firmly than its evidence, with no contradiction.
 - **1** - two or three findings, or one finding that is two passages that cannot both be true.
 - **0** - four or more findings, or the main conclusion contradicts the answer's own evidence.
+
+---
+
+### `specifics_cited`
+
+Substantive specifics (figures, percentages, prices, dates) carry a citation in their own sentence or block, or appear in the research the node received. Code-owned: computed over the answer plus every artifact the worker wrote this round, so a pointer answer is scored on its artifact. Absent when the deliverable has fewer than 10 substantive specifics. The judge does not score this criterion. Bands: 0.8-1.0 nearly every figure next to its source; 0.6-0.79 a run of figures with no source near them; below 0.6 most figures unsourced.
 
 ---
 

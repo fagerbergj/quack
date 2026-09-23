@@ -180,23 +180,20 @@ criteria:
       as invented: every specific (name, price, address, rating, date, statistic, quote) is stated with
       confidence the answer's own evidence supports.
     guidance: >
-      Two checkable questions per specific: is a citation next to it, and does the answer contradict it.
-      Not this criterion's questions: whether the cited page was fetched (code scores that as `cites_sources`),
-      whether the source really says it (`citation_quality`), or whether you believe it - do **NOT** lower
-      this score because a cited fact is unfamiliar, recent, or absent from your own knowledge.
+      One checkable question per specific: does the answer contradict it elsewhere. Citation presence
+      is code-owned (`specifics_cited`); do **NOT** lower this score because a cited fact is unfamiliar,
+      recent, or absent from your own knowledge.
     steps:
     - >-
       Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      a specific (name, number, price, date, quote) with no inline citation in its own sentence or the
-      one before it, or a specific the answer's own text contradicts. Record each finding with a verbatim
-      quote (or an omission naming exactly what is missing); one you cannot quote or name does not count.
-      Pick the band from the number of findings; none is the top band.
-    - List every specific in the answer.
+      a specific (name, number, price, date, quote) that another passage of the answer contradicts. Record
+      each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot
+      quote or name does not count. Pick the band from the number of findings; none is the top band.
+    - List every specific that appears more than once, or that a later passage restates or derives from.
     - >-
-      For each, check for an inline citation in its sentence or the one before it. A cited specific is
-      grounded; whether that page was actually fetched is scored by code under `cites_sources` and is
-      not a finding here.
-    - For each, check the answer's own text does not contradict it elsewhere.
+      For each, check the passages agree; quote both when they do not. Whether a specific has a citation
+      is scored by code as `specifics_cited`; whether the cited page was fetched is `cites_sources`. Neither
+      is a finding here.
     - >-
       If the agent states `web_fetch` failed for most/all sources, check whether it said so plainly. An
       honest disclosure of failed retrieval caps this criterion at **1** (not lower); silent synthesis
@@ -213,12 +210,36 @@ criteria:
       meaning: two or three findings, or one finding that is a headline figure or a conclusion.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or a specific is contradicted by the answer's own text, or the majority
-        of specifics carry no citation.
+      meaning: four or more findings, or the main conclusion rests on a specific the answer itself contradicts.
     anchors:
     - quote
     - omission
+  specifics_cited:
+    definition: >
+      Substantive specifics (figures, percentages, prices, dates) carry a citation in their own sentence
+      or block, or appear in the research the node received.
+    guidance: >
+      Code-owned: computed over the answer plus every artifact the worker wrote this round, so a pointer
+      answer is scored on its artifact. Absent when the deliverable has fewer than 10 substantive specifics.
+      The judge does not score this criterion.
+    bands:
+    - min: 0.8
+      max: 1.0
+      meaning: nearly every figure sits next to its source or came from the received research
+    - min: 0.6
+      max: 0.79
+      meaning: a run of figures with no source near them
+    - min: 0.0
+      max: 0.59
+      meaning: most figures have no source near them
+    deterministic: true
+    fix: >
+      Put the citation in the same sentence or bullet as each figure it backs; drop figures you cannot
+      source.
+    scale:
+      min: 0
+      max: 1
+      pass: 0.8
   internally_consistent:
     definition: >
       The answer does not contradict itself, and its conclusions follow from the evidence it presents.

@@ -69,7 +69,7 @@ func TestDeliveryCriterionFailsWhenCommitErrored(t *testing.T) {
 		fnResp("1", "write_file", map[string]any{"bytes": float64(120), "created": true}),
 		fnCall("2", "git_commit", map[string]any{"dir": "games", "message": "feat: flappy bird"}),
 		fnResp("2", "git_commit", map[string]any{"error": "nothing to commit, working tree clean"}),
-	), "")
+	), "", "")
 	if act.committed {
 		t.Fatal("activityFromSession recorded a FAILED git_commit as committed")
 	}
@@ -88,7 +88,7 @@ func TestActivityFromSessionRecordsDelivery(t *testing.T) {
 		fnResp("2", "git_push", map[string]any{"remote": "origin", "branch": "add-flappy-bird-quack-v4", "sha": "abc123"}),
 		fnCall("3", "github_pull_request", map[string]any{"owner": "fagerbergj", "repo": "games", "title": "Add Flappy Bird", "head": "add-flappy-bird-quack-v4"}),
 		fnResp("3", "github_pull_request", map[string]any{"url": "https://github.com/fagerbergj/games/pull/7"}),
-	), "")
+	), "", "")
 	if !act.committed || !act.pushed {
 		t.Errorf("committed=%v pushed=%v, want all true", act.committed, act.pushed)
 	}
@@ -117,7 +117,7 @@ func TestActivityFromSessionRecordsArtifactWrites(t *testing.T) {
 		fnResp("5", "write_file", map[string]any{"bytes": float64(10), "created": true}),
 		fnCall("6", "write_code_review", map[string]any{"pr": "123"}),
 		fnResp("6", "write_code_review", map[string]any{"output": "ok: id=code_review:pr123 revision=1"}),
-	), "")
+	), "", "")
 	want := []string{"text:doc1", "finding:1", "code_review:pr123"}
 	if len(act.artifactsWritten) != len(want) {
 		t.Fatalf("artifactsWritten = %v, want %v (deduped, no conflict, no write_file)", act.artifactsWritten, want)
@@ -396,7 +396,7 @@ func TestReviewCriterionFailsWhenSubmitErrored(t *testing.T) {
 		fnResp("1", "github_add_review_comment", map[string]any{"index": float64(0), "draft_count": float64(1)}),
 		fnCall("2", "github_submit_review", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "event": "REQUEST_CHANGES"}),
 		fnResp("2", "github_submit_review", map[string]any{"error": "422 Unprocessable Entity"}),
-	), "")
+	), "", "")
 	if act.reviewSubmitted {
 		t.Fatal("activityFromSession recorded a FAILED github_submit_review as submitted")
 	}
@@ -415,7 +415,7 @@ func TestActivityFromSessionRecordsReview(t *testing.T) {
 		fnResp("1", "github_add_review_comment", map[string]any{"index": float64(0), "draft_count": float64(1)}),
 		fnCall("2", "github_submit_review", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "event": "REQUEST_CHANGES"}),
 		fnResp("2", "github_submit_review", map[string]any{"url": "https://github.com/fagerbergj/games/pull/4#pullrequestreview-1", "comments": float64(1)}),
-	), "")
+	), "", "")
 	if !act.reviewCommented || !act.reviewSubmitted {
 		t.Errorf("reviewCommented=%v reviewSubmitted=%v, want both true", act.reviewCommented, act.reviewSubmitted)
 	}
@@ -465,7 +465,7 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 		fnResp("1", "git_checkout", map[string]any{"branch": "add-flappy-bird-openhands", "head": "abc1234"}),
 		fnCall("2", "read_file", map[string]any{"path": "games/app/flappy/game.ts"}),
 		fnResp("2", "read_file", map[string]any{"content": "export function step() {}"}),
-	), "")
+	), "", "")
 	got, ok := behaviourCriterion(reviewTask, act, true)
 	if !ok {
 		t.Fatal("behaviour_verified must apply to a review of a real code change")
@@ -487,7 +487,7 @@ func TestBehaviourCriterionPassesWhenTheReviewerRanTheCode(t *testing.T) {
 		fnResp("1", "read_file", map[string]any{"content": "export function step() {}"}),
 		fnCall("2", "run_command", map[string]any{"dir": "games", "command": "npx tsx /tmp/probe.ts"}),
 		fnResp("2", "run_command", map[string]any{"exit_code": float64(0), "stdout": "Start Y: 285.0, Final Y: 285.0"}),
-	), "")
+	), "", "")
 	if !act.ranCommand {
 		t.Fatal("activityFromSession must record a successful run_command")
 	}
@@ -505,7 +505,7 @@ func TestBehaviourCriterionFailsWhenTheCommandErrored(t *testing.T) {
 		fnResp("1", "read_file", map[string]any{"content": "export function step() {}"}),
 		fnCall("2", "run_command", map[string]any{"dir": "games", "command": "npm test"}),
 		fnResp("2", "run_command", map[string]any{"error": "command not allowed"}),
-	), "")
+	), "", "")
 	if act.ranCommand {
 		t.Fatal("a FAILED run_command must not count as an execution")
 	}
@@ -541,7 +541,7 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 		fnResp("1", "read_file", map[string]any{"content": "# Games"}),
 		fnCall("2", "read_file", map[string]any{"path": "games/.github/workflows/ci.yaml"}),
 		fnResp("2", "read_file", map[string]any{"content": "on: push"}),
-	), "")
+	), "", "")
 	if _, ok := behaviourCriterion(reviewTask, act, true); ok {
 		t.Error("behaviour_verified must not fire on a review whose change has no runnable surface (.md/.yaml only)")
 	}

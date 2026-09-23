@@ -346,7 +346,7 @@ func TestActivityWrittenTracksCwd(t *testing.T) {
 		fnCall("w2", "write_file", map[string]any{"path": "/toplevel.ts"}),
 		fnResp("w2", "write_file", map[string]any{"bytes": 10, "created": true}),
 	)
-	act := activityFromSessionAt(sess, "")
+	act := activityFromSessionAt(sess, "", "")
 	want := []string{"repo/app/logic.ts", "toplevel.ts"}
 	if len(act.written) != len(want) {
 		t.Fatalf("written = %v, want %v", act.written, want)
@@ -390,7 +390,7 @@ func TestGitCloneCountsAsRetrieval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	act := activityFromSessionAt(sess, "")
+	act := activityFromSessionAt(sess, "", "")
 
 	// The clone is recorded structurally: URL + local dir.
 	if len(act.clonedRepos) != 1 || act.clonedRepos[0] != repoURL {
@@ -443,7 +443,7 @@ func TestGitCloneFailureGetsNoRetrievalCredit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	act := activityFromSessionAt(sess, "")
+	act := activityFromSessionAt(sess, "", "")
 	if len(act.clonedRepos) != 0 || len(act.clonedDirs) != 0 {
 		t.Errorf("a FAILED clone must not earn retrieval credit (clonedRepos=%v clonedDirs=%v)", act.clonedRepos, act.clonedDirs)
 	}
@@ -481,7 +481,7 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 		fnCall("w1", "write_file", map[string]any{"path": "logic.ts"}),
 		fnResp("w1", "write_file", map[string]any{"bytes": 42, "created": true}),
 	)
-	act := activityFromSessionAt(sess, nodeID)
+	act := activityFromSessionAt(sess, nodeID, "")
 	if len(act.written) != 1 || act.written[0] != nodeID+"/repo/logic.ts" {
 		t.Fatalf("written = %v, want [%s/repo/logic.ts]", act.written, nodeID)
 	}
@@ -501,7 +501,7 @@ func TestWebFetchEntersWorkspaceLedger(t *testing.T) {
 			map[string]any{"url": url, "text": "package tools\n// exa.go contents"},
 		}}),
 	)
-	act := activityFromSessionAt(sess, "")
+	act := activityFromSessionAt(sess, "", "")
 
 	if len(act.workspace) != 1 || act.workspace[0].tool != "web_fetch" {
 		t.Fatalf("workspace ledger = %+v, want one web_fetch op recorded", act.workspace)
@@ -537,7 +537,7 @@ func TestRecordFetchBatch(t *testing.T) {
 			map[string]any{"url": bad, "error": "web_fetch: 404"},
 		}}),
 	)
-	act := activityFromSessionAt(sess, "")
+	act := activityFromSessionAt(sess, "", "")
 	for _, u := range []string{small, large} {
 		if _, ok := act.fetched[u]; !ok {
 			t.Errorf("act.fetched missing %q; a successful batch entry (inline or stored) must count as fetched", u)
@@ -554,7 +554,7 @@ func TestRecordSearchBatch(t *testing.T) {
 	sess := newTestSession(t,
 		fnCall("s1", "web_search", map[string]any{"queries": []any{"first query", "", "second query"}}),
 	)
-	act := activityFromSessionAt(sess, "")
+	act := activityFromSessionAt(sess, "", "")
 	want := []string{"first query", "second query"}
 	if len(act.searches) != len(want) {
 		t.Fatalf("searches = %v, want %v", act.searches, want)
@@ -578,7 +578,7 @@ func TestActivityAcceptsLegacyScalarSearchAndFetch(t *testing.T) {
 		fnCall("f1", "web_fetch", map[string]any{"url": url}),
 		fnResp("f1", "web_fetch", map[string]any{"result": "legacy page text"}),
 	)
-	act := activityFromSessionAt(sess, "")
+	act := activityFromSessionAt(sess, "", "")
 	if len(act.searches) != 1 || act.searches[0] != "legacy query" {
 		t.Fatalf("searches = %v, want [legacy query]", act.searches)
 	}
@@ -597,7 +597,7 @@ func TestActivityWrittenDefaultsToTheNodeDir(t *testing.T) {
 		fnCall("w1", "write_file", map[string]any{"path": "report.md"}),
 		fnResp("w1", "write_file", map[string]any{"bytes": 10, "created": true}),
 	)
-	act := activityFromSessionAt(sess, "node-1")
+	act := activityFromSessionAt(sess, "node-1", "")
 	if len(act.written) != 1 || act.written[0] != "node-1/report.md" {
 		t.Fatalf("written = %v, want [node-1/report.md]", act.written)
 	}

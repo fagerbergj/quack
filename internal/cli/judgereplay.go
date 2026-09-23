@@ -186,15 +186,15 @@ func nodeRoundsBefore(sess *bundle.Session, node string, judgeAt time.Time) []no
 }
 
 // activityTurnsBefore gathers every stream's (any node - the live gate scans
-// the whole chat session) last llm.call at or before judgeAt, time-ordered.
-func activityTurnsBefore(sess *bundle.Session, judgeAt time.Time) []vetting.RawTurn {
+// the whole chat session) last llm.call at or before judgeAt, time-ordered; node narrows it to one node's streams.
+func activityTurnsBefore(sess *bundle.Session, judgeAt time.Time, node string) []vetting.RawTurn {
 	type timedTurn struct {
 		turn vetting.RawTurn
 		at   time.Time
 	}
 	var found []timedTurn
 	for _, k := range sess.Streams() {
-		if k.Agent == "judge" {
+		if k.Agent == "judge" || (node != "" && k.Node != node) {
 			continue
 		}
 		turns := sess.ChatTurns(k)
@@ -224,7 +224,7 @@ func workerTurnsFor(sess *bundle.Session, jr judgedRound) (task, answer string, 
 	if len(rounds) == 0 {
 		return "", "", nil, false
 	}
-	return rounds[0].task, rounds[len(rounds)-1].answer, activityTurnsBefore(sess, jr.at), true
+	return rounds[0].task, rounds[len(rounds)-1].answer, activityTurnsBefore(sess, jr.at, ""), true
 }
 
 // recordedFor returns jr's latest run's per-criterion scores. A re-run shares the round label AND the
@@ -350,7 +350,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		}
 		cfgCache[jr.agent] = gc
 	}
-	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, Pages: opts.Pages, Verifier: opts.Verifier}
+	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, NodeTurns: activityTurnsBefore(sess, jr.at, jr.node), Pages: opts.Pages, Verifier: opts.Verifier}
 
 	jf := judge
 	if opts.DeterministicOnly {
