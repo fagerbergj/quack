@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/session"
 )
@@ -119,5 +120,18 @@ func TestReplayCreditsArtifactsFromNodeTurns(t *testing.T) {
 	}
 	if strings.Join(act.artifactsWritten, ",") != "text:mine" {
 		t.Errorf("artifactsWritten = %v, want the node's own turns only", act.artifactsWritten)
+	}
+}
+
+// TestCitesSourcesGradesThePointedArtifact: a short reply naming its artifact
+// is graded on the artifact's links, not reported as having none.
+func TestCitesSourcesGradesThePointedArtifact(t *testing.T) {
+	u := "https://example.test/fetched"
+	act := workerActivity{fetched: map[string]struct{}{u: {}}, seen: map[string]string{}, paths: map[string]bool{}, artifactsWritten: []string{"text:report"}}
+	cfg := Config{RecordReader: fakeLoader{"text:report": "Revenue was $4.2M ([filing](" + u + "))."}}
+	det, _ := computeDeterministicCriteria(context.Background(), "Report updated in text:report.", act, cfg, "node-1", time.Time{})
+	c, ok := det["cites_sources"]
+	if !ok || c.Score != 1 {
+		t.Fatalf("cites_sources = %+v ok=%v, want the artifact's fetched link graded 1", c, ok)
 	}
 }

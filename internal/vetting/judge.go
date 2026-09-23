@@ -1324,11 +1324,11 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	sb.WriteString("\n\n")
 	if citationOnly {
-		// The answer's substance passed; only cites_sources failed. This is a
+		// The answer's substance passed; only citation-form criteria failed. This is a
 		// formatting pass, not re-research: the worker already fetched the URLs
 		// (listed in the activity section below), so re-fetching them wastes tokens and time. Tell it to attach what it has.
 		sb.WriteString("Your previous answer is substantively fine - the ONLY problem is missing inline citations. " +
-			"You already retrieved the sources listed below (URLs you fetched and searched); attach them inline as Markdown links to the claims they support, in the same sentence or bullet as each figure - edit_artifact the artifact if the answer lives in one. " +
+			"You already retrieved the sources listed below (URLs you fetched and searched); attach them inline as Markdown links to the claims they support, in the same sentence or bullet as each figure, and remove any figure none of them states - edit_artifact the artifact if the answer lives in one. " +
 			"Do NOT re-fetch or search again - this is purely a citation-formatting fix. " + reviseReplyRule)
 	} else {
 		sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +

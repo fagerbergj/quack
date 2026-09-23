@@ -1072,8 +1072,7 @@ func TestRunGatedRefine_StampsUserAndSourceOntoWorkerModel(t *testing.T) {
 }
 
 // TestCitationOnlyFailure covers the trigger for the targeted citation-only
-// revise directive: it fires only when cites_sources is the SOLE failing
-// criterion.
+// revise directive: it fires only when citation-form criteria are the only failures.
 func TestCitationOnlyFailure(t *testing.T) {
 	const th = 0.7
 	tests := []struct {
