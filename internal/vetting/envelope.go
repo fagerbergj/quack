@@ -201,11 +201,6 @@ func applyRubricSpecs(v verdict, specs map[string]criterionSpec) verdict {
 			continue
 		}
 		if spec, ok := specs[name]; ok {
-			if spec.Deterministic {
-				// Code had nothing to compute this round (e.g. no markdown links), so the criterion is absent - not the judge's to fill in.
-				delete(v.Criteria, name)
-				continue
-			}
 			c.Definition = spec.Definition
 			c.Scale = spec.Scale
 			c.Bands = spec.Bands
