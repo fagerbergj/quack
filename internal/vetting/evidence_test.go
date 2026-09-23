@@ -160,7 +160,7 @@ func TestResolveFallsBackToTheSearchSnippet(t *testing.T) {
 	u := "https://example.test/only-searched"
 	ev := WebPageEvidence{Store: fakePages{}, Snippets: map[string]string{u: "Revenue reached $4.2M in 2025, per the filing."}}
 	checks := CheckUnits(context.Background(), FindUnits("Revenue hit $4.2M ([filing]("+u+"#top))."), ev)
-	if len(checks) == 0 || checks[0].State != "located" || !strings.Contains(checks[0].Window, "4.2m") {
+	if len(checks) == 0 || checks[0].State != "located" || !checks[0].snippet || !strings.Contains(checks[0].Window, "4.2m") {
 		t.Fatalf("a figure cited to a search-only page must be located in its snippet: %+v", checks)
 	}
 	fetched := pageID(t, u)
