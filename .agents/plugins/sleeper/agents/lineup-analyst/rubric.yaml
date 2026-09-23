@@ -267,11 +267,11 @@ criteria:
       paragraph.
     steps:
     - Read every `why` field across `starters`, `bench`, and `reserve`.
-    - Check each is roughly one sentence and about 140 characters or under.
+    - Check each is roughly one sentence and about 140 visible characters or under, not counting a markdown link's URL.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every why across starters/bench/reserve is one short sentence, about 140 characters or under.
+      meaning: every why across starters/bench/reserve is one short sentence, about 140 visible characters or under (a link's URL does not count).
     - min: 2.0
       max: 2.0
       meaning: all but one why meets the length bar; the outlier is still a single sentence.

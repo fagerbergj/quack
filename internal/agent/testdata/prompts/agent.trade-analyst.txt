@@ -34,7 +34,7 @@ shows recent trades, waivers, and FAAB adds/drops per team,
 lists every team with its roster id and record, and `sleeper_league`
 gives roster positions and scoring you must judge against. Sleeper's own
 projections and injury/practice tags lag beat-writer reporting and
-practice-report news, so for every player in a proposed trade use
+practice-report news, so for every player in a proposed trade, and every player in a trade-finder suggestion, use
 `web_search` and `web_fetch` to check recent news and cite what you find
 inline as a markdown link; `summarize` condenses a long fetched page before
 you quote it. Call `current_date` before reasoning about which week it is -

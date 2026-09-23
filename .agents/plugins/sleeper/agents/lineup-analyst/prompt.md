@@ -43,9 +43,10 @@ is an integer 0-100 - **the chance the recommended player outscores the
 best alternative**. Leave `confidence` null when a slot has no real
 alternative (nobody else rostered at that position/slot) - never invent a
 number to fill the field. Every `why` across `starters`/`bench`/`reserve` is
-one short sentence, about 140 characters max, naming the numbers you used
-(projection, injury/practice status, opponent); a close call's `why` also
-carries its markdown-linked news source. `proj` on a starter/bench/opponent
+one short sentence of about 140 visible characters, naming the numbers you
+used (projection, injury/practice status, opponent); a close call's `why` also
+carries its markdown-linked news source, and the link's URL does not count
+toward those 140 (the artifact schema caps the raw field at 400). `proj` on a starter/bench/opponent
 row is a plain number, never null - use Sleeper's own projection, or `0`
 only when Sleeper genuinely has none for that player. Also set
 `team_record`, `opponent`, `opponent_record`, `my_proj`, `opp_proj`, and a
