@@ -50,16 +50,15 @@ type resolved struct {
 }
 
 func (w WebPageEvidence) resolve(ctx context.Context, citation string) resolved {
-	for _, cand := range urlVariants(citation) {
-		if w.Store == nil {
-			break
-		}
-		id, err := recordstore.IdentityFor(webPageKind, "", cand)
-		if err != nil {
-			continue
-		}
-		if data, _, ok, err := w.Store.Latest(ctx, id); err == nil && ok && len(data) > 0 {
-			return resolved{text: string(data), ok: true}
+	if w.Store != nil {
+		for _, cand := range urlVariants(citation) {
+			id, err := recordstore.IdentityFor(webPageKind, "", cand)
+			if err != nil {
+				continue
+			}
+			if data, _, ok, err := w.Store.Latest(ctx, id); err == nil && ok && len(data) > 0 {
+				return resolved{text: string(data), ok: true}
+			}
 		}
 	}
 	for _, cand := range urlVariants(citation) {
@@ -246,7 +245,7 @@ func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebP
 			c.State, c.Citation, c.Window, c.page, c.snippet = "located", cit, w, text, r.snippet
 			return c
 		}
-		if c.Window == "" {
+		if c.Window == "" || (c.snippet && !r.snippet) { // a fetched page's window beats a snippet's
 			if w := keyTermWindow(text, withoutLinks(c.Unit.Text), locateWindow); w != "" { // second look: where the claim's own terms sit
 				c.Window, c.Citation, c.page, c.snippet = w, cit, text, r.snippet // the row is reported under the page its window came from
 			}

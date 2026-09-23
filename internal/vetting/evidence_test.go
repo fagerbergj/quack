@@ -169,3 +169,17 @@ func TestResolveFallsBackToTheSearchSnippet(t *testing.T) {
 		t.Errorf("a fetched page must win over the snippet, got %q", text)
 	}
 }
+
+// TestFetchedPageWindowBeatsSnippetWindow: a unit citing a search-only URL and
+// then a fetched page gets its second-look window from the page, which can contradict.
+func TestFetchedPageWindowBeatsSnippetWindow(t *testing.T) {
+	searched, fetched := "https://example.test/searched", "https://example.test/fetched"
+	ev := WebPageEvidence{
+		Store:    fakePages{pageID(t, fetched): []byte("The quarterly revenue figure in the audited filing was lower than analysts expected.")},
+		Snippets: map[string]string{searched: "Quarterly revenue coverage and analyst notes."},
+	}
+	checks := CheckUnits(context.Background(), FindUnits("Quarterly revenue was $4.2M ([news]("+searched+"), [filing]("+fetched+"))."), ev)
+	if len(checks) == 0 || checks[0].snippet || checks[0].Citation != fetched || !strings.Contains(checks[0].Window, "audited filing") {
+		t.Fatalf("second-look window should come from the fetched page: %+v", checks)
+	}
+}
