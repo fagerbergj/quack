@@ -73,7 +73,7 @@ func specificsCitedScore(units []Unit, received string) (backed, total int, unci
 // specificsCitedCriterionScore: applicable only when the node's rubric declares
 // specifics_cited deterministic, and only once the deliverable carries enough specifics for a ratio to mean anything.
 func specificsCitedCriterionScore(ctx context.Context, answer string, act workerActivity, cfg Config, load PageLoader) (criterionScore, bool) {
-	if spec, ok := cfg.RubricSpecs[specificsCitedCriterion]; !ok || !spec.Deterministic {
+	if !declaresCodeOwned(cfg, specificsCitedCriterion) {
 		return criterionScore{}, false
 	}
 	units := FindUnits(deliverableText(ctx, answer, act, load))

@@ -66,10 +66,11 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	augmentFromAnswer(&act, cfg, rc.Answer)
 	res := ReplayRoundResult{Threshold: cfg.Threshold, ArtifactsWritten: act.artifactsWritten}
 	if rc.Pages != nil {
-		res.Units = CheckUnits(ctx, FindUnits(rc.Answer), WebPageEvidence{Store: rc.Pages})
+		var v Verifier
 		if rc.Verifier != nil {
-			res.Units = rc.Verifier.VerifyChecks(ctx, res.Units)
+			v = *rc.Verifier
 		}
+		res.Units = verifiedChecks(ctx, rc.Answer, act, rc.Pages, v)
 	}
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
@@ -89,6 +90,9 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 		if err != nil {
 			return res, fmt.Errorf("vetting: replay judge round: %w", err)
 		}
+	}
+	if c, ok := specificsSupportedScore(res.Units); ok && declaresCodeOwned(cfg, specificsSupportedCriterion) {
+		det[specificsSupportedCriterion] = c // live computes it beside the judge, so it never reaches the judge prompt
 	}
 	v = mergeDeterministic(v, det, cfg)
 	v = applyRubricSpecs(v, cfg.RubricSpecs)

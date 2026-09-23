@@ -36,11 +36,46 @@ func (v Verifier) VerifyChecks(ctx context.Context, checks []UnitCheck) []UnitCh
 	if v.LLM == nil {
 		return checks
 	}
-	byPage := map[string][]int{}
+	var idx []int
 	for i, c := range checks {
 		if c.State == "located" || (c.State == "unlocated" && c.Window != "") {
-			byPage[c.Citation] = append(byPage[c.Citation], i) // an unlocated figure with a key-term window gets its second look
+			idx = append(idx, i) // an unlocated figure with a key-term window gets its second look
 		}
+	}
+	v.verifyByPage(ctx, checks, idx)
+	v.recheckUnsupported(ctx, checks)
+	return checks
+}
+
+// recheckUnsupported reads every unsupported item once more in a window three times
+// wider: a false fail costs a revise, so an item stays unsupported only when both reads agree.
+func (v Verifier) recheckUnsupported(ctx context.Context, checks []UnitCheck) {
+	first := map[int]Verdict{}
+	var idx []int
+	for i, c := range checks {
+		if c.Verdict.State == "unsupported" {
+			first[i] = c.Verdict
+			checks[i].Window = c.wideWindow()
+			idx = append(idx, i)
+		}
+	}
+	v.verifyByPage(ctx, checks, idx)
+	for _, i := range idx {
+		switch checks[i].Verdict.State {
+		case "unsupported":
+			checks[i].Verdict.Reason = "confirmed by a second look in a wider window"
+		case "supported":
+		default:
+			checks[i].Verdict = Verdict{State: "cannot_tell", Quote: first[i].Quote, Reason: "a second look in a wider window did not confirm it"}
+		}
+	}
+}
+
+// verifyByPage asks about idx's items in batches that share one cited page.
+func (v Verifier) verifyByPage(ctx context.Context, checks []UnitCheck, idx []int) {
+	byPage := map[string][]int{}
+	for _, i := range idx {
+		byPage[checks[i].Citation] = append(byPage[checks[i].Citation], i)
 	}
 	pages := make([]string, 0, len(byPage))
 	for p := range byPage {
@@ -53,7 +88,6 @@ func (v Verifier) VerifyChecks(ctx context.Context, checks []UnitCheck) []UnitCh
 			v.verifyBatch(ctx, checks, idx[start:min(len(idx), start+verifyBatch)])
 		}
 	}
-	return checks
 }
 
 func (v Verifier) verifyBatch(ctx context.Context, checks []UnitCheck, idx []int) {
@@ -93,7 +127,7 @@ func checkedVerdict(a verifyAnswer, c UnitCheck) Verdict {
 	if state == "cannot_tell" {
 		return Verdict{State: state, Quote: a.Quote}
 	}
-	if _, ok := locateQuote(c.Window, strings.ToLower(a.Quote)); !ok || strings.TrimSpace(a.Quote) == "" {
+	if _, ok := locateQuote(c.Window, strings.ToLower(a.Quote), locateWindow); !ok || strings.TrimSpace(a.Quote) == "" {
 		return Verdict{State: "not_checked", Reason: "quote is not in the evidence", Quote: a.Quote}
 	}
 	if k := c.Specific.Kind; (k == "number" || k == "percent" || k == "currency") && state == "supported" {

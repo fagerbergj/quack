@@ -85,6 +85,12 @@ Substantive specifics (figures, percentages, prices, dates) carry a citation in 
 
 ---
 
+### `specifics_supported`
+
+Every figure, date or quote the deliverable ties to a cited page is what that page says. Code-owned: each cited specific is looked up in its cited page's stored text and read by a tool-less check that must quote the page; a contradiction is read a second time in a window three times wider before it counts. One confirmed contradiction fails the round. Absent when nothing could be read. The judge does not score this criterion. Bands: 1.0 no cited specific contradicted; below 1.0 at least one contradicted on two reads.
+
+---
+
 ### `cites_sources`
 
 Code-owned: deterministic code scores whether each cited link was fetched or seen this session (see the bands in every research rubric). The judge does not score this criterion; citation quality and placement are `citation_quality` where a rubric declares it.
