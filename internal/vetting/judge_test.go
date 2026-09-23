@@ -1937,7 +1937,7 @@ func TestSubmitVerdictArgs_MissingScoreIsNotAZero(t *testing.T) {
 	}
 }
 
-// unscoredThenScoredJudge first submits a rubric criterion with no score plus a
+// unscoredThenScoredJudge first answers with a rubric criterion that has no score plus a
 // non-rubric aside (prod chat ext:github:github-fagerbergj-quack-1545), then scores it.
 type unscoredThenScoredJudge struct{ calls int32 }
 
@@ -1956,7 +1956,10 @@ func (j *unscoredThenScoredJudge) GenerateContent(_ context.Context, _ *model.LL
 		for k, v := range extra {
 			criteria[k] = v
 		}
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 3.0, "criteria": criteria, "feedback": ""}), nil)
+		// Plain JSON text, as prod's judge answered: the submit_verdict tool's schema
+		// would reject a missing score before the gate ever saw it.
+		raw, _ := json.Marshal(map[string]any{"score": 3.0, "criteria": criteria, "feedback": ""})
+		yield(stubText(string(raw)), nil)
 	}
 }
 
