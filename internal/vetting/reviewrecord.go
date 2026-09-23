@@ -694,6 +694,7 @@ func saveEpisodicRoundWritten(ctx context.Context, cfg Config, nodeID, turnID st
 		// Drained once here (not inside saveDocumentRound/saveTextRound) so the
 		// artifact-kind check below and the text fallback share one per-round set.
 		toolWritten := mergeWritten(resetToolWrittenIDs(cfg), written)
+		markWorkerOwnedText(st, nodeID, toolWritten, nil)
 		docID, idErr := recordstore.IdentityFor(cfg.Artifact, nil, DocumentHint(cfg.ChatID))
 		if idErr == nil && toolWritten[docID] {
 			st.artifactToolWritten = true
@@ -711,24 +712,28 @@ func saveEpisodicRoundWritten(ctx context.Context, cfg Config, nodeID, turnID st
 			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, toolWritten)
 		}
 	default:
-		// No registered structured kind selected (#1095): every gated node's
-		// round output still becomes a revision, generic "text:<node>".
+		// No registered structured kind selected (#1095): each round's output becomes
+		// a "text:<node>" revision, until the worker writes that id itself.
 		drained := resetToolWrittenIDs(cfg)
-		if textID, err := recordstore.IdentityFor(kindText, nil, nodeID); err == nil && (drained[textID] || slices.Contains(written, textID)) {
-			st.textToolWritten = true
-		}
-		if !st.textToolWritten {
-			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, drained)
-		}
+		markWorkerOwnedText(st, nodeID, drained, written)
+		saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st, drained)
 	}
 	return st
+}
+
+// markWorkerOwnedText: once the worker writes text:<node> itself it is the worker's
+// document, and no later round's answer is saved over it (prod chat cedfc299).
+func markWorkerOwnedText(st *episodicRoundState, nodeID string, ids map[string]bool, written []string) {
+	if textID, err := recordstore.IdentityFor(kindText, nil, nodeID); err == nil && (ids[textID] || slices.Contains(written, textID)) {
+		st.textToolWritten = true
+	}
 }
 
 // saveTextRound is the generic fallback for a gated node with no cfg.IsReviewer/cfg.Artifact kind (#1095, #1090 P8): id "text:<node>", one
 // revision per round including failed rounds. Skipped when the worker already tool-wrote an artifact this round (any kind, via write_<kind>,
 // write_artifact, or edit_artifact) - toolWritten is the caller's own per-round drain (resetToolWrittenIDs is a one-shot Reset, so it must not be called twice for one round).
 func saveTextRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState, toolWritten map[string]bool) {
-	if len(toolWritten) > 0 {
+	if len(toolWritten) > 0 || st.textToolWritten {
 		return
 	}
 	c := recordClient(cfg)
