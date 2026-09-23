@@ -1424,3 +1424,64 @@ func TestSaveEpisodicRound_ArtifactKind_SkippedWhenToolWrote(t *testing.T) {
 		}
 	})
 }
+
+// TestTextRoundWrite_NeverOverwritesWorkerOwnedText: a native worker that
+// wrote its report to text:<node> itself (seen by the session scan, not the
+// MCP stage) keeps it; a later round's summary answer must not become the latest revision a dependent inlines (prod chat cedfc299).
+func TestTextRoundWrite_NeverOverwritesWorkerOwnedText(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	base := reviewerCfgWithArtifacts(t, svc, true)
+	base.IsReviewer = false
+	base.Artifact = ""
+	base.NodeID = "web-researcher-1"
+	textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := recordClient(base)
+	lineage := recordstore.Lineage{NodeID: base.NodeID, Round: 1, Author: "worker"}
+	if _, _, err := rc.SaveBlob(context.Background(), kindText, []byte("# the full report"), "text/markdown", base.NodeID, lineage); err != nil {
+		t.Fatal(err)
+	}
+
+	st := saveEpisodicRoundWritten(context.Background(), base, base.NodeID, "turn-1", 1, "# the full report", StagedDelivery{}, nil, []string{textID})
+	saveEpisodicRoundWritten(context.Background(), base, base.NodeID, "turn-1", 2, "All flagged issues are fixed in text:web-researcher-1", StagedDelivery{}, st, []string{textID})
+
+	raw, rev, ok, err := rc.Latest(context.Background(), textID)
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	if string(raw) != "# the full report" || rev != 1 {
+		t.Fatalf("latest text:<node> = rev %d %q, want the worker's report untouched", rev, raw)
+	}
+}
+
+// TestTextRoundWrite_ArtifactBranchNeverOverwritesWorkerOwnedText: with a
+// structured kind selected, the sticky summary fallback must not land on a text:<node> the worker wrote itself either.
+func TestTextRoundWrite_ArtifactBranchNeverOverwritesWorkerOwnedText(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	base := reviewerCfgWithArtifacts(t, svc, true)
+	base.IsReviewer = false
+	base.Artifact = kindDocument
+	base.NodeID = "lineup-analyst"
+	rc := recordClient(base)
+	docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := rc.SaveBlob(context.Background(), kindText, []byte("# worker notes"), "text/markdown", base.NodeID, recordstore.Lineage{NodeID: base.NodeID}); err != nil {
+		t.Fatal(err)
+	}
+	written := []string{docID, textID}
+	st := saveEpisodicRoundWritten(context.Background(), base, base.NodeID, "turn-1", 1, "summary one", StagedDelivery{}, nil, written)
+	saveEpisodicRoundWritten(context.Background(), base, base.NodeID, "turn-1", 2, "summary two", StagedDelivery{}, st, written)
+
+	raw, rev, ok, err := rc.Latest(context.Background(), textID)
+	if err != nil || !ok || string(raw) != "# worker notes" || rev != 1 {
+		t.Fatalf("latest text:<node> = rev %d %q ok=%v err=%v, want the worker's own revision untouched", rev, raw, ok, err)
+	}
+}
