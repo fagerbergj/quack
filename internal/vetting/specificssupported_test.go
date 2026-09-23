@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"strings"
+	"sync"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
@@ -116,5 +117,61 @@ func TestStartVerify(t *testing.T) {
 	prompts = nil
 	if _, ok := startVerify(context.Background(), undeclared, answer, workerActivity{})(); ok || len(prompts) != 0 {
 		t.Errorf("a rubric that does not declare specifics_supported must not run it: ok=%v calls=%d", ok, len(prompts))
+	}
+}
+
+// TestStartVerify_RacesTheJudgePath runs the verify goroutine while the judge
+// path reads the same act and det, as runJudge does; meaningful under -race.
+func TestStartVerify_RacesTheJudgePath(t *testing.T) {
+	u := "https://example.test/survey"
+	var prompts []string
+	cfg := Config{RecordReader: fakeLoader{pageID(t, u): secondLookPage}, Threshold: 0.6,
+		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
+		JudgeModel:  seqLLM{answers: []string{`{"items":[{"n":1,"state":"supported","quote":"not 25% as first reported"}]}`}, prompts: &prompts}}
+	act := workerActivity{fetched: map[string]struct{}{u: {}}, seen: map[string]string{}, paths: map[string]bool{}, artifactsWritten: []string{"text:none"}}
+	det := map[string]criterionScore{"cites_sources": {Score: 1, Deterministic: true}}
+
+	wait := startVerify(context.Background(), cfg, "Users rose 25% in 2024 ([survey]("+u+")).", act)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { // the judge's own reads while the verify tier runs
+		defer wg.Done()
+		for range 50 {
+			changedFilesSection(cfg, act)
+			judgeKnownFailuresSection(det, cfg.Threshold)
+		}
+	}()
+	wg.Wait()
+	c, ok := wait()
+	if !ok || c.Score != 1 {
+		t.Fatalf("specifics_supported = %+v ok=%v, want a pass", c, ok)
+	}
+	det[specificsSupportedCriterion] = c
+}
+
+func TestReplayRound_SpecificsSupported(t *testing.T) {
+	u := "https://example.test/survey"
+	unsupported := `{"items":[{"n":1,"state":"unsupported","quote":"users rose 30% in 2024"}]}`
+	run := func(specs map[string]criterionSpec) *ReplayCriterion {
+		var prompts []string
+		rc := ReplayCase{NodeID: "node-1", Task: "task", Answer: "Users rose 25% in 2024 ([survey](" + u + ")).",
+			Pages: fakeLoader{pageID(t, u): secondLookPage}, Verifier: &Verifier{LLM: seqLLM{answers: []string{unsupported}, prompts: &prompts}}}
+		res, err := ReplayRound(context.Background(), Config{Threshold: 0.5, RubricSpecs: specs}, nil, rc)
+		if err != nil {
+			t.Fatalf("ReplayRound: %v", err)
+		}
+		for i := range res.Criteria {
+			if res.Criteria[i].Name == specificsSupportedCriterion {
+				return &res.Criteria[i]
+			}
+		}
+		return nil
+	}
+	got := run(map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}})
+	if got == nil || got.Score != 0 || !got.Deterministic {
+		t.Errorf("specifics_supported = %+v, want a deterministic 0 for a contradicted figure", got)
+	}
+	if got := run(nil); got != nil {
+		t.Errorf("an undeclaring rubric got specifics_supported: %+v", got)
 	}
 }

@@ -1200,8 +1200,10 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 	}
 	waitVerify := startVerify(ledgerCtx, j.cfg, j.answer, act)
 	v, jerr := runJudgeAgent(ledgerCtx, j.judge, j.cfg, attachScreenshots(j.question, shots), j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
-	if c, ok := waitVerify(); ok {
-		det[specificsSupportedCriterion] = c
+	if jerr == nil { // a failed judge round fails closed without reading det; the verify goroutine ends on its own
+		if c, ok := waitVerify(); ok {
+			det[specificsSupportedCriterion] = c
+		}
 	}
 	if j.cfg.ReleaseJudge != nil && j.cfg.AdmitWorker != nil {
 		j.cfg.ReleaseJudge()
