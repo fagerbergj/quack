@@ -33,7 +33,7 @@ func specificsSupportedScore(checks []UnitCheck) (criterionScore, bool) {
 		return criterionScore{}, false
 	}
 	if len(bad) == 0 {
-		return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d specifics read against their cited pages, none contradicted", supported)}, true
+		return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d specifics read against their cited pages or those pages' search snippets, none contradicted", supported)}, true
 	}
 	c := criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: %d of %d specifics read against their cited pages are contradicted by them", len(bad), supported+len(bad))}
 	for _, b := range bad {
@@ -46,7 +46,7 @@ func specificsSupportedScore(checks []UnitCheck) (criterionScore, bool) {
 // verifiedChecks runs the locate and verify tiers over the deliverable (answer plus
 // the artifacts the node wrote), reading pages and artifacts through load.
 func verifiedChecks(ctx context.Context, answer string, act workerActivity, load PageLoader, v Verifier) []UnitCheck {
-	checks := CheckUnits(ctx, FindUnits(deliverableText(ctx, answer, act, load)), WebPageEvidence{Store: load})
+	checks := CheckUnits(ctx, FindUnits(deliverableText(ctx, answer, act, load)), WebPageEvidence{Store: load, Snippets: act.seen})
 	return v.VerifyChecks(ctx, checks)
 }
 

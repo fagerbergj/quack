@@ -18,6 +18,7 @@ type UnitCheck struct {
 	State    string  // "located", "unlocated", "uncited", "no_stored_text"
 	Window   string  // evidence around the match; for an unlocated figure, around the claim's key terms (second look)
 	page     string  // the cited page's text, for the second look's wider window
+	snippet  bool    // the evidence is a search snippet: it can back a specific, never contradict one
 	Verdict  Verdict // the verify tier's answer, zero until it runs
 }
 
@@ -27,27 +28,45 @@ type PageLoader interface {
 	Latest(ctx context.Context, id string) ([]byte, int, bool, error)
 }
 
-// WebPageEvidence resolves a citation URL to the page text a fetch stored for it.
-type WebPageEvidence struct{ Store PageLoader }
+// WebPageEvidence resolves a citation URL to the page text a fetch stored for it,
+// else to the search snippet the worker saw for it (owner: quoting a snippet is fine).
+type WebPageEvidence struct {
+	Store    PageLoader
+	Snippets map[string]string // search result url -> snippet, from the round's activity
+}
 
 const webPageKind = "web_page"
 
 // Resolve tries the URL as cited, then without fragment and trailing slash:
 // the worker fetched one exact form and the citation is often a lighter one.
 func (w WebPageEvidence) Resolve(ctx context.Context, citation string) (string, bool) {
-	if w.Store == nil {
-		return "", false
+	r := w.resolve(ctx, citation)
+	return r.text, r.ok
+}
+
+type resolved struct {
+	text        string
+	snippet, ok bool
+}
+
+func (w WebPageEvidence) resolve(ctx context.Context, citation string) resolved {
+	if w.Store != nil {
+		for _, cand := range urlVariants(citation) {
+			id, err := recordstore.IdentityFor(webPageKind, "", cand)
+			if err != nil {
+				continue
+			}
+			if data, _, ok, err := w.Store.Latest(ctx, id); err == nil && ok && len(data) > 0 {
+				return resolved{text: string(data), ok: true}
+			}
+		}
 	}
 	for _, cand := range urlVariants(citation) {
-		id, err := recordstore.IdentityFor(webPageKind, "", cand)
-		if err != nil {
-			continue
-		}
-		if data, _, ok, err := w.Store.Latest(ctx, id); err == nil && ok && len(data) > 0 {
-			return string(data), true
+		if s := w.Snippets[cand]; s != "" {
+			return resolved{text: s, snippet: true, ok: true}
 		}
 	}
-	return "", false
+	return resolved{}
 }
 
 func urlVariants(raw string) []string {
@@ -207,28 +226,28 @@ func indexSpecific(hay, needle, kind string) int {
 
 // locateAcross tries every citation the unit carries: a sentence with two
 // links may back its figure with the second. Stored text on any page wins over none.
-func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebPageEvidence, pages map[string]string) UnitCheck {
+func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebPageEvidence, pages map[string]resolved) UnitCheck {
 	c.State = "no_stored_text"
 	for _, cit := range citations {
-		text, ok := pages[cit]
-		if !ok {
-			if text, ok = res.Resolve(ctx, cit); ok {
-				pages[cit] = text
-			}
+		r, cached := pages[cit]
+		if !cached {
+			r = res.resolve(ctx, cit)
+			pages[cit] = r
 		}
-		if !ok {
+		if !r.ok {
 			continue
 		}
+		text := r.text
 		if c.State == "no_stored_text" {
 			c.State, c.Citation = "unlocated", cit
 		}
 		if w, found := LocateSpecific(text, c.Specific); found {
-			c.State, c.Citation, c.Window, c.page = "located", cit, w, text
+			c.State, c.Citation, c.Window, c.page, c.snippet = "located", cit, w, text, r.snippet
 			return c
 		}
-		if c.Window == "" {
+		if c.Window == "" || (c.snippet && !r.snippet) { // a fetched page's window beats a snippet's
 			if w := keyTermWindow(text, withoutLinks(c.Unit.Text), locateWindow); w != "" { // second look: where the claim's own terms sit
-				c.Window, c.Citation, c.page = w, cit, text // the row is reported under the page its window came from
+				c.Window, c.Citation, c.page, c.snippet = w, cit, text, r.snippet // the row is reported under the page its window came from
 			}
 		}
 	}
@@ -280,7 +299,7 @@ func partOfNumber(hay string, j, dir int) bool {
 // first citation and look for the specific in it. Units without specifics are skipped.
 func CheckUnits(ctx context.Context, units []Unit, res WebPageEvidence) []UnitCheck {
 	var out []UnitCheck
-	pages := map[string]string{}
+	pages := map[string]resolved{}
 	for _, u := range units {
 		for _, s := range u.Specifics {
 			c := UnitCheck{Unit: u, Specific: s}

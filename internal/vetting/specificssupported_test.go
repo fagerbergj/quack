@@ -175,3 +175,20 @@ func TestReplayRound_SpecificsSupported(t *testing.T) {
 		t.Errorf("an undeclaring rubric got specifics_supported: %+v", got)
 	}
 }
+
+// TestVerifyChecks_SnippetNeverContradicts: a live page's search snippet is often
+// stale (prod: an ADP page's snippet showed an older draft window), so it can only back a figure.
+func TestVerifyChecks_SnippetNeverContradicts(t *testing.T) {
+	c := secondLookCheck()
+	c.snippet = true
+	var prompts []string
+	got := Verifier{LLM: seqLLM{answers: []string{`{"items":[{"n":1,"state":"unsupported","quote":"users rose 30% in 2024"}]}`}, prompts: &prompts}}.VerifyChecks(context.Background(), []UnitCheck{c})
+	if got[0].Verdict.State != "cannot_tell" || len(prompts) != 1 {
+		t.Errorf("snippet contradiction = %+v after %d calls, want cannot_tell with no second look", got[0].Verdict, len(prompts))
+	}
+	ok := `{"items":[{"n":1,"state":"supported","quote":"not 25% as first reported"}]}`
+	prompts = nil
+	if got := (Verifier{LLM: seqLLM{answers: []string{ok}, prompts: &prompts}}).VerifyChecks(context.Background(), []UnitCheck{c}); got[0].Verdict.State != "supported" {
+		t.Errorf("a snippet that states the figure must back it: %+v", got[0].Verdict)
+	}
+}

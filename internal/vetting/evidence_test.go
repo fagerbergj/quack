@@ -155,3 +155,31 @@ func TestSecondLook_TermsIgnoreLinksAndCitationFollowsTheWindow(t *testing.T) {
 		t.Fatalf("second look should use the claim's own words (not the URL's) and report the page its window came from: %+v", got)
 	}
 }
+
+func TestResolveFallsBackToTheSearchSnippet(t *testing.T) {
+	u := "https://example.test/only-searched"
+	ev := WebPageEvidence{Store: fakePages{}, Snippets: map[string]string{u: "Revenue reached $4.2M in 2025, per the filing."}}
+	checks := CheckUnits(context.Background(), FindUnits("Revenue hit $4.2M ([filing]("+u+"#top))."), ev)
+	if len(checks) == 0 || checks[0].State != "located" || !checks[0].snippet || !strings.Contains(checks[0].Window, "4.2m") {
+		t.Fatalf("a figure cited to a search-only page must be located in its snippet: %+v", checks)
+	}
+	fetched := pageID(t, u)
+	ev.Store = fakePages{fetched: []byte("Revenue reached $4.2M in 2025 according to the full filing text.")}
+	if text, _ := ev.Resolve(context.Background(), u); !strings.Contains(text, "full filing") {
+		t.Errorf("a fetched page must win over the snippet, got %q", text)
+	}
+}
+
+// TestFetchedPageWindowBeatsSnippetWindow: a unit citing a search-only URL and
+// then a fetched page gets its second-look window from the page, which can contradict.
+func TestFetchedPageWindowBeatsSnippetWindow(t *testing.T) {
+	searched, fetched := "https://example.test/searched", "https://example.test/fetched"
+	ev := WebPageEvidence{
+		Store:    fakePages{pageID(t, fetched): []byte("The quarterly revenue figure in the audited filing was lower than analysts expected.")},
+		Snippets: map[string]string{searched: "Quarterly revenue coverage and analyst notes."},
+	}
+	checks := CheckUnits(context.Background(), FindUnits("Quarterly revenue was $4.2M ([news]("+searched+"), [filing]("+fetched+"))."), ev)
+	if len(checks) == 0 || checks[0].snippet || checks[0].Citation != fetched || !strings.Contains(checks[0].Window, "audited filing") {
+		t.Fatalf("second-look window should come from the fetched page: %+v", checks)
+	}
+}

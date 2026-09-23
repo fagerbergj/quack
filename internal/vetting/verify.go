@@ -53,6 +53,11 @@ func (v Verifier) recheckUnsupported(ctx context.Context, checks []UnitCheck) {
 	first := map[int]Verdict{}
 	var idx []int
 	for i, c := range checks {
+		if c.Verdict.State == "unsupported" && c.snippet {
+			// A snippet is a few hundred characters of a search index's copy, often stale on a live page.
+			checks[i].Verdict = Verdict{State: "cannot_tell", Quote: c.Verdict.Quote, Reason: "the evidence is a search snippet, which can back a specific but not contradict it"}
+			continue
+		}
 		if c.Verdict.State == "unsupported" {
 			first[i] = c.Verdict
 			checks[i].Window = c.wideWindow()
