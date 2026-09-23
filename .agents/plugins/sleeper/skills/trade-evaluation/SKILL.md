@@ -26,29 +26,43 @@ TE/FLEX/K/DEF + 5 bench, 6-of-10 playoffs from week 15.
    failure mode. Load `value-charts-and-limits.md` for what each chart
    family is actually grounded in (consensus rankings, real-trade market
    data, or explicit VOR) and pick one to name.
-2. **Price by scarcity, not raw points.** RB is the scarcest starter
+2. **Model each partner before pricing.** Read that team's roster
+   (`sleeper_roster` with their `user`), check it against the league's
+   starting slots (`sleeper_league`), and read its record and playoff
+   position (`sleeper_standings`) to tell a contender from a rebuilder.
+   That model - positional surplus and need, contender or rebuilder - is
+   what decides which of your players they'd value and what they'd give up
+   for it, not just chart parity. Load `roster-fit.md`'s mutual-need rule.
+3. **Check outside news for every traded player.** Sleeper's own
+   projections and injury/practice tags lag beat-writer reporting and
+   practice-report news (see `sleeper:injury-and-news`). Search the open
+   web for each traded player and cite what you find inline as a markdown
+   link, especially when it would move the price.
+4. **Price by scarcity, not raw points.** RB is the scarcest starter
    position in this league (~50% of weekly supply started, vs ~25% at
    WR/TE, ~31% at QB) but the FLEX narrows the RB/WR gap versus a
    no-FLEX league. Load `positional-scarcity-10-team.md` for the numbers
    and the 10-team-specific expert read.
-3. **Discount a 2-for-1, and price the forced cut.** Packages do not sum at
+5. **Discount a 2-for-1, and price the forced cut.** Packages do not sum at
    100%; a shallow 10-team start-9 justifies a larger-than-default
    second-asset discount. Load `consolidation-rules.md` for the published
    discount figures and when taking two is actually the right move.
-4. **Weigh roster fit and win-now vs. depth.** A 5th RB on an already-deep
+6. **Weigh roster fit and win-now vs. depth.** A 5th RB on an already-deep
    roster earns no scarcity premium (the reversal rule); a contender inside
    the playoff cutline and a team past its window get different published
-   advice. Load `roster-fit.md` for the fit band, the mutual-need rule, and
-   the win-now-premium numbers.
-5. **Check fairness and collusion norms before recommending a lopsided
+   advice. Load `roster-fit.md` for the fit band and the win-now-premium
+   numbers.
+7. **Check fairness and collusion norms before recommending a lopsided
    deal**, especially with an eliminated team or a playoff rival. Load
    `fairness-and-vetoes.md` — collusion has no single definition, and a
    one-sided-but-voluntary trade ("fleecing") is not collusion.
-6. **Write the verdict and the note.** Land on exactly one of send / counter
+8. **Write the verdict and the note.** Land on exactly one of send / counter
    / decline (a finder run: a ranked, bounded list of at most three
-   candidates). Load `persuasive-writeup.md` for how to state the fairness
-   band used, write the lineup before/after, and structure a counter that
-   keeps the spirit of the original offer.
+   candidates), each in one or two short sentences that name the deciding
+   line item and, for a suggestion, the partner's need it fills. Load
+   `persuasive-writeup.md` for how to state the fairness band used, write
+   the lineup before/after, and structure a counter that keeps the spirit
+   of the original offer.
 
 ## No published number
 

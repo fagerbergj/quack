@@ -22,18 +22,26 @@ so instead of inventing one — see "No published number" below.
    resolved before anything else — do not let a good matchup override an
    unresolved availability question. Load `practice-report-semantics.md` for
    the Wed/Thu/Fri interpretation and the injury-type play-rate table.
-2. **Locks.** Sleeper locks each slot at that player's own kickoff
+2. **Check outside news for a close call.** Sleeper's own designation and
+   practice fields update on that reporting calendar, so they lag
+   beat-writer and practice-report news between snapshots (see
+   `sleeper:injury-and-news`). For a Questionable or limited-practice
+   starter, or a bench player whose projection sits within the flex
+   tie-break gap (`flex-decisions.md`, under 3 points) of the starter's,
+   search the open web for what changed and cite it inline as a markdown
+   link.
+3. **Locks.** Sleeper locks each slot at that player's own kickoff
    (`sleeper_schedule` for kickoff times); a locked slot cannot change. A
    Thursday player has no Thu/Fri/Sat report — the decision is effectively
    final at the Wednesday 4pm ET report. State the lock time when a
    Questionable/Doubtful player's kickoff is close.
-3. **Matchup, bounded.** Pull opponent defensive context. The real, quantified
+4. **Matchup, bounded.** Pull opponent defensive context. The real, quantified
    effect is small and position-dependent: −0.07 (QB), −0.13 (RB), −0.09 (WR)
    fantasy points per one-spot change in opponent defensive rank, TE
    statistically ~0 ([The Fantasy Footballers, Aug 3, 2021](https://www.thefantasyfootballers.com/articles/the-fantasy-football-mythbusters-making-the-most-of-matchups/)).
    Use it to break *close* calls only — never to bench a clearly-better
    player for a clearly-worse one on matchup alone ([The Athletic, Dec 24, 2024](https://www.nytimes.com/athletic/5744918/2024/12/24/fantasy-football-matchup-rankings-strength-of-schedule/)).
-4. **Game script and weather, as a tiebreaker only.** Favorites win more
+5. **Game script and weather, as a tiebreaker only.** Favorites win more
    (66% overall, 85% at 10+ points — [TFF, Jul 15, 2021](https://www.thefantasyfootballers.com/articles/the-fantasy-football-mythbusters-flip-the-game-script/)),
    but the same study's own verdict is that team-score projection dominates
    game-script narrative — pick the higher-scoring team's players rather than
@@ -41,10 +49,10 @@ so instead of inventing one — see "No published number" below.
    wind, heavy precipitation, <30°F) and trims efficiency, not volume — see
    `weather-and-vegas.md` for the full multiplier tables and the "no
    correlation" null result that also exists in the literature.
-5. **FLEX last.** Fill the five dedicated slots first, then rank every
+6. **FLEX last.** Fill the five dedicated slots first, then rank every
    remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`
    for the floor-vs-ceiling tie-break and the PPR-specific WR-lean data.
-6. **Write the verdict.** Every starter gets `start` or `sit` plus the
+7. **Write the verdict.** Every starter gets `start` or `sit` plus the
    `why`; the UI's `confidence` number is the chance the recommended player
    outscores the best alternative — leave it null when there is no real
    alternative (see agent prompt).

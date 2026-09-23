@@ -149,3 +149,89 @@ criteria:
     anchors:
     - quote
     - omission
+  outside_news_for_traded_players:
+    definition: >
+      Sleeper's own projections and injury/practice tags lag beat-writer
+      reporting and practice-report news, so every player in the trade -
+      both sides of an evaluated offer, or every give/get pair in a
+      finder's suggestions - checks recent news and cites it inline as a
+      markdown link.
+    steps:
+    - List every player named in the trade (an evaluated offer) or in each
+      suggestion (a finder run).
+    - For each, check the `why`/`note` cites a markdown-linked news source,
+      not just the Sleeper projection or designation restated.
+    - Check the cited link is one a web_search/web_fetch call in this
+      session actually returned, not invented.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every traded player's why/note cites a markdown-linked news source actually returned by a session tool call.
+    - min: 2.0
+      max: 2.0
+      meaning: every traded player has an outside-news citation, but one link cannot be traced to a session tool call.
+    - min: 1.0
+      max: 1.0
+      meaning: one traded player has no outside-news citation.
+    - min: 0.0
+      max: 0.0
+      meaning: multiple traded players rest on Sleeper's fields alone, or a cited link is fabricated.
+    anchors:
+    - quote
+    - omission
+  partner_need_named:
+    definition: >
+      Each suggestion (a finder run) or the partner's side of an evaluated
+      offer rests on that team's own model - its starting slots from
+      sleeper_league, its record/playoff position from sleeper_standings,
+      and its roster's positional surplus/need from sleeper_roster - and
+      names why that team would plausibly say yes, not just what the owner
+      gets.
+    steps:
+    - For each suggestion/offer, check the session read the partner's
+      roster, the league's starting slots, and sleeper_standings for that
+      partner.
+    - Check the `note`/`why` states the partner's positional surplus or
+      need this deal addresses, and whether they're a contender or a
+      rebuilder where that's the deciding factor.
+    - Check the stated need traces to the session's own tool calls, not an
+      assumption about the partner with no data behind it.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every suggestion/offer names the partner's specific surplus or need, traced to a session tool call.
+    - min: 2.0
+      max: 2.0
+      meaning: the partner's need is named for every suggestion, but one is asserted without a traceable tool call.
+    - min: 1.0
+      max: 1.0
+      meaning: one suggestion/offer gives no reason the partner would say yes.
+    - min: 0.0
+      max: 0.0
+      meaning: no suggestion/offer states the partner's need, or the league/standings data was never read.
+    anchors:
+    - quote
+    - omission
+  note_is_brief:
+    definition: >
+      Every offer's `why` and every suggestion's `note` is one or two short
+      sentences - the deciding line item, not a running commentary.
+    steps:
+    - Read every `why` (offers) and `note` (suggestions) field in the
+      artifact.
+    - Check each is one or two sentences, not a longer paragraph.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every why/note is one or two short sentences.
+    - min: 2.0
+      max: 2.0
+      meaning: all but one why/note meets the length bar; the outlier is still under a short paragraph.
+    - min: 1.0
+      max: 1.0
+      meaning: several why/note fields run to a paragraph or more.
+    - min: 0.0
+      max: 0.0
+      meaning: why/note fields are consistently paragraph-length across the artifact.
+    anchors:
+    - quote

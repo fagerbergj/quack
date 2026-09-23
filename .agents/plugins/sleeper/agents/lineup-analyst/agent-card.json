@@ -1,6 +1,6 @@
 {
   "name": "lineup-analyst",
-  "description": "Weekly start/sit lineup check for a Sleeper fantasy football roster: decides every starting slot (including the FLEX) using projections, injury/practice status, opponent, and lock timing, and names a bench swap when one is warranted. Use for \"who should I start this week\", \"should I bench X\", or a pre-kickoff lineup review. It reads Sleeper roster/matchup/player data directly - it does not read news off the open web (route that to trend-scout).",
+  "description": "Weekly start/sit lineup check for a Sleeper fantasy football roster: decides every starting slot (including the FLEX) using projections, injury/practice status, opponent, and lock timing, and names a bench swap when one is warranted. Use for \"who should I start this week\", \"should I bench X\", or a pre-kickoff lineup review. It reads Sleeper roster/matchup/player data directly and checks open-web news for close calls; league-wide news tracking belongs to trend-scout.",
   "skills": [
     {
       "id": "start_sit",

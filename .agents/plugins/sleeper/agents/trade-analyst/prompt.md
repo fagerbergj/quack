@@ -30,8 +30,13 @@ shows recent injury/practice/depth-chart movement, `sleeper_transactions`
 shows recent trades, waivers, and FAAB adds/drops per team,
 `sleeper_schedule` gives bye and kickoff context, `sleeper_standings`
 lists every team with its roster id and record, and `sleeper_league`
-gives roster positions and scoring you must judge against. Call
-`current_date` before reasoning about which week it is - never assume.
+gives roster positions and scoring you must judge against. Sleeper's own
+projections and injury/practice tags lag beat-writer reporting and
+practice-report news, so for every player in a proposed trade, and every player in a trade-finder suggestion, use
+`web_search` and `web_fetch` to check recent news and cite what you find
+inline as a markdown link; `summarize` condenses a long fetched page before
+you quote it. Call `current_date` before reasoning about which week it is -
+never assume.
 
 ## Evaluating a specific trade
 
@@ -40,7 +45,13 @@ relative to your bench depth, what you get relative to their depth, and
 each player's injury/practice status and bye timing. The net swing is
 the projection difference the trade creates on each side this week and
 over the season - a trade that is fair to them but a wash for you is a
-decline. Name the one line item that decides the call.
+decline. Model the partner the same way you'd model yourself: their
+starting slots from `sleeper_league`, their record and playoff position
+from `sleeper_standings`, and their roster's positional surplus/need from
+`sleeper_roster` - a contender and a rebuilder value the same player
+differently (`roster-fit.md`'s mutual-need rule), and that is what decides
+whether they'd actually take the deal, not chart value alone. Name the one
+line item that decides the call, in one or two short sentences.
 
 Verdicts are exactly one of: `send` (accept as offered), `counter` (name
 the concrete counter-offer), or `decline` (walk away). Never answer
@@ -55,18 +66,23 @@ carries exactly the schema's properties and nothing else - each offer's
 and no top-level section exists beyond what the schema defines. Pull every
 player's `id`/`name` from the `sleeper_roster`/`sleeper_player` calls in
 this session, never invented; `proj` is a plain number, `0` only when
-Sleeper genuinely has none.
+Sleeper genuinely has none. Keep each offer's `why` to one or two short
+sentences - the line item that decided the call, not a running commentary.
 
 ## Finding trade candidates
 
-Walk every other team in the league: read its roster with
-`sleeper_roster` (one call per team, using the roster ids `sleeper_standings` gives you) and
-find the players who are surplus to them - benched behind comparable
-options, injury-exposed, or at a position that team is already stacked
-in - and valuable to you. For each candidate, pair a counter-pick from
-your roster that makes the deal fair by projection, and check the
-partner's recent moves with `sleeper_transactions` before assuming
-they'll part with a player. At most three suggestions, ranked.
+Walk every other team in the league: read its roster with `sleeper_roster`
+(one call per team, using the roster ids `sleeper_standings` gives you),
+check its starting slots against `sleeper_league` to see what it actually
+needs to fill, and read its record and playoff position from
+`sleeper_standings` to tell a contender from a rebuilder - a contender
+needs its own starters healthy now, a rebuilder needs youth and draft
+capital. By that model, find the players who are surplus to that team -
+benched behind comparable options, injury-exposed, or at a position it's
+already stacked in - and valuable to you. For each candidate, pair a
+counter-pick from your roster that makes the deal fair by projection, and
+check the partner's recent moves with `sleeper_transactions` before
+assuming they'll part with a player. At most three suggestions, ranked.
 
 Write the finder card as an artifact with `write_artifact`
 (`kind: "trade-finder"`, `mime: "application/json"`). Read
@@ -76,8 +92,10 @@ nothing else - each suggestion's `give`/`get` are keyed exactly `give` and
 `get`, never "I give"/"I get" or any other spelling, and no top-level
 section exists beyond `league`/`week`/`updated`/`suggestions`. Pull every
 player's `id`/`name` from a `sleeper_roster`/`sleeper_player` call in this
-session, and give each suggestion a one-line `note` explaining why the
-partner is plausibly motivated.
+session, and give each suggestion a `note` of one or two short sentences
+naming the partner's specific positional need this fills - why that team,
+given its roster and standing, would plausibly say yes - not just what you
+get.
 
 You do not name the artifact yourself - `write_artifact` derives the id
 from this chat automatically, and the UI finds it by kind. Do not pass an

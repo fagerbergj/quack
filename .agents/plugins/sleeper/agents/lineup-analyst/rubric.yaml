@@ -194,3 +194,92 @@ criteria:
     anchors:
     - quote
     - omission
+  outside_news_for_close_calls:
+    definition: >
+      Sleeper's own projection and injury/practice fields lag practice-report
+      and beat-writer news, so every close call - a Questionable or
+      limited-practice starter, or a bench player whose projection sits
+      within the flex tie-break gap of the starter's - checks recent news
+      and cites it inline as a markdown link.
+    guidance: >
+      If a round genuinely has no close call (no Questionable/limited-
+      practice starter and no bench-vs-starter gap under the flex tie-break
+      threshold), score 3 - there is nothing to check, not a missed check.
+    steps:
+    - List every close call - a starter carrying a Questionable/Doubtful
+      designation or a Friday-limited practice report, and any slot where a
+      bench player's projection sits within the flex tie-break gap of the
+      starter's.
+    - For each, check the `why` (or the reply) cites a markdown link to a
+      news source, not just the Sleeper designation restated.
+    - Check the cited link is one a web_search/web_fetch call in this
+      session actually returned, not invented.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every close call cites a markdown-linked news source actually returned by a session tool call.
+    - min: 2.0
+      max: 2.0
+      meaning: every close call cites outside news, but one link cannot be traced to a session tool call.
+    - min: 1.0
+      max: 1.0
+      meaning: one close call has no outside-news citation.
+    - min: 0.0
+      max: 0.0
+      meaning: multiple close calls rest on Sleeper's fields alone, or a cited link is fabricated.
+    anchors:
+    - quote
+    - omission
+  summary_states_changes:
+    definition: >
+      The artifact's `summary` is at most two sentences and names every
+      change from the starters `sleeper_roster`/`sleeper_matchup` reported
+      as starting this week - "Start X over Y" per change - or states there
+      are no changes.
+    steps:
+    - Read the current starters `sleeper_roster`/`sleeper_matchup` reported
+      for this week (the session's own tool calls, not the artifact's
+      recommended starters).
+    - Diff those against the artifact's `starters` array to find every real
+      change.
+    - Check the `summary` names each one as "Start X over Y" (or equivalent
+      explicit phrasing) in no more than two sentences.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: summary is at most two sentences and names every real change as start X over Y, or correctly says no changes.
+    - min: 2.0
+      max: 2.0
+      meaning: every change is named, but the summary runs longer than two sentences or names one loosely.
+    - min: 1.0
+      max: 1.0
+      meaning: one real change is missing from the summary.
+    - min: 0.0
+      max: 0.0
+      meaning: the summary lists no changes while the starters array shows real ones, or invents a change that didn't happen.
+    anchors:
+    - quote
+    - omission
+  why_is_brief:
+    definition: >
+      Every `starters`/`bench`/`reserve` row's `why` is one short sentence,
+      about 140 characters or fewer - a decision-first line, not a
+      paragraph.
+    steps:
+    - Read every `why` field across `starters`, `bench`, and `reserve`.
+    - Check each is roughly one sentence and about 140 visible characters or under, not counting a markdown link's URL.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every why across starters/bench/reserve is one short sentence, about 140 visible characters or under (a link's URL does not count).
+    - min: 2.0
+      max: 2.0
+      meaning: all but one why meets the length bar; the outlier is still a single sentence.
+    - min: 1.0
+      max: 1.0
+      meaning: several why fields run long, or one is a multi-sentence paragraph.
+    - min: 0.0
+      max: 0.0
+      meaning: why fields are consistently paragraph-length across the artifact.
+    anchors:
+    - quote
