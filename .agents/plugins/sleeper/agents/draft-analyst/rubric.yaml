@@ -3,205 +3,157 @@ scale:
   max: 3
   pass: 2
 notes: >
-  Every criterion here is drawn from `research-r9-drafting.md` (R9) via the `sleeper:draft-strategy` skill.
-  A published threshold not in the skill/report must never be treated as fabricated on its own; check
-  the report before scoring a citation down. When the skill itself says no published number exists for
-  a case, an answer that says the same thing is fully grounded.
+  Every criterion here is drawn from `research-r9-drafting.md` (R9) via
+  the `sleeper:draft-strategy` skill. A published threshold not in the
+  skill/report must never be treated as fabricated on its own; check
+  the report before scoring a citation down. When the skill itself says
+  no published number exists for a case, an answer that says the same
+  thing is fully grounded.
 criteria:
   tiers_not_names:
     definition: >
-      Picks and plan entries are justified by tier position (a cluster bounded by projection drop-offs)
-      and the league's own board data from sleeper_draft/sleeper_player, never by a bare player name or
+      Picks and plan entries are justified by tier position (a cluster
+      bounded by projection drop-offs) and the league's own board data
+      from sleeper_draft/sleeper_player, never by a bare player name or
       reputation with no tier or projection context.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check the primary recommendation states which tier the player falls in, or the projected drop-off
-      to the next tier.
-    - Check no recommendation rests on name recognition alone with no tier or projection backing.
-    - >-
-      For a finished-draft grade, check drafted_as/finished positions trace to a sleeper_draft/sleeper_player
-      call, not an assumption.
+    - Check the primary recommendation states which tier the player
+      falls in, or the projected drop-off to the next tier.
+    - Check no recommendation rests on name recognition alone with no
+      tier or projection backing.
+    - For a finished-draft grade, check drafted_as/finished positions
+      trace to a sleeper_draft/sleeper_player call, not an assumption.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: every recommendation carries explicit tier context traced to tool data.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        call leans on name recognition without it.
+      meaning: tier context is present throughout, but one call leans on name recognition without it.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: tier context
-        is missing for more than one call, or is asserted without a tool-traced projection.
+      meaning: tier context is missing for more than one call, or is asserted without a tool-traced projection.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: recommendations are driven by name/reputation
-        with no tier or projection basis anywhere.
+      meaning: recommendations are driven by name/reputation with no tier or projection basis anywhere.
     anchors:
     - quote
     - omission
   adp_as_value_not_gospel:
     definition: >
-      ADP is treated as a timing/price signal to be checked against tier and roster-need context, never
-      as the draft order itself or an unexamined "next on the list" pick - and never a 12-team or other-platform
-      ADP presented as this 10-team league's price.
+      ADP is treated as a timing/price signal to be checked against
+      tier and roster-need context, never as the draft order itself or
+      an unexamined "next on the list" pick - and never a 12-team or
+      other-platform ADP presented as this 10-team league's price.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check the answer does not simply take the next name on an ADP or rankings list without a value/need
-      reason.
-    - >-
-      Check any reach beyond the declared band names the tier-cliff or structural reason for it (see skill's
-      reach thresholds).
-    - Check ADP figures are attributed to a 10-team PPR source, not a 12-team or other-format board.
+    - Check the answer does not simply take the next name on an ADP or
+      rankings list without a value/need reason.
+    - Check any reach beyond the declared band names the tier-cliff or
+      structural reason for it (see skill's reach thresholds).
+    - Check ADP figures are attributed to a 10-team PPR source, not a
+      12-team or other-format board.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: ADP is used as a value check throughout, every reach is justified, and the format is correct.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        reach lacks a stated justification.
+      meaning: ADP is used correctly, but one reach lacks a stated justification.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: one pick
-        is driven by "next on ADP" with no value reasoning.
+      meaning: one pick is driven by "next on ADP" with no value reasoning.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: the plan drafts straight off an ADP/rankings
-        list, or uses a mismatched-format ADP as this league's price.
+      meaning: the plan drafts straight off an ADP/rankings list, or uses a mismatched-format ADP as this league's price.
     anchors:
     - quote
     - omission
   on_clock_call_names_pick_and_tier_drop:
     definition: >
-      Every live on-the-clock recommendation names the specific pick (round/slot/pick number) and the
-      tier drop it is responding to - not a generic "take the best player available" with no concrete
+      Every live on-the-clock recommendation names the specific pick
+      (round/slot/pick number) and the tier drop it is responding to -
+      not a generic "take the best player available" with no concrete
       pick context.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      For a live-draft answer, check the `clock` entry names the on-the-clock pick number and states the
-      marginal reason (a tier falling, or not) in one sentence.
-    - Check a fallback is stated for the case the primary target is gone.
-    - Check the answer does not present an unbounded list of names with no single primary recommendation.
+    - For a live-draft answer, check the `clock` entry names the
+      on-the-clock pick number and states the marginal reason (a tier
+      falling, or not) in one sentence.
+    - Check a fallback is stated for the case the primary target is
+      gone.
+    - Check the answer does not present an unbounded list of names with
+      no single primary recommendation.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: the pick, the tier-drop reason, and a fallback are all named.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: no fallback
-        is given.
+      meaning: the pick and tier reason are named, but no fallback is given.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: a pick
-        is named but with no tier-drop reasoning.
+      meaning: a pick is named but with no tier-drop reasoning.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: the answer is a rankings list or generic
-        advice with no single named pick.
+      meaning: the answer is a rankings list or generic advice with no single named pick.
     anchors:
     - quote
     - omission
   byes_and_handcuffs_considered:
     definition: >
-      Bye-week collisions at QB/TE and handcuff picks are checked against the skill's rules (unique QB/TE
-      byes; handcuffs earn a pick only on the two-condition checklist) rather than ignored or assumed.
+      Bye-week collisions at QB/TE and handcuff picks are checked
+      against the skill's rules (unique QB/TE byes; handcuffs earn a
+      pick only on the two-condition checklist) rather than ignored or
+      assumed.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - Check any QB2/TE2 recommendation states whether its bye collides with the starter's.
-    - >-
-      Check any handcuff-shaped pick (a clear backup to a rostered starter) is justified against the two-condition
-      checklist, not recommended as generic depth.
-    - >-
-      Check byes/handcuffs are addressed when the roster or board makes them relevant - not force-fit
-      into an answer where they don't apply.
+    - Check any QB2/TE2 recommendation states whether its bye collides
+      with the starter's.
+    - Check any handcuff-shaped pick (a clear backup to a rostered
+      starter) is justified against the two-condition checklist, not
+      recommended as generic depth.
+    - Check byes/handcuffs are addressed when the roster or board makes
+      them relevant - not force-fit into an answer where they don't
+      apply.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: bye collisions and handcuff picks are checked and correctly reasoned wherever relevant.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        instance is asserted without the checklist reasoning.
+      meaning: byes/handcuffs are checked, but one instance is asserted without the checklist reasoning.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: a relevant
-        bye collision or handcuff pick is present but unaddressed.
+      meaning: a relevant bye collision or handcuff pick is present but unaddressed.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: a same-bye QB/TE pair or a generic handcuff
-        pick is recommended with no check at all.
+      meaning: a same-bye QB/TE pair or a generic handcuff pick is recommended with no check at all.
     anchors:
     - quote
     - omission
   artifact_delivered:
     definition: >
-      The round's deliverable is a `draft` artifact written via write_artifact, not just a plan or report
-      card described in the chat reply - it parses as JSON and carries the schema's required top-level
-      field (`season`).
+      The round's deliverable is a `draft` artifact written via
+      write_artifact, not just a plan or report card described in the
+      chat reply - it parses as JSON and carries the schema's required
+      top-level field (`season`).
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check a `draft` artifact exists for this round (list_artifacts/ read_artifact), separate from the
-      reply's own text.
+    - Check a `draft` artifact exists for this round (list_artifacts/
+      read_artifact), separate from the reply's own text.
     - Parse the artifact's content as JSON.
-    - >-
-      Check `season` is present, and that `plan`/`clock` (live) or `report_card` (finished) is populated
-      as appropriate.
+    - Check `season` is present, and that `plan`/`clock` (live) or
+      `report_card` (finished) is populated as appropriate.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: a `draft` artifact exists, parses as JSON, and the required fields for the draft's state are present.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        required field is missing or empty.
+      meaning: the artifact exists and parses, but one required field is missing or empty.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
-        was written this round - the draft content only exists as prose in the reply.
+      meaning: no artifact was written this round - the draft content only exists as prose in the reply.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
-        at all, or no draft content exists anywhere.
+      meaning: the round's content does not parse as JSON at all, or no draft content exists anywhere.
     anchors:
     - quote
     - omission

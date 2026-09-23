@@ -3,201 +3,153 @@ scale:
   max: 3
   pass: 2
 notes: >
-  Every criterion here is drawn from `research-r8-history-grading-v2.md` (R8) via the `sleeper:history-grading`
-  skill. A published threshold not in the skill/report must never be treated as fabricated on its own;
-  check the report before scoring a citation down. When the skill itself says no published number exists
-  for a case, an answer that says the same thing is fully grounded.
+  Every criterion here is drawn from `research-r8-history-grading-v2.md`
+  (R8) via the `sleeper:history-grading` skill. A published threshold
+  not in the skill/report must never be treated as fabricated on its
+  own; check the report before scoring a citation down. When the skill
+  itself says no published number exists for a case, an answer that
+  says the same thing is fully grounded.
 criteria:
   claims_computed_from_tool_data:
     definition: >
-      Every record, efficiency, PF/PA, or draft-pick figure in the answer traces to a sleeper_history/sleeper_standings/sleeper_
-      league/sleeper_roster/sleeper_draft/sleeper_player call in this session, not to an estimate or a
-      round number.
+      Every record, efficiency, PF/PA, or draft-pick figure in the
+      answer traces to a sleeper_history/sleeper_standings/sleeper_
+      league/sleeper_roster/sleeper_draft/sleeper_player call in this
+      session, not to an estimate or a round number.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      List the answer's non-trivial numeric claims (record, efficiency, luck gap, reach/steal calls, PF/PA).
+    - List the answer's non-trivial numeric claims (record, efficiency,
+      luck gap, reach/steal calls, PF/PA).
     - For each, check a tool call in the session produced that number.
-    - >-
-      Check season efficiency is the total-points-weighted ratio, not a simple average of weekly percentages.
+    - Check season efficiency is the total-points-weighted ratio, not a
+      simple average of weekly percentages.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: every numeric claim traces to a tool call, and efficiency uses the weighted ratio.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        aggregation (e.g. efficiency) is computed the wrong way.
+      meaning: every claim traces to a tool call, but one aggregation (e.g. efficiency) is computed the wrong way.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: most claims
-        trace to tool data, but one figure is asserted with no backing call.
+      meaning: most claims trace to tool data, but one figure is asserted with no backing call.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: multiple figures are invented or do not
-        match the tool data.
+      meaning: multiple figures are invented or do not match the tool data.
     anchors:
     - quote
     - omission
   process_separated_from_luck:
     definition: >
-      The answer decomposes the season into controllable channels (draft, lineup execution, waivers/trades)
-      and uncontrollable ones (schedule/PA luck), never charging the manager for opponent production or
-      reading a close-loss rate as a clutch signal.
+      The answer decomposes the season into controllable channels
+      (draft, lineup execution, waivers/trades) and uncontrollable ones
+      (schedule/PA luck), never charging the manager for opponent
+      production or reading a close-loss rate as a clutch signal.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check the answer states a luck gap (expected wins minus actual wins) or PA context rather than treating
-      record as pure skill.
+    - Check the answer states a luck gap (expected wins minus actual
+      wins) or PA context rather than treating record as pure skill.
     - Check no criticism charges the manager for opponent scoring (PA).
-    - Check close losses are framed as timing evidence, not clutch/ anti-clutch evidence.
+    - Check close losses are framed as timing evidence, not clutch/
+      anti-clutch evidence.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: luck and process are explicitly separated throughout, with no PA or close-loss misattribution.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        section blurs the line without a clear misattribution.
+      meaning: luck and process are separated, but one section blurs the line without a clear misattribution.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: the season
-        is graded with only a partial luck/process split.
+      meaning: the season is graded with only a partial luck/process split.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: a manager is charged for opponent scoring,
-        or a close-loss rate is read as a clutch trait.
+      meaning: a manager is charged for opponent scoring, or a close-loss rate is read as a clutch trait.
     anchors:
     - quote
     - omission
   recurring_mistakes_named:
     definition: >
-      Draft reaches/steals and lineup errors are named with the specific player, pick or week, and number
-      - never a vague "the draft was weak" or a single-week finding presented as a pattern.
+      Draft reaches/steals and lineup errors are named with the specific
+      player, pick or week, and number - never a vague "the draft was
+      weak" or a single-week finding presented as a pattern.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check every reach/steal call states the player, the declared band it falls under, and the realized
-      positional finish.
-    - Check no single low-efficiency week is presented as a finding without aggregation across weeks.
-    - >-
-      For a multi-season review, check a recurring pattern is named as such only when it appears across
-      seasons, not from one instance.
+    - Check every reach/steal call states the player, the declared band
+      it falls under, and the realized positional finish.
+    - Check no single low-efficiency week is presented as a finding
+      without aggregation across weeks.
+    - For a multi-season review, check a recurring pattern is named as
+      such only when it appears across seasons, not from one instance.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: every mistake is named with player/pick/week and number, and patterns are only claimed when they recur.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        pattern claim rests on a single instance.
+      meaning: mistakes are specific, but one pattern claim rests on a single instance.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: one criticism
-        is vague (no player, pick, or number named).
+      meaning: one criticism is vague (no player, pick, or number named).
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: criticisms are generic, or a single week/pick
-        is scolded as if it were a season-long pattern.
+      meaning: criticisms are generic, or a single week/pick is scolded as if it were a season-long pattern.
     anchors:
     - quote
     - omission
   report_card_useful_not_scolding:
     definition: >
-      The card leads with net position (bench points, luck gap, net points) and names which controllable
-      channel is binding, rather than opening with blame; praise is stated with the same precision as
-      criticism.
+      The card leads with net position (bench points, luck gap, net
+      points) and names which controllable channel is binding, rather
+      than opening with blame; praise is stated with the same precision
+      as criticism.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check the answer opens with the headline numbers and a one- sentence diagnosis naming the channel,
-      before any specific criticism.
-    - >-
-      Check at least one steal or good decision is praised with a specific number, if one exists in the
-      data.
-    - Check the closing verdict names a channel (draft/lineup/waivers/ trades), not a bare grade letter.
+    - Check the answer opens with the headline numbers and a one-
+      sentence diagnosis naming the channel, before any specific
+      criticism.
+    - Check at least one steal or good decision is praised with a
+      specific number, if one exists in the data.
+    - Check the closing verdict names a channel (draft/lineup/waivers/
+      trades), not a bare grade letter.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: headline numbers lead, praise is specific, and the verdict names a channel.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: praise
-        is generic or the channel verdict is implicit.
+      meaning: the structure is followed, but praise is generic or the channel verdict is implicit.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: the card
-        opens with criticism or a grade letter before the headline numbers.
+      meaning: the card opens with criticism or a grade letter before the headline numbers.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: the answer reads as scolding, with no headline
-        numbers or channel verdict.
+      meaning: the answer reads as scolding, with no headline numbers or channel verdict.
     anchors:
     - quote
     - omission
   artifact_delivered:
     definition: >
-      The round's deliverable is a `history` artifact written via write_artifact, not just a season card
-      described in the chat reply - it parses as JSON and carries the schema's required top-level fields
-      (`season`, `wins`, `losses`, a non-empty `weeks` array).
+      The round's deliverable is a `history` artifact written via
+      write_artifact, not just a season card described in the chat
+      reply - it parses as JSON and carries the schema's required
+      top-level fields (`season`, `wins`, `losses`, a non-empty `weeks`
+      array).
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check a `history` artifact exists for this round (list_artifacts/ read_artifact), separate from
-      the reply's own text.
+    - Check a `history` artifact exists for this round (list_artifacts/
+      read_artifact), separate from the reply's own text.
     - Parse the artifact's content as JSON.
-    - Check `season`, `wins`, `losses`, and a non-empty `weeks` array are present.
+    - Check `season`, `wins`, `losses`, and a non-empty `weeks` array
+      are present.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: a `history` artifact exists, parses as JSON, and every required top-level field is present.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        required field is missing or empty.
+      meaning: the artifact exists and parses, but one required field is missing or empty.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
-        was written this round - the season card only exists as prose in the reply.
+      meaning: no artifact was written this round - the season card only exists as prose in the reply.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
-        at all, or no season content exists anywhere.
+      meaning: the round's content does not parse as JSON at all, or no season content exists anywhere.
     anchors:
     - quote
     - omission

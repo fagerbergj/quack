@@ -3,196 +3,149 @@ scale:
   max: 3
   pass: 2
 notes: >
-  The judge sees the session's tool results, so every projection, injury/practice designation, and bye
-  date the answer cites is checkable against a `sleeper_roster`, `sleeper_player`, `sleeper_matchup`,
-  or `sleeper_trends` call in the transcript. A figure with no such call behind it is invented, not imprecise.
-  For a trade-finder run the `partner` is the other team; for a trade evaluation it is the named counterparty.
+  The judge sees the session's tool results, so every projection,
+  injury/practice designation, and bye date the answer cites is checkable
+  against a `sleeper_roster`, `sleeper_player`, `sleeper_matchup`, or
+  `sleeper_trends` call in the transcript. A figure with no such call
+  behind it is invented, not imprecise. For a trade-finder run the
+  `partner` is the other team; for a trade evaluation it is the named
+  counterparty.
 criteria:
   both_rosters_checked:
     definition: >
-      The evaluation is made against both rosters - what this side gives up relative to its own depth,
-      and what it gets relative to the partner's depth - not scored from one side only.
+      The evaluation is made against both rosters - what this side gives
+      up relative to its own depth, and what it gets relative to the
+      partner's depth - not scored from one side only.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check the session read the partner's roster (sleeper_roster with the partner's user or roster_id),
-      not just this team's.
-    - >-
-      Check the call weighs each traded player against the bench depth on both sides, not just the head-to-head
-      projection of the two names.
+    - Check the session read the partner's roster (sleeper_roster with the
+      partner's user or roster_id), not just this team's.
+    - Check the call weighs each traded player against the bench depth on
+      both sides, not just the head-to-head projection of the two names.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: both rosters are read and each traded player is weighed against depth on both sides.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        side's depth is treated as a formality.
+      meaning: both rosters inform the call, but one side's depth is treated as a formality.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: the call
-        is scored from this roster alone; the partner's side is asserted, not read.
+      meaning: the call is scored from this roster alone; the partner's side is asserted, not read.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: the partner's roster was never read and
-        the verdict rests on one side's numbers.
+      meaning: the partner's roster was never read and the verdict rests on one side's numbers.
     anchors:
     - quote
     - omission
   projection_swing_stated:
     definition: >
-      The net value of the deal is stated as a projection swing on this side, with the numbers tracing
-      to tool calls - not a qualitative "you'd be better off."
+      The net value of the deal is stated as a projection swing on this
+      side, with the numbers tracing to tool calls - not a qualitative
+      "you'd be better off."
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - Check a concrete projection figure (or points-so-far figure) is cited for each traded player.
-    - Check each figure traces to a sleeper_roster/sleeper_player/sleeper_matchup call in the session.
+    - Check a concrete projection figure (or points-so-far figure) is cited
+      for each traded player.
+    - Check each figure traces to a sleeper_roster/sleeper_player/sleeper_matchup
+      call in the session.
     - Check the answer states which side the swing favors and by how much.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: every traded player carries a cited projection and the net swing per side is stated.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        traded player is described without a figure.
+      meaning: the swing is stated with cited numbers, but one traded player is described without a figure.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: projections
-        are mentioned qualitatively ("a step up") with no numbers the judge can trace.
+      meaning: projections are mentioned qualitatively ("a step up") with no numbers the judge can trace.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: no projection basis at all, or a cited figure
-        does not match the tool data.
+      meaning: no projection basis at all, or a cited figure does not match the tool data.
     anchors:
     - quote
     - omission
   status_and_bye_context:
     definition: >
-      Injury/practice designations and bye timing for the traded players are checked and reflected - a
-      "healthy" RB with a bye this week is not the same asset.
+      Injury/practice designations and bye timing for the traded players
+      are checked and reflected - a "healthy" RB with a bye this week is
+      not the same asset.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - For each traded player with an injury/practice designation, check the answer names it.
-    - Check bye timing is considered for any player whose value depends on this week's output.
-    - >-
-      Check a Questionable/Doubtful player is not treated as a lock without a stated play-rate or contingency.
+    - For each traded player with an injury/practice designation, check the
+      answer names it.
+    - Check bye timing is considered for any player whose value depends on
+      this week's output.
+    - Check a Questionable/Doubtful player is not treated as a lock without
+      a stated play-rate or contingency.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: designations and byes are checked for every traded player and reflected in the call.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        designation or bye is noted without changing the reasoning.
+      meaning: statuses are checked, but one designation or bye is noted without changing the reasoning.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: a traded
-        player's designation or bye is checked but ignored in the verdict.
+      meaning: a traded player's designation or bye is checked but ignored in the verdict.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: injury/practice/bye status is not checked
-        for a player it plainly affects.
+      meaning: injury/practice/bye status is not checked for a player it plainly affects.
     anchors:
     - quote
     - omission
   verdict_stated:
     definition: >
-      The answer lands on exactly one of send/counter/decline (a finder run: a ranked, bounded candidate
-      list). Whether the card was written as an artifact is `artifact_delivered`'s job, not this criterion's.
+      The answer lands on exactly one of send/counter/decline (a finder run:
+      a ranked, bounded candidate list). Whether the card was written as an
+      artifact is `artifact_delivered`'s job, not this criterion's.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check the reply names exactly one verdict, or (finder) a ranked list of at most three candidates,
-      never an unbounded "either works."
-    - >-
-      A `counter` names the concrete counter-offer. An answer that hedges ("depends") names the condition
-      that would flip it and which way.
+    - Check the reply names exactly one verdict, or (finder) a ranked list
+      of at most three candidates, never an unbounded "either works."
+    - A `counter` names the concrete counter-offer. An answer that hedges
+      ("depends") names the condition that would flip it and which way.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: a single named verdict (or a bounded ranked list); a counter names its offer, and any hedge names its flip condition.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: a counter
-        leaves its offer vague or a hedge leaves its flip condition unnamed.
+      meaning: a single verdict is named, but a counter leaves its offer vague or a hedge leaves its flip condition unnamed.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: the answer
-        leans one way without committing, or lists more than three candidates unranked.
+      meaning: the answer leans one way without committing, or lists more than three candidates unranked.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: no verdict - "either works" or a bare restatement
-        of the offer.
+      meaning: no verdict - "either works" or a bare restatement of the offer.
     anchors:
     - quote
     - omission
   artifact_delivered:
     definition: >
-      The round's deliverable is a `trade` or `trade-finder` artifact written via write_artifact, matching
-      the extension UI schema exactly - `give`/`get` keyed exactly `give` and `get` (never "I give"/"I
-      get" or any other spelling), and no top-level section beyond what the schema defines (`partner`/`partner_id`/`status`/`offers`/...
-      for a trade card, `league`/`week`/`updated`/`suggestions` for a finder card).
+      The round's deliverable is a `trade` or `trade-finder` artifact
+      written via write_artifact, matching the extension UI schema exactly -
+      `give`/`get` keyed exactly `give` and `get` (never "I give"/"I get" or
+      any other spelling), and no top-level section beyond what the schema
+      defines (`partner`/`partner_id`/`status`/`offers`/... for a trade card,
+      `league`/`week`/`updated`/`suggestions` for a finder card).
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an item that fails one of the steps below. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - >-
-      Check a `trade` or `trade-finder` artifact exists for this round (list_artifacts/read_artifact),
-      separate from the reply's own text.
+    - Check a `trade` or `trade-finder` artifact exists for this round
+      (list_artifacts/read_artifact), separate from the reply's own text.
     - Parse the artifact's content as JSON.
-    - >-
-      Check every object key matches the schema exactly - flag any renamed or invented key (e.g. "I give"/"I
-      get") or any top-level section the schema does not define.
+    - Check every object key matches the schema exactly - flag any renamed
+      or invented key (e.g. "I give"/"I get") or any top-level section the
+      schema does not define.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: the artifact exists, parses as JSON, and every key matches the schema exactly with no invented sections.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is of this kind: exactly one finding, and it is of this kind: one
-        required field is missing or empty.
+      meaning: the artifact exists and parses, but one required field is missing or empty.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one of this kind: two or three findings, or one of this kind: no artifact
-        was written this round - the trade content only exists as prose in the reply.
+      meaning: no artifact was written this round - the trade content only exists as prose in the reply.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or: four or more findings, or: the round's content does not parse as JSON
-        at all, or a key is renamed/invented against the schema (e.g. "I give"/"I get" instead of give/get).
+      meaning: the round's content does not parse as JSON at all, or a key is renamed/invented against the schema (e.g. "I give"/"I get" instead of give/get).
     anchors:
     - quote
     - omission

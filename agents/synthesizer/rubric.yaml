@@ -54,17 +54,21 @@ criteria:
     steps:
     - >-
       Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      a cited claim whose source is not an authority for it, whose wording the source does not support,
-      or whose citation is not placed at the claim. Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
+      a cited claim whose citation is not in the claim's sentence or the one before it, whose named outlet
+      differs from the linked URL's host, or whose quoted words do not appear in that source's text shown
+      in the session. Record each finding with a verbatim quote (or an omission naming exactly what is
+      missing); one you cannot quote or name does not count. Pick the band from the number of findings;
+      none is the top band.
+    - List every cited claim.
     - >-
-      For each cited claim, check the source is a reasonable authority for that claim, not a tangential
-      or low-quality page.
-    - Check the claim accurately reflects what the source says, not a stretched or selective reading.
+      For each, check the citation sits in the claim's sentence or the one before it, not only in a references
+      block.
+    - For each, check the outlet named in the text matches the host of the linked URL.
     - >-
-      Check the citation is placed at the claim, not deferred to a references block the claim isn't attached
-      to.
+      For each quoted passage, check the words appear in that source's text as shown in the session; if
+      the session shows no text for that source, it is not a finding. A cited page that was never fetched
+      is scored by code under `cites_sources` and is not a finding here. A weak or tangential source is
+      a note, not a finding.
     bands:
     - min: 3.0
       max: 3.0
@@ -72,21 +76,25 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and the citation sits a sentence or two from its claim, with the source itself
-        authoritative and accurate.
+        exactly one finding, and it is a placement finding: the citation exists elsewhere in the answer
+        but not at the claim.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one finding that is a weak or tangential source, or a claim the source
-        does not actually say.
+        two or three findings, or one finding that is a named outlet that does not match the linked page,
+        or quoted words the session's source text does not contain.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or a citation misrepresents its source, or citations exist only in a references
-        block with none placed at claims.
+        four or more findings, or a quote is contradicted by the session's source text, or citations exist
+        only in a references block with none at claims.
     anchors:
     - quote
     - omission
+    guidance: >
+      Three checkable questions per cited claim: placement, outlet-host match, and quoted words present
+      in the shown source text. Existence of the fetch is `cites_sources` (code); presence of a citation
+      at all is `grounded`.
   clean_output:
     definition: >
       The response is formatted for the reader it is addressed to: it begins directly with the answer

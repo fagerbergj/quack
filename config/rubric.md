@@ -27,19 +27,19 @@ Every criterion is scored by counting findings, never by weighing adjectives. A 
 
 Every non-trivial factual claim traces to a source the agent actually retrieved this session (a fetched page or search result), and nothing reads as invented - no specific (name, number, price, date, quote) is stated with more confidence than the answer's own evidence supports. Vague qualifiers like "reportedly" or "it is known" do not substitute for a retrieved source.
 
-You cannot see the agent's retrieval log, and your own knowledge may be stale or incomplete. Judge grounding by whether each claim **carries an inline citation**; do **NOT** lower this score because a cited fact is unfamiliar or recent, and do **NOT** flag a specific as fabricated merely because it postdates your training. A specific is "invented" only when the answer's own text is internally inconsistent or makes a precise claim it never supports - never because it conflicts with your memory.
-
+Two checkable questions per specific: is a citation next to it, and does the answer contradict it. Not this criterion's questions: whether the cited page was fetched (code scores that as `cites_sources`), whether the source really says it (`citation_quality`), or whether you believe it - do **NOT** lower this score because a cited fact is unfamiliar, recent, or absent from your own knowledge.
 **Evaluation steps.**
-1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a non-trivial claim or specific (name, number, price, date, quote) with no inline citation, or one stated more confidently than the answer's own evidence supports. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
-2. List the answer's non-trivial factual claims and specifics.
-3. For each, check whether it carries an inline citation, not whether you personally believe it.
-4. For each, judge whether the answer's own evidence justifies the confidence it is stated with.
+1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a specific (name, number, price, date, quote) with no inline citation in its own sentence or the one before it, or a specific the answer's own text contradicts. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
+2. List every specific in the answer.
+3. For each, check for an inline citation in its sentence or the one before it. A cited specific is grounded; whether that page was actually fetched is scored by code under `cites_sources` and is not a finding here.
+4. For each, check the answer's own text does not contradict it elsewhere.
+5. If the agent states `web_fetch` failed for most/all sources, check whether it said so plainly. An honest disclosure of failed retrieval caps this criterion at **1** (not lower); silent synthesis despite failed fetches scores **0**.
 
 **Scoring bands.**
 - **3** - no finding: every item passes the steps above.
-- **2** - exactly one finding, and it is a secondary detail (not a headline figure or a conclusion) and it is cited, only overstated.
-- **1** - two or three findings, or one finding that is a headline figure, a conclusion, or a specific with no citation at all.
-- **0** - four or more findings, or a name, number, or quote is contradicted by the answer's own evidence, or the majority of claims carry no citation.
+- **2** - exactly one finding, and it is a secondary detail, not a headline figure or a conclusion.
+- **1** - two or three findings, or one finding that is a headline figure or a conclusion.
+- **0** - four or more findings, or a specific is contradicted by the answer's own text, or the majority of specifics carry no citation.
 
 ---
 
@@ -66,15 +66,15 @@ The response addresses exactly what the user asked, in full - not a related-but-
 The answer does not contradict itself, and its conclusions follow from the evidence it presents.
 
 **Evaluation steps.**
-1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is a place where the answer contradicts itself, a conclusion its own evidence does not support, or a hedge that later becomes a certainty. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
-2. Check for self-contradiction across the answer.
-3. Check that conclusions follow from the cited evidence.
-4. Check that uncertainty is stated where evidence is thin.
+1. Enumerate first: list every item the steps below cover, then apply them to each one. A finding is two passages of the answer that cannot both be true, or a conclusion sentence whose supporting evidence appears nowhere in the answer. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band.
+2. List every conclusion sentence and every pair of passages about the same fact.
+3. For each pair, check both can be true at once; quote both when they cannot.
+4. For each conclusion, find the sentence in the answer that supports it; an unsupported conclusion is a finding. A hedge phrased unevenly is not a finding unless the two phrasings cannot both be true.
 
 **Scoring bands.**
 - **3** - no finding: every item passes the steps above.
-- **2** - exactly one finding, and it is a hedge phrased unevenly with no actual contradiction.
-- **1** - two or three findings, or one finding that is a contradiction between two claims, or a conclusion the cited evidence does not support.
+- **2** - exactly one finding, and it is a conclusion stated one notch more firmly than its evidence, with no contradiction.
+- **1** - two or three findings, or one finding that is two passages that cannot both be true.
 - **0** - four or more findings, or the main conclusion contradicts the answer's own evidence.
 
 ---

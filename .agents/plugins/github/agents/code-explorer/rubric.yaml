@@ -5,189 +5,170 @@ scale:
 criteria:
   accurate:
     definition: >
-      The understanding matches what the code actually does. No misrepresentation, no plausible-but-wrong
-      description, no guessing dressed as fact.
+      The understanding matches what the code actually does. No misrepresentation, no
+      plausible-but-wrong description, no guessing dressed as fact.
     guidance: >
-      This is the correctness of the exploration: a confident description that gets the behavior, control
-      flow, or structure wrong actively misleads a downstream implementer and is worse than a hedged one.
+      This is the correctness of the exploration: a confident description that gets the
+      behavior, control flow, or structure wrong actively misleads a downstream
+      implementer and is worse than a hedged one.
 
-      When you can, open a file the answer describes and compare. Weight the load- bearing claims - the
-      ones an implementer would act on - most heavily.
+      When you can, open a file the answer describes and compare. Weight the load- bearing
+      claims - the ones an implementer would act on - most heavily.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      a claim about behavior, structure, or conventions that the code does not bear out. Record each finding
-      with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name
-      does not count. Pick the band from the number of findings; none is the top band.
     - Identify the answer's factual claims about behavior, structure, and conventions.
-    - >-
-      For the load-bearing ones, check them against the actual code (via your read-only tools where a
-      clone is available, or against the ledger's read samples).
-    - >-
-      Judge whether uncertainty is stated where the code was ambiguous, rather than papered over with
-      false confidence.
+    - For the load-bearing ones, check them against the actual code (via your read-only
+      tools where a clone is available, or against the ledger's read samples).
+    - Judge whether uncertainty is stated where the code was ambiguous, rather than
+      papered over with false confidence.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: the description matches the code; any uncertainty is flagged honestly.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is a secondary point phrased more confidently than the evidence supports,
-        without being wrong.
+      meaning: the description matches the code, but one point is phrased more confidently than the evidence strictly supports without being wrong.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one finding that is a wrong or misleading secondary claim, or a guess
-        stated as fact.
+      meaning: mostly accurate, but a secondary claim is wrong or misleading, or a guess is
+        stated as fact without hedging.
     - min: 0.0
       max: 0.0
-      meaning: four or more findings, or a core claim about how the code works is wrong.
+      meaning: a core claim about how the code works is wrong, or the answer confidently
+        misrepresents the structure/behavior.
     anchors:
     - path
     - omission
   answers_the_task:
     definition: >
-      The response covers what was actually asked - the specific structure, the named convention, how
-      the requested feature works - at a depth useful for the task, not a related-but-different tour of
-      the repo.
+      The response covers what was actually asked - the specific structure, the named
+      convention, how the requested feature works - at a depth useful for the task, not a
+      related-but-different tour of the repo.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      a distinct ask in the request that the answer does not cover from the actual code. Record each finding
-      with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name
-      does not count. Pick the band from the number of findings; none is the top band.
-    - >-
-      Decompose the request into its distinct asks (the specific thing to explain, any named files/areas/constraints).
+    - Decompose the request into its distinct asks (the specific thing to explain, any
+      named files/areas/constraints).
     - Check that each ask is addressed from the actual code.
-    - >-
-      Note any silent narrowing, topic drift, or a generic repo overview substituted for the specific
-      question asked. **A well-evidenced NEGATIVE result answers the task.** Sometimes the thing the explorer
-      was sent to read is genuinely not in any source it can reach - it's a hosted service, an unreleased
-      product, a design published only as a blog post, or it lives in a dependency rather than the repo.
-      An explorer that establishes this, names what it searched (repos, paths, patterns), reports what
-      it *did* find and what that thing actually is (a feature flag is not an implementation), and says
-      where the real answer likely lives, has done its job **completely**. Score it on the quality of
-      that evidence, exactly as you would a positive finding - do NOT mark it down for "not answering",
-      and do NOT reward an explorer that kept cloning speculative repositories instead of reporting the
-      dead end. The explorer has no web tools; "go and search the web" was never an option available to
-      it.
+    - Note any silent narrowing, topic drift, or a generic repo overview substituted for
+      the specific question asked. **A well-evidenced NEGATIVE result answers the
+      task.** Sometimes the thing the explorer was sent to read is genuinely not in any
+      source it can reach - it's a hosted service, an unreleased product, a design
+      published only as a blog post, or it lives in a dependency rather than the repo.
+      An explorer that establishes this, names what it searched (repos, paths,
+      patterns), reports what it *did* find and what that thing actually is (a feature
+      flag is not an implementation), and says where the real answer likely lives, has
+      done its job **completely**. Score it on the quality of that evidence, exactly as
+      you would a positive finding - do NOT mark it down for "not answering", and do NOT
+      reward an explorer that kept cloning speculative repositories instead of reporting
+      the dead end. The explorer has no web tools; "go and search the web" was never an
+      option available to it.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: addresses the request completely, at a depth proportionate to what was asked; or
+        establishes, with evidence, that the answer is not in the reachable source, and
+        says what is there instead and where the answer likely lives.
     - min: 2.0
       max: 2.0
-      meaning: exactly one finding, and the ask is covered, only more thinly than the others.
+      meaning: addresses the request completely, but includes tangential detail the task didn't ask for, or the negative-result account is solid without fully spelling out where the answer likely lives.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one finding that is an ask dropped, narrowed, or answered with a generic
-        overview instead of the code.
+      meaning: addresses the main ask but leaves a sub-question thin or drops a named area.
     - min: 0.0
       max: 0.0
-      meaning: four or more findings, or the core ask is missed.
+      meaning: misses the core ask, answers a generic "what is this repo" in place of the
+        specific question, or reports "not found" with no account of what was searched
+        and no conclusion drawn.
     anchors:
     - path
     - omission
   clear_and_actionable:
     definition: >
-      The understanding is organized and precise enough for a downstream implementer to act on: exact
-      file/path/symbol references (not vague gestures like "somewhere in the server layer"), a structure
-      that leads the reader through the answer, and enough specificity that the reader knows which files
-      they'd touch and which patterns they'd follow.
+      The understanding is organized and precise enough for a downstream implementer to
+      act on: exact file/path/symbol references (not vague gestures like "somewhere in the
+      server layer"), a structure that leads the reader through the answer, and enough
+      specificity that the reader knows which files they'd touch and which patterns they'd
+      follow.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      a key claim with no file, path, or symbol named, a section a reader cannot act on, or text that
-      is not the answer (preamble, narration). Record each finding with a verbatim quote (or an omission
-      naming exactly what is missing); one you cannot quote or name does not count. Pick the band from
-      the number of findings; none is the top band.
-    - Check that key claims name specific files/paths/symbols rather than gesturing at areas.
-    - >-
-      Judge whether the organization (sections, ordering) makes the answer easy to act on, or whether
-      it is an undifferentiated wall.
-    - >-
-      Confirm the response is ONLY the answer - it begins directly (no "Great, I explored the repo" preamble)
-      and ends with the answer, with no leaked planning, self-talk, or meta-commentary about tools/skills.
-      Score down for each such intrusion; the buried content's quality does not excuse it.
+    - Check that key claims name specific files/paths/symbols rather than gesturing at
+      areas.
+    - Judge whether the organization (sections, ordering) makes the answer easy to act
+      on, or whether it is an undifferentiated wall.
+    - Confirm the response is ONLY the answer - it begins directly (no "Great, I
+      explored the repo" preamble) and ends with the answer, with no leaked planning,
+      self-talk, or meta-commentary about tools/skills. Score down for each such
+      intrusion; the buried content's quality does not excuse it.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: precise file/symbol references, well-organized, directly actionable; pure answer
+        with no preamble or leaked reasoning.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is one vague reference or one stray sentence with the rest specific
-        and direct.
+      meaning: precise, well-organized, directly actionable, but a stray opener or single meta sentence about tools/skills mars an otherwise clean answer.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one finding that is a load-bearing claim with nothing an implementer
-        could open, or a paragraph of narration.
+      meaning: useful but vague in places (an area named where a file was needed).
     - min: 0.0
       max: 0.0
-      meaning: four or more findings, or key claims name nothing concrete, or the answer opens with preamble.
+      meaning: too vague to act on (no concrete references), disorganized, or noticeably marred
+        by preamble/leaked planning.
     anchors:
     - path
     - omission
   grounded_in_code:
     definition: >
-      Every claim the answer makes about the code - what a function does, how a convention works, that
-      module A calls module B, where X lives - traces to a file the worker actually read this session.
-      General knowledge, prior training, or inference from a filename does not count as grounding - the
-      whole point of an explorer is that it looked, not that it ran something.
+      Every claim the answer makes about the code - what a function does, how a convention
+      works, that module A calls module B, where X lives - traces to a file the worker
+      actually read this session. General knowledge, prior training, or inference from a
+      filename does not count as grounding - the whole point of an explorer is that it
+      looked, not that it ran something.
     guidance: >
-      This is the code-grounding criterion; it replaces the web-researcher's URL-citation check.
+      This is the code-grounding criterion; it replaces the web-researcher's URL-citation
+      check.
 
-      Reading is the default path to grounding, not a lesser substitute for running: a claim backed by
-      an opened file is fully grounded on its own. Running (`execute`/edit spans in the ledger) earns
-      nothing here unless the claim genuinely could not be settled by reading - do NOT credit a long run
-      in place of a citation, and do NOT reward "ran it to confirm" on a claim a file read would have
-      settled just as well; this is an explorer, and its report feeds a downstream agent that will do
-      its own running.
+      Reading is the default path to grounding, not a lesser substitute for running: a
+      claim backed by an opened file is fully grounded on its own. Running (`execute`/edit
+      spans in the ledger) earns nothing here unless the claim genuinely could not be
+      settled by reading - do NOT credit a long run in place of a citation, and do NOT
+      reward "ran it to confirm" on a claim a file read would have settled just as well;
+      this is an explorer, and its report feeds a downstream agent that will do its own
+      running.
 
-      Judge grounding by whether each non-trivial claim is backed by a file in the ledger and, where the
-      answer cites <repo>@<path>, whether that path was actually read. Do NOT lower this score merely
-      because a described API or pattern is unfamiliar to you - an explorer reads code you cannot see.
-      Lower it when a claim about the code has no read behind it (an assertion about a file the ledger
-      shows was never opened, or one backed only by a run's output with no file cited) or when a quote/paraphrase
+      Judge grounding by whether each non-trivial claim is backed by a file in the ledger
+      and, where the answer cites <repo>@<path>, whether that path was actually read. Do
+      NOT lower this score merely because a described API or pattern is unfamiliar to you
+      - an explorer reads code you cannot see. Lower it when a claim about the code has no
+      read behind it (an assertion about a file the ledger shows was never opened, or one
+      backed only by a run's output with no file cited) or when a quote/paraphrase
       contradicts the read sample.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      a non-trivial claim about the code with no corresponding read in the ledger. Record each finding
-      with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name
-      does not count. Pick the band from the number of findings; none is the top band.
     - List the answer's non-trivial claims about the code.
-    - >-
-      For each, check whether a corresponding file appears in the ledger (read, or under a cloned repo)
-      - and, if the answer quotes or paraphrases file content, whether the read sample is consistent with
-      it.
-    - >-
-      Treat a claim about a file the ledger never recorded as read as ungrounded; treat an honest "I did
-      not read/verify this" as a disclosure, not a fabrication.
-    - >-
-      Where the ledger shows a run, check the claim actually warranted it (large, surprising, or no test
-      to read) and the answer says so; an unwarranted run does not substitute for a missing citation.
+    - For each, check whether a corresponding file appears in the ledger (read, or under
+      a cloned repo) - and, if the answer quotes or paraphrases file content, whether
+      the read sample is consistent with it.
+    - Treat a claim about a file the ledger never recorded as read as ungrounded; treat
+      an honest "I did not read/verify this" as a disclosure, not a fabrication.
+    - Where the ledger shows a run, check the claim actually warranted it (large,
+      surprising, or no test to read) and the answer says so; an unwarranted run does not
+      substitute for a missing citation.
     - Score the proportion of claims that are backed by actual reads.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: essentially every claim about the code traces to a file the worker read; quotes
+        match their read samples; any run in the ledger was warranted and stated as such.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and it is a secondary claim about a file the ledger shows was read under
-        a different name or path.
+      meaning: every claim traces to a file the worker read, but one run in the ledger was more than the claim strictly warranted without replacing a needed citation.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one finding that is a load-bearing claim about a file the ledger never
-        recorded as read.
+      meaning: most claims are grounded, but several rest on inference from names or on files
+        never opened, or the answer over-quotes beyond what it read, or leans on an
+        unwarranted run in place of a citation.
     - min: 0.0
       max: 0.0
-      meaning: four or more findings, or the majority of claims have no read behind them.
+      meaning: the answer asserts how the code works largely from guesswork - describing files
+        the ledger shows were never read - or quotes content its reads cannot support, or
+        substitutes a long run for reading a claim the code itself would have settled.
     anchors:
     - path
     - omission

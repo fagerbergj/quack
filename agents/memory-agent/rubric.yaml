@@ -3,108 +3,83 @@ scale:
   max: 3
   pass: 2
 notes: >
-  Candidate quality bar. Apply this bar to every fact before you emit it as a candidate. When in doubt,
-  leave it out - a missed memory costs nothing until it recurs and gets caught next time; a bad one pollutes
-  every future turn.
+  Candidate quality bar. Apply this bar to every fact before you emit it as a candidate.
+  When in doubt, leave it out - a missed memory costs nothing until it recurs and gets
+  caught next time; a bad one pollutes every future turn.
 
   A candidate qualifies only if it is all of the following:
 
-  - Explicitly stated, not inferred. The user said it, plainly, in the message. Do not extrapolate a general
-  rule from a specific one-off request, and do not guess at a preference from tone, word choice, or brevity
-  alone.
+  - Explicitly stated, not inferred. The user said it, plainly, in the message. Do not
+  extrapolate a general rule from a specific one-off request, and do not guess at a
+  preference from tone, word choice, or brevity alone.
 
-  - Durable, not transient. It describes how the user generally works or communicates, not something scoped
-  to this one task, this one PR, or this one message ("do it quickly this time" is transient; "always
-  keep it quick" is durable).
+  - Durable, not transient. It describes how the user generally works or communicates, not
+  something scoped to this one task, this one PR, or this one message ("do it quickly this
+  time" is transient; "always keep it quick" is durable).
 
-  - A genuine work/communication preference, goal, or standing constraint - matching the categories in
-  the "what to remember" guidance above (verbosity, PR-vs-comment, proceed- vs-ask, a hard limit, a recurring
-  piece of context about who they are or what they're working toward). Ordinary task content (what they
-  want built, reviewed, or answered right now) is never a candidate.
+  - A genuine work/communication preference, goal, or standing constraint - matching the
+  categories in the "what to remember" guidance above (verbosity, PR-vs-comment, proceed-
+  vs-ask, a hard limit, a recurring piece of context about who they are or what they're
+  working toward). Ordinary task content (what they want built, reviewed, or answered
+  right now) is never a candidate.
 
-  - Non-sensitive. Skip health, legal, financial, political, or other sensitive personal information even
-  if the user stated it - remembering it was never asked for and isn't this hook's job.
+  - Non-sensitive. Skip health, legal, financial, political, or other sensitive personal
+  information even if the user stated it - remembering it was never asked for and isn't
+  this hook's job.
 
-  - One fact per candidate. Split a message that states two distinct durable facts into two candidates;
-  never merge them into one run-on sentence.
+  - One fact per candidate. Split a message that states two distinct durable facts into
+  two candidates; never merge them into one run-on sentence.
 
-  - Normalized for dedup. Written the same stable, third-person way a restatement of the same fact would
-  be written, so the consolidation pass recognizes it as the same memory rather than a near-duplicate.
+  - Normalized for dedup. Written the same stable, third-person way a restatement of the
+  same fact would be written, so the consolidation pass recognizes it as the same memory
+  rather than a near-duplicate.
 
-  A message with nothing meeting every point above yields no candidates - not a weakened or hedged one.
+  A message with nothing meeting every point above yields no candidates - not a weakened
+  or hedged one.
 criteria:
   fact_supported:
     definition: >
-      Each emitted candidate is explicitly stated by the user in the message, not inferred, extrapolated
-      from a one-off request, or guessed at from tone/word choice/brevity alone.
+      Each emitted candidate is explicitly stated by the user in the message, not inferred, extrapolated from a one-off request, or guessed at from tone/word choice/brevity alone.
     guidance: >
-      This rubric is not currently wired to a judge gate - memory-agent's fire-and-forget hook has no
-      vetting node - it exists so the criteria are ready if that changes, and as an explicit quality bar
-      alongside the notes above.
+      This rubric is not currently wired to a judge gate - memory-agent's fire-and-forget hook has no vetting node - it exists so the criteria are ready if that changes, and as an explicit quality bar alongside the notes above.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an emitted candidate that restates something the user did not explicitly say. Record each finding
-      with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name
-      does not count. Pick the band from the number of findings; none is the top band.
     - For each candidate, find the user's own words it claims to restate.
     - Check the candidate states only what was said, not a generalization the user never made.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: every candidate traces to something the user explicitly said.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and the candidate is phrased slightly more generally than the user's words
-        while keeping their meaning.
+      meaning: every candidate traces to something explicitly said, but one is phrased slightly more generally than the user's exact words while preserving their meaning.
     - min: 1.0
       max: 1.0
-      meaning: two or three findings, or one finding that overreaches the user's literal words.
+      meaning: one candidate is a reasonable paraphrase that slightly overreaches the user's literal words but not their meaning.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or a candidate is inferred, extrapolated, or guessed with no explicit statement
-        behind it.
+      meaning: a candidate is inferred, extrapolated, or guessed at with no explicit statement behind it.
     anchors:
     - quote
     - omission
   durable_and_scoped:
     definition: >
-      Each candidate is durable (a standing preference or constraint, not scoped to one task/PR/message)
-      and worth recalling later - a genuine work/communication preference, goal, or standing constraint,
-      never ordinary task content or a sensitive personal fact.
+      Each candidate is durable (a standing preference or constraint, not scoped to one task/PR/message) and worth recalling later - a genuine work/communication preference, goal, or standing constraint, never ordinary task content or a sensitive personal fact.
     steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      an emitted candidate that is transient, ordinary task content, or sensitive. Record each finding
-      with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name
-      does not count. Pick the band from the number of findings; none is the top band.
-    - >-
-      For each candidate, check it describes how the user generally works or communicates, not something
-      true only of the current task.
-    - >-
-      Check the candidate is non-sensitive (not health/legal/financial/political) and falls in a genuine
-      "what to remember" category, not task content.
+    - For each candidate, check it describes how the user generally works or communicates, not something true only of the current task.
+    - Check the candidate is non-sensitive (not health/legal/financial/political) and falls in a genuine "what to remember" category, not task content.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
+      meaning: every candidate is durable, correctly scoped, and non-sensitive.
     - min: 2.0
       max: 2.0
-      meaning: >-
-        exactly one finding, and the candidate is durable and non-sensitive, only phrased more narrowly
-        than it needs to be.
+      meaning: every candidate is durable and non-sensitive, but one is phrased a little more narrowly than it needs to be without actually being scoped to one task.
     - min: 1.0
       max: 1.0
-      meaning: >-
-        two or three findings, or one finding that is only borderline durable (plausibly recurring but
-        stated once).
+      meaning: one candidate is borderline durable (plausibly recurring but stated only once) but otherwise fits.
     - min: 0.0
       max: 0.0
-      meaning: >-
-        four or more findings, or a candidate is scoped to this one task, is task content, or is sensitive
-        personal information.
+      meaning: a candidate is transient (scoped to this task only), is ordinary task content, or is sensitive personal information.
     anchors:
     - quote
     - omission
