@@ -46,7 +46,7 @@ func specificsSupportedScore(checks []UnitCheck) (criterionScore, bool) {
 // verifiedChecks runs the locate and verify tiers over the deliverable (answer plus
 // the artifacts the node wrote), reading pages and artifacts through load.
 func verifiedChecks(ctx context.Context, answer string, act workerActivity, load PageLoader, v Verifier) []UnitCheck {
-	checks := CheckUnits(ctx, FindUnits(deliverableText(ctx, answer, act, load)), WebPageEvidence{Store: load})
+	checks := CheckUnits(ctx, FindUnits(deliverableText(ctx, answer, act, load)), WebPageEvidence{Store: load, Snippets: act.seen})
 	return v.VerifyChecks(ctx, checks)
 }
 

@@ -27,24 +27,33 @@ type PageLoader interface {
 	Latest(ctx context.Context, id string) ([]byte, int, bool, error)
 }
 
-// WebPageEvidence resolves a citation URL to the page text a fetch stored for it.
-type WebPageEvidence struct{ Store PageLoader }
+// WebPageEvidence resolves a citation URL to the page text a fetch stored for it,
+// else to the search snippet the worker saw for it (owner: quoting a snippet is fine).
+type WebPageEvidence struct {
+	Store    PageLoader
+	Snippets map[string]string // search result url -> snippet, from the round's activity
+}
 
 const webPageKind = "web_page"
 
 // Resolve tries the URL as cited, then without fragment and trailing slash:
 // the worker fetched one exact form and the citation is often a lighter one.
 func (w WebPageEvidence) Resolve(ctx context.Context, citation string) (string, bool) {
-	if w.Store == nil {
-		return "", false
-	}
 	for _, cand := range urlVariants(citation) {
+		if w.Store == nil {
+			break
+		}
 		id, err := recordstore.IdentityFor(webPageKind, "", cand)
 		if err != nil {
 			continue
 		}
 		if data, _, ok, err := w.Store.Latest(ctx, id); err == nil && ok && len(data) > 0 {
 			return string(data), true
+		}
+	}
+	for _, cand := range urlVariants(citation) {
+		if s := w.Snippets[cand]; s != "" {
+			return s, true
 		}
 	}
 	return "", false
