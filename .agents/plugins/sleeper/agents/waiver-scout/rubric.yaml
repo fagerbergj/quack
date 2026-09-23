@@ -3,12 +3,16 @@ scale:
   max: 3
   pass: 2
 notes: >
-  Every criterion here is drawn from `research-r2-waivers.md` (R2) via the
-  `sleeper:waivers` skill, primarily its "what bad advice looks like" list.
-  The league's actual waiver type is whatever `sleeper_league` reports, not
-  assumed - never grade sizing against a waiver type the answer didn't
-  check. The `waivers` artifact has no separate bid/priority field; the
-  sized figure belongs in each candidate's `why`. When the skill/report
+  Criteria on bid bands, screening rules, and strategy come from
+  `research-r2-waivers.md` (R2) via the `sleeper:waivers` skill. Waiver
+  mechanics (which claims process how, when a hybrid is and isn't real)
+  come from Sleeper's own documentation, cited in the skill's SKILL.md and
+  `rolling-priority.md`/`faab-bidding.md`. The league's actual waiver type
+  is whatever `sleeper_league` reports, not assumed - never grade sizing
+  against a waiver type the answer didn't check, and never grade a
+  rolling/reverse-standings league's non-zero `waiver_budget` as if it were
+  FAAB in play. The `waivers` artifact has no separate bid/priority field;
+  the sized figure belongs in each candidate's `why`. When the skill/report
   states no published number covers a case, an answer that says so is
   fully grounded and must not be penalized for lacking an invented figure.
 criteria:
@@ -16,7 +20,8 @@ criteria:
     definition: >
       Waiver candidates are presented as a ranked list, not an unordered
       dump - the ranking reflects role/usage evidence, not raw trending
-      count or ownership alone.
+      count or ownership alone, and `rank` is the order to submit the
+      claims in.
     steps:
     - Check candidates carry an explicit rank or clear ordering.
     - Check the ranking rationale is role/usage-based, not just "most
@@ -63,25 +68,89 @@ criteria:
     anchors:
     - quote
     - omission
+  drop_matches_roster_role:
+    definition: >
+      A recommended drop's stated role matches this round's actual
+      `sleeper_roster` data - a current starter is never mislabeled as
+      bench or cuttable depth, and a starter drop is called out as such,
+      not buried.
+    steps:
+    - For each recommended drop, check its labeled role (bench, depth,
+      etc.) against the same round's `sleeper_roster` starters/bench/
+      reserve lists.
+    - If the drop is a current starter, check the answer says so
+      explicitly (e.g. "drops your starting RB2"), not a bench-status
+      label that contradicts the roster data.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every drop's role label matches the roster data, and any starter drop is explicitly named as such.
+    - min: 2.0
+      max: 2.0
+      meaning: every drop's role label matches the roster data, but a starter drop's tradeoff isn't called out as plainly as it should be.
+    - min: 1.0
+      max: 1.0
+      meaning: a drop's stated role doesn't match what the roster data shows, though the drop itself may be reasonable.
+    - min: 0.0
+      max: 0.0
+      meaning: a current starter is dropped and labeled bench/depth with no acknowledgment that it's a starter.
+    anchors:
+    - quote
+    - omission
+  fallback_claims_not_error:
+    definition: >
+      When more than one claim (recommended here, or already pending per
+      the round's context) names the same drop, the answer treats it as a
+      normal ordered fallback - this claim first, that one if it doesn't
+      land - never as a mistake, a conflict, or something to fix.
+    steps:
+    - Check whether the round's tool results or the user's own message
+      mention multiple claims (pending or recommended) that share a drop.
+    - If so, check the answer's language frames them as an intentional
+      order, not an error.
+    - If no such situation exists this round, check the answer doesn't
+      invent one.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: claims sharing a drop are present and explicitly named as an ordered fallback, not an error.
+    - min: 2.0
+      max: 2.0
+      meaning: no claims-sharing-a-drop situation arose this round, and nothing in the answer contradicts the rule.
+    - min: 1.0
+      max: 1.0
+      meaning: such a situation exists but the answer doesn't clearly address it either way.
+    - min: 0.0
+      max: 0.0
+      meaning: the answer describes claims that share a drop as a mistake, a conflict, or something the manager needs to fix.
+    anchors:
+    - quote
+    - omission
   priority_or_bid_sized_to_waiver_type:
     definition: >
       Waiver priority spend or FAAB bid size, stated in each candidate's
       `why` (the artifact has no separate bid/priority field), matches this
-      league's actual `waiver_type` (checked via `sleeper_league`) and this
-      team's remaining resources, using the published bid bands by need
-      tier.
+      league's actual `waiver_type` (checked via `sleeper_league`, never
+      assumed to be a rolling+FAAB hybrid) and this team's remaining
+      resources, using the published bid bands by need tier. The
+      artifact's `waiver_type`/`my_priority`/`teams` fields, when set,
+      match what the tools actually reported.
     steps:
     - Check the answer checked or states the league's waiver type before
-      sizing.
+      sizing, and never sizes a rolling/reverse-standings claim in FAAB
+      dollars just because `waiver_budget` was non-zero.
     - For a FAAB bid, check the figure is expressed as a share of *remaining*
       FAAB (not the original $100) and matches the need-tier band (e.g.
       25-40% for a replacement starter, $1-2 for K/DEF).
     - For a priority-queue claim, check the answer weighs the
       aggressive-vs-patient tradeoff rather than assuming one stance.
+    - If `waiver_type`/`my_priority`/`teams` are set in the artifact, check
+      they match `sleeper_league`/`sleeper_roster`/`sleeper_standings`'s
+      own numbers rather than being invented.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: sizing matches the actual waiver type, remaining resources, and the published need-tier bands.
+      meaning: sizing matches the actual waiver type, remaining resources, and the published need-tier bands; any structured waiver-context fields match the tool data.
     - min: 2.0
       max: 2.0
       meaning: sizing is correct in kind, but one figure is a bit off-band without being a category error.
@@ -90,7 +159,95 @@ criteria:
       meaning: a bid is given with no percentage/dollar figure, or is sized against the original budget instead of what remains.
     - min: 0.0
       max: 0.0
-      meaning: sizing ignores the league's actual waiver type, or a K/DEF bid exceeds the published cap with no stated reason.
+      meaning: sizing ignores the league's actual waiver type, treats a rolling/reverse-standings league as running FAAB, or a K/DEF bid exceeds the published cap with no stated reason.
+    anchors:
+    - quote
+    - omission
+  candidate_coverage_checked:
+    definition: >
+      Every unrostered player who is widely owned elsewhere or trending, at
+      every position, is accounted for - ranked in `candidates` or listed
+      in `also_checked` with a concrete, checked reason (e.g. an injury) -
+      never silently dropped from consideration.
+    steps:
+    - From the round's `sleeper_free_agents` results, list any player with
+      a high `owned_pct` or a real `trending_adds` count.
+    - For each, check it appears either in `candidates` or in
+      `also_checked`.
+    - For each `also_checked` entry, check its `why` states a concrete,
+      checked reason (e.g. `sleeper_player`'s injury status), not a vague
+      dismissal.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every such player appears in `candidates` or `also_checked`, and each `also_checked` reason is concrete and checked.
+    - min: 2.0
+      max: 2.0
+      meaning: coverage is complete, but one `also_checked` reason is vague or not clearly tied to a tool check.
+    - min: 1.0
+      max: 1.0
+      meaning: one widely-owned/trending player is missing from both `candidates` and `also_checked`.
+    - min: 0.0
+      max: 0.0
+      meaning: the also_checked list is absent or empty despite multiple widely-owned/trending players being available and unranked, or multiple players are missing from both.
+    anchors:
+    - quote
+    - omission
+  league_competition_considered:
+    definition: >
+      Claim timing/ordering advice (claim now vs. wait, aggressive vs.
+      patient, or a bid size) rests on this league's actual competing
+      rosters and waiver priority - read via `sleeper_roster` for other
+      teams - not on the platform-wide trending/ownership count alone.
+    steps:
+    - Check the round's tool calls include at least one `sleeper_roster`/
+      `sleeper_standings` look at a team other than the owner's own.
+    - Check the answer's claim-now-vs-wait or bid-sizing reasoning cites a
+      specific competing team's need, waiver position, or FAAB left - not
+      just a global trending number.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: other rosters were read and named in the reasoning behind at least one top target's urgency or sizing.
+    - min: 2.0
+      max: 2.0
+      meaning: other rosters were read, but the urgency/sizing reasoning leans on the global trending count more than the specific competition found.
+    - min: 1.0
+      max: 1.0
+      meaning: no other roster was read this round despite candidates that call for it.
+    - min: 0.0
+      max: 0.0
+      meaning: urgency or sizing is argued from the global trending/ownership count alone, with no in-league read at all.
+    anchors:
+    - quote
+    - omission
+  close_call_cites_news:
+    definition: >
+      For a genuine close call among the top claims or a recommended drop
+      (two similar-value options, or a call turning on an injury/role
+      question), the answer checked current news this session
+      (`web_search`/`web_fetch`) and cites what it found inline as a
+      markdown link, rather than resting the call on Sleeper's fields
+      alone.
+    steps:
+    - Identify any close call among the top claims or recommended drops.
+    - Check the answer ran `web_search`/`web_fetch` this round for it.
+    - Check the citation appears inline as a markdown link in the relevant
+      candidate's `why`, and that the link was actually fetched or seen in
+      search this session, not merely recalled.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: a close call exists and is backed by a cited, actually-fetched news link.
+    - min: 2.0
+      max: 2.0
+      meaning: no genuine close call arose this round, or a close call is backed by news that was searched/fetched but not linked inline.
+    - min: 1.0
+      max: 1.0
+      meaning: a close call exists and rests on Sleeper's fields alone, with no news check attempted.
+    - min: 0.0
+      max: 0.0
+      meaning: a close call cites a URL never actually fetched or seen in search this session.
     anchors:
     - quote
     - omission
@@ -142,6 +299,37 @@ criteria:
     - min: 0.0
       max: 0.0
       meaning: a trending/ownership number is used as the stated reason a player is worth adding.
+    anchors:
+    - quote
+    - omission
+  concise:
+    definition: >
+      The artifact respects its brevity contract: `summary` is at most two
+      sentences and states the claim order plainly; each `why` (including
+      `also_checked` entries) is one short sentence, about 140 characters;
+      `source_note` states this league's waiver type and the owner's
+      current waiver position.
+    steps:
+    - Check `summary` is at most two sentences and states the order to
+      submit claims.
+    - Check each candidate's `why` reads as one short sentence, not a
+      paragraph.
+    - Check `source_note` names the waiver type and the owner's current
+      waiver position (plus remaining FAAB only when `waiver_type` is
+      `faab`).
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: summary, every why, and source_note all meet the brevity contract.
+    - min: 2.0
+      max: 2.0
+      meaning: one why runs long, or one element is present but not stated plainly.
+    - min: 1.0
+      max: 1.0
+      meaning: summary exceeds two sentences, or source_note omits the waiver type or position.
+    - min: 0.0
+      max: 0.0
+      meaning: most why fields are long paragraphs, or source_note/summary is missing content entirely.
     anchors:
     - quote
     - omission
