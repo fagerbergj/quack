@@ -1072,8 +1072,7 @@ func TestRunGatedRefine_StampsUserAndSourceOntoWorkerModel(t *testing.T) {
 }
 
 // TestCitationOnlyFailure covers the trigger for the targeted citation-only
-// revise directive: it fires only when cites_sources is the SOLE failing
-// criterion.
+// revise directive: it fires only when citation-form criteria are the only failures.
 func TestCitationOnlyFailure(t *testing.T) {
 	const th = 0.7
 	tests := []struct {
@@ -1092,6 +1091,15 @@ func TestCitationOnlyFailure(t *testing.T) {
 		}, false},
 		{"all pass", map[string]criterionScore{
 			"grounded": {Score: 0.9}, "cites_sources": {Score: 0.9},
+		}, false},
+		{"specifics_cited only", map[string]criterionScore{
+			"grounded": {Score: 0.9}, "cites_sources": {Score: 0.9}, "specifics_cited": {Score: 0.5},
+		}, true},
+		{"both citation criteria", map[string]criterionScore{
+			"grounded": {Score: 0.9}, "cites_sources": {Score: 0.4}, "specifics_cited": {Score: 0.5},
+		}, true},
+		{"specifics_cited plus a contradiction", map[string]criterionScore{
+			"specifics_supported": {Score: 0}, "specifics_cited": {Score: 0.5},
 		}, false},
 	}
 	for _, tt := range tests {

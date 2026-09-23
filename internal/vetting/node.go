@@ -2178,7 +2178,9 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session - " +
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
-	if cs, details, hasCites := citationScore(answer, act); hasCites {
+	// A pointer reply's links live in the artifact it names: grade the whole deliverable.
+	deliverable := deliverableText(ctx, answer, act, recordReader(cfg))
+	if cs, details, hasCites := citationScore(deliverable, act); hasCites {
 		evidence := make([]evidenceItem, len(details))
 		for i, d := range details {
 			evidence[i] = evidenceItem{Ref: d.url, Score: d.score}
@@ -2214,7 +2216,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	// Schema validity: absent (not a 1.0 pass) for a node with no registered kind.
 	avc, avcOK := artifactValidCriterion(ctx, cfg, nodeID, since)
 	setIfApplicable(det, "artifact_valid", avc, avcOK)
-	scc, sccOK := specificsCitedCriterionScore(ctx, answer, act, cfg, recordReader(cfg))
+	scc, sccOK := specificsCitedCriterionScore(ctx, deliverable, act, cfg, nil)
 	setIfApplicable(det, specificsCitedCriterion, scc, sccOK)
 	return det, checksSkipReason
 }
@@ -2437,19 +2439,20 @@ func appendLabeledSection(sb *strings.Builder, header, body string) {
 	sb.WriteString(body)
 }
 
-// citationOnlyFailure: only cites_sources below threshold - answer is substantively fine, just needs URL formatting.
+// citationOnlyFailure: only citation-form criteria are below threshold - the answer is
+// substantively fine and needs links attached, not re-research.
 func citationOnlyFailure(v verdict, threshold float64) bool {
 	failing := 0
-	citesFailed := false
 	for name, c := range v.Criteria {
-		if c.Score < threshold {
-			failing++
-			if name == "cites_sources" {
-				citesFailed = true
-			}
+		if c.Score >= threshold {
+			continue
 		}
+		if name != "cites_sources" && name != specificsCitedCriterion {
+			return false
+		}
+		failing++
 	}
-	return citesFailed && failing == 1
+	return failing > 0
 }
 
 // activityFromSession: reconstructs worker's retrieval and workspace ledger from session events.
