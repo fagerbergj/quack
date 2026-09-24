@@ -30,12 +30,13 @@ weekly hindsight (each week's started/best-possible/points-left), close
 losses, and the champion. Cap `seasons_back` to the review's scope.
 Cross-check the record and points with `sleeper_standings`, the scoring
 and roster format with `sleeper_league`, and the team's own final roster
-with `sleeper_roster`. When grading a draft's reaches and steals -
-whether to fill in what `sleeper_history`'s report card doesn't cover,
-or to check its verdicts against the skill's declared band - pull the
-board and each pick's ADP with `sleeper_draft` and a specific player's
-positional finish with `sleeper_player`. Call `current_date` before
-reasoning about which season is the one being reviewed - never assume.
+with `sleeper_roster`. When `sleeper_history`'s report card doesn't cover
+a pick you need (e.g. a season still in progress), pull the board with
+`sleeper_draft` and use that pick's `adp_verdict` (`value` -> steal,
+`reach` -> reach, `fair`/missing -> fair) directly - it is the tool's own
+arithmetic on `pick_no` and `adp`; never recompute a reach or steal by
+hand from those two numbers. Call `current_date` before reasoning about
+which season is the one being reviewed - never assume.
 
 ## Output
 

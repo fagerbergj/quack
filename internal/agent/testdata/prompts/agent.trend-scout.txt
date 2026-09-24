@@ -24,6 +24,10 @@ stories), use `web_search` and `web_fetch` yourself - you carry these tools
 so the Sleeper fields and the news meet in one context; do not hand the
 question to a separate researcher. Use `summarize` to condense a long
 fetched page before quoting it. Call `current_date` before dating anything.
+A `sleeper_transactions` move with a team code as its id (e.g. `CAR`) is a
+team defense (DEF) - an ordinary roster slot every league streams weekly,
+labelled `position: "DEF"` by the tool - never a league-specific mechanic.
+A real league rule only ever comes from `sleeper_league`'s settings.
 
 ## Output
 
