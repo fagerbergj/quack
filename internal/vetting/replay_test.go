@@ -77,6 +77,25 @@ func TestReplayRound_ArtifactWrittenFlagged(t *testing.T) {
 	}
 }
 
+// TestReplayRebuildsDataToolSection: the replay path (quack judge replay)
+// must reproduce the same data-tool section live judging builds, from the
+// recorded session alone.
+func TestReplayRebuildsDataToolSection(t *testing.T) {
+	call := replayContent(genai.RoleModel, &genai.Part{FunctionCall: &genai.FunctionCall{ID: "1", Name: "sleeper_matchup",
+		Args: map[string]any{"week": 2}}})
+	resp := replayContent(genai.RoleUser, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: "1", Name: "sleeper_matchup",
+		Response: map[string]any{"starters_points": 101.4}}})
+	rc := ReplayCase{NodeID: "node-1", WorkerTurns: []RawTurn{{Input: replayJSON(t, []*genai.Content{call, resp})}}}
+	act, err := rebuildActivity(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("rebuildActivity: %v", err)
+	}
+	got := buildDataToolsSection(act)
+	if !strings.Contains(got, "sleeper_matchup") || !strings.Contains(got, "101.4") {
+		t.Errorf("replay-rebuilt section missing the tool call:\n%s", got)
+	}
+}
+
 func TestReplayRound_MalformedTurnIsSkippedNotFatal(t *testing.T) {
 	rc := ReplayCase{NodeID: "node-1", Answer: "plain answer, no citations", WorkerTurns: []RawTurn{{Input: "not json"}}}
 	res, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)

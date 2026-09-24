@@ -2488,6 +2488,7 @@ func activityFromSessionAt(sess session.Session, nodeDir, nodeID string) workerA
 		pendingWsTool:    map[string]string{},
 		pendingCd:        map[string]bool{},
 		pendingLegacyURL: map[string]string{},
+		pendingData:      map[string]pendingDataCall{},
 	}
 	if sess == nil {
 		return s.act
@@ -2549,6 +2550,8 @@ func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
 		if isWorkspaceTool(fc.Name) {
 			s.pendingWs[fc.ID] = fc.Args
 			s.pendingWsTool[fc.ID] = fc.Name
+		} else if isDataToolCall(fc.Name) {
+			s.pendingData[fc.ID] = pendingDataCall{name: fc.Name, args: fc.Args}
 		}
 	}
 }
@@ -2581,6 +2584,10 @@ func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 			s.recordWorkspace(fr.Name, args, fr.Response)
 		}
 	}
+	if pd, known := s.pendingData[fr.ID]; known && pd.name == fr.Name {
+		delete(s.pendingData, fr.ID)
+		s.recordDataTool(pd.name, pd.args, fr.Response)
+	}
 }
 
 // activityScanner: accumulates one worker's activity. Recorders reached from both session-event and replay paths.
@@ -2598,6 +2605,13 @@ type activityScanner struct {
 	// pendingLegacyURL: pre-batching web_fetch calls (args["url"], a scalar) -
 	// a pre-upgrade session's response has no "url" of its own to key off.
 	pendingLegacyURL map[string]string
+	pendingData      map[string]pendingDataCall
+}
+
+// pendingDataCall: an in-flight data-tool call awaiting its response.
+type pendingDataCall struct {
+	name string
+	args map[string]any
 }
 
 // recordPRNumber: captures pull_number for delivery target. First call wins.
@@ -2788,4 +2802,40 @@ func (s *activityScanner) recordArtifactWrite(resp map[string]any) {
 	}
 	s.artifactSeen[m[1]] = true
 	s.act.artifactsWritten = append(s.act.artifactsWritten, m[1])
+}
+
+// excludedDataToolNames: tools already visible to the judge through another
+// path (evidence, artifacts, memory, staging) or with no checkable payload -
+// never counted as a data tool.
+var excludedDataToolNames = map[string]bool{
+	"web_search": true, "web_fetch": true, "summarize": true,
+	"load_skill": true, "load_skill_resource": true,
+	"recall_memory": true, "load_memory": true, "stage_memory": true,
+	"current_date":   true,
+	"list_artifacts": true, "read_artifact": true,
+	"stage_pr": true, "stage_review": true, "stage_comment": true, "unstage": true, "stage_push": true,
+	"cd": true, "ask_user": true,
+}
+
+// isDataToolCall reports whether name is a data-agent tool (e.g. an
+// extension's sleeper_matchup) whose result the judge otherwise never sees -
+// excludes anything the workspace ledger, evidence, artifact, or memory
+// sections already cover.
+func isDataToolCall(name string) bool {
+	return !excludedDataToolNames[name] && !isWorkspaceTool(name) && !isArtifactWriteTool(name)
+}
+
+// dataToolEntryCap: chars kept per rendered "tool(args) -> result" entry -
+// well under dataToolTotalCap so one call can never exhaust the section.
+const dataToolEntryCap = 8000
+
+// recordDataTool appends one call/response pair as a compact, capped entry -
+// args/result re-marshalled without indentation, same shape for a native
+// tool's raw JSON reply and an ACP-routed one (translate.go wraps it as
+// {"output": ...}/{"error": ...}), so both render the same way.
+func (s *activityScanner) recordDataTool(name string, args, resp map[string]any) {
+	argsJSON, _ := json.Marshal(args)
+	respJSON, _ := json.Marshal(resp)
+	entry := fmt.Sprintf("%s(%s) -> %s", name, argsJSON, respJSON)
+	s.act.dataTools = append(s.act.dataTools, boundExcerpt(entry, dataToolEntryCap))
 }

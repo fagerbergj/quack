@@ -225,6 +225,85 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 	}
 }
 
+// TestDataToolCallReachesJudgePrompt: the #1548-era bug - a data-agent tool
+// (e.g. sleeper's) call/result never reached the judge at all, so it scored
+// "no tool results in this conversation" on internal consistency alone.
+func TestDataToolCallReachesJudgePrompt(t *testing.T) {
+	sess := newTestSession(t,
+		fnCall("c1", "sleeper_matchup", map[string]any{"week": 2, "roster_id": 4}),
+		fnResp("c1", "sleeper_matchup", map[string]any{"points": 101.4, "starters": []any{"QB1"}}),
+	)
+	act := activityFromSessionAt(sess, "", "")
+	got := buildJudgePrompt("", "rubric text", "", "", questionContent("q"), "answer", "", act, "")
+	for _, want := range []string{"TOOL RESULTS THE WORKER RECEIVED", "sleeper_matchup", "101.4"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("judge prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestExcludedToolsNeverBecomeDataTools: tools already covered by another
+// judge input (workspace ledger, memory, current_date) must not double up
+// in the new section.
+func TestExcludedToolsNeverBecomeDataTools(t *testing.T) {
+	sess := newTestSession(t,
+		fnCall("c1", "read_file", map[string]any{"path": "a.go"}),
+		fnResp("c1", "read_file", map[string]any{"content": "package a"}),
+		fnCall("c2", "current_date", map[string]any{}),
+		fnResp("c2", "current_date", map[string]any{"date": "2026-09-23"}),
+		fnCall("c3", "recall_memory", map[string]any{"query": "q"}),
+		fnResp("c3", "recall_memory", map[string]any{"hits": []any{}}),
+	)
+	act := activityFromSessionAt(sess, "", "")
+	if len(act.dataTools) != 0 {
+		t.Errorf("act.dataTools = %v, want none - all three tools have their own path already", act.dataTools)
+	}
+}
+
+// TestDataToolCallCoversACPShapedResponse: an ACP worker's data-tool call
+// lands in the session too (internal/acp/translate.go's pairSpec), just with
+// the response wrapped as {"output": ...} instead of the tool's raw JSON
+// (toolResponse's default case, translate.go:342) - the scanner must still
+// pick it up, so native and ACP workers share this fix with no ACP-specific code.
+func TestDataToolCallCoversACPShapedResponse(t *testing.T) {
+	sess := newTestSession(t,
+		fnCall("c1", "sleeper_matchup", map[string]any{"week": 2}),
+		fnResp("c1", "sleeper_matchup", map[string]any{"output": `{"points":101.4}`}),
+	)
+	act := activityFromSessionAt(sess, "", "")
+	got := buildDataToolsSection(act)
+	if !strings.Contains(got, "sleeper_matchup") || !strings.Contains(got, "101.4") {
+		t.Errorf("ACP-shaped data-tool response not captured:\n%s", got)
+	}
+}
+
+// TestTrimDataToolEntriesKeepsNewestAndReportsOmitted: the cap trims from the
+// oldest call, deterministically, and reports exactly how many it dropped.
+func TestTrimDataToolEntriesKeepsNewestAndReportsOmitted(t *testing.T) {
+	entries := []string{"aaaa", "bbbb", "cccc", "dddd"} // oldest first, 4 chars each
+	kept, omitted := trimDataToolEntries(entries, 10)   // room for 2 of 4
+	want := []string{"cccc", "dddd"}
+	if len(kept) != len(want) || kept[0] != want[0] || kept[1] != want[1] {
+		t.Errorf("kept = %v, want %v", kept, want)
+	}
+	if omitted != 2 {
+		t.Errorf("omitted = %d, want 2", omitted)
+	}
+}
+
+// TestBuildDataToolsSectionCapsTotalAndReportsOmitted: enough entries to
+// exceed dataToolTotalCap must trigger the section's own omission note.
+func TestBuildDataToolsSectionCapsTotalAndReportsOmitted(t *testing.T) {
+	var entries []string
+	for i := 0; i < 7; i++ {
+		entries = append(entries, strings.Repeat("x", dataToolEntryCap))
+	}
+	got := buildDataToolsSection(workerActivity{dataTools: entries})
+	if !strings.Contains(got, "1 earlier call(s) omitted") {
+		t.Errorf("expected an omission note for 1 dropped call, got head:\n%s", got[:200])
+	}
+}
+
 func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {

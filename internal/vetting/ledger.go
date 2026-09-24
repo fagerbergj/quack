@@ -3,6 +3,7 @@ package vetting
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -117,6 +118,50 @@ func kvList(m map[string]any, keys []string) string {
 
 // maxLedgerOps: caps operations in buildWorkspaceSection, keeping the tail (commit, final test run).
 const maxLedgerOps = 80
+
+// dataToolTotalCap: chars kept across the whole data-tools section - well
+// above dataToolEntryCap so a handful of calls never gets cut mid-round.
+const dataToolTotalCap = 48000
+
+// buildDataToolsSection: renders the round's data-tool call/results (already
+// per-entry capped by recordDataTool) for the judge prompt, keeping the
+// newest entries when the total exceeds dataToolTotalCap. Empty when no calls.
+func buildDataToolsSection(act workerActivity) string {
+	if len(act.dataTools) == 0 {
+		return ""
+	}
+	kept, omitted := trimDataToolEntries(act.dataTools, dataToolTotalCap)
+	var sb strings.Builder
+	sb.WriteString("TOOL RESULTS THE WORKER RECEIVED THIS ROUND (verify the answer's figures against these):\n")
+	if omitted > 0 {
+		fmt.Fprintf(&sb, "  (… %d earlier call(s) omitted)\n", omitted)
+	}
+	for _, e := range kept {
+		sb.WriteString("  • ")
+		sb.WriteString(e)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// trimDataToolEntries keeps entries newest-first up to budget chars, then
+// restores chronological order. Always keeps at least one entry.
+func trimDataToolEntries(entries []string, budget int) ([]string, int) {
+	var kept []string
+	total := 0
+	omitted := 0
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if total+len(e) > budget && len(kept) > 0 {
+			omitted = i + 1
+			break
+		}
+		kept = append(kept, e)
+		total += len(e)
+	}
+	slices.Reverse(kept)
+	return kept, omitted
+}
 
 // buildWorkspaceSection: renders workspace ledger for prompt (judge and revise). Empty when no ops.
 func buildWorkspaceSection(act workerActivity) string {
