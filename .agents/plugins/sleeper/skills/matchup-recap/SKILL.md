@@ -57,12 +57,21 @@ recital.
 
 ## Writing the retro
 
-Compare what was started to what the roster could have scored, slot by
-slot. Grade each start/sit call against what actually happened, and
-separate a bad process (ignored evidence available at the time) from bad
-luck (a reasonable call that didn't pay off) — see
-`points-against-and-luck.md` for the variance-vs-skill distinction that
-separation depends on.
+For a completed week, `sleeper_matchup`'s `me` side already carries
+`bench`, `best_points`, `left_on_bench`, `best_lineup` (the actual best
+assignment, keyed to the lineup artifact's numbered slots), and
+`free_agent_hits`; the retro artifact's `best`/`left` are those tool
+values, not a recomputation. FLEX is filled from RB/WR/TE, so a bench
+RB/WR/TE landing in `best_lineup`'s FLEX slot is a real miss.
+`misses` compares the started lineup to `best_lineup` slot by slot;
+`waiver_misses` comes from `free_agent_hits`.
+
+Grade each miss against what actually happened, and separate a bad
+process (ignored evidence available at the time - a `sleeper_trends`
+add, a `sleeper_transactions` move, or news dated before kickoff or that
+week's waiver run) from bad luck (a reasonable call that didn't pay off,
+`knowable: false`) — see `points-against-and-luck.md` for the
+variance-vs-skill distinction that separation depends on.
 
 ## Resources (load only when the case calls for it)
 

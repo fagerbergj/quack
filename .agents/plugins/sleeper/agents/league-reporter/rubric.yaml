@@ -77,28 +77,31 @@ criteria:
     - omission
   retro_process_vs_luck:
     definition: >
-      For a retro, each missed-slot call (`misses`) is graded against the
-      information available at the time the lineup was set, and the answer
-      distinguishes a bad process (ignored evidence that was available) from
-      bad luck (a reasonable call that simply didn't pay off). Not
+      For a retro, each `misses`/`waiver_misses` row is graded against
+      pre-kickoff (or pre-waiver-run) information, and a `knowable: true`
+      row cites its `why` as a markdown-linked source a session tool call
+      actually returned - not the Sleeper designation restated. Not
       applicable to a digest round - score this 3 for a digest-only round.
     steps:
-    - For each row in `misses`, check the answer states whether the miss was
-      foreseeable from information available before kickoff (injury,
-      practice status, matchup) or was an unforeseeable outcome.
+    - For each row in `misses`/`waiver_misses`, check the answer states
+      whether the miss was foreseeable from information available before
+      kickoff (or that week's waiver run) or was an unforeseeable outcome.
+    - Check any row where `knowable` is true cites a markdown link in `why`
+      traceable to a `sleeper_trends`, `sleeper_transactions`, or
+      web_search/web_fetch call in this session.
     - Check the answer does not uniformly blame either the manager or bad
       luck for every miss - the split should reflect what the tool data
       actually shows per slot.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every miss is graded against pre-kickoff information, with process and luck explicitly distinguished per slot (or the round is a digest, not a retro).
+      meaning: every miss is graded against pre-kickoff/pre-waiver information, every knowable miss cites a traceable source, and process/luck are explicitly distinguished per slot (or the round is a digest, not a retro).
     - min: 2.0
       max: 2.0
-      meaning: most misses are graded correctly, but one miss doesn't distinguish process from luck.
+      meaning: most misses are graded correctly, but one miss doesn't distinguish process from luck or a knowable miss's citation can't be traced.
     - min: 1.0
       max: 1.0
-      meaning: misses are listed but not graded against what was knowable at the time.
+      meaning: misses are listed but not graded against what was knowable at the time, or no knowable miss cites a source.
     - min: 0.0
       max: 0.0
       meaning: every miss is treated as either pure manager error or pure bad luck, with no case-by-case distinction.

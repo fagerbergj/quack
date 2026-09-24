@@ -27,7 +27,10 @@ every team's record with `sleeper_standings`, a team's own lineup with
 and one week's matchup for a roster with `sleeper_matchup` (pass the
 `week` - it defaults to the current week, which is not always the week
 being reported). Call `current_date` before reasoning about which week
-is being covered - never assume.
+is being covered - never assume. For a retro, `sleeper_trends` (recent
+adds), `sleeper_transactions`, and `sleeper_player` (a player's game log)
+surface what was knowable before a week's waiver run or kickoff;
+`web_search`/`web_fetch`/`summarize` back a specific claim with news.
 
 ## Writing the digest
 
@@ -47,19 +50,38 @@ high score, the blowout).
 
 ## Writing the retro
 
-For the team named in the ask, compare what was STARTED to what the
-roster COULD have scored that week: for each slot, the best-scoring
-rostered player at that position against the player who actually
-started. Set `started` (points actually started), `best` (the
-best-possible total), `left` (best minus started), `opp` and `won` from
-the week's matchup. Collect every slot where a rostered player
-outscored the starter under the `misses` key - a slot where the starter
-was best gets no miss row. Write the retro card as an artifact with
-`write_artifact` (`kind: "retro"`, `mime: "application/json"`). Read
-`sleeper:matchup-recap`'s `references/output-schema-retro.json` before
-writing it: the artifact carries exactly the schema's properties and
-nothing else. End with a one-line `summary` naming the single biggest
-swing.
+For the team named in the ask, call `sleeper_matchup` for that week. For
+a completed week its `me` side carries `bench`, `best_points`,
+`left_on_bench`, `best_lineup` (the actual best assignment, one entry per
+numbered slot - QB, RB1, RB2, WR1, WR2, TE, FLEX, K, DEF), and
+`free_agent_hits` (unrostered players who beat the weakest starter they
+were legally eligible to replace). Set `started`/`opp`/`won` from the
+matchup's own points, and `best`/`left` to the tool's `best_points` and
+`left_on_bench` directly - never recompute them.
+
+FLEX is filled from RB/WR/TE, so a bench RB or WR landing in
+`best_lineup`'s FLEX slot is a real FLEX miss even when the started FLEX
+was a different position. Build `misses` by comparing the started
+lineup to `best_lineup` slot by slot: a match gets no row; a difference
+is a miss (`better_name`/`better_pts` from `best_lineup`,
+`started_name`/`started_pts` from what actually started, `swing` is the
+gap). Build `waiver_misses` from `free_agent_hits`
+(`over.name`/`over.points` become `over_name`/`over_pts`).
+
+A `misses` or `waiver_misses` row's `knowable` is true only when
+`sleeper_trends`, `sleeper_transactions`, or a web news result shows the
+signal existed before kickoff (or before that week's waiver run) - an
+injury/practice note, a usage trend, a trending add; otherwise it is
+hindsight luck, not a bad call. Cite that signal inline in `why` as a
+markdown link to what a session tool call actually returned - the
+Sleeper designation restated alone is not outside evidence. Name up to 3
+process fixes for next week in `lessons`.
+
+Write the retro card as an artifact with `write_artifact` (`kind:
+"retro"`, `mime: "application/json"`). Read `sleeper:matchup-recap`'s
+`references/output-schema-retro.json` before writing it: the artifact
+carries exactly the schema's properties and nothing else. End with a
+one-line `summary` naming the single biggest swing.
 
 You do not name the artifact yourself - `write_artifact` derives the id
 from this chat automatically, and the UI finds it by kind. Do not pass an
