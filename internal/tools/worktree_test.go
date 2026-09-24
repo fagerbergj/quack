@@ -101,6 +101,42 @@ func TestSetupWorktreeIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestSetupWorktreeFollowsMovedParentHead: a re-review after a push reuses the node's
+// worktree; it must land on the shared clone's new head, not keep reviewing the old files.
+func TestSetupWorktreeFollowsMovedParentHead(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	parentDir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+	nodeRel, branch := workspace.NodeDir("review1"), workspace.WorktreeBranch("review1")
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil)
+	if err != nil {
+		t.Fatalf("first SetupWorktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("pushed after the first review\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, parentDir, "commit", "--quiet", "-am", "new head")
+	want := strings.TrimSpace(runGitT(t, parentDir, "rev-parse", "HEAD"))
+
+	if _, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil); err != nil {
+		t.Fatalf("second SetupWorktree: %v", err)
+	}
+	if got := strings.TrimSpace(runGitT(t, dir, "rev-parse", "HEAD")); got != want {
+		t.Errorf("worktree HEAD = %s, want the shared clone's new head %s", got, want)
+	}
+	if body, _ := os.ReadFile(filepath.Join(dir, "README.md")); string(body) != "pushed after the first review\n" {
+		t.Errorf("worktree README.md = %q, want the new head's content", body)
+	}
+	if st := runGitT(t, dir, "status", "--porcelain", "--untracked-files=no"); strings.TrimSpace(st) != "" {
+		t.Errorf("worktree left dirty after sync:\n%s", st)
+	}
+}
+
 // TestSetupWorktreeRunsCheckSetup pins the #856 follow-up: a read-only
 // worktree (reviewer/explorer) can never bootstrap itself, so check_setup
 // must run quack-side, in the worktree, before the worker's first round - not only later at gate-check time.
