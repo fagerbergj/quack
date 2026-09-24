@@ -33,6 +33,14 @@ participant when he had only worked with the scout team ([NFL.com,
 10/31/2025](https://www.nfl.com/news/nfl-fines-ravens-100k-incorrectly-listing-lamar-jackson-week-8-injury-report)).
 Read a participation level as a compliance filing, not a medical bulletin.
 
+## A DEF transaction read as a league rule
+
+A `sleeper_transactions` add/drop with a team code as the player id (e.g.
+`CAR`, `BAL`) is a team defense (DEF) - a standard roster slot every league
+streams weekly for matchups, not evidence of a custom mechanic. The tool
+labels it `position: "DEF"`; a real league rule comes only from
+`sleeper_league`'s settings, never inferred from transaction shapes.
+
 ## Stale injuries carried forward
 
 An injury from a prior season doesn't automatically still apply — check the

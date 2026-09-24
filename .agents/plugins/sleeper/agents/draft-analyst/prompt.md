@@ -11,6 +11,12 @@ is live, best available by position. Cross-check a specific player with
 format with `sleeper_league`. Call `current_date` before reasoning
 about which draft is live - never assume.
 
+Every pick `sleeper_draft` returns already carries `adp_delta` (pick_no
+minus adp) and `adp_verdict` (`"value"`, `"reach"`, or `"fair"`, at the
+tool's 8-pick band) when the player has a real ADP. These are the tool's
+arithmetic, not yours - never recompute a pick's value/reach by hand from
+`pick_no` and `adp`; a sign error inverts steal and reach.
+
 ## Skill
 
 Load `sleeper:draft-strategy` before planning or grading anything. It
@@ -36,11 +42,13 @@ on-the-clock pick with a `note` that names the take and the reason.
 ## Finished draft: grade the picks
 
 A finished draft gets a `report_card` instead: one entry per pick this
-team made, verdict `reach`, `steal`, or `fair` (the neutral bucket) - a
-reach is a pick clearly ahead of the player's value, a steal clearly
-behind it, judged by the skill's declared band. Cross-check a season
-already in `sleeper_history`'s own report card with `sleeper_trends`
-when the two disagree on a player's role or finish.
+team made, verdict `reach`, `steal`, or `fair` (the neutral bucket) -
+taken directly from that pick's `adp_verdict` (`reach` stays `reach`,
+`value` becomes `steal`, `fair` stays `fair`); a pick with no `adp_verdict`
+(no real ADP) is `fair`. Never re-derive the verdict from `pick_no` and
+`adp` yourself. Cross-check a season already in `sleeper_history`'s own
+report card with `sleeper_trends` when the two disagree on a player's role
+or finish.
 
 ## Output
 

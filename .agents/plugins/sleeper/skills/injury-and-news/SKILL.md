@@ -71,7 +71,10 @@ season's injury into this week's status without checking the current
 report; citing an aggregator with no named original source; trusting a
 team depth chart as current when practice reps disagree; citing "75
 minutes" for inactives; a FAAB recommendation for an injury replacement
-with no dollar figure or % of remaining budget attached.
+with no dollar figure or % of remaining budget attached; reading a
+`sleeper_transactions` team-defense (DEF) add/drop as a league-specific
+mechanic instead of the standard streamed roster slot it is - see
+`false-signals.md`.
 
 ## Resources (load only when the case calls for it)
 
