@@ -52,8 +52,60 @@
           },
           "swing": {
             "type": "number"
+          },
+          "why": {
+            "type": "string",
+            "description": "The pre-kickoff signal that pointed the other way: injury/practice news, matchup/defense, snap share or target trend, weather, depth chart. Markdown [text](url) links allowed."
+          },
+          "knowable": {
+            "type": "boolean",
+            "description": "True only if that signal existed before kickoff; false means variance, not a bad call."
           }
         }
+      }
+    },
+    "waiver_misses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "pos",
+          "pts",
+          "over_name",
+          "over_pts"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "pos": {
+            "type": "string"
+          },
+          "pts": {
+            "type": "number"
+          },
+          "over_name": {
+            "type": "string"
+          },
+          "over_pts": {
+            "type": "number"
+          },
+          "knowable": {
+            "type": "boolean",
+            "description": "True only if that signal existed before that week's waiver run; false means hindsight luck."
+          },
+          "why": {
+            "type": "string",
+            "description": "The pre-waiver-run signal, if any. Markdown [text](url) links allowed."
+          }
+        }
+      }
+    },
+    "lessons": {
+      "type": "array",
+      "items": {
+        "type": "string"
       }
     },
     "summary": {

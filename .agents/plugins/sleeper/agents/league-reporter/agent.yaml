@@ -2,4 +2,4 @@ skills: [sleeper:matchup-recap]
 model_role: researcher
 context_window: 65536
 judge_rounds: 1
-tools: [sleeper_roster, sleeper_matchup, sleeper_standings, sleeper_schedule, sleeper_league, current_date]
+tools: [sleeper_roster, sleeper_matchup, sleeper_standings, sleeper_schedule, sleeper_league, sleeper_player, sleeper_trends, sleeper_transactions, web_search, web_fetch, summarize, current_date]
