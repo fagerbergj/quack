@@ -32,7 +32,9 @@ TE/FLEX/K/DEF + 5 bench, 6-of-10 playoffs from week 15.
    position (`sleeper_standings`) to tell a contender from a rebuilder.
    That model - positional surplus and need, contender or rebuilder - is
    what decides which of your players they'd value and what they'd give up
-   for it, not just chart parity. Load `roster-fit.md`'s mutual-need rule.
+   for it, not just chart parity. Load `roster-fit.md`'s mutual-need rule. A
+   finder suggestion states that surplus/need in its `partner_need` field
+   (e.g. "needs RB"), not just in the prose `note`.
 3. **Check outside news for every traded player.** Sleeper's own
    projections and injury/practice tags lag beat-writer reporting and
    practice-report news (see `sleeper:injury-and-news`). Search the open

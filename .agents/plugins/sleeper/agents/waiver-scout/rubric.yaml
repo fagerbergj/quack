@@ -113,7 +113,7 @@ criteria:
     bands:
     - min: 3.0
       max: 3.0
-      meaning: claims sharing a drop are present and explicitly named as an ordered fallback, not an error.
+      meaning: claims sharing a drop are present and the answer's language never frames them as a mistake, a conflict, or something to fix.
     - min: 2.0
       max: 2.0
       meaning: no claims-sharing-a-drop situation arose this round, and nothing in the answer contradicts the rule.
@@ -306,14 +306,15 @@ criteria:
     definition: >
       The artifact respects its brevity contract: `summary` is at most two
       sentences and states the claim order plainly; each `why` (including
-      `also_checked` entries) is one short sentence, about 140 characters;
+      `also_checked` entries) is one short sentence, about 140 visible
+      characters (a markdown link's URL does not count toward that);
       `source_note` states this league's waiver type and the owner's
       current waiver position.
     steps:
     - Check `summary` is at most two sentences and states the order to
       submit claims.
-    - Check each candidate's `why` reads as one short sentence, not a
-      paragraph.
+    - Check each candidate's `why` reads as one short sentence, about 140
+      visible characters or under, not counting a markdown link's URL.
     - Check `source_note` names the waiver type and the owner's current
       waiver position (plus remaining FAAB only when `waiver_type` is
       `faab`).

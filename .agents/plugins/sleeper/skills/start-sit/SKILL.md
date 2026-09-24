@@ -15,6 +15,14 @@ FLEX, QB/RB/RB/WR/WR/TE/FLEX/K/DEF + 5 bench, 6-of-10 playoffs from week 15).
 Every number below is as published, with its source; where none exists, say
 so instead of inventing one — see "No published number" below.
 
+A lineup passed in as context is this chat's own earlier output, not a
+constraint - every dedicated slot's incumbent is compared against the whole
+bench at that position each run, not just a contingency named in a prior
+round. `sleeper_matchup`'s `me` side carries a code-computed
+`best_by_projection` baseline (the best legal lineup by projection, per
+slot, Out/IR/Doubtful excluded); a starter that differs from it names the
+baseline player and the evidence that beat it in the row's `why`.
+
 ## Decision procedure (run in this order per slot)
 
 1. **Availability first.** Pull `injury_status` and `practice_description` via
@@ -52,7 +60,13 @@ so instead of inventing one — see "No published number" below.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every
    remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`
    for the floor-vs-ceiling tie-break and the PPR-specific WR-lean data.
-7. **Write the verdict.** Every starter gets `start` or `sit` plus the
+7. **Estimate floor and ceiling.** These are not calculated - weigh the
+   matchup, the player's recent snap share/usage (`sleeper_trends`), and any
+   team news into a low/high PPR estimate for the week, and link that
+   evidence's source inline in the row's `why`. An inverted pair (floor
+   above ceiling) is ignored by the renderer, so check the order before
+   writing it.
+8. **Write the verdict.** Every starter gets `start` or `sit` plus the
    `why`; the UI's `confidence` number is the chance the recommended player
    outscores the best alternative — leave it null when there is no real
    alternative (see agent prompt).

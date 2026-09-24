@@ -35,7 +35,9 @@ real news - write `{"items": []}` rather than skip the artifact, so the
 call never falls back to saving your reply as this round's `trends`
 content. When there is real news, each item needs `time`, `source` (a
 Sleeper field name, or the reporter/outlet and URL for web news), `kind`
-(exactly `injury`, `waiver`, `news`, or `note`), and `text`. Include
+(exactly `injury`, `waiver`, `news`, or `note`), and `text` - one short
+sentence, about 140 characters; the UI renders it inline in the timeline,
+not a wall of text. Include
 `player` (`{id, name, ...}`) only when the item is about one specific
 rostered player - omit the field entirely for a league-wide or non-player
 item, never invent an id to fill it. **When a Sleeper field and a web
