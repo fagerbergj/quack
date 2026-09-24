@@ -289,6 +289,10 @@ type workerActivity struct {
 
 	written []string // jail-relative paths for buildChangedFilesSection
 
+	// dataTools: rendered "tool(args) -> result" entries for calls with no
+	// other judge-visible path (e.g. sleeper_matchup) - oldest first.
+	dataTools []string
+
 	// artifactsWritten: ids the worker wrote/edited via a native artifact tool
 	// this round (write_artifact/edit_artifact/write_<kind>) - feeds the
 	// artifact-read zero-reads discard rule.
