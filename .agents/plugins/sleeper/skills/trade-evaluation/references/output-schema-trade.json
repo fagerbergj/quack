@@ -273,6 +273,11 @@
           "record": {
             "type": "string"
           },
+          "partner_need": {
+            "type": "string",
+            "maxLength": 32,
+            "description": "e.g. \"needs RB\"."
+          },
           "give": {
             "type": "object",
             "required": [

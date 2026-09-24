@@ -84,7 +84,10 @@ benched behind comparable options, injury-exposed, or at a position it's
 already stacked in - and valuable to you. For each candidate, pair a
 counter-pick from your roster that makes the deal fair by projection, and
 check the partner's recent moves with `sleeper_transactions` before
-assuming they'll part with a player. At most three suggestions, ranked.
+assuming they'll part with a player. Set each suggestion's `partner_need`
+(32 characters, e.g. "needs RB") from that same roster/standings read - the
+positional surplus/need the deal addresses, not chart value. At most three
+suggestions, ranked.
 
 Write the finder card as an artifact with `write_artifact`
 (`kind: "trade-finder"`, `mime: "application/json"`). Read

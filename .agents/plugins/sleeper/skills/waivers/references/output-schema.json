@@ -11,6 +11,22 @@
     "summary": {
       "type": "string"
     },
+    "waiver_type": {
+      "type": "string",
+      "description": "As sleeper_league reports it: rolling / reverse standings / FAAB."
+    },
+    "my_priority": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "teams": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "candidates": {
       "type": "array",
       "items": {
@@ -88,6 +104,66 @@
           },
           "drop": {
             "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "also_checked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "player",
+          "why"
+        ],
+        "properties": {
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
           },
           "why": {
             "type": "string"

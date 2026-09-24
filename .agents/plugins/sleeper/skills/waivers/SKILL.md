@@ -80,12 +80,13 @@ Claim A (add X, drop Z) followed by claim B (add Y, drop Z) is a manager express
    a miss, and only `sleeper_player`'s `injury_status`/`practice_description`
    says which. Dismiss an injured one with the reason stated; rank a healthy
    one.
-7. **Check current news on every top claim and every drop.** Sleeper's own
+7. **Check current news on a genuine close call.** Sleeper's own
    projections and injury tags update on a fixed schedule and lag practice
-   reports and beat-writer news. For each top claim and each recommended
-   drop, run `web_search`/`web_fetch` and cite what changes the call as an
-   inline markdown link in that candidate's `why` — never let a close call
-   ride on Sleeper's fields alone.
+   reports and beat-writer news. For a close call among the top claims or a
+   recommended drop (two similar-value options, or a call turning on an
+   injury/role question), run `web_search`/`web_fetch` and cite what changes
+   the call as an inline markdown link in that candidate's `why` — never let
+   a close call ride on Sleeper's fields alone.
 8. **K/DEF:** stream on matchup per week; see `streaming-k-def.md` — this is
    the one category where the rule doesn't depend on FAAB vs. rolling.
 9. **Byes:** see `handcuffs-and-byes.md` for lead time and the double-stack
@@ -122,10 +123,7 @@ Sizing a rolling/reverse-standings league's claim in FAAB dollars because `waive
 
 - `output-schema.json` — the extension UI's schema for the `waivers`
   artifact. Write the artifact to match it exactly (see the agent prompt's
-  Output section for the required-field walkthrough). This copy doesn't yet
-  list `waiver_type`/`my_priority`/`teams`/`also_checked` - the schema has
-  no `additionalProperties: false`, so they validate today; a pin bump will
-  refresh this copy once the upstream schema documents them.
+  Output section for the required-field walkthrough).
 - `faab-bidding.md` — bid bands by need tier, the "three Ps" pre-bid gate,
   auction mechanics. FAAB leagues only.
 - `rolling-priority.md` — queue mechanics, the aggressive-vs-patient
