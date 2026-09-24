@@ -253,10 +253,14 @@ func TestExcludedToolsNeverBecomeDataTools(t *testing.T) {
 		fnResp("c2", "current_date", map[string]any{"date": "2026-09-23"}),
 		fnCall("c3", "recall_memory", map[string]any{"query": "q"}),
 		fnResp("c3", "recall_memory", map[string]any{"hits": []any{}}),
+		fnCall("c4", "bash", map[string]any{"command": "go test ./..."}),
+		fnResp("c4", "bash", map[string]any{"output": "ok"}),
+		fnCall("c5", "quackmcp_stage_review", map[string]any{"verdict": "approve"}),
+		fnResp("c5", "quackmcp_stage_review", map[string]any{"output": "staged"}),
 	)
 	act := activityFromSessionAt(sess, "", "")
 	if len(act.dataTools) != 0 {
-		t.Errorf("act.dataTools = %v, want none - all three tools have their own path already", act.dataTools)
+		t.Errorf("act.dataTools = %v, want none - each has its own path or is code evidence, not data", act.dataTools)
 	}
 }
 

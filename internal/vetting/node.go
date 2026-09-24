@@ -2815,12 +2815,14 @@ var excludedDataToolNames = map[string]bool{
 	"list_artifacts": true, "read_artifact": true,
 	"stage_pr": true, "stage_review": true, "stage_comment": true, "unstage": true, "stage_push": true,
 	"cd": true, "ask_user": true,
+	// ACP coding tools (pi) and quack's review-staging MCP: code evidence, not league data.
+	"bash": true, "read": true, "grep": true, "find": true, "ls": true, "edit": true, "write": true, "grep_artifacts": true,
 }
 
 // isDataToolCall reports whether name is a data-agent tool (e.g.
 // sleeper_matchup) not already covered by another judge-input section.
 func isDataToolCall(name string) bool {
-	return !excludedDataToolNames[name] && !isWorkspaceTool(name) && !isArtifactWriteTool(name)
+	return !excludedDataToolNames[name] && !strings.HasPrefix(name, "quackmcp_") && !isWorkspaceTool(name) && !isArtifactWriteTool(name)
 }
 
 // dataToolEntryCap: chars kept per rendered "tool(args) -> result" entry -
