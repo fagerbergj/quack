@@ -289,10 +289,8 @@ type workerActivity struct {
 
 	written []string // jail-relative paths for buildChangedFilesSection
 
-	// dataTools: rendered "tool(args) -> result" entries for calls to tools
-	// with no other judge-visible path (e.g. a data-agent extension tool
-	// like sleeper_matchup) - oldest first. Excludes anything already
-	// covered by the workspace ledger, evidence, artifact, or memory paths.
+	// dataTools: rendered "tool(args) -> result" entries for calls with no
+	// other judge-visible path (e.g. sleeper_matchup) - oldest first.
 	dataTools []string
 
 	// artifactsWritten: ids the worker wrote/edited via a native artifact tool

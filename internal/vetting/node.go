@@ -2817,10 +2817,8 @@ var excludedDataToolNames = map[string]bool{
 	"cd": true, "ask_user": true,
 }
 
-// isDataToolCall reports whether name is a data-agent tool (e.g. an
-// extension's sleeper_matchup) whose result the judge otherwise never sees -
-// excludes anything the workspace ledger, evidence, artifact, or memory
-// sections already cover.
+// isDataToolCall reports whether name is a data-agent tool (e.g.
+// sleeper_matchup) not already covered by another judge-input section.
 func isDataToolCall(name string) bool {
 	return !excludedDataToolNames[name] && !isWorkspaceTool(name) && !isArtifactWriteTool(name)
 }
@@ -2830,9 +2828,8 @@ func isDataToolCall(name string) bool {
 const dataToolEntryCap = 8000
 
 // recordDataTool appends one call/response pair as a compact, capped entry -
-// args/result re-marshalled without indentation, same shape for a native
-// tool's raw JSON reply and an ACP-routed one (translate.go wraps it as
-// {"output": ...}/{"error": ...}), so both render the same way.
+// a native tool's raw reply and an ACP-wrapped {"output"/"error": ...} one
+// (translate.go) marshal to the same shape.
 func (s *activityScanner) recordDataTool(name string, args, resp map[string]any) {
 	argsJSON, _ := json.Marshal(args)
 	respJSON, _ := json.Marshal(resp)
