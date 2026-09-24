@@ -245,6 +245,18 @@ func TestDataToolCallReachesJudgePrompt(t *testing.T) {
 // TestExcludedToolsNeverBecomeDataTools: tools already covered by another
 // judge input (workspace ledger, memory, current_date) must not double up
 // in the new section.
+// TestCodeToolsAreNotDataTools pins every ACP coding and review-staging name: dropping one regrows code-review judge prompts.
+func TestCodeToolsAreNotDataTools(t *testing.T) {
+	for _, name := range []string{"bash", "read", "grep", "find", "ls", "edit", "write", "grep_artifacts", "quackmcp_stage_review", "quackmcp_write_finding"} {
+		if isDataToolCall(name) {
+			t.Errorf("isDataToolCall(%q) = true, want false", name)
+		}
+	}
+	if !isDataToolCall("sleeper_matchup") {
+		t.Error("isDataToolCall(sleeper_matchup) = false, want true")
+	}
+}
+
 func TestExcludedToolsNeverBecomeDataTools(t *testing.T) {
 	sess := newTestSession(t,
 		fnCall("c1", "read_file", map[string]any{"path": "a.go"}),

@@ -79,16 +79,17 @@ criteria:
     definition: >
       For a retro, each `misses`/`waiver_misses` row is graded against
       pre-kickoff (or pre-waiver-run) information, and a `knowable: true`
-      row cites its `why` as a markdown-linked source a session tool call
-      actually returned - not the Sleeper designation restated. Not
+      row cites its signal in `why` - a markdown link for web news, or the
+      named Sleeper tool and dated entry for a Sleeper signal (those carry
+      no URL) - not the Sleeper designation restated. Not
       applicable to a digest round - score this 3 for a digest-only round.
     steps:
     - For each row in `misses`/`waiver_misses`, check the answer states
       whether the miss was foreseeable from information available before
       kickoff (or that week's waiver run) or was an unforeseeable outcome.
-    - Check any row where `knowable` is true cites a markdown link in `why`
-      traceable to a `sleeper_trends`, `sleeper_transactions`, or
-      web_search/web_fetch call in this session.
+    - Check any row where `knowable` is true cites, in `why`, either a
+      markdown link traceable to a web_search/web_fetch call or a named
+      `sleeper_trends`/`sleeper_transactions` entry from this session.
     - Check the answer does not uniformly blame either the manager or bad
       luck for every miss - the split should reflect what the tool data
       actually shows per slot.
