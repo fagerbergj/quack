@@ -19,7 +19,7 @@ Resolve the league and roster with `sleeper_roster`, pull this week's
 matchup (both lineups, points, projections) with `sleeper_matchup`, look up
 a specific player's injury/practice/projection detail with `sleeper_player`,
 get kickoff times and lock status with `sleeper_schedule`, and check for
-injury/practice/depth-chart movement (snap share and usage trend) since the
+injury/practice/depth-chart movement since the
 last look with `sleeper_trends`. Sleeper's own projection and injury/practice
 fields lag practice-report and beat-writer news, so for a close call - a
 Questionable or limited-practice starter, or a bench player whose projection
@@ -52,7 +52,7 @@ null when a slot has no real alternative (nobody else rostered at that
 position/slot) - never invent a number to fill the field. `floor` and
 `ceiling` are your own week-specific low/high PPR estimates for that
 slot's starter, not a calculation - built from the matchup, the player's
-recent snap share/usage (`sleeper_trends`), and team news, each with its
+recent snap share and usage (`sleeper_player`'s `game_log`), and team news, each with its
 source linked inline in that row's `why`; an inverted pair is ignored by the
 renderer, so never set `floor` above `ceiling`. `bench` rows carry the same
 `floor`/`ceiling` for any player worth comparing against a starter. `replaces`

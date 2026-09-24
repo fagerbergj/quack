@@ -61,7 +61,7 @@ baseline player and the evidence that beat it in the row's `why`.
    remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`
    for the floor-vs-ceiling tie-break and the PPR-specific WR-lean data.
 7. **Estimate floor and ceiling.** These are not calculated - weigh the
-   matchup, the player's recent snap share/usage (`sleeper_trends`), and any
+   matchup, the player's recent snap share and usage (`sleeper_player`'s `game_log`), and any
    team news into a low/high PPR estimate for the week, and link that
    evidence's source inline in the row's `why`. An inverted pair (floor
    above ceiling) is ignored by the renderer, so check the order before
