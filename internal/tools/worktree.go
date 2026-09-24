@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // SetupWorktree provisions one node's git worktree, linked off the plan's
-// shared setup clone. Idempotent: a resumed run finds its worktree already
-// registered; a gate-failed node's worktree is kept. checkSetup bootstraps the worktree quack-side, before any sandboxed worker starts in it - a read-only worker (reviewer/explorer) can never run it itself, and the shared clone's own bootstrap (SetupClone) is not carried by `worktree add` for untracked state (e.g. an untracked vendor dir).
+// shared setup clone. Idempotent: a resumed run finds its worktree already registered and moved to the clone's HEAD;
+// untracked files survive. checkSetup bootstraps the worktree quack-side, before any sandboxed worker starts in it - a read-only worker (reviewer/explorer) can never run it itself, and the shared clone's own bootstrap (SetupClone) is not carried by `worktree add` for untracked state (e.g. an untracked vendor dir).
 func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, parentDir, nodeRelDir, branch string, caps workspace.Caps, checkSetup []string) (string, error) {
 	b := gitBinding{userID: userID, jail: jail, caps: caps}
 	b.chatID = chatID
@@ -19,7 +20,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve worktree dir: %w", err)
 	}
-	if worktreeValid(target, parentDir) {
+	if worktreeValid(target, parentDir) && syncWorktree(ctx, target, parentDir, caps) {
 		workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 		workspace.RunCheckSetup(target, checkSetup, caps)
 		return target, nil
@@ -54,6 +55,17 @@ func PruneWorktree(ctx context.Context, dir string, caps workspace.Caps) error {
 	}
 	_, _, err := runGit(ctx, parent, []string{"worktree", "remove", "--force", dir}, caps, nil)
 	return err
+}
+
+// syncWorktree moves a reused worktree to the shared clone's current HEAD: only read-only
+// nodes get one, so nothing of theirs lives in it, and a re-review after a push must read the new head.
+func syncWorktree(ctx context.Context, target, parentDir string, caps workspace.Caps) bool {
+	head, _, err := runGit(ctx, parentDir, []string{"rev-parse", "HEAD"}, caps, nil)
+	if err != nil {
+		return false
+	}
+	_, _, err = runGit(ctx, target, []string{"reset", "--quiet", "--hard", strings.TrimSpace(head)}, caps, nil)
+	return err == nil
 }
 
 // worktreeValid: idempotency check for SetupWorktree.
