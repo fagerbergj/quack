@@ -71,9 +71,11 @@ A `misses` or `waiver_misses` row's `knowable` is true only when
 `sleeper_trends`, `sleeper_transactions`, or a web news result shows the
 signal existed before kickoff (or before that week's waiver run) - an
 injury/practice note, a usage trend, a trending add; otherwise it is
-hindsight luck, not a bad call. Cite that signal inline in `why` as a
-markdown link to what a session tool call actually returned - the
-Sleeper designation restated alone is not outside evidence. Name up to 3
+hindsight luck, not a bad call. Cite that signal inline in `why`: a web
+news result as a markdown link to the page a session call returned; a
+Sleeper signal (they carry no URL) by naming the tool and its dated
+entry, e.g. "sleeper_trends: +4,100 adds by Wed". The Sleeper designation
+restated alone is not evidence of a knowable miss. Name up to 3
 process fixes for next week in `lessons`.
 
 Write the retro card as an artifact with `write_artifact` (`kind:
