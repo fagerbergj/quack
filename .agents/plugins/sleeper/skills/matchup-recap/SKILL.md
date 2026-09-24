@@ -58,13 +58,14 @@ recital.
 ## Writing the retro
 
 For a completed week, `sleeper_matchup`'s `me` side already carries
-`bench`, `best_points`, `left_on_bench`, `best_lineup` (the actual best
-assignment, keyed to the lineup artifact's numbered slots), and
+`bench`, `best_points`, `left_on_bench`, `best_lineup`, `swaps`, and
 `free_agent_hits`; the retro artifact's `best`/`left` are those tool
-values, not a recomputation. FLEX is filled from RB/WR/TE, so a bench
-RB/WR/TE landing in `best_lineup`'s FLEX slot is a real miss.
-`misses` compares the started lineup to `best_lineup` slot by slot;
-`waiver_misses` comes from `free_agent_hits`.
+values, not a recomputation. `swaps` already pairs each `best_lineup`
+player who didn't start with the eligible started player they'd
+replace, so `misses` is built straight from `swaps`, never a raw
+slot-by-slot label comparison (which false-positives when `best_lineup`
+reorders two started same-position players). `waiver_misses` comes from
+`free_agent_hits`.
 
 Grade each miss against what actually happened, and separate a bad
 process (ignored evidence available at the time - a `sleeper_trends`

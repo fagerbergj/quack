@@ -52,21 +52,22 @@ high score, the blowout).
 
 For the team named in the ask, call `sleeper_matchup` for that week. For
 a completed week its `me` side carries `bench`, `best_points`,
-`left_on_bench`, `best_lineup` (the actual best assignment, one entry per
-numbered slot - QB, RB1, RB2, WR1, WR2, TE, FLEX, K, DEF), and
-`free_agent_hits` (unrostered players who beat the weakest starter they
-were legally eligible to replace). Set `started`/`opp`/`won` from the
-matchup's own points, and `best`/`left` to the tool's `best_points` and
+`left_on_bench`, `best_lineup`, `swaps`, and `free_agent_hits`
+(unrostered players who beat the weakest starter they were legally
+eligible to replace). Set `started`/`opp`/`won` from the matchup's own
+points, and `best`/`left` to the tool's `best_points` and
 `left_on_bench` directly - never recompute them.
 
-FLEX is filled from RB/WR/TE, so a bench RB or WR landing in
-`best_lineup`'s FLEX slot is a real FLEX miss even when the started FLEX
-was a different position. Build `misses` by comparing the started
-lineup to `best_lineup` slot by slot: a match gets no row; a difference
-is a miss (`better_name`/`better_pts` from `best_lineup`,
-`started_name`/`started_pts` from what actually started, `swing` is the
-gap). Build `waiver_misses` from `free_agent_hits`
-(`over.name`/`over.points` become `over_name`/`over_pts`).
+`swaps` already pairs each `best_lineup` player who didn't start with
+the started player they were legally eligible to replace (FLEX-eligible
+via RB/WR/TE, or the same strict position) - this handles cases a raw
+slot-by-slot label comparison gets wrong, like best_lineup reordering
+two started same-position players (e.g. RB1/RB2) with no real change.
+Build `misses` straight from `swaps`, one row per entry:
+`better_name`/`better_pts` from `in`, `started_name`/`started_pts`/`slot`
+from `out`, `swing` from the swap. Build `waiver_misses` from
+`free_agent_hits` (`over.name`/`over.points` become
+`over_name`/`over_pts`).
 
 A `misses` or `waiver_misses` row's `knowable` is true only when
 `sleeper_trends`, `sleeper_transactions`, or a web news result shows the
