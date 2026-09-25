@@ -27,7 +27,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/landlock-lsm/go-landlock v0.10.1
 	github.com/moby/moby/api v1.56.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
