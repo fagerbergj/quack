@@ -2,6 +2,14 @@
 
 Source: `research-r9-drafting.md` §1, "ADP as a value signal".
 
+## The verdict is code-owned
+
+`sleeper_draft` computes `adp_delta` (pick_no minus adp) and `adp_verdict`
+(`value`/`reach`/`fair`, at an 8-pick band) per pick. That verdict is the
+steal/reach call for a report card - state it as given, never recompute it
+by hand from `pick_no` and `adp`. Everything below is background on *why*
+an 8-pick fall or reach matters, not a competing threshold to apply.
+
 ## Definition
 
 "The average spot where a player is being taken across thousands of

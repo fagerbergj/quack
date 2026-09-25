@@ -25,7 +25,10 @@ with its source; where none exists, say so instead of inventing one.
    consensus price, a timing signal, not a projection. The reach test is
    VONA — if the target will survive to the next pick, reaching is not
    an edge. Never use a 12-team or other-platform ADP as this league's
-   price. Load `adp-as-value.md`.
+   price. `sleeper_draft` already carries each pick's `adp_delta` and
+   `adp_verdict` (`value`/`reach`/`fair`) — that verdict *is* the
+   steal/reach call for a report card; never recompute it from `pick_no`
+   and `adp`. Load `adp-as-value.md`.
 3. **Time the position, not the round number.** RB/WR/QB/TE/K/DEF each
    have their own 10-team-specific timing evidence — load
    `roster-construction.md` for the position in question.
