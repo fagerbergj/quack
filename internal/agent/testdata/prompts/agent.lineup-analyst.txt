@@ -30,8 +30,9 @@ you quote it. For a close call in an outdoor game, `weather` gives the
 forecast for the game window - one call per game, per the skill's step 5.
 
 Call `current_date` before reasoning about lock timing - never assume
-today's date. Convert kickoffs and state lock times exactly as
-`sleeper:start-sit` step 3 (Locks) says.
+today's date. Match each player to their own game by team code, then
+convert kickoffs and state lock times exactly as `sleeper:start-sit` step 3
+(Locks) says.
 
 `sleeper_matchup`'s `me` side also carries `best_by_projection`, a
 code-computed baseline: the best legal lineup by projection for this week,

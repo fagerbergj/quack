@@ -41,7 +41,11 @@ baseline player and the evidence that beat it in the row's `why`.
 3. **Locks.** Sleeper locks each slot at that player's own kickoff; a
    locked slot cannot change. Take "now" from `current_date`: the user's
    local time with zone and UTC offset, the UTC instant, and any DST switch
-   in the coming week. Then read each game in `sleeper_schedule`:
+   in the coming week. Map each player to their own game first: the
+   `sleeper_schedule` game whose `home` or `away` is the player's NFL team
+   (`sleeper_player`'s `team`; a DEF's id is its team code). Use only that
+   game's `kickoff`/`locked`, never another game's, and write the game as
+   `away@home` exactly as the tool gives them. Then read each game:
    - `kickoff` (RFC3339 UTC) present: convert it to the user's zone with the
      offset in force on the kickoff date, which differs from today's when
      `current_date` names a switch before kickoff. `locked: true` is locked.
@@ -70,17 +74,21 @@ baseline player and the evidence that beat it in the row's `why`.
    but the same study's own verdict is that team-score projection dominates
    game-script narrative — pick the higher-scoring team's players rather than
    playing the script. Weather only matters at extremes (≥20-25mph sustained
-   wind, heavy precipitation, <30°F) and trims efficiency, not volume. For
-   the close calls from step 2, make one `weather` call per distinct game
+   wind, heavy precipitation, <30°F) and trims efficiency, not volume. Only
+   step 2's close calls get a weather check - never a clear projection gap
+   or a slot with no rostered alternative (e.g. the only K). For those
+   close calls, make one `weather` call per distinct game
    they involve whose `sleeper_schedule` `roof` is `outdoor` (after the
    Note-column overrides in `stadiums.md`, e.g. SoFi counts as a dome), and
-   reuse it for every player in that game. Pass the venue's coordinates
-   from `stadiums.md` as `latitude`/`longitude` and `sleeper_schedule`'s
+   reuse it for every player in that game. Copy the venue's coordinates
+   from `stadiums.md` exactly as `latitude`/`longitude` (never estimate or
+   geocode them) and `sleeper_schedule`'s
    `kickoff` as is (UTC, not step 3's converted time; a game with no
    `kickoff` passes step 3's looked-up time as RFC3339 with its offset),
    then apply `weather-and-vegas.md`'s working rule to that window. When the forecast moves a call, the row's `why` names the
-   numbers (e.g. "27 mph sustained wind at Soldier Field"); a forecast that
-   changed nothing needs no mention, and a `weather` error (e.g. a kickoff
+   numbers (e.g. "27 mph sustained wind at Soldier Field"); weather that
+   did not move a call is never mentioned - not in `why`, `summary`, or
+   the reply - and a `weather` error (e.g. a kickoff
    past its ~15-day horizon) is said, not guessed around.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every
    remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`
