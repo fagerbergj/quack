@@ -1984,3 +1984,13 @@ describe('ChatStore a2ui surface events and double submit', () => {
     expect(JSON.parse((posts[1][1] as RequestInit).body as string)).toEqual({ content: 'second' })
   })
 })
+
+describe('ChatStore.attach', () => {
+  it('keeps the lifted turn server start time, the surface created_at fallback anchor', () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    const store = new ChatStore()
+    store.seed('chat-r', [{ id: 't9', created_at: '2026-09-27T10:00:00Z', input: { role: 'user', content: 'go' }, output: [] }])
+    store.attach('chat-r')
+    expect(store.get('chat-r').live).toMatchObject({ id: 't9', createdAt: '2026-09-27T10:00:00Z' })
+  })
+})

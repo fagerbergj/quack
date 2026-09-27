@@ -16,7 +16,7 @@ import { useChatStore } from '../state/ChatStoreProvider'
 import { Icon } from './Icon'
 import { AssistantText } from './AgentParts'
 import { A2uiSurfaceBox } from './A2uiArtifact'
-import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, type SurfaceContent } from '../lib/a2ui'
+import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, surfacePersistKey, type SurfaceContent } from '../lib/a2ui'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact (design V4
 // §4.3) - the only place a note's line anchor lives. Fetched and parsed
@@ -736,7 +736,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                 isStructured={isStructured}
                 parsedJson={parsedJson}
                 kind={primary?.kind}
-                chatId={chatId}
+                surface={surfaceTarget(chatId, primary, currentRev, latestRev)}
                 byLine={byLine}
                 activeNote={activeNote}
                 onSelectNote={setActiveNote}
@@ -1216,11 +1216,19 @@ export function PlanView({ data }: { data: PlanBody }) {
   )
 }
 
+// At the latest revision the panel shares the inline card's processor, so picks show in both;
+// an older revision renders detached so browsing history never rewinds the live surface.
+interface SurfaceTarget { chatId: string; revision?: number; persistKey?: string }
+function surfaceTarget(chatId: string, primary: ArtifactSummary | null, currentRev: number | null, latestRev: number | null): SurfaceTarget {
+  const shared = primary && currentRev != null && currentRev === latestRev
+  return shared ? { chatId, revision: currentRev, persistKey: surfacePersistKey(chatId, primary.name) } : { chatId }
+}
+
 // typedView dispatches a structured artifact's known kind to its own view;
 // undefined for anything else, so the caller falls back to the generic JSON tree - unknown kinds keep the tree.
-function typedView(kind: string | undefined, data: unknown, reviewFindings: { id: string; body: FindingBody | undefined }[], chatId: string): ReactNode | undefined {
+function typedView(kind: string | undefined, data: unknown, reviewFindings: { id: string; body: FindingBody | undefined }[], surface: SurfaceTarget): ReactNode | undefined {
   switch (kind) {
-    case A2UI_SURFACE_KIND: return <A2uiSurfaceBox chatId={chatId} content={data as SurfaceContent} />
+    case A2UI_SURFACE_KIND: return <A2uiSurfaceBox key={surface.persistKey} {...surface} content={data as SurfaceContent} />
     case 'code_review': return <ReviewView data={data as CodeReviewBody} findings={reviewFindings} />
     case 'finding': return <FindingView data={data as FindingBody} hideHeader />
     case 'judge_round': return <JudgeRoundView data={data as JudgeRoundContent} />
@@ -1232,7 +1240,7 @@ function typedView(kind: string | undefined, data: unknown, reviewFindings: { id
 // The primary output and a focused secondary share ONE renderer stack - the
 // Raw line list, a typed view per known kind (JSON tree for anything else),
 // and rendered markdown - so both surfaces can't drift as kinds grow.
-function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, chatId, byLine, activeNote, onSelectNote, reviewFindings }: {
+function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, surface, byLine, activeNote, onSelectNote, reviewFindings }: {
   content: string | null
   displayText: string | null
   lines: string[]
@@ -1240,7 +1248,7 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   isStructured: boolean
   parsedJson: unknown
   kind: string | undefined
-  chatId: string
+  surface: SurfaceTarget
   byLine: Map<number, JudgeNote[]>
   activeNote: JudgeNote | null
   onSelectNote: (n: JudgeNote) => void
@@ -1250,7 +1258,7 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   if (rawView) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (!isStructured) return <ArtifactMarkdown text={content ?? ''} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (parsedJson === undefined) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
-  const typed = typedView(kind, parsedJson, reviewFindings ?? [], chatId)
+  const typed = typedView(kind, parsedJson, reviewFindings ?? [], surface)
   return typed ?? <JsonView data={parsedJson} />
 }
 
@@ -1363,7 +1371,7 @@ function TitleHeading({ primary, body, reviewFindings }: {
 
 // The primary output's view slot: the diff (when active with a loaded body)
 // or the shared renderer stack.
-function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, chatId, byLine, activeNote, onSelectNote, reviewFindings }: {
+function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, surface, byLine, activeNote, onSelectNote, reviewFindings }: {
   diffActive: boolean
   diffText: string | null
   content: string | null
@@ -1373,7 +1381,7 @@ function PrimaryView({ diffActive, diffText, content, displayText, lines, rawVie
   isStructured: boolean
   parsedJson: unknown
   kind: string | undefined
-  chatId: string
+  surface: SurfaceTarget
   byLine: Map<number, JudgeNote[]>
   activeNote: JudgeNote | null
   onSelectNote: (n: JudgeNote) => void
@@ -1388,7 +1396,7 @@ function PrimaryView({ diffActive, diffText, content, displayText, lines, rawVie
       isStructured={isStructured}
       parsedJson={parsedJson}
       kind={kind}
-      chatId={chatId}
+      surface={surface}
       byLine={byLine}
       activeNote={activeNote}
       onSelectNote={onSelectNote}

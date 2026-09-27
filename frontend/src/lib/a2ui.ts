@@ -76,6 +76,11 @@ export function parseA2uiActionText(text: string): { name: string; surfaceId: st
   return null
 }
 
+// One processor per surface artifact per chat: the inline card and the panel share it.
+export function surfacePersistKey(chatId: string, artifactName: string): string {
+  return `${chatId}/${artifactName}`
+}
+
 export interface SurfaceRef { name: string; revision: number }
 
 // One card per surface, at its latest revision, under the turn that created it: a turn_id naming a

@@ -26,10 +26,10 @@ export function useTurnArtifacts(chatId: string | null, state: ChatState) {
   const current = artifacts.chatId === chatId
   const list = current ? artifacts.list : EMPTY
   const turnImages = current ? artifacts.images : NO_IMAGES
-  const liveId = state.live?.id
+  const live = state.live
   const turnSurfaces = useMemo(
-    () => surfacesByTurn(list, liveId ? [...state.turns, { id: liveId }] : state.turns, state.surfacePins),
-    [list, state.turns, liveId, state.surfacePins],
+    () => surfacesByTurn(list, live?.id ? [...state.turns, { id: live.id, created_at: live.createdAt }] : state.turns, state.surfacePins),
+    [list, state.turns, live?.id, live?.createdAt, state.surfacePins],
   )
   return { turnImages, turnSurfaces }
 }

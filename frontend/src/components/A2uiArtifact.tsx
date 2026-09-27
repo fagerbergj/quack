@@ -1,7 +1,7 @@
 import { Component, Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { useChatState, useChatStore } from '../state/ChatStoreProvider'
-import type { SurfaceContent, SurfaceRef } from '../lib/a2ui'
+import { surfacePersistKey, type SurfaceContent, type SurfaceRef } from '../lib/a2ui'
 import type { A2UiAction } from '../generated'
 
 // The renderer (web_core + zod) is its own chunk: most chats never show a surface.
@@ -20,7 +20,7 @@ class SurfaceBoundary extends Component<{ children: ReactNode }, { failed: boole
 }
 
 // A surface with its button actions sent as turns of this chat.
-export function A2uiSurfaceBox({ chatId, content, persistKey }: { chatId: string; content: SurfaceContent; persistKey?: string }) {
+export function A2uiSurfaceBox({ chatId, content, revision, persistKey }: { chatId: string; content: SurfaceContent; revision?: number; persistKey?: string }) {
   const store = useChatStore()
   const state = useChatState(chatId)
   const busy = !!(state.submitting || state.live?.streaming)
@@ -28,7 +28,7 @@ export function A2uiSurfaceBox({ chatId, content, persistKey }: { chatId: string
   return (
     <SurfaceBoundary>
       <Suspense fallback={<p className="text-xs text-gray-500 dark:text-gray-400" role="status">Loading…</p>}>
-        <A2uiSurfaceView content={content} onAction={onAction} persistKey={persistKey} busy={busy} />
+        <A2uiSurfaceView content={content} revision={revision} onAction={onAction} persistKey={persistKey} busy={busy} />
       </Suspense>
     </SurfaceBoundary>
   )
@@ -46,7 +46,7 @@ function A2uiArtifact({ chatId, name, revision }: { chatId: string; name: string
     return () => { cancelled = true }
   }, [chatId, name, revision])
   if (!content) return error ? loadFailed : null
-  return <A2uiSurfaceBox chatId={chatId} content={content} persistKey={`${chatId}/${name}`} />
+  return <A2uiSurfaceBox chatId={chatId} content={content} revision={revision} persistKey={surfacePersistKey(chatId, name)} />
 }
 
 // The surfaces a turn created, under its response.

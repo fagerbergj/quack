@@ -79,6 +79,8 @@ export interface DagTurnState {
 interface LiveTurn {
   id: string             // turn ID (response_id) - empty string while streaming before first event
   userText: string
+  // Server start time; known only for a persisted turn attach() lifted back into `live`.
+  createdAt?: string
   dag?: DagTurnState
   // Top-level fields for orchestrator responses that don't go through a DAG node.
   text: string           // accumulated answer text from node-less agent_token events
@@ -151,7 +153,7 @@ function turnFromLiveTurn(live: LiveTurn): Turn {
   const text = live.dag ? (finalId != null ? (live.dag.nodeAnswer[finalId] ?? '') : live.text) : live.text
   return {
     id: live.id,
-    created_at: new Date().toISOString(),
+    created_at: live.createdAt ?? new Date().toISOString(),
     input: { role: 'user', content: live.userText },
     output: [{ id: `${live.id}-msg`, type: 'message', status: 'completed', content: [{ type: 'output_text', text }] }],
   }
@@ -581,6 +583,7 @@ export class ChatStore {
     const live: LiveTurn = {
       id: last?.id ?? '',
       userText: last?.input.content ?? '',
+      createdAt: last?.created_at,
       streaming: true,
       error: '',
       text: last ? textFromTurn(last) : '',

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import A2uiSurfaceView from './A2uiSurface'
 import { pr1085 } from './A2uiSurface.fixtures'
@@ -96,5 +96,18 @@ describe('A2uiSurfaceView', () => {
     const button = screen.getByRole('button')
     expect(button.querySelector('p, a')).toBeNull()
     expect(container.textContent).not.toContain('account_circle')
+  })
+
+  it('shares picks between two views of one surface (inline card and panel) and never rewinds to an older revision', async () => {
+    const user = userEvent.setup()
+    render(<><div data-testid="inline"><A2uiSurfaceView content={first} revision={1} persistKey="t-shared" /></div>
+      <div data-testid="panel"><A2uiSurfaceView content={graded} revision={2} persistKey="t-shared" /></div></>)
+    const panel = within(screen.getByTestId('panel'))
+    const inline = within(screen.getByTestId('inline'))
+    await user.click(panel.getByRole('tab', { name: 'Quiz' }))
+    await user.click(panel.getByLabelText(/That one skill is skipped/))
+    await user.click(inline.getByRole('tab', { name: 'Quiz' }))
+    expect((inline.getByLabelText(/That one skill is skipped/) as HTMLInputElement).checked).toBe(true)
+    expect(inline.getByRole('button', { name: 'Score: 2/4' })).toBeTruthy()
   })
 })

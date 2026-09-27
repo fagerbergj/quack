@@ -174,6 +174,7 @@ const quackCatalog = new Catalog<ReactComponentImplementation>(
 interface Entry {
   processor: MessageProcessor<ReactComponentImplementation>
   content?: SurfaceContent
+  revision?: number
   onAction?: (a: A2UiAction) => void
   error?: string
 }
@@ -191,8 +192,9 @@ function newEntry(): Entry {
 }
 
 // Idempotent per content object; a throw mid-batch leaves the prior render in place with the error shown.
-function apply(entry: Entry, content: SurfaceContent): void {
-  if (entry.content === content) return
+// A view holding an older revision (a stale inline fetch) never rewinds a shared entry.
+function apply(entry: Entry, content: SurfaceContent, revision?: number): void {
+  if (entry.content === content || (revision != null && entry.revision != null && revision < entry.revision)) return
   const local = entry.processor.model.getSurface(content.surface_id)?.dataModel.get('/')
   try {
     entry.processor.processMessages(surfaceMessages(entry.content, content, local))
@@ -201,30 +203,32 @@ function apply(entry: Entry, content: SurfaceContent): void {
     entry.error = e instanceof Error ? e.message : String(e)
   }
   entry.content = content
+  entry.revision = revision ?? entry.revision
 }
 
-function entryFor(persistKey: string | undefined, content: SurfaceContent): Entry {
+function entryFor(persistKey: string | undefined, content: SurfaceContent, revision?: number): Entry {
   const existing = persistKey ? entries.get(persistKey) : undefined
   if (existing) return existing
   const entry = newEntry()
-  apply(entry, content)
+  apply(entry, content, revision)
   if (persistKey) entries.set(persistKey, entry)
   return entry
 }
 
 // Renders one a2ui_surface revision. Same persistKey = same processor across
 // remounts and revisions, so a newer revision updates in place and keeps the user's picks.
-export default function A2uiSurfaceView({ content, onAction, persistKey, busy = false }: {
+export default function A2uiSurfaceView({ content, revision, onAction, persistKey, busy = false }: {
   content: SurfaceContent
+  revision?: number
   onAction?: (a: A2UiAction) => void
   persistKey?: string
   busy?: boolean
 }) {
-  const [entry] = useState(() => entryFor(persistKey, content))
+  const [entry] = useState(() => entryFor(persistKey, content, revision))
   const [error, setError] = useState(entry.error)
   useLayoutEffect(() => { entry.onAction = onAction }, [entry, onAction])
   // Updates run here, not in render: they fire signal subscriptions of already-mounted components.
-  useLayoutEffect(() => { apply(entry, content); setError(entry.error) }, [entry, content])
+  useLayoutEffect(() => { apply(entry, content, revision); setError(entry.error) }, [entry, content, revision])
   const surface = entry.processor.model.getSurface(content.surface_id)
   return (
     <div className="quack-a2ui min-w-0 text-sm text-gray-900 dark:text-gray-100">
