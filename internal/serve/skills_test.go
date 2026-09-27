@@ -286,7 +286,7 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 
 // TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts is the
 // reviewer-mandated regression for #1427 R1: the shipped default seed on a
-// dev checkout must serve the SAME 27-skill roster and 3 ACP skill paths as
+// dev checkout must serve the SAME 28-skill roster and 3 ACP skill paths as
 // main did before the plugin registry existed - not a doubled roster from
 // missing by-bare-name suppression of the embedded dotagents copy. Local
 // fixtures stand in for the real registry-fetched dotagents/ponytail (no
@@ -335,12 +335,12 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fms) != 27 {
+	if len(fms) != 28 {
 		names := make([]string, len(fms))
 		for i, fm := range fms {
 			names[i] = fm.Name
 		}
-		t.Errorf("roster = %d skills, want 27 (main's count): %v", len(fms), names)
+		t.Errorf("roster = %d skills, want 28 (main's count): %v", len(fms), names)
 	}
 
 	paths := acpSkillPaths(skills.plugins)
