@@ -21,7 +21,7 @@ import (
 var updateGolden = flag.Bool("update-golden", false, "rewrite the prompt golden files")
 
 // todayLine: the Environment layer's only non-deterministic input.
-var todayLine = regexp.MustCompile(`Today is \d{4}-\d{2}-\d{2}\.`)
+var todayLine = regexp.MustCompile(`Today is [^\n]*\.`)
 
 func checkGolden(t *testing.T, name, got string) {
 	t.Helper()

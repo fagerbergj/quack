@@ -912,6 +912,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// not import acp, hence the hook), so they never outlive their node or the server.
 	vetting.NodeSessionClosed = acp.ClosePinnedSession
 	b.cleanups = append(b.cleanups, acp.CloseAllPinnedSessions)
+	promptbuilder.SetLocation(cfg.Location())
 
 	addr = cfg.Server.Addr
 	if port != 0 {

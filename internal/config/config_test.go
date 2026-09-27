@@ -484,6 +484,23 @@ func TestServerPublicURL(t *testing.T) {
 	}
 }
 
+// TestTimezone: QUACK_TIMEZONE resolves to its IANA zone, an unknown name
+// fails load, and unset falls back to time.Local.
+func TestTimezone(t *testing.T) {
+	for env, want := range map[string]string{"": "Local", "America/Chicago": "America/Chicago", "Mars/Olympus": ""} {
+		t.Setenv("QUACK_TIMEZONE", env)
+		c, err := Load(writeTemp(t, baseConfig+"timezone: ${QUACK_TIMEZONE}\n"))
+		switch {
+		case want == "" && err == nil:
+			t.Errorf("QUACK_TIMEZONE=%q: expected a load error", env)
+		case want != "" && err != nil:
+			t.Errorf("QUACK_TIMEZONE=%q: Load: %v", env, err)
+		case err == nil && c.Location().String() != want:
+			t.Errorf("QUACK_TIMEZONE=%q: Location() = %s, want %s", env, c.Location(), want)
+		}
+	}
+}
+
 // TestConsolidationSchedule checks schedule is honored when set explicitly
 // (including the "" opt-out), defaults when absent, and rejects a bad cron.
 func TestConsolidationSchedule(t *testing.T) {

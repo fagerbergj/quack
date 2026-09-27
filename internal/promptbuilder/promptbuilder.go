@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/adk/v2/tool"
@@ -118,8 +119,32 @@ func skillLines(skills []*skill.Frontmatter, loadable bool) string {
 	return sb.String()
 }
 
+var (
+	location atomic.Pointer[time.Location]
+	now      = time.Now
+)
+
+// SetLocation sets the user's zone for every date and time shown to agents; nil means time.Local.
+func SetLocation(loc *time.Location) { location.Store(loc) }
+
+func userNow() time.Time {
+	if loc := location.Load(); loc != nil {
+		return now().In(loc)
+	}
+	return now().In(time.Local)
+}
+
+// Now is the current instant in the user's zone with its abbreviation and
+// offset, plus UTC, so an agent can compare it with a time given in any zone.
+func Now() string {
+	t := userNow()
+	return t.Format("Monday, January 2, 2006 15:04 MST (UTC-07:00)") + "; UTC " + t.UTC().Format("2006-01-02T15:04Z")
+}
+
+// today omits the clock time: CacheByDay keys on it, and a stale time is worse than none.
+// The offset is in the key so a DST switch rebuilds the prompt.
 func today() string {
-	return time.Now().Format("2006-01-02")
+	return userNow().Format("Monday, 2006-01-02 in the user's time zone (MST, UTC-07:00)")
 }
 
 // CacheByDay memoizes build's result, rebuilding when today() moves on or when version reports a

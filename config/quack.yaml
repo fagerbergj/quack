@@ -311,6 +311,11 @@ dag:
   # clones/checks within a single run.
   max_active_nodes: 32
 
+# The user's IANA time zone (e.g. America/Chicago) for the dates and times
+# agents see: the prompt's "Today is" line and the current_date tool. Unset
+# falls back to TZ, then the host's /etc/localtime, then UTC.
+timezone: ${QUACK_TIMEZONE}
+
 server:
   addr: ":8080"
   # topology: how the stores are provided. embedded (sqlite, no containers) and

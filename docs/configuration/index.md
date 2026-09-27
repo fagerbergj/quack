@@ -22,6 +22,7 @@ tools:          # built-in tool configuration
 gates:          # the trust gate: deterministic checks + judge
 dag:            # concurrency caps for the DAG executor
 server:         # listen address, store topology, public_url
+timezone:       # the user's IANA time zone for agent-facing dates and times
 workspace:      # the agents' filesystem/git/run_command sandbox
 skills:         # (deprecated alias for plugins) skill-library plugin roots
 plugins:        # Agent Plugins roots (skills + mcp.json + quack extension declarations)
@@ -66,6 +67,10 @@ adk's summariser hard-errors past its transcript cap (sized from `context_window
 - `shutdown_grace_seconds` — how long SIGTERM waits for in-flight runs before force-cancelling them (default 20).
 - `public_url` — this server's externally reachable base URL, e.g. `https://quack.example.com`. Must be an absolute `http(s)` URL with no trailing slash when set. Passed to extensions (SDK `Host.PublicURL`) so a posted GitHub comment/review can link back to the run that made it; unset ⇒ no link. Interpolated from `QUACK_PUBLIC_URL`, which is optional — unset expands to empty, not a validation error.
 
+## `timezone`
+
+The user's IANA time zone name, e.g. `America/Chicago`, interpolated from `QUACK_TIMEZONE`. Agents see dates and times in this zone: the system prompt's `Today is` line (date, zone abbreviation, UTC offset) and the `current_date` tool (local date and time with zone and offset, plus the UTC instant), so they can compare against times published in another zone, such as an NFL kickoff in ET. An unknown name fails config load. Unset falls back to Go's local zone: `TZ`, then `/etc/localtime`, then UTC. The binary embeds its own zone database, so no OS `tzdata` package is needed.
+
 ## Key environment variables
 
 | Var | Purpose |
@@ -81,6 +86,7 @@ adk's summariser hard-errors past its transcript cap (sized from `context_window
 | `QUACK_SEARXNG_URL` | SearXNG JSON API endpoint for web search |
 | `QUACK_WORKSPACE_ROOT` | Filesystem sandbox root (default `./workspace`) |
 | `QUACK_PUBLIC_URL` | This server's externally reachable base URL; interpolated into `server.public_url`. Optional — unset ⇒ no link in extension-posted comments/reviews |
+| `QUACK_TIMEZONE` | The user's IANA time zone (e.g. `America/Chicago`); interpolated into `timezone`. Optional — unset ⇒ `TZ`, then the host zone, then UTC |
 | `QUACK_LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error` |
 | `QUACK_LOG_FORMAT` | slog output: `text` (default) or `json` |
 | `QUACK_CONFIG` | Path to `quack.yaml`, used when `--config` isn't passed |

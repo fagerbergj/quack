@@ -38,11 +38,17 @@ baseline player and the evidence that beat it in the row's `why`.
    tie-break gap (`flex-decisions.md`, under 3 points) of the starter's,
    search the open web for what changed and cite it inline as a markdown
    link.
-3. **Locks.** Sleeper locks each slot at that player's own kickoff
-   (`sleeper_schedule` for kickoff times); a locked slot cannot change. A
-   Thursday player has no Thu/Fri/Sat report — the decision is effectively
-   final at the Wednesday 4pm ET report. State the lock time when a
-   Questionable/Doubtful player's kickoff is close.
+3. **Locks.** Sleeper locks each slot at that player's own kickoff; a
+   locked slot cannot change. Take "now" from `current_date` (the user's
+   local time, UTC offset, and UTC) and put every kickoff in the user's zone
+   before comparing: use `sleeper_schedule`'s kickoff instant or lock flag
+   when it has one; when it gives only a date, a started or finished game is
+   locked and a pre-game one needs its published kickoff (usually ET)
+   converted. Never take "today" from a UTC timestamp: a Sunday or Monday
+   night kickoff is already the next day in UTC. A Thursday player has no
+   Thu/Fri/Sat report — the decision is effectively final at the Wednesday
+   4:00 PM ET report. State the lock time in the user's zone, with ET
+   alongside, when a Questionable/Doubtful player's kickoff is close.
 4. **Matchup, bounded.** Pull opponent defensive context. The real, quantified
    effect is small and position-dependent: −0.07 (QB), −0.13 (RB), −0.09 (WR)
    fantasy points per one-spot change in opponent defensive rank, TE
