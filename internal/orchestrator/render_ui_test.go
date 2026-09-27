@@ -50,7 +50,7 @@ func TestOrchestratorRun_RenderUI(t *testing.T) {
 	svc := artifact.InMemoryService()
 	sessions := session.InMemoryService()
 	stub := &renderUIStub{}
-	o := New(sessions, stub, "you are the orchestrator", dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
+	o := New(sessions, stub, func(context.Context) string { return "you are the orchestrator" }, dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
 	o.SetArtifacts(svc)
 	o.SetRenderUI(true)
 
@@ -74,7 +74,7 @@ func TestOrchestratorRun_RenderUI(t *testing.T) {
 func TestOrchestratorRun_RenderUIDisabled(t *testing.T) {
 	sessions := session.InMemoryService()
 	stub := &renderUIStub{}
-	o := New(sessions, stub, "you are the orchestrator", dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
+	o := New(sessions, stub, func(context.Context) string { return "you are the orchestrator" }, dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
 	o.SetArtifacts(artifact.InMemoryService())
 	for _, err := range o.Run(context.Background(), "u1", "c1", SourceApp, "show me", nil) {
 		if err != nil {
