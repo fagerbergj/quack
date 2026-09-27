@@ -31,17 +31,34 @@ func TestZonedSchedule(t *testing.T) {
 			t.Errorf("%q: next = %s, want %s", schedule, got, want)
 		}
 	}
+	off := ""
+	startConsolidationSweep(t.Context(), nil, config.ResolvedMemory{Consolidation: config.ConsolidationConfig{Schedule: &off}}, chicago) // "" disables: no goroutine
 }
 
-// TestLogTimezoneWarnsOnUnknownTZ: an unset timezone with a bad TZ warns instead of silently serving UTC.
-func TestLogTimezoneWarnsOnUnknownTZ(t *testing.T) {
+// TestLogTimezone: a configured zone logs at info; an unknown TZ with no
+// configured zone warns instead of silently serving UTC.
+func TestLogTimezone(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	logTimezone(&config.Config{Timezone: "America/Chicago"})
+	if !strings.Contains(buf.String(), "level=INFO") || !strings.Contains(buf.String(), "America/Chicago") {
+		t.Errorf("configured zone log = %q, want INFO naming America/Chicago", buf.String())
+	}
+
+	buf.Reset()
 	t.Setenv("TZ", "Mars/Olympus")
 	logTimezone(&config.Config{})
 	if !strings.Contains(buf.String(), "level=WARN") || !strings.Contains(buf.String(), "Mars/Olympus") {
-		t.Errorf("log = %q, want a WARN naming TZ", buf.String())
+		t.Errorf("bad TZ log = %q, want a WARN naming TZ", buf.String())
+	}
+
+	buf.Reset()
+	t.Setenv("TZ", "")
+	logTimezone(&config.Config{})
+	if buf.Len() == 0 {
+		t.Error("unset zone logged nothing")
 	}
 }
