@@ -57,10 +57,10 @@ session:
 
 orchestrator:
   # see config/quack.yaml's orchestrator.skills comment for the routing rationale.
-  skills: [plan-work, format-markdown, present-coding-plan, contribute]
+  skills: [plan-work, format-markdown, present-coding-plan, contribute, a2ui-surfaces]
   provider: default
   model: ${QUACK_ORCH_MODEL}
-  tools: [web_search, web_fetch, summarize, current_date]
+  tools: [web_search, web_fetch, summarize, current_date, render_ui]  # render_ui: quiz grading upserts
 
 # plugins.seed: explicit because the shipped default (dotagents, ponytail, the
 # compiled-in usage manifest) would otherwise be REPLACED, not extended, by
@@ -115,6 +115,14 @@ agents:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
       allow_clone: true   # clones third-party repos into $TMPDIR; needs sandbox landlock or bwrap (this preset's default), git push stays denied
+  pr-tutor:                     # see config/quack.yaml's pr-tutor entry
+    bundle: agents/pr-tutor
+    skills: [mermaid-authoring]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 131072
+    judge_rounds: 1
+    tools: [web_fetch, grep_artifacts, check_mermaid, render_ui]
   synthesizer:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan]

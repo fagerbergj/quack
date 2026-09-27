@@ -5,13 +5,16 @@ scale:
 notes: >
   The deliverable is an interactive surface, not the reply. The worker renders it with render_ui, which
   stores the merged surface as the artifact `a2ui_surface:<surface_id>` and the answer key as
-  `quiz_key:<surface_id>`. Read both with read_artifact before scoring anything: the server shuffles each question's options after the call, so the option values in
-  the render_ui call shown in the tool results do not match the stored surface - the stored pair is the
-  one that agrees. The reply is one or two sentences pointing at the surface; never score its length,
-  prose quality, or lack of citations. The diff is readable as the `bytes:files` artifact (each file's
-  `patch`) on a GitHub-triggered run, or as a stored `web_page` artifact when a fetched diff was long. A
-  short fetched diff reached the worker inline only: then check against the surface's own Code excerpts
-  and the PR description, and do not count a claim as a finding only because you cannot see its hunk.
+  `quiz_key:<surface_id>`. Read both with read_artifact before scoring anything, and score only the
+  stored pair: the server shuffles each question's options after the call, so option values the worker
+  used in its call can differ from the stored ones. The reply is one or two sentences pointing at the
+  surface; never score its length, prose quality, or lack of citations. Read the diff from the chat's
+  artifacts. On a GitHub-triggered run it is `bytes:files`, one JSON value per line: grep_artifacts
+  with pattern '"filename":' and ids ["bytes:files"] gives each file's line, and read_artifact(id,
+  offset, lines) from there shows that file's `patch`. Otherwise it is the `web_page` artifact of the
+  fetched .diff or /files URL (list_artifacts kind web_page); read_artifact it in windows. If no stored
+  diff exists, check against the surface's own Code excerpts and the PR description, and do not count a
+  claim as a finding only because you cannot see its hunk.
 criteria:
   surface_delivered:
     definition: >
@@ -32,7 +35,7 @@ criteria:
     - Check the data model holds one list per question under /answers.
     - >-
       Check the quiz_key has an entry for every question, and each entry's answer is one of that
-      question's option values on the stored surface.
+      question's option values on the stored surface, the one whose label is the entry's label.
     bands:
     - min: 3.0
       max: 3.0
