@@ -668,7 +668,9 @@ workspace:
 #     # while it's present, one attempt per failure, and also engages a PR quack
 #     # itself authored - needs the App subscribed to Workflow run + Pull request
 #     # review events, and Actions/Checks read).
-#     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix]
+#     # explain (a /explain PR comment opens a walkthrough and quiz in quack's chat;
+#     # posts only the link - needs the pr-tutor agent).
+#     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix, explain]
 #     # run_timeout_minutes: 120  # default; bounds one dispatched run
 #     # auto_archive_on_merge: false  # default; archive the chat session when quack:merge lands
 #     # auto_review_label: "quack-auto-review"  # legacy alias for labels.review; set labels.review instead
