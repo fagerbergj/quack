@@ -245,20 +245,23 @@ criteria:
       `outdoor` after the Note-column overrides in `stadiums.md` (SoFi
       counts as a dome, Wembley as outdoor).
     guidance: >
-      A close call whose slot or either player's game is locked is exempt,
-      as is a game already played or beyond the forecast horizon, and a
+      A close call where either player's game is locked, or whose slot has
+      no rostered alternative (e.g. the only K), is exempt, as is a game
+      already played or beyond the forecast horizon, and a
       `weather` call that errored or came back out of range counts as
       checked when the answer acknowledges it. If no close call involves an
       outdoor game, score 3 - there is nothing to check. One call per game
       covers every player in it.
     steps:
     - List every close call (as in outside_news_for_close_calls) and its
-      game; keep the outdoor ones in unlocked slots and games that are not
-      past the horizon.
+      game; keep the outdoor, non-exempt ones (both players' games unlocked,
+      a real alternative, not past the horizon).
     - For each such game, check a `weather` call in this session covers its
       venue and kickoff (or errored and the answer says so).
     - Check each `weather` call used `stadiums.md`'s coordinates for that
-      venue, and none was made for a non-close call, a locked game, or an exempt close call.
+      venue (or, for a venue missing there, coordinates a `web_search`
+      returned, as `stadiums.md` allows), and none was made for a non-close
+      call, a locked game, or an exempt close call.
     - Read the artifact and the chat reply. Check any call that cites weather
       matches the tool's numbers, that
       weather below the skill's extremes did not flip a call, and that
@@ -269,7 +272,7 @@ criteria:
       meaning: every outdoor close-call game is checked, and weather moves a call only at the skill's extremes, stated with its numbers.
     - min: 2.0
       max: 2.0
-      meaning: every outdoor close-call game is checked, but a call weather moved lacks the forecast numbers, or weather was checked for a non-close call or a locked game.
+      meaning: every outdoor close-call game is checked, but a call weather moved lacks the forecast numbers, or weather was checked for a non-close call, a locked game, or an exempt close call.
     - min: 1.0
       max: 1.0
       meaning: exactly one outdoor close-call game is unchecked, mild weather tipped a call, or a forecast is mentioned (including "no adjustment needed") for a call it did not move.

@@ -79,7 +79,7 @@ baseline player and the evidence that beat it in the row's `why`.
    wind, heavy precipitation, <30°F) and trims efficiency, not volume. Only
    step 2's close calls in unlocked games get a weather check - never a
    locked or in-progress game, a close call exempt because either
-   player's slot is locked, a clear projection gap, or a slot with no
+   player's game is locked, a clear projection gap, or a slot with no
    rostered alternative (e.g. the only K). For those
    close calls, make one `weather` call per distinct game they involve
    whose `game.roof` is `outdoor` (after the Note-column overrides in

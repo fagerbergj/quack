@@ -19,6 +19,7 @@ type stubOpenMeteo struct {
 	lastForecast              atomic.Value // url.Values
 	geocodeBody               string
 	maxDate                   string // horizon; later end_date gets a 400 like the real API
+	rowsUntil                 string // horizon in 200 mode: rows stop after this date
 	forecastStatus            int
 	forecastBody              string
 }
@@ -44,7 +45,7 @@ func (s *stubOpenMeteo) serve(t *testing.T) weatherAPI {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = fmt.Fprintf(w, `{"error":true,"reason":"Parameter 'end_date' is out of allowed range to %s"}`, s.maxDate)
 			default:
-				_, _ = w.Write([]byte(forecastFixture(t, q)))
+				_, _ = w.Write([]byte(forecastFixture(t, q, s.rowsUntil)))
 			}
 		default:
 			http.NotFound(w, r)
@@ -56,12 +57,15 @@ func (s *stubOpenMeteo) serve(t *testing.T) weatherAPI {
 }
 
 // forecastFixture: one row per hour; temperature = the row's UTC hour, weather_code 63 (rain).
-func forecastFixture(t *testing.T, q url.Values) string {
+func forecastFixture(t *testing.T, q url.Values, rowsUntil string) string {
 	start, err := time.ParseInLocation(time.DateOnly, q.Get("start_date"), stubTodayOffset)
 	if err != nil {
 		t.Errorf("start_date %q: %v", q.Get("start_date"), err)
 	}
 	end, _ := time.ParseInLocation(time.DateOnly, q.Get("end_date"), stubTodayOffset)
+	if capAt, err := time.ParseInLocation(time.DateOnly, rowsUntil, stubTodayOffset); err == nil && capAt.Before(end) {
+		end = capAt
+	}
 	var ts, temps []string
 	for h := start; h.Before(end.AddDate(0, 0, 1)); h = h.Add(time.Hour) {
 		ts = append(ts, fmt.Sprint(h.Unix()))
@@ -152,6 +156,15 @@ func TestWeatherHorizonRetriesUnpadded(t *testing.T) {
 	_, err = w.forecast(context.Background(), weatherArgs{Latitude: f64(41.86), Longitude: f64(-87.62), Kickoff: "2026-10-20T17:00:00Z"})
 	if err == nil || !strings.Contains(err.Error(), "out of allowed range") {
 		t.Errorf("past-horizon err = %v", err)
+	}
+}
+
+func TestWeatherNoRowsInWindow(t *testing.T) {
+	s := &stubOpenMeteo{rowsUntil: "2026-10-11"}
+	w := s.serve(t)
+	_, err := w.forecast(context.Background(), weatherArgs{Latitude: f64(41.86), Longitude: f64(-87.62), Kickoff: "2026-10-13T17:00:00Z"})
+	if err == nil || !strings.Contains(err.Error(), "no hourly data for 2026-10-13T17:00:00Z") {
+		t.Errorf("err = %v, want the empty-window error", err)
 	}
 }
 
