@@ -67,13 +67,33 @@ export function a2uiActionText(action: A2UiAction): string {
   return ACTION_PREFIX + JSON.stringify(action)
 }
 
-export function parseA2uiActionText(text: string): { name: string; surfaceId: string; context: unknown } | null {
+export function parseA2uiActionText(text: string): { name: string; surfaceId: string; sourceComponentId?: string; context: unknown } | null {
   if (!text.startsWith(ACTION_PREFIX)) return null
   try {
     const a = JSON.parse(text.slice(ACTION_PREFIX.length)) as Partial<A2UiAction> | null
-    if (typeof a?.name === 'string' && typeof a.surface_id === 'string') return { name: a.name, surfaceId: a.surface_id, context: a.context }
+    if (typeof a?.name === 'string' && typeof a.surface_id === 'string') return { name: a.name, surfaceId: a.surface_id, sourceComponentId: a.source_component_id, context: a.context }
   } catch { /* not an action turn */ }
   return null
+}
+
+// Picks live only in the browser; after a reload, the latest action turn for this surface
+// still carries them. Restored only onto paths the stored data model leaves blank.
+export function restoredPicks(content: SurfaceContent, userTexts: string[]): Array<{ path: string; value: unknown }> {
+  const action = userTexts.map(parseA2uiActionText).filter(a => a?.surfaceId === content.surface_id).pop()
+  const button = content.components.find(c => c.id === action?.sourceComponentId)
+  const bound = (button?.action as { event?: { context?: Json } } | undefined)?.event?.context ?? {}
+  const sent = isRecord(action?.context) ? action.context : {}
+  return Object.entries(bound).flatMap(([k, v]) => {
+    const path = (v as { path?: unknown } | null)?.path
+    if (typeof path !== 'string' || !path.startsWith('/') || !(k in sent) || !isBlank(valueAt(content.data_model, path))) return []
+    return [{ path, value: sent[k] }]
+  })
+}
+
+function isBlank(v: unknown): boolean {
+  if (v == null || v === '') return true
+  if (Array.isArray(v)) return v.length === 0
+  return isRecord(v) && Object.values(v).every(isBlank)
 }
 
 // One processor per surface artifact per chat: the inline card and the panel share it.

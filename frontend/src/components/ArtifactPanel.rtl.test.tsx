@@ -772,6 +772,8 @@ describe('A2UI artifacts in the panel', () => {
   const surface = JSON.stringify({ surface_id: 'pr-1-tutor', components: [{ id: 'root', component: 'Text', variant: 'h2', text: 'PR #1 tutor' }], data_model: {} })
   const quizKey = JSON.stringify({ surface_id: 'pr-1-tutor', answers: { q1: { answer: 'b', why: 'the secret reason' } } })
   const lineage = { node_id: 'tutor-1', author: 'worker' }
+  // Revision 2 (grading) came from the orchestrator, which now owns the summary's latest lineage.
+  const graded = { node_id: 'orchestrator', author: 'worker' }
   function stubTutorFixture() {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
@@ -782,7 +784,9 @@ describe('A2UI artifacts in the panel', () => {
       if (url.includes('/artifacts/quiz_key:pr-1-tutor')) return textResponse(quizKey)
       return jsonResponse({
         data: [
-          { name: 'a2ui_surface:pr-1-tutor', kind: 'a2ui_surface', class: 'structured', latest_revision: 1, lineage, revisions: [] },
+          { name: 'a2ui_surface:pr-1-tutor', kind: 'a2ui_surface', class: 'structured', latest_revision: 2, lineage: graded, revisions: [
+            { revision: 1, mime_type: 'application/json', size: 1, lineage }, { revision: 2, mime_type: 'application/json', size: 1, lineage: graded },
+          ] },
           { name: 'quiz_key:pr-1-tutor', kind: 'quiz_key', class: 'structured', latest_revision: 1, lineage, revisions: [] },
         ],
       })

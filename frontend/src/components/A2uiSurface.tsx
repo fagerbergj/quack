@@ -171,6 +171,8 @@ const quackCatalog = new Catalog<ReactComponentImplementation>(
   basicCatalog.themeSchema,
 )
 
+type Restore = Array<{ path: string; value: unknown }>
+
 interface Entry {
   processor: MessageProcessor<ReactComponentImplementation>
   content?: SurfaceContent
@@ -206,25 +208,29 @@ function apply(entry: Entry, content: SurfaceContent, revision?: number): void {
   entry.revision = revision ?? entry.revision
 }
 
-function entryFor(persistKey: string | undefined, content: SurfaceContent, revision?: number): Entry {
+// restore seeds picks only into a brand-new entry; a live one already holds the user's state.
+function entryFor(persistKey: string | undefined, content: SurfaceContent, revision?: number, restore: Restore = []): Entry {
   const existing = persistKey ? entries.get(persistKey) : undefined
   if (existing) return existing
   const entry = newEntry()
   apply(entry, content, revision)
+  const surfaceId = content.surface_id
+  if (!entry.error) entry.processor.processMessages(restore.map(({ path, value }) => ({ version: 'v0.9.1' as const, updateDataModel: { surfaceId, path, value } })))
   if (persistKey) entries.set(persistKey, entry)
   return entry
 }
 
 // Renders one a2ui_surface revision. Same persistKey = same processor across
 // remounts and revisions, so a newer revision updates in place and keeps the user's picks.
-export default function A2uiSurfaceView({ content, revision, onAction, persistKey, busy = false }: {
+export default function A2uiSurfaceView({ content, revision, restore, onAction, persistKey, busy = false }: {
   content: SurfaceContent
   revision?: number
+  restore?: Restore
   onAction?: (a: A2UiAction) => void
   persistKey?: string
   busy?: boolean
 }) {
-  const [entry] = useState(() => entryFor(persistKey, content, revision))
+  const [entry] = useState(() => entryFor(persistKey, content, revision, restore))
   const [error, setError] = useState(entry.error)
   useLayoutEffect(() => { entry.onAction = onAction }, [entry, onAction])
   // Updates run here, not in render: they fire signal subscriptions of already-mounted components.

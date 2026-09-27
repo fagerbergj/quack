@@ -1,7 +1,7 @@
-import { Component, Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { useChatState, useChatStore } from '../state/ChatStoreProvider'
-import { surfacePersistKey, type SurfaceContent, type SurfaceRef } from '../lib/a2ui'
+import { restoredPicks, surfacePersistKey, type SurfaceContent, type SurfaceRef } from '../lib/a2ui'
 import type { A2UiAction } from '../generated'
 
 // The renderer (web_core + zod) is its own chunk: most chats never show a surface.
@@ -25,10 +25,12 @@ export function A2uiSurfaceBox({ chatId, content, revision, persistKey }: { chat
   const state = useChatState(chatId)
   const busy = !!(state.submitting || state.live?.streaming)
   const onAction = useCallback((a: A2UiAction) => { void store.submitA2uiAction(chatId, a) }, [store, chatId])
+  const liveText = state.live?.userText ?? ''
+  const restore = useMemo(() => restoredPicks(content, [...state.turns.map(t => t.input.content), liveText]), [content, state.turns, liveText])
   return (
     <SurfaceBoundary>
       <Suspense fallback={<p className="text-xs text-gray-500 dark:text-gray-400" role="status">Loading…</p>}>
-        <A2uiSurfaceView content={content} revision={revision} onAction={onAction} persistKey={persistKey} busy={busy} />
+        <A2uiSurfaceView content={content} revision={revision} restore={restore} onAction={onAction} persistKey={persistKey} busy={busy} />
       </Suspense>
     </SurfaceBoundary>
   )

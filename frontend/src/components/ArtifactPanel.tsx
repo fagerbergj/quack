@@ -114,6 +114,13 @@ export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
   return { byLine, unanchored }
 }
 
+// A2UI artifacts are shared by the tutor node and the orchestrator that grades them, so they
+// stay listed under every node that wrote any revision (the list carries per-revision lineage).
+function belongsToNode(s: ArtifactSummary, nodeId: string): boolean {
+  if (s.lineage?.node_id === nodeId) return true
+  return (s.kind === A2UI_SURFACE_KIND || s.kind === QUIZ_KEY_KIND) && s.revisions.some(r => r.lineage?.node_id === nodeId)
+}
+
 // Run bookkeeping, never a deliverable: dag_node is rewritten by the system
 // at node start/end; a bytes:* blob is dispatch input staging. Not dag_plan - the per-node lineage filter already scopes that to the orchestrator.
 export function isBookkeeping(a: { kind?: string; name: string }): boolean {
@@ -343,7 +350,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // internal/server/rest/artifacts.go), not "any revision this node wrote": if a later node revises an artifact (e.g. a judge writes revision 2 of a worker's `finding`) it moves to the reviser's panel and disappears from the original author's - a real gap against a "everything this node wrote is an output" reading of design V4, open as a question on #1094's review pending a spec answer. Fixing it needs per-revision lineage (GET .../revisions) up front for every artifact in the chat, which doesn't scale to "one click opens a panel" - documented here rather than silently wrong.
   // isBookkeeping excludes dag_node/bytes:* entirely - they belong to the run, never to this node's own panel.
   const nodeArtifacts = useMemo(
-    () => summaries.filter(s => s.lineage?.node_id === nodeId && !isBookkeeping(s)),
+    () => summaries.filter(s => belongsToNode(s, nodeId) && !isBookkeeping(s)),
     [summaries, nodeId],
   )
 
@@ -586,7 +593,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       if (!ev || ev.seq === seenSeqRef.current) return
       seenSeqRef.current = ev.seq
       const rev = ev.revision
-      if (rev && rev.nodeId === nodeId) {
+      if (rev && (rev.nodeId === nodeId || nodeArtifactNamesRef.current.has(rev.id))) {
         withScrollPreserved(load)
         if (rev.id === primaryIdRef.current) {
           const toLatest = atLatestRef.current

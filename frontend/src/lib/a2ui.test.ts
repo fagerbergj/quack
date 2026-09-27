@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { a2uiActionText, keepLocalEdits, parseA2uiActionText, surfaceMessages, surfacesByTurn, QUACK_CATALOG_ID, type SurfaceContent } from './a2ui'
+import { a2uiActionText, keepLocalEdits, parseA2uiActionText, restoredPicks, surfaceMessages, surfacesByTurn, QUACK_CATALOG_ID, type SurfaceContent } from './a2ui'
 import type { ArtifactList } from '../generated'
 
 const v1: SurfaceContent = {
@@ -50,7 +50,7 @@ describe('keepLocalEdits', () => {
 describe('action text', () => {
   it('round-trips name and surface id through the persisted user line', () => {
     const text = a2uiActionText({ surface_id: 's1', name: 'submit_quiz', source_component_id: 'b', context: {} })
-    expect(parseA2uiActionText(text)).toEqual({ name: 'submit_quiz', surfaceId: 's1', context: {} })
+    expect(parseA2uiActionText(text)).toEqual({ name: 'submit_quiz', surfaceId: 's1', sourceComponentId: 'b', context: {} })
   })
 
   it('ignores ordinary and malformed text', () => {
@@ -81,5 +81,24 @@ describe('surfacesByTurn', () => {
   it('falls back to the last turn started before the first revision', () => {
     expect(surfacesByTurn(list(rev(1, { turn_id: '', created_at: '2026-09-27T10:03:00Z' })), turns)).toEqual({ t1: [{ name: 'a2ui_surface:s1', revision: 1 }] })
     expect(surfacesByTurn(list(rev(1)), turns)).toEqual({})
+  })
+})
+
+describe('restoredPicks', () => {
+  const surface: SurfaceContent = {
+    surface_id: 's1',
+    components: [{ id: 'submit', component: 'Button', child: 'l', action: { event: { name: 'submit_quiz', context: { answers: { path: '/answers' } } } } }],
+    data_model: { answers: { q1: [], q2: [] } },
+  }
+  const turn = (answers: unknown, surface_id = 's1') => a2uiActionText({ surface_id, name: 'submit_quiz', source_component_id: 'submit', context: { answers } })
+
+  it('restores the latest action turn context onto blank bound paths', () => {
+    const texts = ['hi', turn({ q1: ['a'] }), turn({ q1: ['c'], q2: ['b'] }), turn({ q1: ['x'] }, 'other')]
+    expect(restoredPicks(surface, texts)).toEqual([{ path: '/answers', value: { q1: ['c'], q2: ['b'] } }])
+  })
+
+  it('leaves a stored data model with values alone, and does nothing without an action turn', () => {
+    expect(restoredPicks({ ...surface, data_model: { answers: { q1: ['b'] } } }, [turn({ q1: ['c'] })])).toEqual([])
+    expect(restoredPicks(surface, ['hi'])).toEqual([])
   })
 })
