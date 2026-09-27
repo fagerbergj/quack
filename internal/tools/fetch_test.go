@@ -68,7 +68,7 @@ func TestFetchBatch_InlineUnderThreshold_ArtifactAtThreshold(t *testing.T) {
 	rc := testRecordStore()
 	d := Deps{RecordStore: rc, NodeID: "n1", Coords: &RoundCoords{Round: 1}}
 
-	results := fetchBatch(newFakeCtx(), d, f, []string{"https://ex.com/small", "https://ex.com/large"}, "", 0)
+	results := fetchBatch(newFakeCtx(), d, f, []string{"https://ex.com/small", "https://ex.com/large"}, "", 0, false)
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
@@ -107,6 +107,27 @@ func TestFetchBatch_InlineUnderThreshold_ArtifactAtThreshold(t *testing.T) {
 	}
 }
 
+// TestFetchBatch_StoreKeepsShortPageInline: store saves a short page the
+// judge can later read, and the caller still gets the page itself back.
+func TestFetchBatch_StoreKeepsShortPageInline(t *testing.T) {
+	small := "diff --git a/x.go b/x.go\n+short change"
+	f := newFakeFetcher(map[string]fakeFetchResult{"https://ex.com/pr.diff": {body: small}})
+	rc := testRecordStore()
+	d := Deps{RecordStore: rc, NodeID: "n1", Coords: &RoundCoords{Round: 1}}
+
+	results := fetchBatch(newFakeCtx(), d, f, []string{"https://ex.com/pr.diff"}, "", 0, true)
+	if results[0].Text != small {
+		t.Errorf("text = %q, want the page inline", results[0].Text)
+	}
+	items, err := rc.List(context.Background(), kindWebPage)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("web_page artifacts = %v (err %v), want the short page stored", items, err)
+	}
+	if raw, _, _, _ := rc.Latest(context.Background(), items[0].ID); string(raw) != small {
+		t.Errorf("stored %q, want the page verbatim", raw)
+	}
+}
+
 // TestFetchBatch_SubThresholdManyLinesReturnsWholePage: a page under the byte
 // threshold but over fetchHeadLines must still come back in full, not a head.
 func TestFetchBatch_SubThresholdManyLinesReturnsWholePage(t *testing.T) {
@@ -119,7 +140,7 @@ func TestFetchBatch_SubThresholdManyLinesReturnsWholePage(t *testing.T) {
 		t.Fatalf("test setup: page is %d bytes, want under fetchArtifactThreshold (%d)", len(full), fetchArtifactThreshold)
 	}
 	f := newFakeFetcher(map[string]fakeFetchResult{"https://ex.com/many-lines": {body: full}})
-	results := fetchBatch(newFakeCtx(), Deps{}, f, []string{"https://ex.com/many-lines"}, "", 0)
+	results := fetchBatch(newFakeCtx(), Deps{}, f, []string{"https://ex.com/many-lines"}, "", 0, false)
 	if results[0].Text != full {
 		t.Fatalf("sub-threshold page with %d lines was not returned whole: got %d bytes, want %d", len(lines), len(results[0].Text), len(full))
 	}
@@ -130,7 +151,7 @@ func TestFetchBatch_PerURLFailureDoesNotFailBatch(t *testing.T) {
 		"https://ex.com/ok": {body: "all good"},
 	})
 	d := Deps{}
-	results := fetchBatch(newFakeCtx(), d, f, []string{"https://ex.com/ok", "https://ex.com/missing"}, "", 0)
+	results := fetchBatch(newFakeCtx(), d, f, []string{"https://ex.com/ok", "https://ex.com/missing"}, "", 0, false)
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
@@ -146,7 +167,7 @@ func TestFetchBatch_PerURLFailureDoesNotFailBatch(t *testing.T) {
 // batch is fetched once, and both positions get a result.
 func TestFetchBatch_DedupesRepeatedURL(t *testing.T) {
 	f := newFakeFetcher(map[string]fakeFetchResult{"https://ex.com/x": {body: "hello"}})
-	results := fetchBatch(newFakeCtx(), Deps{}, f, []string{"https://ex.com/x", "https://ex.com/x"}, "", 0)
+	results := fetchBatch(newFakeCtx(), Deps{}, f, []string{"https://ex.com/x", "https://ex.com/x"}, "", 0, false)
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2 (one per requested position)", len(results))
 	}
@@ -176,7 +197,7 @@ func TestFetchBatch_InlineBudgetForcesStorage(t *testing.T) {
 	rc := testRecordStore()
 	d := Deps{RecordStore: rc, NodeID: "n1"}
 
-	results := fetchBatch(newFakeCtx(), d, f, urls, "", 0)
+	results := fetchBatch(newFakeCtx(), d, f, urls, "", 0, false)
 	var inlined, stored int
 	for _, r := range results {
 		if r.Error != "" {
@@ -212,7 +233,7 @@ func TestFetchBatch_ManyLargePagesStayBoundedByBudget(t *testing.T) {
 	rc := testRecordStore()
 	d := Deps{RecordStore: rc, NodeID: "n1"}
 
-	results := fetchBatch(newFakeCtx(), d, f, urls, "", 0)
+	results := fetchBatch(newFakeCtx(), d, f, urls, "", 0, false)
 	total, headless := 0, 0
 	for i, r := range results {
 		if r.Error != "" {
@@ -242,7 +263,7 @@ func TestShapeOrStore_PatternShortcutStillStores(t *testing.T) {
 	rc := testRecordStore()
 	d := Deps{RecordStore: rc, NodeID: "n1"}
 
-	got := shapeOrStore(newFakeCtx(), d, fetchedPage{url: "https://ex.com/large", full: large}, "needle-marker", 0, true)
+	got := shapeOrStore(newFakeCtx(), d, fetchedPage{url: "https://ex.com/large", full: large}, "needle-marker", 0, true, false)
 	if strings.Contains(got, "artifact:") {
 		t.Errorf("pattern shortcut should grep the page directly, not return the stored header: %q", got)
 	}
@@ -257,7 +278,7 @@ func TestShapeOrStore_PatternShortcutStillStores(t *testing.T) {
 
 func TestShapeOrStore_NoRecordStoreFallsBackToHead(t *testing.T) {
 	large := strings.Repeat("word ", (fetchArtifactThreshold/5)+100)
-	got := shapeOrStore(newFakeCtx(), Deps{}, fetchedPage{url: "https://ex.com/large", full: large}, "", 0, true)
+	got := shapeOrStore(newFakeCtx(), Deps{}, fetchedPage{url: "https://ex.com/large", full: large}, "", 0, true, false)
 	if strings.Contains(got, "artifact:") {
 		t.Errorf("no RecordStore configured: should degrade to inline text, got %q", got[:60])
 	}
@@ -443,7 +464,7 @@ func TestFetchGrepReadOffsetAgreeOnLineNumbers(t *testing.T) {
 	const target = "https://ex.com/consistent"
 	f := newFakeFetcher(map[string]fakeFetchResult{target: {body: full}})
 
-	fetchResults := fetchBatch(ctx, d, f, []string{target}, "", 0)
+	fetchResults := fetchBatch(ctx, d, f, []string{target}, "", 0, false)
 	header := fetchResults[0].Text
 	if fetchResults[0].Error != "" || !strings.Contains(header, "artifact:") {
 		t.Fatalf("expected the page to be stored, got %+v", fetchResults[0])
@@ -477,7 +498,7 @@ func TestFetchGrepReadOffsetAgreeOnLineNumbers(t *testing.T) {
 	}
 
 	// web_fetch's own offset shortcut against the same (now cached) page.
-	offsetResults := fetchBatch(ctx, d, f, []string{target}, "", needleLine)
+	offsetResults := fetchBatch(ctx, d, f, []string{target}, "", needleLine, false)
 	if offsetResults[0].Error != "" || !strings.Contains(offsetResults[0].Text, "needle-marker") {
 		t.Fatalf("web_fetch(offset=%d) = %+v, want the needle line", needleLine, offsetResults[0])
 	}
@@ -493,7 +514,7 @@ func TestFetchThenReadArtifact_KeepsProvenance(t *testing.T) {
 	const target = "https://ex.com/provenance-roundtrip"
 	f := newFakeFetcher(map[string]fakeFetchResult{target: {body: full}})
 
-	fetchResults := fetchBatch(ctx, d, f, []string{target}, "", 0)
+	fetchResults := fetchBatch(ctx, d, f, []string{target}, "", 0, false)
 	header := fetchResults[0].Text
 	if fetchResults[0].Error != "" || !strings.Contains(header, "artifact:") {
 		t.Fatalf("expected the page to be stored, got %+v", fetchResults[0])
@@ -569,7 +590,7 @@ func TestFetchBatch_ConcurrencyBoundedByMaxConcurrentFetches(t *testing.T) {
 		urls[i] = fmt.Sprintf("https://ex.com/c%d", i)
 	}
 
-	fetchBatch(newFakeCtx(), Deps{}, f, urls, "", 0)
+	fetchBatch(newFakeCtx(), Deps{}, f, urls, "", 0, false)
 
 	f.mu.Lock()
 	peak := f.peak

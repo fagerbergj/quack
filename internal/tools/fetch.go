@@ -87,6 +87,7 @@ type fetchArgs struct {
 	URLs    []string `json:"urls"`
 	Pattern string   `json:"pattern,omitempty"`
 	Offset  int      `json:"offset,omitempty"`
+	Store   bool     `json:"store,omitempty"`
 }
 
 // FetchResult: one URL's outcome in a batched call - Text is the shaped page
@@ -150,7 +151,8 @@ func newFetch(d Deps) (tool.Tool, error) {
 		"short header (title, url, artifact id, line/byte count, a small head) - grep_artifacts and "+
 		"read_artifact(id, offset, lines) read the rest without re-fetching. `pattern` (a regex, applied to "+
 		"every URL in this call) or `offset` (a line number) still shapes the full page directly as a "+
-		"shortcut, storage or not.", fetchArtifactThreshold, maxBatchInlineBytes)
+		"shortcut, storage or not. `store: true` also stores a short page as an artifact while still returning it "+
+		"inline, so a later reader (the judge) can open exactly what you read.", fetchArtifactThreshold, maxBatchInlineBytes)
 
 	return functiontool.New[fetchArgs, fetchResponse](
 		functiontool.Config{
@@ -164,7 +166,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 			if len(a.URLs) > maxBatchURLs {
 				return fetchResponse{}, fmt.Errorf("web_fetch: %d urls exceeds the %d-url batch limit; split into smaller batches", len(a.URLs), maxBatchURLs)
 			}
-			return fetchResponse{Results: fetchBatch(tc, d, f, a.URLs, a.Pattern, a.Offset)}, nil
+			return fetchResponse{Results: fetchBatch(tc, d, f, a.URLs, a.Pattern, a.Offset, a.Store)}, nil
 		},
 	)
 }
@@ -179,10 +181,10 @@ type fetchedPage struct {
 
 // fetchBatch fetches each unique URL once, shapes them against a shared
 // budget, then replicates results to every position a dup URL requested.
-func fetchBatch(tc agent.Context, d Deps, f fetcher, urls []string, pattern string, offset int) []FetchResult {
+func fetchBatch(tc agent.Context, d Deps, f fetcher, urls []string, pattern string, offset int, store bool) []FetchResult {
 	order, idxsByKey, rawByKey := dedupURLs(urls)
 	pages := fetchPages(tc, d, f, order, rawByKey)
-	shaped := shapePages(tc, d, pages, pattern, offset)
+	shaped := shapePages(tc, d, pages, pattern, offset, store)
 
 	out := make([]FetchResult, len(urls))
 	for ui, key := range order {
@@ -258,7 +260,7 @@ func fetchOnePage(tc agent.Context, d Deps, f fetcher, raw string) fetchedPage {
 
 // shapePages shapes pages in order against a shared budget decremented by
 // every entry's own size - past it, stored headers drop their head too.
-func shapePages(tc agent.Context, d Deps, pages []fetchedPage, pattern string, offset int) []FetchResult {
+func shapePages(tc agent.Context, d Deps, pages []fetchedPage, pattern string, offset int, store bool) []FetchResult {
 	out := make([]FetchResult, len(pages))
 	budget := maxBatchInlineBytes
 	for i, p := range pages {
@@ -266,7 +268,7 @@ func shapePages(tc agent.Context, d Deps, pages []fetchedPage, pattern string, o
 			out[i] = FetchResult{URL: p.url, Error: p.err.Error()}
 			continue
 		}
-		text := shapeOrStore(tc, d, p, pattern, offset, budget > 0)
+		text := shapeOrStore(tc, d, p, pattern, offset, budget > 0, store)
 		budget -= len(text)
 		out[i] = FetchResult{URL: p.url, Text: text}
 	}
@@ -274,17 +276,19 @@ func shapePages(tc agent.Context, d Deps, pages []fetchedPage, pattern string, o
 }
 
 // shapeOrStore shapes one page. allowInline false forces storage even under
-// threshold, and drops a stored header's head - the budget is spent.
-func shapeOrStore(tc agent.Context, d Deps, p fetchedPage, pattern string, offset int, allowInline bool) string {
+// threshold, and drops a stored header's head - the budget is spent. store
+// saves a page that would inline anyway, and still inlines it.
+func shapeOrStore(tc agent.Context, d Deps, p fetchedPage, pattern string, offset int, allowInline, store bool) string {
 	underThreshold := len(p.full) < fetchArtifactThreshold
+	inline := underThreshold && allowInline
 	var header string
-	if (!underThreshold || !allowInline) && d.RecordStore != nil {
+	if (!inline || store) && d.RecordStore != nil {
 		header = storeWebPage(tc, d, p.url, p.full, p.cacheHit, allowInline)
 	}
 	if strings.TrimSpace(pattern) != "" || offset > 0 {
 		return shapeFetchResult(p.full, pattern, offset)
 	}
-	if header != "" {
+	if header != "" && !inline {
 		return header
 	}
 	if underThreshold {
