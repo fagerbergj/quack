@@ -516,8 +516,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// Detach from the HTTP request's lifecycle (the run outlives the handler) while
 		// keeping the caller's trace, so the extension's inbound span parents the run's spans.
 		runCtx := context.WithoutCancel(ctx)
-		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
-		effectiveSetup, err := prepareExtChat(runCtx, name, st, orch, chatID, &userID, req)
+		effectiveSetup, allowedKinds, err := prepareExtChat(runCtx, name, st, orch, chatID, &userID, req)
 		if err != nil {
 			return err
 		}
@@ -555,9 +554,9 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 	}
 }
 
-// prepareExtChat: merge the dispatch's chat origin/setup onto the stored state
-// (a nudge re-dispatch carries neither, #1180), reset the session, stamp origin/title.
-func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, error) {
+// prepareExtChat: merge the dispatch's origin/setup/grant onto the stored state (a nudge carries
+// none, #1180), reset the session, stamp origin/title. Returns the grant this run runs under.
+func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, []string, error) {
 	// Merge onto the chat's stored state rather than replacing it: a nudge/retry
 	// re-dispatch (quack-extensions#47) carries neither Origin nor Run.Setup (#1180).
 	existing, getErr := st.GetChat(runCtx, chatID)
@@ -574,16 +573,20 @@ func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *
 
 	if req.Chat.ResetHistory {
 		if err := orch.ResetSession(runCtx, *userID, chatID); err != nil {
-			return nil, fmt.Errorf("extensions.%s: reset history: %w", name, err)
+			return nil, nil, fmt.Errorf("extensions.%s: reset history: %w", name, err)
 		}
 	}
 	originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
-	originJSON = tools.WithOriginGrant(originJSON, deliveryKindStrings(req.Delivery.AllowedKinds))
+	allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
+	originJSON = tools.WithOriginGrant(originJSON, allowedKinds)
+	if allowedKinds == nil { // a nudge carries no Delivery: run under the recorded grant, never unrestricted
+		allowedKinds, _ = tools.OriginGrant(originJSON)
+	}
 	if err := st.SetChatOrigin(runCtx, chatID, *userID, originJSON); err != nil {
-		return nil, fmt.Errorf("extensions.%s: chat setup: %w", name, err)
+		return nil, nil, fmt.Errorf("extensions.%s: chat setup: %w", name, err)
 	}
 	ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
-	return effectiveSetup, nil
+	return effectiveSetup, allowedKinds, nil
 }
 
 // extAttachmentParts: save each dispatch attachment and collect the stored-file

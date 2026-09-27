@@ -166,6 +166,10 @@ func TestDispatchGrant_PersistsAcrossOriginUpdate(t *testing.T) {
 		t.Fatalf("nudge dispatch: %v", err)
 	}
 	waitRunSettled(t, st, chatID)
+	uid := "u"
+	if _, kinds, err := prepareExtChat(context.Background(), "noop", st, orch, chatID, &uid, extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}}); err != nil || strings.Join(kinds, ",") != "comment" || kinds == nil {
+		t.Fatalf("nudge run grant = %#v, %v; want the recorded [comment], not unrestricted", kinds, err)
+	}
 	c, err := st.GetChat(context.Background(), chatID)
 	if err != nil || c == nil {
 		t.Fatalf("GetChat: %v, %v", c, err)
