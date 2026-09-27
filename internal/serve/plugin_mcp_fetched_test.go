@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 }
 
 // runMCPStubServer records the expanded ${PLUGIN_ROOT} arg it launched with,
-// then serves one tool over stdio for pluginMCPTools to enumerate.
+// then serves one tool over stdio for mcpSet.next to enumerate.
 func runMCPStubServer() {
 	if args := os.Args[1:]; len(args) >= 2 {
 		_ = os.WriteFile(args[1], []byte(args[0]), 0o644)
@@ -78,7 +78,7 @@ func installMCPStub(t *testing.T) {
 const fetchedMCPJSONBody = `{"$schema":"https://agent-plugins.org/schemas/1.1.0/mcp.schema.json","mcpServers":{"probe":{"type":"stdio","command":"quack-mcpstub","args":["${PLUGIN_ROOT}","${PLUGIN_DATA}/root-seen"],"env":{"_QUACK_MCP_STUB_SERVER":"1"}}}}`
 
 // TestFetchedPluginMCPServerSpawnsAndEnumeratesTools runs the real
-// Fetch -> resolveRegistryPlugins -> pluginMCPTools pipeline end to end.
+// Fetch -> resolveRegistryPlugins -> mcpSet.next pipeline end to end.
 func TestFetchedPluginMCPServerSpawnsAndEnumeratesTools(t *testing.T) {
 	installMCPStub(t)
 
@@ -118,6 +118,9 @@ func TestFetchedPluginMCPServerSpawnsAndEnumeratesTools(t *testing.T) {
 	if len(plugins) != 1 || len(plugins[0].MCPServers) != 1 {
 		t.Fatalf("resolveRegistryPlugins plugins = %+v, want 1 plugin with 1 declared server", plugins)
 	}
+	if plugins[0].SHA == "" || plugins[0].SHA != fetched.SHA {
+		t.Fatalf("plugin SHA = %q, want the fetched row's %q (the MCP reuse key's revision)", plugins[0].SHA, fetched.SHA)
+	}
 	cloneRoot := pluginreg.CloneDir(registryRoot, "mcptest")
 	if plugins[0].Root != cloneRoot {
 		t.Fatalf("plugin root = %q, want the clone root %q", plugins[0].Root, cloneRoot)
@@ -125,9 +128,11 @@ func TestFetchedPluginMCPServerSpawnsAndEnumeratesTools(t *testing.T) {
 
 	dataRoot := t.TempDir()
 	caps := workspace.Caps{Sandbox: workspace.SandboxNone}
-	tools := pluginMCPTools(context.Background(), plugins, dataRoot, caps)
+	set, _ := newMCPSet(dataRoot, caps).next(context.Background(), plugins)
+	t.Cleanup(set.Release)
+	tools := set.tools()
 	if len(tools) != 1 {
-		t.Fatalf("pluginMCPTools = %d tools, want 1 (the server enumerated and admitted)", len(tools))
+		t.Fatalf("next = %d tools, want 1 (the server enumerated and admitted)", len(tools))
 	}
 	if tools[0].provider != "mcptest" || tools[0].tool.Name() != "probe" {
 		t.Fatalf("tool = provider %q name %q, want mcptest/probe", tools[0].provider, tools[0].tool.Name())

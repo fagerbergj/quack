@@ -771,7 +771,7 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 	if mcpCaps, err := pluginSpawnCaps(b.cfg, jail); err != nil {
 		slog.Warn("plugin MCP servers skipped; sandbox caps unavailable", "component", "startup", "err", err)
 	} else {
-		extTools = append(extTools, pluginMCPTools(ctx, plugins, b.cfg.Workspace.Root, mcpCaps)...)
+		extTools = append(extTools, b.bootPluginMCP(ctx, plugins, mcpCaps).tools()...)
 	}
 	// The SDK inverse interfaces' first real consumer: whichever configured module implements them
 	// (github, today) supplies quack's push credential and delivery target, not hardcoded to one extension.
