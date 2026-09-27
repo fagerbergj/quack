@@ -173,9 +173,8 @@ func Merge(base, upd []Component) ([]Component, error) {
 	return out, nil
 }
 
-// ShuffleQuiz permutes the option labels of every ChoicePicker in comps graded
-// by a question in graded, seeded by surfaceID and the picker id; values keep
-// their positional order, so the correct value moves. Mutates comps.
+// ShuffleQuiz reorders the labels of every graded ChoicePicker in comps as a pure function of
+// (surfaceID, picker id, label set), so a re-send in any order lands the same; values stay positional.
 func ShuffleQuiz(surfaceID string, comps []Component, graded []string) {
 	for _, q := range graded {
 		c := pickerFor(comps, q)
@@ -185,10 +184,11 @@ func ShuffleQuiz(surfaceID string, comps []Component, graded []string) {
 		}
 		h := fnv.New64a()
 		_, _ = h.Write([]byte(surfaceID + "\x00" + idOf(c)))
+		canon := slices.SortedFunc(slices.Values(opts), func(a, b map[string]any) int { return strings.Compare(text(a["label"]), text(b["label"])) })
 		perm := rand.New(rand.NewPCG(h.Sum64(), 0)).Perm(len(opts))
 		shuffled := make([]any, len(opts))
 		for i, p := range perm {
-			o := maps.Clone(opts[p])
+			o := maps.Clone(canon[p])
 			o["value"] = opts[i]["value"]
 			shuffled[i] = o
 		}

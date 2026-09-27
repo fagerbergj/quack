@@ -91,22 +91,25 @@ func renderUI(ctx agent.Context, c *recordstore.Client, lineage recordstore.Line
 	key := a2ui.QuizKey{SurfaceID: a.SurfaceID}
 	sid, _ := recordstore.IdentityFor(a2ui.KindSurface, s, "")
 	kid, _ := recordstore.IdentityFor(a2ui.KindQuizKey, key, "")
-	storedKey, err := loadJSON(ctx, c, kid, &key)
+	storedKey, _, err := loadJSON(ctx, c, kid, &key)
 	if err != nil {
 		return "", err
 	}
-	if _, err := loadJSON(ctx, c, sid, &s); err != nil {
+	storedSurface, rev, err := loadJSON(ctx, c, sid, &s)
+	if err != nil {
 		return "", err
 	}
 	merged, err := a2ui.Apply(&s, key.Answers, a.Components, a.DataModel, a.AnswerKey)
 	if err != nil {
 		return "VALIDATION_FAILED: " + err.Error(), nil
 	}
-	sid, rev, err := c.SaveStructured(ctx, a2ui.KindSurface, s, "", lineage)
-	if err != nil {
-		return "", fmt.Errorf("render_ui: %w", err)
+	// An unchanged surface mints no revision, so nothing is announced.
+	if newSurface, _ := json.Marshal(s); !bytes.Equal(newSurface, storedSurface) {
+		if sid, rev, err = c.SaveStructured(ctx, a2ui.KindSurface, s, "", lineage); err != nil {
+			return "", fmt.Errorf("render_ui: %w", err)
+		}
+		emitRevision(sink, sid, rev, a2ui.KindSurface, lineage)
 	}
-	emitRevision(sink, sid, rev, a2ui.KindSurface, lineage)
 	key.Answers = merged
 	if newKey, _ := json.Marshal(key); len(merged) > 0 && !bytes.Equal(newKey, storedKey) {
 		kid, krev, err := c.SaveStructured(ctx, a2ui.KindQuizKey, key, "", lineage)
@@ -119,16 +122,16 @@ func renderUI(ctx agent.Context, c *recordstore.Client, lineage recordstore.Line
 	return string(b), err
 }
 
-// loadJSON decodes id's latest revision into v, returning its raw bytes (nil when absent).
-func loadJSON(ctx agent.Context, c *recordstore.Client, id string, v any) ([]byte, error) {
-	raw, _, found, err := c.Latest(ctx, id)
+// loadJSON decodes id's latest revision into v, returning its raw bytes and revision (nil, 0 when absent).
+func loadJSON(ctx agent.Context, c *recordstore.Client, id string, v any) ([]byte, int, error) {
+	raw, rev, found, err := c.Latest(ctx, id)
 	if err != nil || !found {
-		return nil, err
+		return nil, 0, err
 	}
 	if err := json.Unmarshal(raw, v); err != nil {
-		return nil, fmt.Errorf("render_ui: stored %s: %w", id, err)
+		return nil, 0, fmt.Errorf("render_ui: stored %s: %w", id, err)
 	}
-	return raw, nil
+	return raw, rev, nil
 }
 
 func emitRevision(sink func(stream.SSEEvent), id string, rev int, kind string, l recordstore.Lineage) {

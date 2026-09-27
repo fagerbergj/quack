@@ -26,19 +26,14 @@ func AllowedDeliveryKindsFromContext(ctx context.Context) []string {
 // JSON, so a later REST turn on that chat runs under the same grant.
 const originGrantKey = "quackAllowedDeliveryKinds"
 
-// WithOriginGrant returns originJSON with kinds recorded; nil kinds (unrestricted) removes the record.
+// WithOriginGrant returns originJSON with kinds recorded. nil kinds (a nudge
+// carrying no Delivery) keeps whatever grant is already recorded - fail-safe.
 func WithOriginGrant(originJSON string, kinds []string) string {
 	m := map[string]json.RawMessage{}
-	if originJSON != "" && json.Unmarshal([]byte(originJSON), &m) != nil {
+	if kinds == nil || (originJSON != "" && json.Unmarshal([]byte(originJSON), &m) != nil) {
 		return originJSON
 	}
-	delete(m, originGrantKey)
-	if kinds != nil {
-		m[originGrantKey], _ = json.Marshal(kinds)
-	}
-	if len(m) == 0 {
-		return ""
-	}
+	m[originGrantKey], _ = json.Marshal(kinds)
 	b, _ := json.Marshal(m)
 	return string(b)
 }

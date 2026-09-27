@@ -137,9 +137,8 @@ func TestUpdateChatOrigin_PreservesStoredSetup(t *testing.T) {
 	}
 }
 
-// TestDispatchGrant_PersistsAcrossOriginUpdate: the dispatch's delivery grant is
-// recorded on the chat and survives a state-transition origin update, so REST
-// turns on the ext chat can re-apply it.
+// TestDispatchGrant_PersistsAcrossOriginUpdate: the dispatch's grant is recorded on the chat and
+// survives an origin update and a nudge re-dispatch, so REST turns on the ext chat re-apply it.
 func TestDispatchGrant_PersistsAcrossOriginUpdate(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
@@ -162,6 +161,11 @@ func TestDispatchGrant_PersistsAcrossOriginUpdate(t *testing.T) {
 	if err := updateOrigin(localID, extsdk.ChatOrigin{Extension: "noop", Label: "o/r#8", Kind: "pull_request", Badge: "synchronize"}); err != nil {
 		t.Fatalf("updateOrigin: %v", err)
 	}
+	// A nudge re-dispatch carries no Delivery: the recorded grant must survive it.
+	if err := dispatch(context.Background(), extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "nudge"}}); err != nil {
+		t.Fatalf("nudge dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
 	c, err := st.GetChat(context.Background(), chatID)
 	if err != nil || c == nil {
 		t.Fatalf("GetChat: %v, %v", c, err)

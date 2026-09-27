@@ -165,6 +165,24 @@ func TestRenderUI_ValidationFailedIsToolOutput(t *testing.T) {
 	}
 }
 
+// TestRenderUI_UnchangedSurfaceNotAnnounced: a re-render identical to the tip mints no revision and emits nothing.
+func TestRenderUI_UnchangedSurfaceNotAnnounced(t *testing.T) {
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	tl, err := NewRenderUITool(rc, "n1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := tl.(runnableTool)
+	ctx := newArtifactsToolCtx()
+	events := 0
+	ctx.Ctx = stream.WithYield(context.Background(), func(stream.SSEEvent) { events++ })
+	args := map[string]any{"surface_id": "s1", "components": []any{map[string]any{"id": "root", "component": "Text", "text": "hi"}}}
+	first, second := runRenderUI(t, rt, ctx, args), runRenderUI(t, rt, ctx, args)
+	if first != second || events != 1 {
+		t.Fatalf("results %s / %s, %d events; want the same revision and one event", first, second, events)
+	}
+}
+
 // TestRenderUI_ConcurrentUpserts: ADK runs one response's parallel calls
 // concurrently; every upsert on the same surface must survive.
 func TestRenderUI_ConcurrentUpserts(t *testing.T) {

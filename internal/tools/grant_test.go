@@ -17,8 +17,8 @@ func TestOriginGrant(t *testing.T) {
 	if kinds, ok := OriginGrant(WithOriginGrant(withKinds, []string{})); !ok || kinds == nil || len(kinds) != 0 {
 		t.Fatalf("deny-all grant = %#v %v", kinds, ok)
 	}
-	if _, ok := OriginGrant(WithOriginGrant(withKinds, nil)); ok {
-		t.Fatal("nil kinds must clear the record")
+	if kinds, ok := OriginGrant(WithOriginGrant(withKinds, nil)); !ok || strings.Join(kinds, ",") != "comment" {
+		t.Fatalf("nil kinds (a nudge) must keep the recorded grant, got %v %v", kinds, ok)
 	}
 	if got := WithOriginGrant("", nil); got != "" {
 		t.Fatalf("empty origin, no grant = %q", got)

@@ -643,20 +643,14 @@ func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 	return out
 }
 
-// extOriginRecord is what Chat.Origin actually stores for an extension-dispatched
-// chat: the extension's own ChatOrigin (still at the JSON top level - a nil
-// embedded pointer marshals as absent, and priorOriginState/UpdateChatOrigin's
-// own writes decode straight into extsdk.ChatOrigin, ignoring the extra field)
-// plus, alongside it (#1180), the dispatch's own sdk Setup - the only durable
-// record of a PR's real head ref, so a later dispatch on the same chat with no
-// Run.Setup (a nudge, a retry) can still plan a review. Kept as the SDK's own
-// Setup, not dag.Setup: dag.Setup.CheckoutExistingHead is `json:"-"` (it's
-// derived, never persisted with a plan) and toDagSetup is what recomputes it
-// from ExistingHeadRef on the way back out.
+// extOriginRecord is Chat.Origin for an ext chat: the extension's ChatOrigin at top level plus
+// quack's own fields, which mergeExtOrigin (#1181) carries across every origin write and nudge.
 type extOriginRecord struct {
 	*extsdk.ChatOrigin
+	// Setup: the latest dispatch's sdk Setup (#1180), the only record of a PR's head ref (sdk
+	// type because dag.Setup's CheckoutExistingHead is json:"-"; toDagSetup recomputes it).
 	Setup *extsdk.Setup `json:"quackSetup,omitempty"`
-	// Grant round-trips tools.WithOriginGrant's record through origin updates.
+	// Grant is the latest dispatch's delivery grant (tools.WithOriginGrant), re-applied on REST turns.
 	Grant *[]string `json:"quackAllowedDeliveryKinds,omitempty"`
 }
 

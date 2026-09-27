@@ -40,8 +40,8 @@ func refs(c Component) []string {
 	return out
 }
 
-// checkIntegrity: unique ids, a root, every reference resolves to a component
-// with exactly one parent, no cycles, non-empty ChoicePickers, http(s)-only URLs.
+// checkIntegrity: unique ids and a tree - every reference resolves, each component but
+// root has exactly one parent and is reachable from root (which rules out cycles).
 func checkIntegrity(comps []Component) error {
 	byID := make(map[string]Component, len(comps))
 	for _, c := range comps {
@@ -57,12 +57,15 @@ func checkIntegrity(comps []Component) error {
 	if err := checkRefs(comps, byID); err != nil {
 		return err
 	}
+	if err := checkReachable(comps, byID); err != nil {
+		return err
+	}
 	for _, c := range comps {
 		if err := checkContent(c); err != nil {
 			return err
 		}
 	}
-	return checkCycles(comps, byID)
+	return nil
 }
 
 func checkRefs(comps []Component, byID map[string]Component) error {
@@ -72,9 +75,15 @@ func checkRefs(comps []Component, byID map[string]Component) error {
 			if _, ok := byID[r]; !ok {
 				return fmt.Errorf("component %q references missing component %q", idOf(c), r)
 			}
-			if p, ok := parent[r]; ok && p == idOf(c) {
+			p, seen := parent[r]
+			switch {
+			case r == idOf(c):
+				return fmt.Errorf("component %q references itself (a cycle)", r)
+			case r == "root":
+				return fmt.Errorf(`component %q references "root"; root is the top of the tree and has no parent`, idOf(c))
+			case seen && p == idOf(c):
 				return fmt.Errorf("component %q lists child %q twice", p, r)
-			} else if ok {
+			case seen:
 				return fmt.Errorf("component %q is referenced by both %q and %q; a component has one parent - give the copy its own id", r, p, idOf(c))
 			}
 			parent[r] = idOf(c)
@@ -83,29 +92,25 @@ func checkRefs(comps []Component, byID map[string]Component) error {
 	return nil
 }
 
-func checkCycles(comps []Component, byID map[string]Component) error {
-	state := make(map[string]int, len(comps)) // 1 = on the DFS stack, 2 = done
-	var visit func(id string) error
-	visit = func(id string) error {
-		switch state[id] {
-		case 1:
-			return fmt.Errorf("component %q is its own ancestor (reference cycle)", id)
-		case 2:
-			return nil
-		}
-		state[id] = 1
-		for _, r := range refs(byID[id]) {
-			if err := visit(r); err != nil {
-				return err
+// checkReachable rejects components no path from root reaches; Merge never deletes, so orphans would pile up.
+func checkReachable(comps []Component, byID map[string]Component) error {
+	seen := map[string]bool{"root": true}
+	for queue := []string{"root"}; len(queue) > 0; queue = queue[1:] {
+		for _, r := range refs(byID[queue[0]]) {
+			if !seen[r] {
+				seen[r] = true
+				queue = append(queue, r)
 			}
 		}
-		state[id] = 2
-		return nil
 	}
+	var orphans []string
 	for _, c := range comps {
-		if err := visit(idOf(c)); err != nil {
-			return err
+		if !seen[idOf(c)] {
+			orphans = append(orphans, idOf(c))
 		}
+	}
+	if len(orphans) > 0 {
+		return fmt.Errorf("components %q are not reachable from root; reference each from a parent (e.g. add it to a Column's children) in the same call", orphans)
 	}
 	return nil
 }
@@ -115,8 +120,8 @@ func checkCycles(comps []Component, byID map[string]Component) error {
 func checkContent(c Component) error {
 	switch c["component"] {
 	case "ChoicePicker":
-		if opts, _ := c["options"].([]any); len(opts) == 0 {
-			return fmt.Errorf("component %q: ChoicePicker needs at least one option", idOf(c))
+		if err := checkPicker(c); err != nil {
+			return err
 		}
 	case "Image", "Video", "AudioPlayer":
 		if s, ok := c["url"].(string); ok && !httpURL(s) {
@@ -125,6 +130,24 @@ func checkContent(c Component) error {
 	}
 	if s, ok := findOpenURL(c); ok {
 		return fmt.Errorf("component %q: openUrl target %q must be an absolute http(s) URL", idOf(c), s)
+	}
+	return nil
+}
+
+// checkPicker: options non-empty with distinct labels - a quiz key identifies its answer by label.
+func checkPicker(c Component) error {
+	opts, _ := c["options"].([]any)
+	if len(opts) == 0 {
+		return fmt.Errorf("component %q: ChoicePicker needs at least one option", idOf(c))
+	}
+	seen := map[string]bool{}
+	for _, o := range opts {
+		m, _ := o.(map[string]any)
+		l := text(m["label"])
+		if seen[l] {
+			return fmt.Errorf("component %q: two options share the label %s; each option needs its own label", idOf(c), l)
+		}
+		seen[l] = true
 	}
 	return nil
 }

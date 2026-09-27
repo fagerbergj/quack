@@ -67,7 +67,21 @@ func TestValidate(t *testing.T) {
 		}, `duplicate component id "title"`},
 		{"cycle", func(t *testing.T, s *Surface) {
 			s.Components = append(s.Components, Component{"id": "x", "component": "Card", "child": "y"}, Component{"id": "y", "component": "Card", "child": "x"})
-		}, "reference cycle"},
+		}, `components ["x" "y"] are not reachable from root`},
+		{"self reference", func(t *testing.T, s *Surface) {
+			c := comp(t, s.Components, "changes")
+			c["children"] = append(c["children"].([]any), "changes")
+		}, `"changes" references itself`},
+		{"root has a parent", func(t *testing.T, s *Surface) {
+			c := comp(t, s.Components, "quiz")
+			c["children"] = append(c["children"].([]any), "root")
+		}, `references "root"`},
+		{"orphan", func(_ *testing.T, s *Surface) {
+			s.Components = append(s.Components, Component{"id": "stray", "component": "Text", "text": "x"})
+		}, `components ["stray"] are not reachable`},
+		{"duplicate option labels", func(t *testing.T, s *Surface) {
+			comp(t, s.Components, "q1")["options"] = []any{map[string]any{"label": "same", "value": "a"}, map[string]any{"label": "same", "value": "b"}}
+		}, "share the label"},
 		{"unknown component", func(t *testing.T, s *Surface) { comp(t, s.Components, "flow")["component"] = "Graph" }, `unknown component "Graph"`},
 		{"unknown property", func(t *testing.T, s *Surface) { comp(t, s.Components, "submit")["label"] = "Go" }, `unknown properties ["label"]`},
 		{"mermaid without code", func(t *testing.T, s *Surface) { delete(comp(t, s.Components, "flow"), "code") }, `missing properties: ["code"]`},
@@ -93,9 +107,10 @@ func TestValidate(t *testing.T) {
 		{"https openUrl", func(t *testing.T, s *Surface) {
 			comp(t, s.Components, "submit")["action"] = map[string]any{"functionCall": map[string]any{"call": "openUrl", "args": map[string]any{"url": "https://github.com/x"}}}
 		}, ""},
-		{"data image", func(_ *testing.T, s *Surface) {
+		{"data image", func(t *testing.T, s *Surface) {
 			s.Components = append(s.Components, Component{"id": "img", "component": "Image", "url": "data:image/png;base64,AA"})
-			s.Components[0]["child"] = "img"
+			c := comp(t, s.Components, "main")
+			c["children"] = append(c["children"].([]any), "img")
 		}, "absolute http(s) URL"},
 	}
 	for _, tc := range cases {
@@ -214,6 +229,14 @@ func TestShuffleQuiz(t *testing.T) {
 	if fmt.Sprint(first) != fmt.Sprint(again) {
 		t.Fatalf("same seed, different order: %v vs %v", first, again)
 	}
+	// Re-sending in the displayed (shuffled) order must not re-permute.
+	f := loadExample(t)
+	ShuffleQuiz("pr-412-tutor", f.Components, []string{"q1"})
+	shown := optionOrder(comp(t, f.Components, "q1"))
+	ShuffleQuiz("pr-412-tutor", f.Components, []string{"q1"})
+	if again := optionOrder(comp(t, f.Components, "q1")); again != shown {
+		t.Fatalf("re-send in stored order moved options: %s -> %s", shown, again)
+	}
 	orig := loadExample(t)
 	moved := false
 	for _, sid := range []string{"pr-412-tutor", "other-surface", "third"} {
@@ -318,5 +341,27 @@ func TestKindsRegistered(t *testing.T) {
 	}
 	if err := spec.Validate([]byte(`{"surface_id":"x","catalog_id":"` + CatalogID + `","components":[]}`)); err == nil {
 		t.Fatal("kind validator accepted a surface with no root")
+	}
+}
+
+func TestHTTPURLPolicy(t *testing.T) {
+	for u, want := range map[string]bool{
+		"https://github.com/x": true, "http://example.com/a.png": true, "HTTP://EXAMPLE.COM/": true,
+		"file:///etc/passwd": false, "//host/x.png": false, "/relative/x.png": false, "x.png": false,
+		"ftp://host/x": false, "javascript:alert(1)": false, "data:image/png;base64,AA": false, "https:///nohost": false,
+	} {
+		if got := httpURL(u); got != want {
+			t.Errorf("httpURL(%q) = %v, want %v", u, got, want)
+		}
+	}
+}
+
+// TestApplyDuplicateLabelsRejected: a key resolves value->label->value, so twin labels would flip the stored answer.
+func TestApplyDuplicateLabelsRejected(t *testing.T) {
+	f := loadExample(t)
+	comp(t, f.Components, "q1")["options"] = []any{map[string]any{"label": "same", "value": "a"}, map[string]any{"label": "same", "value": "b"}}
+	s := Surface{SurfaceID: f.SurfaceID, CatalogID: CatalogID}
+	if _, err := Apply(&s, nil, f.Components, f.DataModel, map[string]QuizAnswer{"q1": {Answer: "b"}}); err == nil || !strings.Contains(err.Error(), "share the label") {
+		t.Fatalf("duplicate labels: %v", err)
 	}
 }
