@@ -58,4 +58,43 @@ describe('A2uiSurfaceView', () => {
     render(<A2uiSurfaceView content={bad} />)
     expect(screen.getByRole('alert').textContent).toMatch(/Could not render this surface/)
   })
+
+  it('holds actions while a reply is in flight, with a visible reason', async () => {
+    const onAction = vi.fn()
+    render(<A2uiSurfaceView content={first} onAction={onAction} busy />)
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Quiz' }))
+    const submit = screen.getByRole('button', { name: 'Check my answers' }) as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    expect(screen.getByText('Wait for the current reply to finish')).toBeTruthy()
+  })
+
+  it('moves between tabs with the arrow keys and wires tab/panel ids', async () => {
+    const user = userEvent.setup()
+    render(<A2uiSurfaceView content={first} />)
+    const overview = screen.getByRole('tab', { name: 'Overview' })
+    overview.focus()
+    await user.keyboard('{ArrowLeft}')
+    const quiz = screen.getByRole('tab', { name: 'Quiz', selected: true })
+    expect(document.activeElement).toBe(quiz)
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(quiz.id)
+    expect(quiz.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel').id)
+  })
+
+  it('renders button labels inline and maps icons onto the quack set', () => {
+    const content: SurfaceContent = {
+      surface_id: 'misc',
+      components: [
+        { id: 'root', component: 'Row', children: ['ok', 'nope', 'b'] },
+        { id: 'ok', component: 'Icon', name: 'check' },
+        { id: 'nope', component: 'Icon', name: 'accountCircle' },
+        { id: 'b', component: 'Button', child: 'l', action: { event: { name: 'x' } } },
+        { id: 'l', component: 'Text', text: '**Go** [now](https://example.com)' },
+      ],
+    }
+    const { container } = render(<A2uiSurfaceView content={content} />)
+    expect(container.querySelectorAll('svg')).toHaveLength(1)
+    const button = screen.getByRole('button')
+    expect(button.querySelector('p, a')).toBeNull()
+    expect(container.textContent).not.toContain('account_circle')
+  })
 })

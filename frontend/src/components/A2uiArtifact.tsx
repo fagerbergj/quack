@@ -1,6 +1,6 @@
 import { Component, Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api } from '../api'
-import { useChatStore } from '../state/ChatStoreProvider'
+import { useChatState, useChatStore } from '../state/ChatStoreProvider'
 import type { A2uiActionRequest, SurfaceContent, SurfaceRef } from '../lib/a2ui'
 
 // The renderer (web_core + zod) is its own chunk: most chats never show a surface.
@@ -21,11 +21,13 @@ class SurfaceBoundary extends Component<{ children: ReactNode }, { failed: boole
 // A surface with its button actions sent as turns of this chat.
 export function A2uiSurfaceBox({ chatId, content, persistKey }: { chatId: string; content: SurfaceContent; persistKey?: string }) {
   const store = useChatStore()
+  const state = useChatState(chatId)
+  const busy = !!(state.submitting || state.live?.streaming)
   const onAction = useCallback((a: A2uiActionRequest) => { void store.submitA2uiAction(chatId, a) }, [store, chatId])
   return (
     <SurfaceBoundary>
       <Suspense fallback={<p className="text-xs text-gray-500 dark:text-gray-400" role="status">Loading…</p>}>
-        <A2uiSurfaceView content={content} onAction={onAction} persistKey={persistKey} />
+        <A2uiSurfaceView content={content} onAction={onAction} persistKey={persistKey} busy={busy} />
       </Suspense>
     </SurfaceBoundary>
   )

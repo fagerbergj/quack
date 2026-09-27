@@ -10,7 +10,7 @@ import {
   type AgentRun,
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage } from '../generated'
-import { a2uiActionText, type A2uiActionRequest, type SendMessageBodyWithAction } from '../lib/a2ui'
+import { a2uiActionText, A2UI_SURFACE_KIND, type A2uiActionRequest, type SendMessageBodyWithAction } from '../lib/a2ui'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
 // unchanged - the generated enum is now the one source of truth for node states.
@@ -114,6 +114,10 @@ export interface ChatState {
   // subscriber (ArtifactPanel) reads this off the existing subscribe() fan-out
   // rather than a separate pub/sub. seq increments on every artifact event so a listener can detect a new one even when the payload repeats (e.g. same revision re-announced on reconnect replay).
   artifactEvents?: { revision?: ArtifactRevisionPayload; judgeRound?: ArtifactJudgeRoundPayload; seq: number }
+  // Bumped only by a2ui_surface revisions: artifactEvents is last-write-wins and render_ui's quiz_key event lands right after.
+  surfaceSeq?: number
+  // Surface artifact id -> the live turn its first revision streamed in (the backend's turn_id isn't the chat turn).
+  surfacePins?: Record<string, string>
 }
 
 type Listener = () => void
@@ -151,6 +155,13 @@ function turnFromLiveTurn(live: LiveTurn): Turn {
     input: { role: 'user', content: live.userText },
     output: [{ id: `${live.id}-msg`, type: 'message', status: 'completed', content: [{ type: 'output_text', text }] }],
   }
+}
+
+// A first revision streaming in means the live turn created that surface.
+function surfaceEventState(s: ChatState, d: ArtifactRevisionPayload): Partial<ChatState> {
+  if (d.kind !== A2UI_SURFACE_KIND) return {}
+  const pin = d.revision === 1 && s.live?.id && !s.surfacePins?.[d.id] ? { [d.id]: s.live.id } : {}
+  return { surfaceSeq: (s.surfaceSeq ?? 0) + 1, surfacePins: { ...s.surfacePins, ...pin } }
 }
 
 // Reconnect tuning for a dropped SSE stream: capped exponential backoff so a
@@ -227,7 +238,8 @@ export class ChatStore {
     const trimmed = a2uiAction ? a2uiActionText(a2uiAction) : content.trim()
     if (!trimmed) return
     let cur = this.get(chatId)
-    if (cur.live?.streaming) return
+    // submitting covers the archive GET below, before live.streaming flips on - a double click lands there.
+    if (cur.live?.streaming || cur.submitting) return
     // Remembered so drainQueue's auto-submit of a later queued message can
     // still report a title change, without the caller having to re-pass it.
     if (onTitle) this.onTitleCallbacks.set(chatId, onTitle)
@@ -965,7 +977,7 @@ export class ChatStore {
         onArtifactRevision: d => {
           const s = this.get(chatId)
           const seq = (s.artifactEvents?.seq ?? 0) + 1
-          this.write(chatId, { ...s, artifactEvents: { ...s.artifactEvents, revision: d, seq } })
+          this.write(chatId, { ...s, ...surfaceEventState(s, d), artifactEvents: { ...s.artifactEvents, revision: d, seq } })
         },
         onArtifactJudgeRound: d => {
           const s = this.get(chatId)

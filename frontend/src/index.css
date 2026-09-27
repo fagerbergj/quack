@@ -75,9 +75,6 @@
   --a2ui-card-margin: 0;
   --a2ui-card-box-shadow: none;
 }
-/* A Text used as a button label inherits the button's colour, not prose's. */
-.quack-a2ui button .prose { color: inherit; }
-.quack-a2ui button .prose p { margin: 0; }
 
 /* The app owns all scrolling (messages pane, sidebar list). The page itself
    must NEVER scroll: without this, wheel input that hits an inner scroller's

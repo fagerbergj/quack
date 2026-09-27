@@ -1946,3 +1946,41 @@ describe('ChatStore.submitA2uiAction', () => {
     expect(store.get('chat-a').live?.userText).toBe(`[a2ui_action] ${JSON.stringify(action)}`)
   })
 })
+
+describe('ChatStore a2ui surface events and double submit', () => {
+  it('counts surface revisions separately and pins a first revision to the live turn', async () => {
+    const sse = [
+      'event: response_created', 'data: {"response_id":"resp-1"}', '',
+      'event: artifact_revision', 'data: {"id":"a2ui_surface:s1","revision":1,"kind":"a2ui_surface"}', '',
+      'event: artifact_revision', 'data: {"id":"a2ui_surface:s0","revision":4,"kind":"a2ui_surface"}', '',
+      'event: artifact_revision', 'data: {"id":"quiz_key:s1","revision":1,"kind":"quiz_key"}', '',
+    ].join('\n')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(makeStream(sse)))
+    const store = new ChatStore()
+    store.seed('chat-s', [])
+    await store.submit('chat-s', 'explain')
+    const s = store.get('chat-s')
+    expect(s.surfaceSeq).toBe(2)
+    expect(s.surfacePins).toEqual({ 'a2ui_surface:s1': 'resp-1' })
+    expect(s.artifactEvents?.revision?.kind).toBe('quiz_key')
+  })
+
+  it('drops a second submit that lands during the archive GET', async () => {
+    let releaseGet: (r: Response) => void = () => {}
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeStream(''))
+      .mockReturnValueOnce(new Promise<Response>(r => { releaseGet = r }))
+      .mockResolvedValueOnce(makeStream(''))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = new ChatStore()
+    store.seed('chat-d', [])
+    await store.submit('chat-d', 'first')
+    const p = store.submit('chat-d', 'second')
+    await store.submit('chat-d', 'second again')
+    releaseGet(new Response(JSON.stringify({ turns: [] })))
+    await p
+    const posts = fetchMock.mock.calls.filter(c => (c[1] as RequestInit | undefined)?.method === 'POST')
+    expect(posts).toHaveLength(2)
+    expect(JSON.parse((posts[1][1] as RequestInit).body as string)).toEqual({ content: 'second' })
+  })
+})

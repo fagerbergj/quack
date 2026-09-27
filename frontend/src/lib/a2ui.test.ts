@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { a2uiActionText, keepLocalEdits, parseA2uiActionText, surfaceEventKey, surfaceMessages, surfacesByTurn, QUACK_CATALOG_ID, type SurfaceContent } from './a2ui'
+import { a2uiActionText, keepLocalEdits, parseA2uiActionText, surfaceMessages, surfacesByTurn, QUACK_CATALOG_ID, type SurfaceContent } from './a2ui'
 import type { ArtifactList } from '../generated'
 
 const v1: SurfaceContent = {
@@ -31,6 +31,16 @@ describe('surfaceMessages', () => {
   })
 })
 
+describe('surfaceMessages question replacement', () => {
+  const picker = (label: string) => ({ id: 'q1', component: 'ChoicePicker', label, options: [{ label: 'x', value: 'a' }], value: { path: '/answers/q1' } })
+  it('resets the answer path of a ChoicePicker whose question changed, even with an unchanged data model', () => {
+    const a = { ...v1, components: [picker('Old?')] }
+    const b = { ...v1, components: [picker('Harder?')] }
+    expect(surfaceMessages(a, b, { answers: { q1: ['a'] } })).toContainEqual({ version: 'v0.9.1', updateDataModel: { surfaceId: 's1', path: '/answers/q1', value: [] } })
+    expect(surfaceMessages(a, { ...a }, {})).toHaveLength(1)
+  })
+})
+
 describe('keepLocalEdits', () => {
   it('lets a structural change in the new revision win over a leaf edit', () => {
     expect(keepLocalEdits({ a: { b: 1 } }, { a: 'x' })).toEqual({ a: { b: 1 } })
@@ -40,7 +50,7 @@ describe('keepLocalEdits', () => {
 describe('action text', () => {
   it('round-trips name and surface id through the persisted user line', () => {
     const text = a2uiActionText({ surface_id: 's1', name: 'submit_quiz', source_component_id: 'b', context: {} })
-    expect(parseA2uiActionText(text)).toEqual({ name: 'submit_quiz', surfaceId: 's1' })
+    expect(parseA2uiActionText(text)).toEqual({ name: 'submit_quiz', surfaceId: 's1', context: {} })
   })
 
   it('ignores ordinary and malformed text', () => {
@@ -50,24 +60,26 @@ describe('action text', () => {
 })
 
 describe('surfacesByTurn', () => {
-  it('places each surface at its first revision turn with its latest revision', () => {
-    const list = {
-      data: [
-        { name: 'a2ui_surface:s1', kind: 'a2ui_surface', revisions: [
-          { revision: 2, turn_id: 't2', mime_type: 'application/json', size: 1 },
-          { revision: 1, turn_id: 't1', mime_type: 'application/json', size: 1 },
-        ] },
-        { name: 'quiz_key:s1', kind: 'quiz_key', revisions: [{ revision: 1, turn_id: 't1', mime_type: 'application/json', size: 1 }] },
-      ],
-    } as ArtifactList
-    expect(surfacesByTurn(list)).toEqual({ t1: [{ name: 'a2ui_surface:s1', revision: 2 }] })
-  })
-})
+  const rev = (revision: number, extra: Record<string, string> = {}) => ({ revision, mime_type: 'application/json', size: 1, ...extra })
+  const turns = [{ id: 't1', created_at: '2026-09-27T10:00:00Z' }, { id: 't2', created_at: '2026-09-27T10:05:00Z' }]
+  const list = (...revisions: ReturnType<typeof rev>[]) => ({
+    data: [
+      { name: 'a2ui_surface:s1', kind: 'a2ui_surface', revisions },
+      { name: 'quiz_key:s1', kind: 'quiz_key', revisions: [rev(1, { turn_id: 't1' })] },
+    ],
+  }) as ArtifactList
 
-describe('surfaceEventKey', () => {
-  it('keys only a2ui_surface revisions', () => {
-    expect(surfaceEventKey({ revision: { id: 'a2ui_surface:s1', revision: 2, kind: 'a2ui_surface' } })).toBe('a2ui_surface:s1@2')
-    expect(surfaceEventKey({ revision: { id: 'text:x', revision: 2, kind: 'text' } })).toBe('')
-    expect(surfaceEventKey(undefined)).toBe('')
+  it('uses a revision turn_id that names a chat turn, at the latest revision', () => {
+    expect(surfacesByTurn(list(rev(2, { turn_id: 't2' }), rev(1, { turn_id: 't1' })), turns)).toEqual({ t1: [{ name: 'a2ui_surface:s1', revision: 2 }] })
+  })
+
+  it('falls back to the live-turn pin when turn_id is not a chat turn id', () => {
+    expect(surfacesByTurn(list(rev(1, { turn_id: 'adk-invocation-7' })), [...turns, { id: 'live' }], { 'a2ui_surface:s1': 'live' }))
+      .toEqual({ live: [{ name: 'a2ui_surface:s1', revision: 1 }] })
+  })
+
+  it('falls back to the last turn started before the first revision', () => {
+    expect(surfacesByTurn(list(rev(1, { turn_id: '', created_at: '2026-09-27T10:03:00Z' })), turns)).toEqual({ t1: [{ name: 'a2ui_surface:s1', revision: 1 }] })
+    expect(surfacesByTurn(list(rev(1)), turns)).toEqual({})
   })
 })

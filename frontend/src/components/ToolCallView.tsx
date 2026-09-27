@@ -38,6 +38,7 @@ const TOOL_VIEWS: Record<string, (props: { tool: ToolCall }) => ReactNode> = {
   git_status: GitStatusView,
   git_branch: GitBranchView,
   git_push: GitPushView,
+  render_ui: RenderUiView,
 }
 
 export function ToolCallView({ tool }: { tool: ToolCall }) {
@@ -538,6 +539,19 @@ function GitPushView({ tool }: { tool: ToolCall }) {
 // GenericView - the tidy fallback for tools without a custom view: a compact
 // key→value list when args/result are flat, else pretty (never raw-blob) JSON -
 // either way height-locked so an unfamiliar tool can't wall off the node.
+// RenderUiView - an A2UI surface write. answer_key is never shown: the rendered
+// surface is the readable form, and the key would spoil its quiz.
+function RenderUiView({ tool }: { tool: ToolCall }) {
+  const { answer_key: key, ...args } = tool.args
+  return (
+    <div className="space-y-2">
+      <PathHeader path={str(args, 'surface_id') ?? '(no surface id)'} note={key != null ? 'answer key hidden' : undefined} />
+      <FormattedValue value={args} />
+      {tool.done && <ResultJSON result={tool.result} />}
+    </div>
+  )
+}
+
 function GenericView({ tool }: { tool: ToolCall }) {
   return (
     <div className="space-y-2">

@@ -20,8 +20,8 @@ import { Icon } from '../components/Icon'
 import { StatusDot } from '../components/StatusDot'
 import { LiveTimer } from '../utils/timer'
 import type { ChatStatus, Turn } from '../generated'
-import { imageAttachmentsByTurn } from '../lib/turnAttachments'
-import { surfacesByTurn, surfaceEventKey, type SurfaceRef } from '../lib/a2ui'
+import { useTurnArtifacts } from '../hooks/useTurnArtifacts'
+import type { SurfaceRef } from '../lib/a2ui'
 import { TurnSurfaces } from '../components/A2uiArtifact'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
@@ -624,8 +624,6 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // #1138: turn_id -> image previews, from this chat's own artifact store -
   // lets a persisted turn show a real thumbnail instead of only the
   // "[User attached: ...]" text placeholder. Best-effort: an empty/failed fetch just means no turn gets a thumbnail, never an error state.
-  const [turnImages, setTurnImages] = useState<Record<string, { url: string; mime: string; name: string }[]>>({})
-  const [turnSurfaces, setTurnSurfaces] = useState<Record<string, SurfaceRef[]>>({})
 
   // Open a chat scrolled to the latest message (and snap down as turns complete),
   // not pinned to the top of a long history. Keyed on turn count so it fires after
@@ -753,22 +751,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     }
   }, [activeChatId])
 
-  // #1138: fetches this chat's artifact list to build the turn -> thumbnail
-  // map; re-fetches on every new archived turn (state.turns.length), not just
-  // on chat open - an attachment turn archives as soon as the NEXT turn is sent, and without this the map is stale for it and the bubble falls back to the "[User attached: ...]" placeholder (the bug this fixes). Separate from the getChat effect: a nice-to-have preview whose failure must not block seeding.
-  // Also refetched on each a2ui_surface revision event: that is how a new or updated surface reaches its turn.
-  const surfaceKey = surfaceEventKey(state.artifactEvents)
-  useEffect(() => { setTurnImages({}); setTurnSurfaces({}) }, [activeChatId])
-  useEffect(() => {
-    if (!activeChatId) return
-    let cancelled = false
-    api.listChatArtifacts(activeChatId).then(artifacts => {
-      if (cancelled) return
-      setTurnImages(imageAttachmentsByTurn(activeChatId, artifacts))
-      setTurnSurfaces(surfacesByTurn(artifacts))
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [activeChatId, state.turns.length, surfaceKey])
+  const { turnImages, turnSurfaces } = useTurnArtifacts(activeChatId, state)
 
   // #499/#738: poll the chat list so the sidebar stays current without a
   // refresh. Skipped while the tab is hidden (a backgrounded tab has nothing
@@ -1140,13 +1123,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               doesn't blink out). Replaced by the live turn once streaming starts. */}
           {showPendingTurn(state) && (
             <div>
-              <div className="flex justify-end mb-3">
-                <div className="max-w-2xl ml-auto">
-                  <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                    {state.pendingUserText}
-                  </div>
-                </div>
-              </div>
+              <TriggerMessage content={state.pendingUserText!} />
               <div className="flex justify-start">
                 <div className="w-auto">
                   <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4" role="status" aria-label="Thinking">

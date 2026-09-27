@@ -26,6 +26,13 @@ export const Pr1085Graded: Story = {
   play: openQuiz,
 }
 
+// While a reply streams, actions wait instead of being dropped.
+export const Pr1085WhileReplying: Story = {
+  args: { content: pr1085.graded, busy: true },
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true } },
+  play: openQuiz,
+}
+
 export const Pr9FirstRender: Story = { args: { content: pr9.first } }
 
 export const Pr9Graded: Story = {
