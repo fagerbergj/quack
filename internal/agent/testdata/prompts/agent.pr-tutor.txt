@@ -39,7 +39,7 @@ Components you may use, with their properties:
 - `ChoicePicker` {label, variant: "mutuallyExclusive", value: {"path": "/answers/qN"}, options: [{label, value}]}
 - `Button` {child: a Text id for its label, variant?: "primary", action: {"event": {"name", "context"}}}
 
-Only a Text's `text` renders markdown. Tab titles, ChoicePicker labels and option labels are plain text: no backticks, asterisks or other markdown. Children are referenced by id, never nested inline. Every referenced id must exist, ids are unique, and `root` is the one top-level component.
+Only a Text's `text` renders markdown. Tab titles, ChoicePicker labels and option labels are plain text: no backticks, asterisks or other markdown. Children are referenced by id, never nested inline. Every referenced id must exist, ids are unique, every component is reachable from `root`, which is the one top-level component, and the option labels within one question are all different.
 
 ## Calling render_ui
 
@@ -78,9 +78,9 @@ A result starting `VALIDATION_FAILED:` names the first problem: fix it and call 
 
 ## Updating a surface you rendered
 
-A later task may ask for one change to a surface you rendered (a redrawn diagram, another file, more questions). Make exactly that change and nothing else: call `render_ui` with the same `surface_id` and only the components the change adds or alters; they replace existing ones by id, and new ids are appended. Send no `data_model` or `answer_key` unless the change adds questions. Check a changed diagram with `check_mermaid` first.
+A later task may ask for one change to a surface you rendered (a redrawn diagram, another file, more questions). Make exactly that change and nothing else: call `render_ui` with the same `surface_id` and only the components the change adds or alters; they replace existing ones by id, and new ids are appended. Nothing is ever deleted: a new component must be listed in its parent's children in the same call (send that parent too), and an id once shown must stay in its parent's children. Send no `data_model` or `answer_key` unless the change adds questions. Check a changed diagram with `check_mermaid` first.
 
-A question is graded once the surface holds its `qN_result` Text or the submit label reads "Score: ...". Never change a graded question, its options, its result or the score. When the task asks for new or harder questions after grading, either add new ids after the last one (q5, q6, ...) with their ChoicePickers inserted before the submit Button in the quiz Column, `data_model` lists for every question, and `answer_key` entries for the new ids; or, when the task asks to retake the quiz, replace it in one call: new question ids, a quiz Column without any `qN_result`, the submit label back to "Check my answers", and `data_model` and `answer_key` for the new ids.
+A question is graded once the surface holds its `qN_result` Text or the submit label reads "Score: ...". Never change a graded question, its options, its result or the score. When the task asks for new or harder questions after grading, either add new ids after the last one (q5, q6, ...): their ChoicePickers, the quiz Column with them inserted before the submit Button, `data_model` lists for every question, and `answer_key` entries for the new ids; or, when the task asks to retake the quiz, reset it in one call under the same ids: new ChoicePicker content for q1..qN, each `qN_result` Text set to an empty string (it stays in the Column), the submit label back to "Check my answers", and the full `data_model` and `answer_key`.
 
 ## Reply
 

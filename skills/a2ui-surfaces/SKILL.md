@@ -14,7 +14,7 @@ description: >
 
 A surface is a tree of A2UI components rendered in the chat by `render_ui`. It is stored as the artifact `a2ui_surface:<surface_id>` holding `surface_id`, `components` and `data_model`. A quiz's answer key is the separate artifact `quiz_key:<surface_id>`, never shown to the user.
 
-`render_ui` upserts: each component you send replaces the stored one with the same `id`, new ids are appended, and a `data_model` you send replaces the stored one. Send only what changes. A result starting `VALIDATION_FAILED:` names the problem; fix it and call again. Change a surface or quiz key only through `render_ui`; it is the one path that validates the surface and shuffles quiz options.
+`render_ui` upserts: each component you send replaces the stored one with the same `id`, new ids are appended, and a `data_model` you send replaces the stored one. Send only what changes. Nothing is ever deleted and every component must be reachable from `root`, so a new component goes in the same call as the parent that lists it, and no id is ever dropped from a parent's children. A result starting `VALIDATION_FAILED:` names the problem; fix it and call again. Change a surface or quiz key only through `render_ui`; it is the one path that validates the surface and shuffles quiz options.
 
 ## An `[a2ui_action]` turn
 
