@@ -70,9 +70,14 @@ baseline player and the evidence that beat it in the row's `why`.
    but the same study's own verdict is that team-score projection dominates
    game-script narrative — pick the higher-scoring team's players rather than
    playing the script. Weather only matters at extremes (≥20-25mph sustained
-   wind, heavy precipitation, <30°F) and trims efficiency, not volume — see
-   `weather-and-vegas.md` for the full multiplier tables and the "no
-   correlation" null result that also exists in the literature.
+   wind, heavy precipitation, <30°F) and trims efficiency, not volume. For
+   every close call (step 2's definition), find the game's venue in
+   `stadiums.md`; if it is open-air, call `weather` with its
+   `latitude`/`longitude`, the game date, and the venue-local kickoff
+   `time`, then apply `weather-and-vegas.md`'s working rule to that
+   window. Skip domes and retractable roofs. When the forecast moves a
+   call, the row's `why` names the numbers (e.g. "27 mph sustained wind at
+   Soldier Field"); a forecast that changed nothing needs no mention.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every
    remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`
    for the floor-vs-ceiling tie-break and the PPR-specific WR-lean data.
@@ -137,6 +142,9 @@ reasoning instead — do not invent a figure to sound precise.
 - `weather-and-vegas.md` — weather multiplier tables, the null-result study,
   and implied-team-total math. Load when the game is outdoors with a
   forecast worth checking, or when a Vegas total/spread is part of the case.
+- `stadiums.md` — every team's stadium with roof type, coordinates, and
+  time zone, plus this season's international/neutral-site games. Load for
+  step 5 whenever a close call involves an outdoor game.
 - `flex-decisions.md` — the FLEX-specific tie-break rules and PPR
   RB-vs-WR-value data. Load whenever the FLEX slot itself is the open
   question (not a fixed RB/WR/TE slot).

@@ -230,6 +230,38 @@ criteria:
     anchors:
     - quote
     - omission
+  weather_checked_for_outdoor_close_calls:
+    definition: >
+      Every close call whose game is in an open-air stadium checks the
+      game-window forecast with the `weather` tool and applies it only at the
+      skill's extremes, as a tiebreaker; a call the forecast moved says so in
+      its `why` with the forecast numbers.
+    guidance: >
+      If no close call involves an open-air game (none, or all in domes or
+      retractable roofs per `stadiums.md`), score 3 - there is nothing to check.
+    steps:
+    - List every close call (as in outside_news_for_close_calls) and its
+      game's venue; keep those in open-air stadiums.
+    - For each, check a `weather` call in this session covers that venue and
+      game date.
+    - Check any call that cites weather matches the tool's numbers, and that
+      weather below the skill's extremes did not flip a call.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every outdoor close call has a matching weather check, and weather moves a call only at the skill's extremes, stated with its numbers.
+    - min: 2.0
+      max: 2.0
+      meaning: every outdoor close call is checked, but a call weather moved does not state the forecast numbers.
+    - min: 1.0
+      max: 1.0
+      meaning: one outdoor close call has no weather check, or mild weather tipped a call.
+    - min: 0.0
+      max: 0.0
+      meaning: no outdoor close call is checked, or a cited forecast does not match any weather tool result.
+    anchors:
+    - quote
+    - omission
   summary_states_changes:
     definition: >
       The artifact's `summary` is at most two sentences and names every

@@ -9,7 +9,7 @@ Load `sleeper:start-sit` before deciding anything. It gives you the decision
 procedure (availability first, then locks, then bounded matchup/game-script/
 weather adjustments, then the FLEX), the published thresholds with their
 sources, and what to say when no published number exists. Load its
-resources (`practice-report-semantics`, `weather-and-vegas`,
+resources (`practice-report-semantics`, `weather-and-vegas`, `stadiums`,
 `flex-decisions`) only when the case in front of you calls for them - do not
 load every resource for every call.
 
@@ -26,7 +26,9 @@ Questionable or limited-practice starter, or a bench player whose projection
 sits within the flex tie-break gap (`flex-decisions.md`) of the starter's -
 use `web_search` and `web_fetch` to check recent news and cite what you find
 inline as a markdown link; `summarize` condenses a long fetched page before
-you quote it.
+you quote it. For each such close call in an open-air stadium
+(`stadiums.md`), `weather` gives the forecast for the game window - see the
+skill's step 5.
 
 Call `current_date` before reasoning about lock timing - never assume
 today's date. Convert kickoffs and state lock times exactly as
