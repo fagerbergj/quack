@@ -1534,7 +1534,7 @@ type nativeNodeBuilder struct {
 	schemas            *artifactschema.Registry
 }
 
-func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
+func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
 	base, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1580,6 +1580,8 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			RecordStore:        rc,
 			NodeID:             nodeID,
 			Coords:             coords,
+			Sink:               sink,
+			TurnID:             turnID,
 		}); err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("tools: %w", err)
 		}
@@ -1598,7 +1600,7 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	return wag, wrapped, wm, builtins, nil
 }
 
-func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
+func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
 	// One holder per dispatch: two nodes of this agent run concurrently, and a
 	// shared one would let either move the other's prompt mid-round.
 	prompts := b.bundle.PinPrompt(b.res)
@@ -1625,7 +1627,7 @@ func (b *nativeNodeBuilder) build(nodeKey string, drain func() string, artifacts
 			*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
 		}
 	}
-	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, extraTools...)
+	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), extraTools...)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -1820,7 +1822,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		res:                res,
 		schemas:            gateCfg.Schemas,
 	}
-	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil)
+	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil, "")
 	if err != nil {
 		return nil, fmtErr(name, "%w", err)
 	}

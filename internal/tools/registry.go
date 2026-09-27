@@ -15,6 +15,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/recordstore"
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -52,6 +53,10 @@ type Deps struct {
 	RecordStore *recordstore.Client
 	NodeID      string
 	Coords      *RoundCoords
+	// Sink/TurnID: a DAG node's chat SSE sink and chat turn id, which its tools'
+	// ctx lacks behind the node's A2A boundary (render_ui's artifact_revision + turn_id).
+	Sink   func(stream.SSEEvent)
+	TurnID string
 }
 
 type constructor func(Deps) (tool.Tool, error)

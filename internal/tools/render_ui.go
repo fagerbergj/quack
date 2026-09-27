@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,12 +33,17 @@ type renderUIResult struct {
 }
 
 func newRenderUI(d Deps) (tool.Tool, error) {
-	return NewRenderUITool(d.RecordStore, d.NodeID, d.Coords)
+	return renderUITool(d.RecordStore, d.NodeID, d.Coords, d.Sink, d.TurnID)
 }
 
 // NewRenderUITool builds render_ui: upserts an a2ui_surface artifact (plus its
 // quiz_key) and announces each save with artifact_revision. A nil c errors on a call.
 func NewRenderUITool(c *recordstore.Client, nodeID string, coords *RoundCoords) (tool.Tool, error) {
+	return renderUITool(c, nodeID, coords, nil, "")
+}
+
+// renderUITool: sink/turnID stand in when the call's ctx lacks them (a DAG node's worker, behind its A2A server).
+func renderUITool(c *recordstore.Client, nodeID string, coords *RoundCoords, sink func(stream.SSEEvent), turnID string) (tool.Tool, error) {
 	if coords == nil {
 		coords = &RoundCoords{}
 	}
@@ -60,9 +66,13 @@ func NewRenderUITool(c *recordstore.Client, nodeID string, coords *RoundCoords) 
 				return "", errors.New("render_ui: no chat artifacts service configured")
 			}
 			// The chat turn id, not coords.TurnID (a worker's ADK invocation id): the UI places a surface on its turn by it.
-			turnID := stream.TurnIDFromContext(ctx)
-			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: turnID, HeadSHA: coords.HeadSHA, TriggerAnnotation: coords.TriggerAnnotation, Author: "worker", SavedAt: time.Now().UTC()}
-			return renderUI(ctx, c, lineage, a)
+			turn := cmp.Or(stream.TurnIDFromContext(ctx), turnID)
+			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: turn, HeadSHA: coords.HeadSHA, TriggerAnnotation: coords.TriggerAnnotation, Author: "worker", SavedAt: time.Now().UTC()}
+			emit := sink
+			if s, ok := stream.YieldFromContext(ctx); ok {
+				emit = s
+			}
+			return renderUI(ctx, c, lineage, emit, a)
 		},
 	)
 	if err != nil {
@@ -71,7 +81,7 @@ func NewRenderUITool(c *recordstore.Client, nodeID string, coords *RoundCoords) 
 	return &decodeStringArgs{runnableTool: t.(runnableTool), keys: []string{"components", "data_model", "answer_key"}}, nil
 }
 
-func renderUI(ctx agent.Context, c *recordstore.Client, lineage recordstore.Lineage, a renderUIArgs) (string, error) {
+func renderUI(ctx agent.Context, c *recordstore.Client, lineage recordstore.Lineage, sink func(stream.SSEEvent), a renderUIArgs) (string, error) {
 	if err := a2ui.CheckSurfaceID(a.SurfaceID); err != nil {
 		return "VALIDATION_FAILED: " + err.Error(), nil
 	}
@@ -96,14 +106,14 @@ func renderUI(ctx agent.Context, c *recordstore.Client, lineage recordstore.Line
 	if err != nil {
 		return "", fmt.Errorf("render_ui: %w", err)
 	}
-	emitRevision(ctx, sid, rev, a2ui.KindSurface, lineage)
+	emitRevision(sink, sid, rev, a2ui.KindSurface, lineage)
 	key.Answers = merged
 	if newKey, _ := json.Marshal(key); len(merged) > 0 && !bytes.Equal(newKey, storedKey) {
 		kid, krev, err := c.SaveStructured(ctx, a2ui.KindQuizKey, key, "", lineage)
 		if err != nil {
 			return "", fmt.Errorf("render_ui: quiz key: %w", err)
 		}
-		emitRevision(ctx, kid, krev, a2ui.KindQuizKey, lineage)
+		emitRevision(sink, kid, krev, a2ui.KindQuizKey, lineage)
 	}
 	b, err := json.Marshal(renderUIResult{ArtifactID: sid, Revision: rev})
 	return string(b), err
@@ -121,8 +131,8 @@ func loadJSON(ctx agent.Context, c *recordstore.Client, id string, v any) ([]byt
 	return raw, nil
 }
 
-func emitRevision(ctx agent.Context, id string, rev int, kind string, l recordstore.Lineage) {
-	if sink, ok := stream.YieldFromContext(ctx); ok {
+func emitRevision(sink func(stream.SSEEvent), id string, rev int, kind string, l recordstore.Lineage) {
+	if sink != nil {
 		sink(stream.SSEEvent{Name: stream.EventArtifactRevision, Data: stream.ArtifactRevisionData{ID: id, Revision: rev, Kind: kind, NodeID: l.NodeID, Round: l.Round}})
 	}
 }
