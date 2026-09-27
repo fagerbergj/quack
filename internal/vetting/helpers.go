@@ -283,6 +283,9 @@ type workerActivity struct {
 	// activityFromSessionAt's "recall_memory" case), since a native worker's tool calls, unlike an ACP worker's, land in this session directly.
 	recalled []memory.Delivered
 
+	// artifactRead: the node read a stored artifact (e.g. a dispatch's PR diff) - retrieval like a fetch.
+	artifactRead bool
+
 	clonedRepos []string
 	clonedDirs  []string
 	paths       map[string]bool // successful fs ops paths, normalizePath'd
@@ -317,6 +320,11 @@ type workerActivity struct {
 	skipArtifactRender bool
 	// ponytail: prefer plan.Setup's PR/issue number over ledger inference.
 	prNumber int
+}
+
+// retrieved reports any retrieval this session: a fetch, a search result seen, a clone, a file read, or an artifact read.
+func (a workerActivity) retrieved() bool {
+	return len(a.fetched) > 0 || len(a.seen) > 0 || len(a.clonedRepos) > 0 || len(a.paths) > 0 || a.artifactRead
 }
 
 // wsOp: one completed fs/git/run_command call/response pair.

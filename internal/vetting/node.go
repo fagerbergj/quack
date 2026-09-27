@@ -2173,8 +2173,8 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf(
 			"deterministic: %d chars, need at least %d (non-empty)", len(strings.TrimSpace(answer)), minAnswerChars)}
 	}
-	// Zero-retrieval answers are ungrounded (model memory or unverifiable citations). Clone/file reads count as retrieval.
-	if cfg.RequireRetrieval && len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(act.paths) == 0 {
+	// Zero-retrieval answers are ungrounded (model memory or unverifiable citations).
+	if cfg.RequireRetrieval && !act.retrieved() {
 		det["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session - " +
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
@@ -2575,6 +2575,8 @@ func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 		}
 	case isArtifactWriteTool(fr.Name):
 		s.recordArtifactWrite(fr.Response)
+	case fr.Name == "read_artifact":
+		s.act.artifactRead = s.act.artifactRead || (!s.otherNode && fr.Response["error"] == nil)
 	}
 	if isWorkspaceTool(fr.Name) {
 		// Only completed call/response pairs enter the ledger.

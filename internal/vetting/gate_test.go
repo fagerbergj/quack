@@ -477,8 +477,9 @@ func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 // grounded - grounded_in_retrieval must not fire on zero web activity alone.
 func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 	for name, act := range map[string]workerActivity{
-		"clone": {clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}},
-		"reads": {paths: map[string]bool{"repo/main.go": true}},
+		"clone":         {clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}},
+		"reads":         {paths: map[string]bool{"repo/main.go": true}},
+		"artifact read": activityFromSessionAt(newTestSession(t, fnResp("r1", "read_artifact", map[string]any{"result": "diff --git a/x b/x"})), "", ""),
 	} {
 		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
 		det, _ := computeDeterministicCriteria(context.Background(), "The entrypoint is [main.go](repo/main.go).", act, Config{RequireRetrieval: true}, "", time.Time{})
@@ -486,6 +487,14 @@ func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 		if _, present := got.Criteria["grounded_in_retrieval"]; present {
 			t.Errorf("%s: grounded_in_retrieval penalty applied despite workspace grounding", name)
 		}
+	}
+}
+
+// A failed read_artifact (not found) retrieved nothing, so it is no grounding.
+func TestFailedArtifactReadIsNotRetrieval(t *testing.T) {
+	sess := newTestSession(t, fnResp("r1", "read_artifact", map[string]any{"error": "read_artifact: x: not found"}))
+	if activityFromSessionAt(sess, "", "").artifactRead {
+		t.Fatal("a failed read_artifact counted as retrieval")
 	}
 }
 
