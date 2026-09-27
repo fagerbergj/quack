@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"iter"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -283,6 +284,9 @@ type workerActivity struct {
 	// activityFromSessionAt's "recall_memory" case), since a native worker's tool calls, unlike an ACP worker's, land in this session directly.
 	recalled []memory.Delivered
 
+	// sourceReads: ids of stored source artifacts (dispatch inputs, fetched pages) read successfully.
+	sourceReads []string
+
 	clonedRepos []string
 	clonedDirs  []string
 	paths       map[string]bool // successful fs ops paths, normalizePath'd
@@ -297,6 +301,9 @@ type workerActivity struct {
 	// this round (write_artifact/edit_artifact/write_<kind>) - feeds the
 	// artifact-read zero-reads discard rule.
 	artifactsWritten []string
+	// rendered: render_ui surface and quiz key ids - kept out of artifactsWritten so
+	// surface JSON (diff hunks with markdown links) is never scored as cited prose.
+	rendered []string
 
 	committed bool
 	pushed    bool
@@ -317,6 +324,26 @@ type workerActivity struct {
 	skipArtifactRender bool
 	// ponytail: prefer plan.Setup's PR/issue number over ledger inference.
 	prNumber int
+}
+
+// retrieved reports any retrieval this session: a fetch, a search result seen, a clone, a file read, or a source-artifact read.
+func (a workerActivity) retrieved() bool {
+	return len(a.fetched) > 0 || len(a.seen) > 0 || len(a.clonedRepos) > 0 || len(a.paths) > 0 || a.readSource()
+}
+
+// readSource: a source artifact read that this node did not write itself - reading back its own write retrieves nothing.
+func (a workerActivity) readSource() bool {
+	for _, id := range a.sourceReads {
+		if !slices.Contains(a.artifactsWritten, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// producedArtifacts: every artifact this round's judge must read before passing it.
+func (a workerActivity) producedArtifacts() []string {
+	return append(slices.Clone(a.artifactsWritten), a.rendered...)
 }
 
 // wsOp: one completed fs/git/run_command call/response pair.

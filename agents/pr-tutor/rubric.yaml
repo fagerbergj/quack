@@ -1,0 +1,129 @@
+scale:
+  min: 0
+  max: 3
+  pass: 2
+notes: >
+  The deliverable is an interactive surface, not the reply. render_ui stores it as the artifact
+  `a2ui_surface:<surface_id>` and its answer key as `quiz_key:<surface_id>`. Read those two first and
+  score only them: options are shuffled after the call, so values in the worker's call can differ. Never
+  score the reply's length, prose or citations. Keep the check small: open only the diff hunks that a
+  quiz `why` or a Code excerpt names, never the whole diff. Find a hunk with grep_artifacts on its file
+  path (ids ["bytes:files"] on a GitHub-triggered run, otherwise the `web_page` diff from
+  list_artifacts kind web_page), then read_artifact(id, offset, lines: 40) at the hit. When no stored
+  diff exists, do not count a claim as a finding only because you cannot see its hunk. A task that
+  changes an existing surface is scored on that change only. A question whose `qN_result` Text is on
+  the surface is graded and frozen: it is never an item for quiz_grounded or answers_not_guessable. When
+  the task does not add or change questions, those two criteria have no items and score 3.
+criteria:
+  surface_delivered:
+    definition: >
+      This round left one `a2ui_surface` artifact with the tutor's full shape and a `quiz_key` artifact
+      that answers every question on it.
+    steps:
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      one missing or wrong structural element below. Record each finding with a verbatim quote from the
+      artifact (or an omission naming exactly what is missing); one you cannot quote or name does not
+      count. Pick the band from the number of findings; none is the top band.
+    - Check the root is a Card whose content holds a title Text and a Tabs component.
+    - Check the tabs are exactly Overview, Flow, Key changes, Quiz, in that order.
+    - Check the Flow tab holds a Mermaid component and Key changes holds 2-4 Text + Code pairs.
+    - >-
+      Check the Quiz tab holds 3-5 ChoicePicker components, each bound to /answers/qN, followed by a
+      Button whose action event is submit_quiz with context {"answers": {"path": "/answers"}}.
+    - Check the data model holds one list per question under /answers.
+    - >-
+      When the task changes an existing surface, read the previous revision (read_artifact with
+      revision one below the latest) and check the requested change is present and no graded question
+      (one with a `qN_result`), its options, its result or the score changed.
+    - >-
+      Check the quiz_key has an entry for every question, and each entry's answer is one of that
+      question's option values on the stored surface, the one whose label is the entry's label.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: 'no finding: both artifacts exist and every structural item passes.'
+    - min: 2.0
+      max: 2.0
+      meaning: exactly one finding, and it is cosmetic (a missing title, one Key changes pair short).
+    - min: 1.0
+      max: 1.0
+      meaning: >-
+        two or three findings, or one finding that breaks grading: a question missing from the key, a
+        keyed answer that is not an option, a submit button without the submit_quiz event, or a graded
+        question that changed.
+    - min: 0.0
+      max: 0.0
+      meaning: >-
+        four or more findings, or no a2ui_surface or no quiz_key artifact exists, or the surface was
+        written into the reply as text instead of rendered.
+    anchors:
+    - quote
+    - omission
+  quiz_grounded:
+    definition: >
+      Every keyed answer follows from code the PR actually changes, no other option is also right, and
+      the Code excerpts are copied from the diff.
+    steps:
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      a question whose `why` names no file or code, whose cited code does not appear in the diff or the
+      surface's Code excerpts, whose keyed option the cited code contradicts, or where a second option is
+      equally correct by that code, or a Code excerpt whose lines are not in the diff. Record each finding with a verbatim quote (or an omission naming
+      exactly what is missing); one you cannot quote or name does not count. Pick the band from the
+      number of findings; none is the top band.
+    - For each question, read its quiz_key `why` and find the hunk it cites.
+    - Check the cited code says what the `why` claims and makes the keyed option true.
+    - Check each other option is false by that same code.
+    - Check each Code excerpt's first changed line appears in the diff under its path.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: 'no finding: every item passes the steps above.'
+    - min: 2.0
+      max: 2.0
+      meaning: exactly one finding, and it is a `why` that names the file but quotes no code while the
+        keyed answer is still right.
+    - min: 1.0
+      max: 1.0
+      meaning: two or three findings, or one keyed answer the cited code contradicts.
+    - min: 0.0
+      max: 0.0
+      meaning: >-
+        four or more findings, or two or more keyed answers are wrong, or the answers rest on no code at
+        all.
+    anchors:
+    - quote
+    - omission
+  answers_not_guessable:
+    definition: >
+      A reader who has not read the PR cannot pick the keyed option from the shape of the options alone.
+    guidance: >
+      Option order does not matter here: the server shuffles it. What gives an answer away is its form:
+      the only option that is clearly longer, the only precise one, the only one naming real identifiers
+      from the diff, or a distractor no reader could believe.
+    steps:
+    - >-
+      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
+      a question whose keyed option is the only one that is clearly the longest, the only specific one,
+      or the only one naming real code, or that has a distractor which is obviously absurd. Record each
+      finding with a verbatim quote of the options (or an omission naming exactly what is missing); one
+      you cannot quote or name does not count. Pick the band from the number of findings; none is the
+      top band.
+    - For each question, compare the keyed option's length and specificity with every distractor.
+    - Check each distractor is a plausible misreading of the change, not filler.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: 'no finding: every item passes the steps above.'
+    - min: 2.0
+      max: 2.0
+      meaning: exactly one finding.
+    - min: 1.0
+      max: 1.0
+      meaning: two or three findings.
+    - min: 0.0
+      max: 0.0
+      meaning: four or more findings, or the keyed option is the clearly longest in every question.
+    anchors:
+    - quote

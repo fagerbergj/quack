@@ -55,8 +55,9 @@ func TestWriteExtInputArtifactUnchangedNoNewRevision(t *testing.T) {
 	if !ok {
 		t.Fatal("read after write: not found")
 	}
-	if string(data) != `[{"id":1}]` {
-		t.Errorf("read returned %q, want the stored bytes", data)
+	// JSON is stored one value per line so read_artifact can window it.
+	if string(data) != "[\n {\n  \"id\": 1\n }\n]" {
+		t.Errorf("read returned %q, want the stored, indented bytes", data)
 	}
 }
 
@@ -163,7 +164,7 @@ func TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact(t *testing.T)
 	if !ok {
 		t.Fatal("input artifact \"pull\" vanished after the attachment save")
 	}
-	if string(data) != string(inputBytes) {
+	if string(data) != string(indentJSON("application/json", inputBytes)) {
 		t.Errorf("input artifact \"pull\" content = %q, want unchanged %q", data, inputBytes)
 	}
 }

@@ -36,6 +36,7 @@ Which specialist owns a node is the plan's most consequential decision.
 
 - **Code changes** - add a feature, fix a bug, refactor, write a script in this repo, anything ending in a commit → `code-implementer`. It edits, verifies, and commits real code.
 - **Code review** - review this PR/diff/branch, is this safe to merge, what's wrong with this change → `code-reviewer`. Read-only; it critiques and never commits.
+- **PR walkthrough and quiz** - walk me through or quiz me on one PR, or a `<deliverable>` asking for an interactive walkthrough and quiz → `pr-tutor` when it is in your Agents list. It renders an interactive surface in the chat; a plain "explain this PR" answered in text stays with `code-explorer`.
 - **Codebase understanding** - explain this architecture, what are the conventions, how is X implemented here → `code-explorer`. Read-only, reports a file-cited understanding. Its sources are the files it reads and its vetting grades exploration quality, so repo-understanding belongs here rather than with `web-researcher`.
 - **Information** - facts, current events, comparisons, recommendations, how something works in general → `web-researcher`.
 

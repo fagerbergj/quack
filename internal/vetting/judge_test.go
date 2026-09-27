@@ -641,6 +641,20 @@ func TestJudgeArtifactReadDiscard(t *testing.T) {
 		}
 	})
 
+	t.Run("a rendered surface alone still requires a read", func(t *testing.T) {
+		var calls int32
+		var second string
+		factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, nil, nil)
+		cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: []tool.Tool{newSpyReadArtifactTool(t, new(int32))}}
+		rendered := workerActivity{rendered: []string{"a2ui_surface:acme-widgets-pr-1-tutor", "quiz_key:acme-widgets-pr-1-tutor"}}
+		if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "Rendered the walkthrough.", rendered, nil, nil, func(*genai.Part) bool { return true }); err != nil {
+			t.Fatalf("runJudgeAgent: %v", err)
+		}
+		if calls != 2 || !strings.Contains(second, "quiz_key:acme-widgets-pr-1-tutor") {
+			t.Errorf("calls = %d, re-judge prompt = %q; want a re-judge naming the quiz key", calls, second)
+		}
+	})
+
 	t.Run("worker wrote nothing: no discard even with zero reads", func(t *testing.T) {
 		var calls int32
 		var second string

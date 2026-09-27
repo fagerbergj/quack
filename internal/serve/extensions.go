@@ -857,6 +857,7 @@ func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) f
 		}
 		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
 		id := inputArtifactKind + ":" + name
+		data = indentJSON(mimeType, data)
 		prev, prevRev, ok, err := client.Latest(ctx, id)
 		if err != nil {
 			slog.Warn("ext input artifact: baseline read failed; writing unconditionally", "component", "startup", "chat", chatID, "artifact", name, "err", err)
@@ -867,6 +868,19 @@ func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) f
 		_, rev, err := client.SaveBlob(ctx, inputArtifactKind, data, mimeType, name, inputArtifactLineage())
 		return int64(rev), true, err
 	}
+}
+
+// indentJSON puts one JSON value per line, so read_artifact and grep_artifacts can
+// window a large input (a PR's files with patches arrives as one minified line).
+func indentJSON(mimeType string, data []byte) []byte {
+	if !strings.HasPrefix(mimeType, "application/json") {
+		return data
+	}
+	var b bytes.Buffer
+	if json.Indent(&b, data, "", " ") != nil {
+		return data
+	}
+	return b.Bytes()
 }
 
 // attachmentHintPrefix keeps a dispatch attachment's id ("bytes:upload-
