@@ -63,7 +63,7 @@ func TestWorkerModelHoldsPerCall(t *testing.T) {
 	if !ok {
 		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
 	}
-	_, wm, _, _, _, release, err := na.ForNode("test-plan:test-node", nil, artifact.InMemoryService(), "quack-test", "u1", "chat-1", "test-node", nil)
+	_, wm, _, _, _, release, err := na.ForNode(context.Background(), "test-plan:test-node", nil, artifact.InMemoryService(), "quack-test", "u1", "chat-1", "test-node", nil)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

@@ -155,6 +155,13 @@ func (s *orchRun) buildMemoryArtifactTools(githubSetup *dag.Setup) string {
 			return "orchestrator: write_<kind> tools: " + err.Error()
 		}
 		s.toolList = append(s.toolList, writeKindTools...)
+		if s.o.renderUI {
+			renderTool, err := tools.NewRenderUITool(rc, orchestratorName, nil)
+			if err != nil {
+				return "orchestrator: render_ui tool: " + err.Error()
+			}
+			s.toolList = append(s.toolList, renderTool)
+		}
 	}
 	return ""
 }

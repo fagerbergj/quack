@@ -313,6 +313,17 @@ func (c *Client) lockFor(id string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
+var keyLocks sync.Map // "chatID\x00key" -> *sync.Mutex
+
+// LockKey serializes a caller's read-modify-write of several records under key
+// within this chat. Separate from the per-id save lock, so Save* may run inside it.
+func (c *Client) LockKey(key string) (unlock func()) {
+	v, _ := keyLocks.LoadOrStore(c.sessionID+"\x00"+key, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // save picks id's current latest revision as the parent and retries on
 // ledger.ErrStaleParent for a cross-process conflict; a same-process
 // conflict for the same id can't happen at all - lockFor serializes it.

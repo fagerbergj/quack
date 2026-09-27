@@ -34,24 +34,9 @@ const (
 
 // nodeScopedWorker: fresh worker/model/tools per DAG node.
 type nodeScopedWorker interface {
-	// drain delivers a message queued against this node mid-round (#1029);
-	// it is resolved lazily because the control registers when the node runs.
-	// artifacts/appName/userID/chatID/nodeID (all "" / nil when artifacts is
-	// unavailable) let the implementation (internal/serve's nativeAgent) build
-	// this node's own list/read/edit/write_<kind> artifact tools before the
-	// worker is constructed - dag itself never imports internal/tools, to
-	// avoid an import cycle (tools already imports dag for plan/execute).
-	// setRoundCoords, when non-nil, must be called by the gate at every
-	// judge/revise round (mirrors vetting.SetAdvisorThreadRound) so those
-	// already-built tools' writes carry the round's real lineage (#1123).
-	// sink lets this node's own A2A server re-emit a `compaction` SSE event
-	// (#1185 follow-up) - nil is a valid "no active hub" no-op.
-	// release(paused): closes this node's own per-dispatch A2A server;
-	// the underlying worker session itself now outlives every dispatch
-	// (paused or not) and is only reaped at chat archive/delete, so a later
-	// reuse - a brand new ForNode call to the SAME deterministic session id -
-	// always finds its prior history.
-	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
+	// Builds a node's own worker, model and tools (internal/serve's nativeAgent); see that
+	// implementation for drain, setRoundCoords, sink, ctx and release semantics.
+	ForNode(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source is the run's origin (extension name or a fixed
@@ -96,7 +81,7 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		var refreshPrompt func(context.Context) artifactsrc.Artifact
 		perCall := false // native workers hold admission per model call; ACP nodes per subprocess round
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, src, rp, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
+			w, m, wt, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}

@@ -516,8 +516,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// Detach from the HTTP request's lifecycle (the run outlives the handler) while
 		// keeping the caller's trace, so the extension's inbound span parents the run's spans.
 		runCtx := context.WithoutCancel(ctx)
-		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
-		effectiveSetup, err := prepareExtChat(runCtx, name, st, orch, chatID, &userID, req)
+		effectiveSetup, allowedKinds, err := prepareExtChat(runCtx, name, st, orch, chatID, &userID, req)
 		if err != nil {
 			return err
 		}
@@ -555,9 +554,9 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 	}
 }
 
-// prepareExtChat: merge the dispatch's chat origin/setup onto the stored state
-// (a nudge re-dispatch carries neither, #1180), reset the session, stamp origin/title.
-func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, error) {
+// prepareExtChat: merge the dispatch's origin/setup/grant onto the stored state (a nudge carries
+// none, #1180), reset the session, stamp origin/title. Returns the grant this run runs under.
+func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, []string, error) {
 	// Merge onto the chat's stored state rather than replacing it: a nudge/retry
 	// re-dispatch (quack-extensions#47) carries neither Origin nor Run.Setup (#1180).
 	existing, getErr := st.GetChat(runCtx, chatID)
@@ -574,15 +573,20 @@ func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *
 
 	if req.Chat.ResetHistory {
 		if err := orch.ResetSession(runCtx, *userID, chatID); err != nil {
-			return nil, fmt.Errorf("extensions.%s: reset history: %w", name, err)
+			return nil, nil, fmt.Errorf("extensions.%s: reset history: %w", name, err)
 		}
 	}
 	originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
+	allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
+	originJSON = tools.WithOriginGrant(originJSON, allowedKinds)
+	if allowedKinds == nil { // a nudge carries no Delivery: run under the recorded grant, never unrestricted
+		allowedKinds, _ = tools.OriginGrant(originJSON)
+	}
 	if err := st.SetChatOrigin(runCtx, chatID, *userID, originJSON); err != nil {
-		return nil, fmt.Errorf("extensions.%s: chat setup: %w", name, err)
+		return nil, nil, fmt.Errorf("extensions.%s: chat setup: %w", name, err)
 	}
 	ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
-	return effectiveSetup, nil
+	return effectiveSetup, allowedKinds, nil
 }
 
 // extAttachmentParts: save each dispatch attachment and collect the stored-file
@@ -642,19 +646,15 @@ func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 	return out
 }
 
-// extOriginRecord is what Chat.Origin actually stores for an extension-dispatched
-// chat: the extension's own ChatOrigin (still at the JSON top level - a nil
-// embedded pointer marshals as absent, and priorOriginState/UpdateChatOrigin's
-// own writes decode straight into extsdk.ChatOrigin, ignoring the extra field)
-// plus, alongside it (#1180), the dispatch's own sdk Setup - the only durable
-// record of a PR's real head ref, so a later dispatch on the same chat with no
-// Run.Setup (a nudge, a retry) can still plan a review. Kept as the SDK's own
-// Setup, not dag.Setup: dag.Setup.CheckoutExistingHead is `json:"-"` (it's
-// derived, never persisted with a plan) and toDagSetup is what recomputes it
-// from ExistingHeadRef on the way back out.
+// extOriginRecord is Chat.Origin for an ext chat: the extension's ChatOrigin at top level plus
+// quack's own fields, which mergeExtOrigin (#1181) carries across every origin write and nudge.
 type extOriginRecord struct {
 	*extsdk.ChatOrigin
+	// Setup: the latest dispatch's sdk Setup (#1180), the only record of a PR's head ref (sdk
+	// type because dag.Setup's CheckoutExistingHead is json:"-"; toDagSetup recomputes it).
 	Setup *extsdk.Setup `json:"quackSetup,omitempty"`
+	// Grant is the latest dispatch's delivery grant (tools.WithOriginGrant), re-applied on REST turns.
+	Grant *[]string `json:"quackAllowedDeliveryKinds,omitempty"`
 }
 
 // stableDispatchUser is #1198's fix: SessionUser is fixed at chat creation
@@ -726,7 +726,7 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 		s := toDagSetup(*rec.Setup)
 		effectiveSetup = &s
 	}
-	if rec.ChatOrigin == nil && rec.Setup == nil {
+	if rec.ChatOrigin == nil && rec.Setup == nil && rec.Grant == nil {
 		return "", effectiveSetup
 	}
 	b, err := json.Marshal(rec)
@@ -1067,6 +1067,7 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	} else {
 		runCtx, cancelRun = context.WithCancel(ctx)
 	}
+	runCtx = stream.WithTurnID(runCtx, turnID)
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
 	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.

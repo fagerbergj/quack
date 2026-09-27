@@ -39,17 +39,12 @@ type nodeRelease func(paused bool)
 type promptRefresher func(ctx context.Context) artifactsrc.Artifact
 
 // nodeBuilder builds one native node's dispatch worker.
-type nodeBuilder func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error)
+type nodeBuilder func(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error)
 
-// ForNode builds this node's list/read/edit/write_<kind> artifact tools
-// (internal/tools.BuildNativeArtifactTools) into the worker's builtins
-// before construction - the same mechanism check_mermaid/format-markdown
-// tools go through (buildWorker's builtins), not a parallel one (#1123).
-// sink is grabbed from the caller's ctx at build time (stream.YieldFromContext)
-// and closed over by this node's own A2A server - it can't cross the A2A
-// wire later, so agent.Serve needs it passed in explicitly (see its doc).
-func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
-	return n.build(nodeKey, drain, artifacts, appName, userID, chatID, nodeID, sink)
+// ForNode builds one node's worker and tools (#1123); sink and ctx's chat turn id are handed
+// to the tools, whose A2A-served ctx carries neither. release(paused) closes its A2A server.
+func (n nativeAgent) ForNode(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
+	return n.build(ctx, nodeKey, drain, artifacts, appName, userID, chatID, nodeID, sink)
 }
 
 // perNodeServers tracks currently-open per-node A2A servers (nativeAgent.ForNode) so process

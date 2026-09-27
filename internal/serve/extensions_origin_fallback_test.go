@@ -11,6 +11,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
+	"github.com/fagerbergj/quack/internal/tools"
 )
 
 // TestMergeExtOrigin_NudgeFallsBackToStoredSetup is #1180's issue-47
@@ -133,5 +134,47 @@ func TestUpdateChatOrigin_PreservesStoredSetup(t *testing.T) {
 	}
 	if rec.ChatOrigin == nil || rec.ChatOrigin.Badge != "synchronize" {
 		t.Errorf("ChatOrigin = %+v, want the update's own Badge applied", rec.ChatOrigin)
+	}
+}
+
+// TestDispatchGrant_PersistsAcrossOriginUpdate: the dispatch's grant is recorded on the chat and
+// survives an origin update and a nudge re-dispatch, so REST turns on the ext chat re-apply it.
+func TestDispatchGrant_PersistsAcrossOriginUpdate(t *testing.T) {
+	st, orch, hub, artifacts, _ := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil, nil)
+
+	const localID = "grant-1"
+	chatID := "ext:noop:" + localID
+	req := extsdk.DispatchRequest{
+		Chat:     extsdk.ChatRef{LocalID: localID, Origin: &extsdk.ChatOrigin{Extension: "noop", Label: "o/r#8", Kind: "pull_request"}},
+		Ask:      extsdk.Ask{Message: "explain this"},
+		Delivery: extsdk.DeliveryAuthority{AllowedKinds: []extsdk.DeliveryKind{"comment"}},
+	}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+	if err := updateOrigin(localID, extsdk.ChatOrigin{Extension: "noop", Label: "o/r#8", Kind: "pull_request", Badge: "synchronize"}); err != nil {
+		t.Fatalf("updateOrigin: %v", err)
+	}
+	// A nudge re-dispatch carries no Delivery: the recorded grant must survive it.
+	if err := dispatch(context.Background(), extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "nudge"}}); err != nil {
+		t.Fatalf("nudge dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+	uid := "u"
+	if _, kinds, err := prepareExtChat(context.Background(), "noop", st, orch, chatID, &uid, extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}}); err != nil || strings.Join(kinds, ",") != "comment" || kinds == nil {
+		t.Fatalf("nudge run grant = %#v, %v; want the recorded [comment], not unrestricted", kinds, err)
+	}
+	c, err := st.GetChat(context.Background(), chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat: %v, %v", c, err)
+	}
+	if kinds, ok := tools.OriginGrant(c.Origin); !ok || strings.Join(kinds, ",") != "comment" {
+		t.Fatalf("grant = %v, %v (origin %s)", kinds, ok, c.Origin)
 	}
 }

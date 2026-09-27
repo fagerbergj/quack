@@ -593,6 +593,21 @@ func (e ListMemoriesParamsSort) Valid() bool {
 	}
 }
 
+// A2uiAction A user action on an A2UI surface (a Button's `action.event`, with its
+// context paths already resolved against the surface's data model).
+// When set, `content` must be empty: the turn's user text becomes the
+// single line `[a2ui_action] <compact JSON of this object>`.
+type A2uiAction struct {
+	Context *map[string]interface{} `json:"context,omitempty"`
+
+	// Name The event name, e.g. `submit_quiz`.
+	Name string `json:"name"`
+
+	// SourceComponentId Id of the component that fired the action.
+	SourceComponentId *string `json:"source_component_id,omitempty"`
+	SurfaceId         string  `json:"surface_id"`
+}
+
 // AgentActivityOutputItem defines model for AgentActivityOutputItem.
 type AgentActivityOutputItem struct {
 	Id        string                      `json:"id"`
@@ -1296,6 +1311,13 @@ type ResponseStatusUpdateBody struct {
 
 // SendMessageBody defines model for SendMessageBody.
 type SendMessageBody struct {
+	// A2uiAction A user action on an A2UI surface (a Button's `action.event`, with its
+	// context paths already resolved against the surface's data model).
+	// When set, `content` must be empty: the turn's user text becomes the
+	// single line `[a2ui_action] <compact JSON of this object>`.
+	A2uiAction *A2uiAction `json:"a2ui_action,omitempty"`
+
+	// Content The user's message. May be empty when `a2ui_action` is set.
 	Content string `json:"content"`
 }
 

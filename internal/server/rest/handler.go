@@ -21,6 +21,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/a2ui"
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -33,6 +34,7 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -558,8 +560,12 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		body.Content = r.FormValue("content")
 		attachments = h.multipartAttachments(r, h.sessionUser(r.Context(), chatID), chatID, turnID)
 	} else {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			errMsg(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if msg := applyA2UIAction(&body); msg != "" {
+			errMsg(w, http.StatusBadRequest, msg)
 			return
 		}
 	}
@@ -588,6 +594,46 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 	// From here this handler is only a viewer - it cannot stall or kill the run.
 	streamHub(r.Context(), sse, replay, live, 0)
+}
+
+// withChatGrant re-applies the delivery grant an extension dispatch recorded on
+// this chat, so a REST turn on an ext: chat can't deliver more than its trigger allowed.
+func (h *Handler) withChatGrant(ctx context.Context, chatID string) context.Context {
+	c, err := h.store.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		return ctx
+	}
+	if kinds, ok := tools.OriginGrant(c.Origin); ok {
+		return tools.WithAllowedDeliveryKinds(ctx, kinds)
+	}
+	return ctx
+}
+
+// applyA2UIAction turns body's a2ui_action (if any) into its content; a non-empty return is the 400 message.
+func applyA2UIAction(body *schema.SendMessageBody) string {
+	a := body.A2uiAction
+	switch {
+	case a == nil:
+		return ""
+	case body.Content != "":
+		return "send either content or a2ui_action, not both"
+	case a.Name == "" || a2ui.CheckSurfaceID(a.SurfaceId) != nil:
+		return "a2ui_action needs a name and a valid surface_id"
+	}
+	body.Content = a2uiActionText(a)
+	return ""
+}
+
+// a2uiActionText is the user turn an A2UI surface action becomes; keys keep
+// the documented order so the model and the UI's action pill read the same line.
+func a2uiActionText(a *schema.A2uiAction) string {
+	b, _ := json.Marshal(struct {
+		SurfaceID         string                  `json:"surface_id"`
+		Name              string                  `json:"name"`
+		SourceComponentID *string                 `json:"source_component_id,omitempty"`
+		Context           *map[string]interface{} `json:"context,omitempty"`
+	}{a.SurfaceId, a.Name, a.SourceComponentId, a.Context})
+	return "[a2ui_action] " + string(b)
 }
 
 // multipartAttachments saves every uploaded file as a blob artifact and returns
@@ -682,6 +728,7 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string, attachments []*genai.Part) {
 	// Stamps the outcome on every exit path, including the error return below (#738).
 	defer h.stampRunOutcome(runCtx, chatID)
+	runCtx = h.withChatGrant(stream.WithTurnID(runCtx, turnID), chatID)
 	// Clear previous run's durable events so this run's seq starts at 1.
 	h.eventLog.Reset(runCtx, chatID)
 

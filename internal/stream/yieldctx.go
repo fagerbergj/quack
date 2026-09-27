@@ -17,3 +17,17 @@ func YieldFromContext(ctx context.Context) (func(SSEEvent), bool) {
 	fn, ok := ctx.Value(yieldCtxKey{}).(func(SSEEvent))
 	return fn, ok
 }
+
+type turnIDCtxKey struct{}
+
+// WithTurnID stores the chat turn id (the response_created response_id) that a
+// run belongs to, so artifacts saved during it can be placed on that turn.
+func WithTurnID(ctx context.Context, turnID string) context.Context {
+	return context.WithValue(ctx, turnIDCtxKey{}, turnID)
+}
+
+// TurnIDFromContext returns the id WithTurnID stored, or "".
+func TurnIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(turnIDCtxKey{}).(string)
+	return id
+}

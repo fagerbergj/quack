@@ -192,15 +192,11 @@ func setupIgnoredNote(submitted, githubSetup *dag.Setup) string {
 	return fmt.Sprintf("\nsetup ignored: this run clones %s@%s from the trigger", githubSetup.Repo, githubSetup.BaseRef)
 }
 
-// validateAllowedDeliveryKind rejects hiring or reassigning agent when its
-// job is coupled to a Delivery.Kind (dag.RequiredDeliveryKind) this dispatch
-// doesn't allow - deterministic, at plan-authoring time, so a node whose
-// output could never be delivered doesn't burn a full run's tokens only to
-// be refused at delivery. allowedKinds empty means unrestricted (a plain
-// chat dispatch, no GitHub trigger narrowing it).
+// validateAllowedDeliveryKind refuses, at plan time, an agent whose only delivery kind the grant
+// excludes. nil = unrestricted; non-nil empty denies all, like the gate's partitionByAllowedKinds.
 func validateAllowedDeliveryKind(agent string, allowedKinds []string) error {
 	kind, ok := dag.RequiredDeliveryKind(agent)
-	if !ok || len(allowedKinds) == 0 {
+	if !ok || allowedKinds == nil {
 		return nil
 	}
 	for _, k := range allowedKinds {
