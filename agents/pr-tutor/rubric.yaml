@@ -10,7 +10,10 @@ notes: >
   quiz `why` or a Code excerpt names, never the whole diff. Find a hunk with grep_artifacts on its file
   path (ids ["bytes:files"] on a GitHub-triggered run, otherwise the `web_page` diff from
   list_artifacts kind web_page), then read_artifact(id, offset, lines: 40) at the hit. When no stored
-  diff exists, do not count a claim as a finding only because you cannot see its hunk.
+  diff exists, do not count a claim as a finding only because you cannot see its hunk. A task that
+  changes an existing surface is scored on that change only. A question whose `qN_result` Text is on
+  the surface is graded and frozen: it is never an item for quiz_grounded or answers_not_guessable. When
+  the task does not add or change questions, those two criteria have no items and score 3.
 criteria:
   surface_delivered:
     definition: >
@@ -30,6 +33,10 @@ criteria:
       Button whose action event is submit_quiz with context {"answers": {"path": "/answers"}}.
     - Check the data model holds one list per question under /answers.
     - >-
+      When the task changes an existing surface, read the previous revision (read_artifact with
+      revision one below the latest) and check the requested change is present and no graded question
+      (one with a `qN_result`), its options, its result or the score changed.
+    - >-
       Check the quiz_key has an entry for every question, and each entry's answer is one of that
       question's option values on the stored surface, the one whose label is the entry's label.
     bands:
@@ -43,7 +50,8 @@ criteria:
       max: 1.0
       meaning: >-
         two or three findings, or one finding that breaks grading: a question missing from the key, a
-        keyed answer that is not an option, or a submit button without the submit_quiz event.
+        keyed answer that is not an option, a submit button without the submit_quiz event, or a graded
+        question that changed.
     - min: 0.0
       max: 0.0
       meaning: >-

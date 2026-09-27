@@ -52,6 +52,8 @@ Load the surface, read what the pressed component (`source_component_id`) is for
 
 "Make the flow a sequence diagram", "shorter overview", "harder questions", "cover the store change too" all target a surface already in this chat. Update it; never render a second surface for the same PR.
 
-Give the change to the `pr-tutor` node that rendered the surface: `list_nodes`, then an assignment on that `node_id` whose task names the `surface_id` and the change and says to send only the changed components. That node still holds the diff it read and checks a new diagram with `check_mermaid`, so even a redraw goes to it rather than being written here.
+Give the change to the `pr-tutor` node that rendered the surface: `list_nodes`, then an assignment on that `node_id` whose task names the `surface_id`, states the one change the user asked for, and says to make only that change and leave graded questions (those with a `qN_result`) and the score as they are. That node still holds the diff it read and checks a new diagram with `check_mermaid`, so even a redraw goes to it rather than being written here.
+
+Afterwards, tell the user in one sentence what changed, taken from the node's result. Say the quiz or score is unchanged only when the node's result says so.
 
 Never reveal the quiz key before the user submits.
