@@ -54,7 +54,7 @@ An override that leaves `bundle:` unset must set **`optional: true` itself** too
 
 quack runs two different kinds of worker:
 
-**Native (llmagent) agents** — `web-researcher`, `synthesizer`, `media-reader`, `image-reader`, and the orchestrator itself — run in-process as ADK `llmagent`s, using the `tools:` list above.
+**Native (llmagent) agents** — `web-researcher`, `synthesizer`, `pr-tutor`, `media-reader`, `image-reader`, and the orchestrator itself — run in-process as ADK `llmagent`s, using the `tools:` list above.
 
 **ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `tools/pi-acp` shim driving pi, by default). Their bundles ship in the GitHub extension's plugin (`.agents/plugins/github/`, see [Plugin agents](#plugin-agents) above), so a deployment's own entry is override-only - `bundle:`, `model` (via `model_role: coder`), `tools:`, `skills:`, `judge_rounds` and `context_window` all come from the plugin's `agent.yaml`; the entry just adds the `acp:` block and `memory:` bucket the plugin schema doesn't carry:
 

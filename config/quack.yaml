@@ -136,10 +136,11 @@ orchestrator:
   # contribute: the issue→plan→agree→implement→review→merge umbrella that hands
   # off to the others (kept alongside them, not on a worker - the orchestrator
   # is the only agent that owns the whole loop).
-  skills: [plan-work, format-markdown, present-coding-plan, contribute, mermaid-authoring]
+  # a2ui-surfaces: grading [a2ui_action] turns and editing rendered surfaces in place.
+  skills: [plan-work, format-markdown, present-coding-plan, contribute, mermaid-authoring, a2ui-surfaces]
   provider: default
   model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
-  tools: [commit_memory, recall_memory, load_artifacts]  # commit_memory: user memory; recall_memory: task memory (repo/role/user), on-demand (#1255 P2); load_artifacts: read artifacts saved to this chat's session
+  tools: [commit_memory, recall_memory, load_artifacts, render_ui]  # commit_memory: user memory; recall_memory: task memory (repo/role/user), on-demand (#1255 P2); load_artifacts: read artifacts saved to this chat's session; render_ui: quiz grading and surface edits as upserts
   # End-of-turn memory hook (#262): the orchestrator model won't reliably call
   # commit_memory itself, so a dedicated memory-agent bundle (agents/memory-agent)
   # extracts durable preferences from the user's message and commits them
@@ -207,6 +208,16 @@ agents:
         - https://mcp.context7.com/mcp
       read_only: true
       allow_clone: true   # the only agent exempt from the git clone deny; git push stays denied
+  pr-tutor:
+    bundle: agents/pr-tutor
+    skills: [mermaid-authoring]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 131072      # a long diff is read in windows before one large render_ui call
+    judge_rounds: 1             # a failed round re-renders the same surface_id; one revision is enough
+    # web_fetch reads the PR from api.github.com and the .diff URL (public repos only);
+    # read_artifact comes with every native node, for windows of a long stored diff.
+    tools: [web_fetch, grep_artifacts, check_mermaid, render_ui]
   synthesizer:
     bundle: agents/synthesizer
     # pr-authoring: when a run's answer IS a PR body (run-level synthesis of the atomic

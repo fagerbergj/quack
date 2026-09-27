@@ -18,7 +18,7 @@ Each name mirrors the shipped file it falls back to. The registry (`artifactsrc.
 | `system/compaction.summary` | `config/prompts/compaction.summary.md` |
 | `system/acp.environment` | `config/prompts/acp.environment.md` |
 
-`<agent>` is one of `agents/`'s bundle directories (`code-explorer`, `code-implementer`, `code-reviewer`, `image-reader`, `media-reader`, `memory-agent`, `orchestrator`, `synthesizer`, `web-researcher`). Only the five core names quack cannot run without - `system/judge`, `system/compaction`, `system/compaction.summary`, `system/acp.environment`, `rubric/global` - are checked at boot and log an error if missing (a broken image, or a bind-mount that shadowed the file); any other absent shipped file is silently absent from the registry instead.
+`<agent>` is one of `agents/`'s bundle directories (`code-explorer`, `code-implementer`, `code-reviewer`, `image-reader`, `media-reader`, `memory-agent`, `orchestrator`, `pr-tutor`, `synthesizer`, `web-researcher`). Only the five core names quack cannot run without - `system/judge`, `system/compaction`, `system/compaction.summary`, `system/acp.environment`, `rubric/global` - are checked at boot and log an error if missing (a broken image, or a bind-mount that shadowed the file); any other absent shipped file is silently absent from the registry instead.
 
 ## The `prompts:` block and the langfuse store
 

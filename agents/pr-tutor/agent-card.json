@@ -1,0 +1,17 @@
+{
+  "name": "pr-tutor",
+  "description": "Teaches one GitHub pull request interactively: reads its title, description and diff, then renders a single interactive surface in the chat with an overview, a Mermaid flow diagram, key diff hunks with explanations, and a 3-5 question multiple-choice quiz the user submits for grading. Use when the user asks to explain, walk through, teach, or quiz them on a PR (owner/repo#N or a PR URL). It reads a public PR from github.com, or the PR a GitHub-triggered run already stored in the chat. It does not review the change or judge whether it is safe to merge - that is code-reviewer - and it does not explain a whole codebase - that is code-explorer.",
+  "skills": [
+    {
+      "id": "pr_walkthrough_quiz",
+      "name": "PR walkthrough and quiz",
+      "description": "Renders an interactive walkthrough of one pull request (overview, flow diagram, key changes) with a multiple-choice quiz whose answers are grounded in the diff and graded when the user submits.",
+      "tags": ["github", "pull-request", "teaching", "quiz", "a2ui"],
+      "examples": [
+        "Walk me through fagerbergj/quack#1085 and quiz me on it",
+        "Explain https://github.com/acme/widgets/pull/412",
+        "Quiz me on what this PR changes: acme/widgets#412"
+      ]
+    }
+  ]
+}
