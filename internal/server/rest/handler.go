@@ -34,6 +34,7 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -595,6 +596,19 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	streamHub(r.Context(), sse, replay, live, 0)
 }
 
+// withChatGrant re-applies the delivery grant an extension dispatch recorded on
+// this chat, so a REST turn on an ext: chat can't deliver more than its trigger allowed.
+func (h *Handler) withChatGrant(ctx context.Context, chatID string) context.Context {
+	c, err := h.store.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		return ctx
+	}
+	if kinds, ok := tools.OriginGrant(c.Origin); ok {
+		return tools.WithAllowedDeliveryKinds(ctx, kinds)
+	}
+	return ctx
+}
+
 // applyA2UIAction turns body's a2ui_action (if any) into its content; a non-empty return is the 400 message.
 func applyA2UIAction(body *schema.SendMessageBody) string {
 	a := body.A2uiAction
@@ -714,7 +728,7 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string, attachments []*genai.Part) {
 	// Stamps the outcome on every exit path, including the error return below (#738).
 	defer h.stampRunOutcome(runCtx, chatID)
-	runCtx = stream.WithTurnID(runCtx, turnID)
+	runCtx = h.withChatGrant(stream.WithTurnID(runCtx, turnID), chatID)
 	// Clear previous run's durable events so this run's seq starts at 1.
 	h.eventLog.Reset(runCtx, chatID)
 

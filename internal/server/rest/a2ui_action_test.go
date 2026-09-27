@@ -1,10 +1,13 @@
 package rest
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/tools"
 )
 
 func TestSendChatMessage_A2UIAction(t *testing.T) {
@@ -40,5 +43,21 @@ func TestSendChatMessage_A2UIAction(t *testing.T) {
 		if code := post(h, chatID, bad); code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", name, code)
 		}
+	}
+}
+
+func TestWithChatGrant(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	chatID := mustCreateChat(t, h)
+	if got := tools.AllowedDeliveryKindsFromContext(h.withChatGrant(ctx, chatID)); got != nil {
+		t.Fatalf("plain chat grant = %v, want nil (unrestricted)", got)
+	}
+	origin := tools.WithOriginGrant(`{"extension":"github","label":"o/r#1"}`, []string{})
+	if err := h.store.SetChatOrigin(ctx, chatID, "u", origin); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.AllowedDeliveryKindsFromContext(h.withChatGrant(ctx, chatID)); got == nil || len(got) != 0 {
+		t.Fatalf("recorded deny-all grant = %#v, want non-nil empty", got)
 	}
 }

@@ -578,6 +578,7 @@ func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *
 		}
 	}
 	originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
+	originJSON = tools.WithOriginGrant(originJSON, deliveryKindStrings(req.Delivery.AllowedKinds))
 	if err := st.SetChatOrigin(runCtx, chatID, *userID, originJSON); err != nil {
 		return nil, fmt.Errorf("extensions.%s: chat setup: %w", name, err)
 	}
@@ -655,6 +656,8 @@ func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 type extOriginRecord struct {
 	*extsdk.ChatOrigin
 	Setup *extsdk.Setup `json:"quackSetup,omitempty"`
+	// Grant round-trips tools.WithOriginGrant's record through origin updates.
+	Grant *[]string `json:"quackAllowedDeliveryKinds,omitempty"`
 }
 
 // stableDispatchUser is #1198's fix: SessionUser is fixed at chat creation
@@ -726,7 +729,7 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 		s := toDagSetup(*rec.Setup)
 		effectiveSetup = &s
 	}
-	if rec.ChatOrigin == nil && rec.Setup == nil {
+	if rec.ChatOrigin == nil && rec.Setup == nil && rec.Grant == nil {
 		return "", effectiveSetup
 	}
 	b, err := json.Marshal(rec)
