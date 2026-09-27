@@ -37,9 +37,11 @@ Every label handler reacts with 👀 the instant it fires, before the run even s
 
 **`/quack <request>`, at the START of a line,** is the conversational path - free-form, for anything that doesn't fit a label: "review this PR", "what did you mean by that finding?", "fix the typo in the README". The token must open a line (leading whitespace is fine); it does not match inside a sentence, and it does not match a quoted `> /quack …` reply, so replying to an earlier mention never re-fires it. A mention on a PR that isn't asking for work (a question, a clarification) is answered directly from the conversation so far; it never re-triggers a review. A mention that does ask for review or code changes runs the same way a label would.
 
+**`/explain`, as the entire comment on a PR** (surrounding whitespace allowed), from a repository owner, member or collaborator who is also in `allowed_users`, opens an interactive walkthrough and quiz of that PR in quack. No label is needed. Each requester gets their own chat (`github-<owner>-<repo>-explain-<login>-<N>`), separate from the PR's review session, so a review never resets it. The run has no delivery grant: it posts no review, comment or commit. The only thing posted to the PR is a 👀 and a reply naming where the walkthrough lives: `Walkthrough and quiz for <login>: <server.public_url>/chat/<chat id>`, or just the chat id when `server.public_url` is unset. Repeating `/explain` while the run is going re-posts the same link instead of starting a second run. Needs the `explain` trigger.
+
 **Authorship is the flag on PRs quack opened itself.** No label is needed: quack replies on its own PRs, and a `request_changes` review on one it authored engages it to address the findings - the same "keep it green" treatment `quack:fix` gives a labeled PR, just triggered by having written the PR rather than by a label.
 
-Every path shares one session per issue/PR thread, so context (a plan, a prior review) carries forward regardless of which trigger drove which step. Only one run is ever in flight per thread - a trigger that arrives mid-run is deduplicated with a 👀 rather than started concurrently.
+Every path shares one session per issue/PR thread, so context (a plan, a prior review) carries forward regardless of which trigger drove which step. Only one run is ever in flight per thread - a trigger that arrives mid-run is deduplicated with a 👀 rather than started concurrently. (`/explain` is the exception: one chat per requester per PR.)
 
 ### CI auto-heal (`quack:fix`)
 
@@ -132,7 +134,7 @@ extensions:
     webhook_secret: ${QUACK_GITHUB_WEBHOOK_SECRET}
     mention: "/quack"                    # default; must open a line - see "Two ways to drive it"
     allowed_users: [yourgithublogin]      # empty denies every human-invoked trigger
-    triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix]
+    triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix, explain]
     # run_timeout_minutes: 120           # default; bounds one dispatched run
     # auto_archive_on_merge: false       # default; archive the chat session when quack:merge lands
     # auto_review_label: "quack-auto-review"  # legacy alias for labels.review; set labels.review instead
@@ -150,7 +152,7 @@ workspace:
     git_push: judge   # see "Non-interactive guard policy" below
 ```
 
-`allowed_users` gates every human-invoked trigger (mention, labels) by GitHub login, case-insensitively - seed it or quack won't respond. The automatic `pr_opened` auto-review is exempt (nobody applied it). Bot comments are always ignored, so quack never re-triggers on its own posts.
+`allowed_users` gates every human-invoked trigger (mention, labels, `/review`, `/explain`) by GitHub login, case-insensitively - seed it or quack won't respond. The automatic `pr_opened` auto-review is exempt (nobody applied it). Bot comments are always ignored, so quack never re-triggers on its own posts.
 
 `api_base` overrides `api.github.com` - QA-only, for pointing at [`docs/qa-mocks.md`](../qa-mocks.md)'s mock server; leave it unset against real GitHub.
 
