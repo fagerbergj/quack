@@ -293,7 +293,7 @@ func TestNormalizeURL(t *testing.T) {
 
 func TestParseVerdictToleratesFencedJSON(t *testing.T) {
 	// Fenced block is stripped, and the raw score is normalized to 0–1.
-	v, err := parseVerdict("```json\n{\"score\": 3, \"passed\": true, \"feedback\": \"x\"}\n```")
+	v, err := parseVerdict("```json\n{\"score\": 3, \"passed\": true, \"feedback\": \"x\"}\n```", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestParseVerdictMisplacedTopLevel(t *testing.T) {
 	// inside criteria and omitted the outer closing brace.
 	malformed := `{"criteria":{"grounded":{"reason":"good","score":0.9},"no_fabrication":{"reason":"ok","score":1.0},"answers_question":{"reason":"yes","score":1.0},"internally_consistent":{"reason":"fine","score":0.9},"cites_sources":{"reason":"none","score":0.0},"score":0.76,"passed":true,"feedback":"add citations"}`
 
-	v, err := parseVerdict(malformed)
+	v, err := parseVerdict(malformed, nil)
 	if err != nil {
 		t.Fatalf("parseVerdict(misplaced): %v", err)
 	}
@@ -333,9 +333,9 @@ func TestParseVerdictMisplacedTopLevel(t *testing.T) {
 }
 
 func TestParseVerdictDuplicatedBlob(t *testing.T) {
-	// Model emitted the JSON object twice (back-to-back); only the first should be parsed.
+	// Model emitted the JSON object twice (back-to-back); the identical copy parses to the same verdict.
 	blob := `{"score":0.8,"passed":true,"feedback":"ok"}`
-	v, err := parseVerdict(blob + blob)
+	v, err := parseVerdict(blob+blob, nil)
 	if err != nil {
 		t.Fatalf("parseVerdict(duplicated): %v", err)
 	}
@@ -348,7 +348,7 @@ func TestParseVerdictDuplicatedBlob(t *testing.T) {
 // submit_verdict tool call) still carries the judge's per-memory votes.
 func TestParseVerdictAcceptsMemories(t *testing.T) {
 	input := `{"score":0.9,"passed":true,"feedback":"ok","memories":[{"id":"m1","vote":"supported","reason":"confirmed by the diff"}]}`
-	v, err := parseVerdict(input)
+	v, err := parseVerdict(input, nil)
 	if err != nil {
 		t.Fatalf("parseVerdict: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestParseVerdictLowestCriterion(t *testing.T) {
 	// Well-formed G-Eval verdict; the overall score is the lowest criterion, so
 	// cites_sources=0 sinks it to 0.0 regardless of the model's holistic 0.96.
 	input := `{"criteria":{"grounded":{"score":0.9},"no_fabrication":{"score":1.0},"answers_question":{"score":1.0},"internally_consistent":{"score":0.9},"cites_sources":{"score":0.0}},"score":0.96,"passed":true,"feedback":"no sources"}`
-	v, err := parseVerdict(input)
+	v, err := parseVerdict(input, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ func TestAggregateVerdictMinAndClamp(t *testing.T) {
 // judgeScaleMax, so a perfect criterion (3) becomes 1.0 and the weakest drives the overall.
 func TestParseVerdictNormalizesRawScale(t *testing.T) {
 	input := `{"criteria":{"grounded":{"score":1},"no_fabrication":{"score":3},"answers_question":{"score":3},"internally_consistent":{"score":1},"cites_sources":{"score":0}},"score":1,"passed":true,"feedback":""}`
-	v, err := parseVerdict(input)
+	v, err := parseVerdict(input, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

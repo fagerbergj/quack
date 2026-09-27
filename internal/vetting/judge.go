@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/url"
@@ -949,6 +950,8 @@ type judgeRoundState struct {
 	lastFinish    genai.FinishReason
 	lastOutTokens int32
 	aborted       bool
+	// parseFrom: accum offset past the last truncated turn, whose text may hold only a draft verdict.
+	parseFrom int
 }
 
 // judgePromptContent builds the judge's user content: the (prebuilt or built) prompt
@@ -992,6 +995,10 @@ func (s *judgeRoundState) runTurn(turnContent *genai.Content) error {
 			s.cancel()
 			break
 		}
+	}
+	// A turn cut at the token cap or aborted never supplies a text verdict: a draft may be complete JSON.
+	if s.lastFinish == genai.FinishReasonMaxTokens || s.aborted {
+		s.parseFrom = s.accum.Len()
 	}
 	return nil
 }
@@ -1063,7 +1070,7 @@ func (s *judgeRoundState) verdictFrom() (verdict, bool) {
 	if s.submitted {
 		return aggregateVerdict(s.sink), true
 	}
-	if v, perr := parseVerdict(s.accum.String()); perr == nil {
+	if v, perr := parseVerdict(s.accum.String()[s.parseFrom:], s.cfg.RubricSpecs); perr == nil {
 		return v, true
 	}
 	return verdict{}, false
@@ -1321,9 +1328,10 @@ func boundExcerpt(s string, maxChars int) string {
 	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
 }
 
-// reviseReplyRule closes every revise request: an edited artifact is the deliverable, so
-// re-typing it as the reply cost prod chat cedfc299 26k output tokens (6 min) in one round.
-const reviseReplyRule = "If you edited an artifact, your reply is a short note of what changed that names the artifact: the judge and every later step read the artifact itself, so repeating it in the reply only costs time. " +
+// reviseReplyRule closes every revise request: the reply replaces the user-facing answer, but
+// re-typing an edited artifact in it cost prod chat cedfc299 26k output tokens (6 min) in one round.
+const reviseReplyRule = "Your reply replaces your previous answer as the one the user sees: give the reply your task asks for, updated for these fixes - never a note about this revision, the verdict, or what you fixed. " +
+	"If the deliverable lives in an artifact you edited, keep the reply to the summary your task asks for and do not restate the artifact's content: the judge and every later step read the artifact itself. " +
 	"Otherwise output only the corrected answer with no preamble or commentary.\n\n"
 
 // buildRevisionContent: re-invokes worker to address judge feedback. Every section bounded (boundExcerpt).
@@ -1615,42 +1623,23 @@ func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 	}
 }
 
-// parseVerdict: fallback JSON parser (tolerates ```json fence, truncated JSON, misplaced fields).
-func parseVerdict(raw string) (verdict, error) {
-	s := strings.TrimSpace(raw)
-	// Strip any prefix before the first '{' (e.g. ```json fences).
-	if i := strings.Index(s, "{"); i >= 0 {
-		s = s[i:]
-	}
+// rawVerdict: text-fallback verdict with criteria kept raw, so non-object entries
+// (misplaced score/passed/feedback) can be tolerated.
+type rawVerdict struct {
+	Criteria map[string]json.RawMessage `json:"criteria,omitempty"`
+	Score    float64                    `json:"score"`
+	Passed   bool                       `json:"passed"`
+	Feedback string                     `json:"feedback"`
+	Memories []memoryVerdict            `json:"memories,omitempty"` // #1259: text-JSON fallback also carries votes
+}
 
-	// Intermediate type: criteria values are kept as raw JSON so we can
-	// tolerate non-object entries (misplaced score/passed/feedback).
-	type rawVerdict struct {
-		Criteria map[string]json.RawMessage `json:"criteria,omitempty"`
-		Score    float64                    `json:"score"`
-		Passed   bool                       `json:"passed"`
-		Feedback string                     `json:"feedback"`
-		Memories []memoryVerdict            `json:"memories,omitempty"` // #1259: text-JSON fallback also carries votes
+// parseVerdict: text-fallback parser. It takes the last complete verdict object, since promoted
+// reasoning quotes artifact JSON and drafts before the final verdict.
+func parseVerdict(raw string, specs map[string]criterionSpec) (verdict, error) {
+	rv, ok := lastVerdictObject(raw, specs)
+	if !ok {
+		return verdict{}, fmt.Errorf("vetting: no judge verdict object in %d chars of judge text", len(raw))
 	}
-
-	// Use a Decoder (not Unmarshal) so it stops after the first complete JSON
-	// object and ignores any trailing content - including a duplicated blob.
-	var rv rawVerdict
-	var parsed bool
-	var lastErr error
-	for _, suffix := range []string{"", "}", "}}"} {
-		dec := json.NewDecoder(strings.NewReader(s + suffix))
-		if err := dec.Decode(&rv); err == nil {
-			parsed = true
-			break
-		} else {
-			lastErr = err
-		}
-	}
-	if !parsed {
-		return verdict{}, fmt.Errorf("vetting: parse judge verdict %q: %w", raw, lastErr)
-	}
-
 	feedback := rv.Feedback
 	if feedback == "None" || feedback == "null" || feedback == "N/A" {
 		feedback = ""
@@ -1678,6 +1667,93 @@ func parseVerdict(raw string) (verdict, error) {
 
 	normalizeScale(&v)
 	return aggregateVerdict(v), nil
+}
+
+// lastVerdictObject returns the last top-level JSON object in s that isVerdict accepts. The scan
+// is linear: it jumps past each complete object and to the byte each syntax error stopped at.
+func lastVerdictObject(s string, specs map[string]criterionSpec) (rawVerdict, bool) {
+	var last rawVerdict
+	found := false
+	for i := strings.IndexByte(s, '{'); i >= 0; {
+		keys, skip, err := objectAt(s[i:])
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			// The object at i runs to the end of s, so nothing after it is top-level; a dropped
+			// closing brace is repaired only when no complete verdict came before it.
+			if !found {
+				return repairTailVerdict(s[i:], specs)
+			}
+			break
+		}
+		if rv, ok := toVerdict(s[i:i+skip], keys, err, specs); ok {
+			last, found = rv, true
+		}
+		j := strings.IndexByte(s[i+skip:], '{')
+		if j < 0 {
+			break
+		}
+		i += skip + j
+	}
+	return last, found
+}
+
+// repairTailVerdict closes an object a model left one or two braces short at the end of its text.
+func repairTailVerdict(s string, specs map[string]criterionSpec) (rawVerdict, bool) {
+	for _, suffix := range []string{"}", "}}"} {
+		keys, skip, err := objectAt(s + suffix)
+		if rv, ok := toVerdict((s + suffix)[:skip], keys, err, specs); ok {
+			return rv, true
+		}
+	}
+	return rawVerdict{}, false
+}
+
+// objectAt decodes the JSON object at the start of s; skip is how far the scan may jump - past a
+// complete object, or to the byte a syntax error stopped at, which may open the next object.
+func objectAt(s string) (keys map[string]json.RawMessage, skip int, err error) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	if err = dec.Decode(&keys); err == nil {
+		return keys, int(dec.InputOffset()), nil
+	}
+	var syn *json.SyntaxError
+	if errors.As(err, &syn) && syn.Offset > 1 {
+		return nil, int(syn.Offset) - 1, err
+	}
+	return nil, 1, err
+}
+
+// toVerdict decodes obj when it decoded cleanly and isVerdict accepts its keys.
+func toVerdict(obj string, keys map[string]json.RawMessage, err error, specs map[string]criterionSpec) (rawVerdict, bool) {
+	var rv rawVerdict
+	if err != nil || !isVerdict(keys, specs) || json.Unmarshal([]byte(obj), &rv) != nil {
+		return rawVerdict{}, false
+	}
+	return rv, true
+}
+
+// isVerdict rejects quoted judge_round records and non-object criteria. With a rubric, criteria must
+// name one of its criteria; without one, feedback or passed marks a verdict's top level.
+func isVerdict(keys map[string]json.RawMessage, specs map[string]criterionSpec) bool {
+	for _, record := range []string{"turn", "round", "scored", "evidence"} {
+		if _, ok := keys[record]; ok {
+			return false
+		}
+	}
+	var criteria map[string]json.RawMessage
+	if raw, ok := keys["criteria"]; ok && json.Unmarshal(raw, &criteria) != nil {
+		return false
+	}
+	if len(specs) > 0 {
+		for name := range criteria {
+			if _, ok := specs[name]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	_, score := keys["score"]
+	_, feedback := keys["feedback"]
+	_, passed := keys["passed"]
+	return criteria != nil || (score && (feedback || passed))
 }
 
 // runWriterFresh: recovers empty worker draft via tool-less writer in a fresh runner (re-invoking worker loses finalize prompt).

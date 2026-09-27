@@ -72,7 +72,7 @@ const (
 // judge.go is the only place that knows which happened, so it returns a typed sentinel rather than this checking the error string (#779).
 func judgeFailureFeedback(jerr error) (status, feedback string) {
 	if errors.Is(jerr, ErrJudgeNoVerdict) {
-		return judgeStatusNoVerdict, "quack's judge ran but exhausted its iteration budget without reaching a verdict, so this answer could not be scored: " + jerr.Error()
+		return judgeStatusNoVerdict, "quack's judge ran but ended without a verdict, so this answer could not be scored: " + jerr.Error()
 	}
 	return judgeStatusUnavailable, "quack's judge was unavailable, so this answer could not be scored: " + jerr.Error()
 }

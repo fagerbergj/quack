@@ -102,3 +102,16 @@ func TestBuildRevisionContentSectionsPresent(t *testing.T) {
 		last = idx
 	}
 }
+
+// A revise reply becomes the user-facing answer, so the rule must ask for that answer
+// again rather than a change log (QA: a lineup answer came back as "Revised the lineup artifact ...").
+func TestBuildRevisionContentAsksForTheAnswerNotAChangeNote(t *testing.T) {
+	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Set my lineup."}}}
+	env := verdictEnvelope{Threshold: 0.6, Round: 1}
+	for _, citationOnly := range []bool{false, true} {
+		got := contentPlainText(buildRevisionContent("", question, "the lineup summary", env, workerActivity{}, citationOnly, nil))
+		if !strings.Contains(got, "never a note about this revision") || strings.Contains(got, "note of what changed") {
+			t.Errorf("citationOnly=%v: revise prompt must ask for the user-facing answer, not a change note:\n%s", citationOnly, got)
+		}
+	}
+}
