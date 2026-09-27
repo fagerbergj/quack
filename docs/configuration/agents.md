@@ -99,6 +99,7 @@ The orchestrator stays light on tools — it needs only:
 | [`preloadmemorytool`](https://pkg.go.dev/google.golang.org/adk/tool/preloadmemorytool) | No (ADK) | Auto-injects relevant memory into the prompt at the start of each turn. |
 | `commit_memory` | Yes | Writes a durable fact to quack's own `memory.Store`; the orchestrator calls it directly for user facts, the gate calls it on a judge pass for task findings. |
 | `recall_memory` | Yes | On-demand query into task memory (repo/role/user), scoped to the current chat's user bucket - see [P2's own section below](#recall_memory) for the shape shared with worker nodes and the ACP loopback MCP. |
+| `render_ui` | Yes | Offered only when `render_ui` is listed in `orchestrator.tools`: renders or updates an A2UI surface in the chat, same tool as the registry's `render_ui` (see [tools.md](tools.md)). |
 
 `commit_memory` relies on the orchestrator model choosing to call it, which doesn't hold up reliably in practice. `orchestrator.user_memory_hook` (#262) is the fix: an end-of-turn hook that, after a cheap keyword pre-filter, hands the message to a dedicated `agents/memory-agent` bundle and commits whatever it extracts - fire-and-forget, so it never affects the response. Off by default (costs a model call per qualifying turn); enable with `orchestrator.user_memory_hook.enabled: true` plus a `provider`/`model`. Its guidance comes from `agents/orchestrator/memory.md` (what's worth remembering) and `agents/memory-agent/rubric.yaml` (the candidate-quality bar) - not duplicated into its own prompt.
 

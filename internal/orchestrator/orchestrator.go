@@ -66,6 +66,7 @@ type Orchestrator struct {
 	artifacts   artifact.Service
 	ledgerStore ledger.LedgerStore
 	schemas     *artifactschema.Registry
+	renderUI    bool
 	// nodeSessions best-effort reaps a chat's per-DAG-node ADK sessions
 	// (deterministic "<chatID>:<nodeID>" ids - see internal/agent.WorkerSessionID)
 	// alongside the chat-level one ResetSession already deletes. nil (e.g.
@@ -127,6 +128,9 @@ func (o *Orchestrator) SetLedger(store ledger.LedgerStore) { o.ledgerStore = sto
 // SetSchemas wires registered-schema enforcement into the orchestrator's own
 // write_artifact/write_<kind>/edit_artifact tools. Mirrors SetLedger.
 func (o *Orchestrator) SetSchemas(reg *artifactschema.Registry) { o.schemas = reg }
+
+// SetRenderUI offers render_ui (A2UI surfaces) on the orchestrator's own turns.
+func (o *Orchestrator) SetRenderUI(on bool) { o.renderUI = on }
 
 // failSoftListArtifacts: load_artifacts calls List on every LLM request
 // (ADK's loadartifactstool.ProcessRequest), and a List error fails the whole

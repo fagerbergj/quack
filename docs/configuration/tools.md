@@ -14,6 +14,7 @@ The `tools:` config section configures quack's builtin tool registry; each agent
 | `glob` | Glob file paths inside the jail. |
 | `grep` | Search file contents by Go/RE2 regex inside the jail. |
 | `check_mermaid` | Validate a mermaid diagram's syntax before it ships in an answer. |
+| `render_ui` | Render or update an interactive A2UI v0.9.1 surface in the chat. Takes `surface_id`, a flat `components` list (upserted by `id` onto the stored surface), optional `data_model` and `answer_key`. The merged surface is validated against the v0.9.1 schemas plus quack's catalog (basic + `Mermaid` + `Code`, `internal/a2ui/schema/catalog.json`) and component integrity; a failure returns `VALIDATION_FAILED: <first problem>` for the model to fix. Saves an `a2ui_surface` artifact revision and, with `answer_key`, a `quiz_key` artifact (ChoicePicker options shuffled first, key remapped). Returns `{"artifact_id","revision"}`. |
 | `stage_memory` | Stage a task memory (store-backed - needs `store:` bound, see [stores.md](stores.md#referencing-a-store-from-a-tool)). |
 | `recall_memory` | On-demand recall from the same store `stage_memory` reads (epic #1255 P2) - no `tools:` entry of its own; it takes effect wherever `stage_memory` is bound, plus explicitly in `tools:` lists (see [agents.md](agents.md#recall_memory)). |
 | `load_memory` | Same implementation as `recall_memory`, registered under this name too - listing both in one `tools:` collapses to whichever is listed first (see [agents.md](agents.md#recall_memory)). |

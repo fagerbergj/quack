@@ -2089,6 +2089,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	if artifactSchemas != nil {
 		orch.SetSchemas(artifactSchemas)
 	}
+	orch.SetRenderUI(slices.Contains(cfg.Orchestrator.Tools, "render_ui"))
 	orchRef.Store(orch)
 	if hooks != nil {
 		hooks.pauser = executor
