@@ -32,8 +32,10 @@ func TestSendChatMessage_A2UIAction(t *testing.T) {
 	}
 
 	for name, bad := range map[string]string{
-		"no surface": `{"content":"","a2ui_action":{"name":"submit_quiz"}}`,
-		"no action":  `{"content":""}`,
+		"no surface":         `{"content":"","a2ui_action":{"name":"submit_quiz"}}`,
+		"bad surface id":     `{"content":"","a2ui_action":{"name":"submit_quiz","surface_id":"../x"}}`,
+		"action and content": `{"content":"hi","a2ui_action":{"name":"submit_quiz","surface_id":"s1"}}`,
+		"no action":          `{"content":""}`,
 	} {
 		if code := post(h, chatID, bad); code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", name, code)

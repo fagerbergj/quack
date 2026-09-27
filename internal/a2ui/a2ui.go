@@ -4,11 +4,11 @@ package a2ui
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"maps"
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -41,9 +41,11 @@ type QuizKey struct {
 	Answers   map[string]QuizAnswer `json:"answers"`
 }
 
-// QuizAnswer is one question's correct option value and the reason for it.
+// QuizAnswer is one question's correct option. Label is the identity (option
+// order and values move on a shuffle); Answer is its value on the current surface.
 type QuizAnswer struct {
 	Answer string `json:"answer"`
+	Label  string `json:"label,omitempty"`
 	Why    string `json:"why,omitempty"`
 }
 
@@ -74,32 +76,74 @@ func surfaceIdentity(content []byte, _ string) (string, error) {
 	if err := json.Unmarshal(content, &v); err != nil {
 		return "", err
 	}
-	return v.SurfaceID, checkSurfaceID(v.SurfaceID)
+	return v.SurfaceID, CheckSurfaceID(v.SurfaceID)
 }
 
-// checkSurfaceID: the id becomes an artifact file name, which ADK refuses with a slash.
-func checkSurfaceID(id string) error {
-	if id == "" || strings.ContainsAny(id, `/\`) {
-		return fmt.Errorf("surface_id %q must be non-empty and contain no / or \\", id)
+var surfaceIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+// CheckSurfaceID: the id becomes part of an artifact file name and a UI key.
+func CheckSurfaceID(id string) error {
+	if !surfaceIDRe.MatchString(id) {
+		return fmt.Errorf("surface_id %q must match %s", id, surfaceIDRe)
 	}
 	return nil
 }
 
-// Apply upserts comps onto s (and replaces its data model when dataModel is
-// non-nil), shuffling the ChoicePickers key grades first, then validates the result.
-func Apply(s *Surface, comps []Component, dataModel map[string]any, key map[string]QuizAnswer) error {
-	if err := ShuffleQuiz(s.SurfaceID, comps, key); err != nil {
-		return err
+// Apply upserts comps onto s and keyIn onto key by question id, shuffles every
+// graded incoming ChoicePicker, validates, then re-derives each answer's value
+// from its label on the merged surface. Returns the merged key.
+func Apply(s *Surface, key map[string]QuizAnswer, comps []Component, dataModel map[string]any, keyIn map[string]QuizAnswer) (map[string]QuizAnswer, error) {
+	merged := maps.Clone(key)
+	if merged == nil {
+		merged = map[string]QuizAnswer{}
 	}
-	merged, err := Merge(s.Components, comps)
-	if err != nil {
-		return err
+	for _, q := range slices.Sorted(maps.Keys(keyIn)) {
+		a, err := labelAnswer(q, keyIn[q], comps, s.Components)
+		if err != nil {
+			return nil, err
+		}
+		merged[q] = a
 	}
-	s.Components = merged
+	ShuffleQuiz(s.SurfaceID, comps, slices.Collect(maps.Keys(merged)))
+	var err error
+	if s.Components, err = Merge(s.Components, comps); err != nil {
+		return nil, err
+	}
 	if dataModel != nil {
 		s.DataModel = dataModel
 	}
-	return Validate(*s)
+	if err := Validate(*s); err != nil {
+		return nil, err
+	}
+	for _, q := range slices.Sorted(maps.Keys(merged)) {
+		a := merged[q]
+		c := pickerFor(s.Components, q)
+		value, ok := optionField(c, "label", a.Label, "value")
+		if c == nil || !ok {
+			return nil, fmt.Errorf("answer_key[%q]: option %q is no longer on the surface's ChoicePicker for %q; resend answer_key for %q", q, a.Label, q, q)
+		}
+		a.Answer = value
+		merged[q] = a
+	}
+	return merged, nil
+}
+
+// labelAnswer resolves a new key entry's answer value to its option label,
+// on the incoming picker when one was sent, else the stored one.
+func labelAnswer(q string, a QuizAnswer, incoming, stored []Component) (QuizAnswer, error) {
+	c := pickerFor(incoming, q)
+	if c == nil {
+		c = pickerFor(stored, q)
+	}
+	if c == nil {
+		return a, fmt.Errorf("answer_key[%q]: no ChoicePicker has id %q or a value path ending in /%s", q, q, q)
+	}
+	label, ok := optionField(c, "value", a.Answer, "label")
+	if !ok {
+		return a, fmt.Errorf("answer_key[%q]: answer %q is not one of ChoicePicker %q's option values %q", q, a.Answer, idOf(c), optionValues(c))
+	}
+	a.Label = label
+	return a, nil
 }
 
 // Merge upserts upd into base by id: a known id is replaced in place, a new id appended.
@@ -129,40 +173,27 @@ func Merge(base, upd []Component) ([]Component, error) {
 	return out, nil
 }
 
-// ShuffleQuiz permutes the option labels of every ChoicePicker in comps that
-// key grades (seeded by surfaceID) while values keep their positional order,
-// and rewrites key so each answer still names the same label. Mutates comps and key.
-func ShuffleQuiz(surfaceID string, comps []Component, key map[string]QuizAnswer) error {
-	for _, q := range slices.Sorted(maps.Keys(key)) {
+// ShuffleQuiz permutes the option labels of every ChoicePicker in comps graded
+// by a question in graded, seeded by surfaceID and the picker id; values keep
+// their positional order, so the correct value moves. Mutates comps.
+func ShuffleQuiz(surfaceID string, comps []Component, graded []string) {
+	for _, q := range graded {
 		c := pickerFor(comps, q)
-		if c == nil {
-			continue
-		}
-		opts, values, ok := pickerOptions(c)
+		opts, ok := pickerOptions(c)
 		if !ok {
 			continue // malformed options; Validate reports them
-		}
-		ans := key[q]
-		if !slices.Contains(values, ans.Answer) {
-			return fmt.Errorf("answer_key[%q]: answer %q is not one of ChoicePicker %q's option values %q", q, ans.Answer, idOf(c), values)
 		}
 		h := fnv.New64a()
 		_, _ = h.Write([]byte(surfaceID + "\x00" + idOf(c)))
 		perm := rand.New(rand.NewPCG(h.Sum64(), 0)).Perm(len(opts))
 		shuffled := make([]any, len(opts))
-		orig := ans.Answer
 		for i, p := range perm {
 			o := maps.Clone(opts[p])
-			if values[p] == orig {
-				ans.Answer = values[i]
-			}
-			o["value"] = values[i]
+			o["value"] = opts[i]["value"]
 			shuffled[i] = o
 		}
 		c["options"] = shuffled
-		key[q] = ans
 	}
-	return nil
 }
 
 // pickerFor finds the ChoicePicker graded by key entry q: id q, or bound to a path ending in /q.
@@ -180,103 +211,49 @@ func pickerFor(comps []Component, q string) Component {
 	return nil
 }
 
-func pickerOptions(c Component) ([]map[string]any, []string, bool) {
+func pickerOptions(c Component) ([]map[string]any, bool) {
 	raw, _ := c["options"].([]any)
 	opts := make([]map[string]any, 0, len(raw))
-	values := make([]string, 0, len(raw))
 	for _, r := range raw {
 		o, ok := r.(map[string]any)
-		v, isStr := o["value"].(string)
-		if !ok || !isStr {
-			return nil, nil, false
+		if _, isStr := o["value"].(string); !ok || !isStr {
+			return nil, false
 		}
 		opts = append(opts, o)
-		values = append(values, v)
 	}
-	return opts, values, len(opts) > 0
+	return opts, len(opts) > 0
+}
+
+// optionField returns field `want` of c's first option whose field `by` reads as match.
+func optionField(c Component, by, match, want string) (string, bool) {
+	opts, _ := pickerOptions(c)
+	for _, o := range opts {
+		if text(o[by]) == match {
+			return text(o[want]), true
+		}
+	}
+	return "", false
+}
+
+func optionValues(c Component) []string {
+	opts, _ := pickerOptions(c)
+	out := make([]string, len(opts))
+	for i, o := range opts {
+		out[i] = text(o["value"])
+	}
+	return out
+}
+
+// text is a string as-is and anything else (a bound label) as compact JSON, so it can serve as an identity.
+func text(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 func idOf(c Component) string {
 	id, _ := c["id"].(string)
 	return id
-}
-
-// refs lists the component ids c points at, per the catalog's ComponentId/ChildList fields.
-func refs(c Component) []string {
-	var out []string
-	add := func(v any) {
-		if s, ok := v.(string); ok {
-			out = append(out, s)
-		}
-	}
-	switch c["component"] {
-	case "Card", "Button":
-		add(c["child"])
-	case "Modal":
-		add(c["trigger"])
-		add(c["content"])
-	case "Row", "Column", "List":
-		switch ch := c["children"].(type) {
-		case []any:
-			for _, v := range ch {
-				add(v)
-			}
-		case map[string]any:
-			add(ch["componentId"])
-		}
-	case "Tabs":
-		tabs, _ := c["tabs"].([]any)
-		for _, t := range tabs {
-			if m, ok := t.(map[string]any); ok {
-				add(m["child"])
-			}
-		}
-	}
-	return out
-}
-
-// checkIntegrity: unique ids, a root, no dangling references, and no cycles.
-func checkIntegrity(comps []Component) error {
-	byID := make(map[string]Component, len(comps))
-	for _, c := range comps {
-		id := idOf(c)
-		if _, dup := byID[id]; dup {
-			return fmt.Errorf("duplicate component id %q", id)
-		}
-		byID[id] = c
-	}
-	if _, ok := byID["root"]; !ok {
-		return errors.New(`no component has id "root"`)
-	}
-	for _, c := range comps {
-		for _, r := range refs(c) {
-			if _, ok := byID[r]; !ok {
-				return fmt.Errorf("component %q references missing component %q", idOf(c), r)
-			}
-		}
-	}
-	state := make(map[string]int, len(comps)) // 1 = on the DFS stack, 2 = done
-	var visit func(id string) error
-	visit = func(id string) error {
-		switch state[id] {
-		case 1:
-			return fmt.Errorf("component %q is its own ancestor (reference cycle)", id)
-		case 2:
-			return nil
-		}
-		state[id] = 1
-		for _, r := range refs(byID[id]) {
-			if err := visit(r); err != nil {
-				return err
-			}
-		}
-		state[id] = 2
-		return nil
-	}
-	for _, c := range comps {
-		if err := visit(idOf(c)); err != nil {
-			return err
-		}
-	}
-	return nil
 }

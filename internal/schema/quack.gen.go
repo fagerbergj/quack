@@ -595,7 +595,7 @@ func (e ListMemoriesParamsSort) Valid() bool {
 
 // A2uiAction A user action on an A2UI surface (a Button's `action.event`, with its
 // context paths already resolved against the surface's data model).
-// When set, it replaces `content`: the turn's user text becomes the
+// When set, `content` must be empty: the turn's user text becomes the
 // single line `[a2ui_action] <compact JSON of this object>`.
 type A2uiAction struct {
 	Context *map[string]interface{} `json:"context,omitempty"`
@@ -1313,7 +1313,7 @@ type ResponseStatusUpdateBody struct {
 type SendMessageBody struct {
 	// A2uiAction A user action on an A2UI surface (a Button's `action.event`, with its
 	// context paths already resolved against the surface's data model).
-	// When set, it replaces `content`: the turn's user text becomes the
+	// When set, `content` must be empty: the turn's user text becomes the
 	// single line `[a2ui_action] <compact JSON of this object>`.
 	A2uiAction *A2uiAction `json:"a2ui_action,omitempty"`
 

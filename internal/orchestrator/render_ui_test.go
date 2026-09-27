@@ -17,16 +17,20 @@ import (
 
 // renderUIStub calls render_ui once with a one-component surface, then answers.
 type renderUIStub struct {
-	mu    sync.Mutex
-	calls int
+	mu      sync.Mutex
+	calls   int
+	offered bool // render_ui was in the first request's tool map
 }
 
 func (*renderUIStub) Name() string { return "renderUIStub" }
 
-func (s *renderUIStub) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+func (s *renderUIStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		s.mu.Lock()
 		s.calls++
+		if s.calls == 1 {
+			_, s.offered = req.Tools["render_ui"]
+		}
 		n := s.calls
 		s.mu.Unlock()
 		part := &genai.Part{Text: "done"}
@@ -45,7 +49,8 @@ func TestOrchestratorRun_RenderUI(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
 	sessions := session.InMemoryService()
-	o := New(sessions, &renderUIStub{}, "you are the orchestrator", dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
+	stub := &renderUIStub{}
+	o := New(sessions, stub, "you are the orchestrator", dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
 	o.SetArtifacts(svc)
 	o.SetRenderUI(true)
 
@@ -58,10 +63,25 @@ func TestOrchestratorRun_RenderUI(t *testing.T) {
 			rev = &d
 		}
 	}
-	if rev == nil || rev.ID != "a2ui_surface:s1" || rev.Revision != 1 || rev.NodeID != orchestratorName {
+	if !stub.offered || rev == nil || rev.ID != "a2ui_surface:s1" || rev.Revision != 1 || rev.NodeID != orchestratorName {
 		t.Fatalf("artifact_revision = %+v", rev)
 	}
 	if _, err := svc.Load(ctx, &artifact.LoadRequest{AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "a2ui_surface:s1"}); err != nil {
 		t.Fatalf("surface not stored: %v", err)
+	}
+}
+
+func TestOrchestratorRun_RenderUIDisabled(t *testing.T) {
+	sessions := session.InMemoryService()
+	stub := &renderUIStub{}
+	o := New(sessions, stub, "you are the orchestrator", dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
+	o.SetArtifacts(artifact.InMemoryService())
+	for _, err := range o.Run(context.Background(), "u1", "c1", SourceApp, "show me", nil) {
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+	if stub.offered {
+		t.Fatal("render_ui offered to the orchestrator without orchestrator.tools listing it")
 	}
 }

@@ -568,7 +568,7 @@ export type SendMessageBody = {
 /**
  * A user action on an A2UI surface (a Button's `action.event`, with its
  * context paths already resolved against the surface's data model).
- * When set, it replaces `content`: the turn's user text becomes the
+ * When set, `content` must be empty: the turn's user text becomes the
  * single line `[a2ui_action] <compact JSON of this object>`.
  *
  */

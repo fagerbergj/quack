@@ -2173,12 +2173,13 @@ components:
       description: |
         A user action on an A2UI surface (a Button's `action.event`, with its
         context paths already resolved against the surface's data model).
-        When set, it replaces `content`: the turn's user text becomes the
+        When set, `content` must be empty: the turn's user text becomes the
         single line `[a2ui_action] <compact JSON of this object>`.
       required: [surface_id, name]
       properties:
         surface_id:
           type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
         name:
           type: string
           description: The event name, e.g. `submit_quiz`.

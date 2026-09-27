@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -141,7 +142,7 @@ func allowedProps(defs map[string]map[string]any, comp map[string]any) []string 
 // plus component integrity, including the createSurface/updateComponents/
 // updateDataModel envelope a client would receive. The error names the first problem.
 func Validate(s Surface) error {
-	if err := checkSurfaceID(s.SurfaceID); err != nil {
+	if err := CheckSurfaceID(s.SurfaceID); err != nil {
 		return err
 	}
 	if s.CatalogID != CatalogID {
@@ -224,6 +225,20 @@ var (
 	schemaSet = regexp.MustCompile(` (of|against) \[?<anonymous schema>.*$`)
 )
 
+// shapeHints spells out the common_types unions whose oneOf failure otherwise says nothing actionable.
+var shapeHints = map[string]string{
+	"DynamicString":     `a string, {"path": "/json/pointer"}, or {"call": "fn", "args": {...}, "returnType": "string"}`,
+	"DynamicNumber":     `a number, {"path": "/json/pointer"}, or {"call": "fn", "args": {...}, "returnType": "number"}`,
+	"DynamicBoolean":    `true/false, {"path": "/json/pointer"}, or {"call": "fn", "args": {...}, "returnType": "boolean"}`,
+	"DynamicStringList": `an array of strings, {"path": "/json/pointer"}, or {"call": "fn", "args": {...}, "returnType": "array"}`,
+	"DynamicValue":      `a string, number, boolean, array, {"path": "/json/pointer"}, or a function call`,
+	"DataBinding":       `{"path": "/json/pointer"} with no other keys`,
+	"ChildList":         `an array of component id strings, or {"componentId": "id", "path": "/list/pointer"}`,
+	"Action":            `{"event": {"name": "submit_quiz", "context": {"key": {"path": "/pointer"}}}} or {"functionCall": {"call": "openUrl", "args": {"url": "https://..."}}}`,
+	"FunctionCall":      `{"call": "<catalog function>", "args": {...}} - one of: required, regex, length, numeric, email, formatString, formatNumber, formatCurrency, formatDate, pluralize, openUrl, and, or, not`,
+	"anyFunction":       `a catalog function call: {"call": "<name>", "args": {...}} with that function's args`,
+}
+
 // explain turns jsonschema-go's "validating <pointer>: " chain into the
 // innermost property, the $defs type it failed, and the keyword message.
 func explain(err error) string {
@@ -234,15 +249,28 @@ func explain(err error) string {
 			msg = msg[i+j+2:]
 		}
 	}
-	msg = strings.Replace(schemaSet.ReplaceAllString(msg, ""), "oneOf: did not validate against any", "matches none of its oneOf alternatives", 1)
+	msg = schemaSet.ReplaceAllString(msg, "")
 	if m := defRe.FindAllStringSubmatch(full, -1); len(m) > 0 {
-		msg = fmt.Sprintf("does not match %s: %s", m[len(m)-1][1], msg)
+		def := m[len(m)-1][1]
+		if hint, ok := shapeHints[def]; ok && strings.HasPrefix(msg, "oneOf") {
+			msg = fmt.Sprintf("must be %s (%s)", hint, def)
+		} else {
+			msg = fmt.Sprintf("does not match %s: %s", def, msg)
+		}
 	}
 	if m := propRe.FindAllStringSubmatch(full, -1); len(m) > 0 {
 		msg = fmt.Sprintf("property %q %s", m[len(m)-1][1], msg)
 	}
-	if len(msg) > maxErrText {
-		msg = msg[:maxErrText] + "..."
+	return truncate(msg, maxErrText)
+}
+
+// truncate cuts s to at most n bytes without splitting a UTF-8 rune.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return msg
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "..."
 }

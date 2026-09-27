@@ -21,6 +21,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/a2ui"
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -562,12 +563,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 			errMsg(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		if a := body.A2uiAction; a != nil {
-			if a.SurfaceId == "" || a.Name == "" {
-				errMsg(w, http.StatusBadRequest, "a2ui_action needs surface_id and name")
-				return
-			}
-			body.Content = a2uiActionText(a)
+		if msg := applyA2UIAction(&body); msg != "" {
+			errMsg(w, http.StatusBadRequest, msg)
+			return
 		}
 	}
 	if body.Content == "" {
@@ -595,6 +593,21 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 	// From here this handler is only a viewer - it cannot stall or kill the run.
 	streamHub(r.Context(), sse, replay, live, 0)
+}
+
+// applyA2UIAction turns body's a2ui_action (if any) into its content; a non-empty return is the 400 message.
+func applyA2UIAction(body *schema.SendMessageBody) string {
+	a := body.A2uiAction
+	switch {
+	case a == nil:
+		return ""
+	case body.Content != "":
+		return "send either content or a2ui_action, not both"
+	case a.Name == "" || a2ui.CheckSurfaceID(a.SurfaceId) != nil:
+		return "a2ui_action needs a name and a valid surface_id"
+	}
+	body.Content = a2uiActionText(a)
+	return ""
 }
 
 // a2uiActionText is the user turn an A2UI surface action becomes; keys keep
@@ -701,6 +714,7 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string, attachments []*genai.Part) {
 	// Stamps the outcome on every exit path, including the error return below (#738).
 	defer h.stampRunOutcome(runCtx, chatID)
+	runCtx = stream.WithTurnID(runCtx, turnID)
 	// Clear previous run's durable events so this run's seq starts at 1.
 	h.eventLog.Reset(runCtx, chatID)
 

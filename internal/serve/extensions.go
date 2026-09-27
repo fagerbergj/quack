@@ -1067,6 +1067,7 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	} else {
 		runCtx, cancelRun = context.WithCancel(ctx)
 	}
+	runCtx = stream.WithTurnID(runCtx, turnID)
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
 	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
