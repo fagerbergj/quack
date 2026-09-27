@@ -1321,9 +1321,10 @@ func boundExcerpt(s string, maxChars int) string {
 	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
 }
 
-// reviseReplyRule closes every revise request: an edited artifact is the deliverable, so
-// re-typing it as the reply cost prod chat cedfc299 26k output tokens (6 min) in one round.
-const reviseReplyRule = "If you edited an artifact, your reply is a short note of what changed that names the artifact: the judge and every later step read the artifact itself, so repeating it in the reply only costs time. " +
+// reviseReplyRule closes every revise request: the reply replaces the user-facing answer, but
+// re-typing an edited artifact in it cost prod chat cedfc299 26k output tokens (6 min) in one round.
+const reviseReplyRule = "Your reply replaces your previous answer as the one the user sees: give the reply your task asks for, updated for these fixes - never a note about this revision, the verdict, or what you fixed. " +
+	"If the deliverable lives in an artifact you edited, keep the reply to the summary your task asks for and do not restate the artifact's content: the judge and every later step read the artifact itself. " +
 	"Otherwise output only the corrected answer with no preamble or commentary.\n\n"
 
 // buildRevisionContent: re-invokes worker to address judge feedback. Every section bounded (boundExcerpt).
