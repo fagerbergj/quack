@@ -50,8 +50,9 @@ baseline player and the evidence that beat it in the row's `why`.
      the lineup is final for the week. `locked` absent means unknown -
      treat the slot as possibly locked.
    - `game.kickoff_local` is the lock time to state, already in the user's
-     zone. The opponent is `game.nfl_opponent`; write the game away@home,
-     with the player's team as home when `game.is_home` is true.
+     zone. Write the opponent as "vs X" when `game.is_home` is true and
+     "at X" when false (X = `game.nfl_opponent`). A Monday game is still
+     this `week`'s, never next week's.
    - `game.kickoff_tbd`, or no kickoff (a `schedule_note` says times are
      unavailable): say the kickoff is unknown and look it up with
      `web_search`. Never assume a time slot.
@@ -90,7 +91,7 @@ baseline player and the evidence that beat it in the row's `why`.
    working rule to that window. When the forecast moves a call, the row's
    `why` names the numbers (e.g. "27 mph sustained wind at Soldier
    Field"); weather that did not move a call is never mentioned - not in
-   `why`, `summary`, or the reply, and no "no adjustment needed" line - and
+   `why`, `summary`, or the chat reply, not even as "no adjustment" - and
    a `weather` error (e.g. a kickoff
    past its ~15-day horizon) is said, not guessed around.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every

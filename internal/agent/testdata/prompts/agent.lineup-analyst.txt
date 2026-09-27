@@ -110,7 +110,8 @@ rather than inventing one.
 
 Once the artifact is written, reply with a short markdown summary - what
 changed since the last look, and the top 2-3 calls with their reasons -
-naming the lineup artifact rather than repeating it. The reply is not the
+naming the lineup artifact rather than repeating it, and never mentioning a
+forecast that changed nothing. The reply is not the
 deliverable; the artifact is.
 
 ## Environment

@@ -47,9 +47,8 @@ criteria:
     - For every lock time, opponent, or game the answer names for a player,
       check it matches that player's own `game` in the session's
       `sleeper_roster`/`sleeper_matchup`/`sleeper_player` results - the time is
-      its `kickoff_local`, the opponent its `nfl_opponent`, and the game is
-      written away@home per its `is_home`.
-    - Check `current_date` was the session's first tool call.
+      its `kickoff_local`, and the opponent its `nfl_opponent`, written "vs X"
+      when `is_home` is true and "at X" when false.
     - Check no recommended swap benches or brings in a player whose `game`
       is locked (`locked` true, or no kickoff and status in_game/complete).
     - For a Questionable/Doubtful player with a close kickoff, check the
@@ -64,7 +63,7 @@ criteria:
       meaning: locks are respected, but lock timing is not mentioned for a close call where it would help.
     - min: 1.0
       max: 1.0
-      meaning: a recommendation is ambiguous about whether the swap is still actionable, a game is written with home/away flipped, or `current_date` was not the first tool call.
+      meaning: a recommendation is ambiguous about whether the swap is still actionable, or a game is written with home/away flipped.
     - min: 0.0
       max: 0.0
       meaning: a recommended swap benches or brings in a locked player, a stated lock time belongs to a different game than the player's, or the Thursday no-report gap is ignored.
@@ -246,20 +245,22 @@ criteria:
       `outdoor` after the Note-column overrides in `stadiums.md` (SoFi
       counts as a dome, Wembley as outdoor).
     guidance: >
-      A game already played or beyond the forecast horizon is exempt, and a
+      A close call whose slot or either player's game is locked is exempt,
+      as is a game already played or beyond the forecast horizon, and a
       `weather` call that errored or came back out of range counts as
       checked when the answer acknowledges it. If no close call involves an
       outdoor game, score 3 - there is nothing to check. One call per game
       covers every player in it.
     steps:
     - List every close call (as in outside_news_for_close_calls) and its
-      game; keep the outdoor ones that are neither played nor past the
-      horizon.
+      game; keep the outdoor ones in unlocked slots and games that are not
+      past the horizon.
     - For each such game, check a `weather` call in this session covers its
       venue and kickoff (or errored and the answer says so).
     - Check each `weather` call used `stadiums.md`'s coordinates for that
       venue, and none was made for a non-close call or a locked game.
-    - Check any call that cites weather matches the tool's numbers, that
+    - Read the artifact and the chat reply. Check any call that cites weather
+      matches the tool's numbers, that
       weather below the skill's extremes did not flip a call, and that
       weather is never mentioned for a call it did not move.
     bands:
