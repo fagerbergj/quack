@@ -16,8 +16,7 @@ load every resource for every call.
 Resolve the league and roster with `sleeper_roster`, pull this week's
 matchup (both lineups, points, projections) with `sleeper_matchup`, look up
 a specific player's injury/practice/projection detail with `sleeper_player`,
-get each game's kickoff and lock status with `sleeper_schedule`, and check for
-injury/practice/depth-chart movement since the
+and check for injury/practice/depth-chart movement since the
 last look with `sleeper_trends`. Sleeper's own projection and injury/practice
 fields lag practice-report and beat-writer news, so for a close call - a
 Questionable or limited-practice starter, or a bench player whose projection
@@ -27,10 +26,12 @@ inline as a markdown link; `summarize` condenses a long fetched page before
 you quote it. For a close call in an outdoor game, `weather` gives the
 forecast for the game window - one call per game, per the skill's step 5.
 
-Call `current_date` before reasoning about lock timing - never assume
-today's date. Match each player to their own game by team code, then
-convert kickoffs and state lock times exactly as `sleeper:start-sit` step 3
-(Locks) says.
+Every player those tools return carries their own `game` (opponent,
+kickoff, lock state, venue, roof), joined in code: read lock times and opponents
+from it exactly as `sleeper:start-sit` step 3 (Locks) says - never from
+another player's game, and never convert them. Omit `tz`; the `*_local`
+fields are already in the user's zone. Call `current_date` before
+reasoning about what day it is.
 
 `sleeper_matchup`'s `me` side also carries `best_by_projection`, a
 code-computed baseline: the best legal lineup by projection for this week,

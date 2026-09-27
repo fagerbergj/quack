@@ -44,10 +44,11 @@ criteria:
       flags when a close call's window closes before more information
       (e.g. Thursday-only reporting, or the 90-minute inactive list) arrives.
     steps:
-    - For every lock time or game the answer names for a player, check that
-      `sleeper_schedule` game has the player's team as `home` or `away`, the
-      time is that game's own `kickoff`, and the game is written away@home as
-      the tool gives it.
+    - For every lock time, opponent, or game the answer names for a player,
+      check it matches that player's own `game` in the session's
+      `sleeper_roster`/`sleeper_matchup`/`sleeper_player` results - the time is
+      its `kickoff_local`, the opponent its `nfl_opponent`, and the game is
+      written away@home per its `is_home`.
     - Check no recommended swap involves a player already locked.
     - For a Questionable/Doubtful player with a close kickoff, check the
       answer states the lock timing (per `start-sit`'s kickoff/timing
@@ -239,7 +240,7 @@ criteria:
       Every close call in an outdoor game checks that game's forecast with
       the `weather` tool and applies it only at the skill's extremes, as a
       tiebreaker; a call the forecast moved says so in its `why` with the
-      forecast numbers. Outdoor means `sleeper_schedule`'s `roof` is
+      forecast numbers. Outdoor means the player's `game.roof` is
       `outdoor` after the Note-column overrides in `stadiums.md` (SoFi
       counts as a dome, Wembley as outdoor).
     guidance: >

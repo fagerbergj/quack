@@ -1,11 +1,11 @@
 # Venue coordinates
 
-`sleeper_schedule` gives each game's `venue`, `city` (no state), and `roof`,
-including international and other neutral-site games. This table turns that
-`venue` into coordinates for the `weather` tool; don't geocode the city
-instead ("Santa Clara" resolves to Cuba).
+Each player's own `game` carries its `venue` and `roof`, including
+international and other neutral-site games. This table turns that `venue`
+into coordinates for the `weather` tool; don't geocode a city instead
+("Santa Clara" resolves to Cuba).
 
-Roof comes from `sleeper_schedule`: skip `dome` and `retractable_dome`,
+Roof comes from `game.roof`: skip `dome` and `retractable_dome`,
 check `outdoor` - except where the Note column overrides Sleeper's value.
 A venue missing here: `web_search` its coordinates, then pass them as
 `latitude`/`longitude`.
@@ -13,7 +13,7 @@ A venue missing here: `web_search` its coordinates, then pass them as
 Venue names and coordinates are the ones Sleeper's 2026 schedule reports
 (Tottenham's longitude sign corrected).
 
-| Venue (as `sleeper_schedule` reports it) | City | Lat, Lon | Note |
+| Venue (as Sleeper reports it) | City | Lat, Lon | Note |
 | --- | --- | --- | --- |
 | Acrisure Stadium | Pittsburgh | 40.45, -80.02 | |
 | Allegiant Stadium | Las Vegas | 36.09, -115.18 | |
@@ -42,6 +42,7 @@ Venue names and coordinates are the ones Sleeper's 2026 schedule reports
 | MetLife Stadium | East Rutherford | 40.81, -74.07 | |
 | Nissan Stadium | Nashville | 36.17, -86.77 | |
 | Northwest Stadium | Landover | 38.91, -76.86 | |
+| NRG Stadium | Houston | 29.68, -95.41 | Sleeper currently reports it as Reliant Stadium |
 | Paycor Stadium | Cincinnati | 39.10, -84.52 | |
 | Raymond James Stadium | Tampa | 27.98, -82.50 | |
 | Reliant Stadium | Houston | 29.68, -95.41 | Sleeper's old name for NRG Stadium |
