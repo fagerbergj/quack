@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/url"
@@ -949,6 +950,8 @@ type judgeRoundState struct {
 	lastFinish    genai.FinishReason
 	lastOutTokens int32
 	aborted       bool
+	// parseFrom: accum offset past the last truncated turn, whose text may hold only a draft verdict.
+	parseFrom int
 }
 
 // judgePromptContent builds the judge's user content: the (prebuilt or built) prompt
@@ -992,6 +995,10 @@ func (s *judgeRoundState) runTurn(turnContent *genai.Content) error {
 			s.cancel()
 			break
 		}
+	}
+	// A turn cut at the token cap or aborted never supplies a text verdict: a draft may be complete JSON.
+	if s.lastFinish == genai.FinishReasonMaxTokens || s.aborted {
+		s.parseFrom = s.accum.Len()
 	}
 	return nil
 }
@@ -1063,7 +1070,7 @@ func (s *judgeRoundState) verdictFrom() (verdict, bool) {
 	if s.submitted {
 		return aggregateVerdict(s.sink), true
 	}
-	if v, perr := parseVerdict(s.accum.String(), s.lastFinish == genai.FinishReasonMaxTokens); perr == nil {
+	if v, perr := parseVerdict(s.accum.String()[s.parseFrom:], s.cfg.RubricSpecs); perr == nil {
 		return v, true
 	}
 	return verdict{}, false
@@ -1617,21 +1624,21 @@ func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 }
 
 // rawVerdict: text-fallback verdict with criteria kept raw, so non-object entries
-// (misplaced score/passed/feedback) and a named-list shape can be tolerated.
+// (misplaced score/passed/feedback) can be tolerated.
 type rawVerdict struct {
-	Criteria json.RawMessage `json:"criteria,omitempty"`
-	Score    float64         `json:"score"`
-	Passed   bool            `json:"passed"`
-	Feedback string          `json:"feedback"`
-	Memories []memoryVerdict `json:"memories,omitempty"` // #1259: text-JSON fallback also carries votes
+	Criteria map[string]json.RawMessage `json:"criteria,omitempty"`
+	Score    float64                    `json:"score"`
+	Passed   bool                       `json:"passed"`
+	Feedback string                     `json:"feedback"`
+	Memories []memoryVerdict            `json:"memories,omitempty"` // #1259: text-JSON fallback also carries votes
 }
 
-// parseVerdict: text-fallback parser. It takes the last complete verdict-shaped object, since
-// promoted reasoning quotes artifact JSON and drafts before the final verdict.
-func parseVerdict(raw string, truncated bool) (verdict, error) {
-	rv, ok := lastVerdictObject(raw, !truncated)
+// parseVerdict: text-fallback parser. It takes the last complete verdict object, since promoted
+// reasoning quotes artifact JSON and drafts before the final verdict.
+func parseVerdict(raw string, specs map[string]criterionSpec) (verdict, error) {
+	rv, ok := lastVerdictObject(raw, specs)
 	if !ok {
-		return verdict{}, fmt.Errorf("vetting: no judge verdict object in %q", raw)
+		return verdict{}, fmt.Errorf("vetting: no judge verdict object in %d chars of judge text", len(raw))
 	}
 	feedback := rv.Feedback
 	if feedback == "None" || feedback == "null" || feedback == "N/A" {
@@ -1641,7 +1648,7 @@ func parseVerdict(raw string, truncated bool) (verdict, error) {
 
 	// Decode per-criterion entries, skipping non-object values. When score,
 	// passed, or feedback ended up inside criteria, recover them explicitly.
-	for name, entry := range verdictCriteria(rv.Criteria) {
+	for name, entry := range rv.Criteria {
 		var cs criterionScore
 		if err := json.Unmarshal(entry, &cs); err != nil {
 			switch name {
@@ -1662,76 +1669,91 @@ func parseVerdict(raw string, truncated bool) (verdict, error) {
 	return aggregateVerdict(v), nil
 }
 
-// lastVerdictObject scans every top-level JSON object in s and returns the last verdict-shaped
-// one. Brace repair (a model dropping the closing braces) is a fallback for the tail object only.
-func lastVerdictObject(s string, repair bool) (rawVerdict, bool) {
+// lastVerdictObject returns the last top-level JSON object in s that isVerdict accepts. The scan
+// is linear: it jumps past each complete object and to the byte each syntax error stopped at.
+func lastVerdictObject(s string, specs map[string]criterionSpec) (rawVerdict, bool) {
 	var last rawVerdict
 	found := false
 	for i := strings.IndexByte(s, '{'); i >= 0; {
-		next := i + 1
-		if rv, end, ok := verdictObjectAt(s[i:]); end > 0 {
-			next = i + end
-			if ok {
-				last, found = rv, true
+		keys, skip, err := objectAt(s[i:])
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			// The object at i runs to the end of s, so nothing after it is top-level; a dropped
+			// closing brace is repaired only when no complete verdict came before it.
+			if !found {
+				return repairTailVerdict(s[i:], specs)
 			}
-		} else if repair && !found {
-			// A repaired object runs to the end of s, so nothing after i is top-level.
-			for _, suffix := range []string{"}", "}}"} {
-				if rv, end, ok := verdictObjectAt(s[i:] + suffix); end > 0 && ok {
-					return rv, true
-				}
-			}
+			break
 		}
-		j := strings.IndexByte(s[next:], '{')
+		if rv, ok := toVerdict(s[i:i+skip], keys, err, specs); ok {
+			last, found = rv, true
+		}
+		j := strings.IndexByte(s[i+skip:], '{')
 		if j < 0 {
 			break
 		}
-		i = next + j
+		i += skip + j
 	}
 	return last, found
 }
 
-// verdictObjectAt decodes the JSON object at the start of s: end is its length (0 when s does
-// not start with a complete object), ok whether it is shaped like a verdict.
-func verdictObjectAt(s string) (rv rawVerdict, end int, ok bool) {
-	dec := json.NewDecoder(strings.NewReader(s))
-	var keys map[string]json.RawMessage
-	if dec.Decode(&keys) != nil {
-		return rawVerdict{}, 0, false
+// repairTailVerdict closes an object a model left one or two braces short at the end of its text.
+func repairTailVerdict(s string, specs map[string]criterionSpec) (rawVerdict, bool) {
+	for _, suffix := range []string{"}", "}}"} {
+		keys, skip, err := objectAt(s + suffix)
+		if rv, ok := toVerdict((s + suffix)[:skip], keys, err, specs); ok {
+			return rv, true
+		}
 	}
-	end = int(dec.InputOffset())
-	_, criteria := keys["criteria"]
+	return rawVerdict{}, false
+}
+
+// objectAt decodes the JSON object at the start of s; skip is how far the scan may jump - past a
+// complete object, or to the byte a syntax error stopped at, which may open the next object.
+func objectAt(s string) (keys map[string]json.RawMessage, skip int, err error) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	if err = dec.Decode(&keys); err == nil {
+		return keys, int(dec.InputOffset()), nil
+	}
+	var syn *json.SyntaxError
+	if errors.As(err, &syn) && syn.Offset > 1 {
+		return nil, int(syn.Offset) - 1, err
+	}
+	return nil, 1, err
+}
+
+// toVerdict decodes obj when it decoded cleanly and isVerdict accepts its keys.
+func toVerdict(obj string, keys map[string]json.RawMessage, err error, specs map[string]criterionSpec) (rawVerdict, bool) {
+	var rv rawVerdict
+	if err != nil || !isVerdict(keys, specs) || json.Unmarshal([]byte(obj), &rv) != nil {
+		return rawVerdict{}, false
+	}
+	return rv, true
+}
+
+// isVerdict rejects quoted judge_round records and non-object criteria. With a rubric, criteria must
+// name one of its criteria; without one, feedback or passed marks a verdict's top level.
+func isVerdict(keys map[string]json.RawMessage, specs map[string]criterionSpec) bool {
+	for _, record := range []string{"turn", "round", "scored", "evidence"} {
+		if _, ok := keys[record]; ok {
+			return false
+		}
+	}
+	var criteria map[string]json.RawMessage
+	if raw, ok := keys["criteria"]; ok && json.Unmarshal(raw, &criteria) != nil {
+		return false
+	}
+	if len(specs) > 0 {
+		for name := range criteria {
+			if _, ok := specs[name]; ok {
+				return true
+			}
+		}
+		return false
+	}
 	_, score := keys["score"]
 	_, feedback := keys["feedback"]
 	_, passed := keys["passed"]
-	// score alone also matches a criterion entry; feedback or passed marks the top level.
-	if !criteria && !(score && (feedback || passed)) {
-		return rawVerdict{}, end, false
-	}
-	return rv, end, json.Unmarshal([]byte(s[:end]), &rv) == nil
-}
-
-// verdictCriteria accepts criteria keyed by name or as a [{"name": ...}] list,
-// the shape the judge_round artifact records them in.
-func verdictCriteria(raw json.RawMessage) map[string]json.RawMessage {
-	var byName map[string]json.RawMessage
-	if json.Unmarshal(raw, &byName) == nil {
-		return byName
-	}
-	var list []json.RawMessage
-	if json.Unmarshal(raw, &list) != nil {
-		return nil
-	}
-	byName = make(map[string]json.RawMessage, len(list))
-	for _, entry := range list {
-		var named struct {
-			Name string `json:"name"`
-		}
-		if json.Unmarshal(entry, &named) == nil && named.Name != "" {
-			byName[named.Name] = entry
-		}
-	}
-	return byName
+	return criteria != nil || (score && (feedback || passed))
 }
 
 // runWriterFresh: recovers empty worker draft via tool-less writer in a fresh runner (re-invoking worker loses finalize prompt).

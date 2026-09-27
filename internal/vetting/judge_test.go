@@ -1905,7 +1905,7 @@ func TestParseVerdict_MissingScoreIsNotAZero(t *testing.T) {
 	raw := `{"criteria":{"claims_grounded":{"reason":"all confirmed","score":3},` +
 		`"verification_over_assertion":{"reason":"the top band"},` +
 		`"score_note":{"corrected":"verification_over_assertion corrected to 3"}},"score":3}`
-	v, err := parseVerdict(raw, false)
+	v, err := parseVerdict(raw, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
