@@ -1,6 +1,6 @@
 # Built-in tools
 
-The `tools:` config section configures quack's builtin tool registry; each agent's `tools:` list in `agents:` binds names from it (ACP agents bind none - they bring their own tools; see [agents.md](agents.md)). `internal/tools/registry.go` is the authoritative list - 15 tools:
+The `tools:` config section configures quack's builtin tool registry; each agent's `tools:` list in `agents:` binds names from it (ACP agents bind none - they bring their own tools; see [agents.md](agents.md)). `internal/tools/registry.go` is the authoritative list - 16 tools:
 
 | Tool | What it does |
 | --- | --- |
@@ -9,6 +9,7 @@ The `tools:` config section configures quack's builtin tool registry; each agent
 | `grep_artifacts` | Regex search across the chat's stored `web_page` artifacts (or a given `ids` subset), returning `artifact:line: text` hits - pairs with `read_artifact`'s `offset`/`lines` window to read around a hit without re-fetching. |
 | `summarize` | Summarize a long text block, optionally focused on a question. |
 | `current_date` | The current date, for prompts that need "today". |
+| `weather` | Hourly forecast from [Open-Meteo](https://open-meteo.com/) (keyless; forecast + geocoding APIs): `location` (a place name, geocoded) or `latitude`/`longitude`, a local `date`, and optionally a local `time` (HH:MM) plus `hours` (default 4). Returns the resolved place and timezone, units, and one row per hour with temperature, wind speed and gusts, precipitation probability and amount, and conditions. `units`: `imperial` (default) or `metric`. Forecasts reach about 16 days ahead; responses share `web_fetch`'s 10-minute URL cache. |
 | `read_file` | Read a file inside the agent's jail (workspace root + size caps). |
 | `list_dir` | List a directory inside the jail. |
 | `glob` | Glob file paths inside the jail. |
