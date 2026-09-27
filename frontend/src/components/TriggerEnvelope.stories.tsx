@@ -131,6 +131,13 @@ export const PlainMessage: Story = {
   },
 }
 
+// An A2UI button press persists as a one-line action turn; it renders as a pill.
+export const A2uiActionTurn: Story = {
+  args: {
+    content: '[a2ui_action] {"surface_id":"pr-1085-tutor","name":"submit_quiz","source_component_id":"submit","context":{"answers":{"q1":["b"],"q2":["c"]}}}',
+  },
+}
+
 // Delta comments carrying quack_status (internal/github/envelope.go): a
 // deleted comment must read as retracted, not as a live one (#667's
 // quack_status field exists specifically so a miscount can't hide this).

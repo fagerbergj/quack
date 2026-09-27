@@ -1,0 +1,653 @@
+{
+ "pr1085": {
+  "surface": {
+   "surface_id": "pr-1085-tutor",
+   "catalog_id": "https://quack.local/a2ui/v0_9/catalog.json",
+   "components": [
+    {
+     "id": "root",
+     "component": "Card",
+     "child": "main"
+    },
+    {
+     "id": "main",
+     "component": "Column",
+     "children": [
+      "title",
+      "tabs"
+     ]
+    },
+    {
+     "id": "title",
+     "component": "Text",
+     "variant": "h2",
+     "text": "PR #1085: tolerate unknown frontmatter fields in builtin/vendored skills"
+    },
+    {
+     "id": "tabs",
+     "component": "Tabs",
+     "tabs": [
+      {
+       "title": "Overview",
+       "child": "overview"
+      },
+      {
+       "title": "Flow",
+       "child": "flow"
+      },
+      {
+       "title": "Key changes",
+       "child": "changes"
+      },
+      {
+       "title": "Quiz",
+       "child": "quiz"
+      }
+     ]
+    },
+    {
+     "id": "overview",
+     "component": "Text",
+     "text": "**What changed and why.** 0.50.0 crash-looped in production and was rolled back to 0.49.2. The vendored `ponytail` plugin's `SKILL.md` gained `argument-hint` (a valid Claude Code frontmatter field) in the #1080 pin bump, but ADK's strict decoder (`decoder.KnownFields(true)`) rejects it. Worse, ADK's `fileSystemSource.ListFrontmatters` aborts its *entire* listing on the first unparseable skill - so one third-party field addition took down server startup.\n\nThe repo already had a `tolerant` wrapper that listed per-entry and skipped bad skills (used for project skills cloned from user repos), but it never applied to the builtin/vendored sources `internal/agent.Build` actually uses. This PR:\n\n- **generalizes** `tolerant` from a real-disk-path wrapper to an `fs.FS`-backed one (`fs.ReadDir` instead of `os.ReadDir`), so it also works over the bundled `embed.FS`.\n- **exports** it as `skillsource.Tolerant(src, fsys, label)`.\n- **applies** it to every source in `resolvedSkillSource` and the dotagents embedded-skills fallback.\n\nIt deliberately chooses **skip-only** (log the name, keep the rest) over stripping the unknown key, because ADK's `readSkill` re-opens and re-parses the file - making ponytail fully usable would need a byte-rewriting `fs.FS` overlay, which wasn't worth it this round.\n\n**Main files:** `internal/skillsource/skillsource.go`, `internal/serve/serve.go`, `internal/skillsource/skillsource_test.go`."
+    },
+    {
+     "id": "flow",
+     "component": "Mermaid",
+     "code": "flowchart TD\n  A[\"ListFrontmatters (Tolerant)\"] --> B[\"fs.ReadDir fsys '.'\"]\n  B -->|\"err\"| C[\"return nil, nil (no skills)\"]\n  B --> D[\"for each entry\"]\n  D --> E[\"t.Source.LoadFrontmatter(name)\"]\n  E -->|\"ok\"| F[\"append to results\"]\n  E -->|\"ErrSkillNotFound\"| G[\"not a skill, skip\"]\n  E -->|\"other err (bad field)\"| H[\"log warning by label path (deduped)\"]\n  H --> I[\"skip this skill only\"]\n  F --> J[\"return all good skills\"]\n  I --> J"
+    },
+    {
+     "id": "changes",
+     "component": "Column",
+     "children": [
+      "c1_note",
+      "c1_code",
+      "c2_note",
+      "c2_code",
+      "c3_note",
+      "c3_code"
+     ]
+    },
+    {
+     "id": "c1_note",
+     "component": "Text",
+     "text": "The boot-safety fix: every source `resolvedSkillSource` builds - the bundled `embed.FS` and each plugin skill dir - is now wrapped in `Tolerant`, so one unknown frontmatter field can never fail startup for skills that DID parse."
+    },
+    {
+     "id": "c1_code",
+     "component": "Code",
+     "path": "internal/serve/serve.go",
+     "startLine": 171,
+     "language": "go",
+     "code": "+\tbundleFS := bundledir.SubFS(\"skills\")\n+\tsources := []skill.Source{skillsource.Tolerant(skill.NewFileSystemSource(bundleFS), bundleFS, \"bundled skills\")}\n \tfor _, dir := range skillDirs {\n-\t\tsources = append(sources, skill.NewFileSystemSource(os.DirFS(dir)))\n+\t\tdirFS := os.DirFS(dir)\n+\t\tsources = append(sources, skillsource.Tolerant(skill.NewFileSystemSource(dirFS), dirFS, dir))\n \t}"
+    },
+    {
+     "id": "c2_note",
+     "component": "Text",
+     "text": "Generalization to any `fs.FS`: switching `os.ReadDir` to `fs.ReadDir` is what lets the same wrapper cover the embedded (non-disk) bundle, not just real directories. The `label` is stored instead of a hard `dir` path so the log still makes sense for an embedded FS."
+    },
+    {
+     "id": "c2_code",
+     "component": "Code",
+     "path": "internal/skillsource/skillsource.go",
+     "startLine": 60,
+     "language": "go",
+     "code": "+func Tolerant(src skill.Source, fsys fs.FS, label string) skill.Source {\n+\treturn &tolerant{Source: src, fsys: fsys, label: label}\n+}\n ... \n-func (t *tolerant) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {\n-\tentries, err := os.ReadDir(t.dir)\n+entries, err := fs.ReadDir(t.fsys, \".\")"
+    },
+    {
+     "id": "c3_note",
+     "component": "Text",
+     "text": "The skip is visible, not silent: a malformed skill is logged by its label path (`filepath.Join(t.label, ...)`) with the parse error, and `warnedBadSkills` dedupes it to one line per path - so you see `field argument-hint not found in type skill.Frontmatter` instead of a crash."
+    },
+    {
+     "id": "c3_code",
+     "component": "Code",
+     "path": "internal/skillsource/skillsource.go",
+     "startLine": 83,
+     "language": "go",
+     "code": " \t\tfm, err := t.Source.LoadFrontmatter(ctx, e.Name())\n \t\tif err != nil {\n \t\t\tif !errors.Is(err, skill.ErrSkillNotFound) { // a dir without SKILL.md simply isn't a skill\n-\t\t\t\tpath := filepath.Join(t.dir, e.Name(), \"SKILL.md\")\n+\t\t\t\tpath := filepath.Join(t.label, e.Name(), \"SKILL.md\")\n \t\t\t\tif _, dup := warnedBadSkills.LoadOrStore(path, struct{}{}); !dup {\n \t\t\t\t\tslog.Warn(\"skipping malformed skill; other skills still load\",\n \t\t\t\t\t\t\"component\", \"skillsource\", \"path\", path, \"err\", err)"
+    },
+    {
+     "id": "quiz",
+     "component": "Column",
+     "children": [
+      "q1",
+      "q2",
+      "q3",
+      "q4",
+      "submit"
+     ]
+    },
+    {
+     "id": "q1",
+     "component": "ChoicePicker",
+     "label": "A vendored plugin's SKILL.md contains a frontmatter field ADK's strict decoder doesn't know. After this PR, what happens at server startup?",
+     "variant": "mutuallyExclusive",
+     "value": {
+      "path": "/answers/q1"
+     },
+     "options": [
+      {
+       "label": "Startup fails entirely (the 0.50.0 crash-loop)",
+       "value": "a"
+      },
+      {
+       "label": "That one skill is skipped with a logged warning; other skills still load",
+       "value": "b"
+      },
+      {
+       "label": "The unknown field is stripped before ADK parses the file",
+       "value": "c"
+      },
+      {
+       "label": "The entire plugin directory is ignored",
+       "value": "d"
+      }
+     ]
+    },
+    {
+     "id": "q2",
+     "component": "ChoicePicker",
+     "label": "What generalization lets Tolerant now cover the bundled embed.FS, not just real disk directories?",
+     "variant": "mutuallyExclusive",
+     "value": {
+      "path": "/answers/q2"
+     },
+     "options": [
+      {
+       "label": "Switching os.ReadDir to fs.ReadDir over an fs.FS",
+       "value": "a"
+      },
+      {
+       "label": "Adding a retry loop around ListFrontmatters",
+       "value": "b"
+      },
+      {
+       "label": "Rewriting SKILL.md bytes before parsing",
+       "value": "c"
+      }
+     ]
+    },
+    {
+     "id": "q3",
+     "component": "ChoicePicker",
+     "label": "Why did the author pick skip-only instead of stripping the unknown key so ponytail stays fully usable?",
+     "variant": "mutuallyExclusive",
+     "value": {
+      "path": "/answers/q3"
+     },
+     "options": [
+      {
+       "label": "Stripping is hard to test",
+       "value": "a"
+      },
+      {
+       "label": "ADK's readSkill re-opens and re-parses the file, so making it usable needs an fs.FS overlay that rewrites SKILL.md bytes - not worth it this round",
+       "value": "b"
+      },
+      {
+       "label": "Embedded FS cannot be written to at all",
+       "value": "c"
+      }
+     ]
+    },
+    {
+     "id": "q4",
+     "component": "ChoicePicker",
+     "label": "What is the `label` argument to skillsource.Tolerant used for?",
+     "variant": "mutuallyExclusive",
+     "value": {
+      "path": "/answers/q4"
+     },
+     "options": [
+      {
+       "label": "To rename the skill in the listing",
+       "value": "a"
+      },
+      {
+       "label": "To set a priority/order for the skill source",
+       "value": "b"
+      },
+      {
+       "label": "To name the fsys in the warning log line (a real path, or a descriptive name for an embedded FS)",
+       "value": "c"
+      }
+     ]
+    },
+    {
+     "id": "submit",
+     "component": "Button",
+     "variant": "primary",
+     "child": "submit_label",
+     "action": {
+      "event": {
+       "name": "submit_quiz",
+       "context": {
+        "answers": {
+         "path": "/answers"
+        }
+       }
+      }
+     }
+    },
+    {
+     "id": "submit_label",
+     "component": "Text",
+     "text": "Check my answers"
+    }
+   ],
+   "data_model": {
+    "answers": {
+     "q1": [],
+     "q2": [],
+     "q3": [],
+     "q4": []
+    }
+   }
+  },
+  "grade": [
+   {
+    "id": "quiz",
+    "component": "Column",
+    "children": [
+     "q1",
+     "q1_result",
+     "q2",
+     "q2_result",
+     "q3",
+     "q3_result",
+     "q4",
+     "q4_result",
+     "submit"
+    ]
+   },
+   {
+    "id": "q1_result",
+    "component": "Text",
+    "text": "✅ Correct. skillsource.go's tolerant.ListFrontmatters catches non-ErrSkillNotFound errors, logs a warning, and skips only that entry, so the rest still list."
+   },
+   {
+    "id": "q2_result",
+    "component": "Text",
+    "text": "❌ Incorrect. The answer is **a**: Switching os.ReadDir to fs.ReadDir over an fs.FS. skillsource.go changed os.ReadDir(t.dir) to fs.ReadDir(t.fsys, \".\"), so it works over any fs.FS including the bundled embed.FS."
+   },
+   {
+    "id": "q3_result",
+    "component": "Text",
+    "text": "✅ Correct. The PR description states ADK's fileSystemSource.readSkill re-opens and re-parses the file, so full usability would need a byte-rewriting fs.FS overlay that wasn't worth it this round."
+   },
+   {
+    "id": "q4_result",
+    "component": "Text",
+    "text": "❌ Incorrect. The answer is **c**: To name the fsys in the warning log line (a real path, or a descriptive name for an embedded FS). skillsource.go joins t.label into the logged path (filepath.Join(t.label, e.Name(), \"SKILL.md\")) to name an fsys that may have no real path."
+   },
+   {
+    "id": "submit_label",
+    "component": "Text",
+    "text": "Score: 2/4"
+   }
+  ],
+  "picks": {
+   "q1": [
+    "b"
+   ],
+   "q2": [
+    "b"
+   ],
+   "q3": [
+    "b"
+   ],
+   "q4": [
+    "a"
+   ]
+  },
+  "answer_key": {
+   "q1": {
+    "answer": "b",
+    "why": "skillsource.go's tolerant.ListFrontmatters catches non-ErrSkillNotFound errors, logs a warning, and skips only that entry, so the rest still list."
+   },
+   "q2": {
+    "answer": "a",
+    "why": "skillsource.go changed os.ReadDir(t.dir) to fs.ReadDir(t.fsys, \".\"), so it works over any fs.FS including the bundled embed.FS."
+   },
+   "q3": {
+    "answer": "b",
+    "why": "The PR description states ADK's fileSystemSource.readSkill re-opens and re-parses the file, so full usability would need a byte-rewriting fs.FS overlay that wasn't worth it this round."
+   },
+   "q4": {
+    "answer": "c",
+    "why": "skillsource.go joins t.label into the logged path (filepath.Join(t.label, e.Name(), \"SKILL.md\")) to name an fsys that may have no real path."
+   }
+  }
+ },
+ "pr9": {
+  "surface": {
+   "surface_id": "pr-9-tutor",
+   "catalog_id": "https://quack.local/a2ui/v0_9/catalog.json",
+   "components": [
+    {
+     "id": "root",
+     "component": "Card",
+     "child": "main"
+    },
+    {
+     "id": "main",
+     "component": "Column",
+     "children": [
+      "title",
+      "tabs"
+     ]
+    },
+    {
+     "id": "title",
+     "component": "Text",
+     "variant": "h2",
+     "text": "PR #9: UIKitCSS constant + remarkable HTML status page on the kit"
+    },
+    {
+     "id": "tabs",
+     "component": "Tabs",
+     "tabs": [
+      {
+       "title": "Overview",
+       "child": "overview"
+      },
+      {
+       "title": "Flow",
+       "child": "flow"
+      },
+      {
+       "title": "Key changes",
+       "child": "changes"
+      },
+      {
+       "title": "Quiz",
+       "child": "quiz"
+      }
+     ]
+    },
+    {
+     "id": "overview",
+     "component": "Text",
+     "text": "This PR gives extensions a standard design kit and turns remarkable's `/status` from a raw JSON dump into a **human-readable HTML page** styled with it.\n\n- `sdk`: new public constant `UIKitCSS = \"/assets/ext/v1/kit.css\"` — a same-origin link any extension's HTML can load to pick up the host's design tokens/primitives. The v1 contract is **frozen-additive**: breaking changes ship at `/v2/`.\n- `remarkable`: `/status` now renders an `html/template` page (kit-linked, `qk-table` of documents, ok/warn/err badges derived from `InFlight`/`GaveUp`/`LastOutcome`). The old JSON moves **unchanged** to `/status.json`.\n- Template rendering auto-escapes document names (tested against `<script>` injection); zero docs shows an empty state.\n- `noop` is untouched (JSON-only, not nav-linked).\n\n**Files:** `sdk/sdk.go`, `remarkable/remarkable.go`, `remarkable/status.go`, `remarkable/status_test.go` (new), `remarkable/remarkable_test.go`."
+    },
+    {
+     "id": "flow",
+     "component": "Mermaid",
+     "code": "flowchart TD\n  A[\"GET /remarkable/status | /status.json\"] --> B[\"statusSnapshot()\"]\n  B --> C{\"route?\"}\n  C -->|\"/status\"| D[\"render statusTmpl → HTML\"]\n  C -->|\"/status.json\"| E[\"encode JSON (old shape)\"]\n  D --> F{\"Badge() per doc\"}\n  F -->|\"InFlight\"| G[\"warn — in flight\"]\n  F -->|\"GaveUp or failed\"| H[\"err — gave up / failed\"]\n  F -->|\"done\"| I[\"ok — done\"]\n  F -->|\"needs_input\"| J[\"warn — needs_input\"]\n  F -->|\"never run\"| K[\"neutral — never run\"]"
+    },
+    {
+     "id": "changes",
+     "component": "Column",
+     "children": [
+      "c1_note",
+      "c1_code",
+      "c2_note",
+      "c2_code",
+      "c3_note",
+      "c3_code",
+      "c4_note",
+      "c4_code"
+     ]
+    },
+    {
+     "id": "c1_note",
+     "component": "Text",
+     "text": "**Why it matters:** extensions can now link one same-origin stylesheet and inherit the host's look with zero shared toolchain. The frozen-additive v1 guarantee means a linked page can't be silently restyled — breaking changes go to `/v2/`."
+    },
+    {
+     "id": "c1_code",
+     "component": "Code",
+     "path": "sdk/sdk.go",
+     "startLine": 82,
+     "language": "go",
+     "code": "+// UIKitCSS is the same-origin path to quack's extension design-language\n+// kit: link it from any HTML an extension serves to pick up the host's\n+// tokens and primitives (.qk-page, .qk-card, .qk-badge, ...) with no shared\n+// toolchain. The v1 contract is frozen-additive - a breaking restyle ships\n+// at /v2/, and this path keeps serving unchanged.\n+const UIKitCSS = \"/assets/ext/v1/kit.css\""
+    },
+    {
+     "id": "c2_note",
+     "component": "Text",
+     "text": "**Why it matters:** a **path split** instead of `Accept`-header negotiation — there is exactly one consumer of each format (the SPA nav link hits `/status` HTML; tooling/noop-style polling hits `/status.json`), so negotiation buys nothing. The snapshot is factored out into `statusSnapshot()` so both handlers share one code path."
+    },
+    {
+     "id": "c2_code",
+     "component": "Code",
+     "path": "remarkable/remarkable.go",
+     "startLine": 127,
+     "language": "go",
+     "code": " func (e *extension) RegisterRoutes(authed chi.Router, public chi.Router) {\n \tauthed.Get(\"/status\", e.handleStatus)\n+\tauthed.Get(\"/status.json\", e.handleStatusJSON)\n }"
+    },
+    {
+     "id": "c3_note",
+     "component": "Text",
+     "text": "**Why it matters:** one badge function maps poller state to UI state with a deliberate priority order: `InFlight` wins over everything (a doc actively dispatching is \"in flight\" even if its last outcome was `done`), `GaveUp`/`failed` → err, `done` → ok, `needs_input` → warn, and **never-run stays neutral** (\"\"), deliberately not \"ok\" — a doc that was never processed isn't healthy."
+    },
+    {
+     "id": "c3_code",
+     "component": "Code",
+     "path": "remarkable/status.go",
+     "startLine": 33,
+     "language": "go",
+     "code": "+func (d statusDoc) Badge() string {\n+\tswitch {\n+\tcase d.InFlight:\n+\t\treturn \"warn\"\n+\tcase d.GaveUp, d.LastOutcome == \"failed\":\n+\t\treturn \"err\"\n+\tcase d.LastOutcome == \"done\":\n+\t\treturn \"ok\"\n+\tcase d.LastOutcome == \"needs_input\":\n+\t\treturn \"warn\"\n+\tdefault:\n+\t\treturn \"\"\n+\t}"
+    },
+    {
+     "id": "c4_note",
+     "component": "Text",
+     "text": "**Why it matters:** doc names come from user-controlled files on the reMarkable, so rendering them into HTML is an XSS surface. `html/template`'s auto-escaping (plus a dedicated injection test) guarantees a name like `<script>alert(1)</script>` is rendered as inert text, and the `{{else}}` branch gives a friendly empty state before the first poll."
+    },
+    {
+     "id": "c4_code",
+     "component": "Code",
+     "path": "remarkable/status_test.go",
+     "startLine": 78,
+     "language": "go",
+     "code": "+func TestHandleStatusEscapesDocumentName(t *testing.T) {\n+\t...\n+\te.poller.st.Documents[\"doc-1\"] = docState{ID: \"doc-1\", Name: `<script>alert(1)</script>`}\n+\t...\n+\tif strings.Contains(rec.Body.String(), \"<script>alert\") {\n+\t\tt.Errorf(\"document name rendered unescaped: %s\", rec.Body.String())\n+\t}"
+    },
+    {
+     "id": "quiz",
+     "component": "Column",
+     "children": [
+      "q1",
+      "q2",
+      "q3",
+      "q4",
+      "submit"
+     ]
+    },
+    {
+     "id": "q1",
+     "component": "ChoicePicker",
+     "label": "A doc has InFlight=true and LastOutcome=\"done\". What badge does the page show for it?",
+     "variant": "mutuallyExclusive",
+     "value": {
+      "path": "/answers/q1"
+     },
+     "options": [
+      {
+       "label": "ok — done",
+       "value": "a"
+      },
+      {
+       "label": "warn — in flight",
+       "value": "b"
+      },
+      {
+       "label": "err — failed",
+       "value": "c"
+      }
+     ]
+    },
+    {
+     "id": "q2",
+     "component": "ChoicePicker",
+     "label": "A doc has GaveUp=true and LastOutcome=\"failed\". What does the page show?",
+     "variant": "mutuallyExclusive",
+     "value": {
+      "path": "/answers/q2"
+     },
+     "options": [
+      {
+       "label": "err badge, label \"failed\"",
+       "value": "a"
+      },
+      {
+       "label": "err badge, label \"gave up\"",
+       "value": "b"
+      },
+      {
+       "label": "warn badge, label \"gave up\"",
+       "value": "c"
+      }
+     ]
+    },
+    {
+     "id": "q3",
+     "component": "ChoicePicker",
+     "label": "Why does the PR split /status and /status.json into two routes instead of negotiating by Accept header?",
+     "variant": "mutuallyExclusive",
+     "value": {
+      "path": "/answers/q3"
+     },
+     "options": [
+      {
+       "label": "There is exactly one consumer of each format, so a path split is simpler",
+       "value": "a"
+      },
+      {
+       "label": "The JSON endpoint must be public (no auth)",
+       "value": "b"
+      },
+      {
+       "label": "The two formats need different cache headers",
+       "value": "c"
+      }
+     ]
+    },
+    {
+     "id": "q4",
+     "component": "ChoicePicker",
+     "label": "A reMarkable doc is named `<script>alert(1)</script>`. What appears in the /status table?",
+     "variant": "mutuallyExclusive",
+     "value": {
+      "path": "/answers/q4"
+     },
+     "options": [
+      {
+       "label": "The script executes in the browser when the page loads",
+       "value": "a"
+      },
+      {
+       "label": "The escaped text is shown; the template auto-escapes doc names",
+       "value": "b"
+      },
+      {
+       "label": "The document is omitted from the table",
+       "value": "c"
+      }
+     ]
+    },
+    {
+     "id": "submit",
+     "component": "Button",
+     "variant": "primary",
+     "child": "submit_label",
+     "action": {
+      "event": {
+       "name": "submit_quiz",
+       "context": {
+        "answers": {
+         "path": "/answers"
+        }
+       }
+      }
+     }
+    },
+    {
+     "id": "submit_label",
+     "component": "Text",
+     "text": "Check my answers"
+    }
+   ],
+   "data_model": {
+    "answers": {
+     "q1": [],
+     "q2": [],
+     "q3": [],
+     "q4": []
+    }
+   }
+  },
+  "grade": [
+   {
+    "id": "quiz",
+    "component": "Column",
+    "children": [
+     "q1",
+     "q1_result",
+     "q2",
+     "q2_result",
+     "q3",
+     "q3_result",
+     "q4",
+     "q4_result",
+     "submit"
+    ]
+   },
+   {
+    "id": "q1_result",
+    "component": "Text",
+    "text": "✅ Correct. Badge() checks InFlight first, so an active dispatch shows warn/in flight regardless of the last outcome."
+   },
+   {
+    "id": "q2_result",
+    "component": "Text",
+    "text": "❌ Incorrect. The answer is **b**: err badge, label \"gave up\". Badge()'s second case puts GaveUp with failed → err, and Label() returns \"gave up\" when GaveUp is set."
+   },
+   {
+    "id": "q3_result",
+    "component": "Text",
+    "text": "✅ Correct. The status.go comment says the split is deliberate because there's exactly one consumer of each format (SDK UI link vs tooling polling)."
+   },
+   {
+    "id": "q4_result",
+    "component": "Text",
+    "text": "❌ Incorrect. The answer is **b**: The escaped text is shown; the template auto-escapes doc names. status.go parses with html/template, whose auto-escaping neutralises the name — TestHandleStatusEscapesDocumentName asserts the raw <script> tag is absent."
+   },
+   {
+    "id": "submit_label",
+    "component": "Text",
+    "text": "Score: 2/4"
+   }
+  ],
+  "picks": {
+   "q1": [
+    "b"
+   ],
+   "q2": [
+    "a"
+   ],
+   "q3": [
+    "a"
+   ],
+   "q4": [
+    "a"
+   ]
+  },
+  "answer_key": {
+   "q1": {
+    "answer": "b",
+    "why": "Badge() checks InFlight first, so an active dispatch shows warn/in flight regardless of the last outcome."
+   },
+   "q2": {
+    "answer": "b",
+    "why": "Badge()'s second case puts GaveUp with failed → err, and Label() returns \"gave up\" when GaveUp is set."
+   },
+   "q3": {
+    "answer": "a",
+    "why": "The status.go comment says the split is deliberate because there's exactly one consumer of each format (SDK UI link vs tooling polling)."
+   },
+   "q4": {
+    "answer": "b",
+    "why": "status.go parses with html/template, whose auto-escaping neutralises the name — TestHandleStatusEscapesDocumentName asserts the raw <script> tag is absent."
+   }
+  }
+ }
+}

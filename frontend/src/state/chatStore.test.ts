@@ -1931,3 +1931,66 @@ describe('ChatStore - submit already produces clean turns (#463)', () => {
     expect(store.get('c').live?.text).toBe('NEW ANSWER')
   })
 })
+
+describe('ChatStore.submitA2uiAction', () => {
+  it('POSTs the action with empty content and shows the action line as the live user text', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeStream(''))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = new ChatStore()
+    store.seed('chat-a', [])
+    const action = { surface_id: 'pr-1-tutor', name: 'submit_quiz', source_component_id: 'submit', context: { answers: { q1: ['b'] } } }
+    await store.submitA2uiAction('chat-a', action)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/v1/chats/chat-a/responses')
+    expect(JSON.parse(init.body as string)).toEqual({ content: '', a2ui_action: action })
+    expect(store.get('chat-a').live?.userText).toBe(`[a2ui_action] ${JSON.stringify(action)}`)
+  })
+})
+
+describe('ChatStore a2ui surface events and double submit', () => {
+  it('counts surface revisions separately and pins a first revision to the live turn', async () => {
+    const sse = [
+      'event: response_created', 'data: {"response_id":"resp-1"}', '',
+      'event: artifact_revision', 'data: {"id":"a2ui_surface:s1","revision":1,"kind":"a2ui_surface"}', '',
+      'event: artifact_revision', 'data: {"id":"a2ui_surface:s0","revision":4,"kind":"a2ui_surface"}', '',
+      'event: artifact_revision', 'data: {"id":"quiz_key:s1","revision":1,"kind":"quiz_key"}', '',
+    ].join('\n')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(makeStream(sse)))
+    const store = new ChatStore()
+    store.seed('chat-s', [])
+    await store.submit('chat-s', 'explain')
+    const s = store.get('chat-s')
+    expect(s.surfaceSeq).toBe(2)
+    expect(s.surfacePins).toEqual({ 'a2ui_surface:s1': 'resp-1' })
+    expect(s.artifactEvents?.revision?.kind).toBe('quiz_key')
+  })
+
+  it('drops a second submit that lands during the archive GET', async () => {
+    let releaseGet: (r: Response) => void = () => {}
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeStream(''))
+      .mockReturnValueOnce(new Promise<Response>(r => { releaseGet = r }))
+      .mockResolvedValueOnce(makeStream(''))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = new ChatStore()
+    store.seed('chat-d', [])
+    await store.submit('chat-d', 'first')
+    const p = store.submit('chat-d', 'second')
+    await store.submit('chat-d', 'second again')
+    releaseGet(new Response(JSON.stringify({ turns: [] })))
+    await p
+    const posts = fetchMock.mock.calls.filter(c => (c[1] as RequestInit | undefined)?.method === 'POST')
+    expect(posts).toHaveLength(2)
+    expect(JSON.parse((posts[1][1] as RequestInit).body as string)).toEqual({ content: 'second' })
+  })
+})
+
+describe('ChatStore.attach', () => {
+  it('keeps the lifted turn server start time, the surface created_at fallback anchor', () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    const store = new ChatStore()
+    store.seed('chat-r', [{ id: 't9', created_at: '2026-09-27T10:00:00Z', input: { role: 'user', content: 'go' }, output: [] }])
+    store.attach('chat-r')
+    expect(store.get('chat-r').live).toMatchObject({ id: 't9', createdAt: '2026-09-27T10:00:00Z' })
+  })
+})

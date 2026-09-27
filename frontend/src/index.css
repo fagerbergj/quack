@@ -57,6 +57,25 @@
   --breakpoint-medium: 600px;
 }
 
+/* A2UI surfaces: the renderer's theme variables mapped onto this palette.
+   light-dark() follows the color-scheme set on :root/.dark above. */
+.quack-a2ui {
+  --a2ui-color-on-background: light-dark(var(--color-gray-900), var(--color-gray-100));
+  --a2ui-color-surface: light-dark(#fff, var(--color-gray-800));
+  --a2ui-color-on-surface: var(--a2ui-color-on-background);
+  --a2ui-color-secondary: light-dark(var(--color-gray-100), var(--color-gray-700));
+  --a2ui-color-on-secondary: var(--a2ui-color-on-background);
+  --a2ui-color-primary: var(--color-blue-600);
+  --a2ui-color-border: light-dark(var(--color-gray-200), var(--color-gray-700));
+  --a2ui-font-size: 0.875rem;
+  --a2ui-grid-base: 0.75rem;
+  --a2ui-border-radius: 0.5rem;
+  --a2ui-card-border-radius: 1rem;
+  --a2ui-card-padding: 1rem 1.25rem;
+  --a2ui-card-margin: 0;
+  --a2ui-card-box-shadow: none;
+}
+
 /* The app owns all scrolling (messages pane, sidebar list). The page itself
    must NEVER scroll: without this, wheel input that hits an inner scroller's
    end CHAINS to the document, and any stray layout overflow lets the viewport

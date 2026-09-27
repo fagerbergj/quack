@@ -15,6 +15,8 @@ import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { useChatStore } from '../state/ChatStoreProvider'
 import { Icon } from './Icon'
 import { AssistantText } from './AgentParts'
+import { A2uiSurfaceBox } from './A2uiArtifact'
+import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, surfacePersistKey, type SurfaceContent } from '../lib/a2ui'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact (design V4
 // §4.3) - the only place a note's line anchor lives. Fetched and parsed
@@ -112,6 +114,13 @@ export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
   return { byLine, unanchored }
 }
 
+// A2UI artifacts are shared by the tutor node and the orchestrator that grades them, so they
+// stay listed under every node that wrote any revision (the list carries per-revision lineage).
+function belongsToNode(s: ArtifactSummary, nodeId: string): boolean {
+  if (s.lineage?.node_id === nodeId) return true
+  return (s.kind === A2UI_SURFACE_KIND || s.kind === QUIZ_KEY_KIND) && s.revisions.some(r => r.lineage?.node_id === nodeId)
+}
+
 // Run bookkeeping, never a deliverable: dag_node is rewritten by the system
 // at node start/end; a bytes:* blob is dispatch input staging. Not dag_plan - the per-node lineage filter already scopes that to the orchestrator.
 export function isBookkeeping(a: { kind?: string; name: string }): boolean {
@@ -125,6 +134,7 @@ function kindRank(a: ArtifactSummary, nodeArtifactKind?: string): number {
   if (nodeArtifactKind && a.kind === nodeArtifactKind) return 1
   if (a.class !== 'structured') return 2
   if (a.kind === 'finding') return 3
+  if (a.kind === QUIZ_KEY_KIND) return 5
   return 4
 }
 
@@ -340,7 +350,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // internal/server/rest/artifacts.go), not "any revision this node wrote": if a later node revises an artifact (e.g. a judge writes revision 2 of a worker's `finding`) it moves to the reviser's panel and disappears from the original author's - a real gap against a "everything this node wrote is an output" reading of design V4, open as a question on #1094's review pending a spec answer. Fixing it needs per-revision lineage (GET .../revisions) up front for every artifact in the chat, which doesn't scale to "one click opens a panel" - documented here rather than silently wrong.
   // isBookkeeping excludes dag_node/bytes:* entirely - they belong to the run, never to this node's own panel.
   const nodeArtifacts = useMemo(
-    () => summaries.filter(s => s.lineage?.node_id === nodeId && !isBookkeeping(s)),
+    () => summaries.filter(s => belongsToNode(s, nodeId) && !isBookkeeping(s)),
     [summaries, nodeId],
   )
 
@@ -583,7 +593,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       if (!ev || ev.seq === seenSeqRef.current) return
       seenSeqRef.current = ev.seq
       const rev = ev.revision
-      if (rev && rev.nodeId === nodeId) {
+      if (rev && (rev.nodeId === nodeId || nodeArtifactNamesRef.current.has(rev.id))) {
         withScrollPreserved(load)
         if (rev.id === primaryIdRef.current) {
           const toLatest = atLatestRef.current
@@ -733,6 +743,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                 isStructured={isStructured}
                 parsedJson={parsedJson}
                 kind={primary?.kind}
+                surface={surfaceTarget(chatId, primary, currentRev, latestRev)}
                 byLine={byLine}
                 activeNote={activeNote}
                 onSelectNote={setActiveNote}
@@ -882,7 +893,7 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
 
 // DiffView colors unified-diff +/- lines - plain text otherwise, no library:
 // the format is three characters of prefix per line, nothing to parse.
-function DiffView({ text }: { text: string }) {
+export function DiffView({ text }: { text: string }) {
   const lines = text.split('\n')
   return (
     <pre className="text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto">
@@ -1212,10 +1223,19 @@ export function PlanView({ data }: { data: PlanBody }) {
   )
 }
 
+// At the latest revision the panel shares the inline card's processor, so picks show in both;
+// an older revision renders detached so browsing history never rewinds the live surface.
+interface SurfaceTarget { chatId: string; revision?: number; persistKey?: string }
+function surfaceTarget(chatId: string, primary: ArtifactSummary | null, currentRev: number | null, latestRev: number | null): SurfaceTarget {
+  const shared = primary && currentRev != null && currentRev === latestRev
+  return shared ? { chatId, revision: currentRev, persistKey: surfacePersistKey(chatId, primary.name) } : { chatId }
+}
+
 // typedView dispatches a structured artifact's known kind to its own view;
 // undefined for anything else, so the caller falls back to the generic JSON tree - unknown kinds keep the tree.
-function typedView(kind: string | undefined, data: unknown, reviewFindings: { id: string; body: FindingBody | undefined }[]): ReactNode | undefined {
+function typedView(kind: string | undefined, data: unknown, reviewFindings: { id: string; body: FindingBody | undefined }[], surface: SurfaceTarget): ReactNode | undefined {
   switch (kind) {
+    case A2UI_SURFACE_KIND: return <A2uiSurfaceBox key={surface.persistKey} {...surface} content={data as SurfaceContent} />
     case 'code_review': return <ReviewView data={data as CodeReviewBody} findings={reviewFindings} />
     case 'finding': return <FindingView data={data as FindingBody} hideHeader />
     case 'judge_round': return <JudgeRoundView data={data as JudgeRoundContent} />
@@ -1227,7 +1247,7 @@ function typedView(kind: string | undefined, data: unknown, reviewFindings: { id
 // The primary output and a focused secondary share ONE renderer stack - the
 // Raw line list, a typed view per known kind (JSON tree for anything else),
 // and rendered markdown - so both surfaces can't drift as kinds grow.
-function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote, reviewFindings }: {
+function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, surface, byLine, activeNote, onSelectNote, reviewFindings }: {
   content: string | null
   displayText: string | null
   lines: string[]
@@ -1235,6 +1255,7 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   isStructured: boolean
   parsedJson: unknown
   kind: string | undefined
+  surface: SurfaceTarget
   byLine: Map<number, JudgeNote[]>
   activeNote: JudgeNote | null
   onSelectNote: (n: JudgeNote) => void
@@ -1244,7 +1265,7 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   if (rawView) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (!isStructured) return <ArtifactMarkdown text={content ?? ''} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (parsedJson === undefined) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
-  const typed = typedView(kind, parsedJson, reviewFindings ?? [])
+  const typed = typedView(kind, parsedJson, reviewFindings ?? [], surface)
   return typed ?? <JsonView data={parsedJson} />
 }
 
@@ -1357,7 +1378,7 @@ function TitleHeading({ primary, body, reviewFindings }: {
 
 // The primary output's view slot: the diff (when active with a loaded body)
 // or the shared renderer stack.
-function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote, reviewFindings }: {
+function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, surface, byLine, activeNote, onSelectNote, reviewFindings }: {
   diffActive: boolean
   diffText: string | null
   content: string | null
@@ -1367,13 +1388,13 @@ function PrimaryView({ diffActive, diffText, content, displayText, lines, rawVie
   isStructured: boolean
   parsedJson: unknown
   kind: string | undefined
+  surface: SurfaceTarget
   byLine: Map<number, JudgeNote[]>
   activeNote: JudgeNote | null
   onSelectNote: (n: JudgeNote) => void
   reviewFindings: { id: string; body: FindingBody | undefined }[]
 }) {
-  if (diffActive && diffText != null) return <DiffView text={diffText} />
-  return (
+  const view = diffActive && diffText != null ? <DiffView text={diffText} /> : (
     <ArtifactView
       content={content}
       displayText={displayText}
@@ -1382,11 +1403,28 @@ function PrimaryView({ diffActive, diffText, content, displayText, lines, rawVie
       isStructured={isStructured}
       parsedJson={parsedJson}
       kind={kind}
+      surface={surface}
       byLine={byLine}
       activeNote={activeNote}
       onSelectNote={onSelectNote}
       reviewFindings={reviewFindings}
     />
+  )
+  return kind === QUIZ_KEY_KIND ? <Spoiler>{view}</Spoiler> : view
+}
+
+// Quiz answers stay hidden until asked for, whichever view (tree, raw, diff) is on.
+function Spoiler({ children }: { children: ReactNode }) {
+  const [shown, setShown] = useState(false)
+  if (shown) return children
+  return (
+    <button
+      type="button"
+      onClick={() => setShown(true)}
+      className="min-h-[44px] rounded-lg border border-dashed border-gray-300 dark:border-gray-600 px-4 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+    >
+      Show answers (spoiler)
+    </button>
   )
 }
 

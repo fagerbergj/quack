@@ -169,3 +169,13 @@ describe('ToolCallView - new per-tool views (#404)', () => {
     expect(out).toContain('awaiting your answer')
   })
 })
+
+describe('render_ui view', () => {
+  it('never prints the answer key', () => {
+    const out = html({ callId: 'c', name: 'render_ui', done: true, result: { artifact_id: 'a2ui_surface:s1', revision: 1 },
+      args: { surface_id: 's1', components: [{ id: 'root', component: 'Text', text: 'hi' }], answer_key: { q1: { answer: 'b', why: 'SECRET-WHY' } } } })
+    expect(out).toContain('s1')
+    expect(out).toContain('answer key hidden')
+    expect(out).not.toContain('SECRET-WHY')
+  })
+})

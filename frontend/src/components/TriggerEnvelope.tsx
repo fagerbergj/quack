@@ -4,6 +4,8 @@ import { AssistantText } from './AgentParts'
 import { Expandable } from './Expandable'
 import { ArtifactPanel } from './ArtifactPanel'
 import { api } from '../api'
+import { Icon } from './Icon'
+import { parseA2uiActionText } from '../lib/a2ui'
 import {
   parseEnvelope,
   commentsSummaryLabel,
@@ -23,6 +25,23 @@ export * from './envelope'
 // invocation of TriggerMessage's function body, so a perf test can pin
 // memo(TriggerMessage) directly instead of inferring it from render timing (unreliable under jsdom - AssistantText's own useMemo chain already prevents most of the markdown re-parse cost the memo used to be gated on).
 export const triggerMessageRenderProbe = { count: 0 }
+
+// A button press on an A2UI surface: the turn's text is machine JSON, so show what was
+// sent as a pill, with the context the model receives one tap away.
+function A2uiActionPill({ name, surfaceId, context }: { name: string; surfaceId: string; context: unknown }) {
+  return (
+    <div className="flex justify-end mb-3">
+      <details className="max-w-full min-w-0 text-xs text-gray-600 dark:text-gray-300">
+        <summary className="ml-auto flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1 break-all">
+          <Icon name="check_circle" className="w-3.5 h-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
+          <span>Submitted: <span className="font-medium text-gray-900 dark:text-gray-100">{name}</span> on {surfaceId}</span>
+          <Icon name="expand_more" className="w-3.5 h-3.5 shrink-0" />
+        </summary>
+        <pre className="mt-1 overflow-x-auto rounded-lg bg-gray-100 dark:bg-gray-800 p-2 font-mono text-[11px]">{JSON.stringify(context ?? {}, null, 2)}</pre>
+      </details>
+    </div>
+  )
+}
 
 // TriggerMessage renders the user-turn bubble for a GitHub-triggered chat:
 // the XML-ish envelope (design: .quack/trigger-prompts-v2.md) as collapsible
@@ -49,6 +68,8 @@ export const TriggerMessage = memo(function TriggerMessage({
   // artifact id - see ArtifactsSection.openRow below), with that same
   // artifact id passed through as a focus hint so the panel shows the TAPPED artifact as primary, not just whichever of the node's outputs selectPrimaryOutput would otherwise pick (#1250 review). null means closed.
   const [openArtifact, setOpenArtifact] = useState<{ nodeId: string; artifactId: string } | null>(null)
+  const action = useMemo(() => parseA2uiActionText(content), [content])
+  if (action) return <A2uiActionPill name={action.name} surfaceId={action.surfaceId} context={action.context} />
   if (blocks) {
     return (
       <div className="flex justify-end mb-3">

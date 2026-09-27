@@ -9,7 +9,8 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage } from '../generated'
+import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
+import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
 // unchanged - the generated enum is now the one source of truth for node states.
@@ -78,6 +79,8 @@ export interface DagTurnState {
 interface LiveTurn {
   id: string             // turn ID (response_id) - empty string while streaming before first event
   userText: string
+  // Server start time; known only for a persisted turn attach() lifted back into `live`.
+  createdAt?: string
   dag?: DagTurnState
   // Top-level fields for orchestrator responses that don't go through a DAG node.
   text: string           // accumulated answer text from node-less agent_token events
@@ -113,6 +116,10 @@ export interface ChatState {
   // subscriber (ArtifactPanel) reads this off the existing subscribe() fan-out
   // rather than a separate pub/sub. seq increments on every artifact event so a listener can detect a new one even when the payload repeats (e.g. same revision re-announced on reconnect replay).
   artifactEvents?: { revision?: ArtifactRevisionPayload; judgeRound?: ArtifactJudgeRoundPayload; seq: number }
+  // Bumped only by a2ui_surface revisions: artifactEvents is last-write-wins and render_ui's quiz_key event lands right after.
+  surfaceSeq?: number
+  // Surface artifact id -> the live turn its first revision streamed in; the fallback when turn_id is absent (MCP-driven runs).
+  surfacePins?: Record<string, string>
 }
 
 type Listener = () => void
@@ -146,10 +153,17 @@ function turnFromLiveTurn(live: LiveTurn): Turn {
   const text = live.dag ? (finalId != null ? (live.dag.nodeAnswer[finalId] ?? '') : live.text) : live.text
   return {
     id: live.id,
-    created_at: new Date().toISOString(),
+    created_at: live.createdAt ?? new Date().toISOString(),
     input: { role: 'user', content: live.userText },
     output: [{ id: `${live.id}-msg`, type: 'message', status: 'completed', content: [{ type: 'output_text', text }] }],
   }
+}
+
+// A first revision streaming in means the live turn created that surface.
+function surfaceEventState(s: ChatState, d: ArtifactRevisionPayload): Partial<ChatState> {
+  if (d.kind !== A2UI_SURFACE_KIND) return {}
+  const pin = d.revision === 1 && s.live?.id && !s.surfacePins?.[d.id] ? { [d.id]: s.live.id } : {}
+  return { surfaceSeq: (s.surfaceSeq ?? 0) + 1, surfacePins: { ...s.surfacePins, ...pin } }
 }
 
 // Reconnect tuning for a dropped SSE stream: capped exponential backoff so a
@@ -217,11 +231,17 @@ export class ChatStore {
     }
   }
 
-  async submit(chatId: string, content: string, files?: File[], onTitle?: (title: string) => void): Promise<void> {
-    const trimmed = content.trim()
+  // An A2UI button press is an ordinary turn whose user text is the action line the backend persists.
+  submitA2uiAction(chatId: string, action: A2UiAction): Promise<void> {
+    return this.submit(chatId, '', undefined, undefined, action)
+  }
+
+  async submit(chatId: string, content: string, files?: File[], onTitle?: (title: string) => void, a2uiAction?: A2UiAction): Promise<void> {
+    const trimmed = a2uiAction ? a2uiActionText(a2uiAction) : content.trim()
     if (!trimmed) return
     let cur = this.get(chatId)
-    if (cur.live?.streaming) return
+    // submitting covers the archive GET below, before live.streaming flips on - a double click lands there.
+    if (cur.live?.streaming || cur.submitting) return
     // Remembered so drainQueue's auto-submit of a later queued message can
     // still report a title change, without the caller having to re-pass it.
     if (onTitle) this.onTitleCallbacks.set(chatId, onTitle)
@@ -257,10 +277,11 @@ export class ChatStore {
           for (const f of files) fd.append('files', f)
           return fetch(`/api/v1/chats/${chatId}/responses`, { method: 'POST', body: fd, signal })
         }
+        const body: SendMessageBody = a2uiAction ? { content: '', a2ui_action: a2uiAction } : { content: trimmed }
         return fetch(`/api/v1/chats/${chatId}/responses`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: trimmed }),
+          body: JSON.stringify(body),
           signal,
         })
       },
@@ -562,6 +583,7 @@ export class ChatStore {
     const live: LiveTurn = {
       id: last?.id ?? '',
       userText: last?.input.content ?? '',
+      createdAt: last?.created_at,
       streaming: true,
       error: '',
       text: last ? textFromTurn(last) : '',
@@ -958,7 +980,7 @@ export class ChatStore {
         onArtifactRevision: d => {
           const s = this.get(chatId)
           const seq = (s.artifactEvents?.seq ?? 0) + 1
-          this.write(chatId, { ...s, artifactEvents: { ...s.artifactEvents, revision: d, seq } })
+          this.write(chatId, { ...s, ...surfaceEventState(s, d), artifactEvents: { ...s.artifactEvents, revision: d, seq } })
         },
         onArtifactJudgeRound: d => {
           const s = this.get(chatId)
