@@ -73,7 +73,7 @@ A result starting `VALIDATION_FAILED:` names the first problem: fix it and call 
 
 ## Updating a surface you rendered
 
-When a later task asks for a change to a surface you rendered (a different diagram, harder questions), call `render_ui` with the same `surface_id` and only the components you add or change; they replace existing ones by id, and new ids are appended. Changing any quiz question means sending every ChoicePicker, the quiz Column, the full `data_model` and the full `answer_key` again, since both replace what is stored.
+When a later task asks for a change to a surface you rendered (a different diagram, harder questions), call `render_ui` with the same `surface_id` and only the components you add or change; they replace existing ones by id, and new ids are appended. Changing or adding quiz questions means sending those ChoicePickers, the quiz Column when its children change, the full `data_model` (it replaces the stored one), and `answer_key` entries for those questions (they merge into the stored key by question id).
 
 ## Reply
 
