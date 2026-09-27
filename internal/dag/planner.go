@@ -162,7 +162,8 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 	ctx, span := otelobs.Start(ctx, "plan")
 	defer func() { otelobs.End(span, err) }()
 
-	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, allowedKinds)
+	infos := p.infosFor(ctx)
+	plan, err = assemble(nodes, infos, p.checkCommands, setup, delivery, allowedKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +175,7 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 		return nil, err
 	}
 	if p.judge == nil {
-		if err = p.checkReviewFanout(plan, message); err != nil {
+		if err = checkReviewFanout(infos, plan, message); err != nil {
 			return nil, err
 		}
 	}
@@ -195,7 +196,7 @@ func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup,
 	_, span := otelobs.Start(ctx, "plan.bound")
 	defer func() { otelobs.End(span, err) }()
 
-	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, allowedKinds)
+	plan, err = assemble(nodes, p.infosFor(ctx), p.checkCommands, setup, delivery, allowedKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +204,15 @@ func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup,
 	plan.UserMessage = message
 	plan.Attachments = attachments
 	return plan, nil
+}
+
+// infosFor: the pinned roster's agents (Executor.Pin), else the ones NewPlanner
+// was given - also for a NewExecutor Gen 0 roster, which carries no Infos.
+func (p *Planner) infosFor(ctx context.Context) []AgentInfo {
+	if r := pinnedRoster(ctx); r != nil && r.Infos != nil {
+		return r.Infos
+	}
+	return p.agents
 }
 
 func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) error {
@@ -311,9 +321,9 @@ func checkReviewDeliverable(plan *Plan) error {
 }
 
 // checkReviewFanout: rejects single-reviewer plans for large PRs (judge-disabled fallback).
-func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
+func checkReviewFanout(agents []AgentInfo, plan *Plan, message string) error {
 	hasExplorer := false
-	for _, a := range p.agents {
+	for _, a := range agents {
 		if a.Name == explorerAgent {
 			hasExplorer = true
 			break

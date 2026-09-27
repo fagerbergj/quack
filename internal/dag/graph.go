@@ -42,7 +42,7 @@ type nodeScopedWorker interface {
 // buildGateNodes: one gated node per plan node. source is the run's origin (extension name or a fixed
 // app value) - observability only, see vetting.Config.Source. userID scopes the recordstore.Client behind
 // a native node's artifact tools (#1123) and must match the userID the rest of the chat's artifacts (e.g. the orchestrator's own writes) were saved under, or a node's list/read/edit silently sees nothing.
-func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(context.Context, string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore, schemas *artifactschema.Registry,
+func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vetting.JudgeFactory, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore, schemas *artifactschema.Registry,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
@@ -60,7 +60,7 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		}
 	}
 	for _, n := range plan.Nodes {
-		ag, ok := agents[n.AgentName]
+		ag, ok := roster.Agents[n.AgentName]
 		if !ok {
 			return nil, nil, fmt.Errorf("dag: no agent %q for node %q", n.AgentName, n.ID)
 		}
@@ -69,11 +69,11 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 			subAgents = append(subAgents, ag)
 		}
 		worker := ag
-		workerModel := models[n.AgentName]
+		workerModel := roster.Models[n.AgentName]
 		node := n
 		var spec AdmissionSpec
-		if specFor != nil {
-			spec = specFor(node.AgentName)
+		if roster.SpecFor != nil {
+			spec = roster.SpecFor(node.AgentName)
 		}
 		var workerTools []tool.Tool
 		var release func(paused bool)
@@ -98,7 +98,7 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		if err != nil {
 			return nil, nil, err
 		}
-		cfg := nodeGateConfig(ctx, plan, node, worker, cfgFor, chatID, source)
+		cfg := nodeGateConfig(ctx, plan, node, worker, roster.CfgFor, chatID, source)
 		cfg.Artifacts = artifacts
 		// buildTask's dependency-artifact lookup scopes recordstore reads by this,
 		// same as vetting.newGateRun's own cfg.User stamp for the node's own rounds.
@@ -110,7 +110,7 @@ func buildGateNodes(ctx context.Context, plan Plan, agents map[string]adkagent.A
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup, perCall)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, roster.Media, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup, perCall)
 	}
 	return nodesByID, subAgents, nil
 }

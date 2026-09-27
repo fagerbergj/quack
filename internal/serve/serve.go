@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2031,20 +2032,22 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 			orchBehaviour += "\n\n" + mem
 		}
 	}
-	orchSysPrompt := promptbuilder.CacheByDay(nil, func(context.Context) string {
-		return promptbuilder.Orchestrator(roster, []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
-	})
-
 	orchSkillTS, err := newScopedSkillTS(cfg.Orchestrator.Skills)
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator skills toolset init failed: %w", err)
 	}
 
 	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands, planJudge)
-	cfgFor := gateCfgs.For
-	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
+	executor := dag.NewExecutor(st.Sessions, nil, nil, judgeFactory, nil, nil)
+	executor.SetRoster(&dag.Roster{Gen: 1, Agents: clientMap, Models: modelMap, Media: mediaAgents, Infos: agentInfos, Text: roster,
+		CfgFor: gateCfgs.For, SpecFor: admissionSpecFor(cfg)})
+	orchSysPrompt := promptbuilder.CacheByDay(func(ctx context.Context) string {
+		return strconv.FormatUint(executor.RosterFor(ctx).Gen, 10)
+	}, func(ctx context.Context) string {
+		return promptbuilder.Orchestrator(executor.RosterFor(ctx).Text, []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
+	})
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
-	executor.SetAdmission(admission, admissionSpecFor(cfg), judgeSpec(cfg))
+	executor.SetAdmission(admission, judgeSpec(cfg))
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
 	if ledgerStore != nil {

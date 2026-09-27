@@ -258,6 +258,8 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 // guidance; node-level dag.Admission still gates the work.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		ctx, done := o.executor.Pin(ctx)
+		defer done()
 		// A retry/resume is its own run, not a continuation of whatever
 		// finished run left this node retryable - it needs its own trace so
 		// a stale trace_id from the earlier run is never mistaken for this one.
@@ -329,6 +331,8 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 // BuildBoundPlan builds a Plan from a workflow-catalog-bound node list (a
 // dispatch naming a shaped workflow) - no plan judge, no review-fanout heuristic, and critically no orchestrator LLM turn: callers pass the result straight to RunBoundPlan instead of Run. allowedKinds: nil = unrestricted, matching AllowedDeliveryKindsFromContext's sentinel on the planner-LLM path.
 func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, message string, attachments []*genai.Part, allowedKinds []string) (*dag.Plan, error) {
+	ctx, done := o.executor.Pin(ctx)
+	defer done()
 	return o.planner.BuildBound(ctx, nodes, nil, nil, message, attachments, allowedKinds)
 }
 
@@ -341,6 +345,8 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 	// chat must not leak into this one's terminal status.
 	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
+		ctx, done := o.executor.Pin(ctx)
+		defer done()
 		var span oteltrace.Span
 		// A prior turn's unconsumed planning failure (empty node/agent key,
 		// store.orchestratorGiveUpError's read) must not leak into THIS run's
@@ -449,6 +455,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 	// chat needs its OWN evidence, not a stale reason from a turn that already ended.
 	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
+		ctx, done := o.executor.Pin(ctx)
+		defer done()
 		var span oteltrace.Span
 		// A prior turn's unconsumed planning failure (empty node/agent key,
 		// store.orchestratorGiveUpError's read) must not leak into THIS run:
@@ -695,6 +703,8 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 // session - see startIncrementalNodeRun) is checked separately, since that
 // resume re-enters a structurally different wrapper than the whole-plan graph.
 func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
+	ctx, done := o.executor.Pin(ctx)
+	defer done()
 	o.executor.StartNode(sessionID, nodeID)
 	if p, ok := latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, sessionID)); ok && p.nodeID == nodeID {
 		o.startNodeRun(ctx, userID, sessionID, message, &p, nodeID, yield)

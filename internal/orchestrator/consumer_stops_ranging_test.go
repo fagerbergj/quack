@@ -74,13 +74,15 @@ func TestRun_ConsumerStopsRangingMidRun_ProcessSurvives(t *testing.T) {
 	infos = append(infos, dag.AgentInfo{Name: "synthesizer", Description: "synthesizes"})
 
 	sessions := session.InMemoryService()
-	ex := dag.NewExecutor(sessions, agents, models, vetting.NewJudgeFactory(stub, nil, nil),
-		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	ex := dag.NewExecutor(sessions, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), nil, nil)
+	ex.SetRoster(&dag.Roster{Agents: agents, Models: models,
+		CfgFor:  func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
+		SpecFor: func(string) dag.AdmissionSpec { return dag.AdmissionSpec{Model: "m"} }})
 	ex.SetMaxActive(fanN)
 	// Cap 1 so most nodes queue and fire onQueued through the ctx yield long
 	// after the consumer has gone.
 	admission := dag.NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
-	ex.SetAdmission(admission, func(string) dag.AdmissionSpec { return dag.AdmissionSpec{Model: "m"} }, dag.AdmissionSpec{})
+	ex.SetAdmission(admission, dag.AdmissionSpec{})
 
 	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, dag.NewPlanner(infos, nil, nil), ex, nil, nil, nil)
 
