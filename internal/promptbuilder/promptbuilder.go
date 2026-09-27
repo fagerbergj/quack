@@ -143,11 +143,20 @@ const dstNotice = 8 * 24 * time.Hour
 // offset, plus UTC, so an agent can compare it with a time given in any zone.
 func Now() string {
 	t := userNow()
-	s := t.Format("Monday, January 2, 2006 15:04 MST (UTC-07:00)") + "; UTC " + t.UTC().Format("2006-01-02T15:04Z")
+	s := t.Format("Monday, January 2, 2006 15:04 MST (UTC-07:00") + zoneName(t) + "); UTC " + t.UTC().Format("2006-01-02T15:04Z")
 	if _, end := t.ZoneBounds(); !end.IsZero() && end.Sub(t) <= dstNotice {
 		s += "; switches to " + end.Format("MST (UTC-07:00)") + " at " + end.UTC().Format("2006-01-02T15:04Z")
 	}
 	return s
+}
+
+// zoneName: ", America/Chicago" for tools that take an IANA zone; empty for an unconfigured zone,
+// whose name is just "Local".
+func zoneName(t time.Time) string {
+	if name := t.Location().String(); name != "Local" {
+		return ", " + name
+	}
+	return ""
 }
 
 // today omits the clock time: CacheByDay keys on it, and a stale time is worse than none.

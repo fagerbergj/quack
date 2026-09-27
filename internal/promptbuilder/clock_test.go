@@ -29,7 +29,7 @@ func TestUserZoneClock(t *testing.T) {
 	at := time.Date(2026, 9, 28, 0, 42, 0, 0, time.UTC)
 	useClock(t, chicago(t), &at)
 
-	if got, want := Now(), "Sunday, September 27, 2026 19:42 CDT (UTC-05:00); UTC 2026-09-28T00:42Z"; got != want {
+	if got, want := Now(), "Sunday, September 27, 2026 19:42 CDT (UTC-05:00, America/Chicago); UTC 2026-09-28T00:42Z"; got != want {
 		t.Errorf("Now() = %q, want %q", got, want)
 	}
 	line := "Today is Sunday, 2026-09-27 in the user's time zone (CDT, UTC-05:00)."
@@ -42,6 +42,9 @@ func TestUserZoneClock(t *testing.T) {
 		t.Errorf("today() in UTC = %q, want %q", got, want)
 	}
 	SetLocation(nil)
+	if got := Now(); strings.Contains(got, "Local") {
+		t.Errorf("Now() with no configured zone = %q, want no zone name", got)
+	}
 	if got := today(); !strings.Contains(got, "the server's time zone") {
 		t.Errorf("today() with no configured zone = %q, want the server's time zone", got)
 	}
@@ -52,7 +55,7 @@ func TestUserZoneClock(t *testing.T) {
 func TestNowDSTNotice(t *testing.T) {
 	at := time.Date(2026, 10, 31, 17, 0, 0, 0, time.UTC)
 	useClock(t, chicago(t), &at)
-	want := "Saturday, October 31, 2026 12:00 CDT (UTC-05:00); UTC 2026-10-31T17:00Z; switches to CST (UTC-06:00) at 2026-11-01T07:00Z"
+	want := "Saturday, October 31, 2026 12:00 CDT (UTC-05:00, America/Chicago); UTC 2026-10-31T17:00Z; switches to CST (UTC-06:00) at 2026-11-01T07:00Z"
 	if got := Now(); got != want {
 		t.Errorf("Now() = %q, want %q", got, want)
 	}
