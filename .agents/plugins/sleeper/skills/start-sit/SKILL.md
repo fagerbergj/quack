@@ -71,13 +71,17 @@ baseline player and the evidence that beat it in the row's `why`.
    game-script narrative — pick the higher-scoring team's players rather than
    playing the script. Weather only matters at extremes (≥20-25mph sustained
    wind, heavy precipitation, <30°F) and trims efficiency, not volume. For
-   every close call (step 2's definition), find the game's venue in
-   `stadiums.md`; if it is open-air, call `weather` with its
-   `latitude`/`longitude`, the game date, and the venue-local kickoff
-   `time`, then apply `weather-and-vegas.md`'s working rule to that
-   window. Skip domes and retractable roofs. When the forecast moves a
-   call, the row's `why` names the numbers (e.g. "27 mph sustained wind at
-   Soldier Field"); a forecast that changed nothing needs no mention.
+   the close calls from step 2, make one `weather` call per distinct game
+   they involve whose `sleeper_schedule` `roof` is `outdoor` (after the
+   Note-column overrides in `stadiums.md`, e.g. SoFi counts as a dome), and
+   reuse it for every player in that game. Pass the venue's coordinates
+   from `stadiums.md` as `latitude`/`longitude` and `sleeper_schedule`'s
+   `kickoff` as is (UTC, not step 3's converted time; a game with no
+   `kickoff` passes step 3's looked-up time as RFC3339 with its offset),
+   then apply `weather-and-vegas.md`'s working rule to that window. When the forecast moves a call, the row's `why` names the
+   numbers (e.g. "27 mph sustained wind at Soldier Field"); a forecast that
+   changed nothing needs no mention, and a `weather` error (e.g. a kickoff
+   past its ~15-day horizon) is said, not guessed around.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every
    remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`
    for the floor-vs-ceiling tie-break and the PPR-specific WR-lean data.
@@ -142,8 +146,8 @@ reasoning instead — do not invent a figure to sound precise.
 - `weather-and-vegas.md` — weather multiplier tables, the null-result study,
   and implied-team-total math. Load when the game is outdoors with a
   forecast worth checking, or when a Vegas total/spread is part of the case.
-- `stadiums.md` — every team's stadium with roof type, coordinates, and
-  time zone, plus this season's international/neutral-site games. Load for
+- `stadiums.md` — coordinates for every venue `sleeper_schedule` reports,
+  international sites included, plus the roofs Sleeper mislabels. Load for
   step 5 whenever a close call involves an outdoor game.
 - `flex-decisions.md` — the FLEX-specific tie-break rules and PPR
   RB-vs-WR-value data. Load whenever the FLEX slot itself is the open
