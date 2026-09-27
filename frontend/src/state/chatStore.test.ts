@@ -1931,3 +1931,18 @@ describe('ChatStore - submit already produces clean turns (#463)', () => {
     expect(store.get('c').live?.text).toBe('NEW ANSWER')
   })
 })
+
+describe('ChatStore.submitA2uiAction', () => {
+  it('POSTs the action with empty content and shows the action line as the live user text', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeStream(''))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = new ChatStore()
+    store.seed('chat-a', [])
+    const action = { surface_id: 'pr-1-tutor', name: 'submit_quiz', source_component_id: 'submit', context: { answers: { q1: ['b'] } } }
+    await store.submitA2uiAction('chat-a', action)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/v1/chats/chat-a/responses')
+    expect(JSON.parse(init.body as string)).toEqual({ content: '', a2ui_action: action })
+    expect(store.get('chat-a').live?.userText).toBe(`[a2ui_action] ${JSON.stringify(action)}`)
+  })
+})

@@ -21,6 +21,8 @@ import { StatusDot } from '../components/StatusDot'
 import { LiveTimer } from '../utils/timer'
 import type { ChatStatus, Turn } from '../generated'
 import { imageAttachmentsByTurn } from '../lib/turnAttachments'
+import { surfacesByTurn, surfaceEventKey, type SurfaceRef } from '../lib/a2ui'
+import { TurnSurfaces } from '../components/A2uiArtifact'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
 // This IS the DAG turn's answer - never mix in the orchestrator's own top-level
@@ -327,8 +329,9 @@ function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveAct
 // at all (#434): a label/webhook-triggered plan turn has no typed
 // message, just its synthesized task (rendered in the DAG bubble
 // below), so there's nothing for this bubble to show.
-function LiveTurnView({ live, liveActive, isArchived, activeChatId, liveIsChoiceAnswer, livePriorContents, liveAttachmentsEl, liveAttachmentPreviews, submittingChoice, copied, turnsCount, onChoice, onCopy, onDownload, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNode }: {
+function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, liveIsChoiceAnswer, livePriorContents, liveAttachmentsEl, liveAttachmentPreviews, submittingChoice, copied, turnsCount, onChoice, onCopy, onDownload, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNode }: {
   live: NonNullable<ChatState['live']>
+  surfaces?: SurfaceRef[]
   liveActive: boolean
   isArchived: boolean
   activeChatId: string | null
@@ -433,6 +436,7 @@ function LiveTurnView({ live, liveActive, isArchived, activeChatId, liveIsChoice
           )}
         </div>
       </div>
+      <TurnSurfaces chatId={activeChatId ?? undefined} surfaces={surfaces} />
     </div>
   )
 }
@@ -621,6 +625,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // lets a persisted turn show a real thumbnail instead of only the
   // "[User attached: ...]" text placeholder. Best-effort: an empty/failed fetch just means no turn gets a thumbnail, never an error state.
   const [turnImages, setTurnImages] = useState<Record<string, { url: string; mime: string; name: string }[]>>({})
+  const [turnSurfaces, setTurnSurfaces] = useState<Record<string, SurfaceRef[]>>({})
 
   // Open a chat scrolled to the latest message (and snap down as turns complete),
   // not pinned to the top of a long history. Keyed on turn count so it fires after
@@ -751,15 +756,19 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // #1138: fetches this chat's artifact list to build the turn -> thumbnail
   // map; re-fetches on every new archived turn (state.turns.length), not just
   // on chat open - an attachment turn archives as soon as the NEXT turn is sent, and without this the map is stale for it and the bubble falls back to the "[User attached: ...]" placeholder (the bug this fixes). Separate from the getChat effect: a nice-to-have preview whose failure must not block seeding.
+  // Also refetched on each a2ui_surface revision event: that is how a new or updated surface reaches its turn.
+  const surfaceKey = surfaceEventKey(state.artifactEvents)
+  useEffect(() => { setTurnImages({}); setTurnSurfaces({}) }, [activeChatId])
   useEffect(() => {
-    setTurnImages({})
     if (!activeChatId) return
     let cancelled = false
     api.listChatArtifacts(activeChatId).then(artifacts => {
-      if (!cancelled) setTurnImages(imageAttachmentsByTurn(activeChatId, artifacts))
+      if (cancelled) return
+      setTurnImages(imageAttachmentsByTurn(activeChatId, artifacts))
+      setTurnSurfaces(surfacesByTurn(artifacts))
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [activeChatId, state.turns.length])
+  }, [activeChatId, state.turns.length, surfaceKey])
 
   // #499/#738: poll the chat list so the sidebar stays current without a
   // refresh. Skipped while the tab is hidden (a backgrounded tab has nothing
@@ -983,8 +992,8 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     // Earlier turns' raw envelope text, oldest first - lets this turn's
     // TriggerMessage fold a GitHub <comments> delta onto the running history (#730).
     const priorContents = arr.slice(0, idx).map(t => t.input.content)
-    return { turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments: turnImages[turn.id] }
-  }), [state.turns, liveUserText, turnImages])
+    return { turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments: turnImages[turn.id], surfaces: turnSurfaces[turn.id] }
+  }), [state.turns, liveUserText, turnImages, turnSurfaces])
 
   // Cap how many completed turns actually mount (audit finding 9: a chat
   // with hundreds of turns pays 2.9 ms + 28 DOM elements each, unbounded -
@@ -1078,7 +1087,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             </button>
           )}
 
-          {mountedTurnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments }) => (
+          {mountedTurnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments, surfaces }) => (
             <TurnView
               key={turn.id}
               turn={turn}
@@ -1090,6 +1099,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               isCopied={copied === `turn-${turn.id}`}
               priorContents={priorContents}
               imageAttachments={imageAttachments}
+              surfaces={surfaces}
               onChoice={(option) => { void handleChoice(option) }}
               onCopy={handleCopy}
               onDownload={(content, idx) => { void handleDownload(content, idx) }}
@@ -1099,6 +1109,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
           {live && (
             <LiveTurnView
               live={live}
+              surfaces={turnSurfaces[live.id]}
               liveActive={liveActive}
               isArchived={isArchived}
               activeChatId={activeChatId}

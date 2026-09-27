@@ -10,6 +10,7 @@ import {
   type AgentRun,
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage } from '../generated'
+import { a2uiActionText, type A2uiActionRequest, type SendMessageBodyWithAction } from '../lib/a2ui'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
 // unchanged - the generated enum is now the one source of truth for node states.
@@ -217,8 +218,13 @@ export class ChatStore {
     }
   }
 
-  async submit(chatId: string, content: string, files?: File[], onTitle?: (title: string) => void): Promise<void> {
-    const trimmed = content.trim()
+  // An A2UI button press is an ordinary turn whose user text is the action line the backend persists.
+  submitA2uiAction(chatId: string, action: A2uiActionRequest): Promise<void> {
+    return this.submit(chatId, '', undefined, undefined, action)
+  }
+
+  async submit(chatId: string, content: string, files?: File[], onTitle?: (title: string) => void, a2uiAction?: A2uiActionRequest): Promise<void> {
+    const trimmed = a2uiAction ? a2uiActionText(a2uiAction) : content.trim()
     if (!trimmed) return
     let cur = this.get(chatId)
     if (cur.live?.streaming) return
@@ -257,10 +263,11 @@ export class ChatStore {
           for (const f of files) fd.append('files', f)
           return fetch(`/api/v1/chats/${chatId}/responses`, { method: 'POST', body: fd, signal })
         }
+        const body: SendMessageBodyWithAction = a2uiAction ? { content: '', a2ui_action: a2uiAction } : { content: trimmed }
         return fetch(`/api/v1/chats/${chatId}/responses`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: trimmed }),
+          body: JSON.stringify(body),
           signal,
         })
       },

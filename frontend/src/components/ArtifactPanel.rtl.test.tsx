@@ -767,3 +767,39 @@ function stubGlobalArtifactsFixtureWithDuplicateFindings() {
     return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   }))
 }
+
+describe('A2UI artifacts in the panel', () => {
+  const surface = JSON.stringify({ surface_id: 'pr-1-tutor', components: [{ id: 'root', component: 'Text', variant: 'h2', text: 'PR #1 tutor' }], data_model: {} })
+  const quizKey = JSON.stringify({ surface_id: 'pr-1-tutor', answers: { q1: { answer: 'b', why: 'the secret reason' } } })
+  const lineage = { node_id: 'tutor-1', author: 'worker' }
+  function stubTutorFixture() {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+      const rev = (kind: string, size: number) => jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size, kind, class: 'structured', lineage }] })
+      if (url.includes('/artifacts/a2ui_surface:pr-1-tutor/revisions')) return rev('a2ui_surface', surface.length)
+      if (url.includes('/artifacts/quiz_key:pr-1-tutor/revisions')) return rev('quiz_key', quizKey.length)
+      if (url.includes('/artifacts/a2ui_surface:pr-1-tutor')) return textResponse(surface)
+      if (url.includes('/artifacts/quiz_key:pr-1-tutor')) return textResponse(quizKey)
+      return jsonResponse({
+        data: [
+          { name: 'a2ui_surface:pr-1-tutor', kind: 'a2ui_surface', class: 'structured', latest_revision: 1, lineage, revisions: [] },
+          { name: 'quiz_key:pr-1-tutor', kind: 'quiz_key', class: 'structured', latest_revision: 1, lineage, revisions: [] },
+        ],
+      })
+    }))
+  }
+
+  // Long timeout: the first lazy import of the renderer chunk is slow under jsdom.
+  it('renders the surface as the primary and hides the quiz key behind a spoiler toggle', async () => {
+    const user = userEvent.setup()
+    stubTutorFixture()
+    render(<ArtifactPanel chatId="chat-1" nodeId="tutor-1" nodeAgent="PR tutor" nodeTask="" onClose={() => {}} />)
+    expect(await screen.findByRole('heading', { level: 2, name: 'PR #1 tutor' }, { timeout: 20000 })).toBeTruthy()
+
+    await user.click(await screen.findByRole('button', { name: /Quiz key/ }))
+    const reveal = await screen.findByRole('button', { name: 'Show answers (spoiler)' })
+    expect(screen.queryByText(/the secret reason/)).toBeNull()
+    await user.click(reveal)
+    expect(await screen.findByText(/the secret reason/)).toBeTruthy()
+  }, 30000)
+})

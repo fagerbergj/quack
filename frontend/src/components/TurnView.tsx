@@ -4,6 +4,8 @@ import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
 import { TriggerMessage } from './TriggerEnvelope'
 import { AttachmentPreviews, type AttachmentPreview } from './AttachmentUI'
+import { TurnSurfaces } from './A2uiArtifact'
+import type { SurfaceRef } from '../lib/a2ui'
 import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, dagTurnStateFromItem, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn } from '../generated'
@@ -35,6 +37,8 @@ export interface TurnViewProps {
   // store (turn_id-tagged revisions) - undefined/empty means no thumbnail,
   // never an error state.
   imageAttachments?: AttachmentPreview[]
+  // a2ui_surface artifacts this turn created, rendered at their latest revision.
+  surfaces?: SurfaceRef[]
   onChoice: (option: string) => void
   onCopy: (key: string, text: string) => void
   onDownload: (text: string, idx: number) => void
@@ -96,7 +100,7 @@ function CopyDownloadRow({ text, copyKey, isCopied, onCopy, onDownload, idx }: {
 // this stops re-rendering (and re-parsing markdown/DAG) on every streaming token of
 // a later turn - the props only change for the one turn being copied/answered.
 export const TurnView = memo(function TurnView({
-  turn, idx, chatId, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, priorContents, imageAttachments, onChoice, onCopy, onDownload,
+  turn, idx, chatId, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, priorContents, imageAttachments, surfaces, onChoice, onCopy, onDownload,
 }: TurnViewProps) {
   const dagItem = dagFromTurn(turn)
   const dagState = dagItem ? dagTurnStateFromItem(dagItem) : undefined
@@ -150,6 +154,7 @@ export const TurnView = memo(function TurnView({
           {text && <CopyDownloadRow text={text} copyKey={copyKey} isCopied={isCopied} onCopy={onCopy} onDownload={onDownload} idx={idx} />}
         </div>
       </div>
+      <TurnSurfaces chatId={chatId} surfaces={surfaces} />
     </div>
   )
 })

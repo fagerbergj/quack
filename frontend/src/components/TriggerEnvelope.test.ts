@@ -478,3 +478,12 @@ describe('artifacts parsing and summary/status rendering (#1250)', () => {
     expect(out).not.toContain('<artifact id=')
   })
 })
+
+describe('TriggerMessage a2ui action turn', () => {
+  it('renders the persisted action line as a pill, not raw JSON', () => {
+    const content = '[a2ui_action] {"surface_id":"pr-1085-tutor","name":"submit_quiz","source_component_id":"submit","context":{"answers":{"q1":["a"]}}}'
+    const out = renderToStaticMarkup(createElement(TriggerMessage, { content }))
+    expect(out.replace(/<[^>]+>/g, '')).toContain('Submitted: submit_quiz on pr-1085-tutor')
+    expect(out).not.toContain('answers')
+  })
+})

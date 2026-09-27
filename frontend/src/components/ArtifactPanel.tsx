@@ -15,6 +15,8 @@ import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { useChatStore } from '../state/ChatStoreProvider'
 import { Icon } from './Icon'
 import { AssistantText } from './AgentParts'
+import { A2uiSurfaceBox } from './A2uiArtifact'
+import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, type SurfaceContent } from '../lib/a2ui'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact (design V4
 // §4.3) - the only place a note's line anchor lives. Fetched and parsed
@@ -125,6 +127,7 @@ function kindRank(a: ArtifactSummary, nodeArtifactKind?: string): number {
   if (nodeArtifactKind && a.kind === nodeArtifactKind) return 1
   if (a.class !== 'structured') return 2
   if (a.kind === 'finding') return 3
+  if (a.kind === QUIZ_KEY_KIND) return 5
   return 4
 }
 
@@ -733,6 +736,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                 isStructured={isStructured}
                 parsedJson={parsedJson}
                 kind={primary?.kind}
+                chatId={chatId}
                 byLine={byLine}
                 activeNote={activeNote}
                 onSelectNote={setActiveNote}
@@ -882,7 +886,7 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
 
 // DiffView colors unified-diff +/- lines - plain text otherwise, no library:
 // the format is three characters of prefix per line, nothing to parse.
-function DiffView({ text }: { text: string }) {
+export function DiffView({ text }: { text: string }) {
   const lines = text.split('\n')
   return (
     <pre className="text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto">
@@ -1214,8 +1218,9 @@ export function PlanView({ data }: { data: PlanBody }) {
 
 // typedView dispatches a structured artifact's known kind to its own view;
 // undefined for anything else, so the caller falls back to the generic JSON tree - unknown kinds keep the tree.
-function typedView(kind: string | undefined, data: unknown, reviewFindings: { id: string; body: FindingBody | undefined }[]): ReactNode | undefined {
+function typedView(kind: string | undefined, data: unknown, reviewFindings: { id: string; body: FindingBody | undefined }[], chatId: string): ReactNode | undefined {
   switch (kind) {
+    case A2UI_SURFACE_KIND: return <A2uiSurfaceBox chatId={chatId} content={data as SurfaceContent} />
     case 'code_review': return <ReviewView data={data as CodeReviewBody} findings={reviewFindings} />
     case 'finding': return <FindingView data={data as FindingBody} hideHeader />
     case 'judge_round': return <JudgeRoundView data={data as JudgeRoundContent} />
@@ -1227,7 +1232,7 @@ function typedView(kind: string | undefined, data: unknown, reviewFindings: { id
 // The primary output and a focused secondary share ONE renderer stack - the
 // Raw line list, a typed view per known kind (JSON tree for anything else),
 // and rendered markdown - so both surfaces can't drift as kinds grow.
-function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote, reviewFindings }: {
+function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, chatId, byLine, activeNote, onSelectNote, reviewFindings }: {
   content: string | null
   displayText: string | null
   lines: string[]
@@ -1235,6 +1240,7 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   isStructured: boolean
   parsedJson: unknown
   kind: string | undefined
+  chatId: string
   byLine: Map<number, JudgeNote[]>
   activeNote: JudgeNote | null
   onSelectNote: (n: JudgeNote) => void
@@ -1244,7 +1250,7 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   if (rawView) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (!isStructured) return <ArtifactMarkdown text={content ?? ''} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (parsedJson === undefined) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
-  const typed = typedView(kind, parsedJson, reviewFindings ?? [])
+  const typed = typedView(kind, parsedJson, reviewFindings ?? [], chatId)
   return typed ?? <JsonView data={parsedJson} />
 }
 
@@ -1357,7 +1363,7 @@ function TitleHeading({ primary, body, reviewFindings }: {
 
 // The primary output's view slot: the diff (when active with a loaded body)
 // or the shared renderer stack.
-function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, byLine, activeNote, onSelectNote, reviewFindings }: {
+function PrimaryView({ diffActive, diffText, content, displayText, lines, rawView, isStructured, parsedJson, kind, chatId, byLine, activeNote, onSelectNote, reviewFindings }: {
   diffActive: boolean
   diffText: string | null
   content: string | null
@@ -1367,13 +1373,13 @@ function PrimaryView({ diffActive, diffText, content, displayText, lines, rawVie
   isStructured: boolean
   parsedJson: unknown
   kind: string | undefined
+  chatId: string
   byLine: Map<number, JudgeNote[]>
   activeNote: JudgeNote | null
   onSelectNote: (n: JudgeNote) => void
   reviewFindings: { id: string; body: FindingBody | undefined }[]
 }) {
-  if (diffActive && diffText != null) return <DiffView text={diffText} />
-  return (
+  const view = diffActive && diffText != null ? <DiffView text={diffText} /> : (
     <ArtifactView
       content={content}
       displayText={displayText}
@@ -1382,11 +1388,28 @@ function PrimaryView({ diffActive, diffText, content, displayText, lines, rawVie
       isStructured={isStructured}
       parsedJson={parsedJson}
       kind={kind}
+      chatId={chatId}
       byLine={byLine}
       activeNote={activeNote}
       onSelectNote={onSelectNote}
       reviewFindings={reviewFindings}
     />
+  )
+  return kind === QUIZ_KEY_KIND ? <Spoiler>{view}</Spoiler> : view
+}
+
+// Quiz answers stay hidden until asked for, whichever view (tree, raw, diff) is on.
+function Spoiler({ children }: { children: ReactNode }) {
+  const [shown, setShown] = useState(false)
+  if (shown) return children
+  return (
+    <button
+      type="button"
+      onClick={() => setShown(true)}
+      className="min-h-[44px] rounded-lg border border-dashed border-gray-300 dark:border-gray-600 px-4 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+    >
+      Show answers (spoiler)
+    </button>
   )
 }
 
