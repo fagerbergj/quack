@@ -1,5 +1,5 @@
 import type { A2uiMessage } from '@a2ui/web_core/v0_9'
-import type { ArtifactList, SendMessageBody } from '../generated'
+import type { A2UiAction, ArtifactList } from '../generated'
 
 export const QUACK_CATALOG_ID = 'https://quack.local/a2ui/v0_9/catalog.json'
 export const A2UI_SURFACE_KIND = 'a2ui_surface'
@@ -12,16 +12,6 @@ export interface SurfaceContent {
   components: Array<{ id: string; component: string } & Record<string, unknown>>
   data_model?: Record<string, unknown>
 }
-
-export interface A2uiActionRequest {
-  surface_id: string
-  name: string
-  source_component_id: string
-  context: Record<string, unknown>
-}
-
-// Intersection, not a copy: still type-checks once the regenerated client declares a2ui_action itself.
-export type SendMessageBodyWithAction = SendMessageBody & { a2ui_action?: A2uiActionRequest }
 
 type Json = Record<string, unknown>
 const isRecord = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -73,14 +63,14 @@ function valueAt(data: unknown, path: string): unknown {
 const ACTION_PREFIX = '[a2ui_action] '
 
 // The user text the backend persists for an action turn; mirrored for the optimistic live bubble.
-export function a2uiActionText(action: A2uiActionRequest): string {
+export function a2uiActionText(action: A2UiAction): string {
   return ACTION_PREFIX + JSON.stringify(action)
 }
 
 export function parseA2uiActionText(text: string): { name: string; surfaceId: string; context: unknown } | null {
   if (!text.startsWith(ACTION_PREFIX)) return null
   try {
-    const a = JSON.parse(text.slice(ACTION_PREFIX.length)) as Partial<A2uiActionRequest> | null
+    const a = JSON.parse(text.slice(ACTION_PREFIX.length)) as Partial<A2UiAction> | null
     if (typeof a?.name === 'string' && typeof a.surface_id === 'string') return { name: a.name, surfaceId: a.surface_id, context: a.context }
   } catch { /* not an action turn */ }
   return null

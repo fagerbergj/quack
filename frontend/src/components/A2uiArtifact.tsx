@@ -1,7 +1,8 @@
 import { Component, Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { useChatState, useChatStore } from '../state/ChatStoreProvider'
-import type { A2uiActionRequest, SurfaceContent, SurfaceRef } from '../lib/a2ui'
+import type { SurfaceContent, SurfaceRef } from '../lib/a2ui'
+import type { A2UiAction } from '../generated'
 
 // The renderer (web_core + zod) is its own chunk: most chats never show a surface.
 const A2uiSurfaceView = lazy(() => import('./A2uiSurface'))
@@ -23,7 +24,7 @@ export function A2uiSurfaceBox({ chatId, content, persistKey }: { chatId: string
   const store = useChatStore()
   const state = useChatState(chatId)
   const busy = !!(state.submitting || state.live?.streaming)
-  const onAction = useCallback((a: A2uiActionRequest) => { void store.submitA2uiAction(chatId, a) }, [store, chatId])
+  const onAction = useCallback((a: A2UiAction) => { void store.submitA2uiAction(chatId, a) }, [store, chatId])
   return (
     <SurfaceBoundary>
       <Suspense fallback={<p className="text-xs text-gray-500 dark:text-gray-400" role="status">Loading…</p>}>

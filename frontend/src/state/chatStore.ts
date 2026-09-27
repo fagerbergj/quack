@@ -9,8 +9,8 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage } from '../generated'
-import { a2uiActionText, A2UI_SURFACE_KIND, type A2uiActionRequest, type SendMessageBodyWithAction } from '../lib/a2ui'
+import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
+import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
 // unchanged - the generated enum is now the one source of truth for node states.
@@ -116,7 +116,7 @@ export interface ChatState {
   artifactEvents?: { revision?: ArtifactRevisionPayload; judgeRound?: ArtifactJudgeRoundPayload; seq: number }
   // Bumped only by a2ui_surface revisions: artifactEvents is last-write-wins and render_ui's quiz_key event lands right after.
   surfaceSeq?: number
-  // Surface artifact id -> the live turn its first revision streamed in (the backend's turn_id isn't the chat turn).
+  // Surface artifact id -> the live turn its first revision streamed in; the fallback when turn_id is absent (MCP-driven runs).
   surfacePins?: Record<string, string>
 }
 
@@ -230,11 +230,11 @@ export class ChatStore {
   }
 
   // An A2UI button press is an ordinary turn whose user text is the action line the backend persists.
-  submitA2uiAction(chatId: string, action: A2uiActionRequest): Promise<void> {
+  submitA2uiAction(chatId: string, action: A2UiAction): Promise<void> {
     return this.submit(chatId, '', undefined, undefined, action)
   }
 
-  async submit(chatId: string, content: string, files?: File[], onTitle?: (title: string) => void, a2uiAction?: A2uiActionRequest): Promise<void> {
+  async submit(chatId: string, content: string, files?: File[], onTitle?: (title: string) => void, a2uiAction?: A2UiAction): Promise<void> {
     const trimmed = a2uiAction ? a2uiActionText(a2uiAction) : content.trim()
     if (!trimmed) return
     let cur = this.get(chatId)
@@ -275,7 +275,7 @@ export class ChatStore {
           for (const f of files) fd.append('files', f)
           return fetch(`/api/v1/chats/${chatId}/responses`, { method: 'POST', body: fd, signal })
         }
-        const body: SendMessageBodyWithAction = a2uiAction ? { content: '', a2ui_action: a2uiAction } : { content: trimmed }
+        const body: SendMessageBody = a2uiAction ? { content: '', a2ui_action: a2uiAction } : { content: trimmed }
         return fetch(`/api/v1/chats/${chatId}/responses`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

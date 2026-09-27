@@ -6,7 +6,8 @@ import { MermaidDiagram } from './MermaidDiagram'
 import { DiffView } from './ArtifactPanel'
 import { AssistantText } from './AgentParts'
 import { Icon as QuackIcon, ICON_NAMES, type IconName } from './Icon'
-import { QUACK_CATALOG_ID, surfaceMessages, type A2uiActionRequest, type SurfaceContent } from '../lib/a2ui'
+import { QUACK_CATALOG_ID, surfaceMessages, type SurfaceContent } from '../lib/a2ui'
+import type { A2UiAction } from '../generated'
 
 const common = { accessibility: AccessibilityAttributesSchema.optional(), weight: z.number().optional() }
 
@@ -173,7 +174,7 @@ const quackCatalog = new Catalog<ReactComponentImplementation>(
 interface Entry {
   processor: MessageProcessor<ReactComponentImplementation>
   content?: SurfaceContent
-  onAction?: (a: A2uiActionRequest) => void
+  onAction?: (a: A2UiAction) => void
   error?: string
 }
 
@@ -215,7 +216,7 @@ function entryFor(persistKey: string | undefined, content: SurfaceContent): Entr
 // remounts and revisions, so a newer revision updates in place and keeps the user's picks.
 export default function A2uiSurfaceView({ content, onAction, persistKey, busy = false }: {
   content: SurfaceContent
-  onAction?: (a: A2uiActionRequest) => void
+  onAction?: (a: A2UiAction) => void
   persistKey?: string
   busy?: boolean
 }) {
