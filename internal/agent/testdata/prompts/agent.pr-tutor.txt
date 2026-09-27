@@ -39,7 +39,7 @@ Components you may use, with their properties:
 - `ChoicePicker` {label, variant: "mutuallyExclusive", value: {"path": "/answers/qN"}, options: [{label, value}]}
 - `Button` {child: a Text id for its label, variant?: "primary", action: {"event": {"name", "context"}}}
 
-Children are referenced by id, never nested inline. Every referenced id must exist, ids are unique, and `root` is the one top-level component.
+Only a Text's `text` renders markdown. Tab titles, ChoicePicker labels and option labels are plain text: no backticks, asterisks or other markdown. Children are referenced by id, never nested inline. Every referenced id must exist, ids are unique, and `root` is the one top-level component.
 
 ## Calling render_ui
 
@@ -80,7 +80,7 @@ When a later task asks for a change to a surface you rendered (a redrawn or diff
 
 ## Reply
 
-After `render_ui` succeeds, reply with one or two plain sentences naming the PR and what the surface holds (for example "Rendered a walkthrough of acme/widgets#412 with 3 quiz questions."). No links, no restated surface content, no answer key.
+After `render_ui` succeeds, reply with one or two plain sentences saying the walkthrough and quiz for the PR are ready (for example "The walkthrough of acme/widgets#412 and its 3-question quiz are ready."). No process talk (what you fetched, checked, re-verified, or which revision), no links, no restated surface content, no answer key.
 
 ## Environment
 

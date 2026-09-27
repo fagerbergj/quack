@@ -3,18 +3,14 @@ scale:
   max: 3
   pass: 2
 notes: >
-  The deliverable is an interactive surface, not the reply. The worker renders it with render_ui, which
-  stores the merged surface as the artifact `a2ui_surface:<surface_id>` and the answer key as
-  `quiz_key:<surface_id>`. Read both with read_artifact before scoring anything, and score only the
-  stored pair: the server shuffles each question's options after the call, so option values the worker
-  used in its call can differ from the stored ones. The reply is one or two sentences pointing at the
-  surface; never score its length, prose quality, or lack of citations. Read the diff from the chat's
-  artifacts. On a GitHub-triggered run it is `bytes:files`, one JSON value per line: grep_artifacts
-  with pattern '"filename":' and ids ["bytes:files"] gives each file's line, and read_artifact(id,
-  offset, lines) from there shows that file's `patch`. Otherwise it is the `web_page` artifact of the
-  fetched .diff or /files URL (list_artifacts kind web_page); read_artifact it in windows. If no stored
-  diff exists, check against the surface's own Code excerpts and the PR description, and do not count a
-  claim as a finding only because you cannot see its hunk.
+  The deliverable is an interactive surface, not the reply. render_ui stores it as the artifact
+  `a2ui_surface:<surface_id>` and its answer key as `quiz_key:<surface_id>`. Read those two first and
+  score only them: options are shuffled after the call, so values in the worker's call can differ. Never
+  score the reply's length, prose or citations. Keep the check small: open only the diff hunks that a
+  quiz `why` or a Code excerpt names, never the whole diff. Find a hunk with grep_artifacts on its file
+  path (ids ["bytes:files"] on a GitHub-triggered run, otherwise the `web_page` diff from
+  list_artifacts kind web_page), then read_artifact(id, offset, lines: 40) at the hit. When no stored
+  diff exists, do not count a claim as a finding only because you cannot see its hunk.
 criteria:
   surface_delivered:
     definition: >
@@ -58,18 +54,20 @@ criteria:
     - omission
   quiz_grounded:
     definition: >
-      Every keyed answer follows from code the PR actually changes, and no other option is also right.
+      Every keyed answer follows from code the PR actually changes, no other option is also right, and
+      the Code excerpts are copied from the diff.
     steps:
     - >-
       Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
       a question whose `why` names no file or code, whose cited code does not appear in the diff or the
       surface's Code excerpts, whose keyed option the cited code contradicts, or where a second option is
-      equally correct by that code. Record each finding with a verbatim quote (or an omission naming
+      equally correct by that code, or a Code excerpt whose lines are not in the diff. Record each finding with a verbatim quote (or an omission naming
       exactly what is missing); one you cannot quote or name does not count. Pick the band from the
       number of findings; none is the top band.
-    - For each question, read its quiz_key `why` and find the code it cites.
+    - For each question, read its quiz_key `why` and find the hunk it cites.
     - Check the cited code says what the `why` claims and makes the keyed option true.
     - Check each other option is false by that same code.
+    - Check each Code excerpt's first changed line appears in the diff under its path.
     bands:
     - min: 3.0
       max: 3.0
@@ -121,35 +119,3 @@ criteria:
       meaning: four or more findings, or the keyed option is the clearly longest in every question.
     anchors:
     - quote
-  explanation_accurate:
-    definition: >
-      The Overview, Flow and Key changes tabs describe what the diff does, and each Code excerpt is
-      copied from it.
-    steps:
-    - >-
-      Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
-      a statement about the change's behaviour that the diff or the PR description contradicts, a Code
-      excerpt whose lines are not in the diff, or a Flow step the change does not have. Record each
-      finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote
-      or name does not count. Pick the band from the number of findings; none is the top band.
-    - List the behavioural claims in the Overview and every Key changes Text.
-    - For each, check the diff or the PR description supports it.
-    - When the diff is readable, check each Code excerpt's lines appear in it under that path.
-    - Check each Flow step names behaviour the change adds or alters.
-    bands:
-    - min: 3.0
-      max: 3.0
-      meaning: 'no finding: every item passes the steps above.'
-    - min: 2.0
-      max: 2.0
-      meaning: exactly one finding, and it is a secondary detail, not the change's main behaviour.
-    - min: 1.0
-      max: 1.0
-      meaning: two or three findings, or one finding about the change's main behaviour.
-    - min: 0.0
-      max: 0.0
-      meaning: four or more findings, or the surface explains a different change than the diff makes.
-    anchors:
-    - quote
-    - path
-    - omission
