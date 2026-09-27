@@ -284,7 +284,9 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				// no-op for a fresh node (empty) or a native node (never read
 				// by the ACP transport); an ACP node's resolveNode passes it to
 				// session/load as this round's priorSessionID.
-				ACPSessionID: cfg.ResumedFrom,
+				ACPSessionID:         cfg.ResumedFrom,
+				AllowedDeliveryKinds: cfg.AllowedDeliveryKinds,
+				PlanOnly:             plan.PlanOnly,
 			}
 			if cfg.ResumedFrom != "" {
 				slog.Info("node resuming its own session", "component", "dag", "node", node.ID, "resumed_from", cfg.ResumedFrom)

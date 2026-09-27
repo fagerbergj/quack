@@ -57,6 +57,8 @@ type Deps struct {
 	// ctx lacks behind the node's A2A boundary (render_ui's artifact_revision + turn_id).
 	Sink   func(stream.SSEEvent)
 	TurnID string
+	// CallScope: the DAG node extension tools report as sdk.CallInfo; zero outside a node.
+	CallScope CallScope
 }
 
 type constructor func(Deps) (tool.Tool, error)
@@ -122,7 +124,7 @@ func buildOneTool(name string, d Deps, repeats *repeatStates, scrub func(tool.To
 		if et == nil {
 			return nil, fmt.Errorf("tools: tool name %q is provided by more than one extension; use its <plugin>_%s prefixed form", name, name)
 		}
-		t = et
+		t = withCallInfo(et, d)
 	} else {
 		return nil, fmt.Errorf("tools: unknown builtin tool %q: %w", name, ErrUnknownTool)
 	}

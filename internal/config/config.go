@@ -1561,6 +1561,9 @@ func (c *Config) Location() *time.Location {
 	return c.location
 }
 
+// ConfiguredLocation is timezone's zone, or nil when unset - no time.Local fallback.
+func (c *Config) ConfiguredLocation() *time.Location { return c.location }
+
 func (c *Config) validateServer() error {
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

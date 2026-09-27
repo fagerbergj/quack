@@ -38,17 +38,17 @@ func (s *turnRecorder) SaveWithMeta(ctx context.Context, req *artifact.SaveReque
 	return s.Save(ctx, req)
 }
 
-// renderUIProvider answers the worker's first chat completion with a render_ui
-// call and every later one (after the tool result) with plain text.
-func renderUIProvider(t *testing.T) *httptest.Server {
+// toolCallProvider answers the worker's first chat completion with a call to
+// name and every later one (after the tool result) with plain text.
+func toolCallProvider(t *testing.T, name string, args map[string]any) *httptest.Server {
 	t.Helper()
-	args, _ := json.Marshal(map[string]any{"surface_id": "s1", "components": []any{map[string]any{"id": "root", "component": "Text", "text": "hi"}}})
+	argJSON, _ := json.Marshal(args)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		msg := `{"role":"assistant","content":"rendered"}`
+		msg := `{"role":"assistant","content":"done"}`
 		finish := "stop"
 		if !strings.Contains(string(body), `"role":"tool"`) {
-			call, _ := json.Marshal(map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": "render_ui", "arguments": string(args)}})
+			call, _ := json.Marshal(map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": name, "arguments": string(argJSON)}})
 			msg, finish = `{"role":"assistant","content":"","tool_calls":[`+string(call)+`]}`, "tool_calls"
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -56,12 +56,10 @@ func renderUIProvider(t *testing.T) *httptest.Server {
 	}))
 }
 
-// TestNativeNode_RenderUIEmitsAndStampsTurn: render_ui called by a real DAG
-// node's worker (behind its A2A server, whose tool ctx carries neither the
-// chat sink nor the turn id) still emits artifact_revision and stamps the chat turn.
-func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
-	provider := renderUIProvider(t)
-	defer provider.Close()
+// buildStubNodeAgent builds the "tutor" native agent against a stub provider,
+// offering toolNames (resolved against builtins and extTools).
+func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, extTools []extTool, artifacts artifact.Service) nativeAgent {
+	t.Helper()
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -75,20 +73,45 @@ func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)})
 	}
 	cfg := &config.Config{
-		Providers: map[string]config.ProviderConfig{"stub": {Kind: "openai", Endpoint: provider.URL}},
+		Providers: map[string]config.ProviderConfig{"stub": {Kind: "openai", Endpoint: providerURL}},
 		Agents: map[string]config.AgentConfig{
-			"tutor": {Bundle: "../../agents/web-researcher", Provider: "stub", Model: "m", Tools: []string{"render_ui"}},
+			"tutor": {Bundle: "../../agents/web-researcher", Provider: "stub", Model: "m", Tools: toolNames},
 		},
 		Workspace: config.WorkspaceConfig{Sandbox: "none"},
 	}
-	artifacts := &turnRecorder{Service: artifact.InMemoryService(), turns: map[string]string{}}
 	var setupFn dag.SetupFunc
 	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, nil, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts, nil, nil, nil, nil)
+		nil, jail, nil, extTools, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}
-	defer nodeServers.closeAll()
+	t.Cleanup(nodeServers.closeAll)
+	return clientMap["tutor"].(nativeAgent)
+}
+
+// runStubNode drives one round of a node's worker (its A2A client) with msg as the user turn.
+func runStubNode(t *testing.T, worker adkagent.Agent, msg string) {
+	t.Helper()
+	r, err := runner.New(runner.Config{AppName: "quack", Agent: worker, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A bare ctx, like the worker's own A2A request: no yield, no turn id.
+	for _, err := range r.Run(context.Background(), "u1", "chat-1:n1", genai.NewContentFromText(msg, genai.RoleUser), adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+}
+
+// TestNativeNode_RenderUIEmitsAndStampsTurn: render_ui called by a real DAG
+// node's worker (behind its A2A server, whose tool ctx carries neither the
+// chat sink nor the turn id) still emits artifact_revision and stamps the chat turn.
+func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
+	provider := toolCallProvider(t, "render_ui", map[string]any{"surface_id": "s1", "components": []any{map[string]any{"id": "root", "component": "Text", "text": "hi"}}})
+	defer provider.Close()
+	artifacts := &turnRecorder{Service: artifact.InMemoryService(), turns: map[string]string{}}
+	agent := buildStubNodeAgent(t, provider.URL, []string{"render_ui"}, nil, artifacts)
 
 	var mu sync.Mutex
 	var revs []stream.ArtifactRevisionData
@@ -100,22 +123,13 @@ func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
 		}
 	}
 	ctx := stream.WithTurnID(context.Background(), "turn-7")
-	worker, _, _, _, _, release, err := clientMap["tutor"].(nativeAgent).ForNode(ctx, "p:n1", nil, artifacts, "quack", "u1", "chat-1", "n1", sink)
+	worker, _, _, _, _, release, err := agent.ForNode(ctx, "p:n1", nil, artifacts, "quack", "u1", "chat-1", "n1", sink)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}
 	defer release(false)
 
-	r, err := runner.New(runner.Config{AppName: "quack", Agent: worker, SessionService: session.InMemoryService(), AutoCreateSession: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A bare ctx, like the worker's own A2A request: no yield, no turn id.
-	for _, err := range r.Run(context.Background(), "u1", "chat-1:n1", genai.NewContentFromText("render it", genai.RoleUser), adkagent.RunConfig{}) {
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-	}
+	runStubNode(t, worker, "render it")
 	mu.Lock()
 	defer mu.Unlock()
 	if len(revs) != 1 || revs[0].ID != "a2ui_surface:s1" || revs[0].Kind != "a2ui_surface" || revs[0].NodeID != "n1" {
