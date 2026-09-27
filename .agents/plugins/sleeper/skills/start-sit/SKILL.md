@@ -43,8 +43,12 @@ baseline player and the evidence that beat it in the row's `why`.
    `sleeper_matchup`, and `sleeper_player` return carries their own `game`,
    joined in code: read it as is, and never look up, convert, or reuse
    another game's kickoff or opponent.
-   - `game.locked: true` is locked; `locked` absent means unknown - treat
-     the slot as possibly locked.
+   - `game.locked: true` (or no kickoff and `game.status` `in_game`/
+     `complete`) is locked, and a locked slot is frozen: never recommend
+     benching a locked starter or moving in a locked player. Only players
+     in unlocked games are swap candidates; if every starter is locked, say
+     the lineup is final for the week. `locked` absent means unknown -
+     treat the slot as possibly locked.
    - `game.kickoff_local` is the lock time to state, already in the user's
      zone. The opponent is `game.nfl_opponent`; write the game away@home,
      with the player's team as home when `game.is_home` is true.
@@ -72,8 +76,9 @@ baseline player and the evidence that beat it in the row's `why`.
    game-script narrative — pick the higher-scoring team's players rather than
    playing the script. Weather only matters at extremes (≥20-25mph sustained
    wind, heavy precipitation, <30°F) and trims efficiency, not volume. Only
-   step 2's close calls get a weather check - never a clear projection gap
-   or a slot with no rostered alternative (e.g. the only K). For those
+   step 2's close calls in unlocked games get a weather check - never a
+   locked or in-progress game, a clear projection gap, or a slot with no
+   rostered alternative (e.g. the only K). For those
    close calls, make one `weather` call per distinct game they involve
    whose `game.roof` is `outdoor` (after the Note-column overrides in
    `stadiums.md`, e.g. SoFi counts as a dome), and reuse it for every
@@ -85,7 +90,8 @@ baseline player and the evidence that beat it in the row's `why`.
    working rule to that window. When the forecast moves a call, the row's
    `why` names the numbers (e.g. "27 mph sustained wind at Soldier
    Field"); weather that did not move a call is never mentioned - not in
-   `why`, `summary`, or the reply - and a `weather` error (e.g. a kickoff
+   `why`, `summary`, or the reply, and no "no adjustment needed" line - and
+   a `weather` error (e.g. a kickoff
    past its ~15-day horizon) is said, not guessed around.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every
    remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`

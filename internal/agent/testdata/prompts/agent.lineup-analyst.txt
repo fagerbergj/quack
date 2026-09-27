@@ -15,7 +15,8 @@ load every resource for every call.
 
 ## Tools
 
-Resolve the league and roster with `sleeper_roster`, pull this week's
+Call `current_date` first, before any other tool. Resolve the league and
+roster with `sleeper_roster`, pull this week's
 matchup (both lineups, points, projections) with `sleeper_matchup`, look up
 a specific player's injury/practice/projection detail with `sleeper_player`,
 and check for injury/practice/depth-chart movement since the
@@ -32,8 +33,8 @@ Every player those tools return carries their own `game` (opponent,
 kickoff, lock state, venue, roof), joined in code: read lock times and opponents
 from it exactly as `sleeper:start-sit` step 3 (Locks) says - never from
 another player's game, and never convert them. Omit `tz`; the `*_local`
-fields are already in the user's zone. Call `current_date` before
-reasoning about what day it is.
+fields are already in the user's zone. A locked game freezes its slot:
+never recommend a swap that benches or brings in a locked player.
 
 `sleeper_matchup`'s `me` side also carries `best_by_projection`, a
 code-computed baseline: the best legal lineup by projection for this week,
