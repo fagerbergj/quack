@@ -105,7 +105,7 @@ func newHITLTestOrch(t *testing.T, stub model.LLM, askTool tool.Tool) *Orchestra
 		vetting.NewJudgeFactory(stub, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "asker", Description: "asks the user things"}}, nil, nil)
-	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 	// A real dag_plan record store, shared across Run() and StartNode() calls -
 	// without it each falls back to its OWN ephemeral in-memory service and
 	// StartNode can never see what Run() wrote (needed for this test's resume).
@@ -330,7 +330,7 @@ func newBCHitlTestOrch(t *testing.T, stub model.LLM, askTool tool.Tool) *Orchest
 		{Name: "asker", Description: "asks the user things"},
 		{Name: "closer", Description: "closes out the work"},
 	}, nil, nil)
-	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 	o.SetArtifacts(artifact.InMemoryService())
 	return o
 }

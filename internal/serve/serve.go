@@ -913,6 +913,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	vetting.NodeSessionClosed = acp.ClosePinnedSession
 	b.cleanups = append(b.cleanups, acp.CloseAllPinnedSessions)
 	promptbuilder.SetLocation(cfg.Location())
+	logTimezone(cfg)
 
 	addr = cfg.Server.Addr
 	if port != 0 {
@@ -1919,7 +1920,7 @@ func openMemoryStores(ctx context.Context, cfg *config.Config, st *store.Store, 
 		taskStore = s
 		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
 			"embedder", rm.Embedder.Model, "consolidation", rm.Consolidation.Model)
-		startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm) })
+		startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm, cfg.Location()) })
 	}
 	if slices.Contains(cfg.Orchestrator.Tools, "commit_memory") {
 		if rm, ok := cfg.MemoryStore("commit_memory"); ok {
@@ -1932,7 +1933,7 @@ func openMemoryStores(ctx context.Context, cfg *config.Config, st *store.Store, 
 			}
 			userStore = s
 			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
-			startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm) })
+			startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm, cfg.Location()) })
 		}
 	}
 
@@ -2025,7 +2026,9 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 			orchBehaviour += "\n\n" + mem
 		}
 	}
-	orchSysPrompt := promptbuilder.Orchestrator(roster, []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
+	orchSysPrompt := promptbuilder.CacheByDay(nil, func(context.Context) string {
+		return promptbuilder.Orchestrator(roster, []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
+	})
 
 	orchSkillTS, err := newScopedSkillTS(cfg.Orchestrator.Skills)
 	if err != nil {

@@ -166,10 +166,12 @@ func (s *orchRun) buildRunner() string {
 		Name:        orchestratorName,
 		Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
 		Model:       s.o.model,
-		Instruction: s.o.sysPrompt,
-		Tools:       s.toolList,
-		Toolsets:    s.toolsets,
-		Mode:        llmagent.ModeChat,
+		InstructionProvider: func(rc adkagent.ReadonlyContext) (string, error) {
+			return s.o.sysPrompt(rc), nil
+		},
+		Tools:    s.toolList,
+		Toolsets: s.toolsets,
+		Mode:     llmagent.ModeChat,
 	})
 	if err != nil {
 		return "orchestrator: build agent: " + err.Error()

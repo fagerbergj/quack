@@ -56,7 +56,7 @@ func TestRunBoundPlan_ClearsStalePlanningFailureSoALaterSilentGapStaysASilentGap
 		vetting.NewJudgeFactory(stub, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
-	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 
 	plan := dag.Plan{ID: "p1", UserMessage: "go", Nodes: []dag.Node{{ID: "n1", AgentName: "web-researcher", Task: "research"}}}
 	for range o.RunBoundPlan(context.Background(), "u", chatID, SourceApp, plan) {

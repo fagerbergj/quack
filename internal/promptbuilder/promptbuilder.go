@@ -124,7 +124,8 @@ var (
 	now      = time.Now
 )
 
-// SetLocation sets the user's zone for every date and time shown to agents; nil means time.Local.
+// SetLocation sets the user's zone for every date and time shown to agents;
+// nil or time.Local means no configured zone, labelled as the server's.
 func SetLocation(loc *time.Location) { location.Store(loc) }
 
 func userNow() time.Time {
@@ -134,17 +135,30 @@ func userNow() time.Time {
 	return now().In(time.Local)
 }
 
+// dstNotice covers the week before a DST switch, when the current offset
+// would convert a kickoff after the switch wrongly.
+const dstNotice = 8 * 24 * time.Hour
+
 // Now is the current instant in the user's zone with its abbreviation and
 // offset, plus UTC, so an agent can compare it with a time given in any zone.
 func Now() string {
 	t := userNow()
-	return t.Format("Monday, January 2, 2006 15:04 MST (UTC-07:00)") + "; UTC " + t.UTC().Format("2006-01-02T15:04Z")
+	s := t.Format("Monday, January 2, 2006 15:04 MST (UTC-07:00)") + "; UTC " + t.UTC().Format("2006-01-02T15:04Z")
+	if _, end := t.ZoneBounds(); !end.IsZero() && end.Sub(t) <= dstNotice {
+		s += "; switches to " + end.Format("MST (UTC-07:00)") + " at " + end.UTC().Format("2006-01-02T15:04Z")
+	}
+	return s
 }
 
 // today omits the clock time: CacheByDay keys on it, and a stale time is worse than none.
 // The offset is in the key so a DST switch rebuilds the prompt.
 func today() string {
-	return userNow().Format("Monday, 2006-01-02 in the user's time zone (MST, UTC-07:00)")
+	t := userNow()
+	whose := "the user's"
+	if t.Location() == time.Local {
+		whose = "the server's"
+	}
+	return t.Format("Monday, 2006-01-02 in ") + whose + t.Format(" time zone (MST, UTC-07:00)")
 }
 
 // CacheByDay memoizes build's result, rebuilding when today() moves on or when version reports a

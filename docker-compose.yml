@@ -82,6 +82,9 @@ services:
       # https://quack.example.com). Passed to extensions so a posted GitHub
       # comment/review can link back to the run. Empty = no link.
       QUACK_PUBLIC_URL: ${QUACK_PUBLIC_URL:-}
+      # The user's IANA time zone (e.g. America/Chicago) for agent-facing dates
+      # and times. Empty = the container's zone (UTC unless TZ is set).
+      QUACK_TIMEZONE: ${QUACK_TIMEZONE:-}
       # Reachable from inside the container. Override in .env for your setup;
       # host.docker.internal points at an LLM server running on the host.
       QUACK_LLM_ENDPOINT: ${QUACK_LLM_ENDPOINT:-http://host.docker.internal:11436/v1}

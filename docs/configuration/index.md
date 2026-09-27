@@ -69,7 +69,7 @@ adk's summariser hard-errors past its transcript cap (sized from `context_window
 
 ## `timezone`
 
-The user's IANA time zone name, e.g. `America/Chicago`, interpolated from `QUACK_TIMEZONE`. Agents see dates and times in this zone: the system prompt's `Today is` line (date, zone abbreviation, UTC offset) and the `current_date` tool (local date and time with zone and offset, plus the UTC instant), so they can compare against times published in another zone, such as an NFL kickoff in ET. An unknown name fails config load. Unset falls back to Go's local zone: `TZ`, then `/etc/localtime`, then UTC. The binary embeds its own zone database, so no OS `tzdata` package is needed.
+The user's IANA time zone name, e.g. `America/Chicago`, interpolated from `QUACK_TIMEZONE`. Agents see dates and times in this zone: the system prompt's `Today is` line (date, zone abbreviation, UTC offset) and the `current_date` tool (local date and time with zone and offset, plus the UTC instant), so they can compare against times published in another zone, such as an NFL kickoff in ET. An unknown name fails config load. Unset falls back to Go's local zone (`TZ`, then `/etc/localtime`, then UTC), and the prompt then calls it the server's time zone rather than the user's; startup logs the effective zone and warns when agents will see UTC by fallback. The memory consolidation `schedule` cron also runs in this zone unless it carries its own `CRON_TZ=` prefix.
 
 ## Key environment variables
 

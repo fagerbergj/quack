@@ -51,7 +51,7 @@ func TestRunBoundPlan_UnreachableRepoAbortsWithHumanErrorBeforeAnyNodeRuns(t *te
 			"fatal: could not read Username for 'https://github.com': terminal prompts disabled")
 	})
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
-	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 
 	plan := dag.Plan{
 		ID: "p1", UserMessage: "go",

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeTemp(t *testing.T, content string) string {
@@ -487,16 +488,23 @@ func TestServerPublicURL(t *testing.T) {
 // TestTimezone: QUACK_TIMEZONE resolves to its IANA zone, an unknown name
 // fails load, and unset falls back to time.Local.
 func TestTimezone(t *testing.T) {
-	for env, want := range map[string]string{"": "Local", "America/Chicago": "America/Chicago", "Mars/Olympus": ""} {
-		t.Setenv("QUACK_TIMEZONE", env)
+	for _, tc := range []struct {
+		env  string
+		want string // "" = load error; "Local" = time.Local itself
+	}{{"", "Local"}, {"America/Chicago", "America/Chicago"}, {"Mars/Olympus", ""}} {
+		t.Setenv("QUACK_TIMEZONE", tc.env)
 		c, err := Load(writeTemp(t, baseConfig+"timezone: ${QUACK_TIMEZONE}\n"))
 		switch {
-		case want == "" && err == nil:
-			t.Errorf("QUACK_TIMEZONE=%q: expected a load error", env)
-		case want != "" && err != nil:
-			t.Errorf("QUACK_TIMEZONE=%q: Load: %v", env, err)
-		case err == nil && c.Location().String() != want:
-			t.Errorf("QUACK_TIMEZONE=%q: Location() = %s, want %s", env, c.Location(), want)
+		case tc.want == "":
+			if err == nil {
+				t.Errorf("QUACK_TIMEZONE=%q: expected a load error", tc.env)
+			}
+		case err != nil:
+			t.Errorf("QUACK_TIMEZONE=%q: Load: %v", tc.env, err)
+		case tc.want == "Local" && c.Location() != time.Local:
+			t.Errorf("QUACK_TIMEZONE unset: Location() = %s, want time.Local", c.Location())
+		case tc.want != "Local" && c.Location().String() != tc.want:
+			t.Errorf("QUACK_TIMEZONE=%q: Location() = %s, want %s", tc.env, c.Location(), tc.want)
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
+	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -76,6 +77,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repea
 	if err != nil {
 		return err
 	}
+	promptbuilder.SetLocation(cfg.Location())
 
 	var judge vetting.JudgeFactory
 	var judgeArtifactTools []tool.Tool

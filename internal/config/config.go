@@ -13,8 +13,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	// Embedded zoneinfo: the runtime image ships no tzdata, and timezone/TZ must still resolve.
-	_ "time/tzdata"
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"

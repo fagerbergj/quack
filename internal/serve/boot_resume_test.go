@@ -287,7 +287,7 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil,
 		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	ex.SetNodeStateStore(st)
-	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)
+	orch := orchestrator.New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
 	resp, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID,
 		State: map[string]any{tools.ExecPlanKey: string(planJSON)}})
 	if err != nil {
@@ -373,7 +373,7 @@ func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil,
 		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	ex.SetNodeStateStore(st)
-	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)
+	orch := orchestrator.New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
 	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID,
 		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
 		t.Fatalf("session create: %v", err)
@@ -461,7 +461,7 @@ func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	ex.SetNodeStateStore(st)
 
-	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)
+	orch := orchestrator.New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
 	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID,
 		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
 		t.Fatalf("session create: %v", err)

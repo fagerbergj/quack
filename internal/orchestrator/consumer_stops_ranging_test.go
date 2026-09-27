@@ -82,7 +82,7 @@ func TestRun_ConsumerStopsRangingMidRun_ProcessSurvives(t *testing.T) {
 	admission := dag.NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
 	ex.SetAdmission(admission, func(string) dag.AdmissionSpec { return dag.AdmissionSpec{Model: "m"} }, dag.AdmissionSpec{})
 
-	o := New(sessions, stub, "You are the orchestrator.", dag.NewPlanner(infos, nil, nil), ex, nil, nil, nil)
+	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, dag.NewPlanner(infos, nil, nil), ex, nil, nil, nil)
 
 	var sawStart bool
 	for ev, err := range o.Run(context.Background(), "u", "chat", SourceApp, "fan out", nil) {
