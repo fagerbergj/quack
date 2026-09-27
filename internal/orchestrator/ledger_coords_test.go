@@ -64,7 +64,7 @@ func newTracedTestOrch(t *testing.T, stub *orchStub) *Orchestrator {
 		vetting.NewJudgeFactory(stub, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher", Description: "researches the web"}}, nil, nil)
-	return New(sessions, tracedModel, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	return New(sessions, tracedModel, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 }
 
 // TestOrchestratorRun_RootChatCarriesChatID pins #617: before the fix, the

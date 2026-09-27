@@ -205,7 +205,7 @@ func TestOrchestratorRun_LoadArtifactsTool(t *testing.T) {
 	}
 
 	sessions := session.InMemoryService()
-	o := New(sessions, &loadArtifactsStub{}, "you are the orchestrator", dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
+	o := New(sessions, &loadArtifactsStub{}, func(context.Context) string { return "you are the orchestrator" }, dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
 	o.SetArtifacts(svc)
 
 	var texts []string
@@ -233,7 +233,7 @@ func TestOrchestratorRun_NoArtifactService_ToolAbsentNoPanic(t *testing.T) {
 	ctx := context.Background()
 	sessions := session.InMemoryService()
 	textModel := scriptedModel{reply: "no tools needed"}
-	o := New(sessions, textModel, "you are the orchestrator", dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
+	o := New(sessions, textModel, func(context.Context) string { return "you are the orchestrator" }, dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
 	// o.artifacts left nil deliberately.
 
 	for ev, err := range o.Run(ctx, "u1", "c1", SourceApp, "hello", nil) {

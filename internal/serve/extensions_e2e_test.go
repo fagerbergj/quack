@@ -106,7 +106,7 @@ func newExtTestStackWithModelAndAgents(t *testing.T, m model.LLM, agents []dag.A
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(agents, nil, nil)
-	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, m, func(context.Context) string { return "You are a test duck." }, planner, ex, nil, nil, nil)
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("workspace.NewJail: %v", err)
@@ -639,7 +639,7 @@ func TestSDKExtensionRedispatchAfterBoundPlanKeepsAskOnBothTurns(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "worker", Description: "does work"}}, nil, nil)
 
 	m := newEchoProbeModel()
-	orch := orchestrator.New(st.Sessions, m, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, m, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
@@ -959,7 +959,7 @@ func newExtAttachmentTestStack(t *testing.T) (*store.Store, *orchestrator.Orches
 		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.5, JudgeRounds: 1} },
 		map[string]bool{"media": true})
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "media", Description: "reads images"}}, nil, nil)
-	orch := orchestrator.New(st.Sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 	return st, orch, stream.NewHub(), artifacts, stub
 }
 
@@ -1084,7 +1084,7 @@ func TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM(t *testing.T) {
 		vetting.NewJudgeFactory(workerStub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.5, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "worker", Description: "does work"}}, nil, nil)
 	orchModel := &planToolProbeModel{}
-	orch := orchestrator.New(st.Sessions, orchModel, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, orchModel, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
@@ -1180,7 +1180,7 @@ func TestSDKExtensionDispatch_UnshapedWorkflowFoldsHintIntoMessage(t *testing.T)
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil, nil)
-	orch := orchestrator.New(st.Sessions, hintProbeModel{hint: `Use the "unshaped-hint" workflow shape`}, "You are a test duck.", planner, ex, nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, hintProbeModel{hint: `Use the "unshaped-hint" workflow shape`}, func(context.Context) string { return "You are a test duck." }, planner, ex, nil, nil, nil)
 
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)

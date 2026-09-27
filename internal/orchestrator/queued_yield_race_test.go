@@ -90,7 +90,7 @@ func TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield(t *testing.T) {
 		{Name: "web-researcher", Description: "researches the web"},
 		{Name: "synthesizer", Description: "synthesizes findings"},
 	}, nil, nil)
-	o := New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 
 	// Unsynchronized append - the shape production and runTurn both use.
 	// Intentional: this is the artifact that catches the race under -race.

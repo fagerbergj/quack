@@ -60,7 +60,7 @@ func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil, nil)
-	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, m, func(context.Context) string { return "You are a test duck." }, planner, ex, nil, nil, nil)
 	artifacts, err := st.RowArtifactService()
 	if err != nil {
 		t.Fatalf("RowArtifactService: %v", err)

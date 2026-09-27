@@ -46,7 +46,7 @@ func newTestOrchWithJudge(t *testing.T, stub *orchStub, judge vetting.PlanJudge)
 		vetting.NewJudgeFactory(stub, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher", Description: "researches the web"}}, nil, judge)
-	return New(sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	return New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 }
 
 // TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason: the model

@@ -12,7 +12,7 @@ import (
 // AppName="quack" session, leaving every DAG node's own worker session (AppName is whichever agent bundle ran the node) untouched. It must now also call the wired node-session reaper (store.ReapNodeSessions in production) with the same chat id.
 func TestResetSession_InvokesNodeSessionReaper(t *testing.T) {
 	sessions := session.InMemoryService()
-	o := New(sessions, nil, "", nil, nil, nil, nil, nil)
+	o := New(sessions, nil, func(context.Context) string { return "" }, nil, nil, nil, nil, nil)
 
 	var gotCtx context.Context
 	var gotChatID string
@@ -42,7 +42,7 @@ func TestResetSession_InvokesNodeSessionReaper(t *testing.T) {
 // still resets the chat-level session without panicking.
 func TestResetSession_NilReaperIsNoOp(t *testing.T) {
 	sessions := session.InMemoryService()
-	o := New(sessions, nil, "", nil, nil, nil, nil, nil)
+	o := New(sessions, nil, func(context.Context) string { return "" }, nil, nil, nil, nil, nil)
 	if err := o.ResetSession(context.Background(), "local", "chat-1"); err != nil {
 		t.Fatalf("ResetSession: %v", err)
 	}

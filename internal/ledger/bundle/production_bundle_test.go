@@ -61,7 +61,7 @@ func newOrchForTest(t *testing.T, m model.LLM) *orchestrator.Orchestrator {
 		vetting.NewJudgeFactory(m, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher", Description: "researches the web"}}, nil, nil)
-	return orchestrator.New(sessions, traced, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	return orchestrator.New(sessions, traced, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 }
 
 // TestUserTurns_FromProductionShapedBundle (#617 regression): UserTurns()

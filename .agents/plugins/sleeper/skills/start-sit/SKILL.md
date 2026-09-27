@@ -38,11 +38,27 @@ baseline player and the evidence that beat it in the row's `why`.
    tie-break gap (`flex-decisions.md`, under 3 points) of the starter's,
    search the open web for what changed and cite it inline as a markdown
    link.
-3. **Locks.** Sleeper locks each slot at that player's own kickoff
-   (`sleeper_schedule` for kickoff times); a locked slot cannot change. A
-   Thursday player has no Thu/Fri/Sat report — the decision is effectively
-   final at the Wednesday 4pm ET report. State the lock time when a
-   Questionable/Doubtful player's kickoff is close.
+3. **Locks.** Sleeper locks each slot at that player's own kickoff; a
+   locked slot cannot change. Take "now" from `current_date`: the user's
+   local time with zone and UTC offset, the UTC instant, and any DST switch
+   in the coming week. Then read each game in `sleeper_schedule`:
+   - `kickoff` (RFC3339 UTC) present: convert it to the user's zone with the
+     offset in force on the kickoff date, which differs from today's when
+     `current_date` names a switch before kickoff. `locked: true` is locked.
+   - `locked` absent: lock state is unknown; treat the slot as possibly
+     locked.
+   - `kickoff_tbd`, or no `kickoff` (a `note` says times are unavailable):
+     say the kickoff is unknown and look it up with `web_search`. Never
+     assume a time slot: Sunday games kick off at 1:00, 4:05/4:25, or 8:20
+     PM ET, and international games earlier.
+   - `canceled`/`postponed`: ignore lock state.
+
+   Never take "today" from UTC: Thursday, Sunday, and Monday night kickoffs
+   and the Friday Brazil game fall on the next day in UTC. A Thursday player
+   has no Thu/Fri/Sat report — the decision is effectively final at the
+   Wednesday 4:00 PM ET report. When a Questionable/Doubtful player's
+   kickoff is close, state the lock time in the user's zone with ET
+   alongside, e.g. "locks Sun 12:00 PM CDT (1:00 PM ET)".
 4. **Matchup, bounded.** Pull opponent defensive context. The real, quantified
    effect is small and position-dependent: −0.07 (QB), −0.13 (RB), −0.09 (WR)
    fantasy points per one-spot change in opponent defensive rank, TE

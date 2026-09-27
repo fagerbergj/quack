@@ -15,7 +15,7 @@ import (
 // before the artifact-resolver change (#1420) and must stay byte-identical.
 var updateJudgeGolden = flag.Bool("update-golden", false, "rewrite the judge prompt golden files")
 
-var judgeTodayLine = regexp.MustCompile(`Today is \d{4}-\d{2}-\d{2}\.`)
+var judgeTodayLine = regexp.MustCompile(`Today is [^\n]*\.`)
 
 func checkJudgeGolden(t *testing.T, name, got string) {
 	t.Helper()

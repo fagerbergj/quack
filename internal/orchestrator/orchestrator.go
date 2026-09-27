@@ -56,7 +56,7 @@ const SourceApp = "app"
 type Orchestrator struct {
 	sessions    session.Service
 	model       model.LLM
-	sysPrompt   string
+	sysPrompt   func(context.Context) string
 	planner     *dag.Planner
 	executor    *dag.Executor
 	skillTS     tool.Toolset
@@ -423,7 +423,7 @@ func (o *Orchestrator) stashPlanForResume(ctx context.Context, userID, sessionID
 }
 
 // New builds the orchestrator from its dependencies.
-func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset, userMem, taskMem *memory.Store) *Orchestrator {
+func New(sessions session.Service, m model.LLM, sysPrompt func(context.Context) string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset, userMem, taskMem *memory.Store) *Orchestrator {
 	return &Orchestrator{
 		sessions:  sessions,
 		model:     m,

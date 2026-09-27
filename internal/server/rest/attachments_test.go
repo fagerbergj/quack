@@ -157,7 +157,7 @@ func newAttachmentTestHandler(t *testing.T, dbPath string, stub *attachStub) *Ha
 		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.5, JudgeRounds: 1} },
 		map[string]bool{"media": true})
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "media", Description: "reads images"}}, nil, nil)
-	orch := orchestrator.New(st.Sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, artifacts, nil)
 }
 

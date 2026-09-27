@@ -53,6 +53,10 @@ type Config struct {
 	// Prompts binds the named prompt artifacts to a store; absent (the
 	// default) resolves every one from the shipped file.
 	Prompts PromptsConfig `yaml:"prompts"`
+	// Timezone is the user's IANA zone for agent-facing dates and times;
+	// empty falls back to time.Local (TZ, then /etc/localtime, then UTC).
+	Timezone string `yaml:"timezone"`
+	location *time.Location
 	// Revision identifies the loaded config's content (sha256 of the raw file,
 	// short form) - a deployment-authored workflow shape's provenance stamps
 	// this as its version, so a shape changes version only when quack.yaml does.
@@ -1090,6 +1094,7 @@ func (c *Config) validate() error {
 		c.validateTools,
 		c.validateDag,
 		c.validateServer,
+		c.validateTimezone,
 	} {
 		if err := step(); err != nil {
 			return err
@@ -1534,6 +1539,26 @@ func (c *Config) validateDag() error {
 	}
 
 	return nil
+}
+
+func (c *Config) validateTimezone() error {
+	if c.Timezone == "" {
+		return nil
+	}
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return fmt.Errorf("config: timezone %q is not an IANA zone name (e.g. America/Chicago): %w", c.Timezone, err)
+	}
+	c.location = loc
+	return nil
+}
+
+// Location is the user's zone: timezone when set, else time.Local.
+func (c *Config) Location() *time.Location {
+	if c.location == nil {
+		return time.Local
+	}
+	return c.location
 }
 
 func (c *Config) validateServer() error {
