@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -477,9 +478,9 @@ func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 // grounded - grounded_in_retrieval must not fire on zero web activity alone.
 func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 	for name, act := range map[string]workerActivity{
-		"clone":         {clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}},
-		"reads":         {paths: map[string]bool{"repo/main.go": true}},
-		"artifact read": activityFromSessionAt(newTestSession(t, fnResp("r1", "read_artifact", map[string]any{"result": "diff --git a/x b/x"})), "", ""),
+		"clone":               {clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}},
+		"reads":               {paths: map[string]bool{"repo/main.go": true}},
+		"dispatch input read": activityFromSessionAt(newTestSession(t, fnCall("r1", "read_artifact", map[string]any{"id": "bytes:files"}), fnResp("r1", "read_artifact", map[string]any{"result": "diff"})), "", ""),
 	} {
 		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
 		det, _ := computeDeterministicCriteria(context.Background(), "The entrypoint is [main.go](repo/main.go).", act, Config{RequireRetrieval: true}, "", time.Time{})
@@ -490,11 +491,45 @@ func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 	}
 }
 
-// A failed read_artifact (not found) retrieved nothing, so it is no grounding.
-func TestFailedArtifactReadIsNotRetrieval(t *testing.T) {
-	sess := newTestSession(t, fnResp("r1", "read_artifact", map[string]any{"error": "read_artifact: x: not found"}))
-	if activityFromSessionAt(sess, "", "").artifactRead {
-		t.Fatal("a failed read_artifact counted as retrieval")
+// TestArtifactReadsThatAreNotRetrieval: a failed read, reading back your own
+// write, an upload, or a non-source kind retrieves nothing new.
+func TestArtifactReadsThatAreNotRetrieval(t *testing.T) {
+	read := func(id string, resp map[string]any) []evtPart {
+		return []evtPart{fnCall("r-"+id, "read_artifact", map[string]any{"id": id}), fnResp("r-"+id, "read_artifact", resp)}
+	}
+	ok := map[string]any{"result": "content"}
+	writeThenRead := append([]evtPart{
+		fnCall("w1", "write_artifact", map[string]any{"kind": "bytes", "bytes": "x"}),
+		fnResp("w1", "write_artifact", map[string]any{"result": "ok: id=bytes:abc123 revision=1"}),
+	}, read("bytes:abc123", ok)...)
+	for name, parts := range map[string][]evtPart{
+		"failed read":     read("bytes:files", map[string]any{"error": "read_artifact: bytes:files: not found"}),
+		"write then read": writeThenRead,
+		"upload":          read("bytes:upload-notes.txt", ok),
+		"non-source kind": read("document:abc", ok),
+	} {
+		if activityFromSessionAt(newTestSession(t, parts...), "", "").retrieved() {
+			t.Errorf("%s counted as retrieval", name)
+		}
+	}
+}
+
+// TestRenderUIRecordsSurfaceAndKey: a successful render_ui with an answer_key
+// leaves both ids for the judge to read; a validation failure leaves none.
+func TestRenderUIRecordsSurfaceAndKey(t *testing.T) {
+	args := map[string]any{"surface_id": "acme-widgets-pr-1-tutor", "answer_key": map[string]any{"q1": map[string]any{"answer": "a"}}}
+	act := activityFromSessionAt(newTestSession(t,
+		fnCall("u1", "render_ui", args),
+		fnResp("u1", "render_ui", map[string]any{"result": `{"artifact_id":"a2ui_surface:acme-widgets-pr-1-tutor","revision":1}`}),
+		fnCall("u2", "render_ui", args),
+		fnResp("u2", "render_ui", map[string]any{"result": "VALIDATION_FAILED: root missing"}),
+	), "", "")
+	want := []string{"a2ui_surface:acme-widgets-pr-1-tutor", "quiz_key:acme-widgets-pr-1-tutor"}
+	if !slices.Equal(act.producedArtifacts(), want) {
+		t.Errorf("producedArtifacts = %v, want %v", act.producedArtifacts(), want)
+	}
+	if len(act.artifactsWritten) != 0 {
+		t.Errorf("artifactsWritten = %v, want none (surface JSON must stay out of citation scoring)", act.artifactsWritten)
 	}
 }
 

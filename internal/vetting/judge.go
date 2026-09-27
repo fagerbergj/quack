@@ -738,10 +738,10 @@ func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, que
 		slog.Warn("judge passed without reading the repo; re-judging once",
 			"component", "vetting", "agent", cfg.Agent, "score", v.Score)
 		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unreadPassFeedback, changedFiles, known, act, received, emit, v)
-	case unreadArtifactPass(counters.artifact, v, len(act.artifactsWritten) > 0):
+	case unreadArtifactPass(counters.artifact, v, len(act.producedArtifacts()) > 0):
 		slog.Info("judge passed without reading an artifact the worker wrote; re-judging once",
-			"component", "vetting", "agent", cfg.Agent, "node", cfg.NodeID, "score", v.Score, "artifacts", act.artifactsWritten)
-		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unreadArtifactPassFeedback(act.artifactsWritten), changedFiles, known, act, received, emit, v)
+			"component", "vetting", "agent", cfg.Agent, "node", cfg.NodeID, "score", v.Score, "artifacts", act.producedArtifacts())
+		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unreadArtifactPassFeedback(act.producedArtifacts()), changedFiles, known, act, received, emit, v)
 	default:
 		if names := inconsistentJudgeFailures(v, cfg.Threshold, cfg.RubricSpecs); len(names) > 0 {
 			slog.Warn("judge scored below threshold with no fix given; re-judging once",
@@ -766,7 +766,7 @@ func reJudgeOnce(ctx context.Context, factory JudgeFactory, cfg Config, question
 		slog.Warn("judge passed without reading the repo again; accepting the verdict",
 			"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
 	}
-	if unreadArtifactPass(counters2.artifact, v2, len(act.artifactsWritten) > 0) {
+	if unreadArtifactPass(counters2.artifact, v2, len(act.producedArtifacts()) > 0) {
 		slog.Info("judge passed without reading an artifact again; accepting the verdict",
 			"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
 	}

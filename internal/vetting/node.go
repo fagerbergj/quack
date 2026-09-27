@@ -2489,6 +2489,7 @@ func activityFromSessionAt(sess session.Session, nodeDir, nodeID string) workerA
 		pendingCd:        map[string]bool{},
 		pendingLegacyURL: map[string]string{},
 		pendingData:      map[string]pendingDataCall{},
+		pendingRead:      map[string]string{},
 	}
 	if sess == nil {
 		return s.act
@@ -2546,6 +2547,10 @@ func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
 		s.applyDelivery(fc)
 	case "cd":
 		s.pendingCd[fc.ID] = true
+	case "read_artifact":
+		if id, _ := fc.Args["id"].(string); isSourceArtifactID(id) {
+			s.pendingRead[fc.ID] = id
+		}
 	default:
 		if isWorkspaceTool(fc.Name) {
 			s.pendingWs[fc.ID] = fc.Args
@@ -2576,7 +2581,9 @@ func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 	case isArtifactWriteTool(fr.Name):
 		s.recordArtifactWrite(fr.Response)
 	case fr.Name == "read_artifact":
-		s.act.artifactRead = s.act.artifactRead || (!s.otherNode && fr.Response["error"] == nil)
+		s.recordSourceRead(fr)
+	case fr.Name == "render_ui":
+		s.recordRender(fr.Response, s.pendingData[fr.ID].args)
 	}
 	if isWorkspaceTool(fr.Name) {
 		// Only completed call/response pairs enter the ledger.
@@ -2608,6 +2615,7 @@ type activityScanner struct {
 	// a pre-upgrade session's response has no "url" of its own to key off.
 	pendingLegacyURL map[string]string
 	pendingData      map[string]pendingDataCall
+	pendingRead      map[string]string // read_artifact call id -> source artifact id
 }
 
 // pendingDataCall: an in-flight data-tool call awaiting its response.
@@ -2804,6 +2812,54 @@ func (s *activityScanner) recordArtifactWrite(resp map[string]any) {
 	}
 	s.artifactSeen[m[1]] = true
 	s.act.artifactsWritten = append(s.act.artifactsWritten, m[1])
+}
+
+// isSourceArtifactID: a dispatch input ("bytes:<name>") or a fetched page ("web_page:...").
+// Uploads share the bytes kind under "bytes:upload-" (serve/rest attachmentHintPrefix) and are not sources.
+func isSourceArtifactID(id string) bool {
+	switch recordstore.KindOf(id) {
+	case "web_page":
+		return true
+	case "bytes":
+		return !strings.HasPrefix(id, "bytes:upload-")
+	}
+	return false
+}
+
+// recordSourceRead credits a successful read of a source artifact to this node.
+func (s *activityScanner) recordSourceRead(fr *genai.FunctionResponse) {
+	id, ok := s.pendingRead[fr.ID]
+	delete(s.pendingRead, fr.ID)
+	if ok && !s.otherNode && fr.Response["error"] == nil {
+		s.act.sourceReads = append(s.act.sourceReads, id)
+	}
+}
+
+// recordRender records a successful render_ui's surface id, and its quiz key's
+// when the call carried an answer_key (render_ui only stores one then).
+func (s *activityScanner) recordRender(resp, args map[string]any) {
+	result, _ := resp["result"].(string)
+	var out struct {
+		ArtifactID string `json:"artifact_id"`
+	}
+	if s.otherNode || json.Unmarshal([]byte(result), &out) != nil || out.ArtifactID == "" {
+		return
+	}
+	s.act.rendered = append(s.act.rendered, out.ArtifactID)
+	if hasAnswerKey(args["answer_key"]) {
+		s.act.rendered = append(s.act.rendered, "quiz_key:"+strings.TrimPrefix(out.ArtifactID, "a2ui_surface:"))
+	}
+}
+
+// hasAnswerKey: answer_key as a non-empty object, or as the JSON string render_ui also decodes.
+func hasAnswerKey(v any) bool {
+	switch k := v.(type) {
+	case map[string]any:
+		return len(k) > 0
+	case string:
+		return k != "" && k != "{}"
+	}
+	return false
 }
 
 // excludedDataToolNames: tools already visible to the judge through another

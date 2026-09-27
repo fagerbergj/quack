@@ -159,6 +159,7 @@ func rebuildActivity(ctx context.Context, rc ReplayCase) (workerActivity, error)
 		return act, err
 	}
 	act.artifactsWritten = own.artifactsWritten
+	act.rendered = own.rendered
 	return act, nil
 }
 
