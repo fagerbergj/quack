@@ -558,9 +558,16 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		body.Content = r.FormValue("content")
 		attachments = h.multipartAttachments(r, h.sessionUser(r.Context(), chatID), chatID, turnID)
 	} else {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			errMsg(w, http.StatusBadRequest, "invalid request body")
 			return
+		}
+		if a := body.A2uiAction; a != nil {
+			if a.SurfaceId == "" || a.Name == "" {
+				errMsg(w, http.StatusBadRequest, "a2ui_action needs surface_id and name")
+				return
+			}
+			body.Content = a2uiActionText(a)
 		}
 	}
 	if body.Content == "" {
@@ -588,6 +595,18 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 	// From here this handler is only a viewer - it cannot stall or kill the run.
 	streamHub(r.Context(), sse, replay, live, 0)
+}
+
+// a2uiActionText is the user turn an A2UI surface action becomes; keys keep
+// the documented order so the model and the UI's action pill read the same line.
+func a2uiActionText(a *schema.A2uiAction) string {
+	b, _ := json.Marshal(struct {
+		SurfaceID         string                  `json:"surface_id"`
+		Name              string                  `json:"name"`
+		SourceComponentID *string                 `json:"source_component_id,omitempty"`
+		Context           *map[string]interface{} `json:"context,omitempty"`
+	}{a.SurfaceId, a.Name, a.SourceComponentId, a.Context})
+	return "[a2ui_action] " + string(b)
 }
 
 // multipartAttachments saves every uploaded file as a blob artifact and returns

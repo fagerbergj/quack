@@ -558,7 +558,33 @@ export type CreateChatBody = {
 };
 
 export type SendMessageBody = {
+    /**
+     * The user's message. May be empty when `a2ui_action` is set.
+     */
     content: string;
+    a2ui_action?: A2UiAction;
+};
+
+/**
+ * A user action on an A2UI surface (a Button's `action.event`, with its
+ * context paths already resolved against the surface's data model).
+ * When set, it replaces `content`: the turn's user text becomes the
+ * single line `[a2ui_action] <compact JSON of this object>`.
+ *
+ */
+export type A2UiAction = {
+    surface_id: string;
+    /**
+     * The event name, e.g. `submit_quiz`.
+     */
+    name: string;
+    /**
+     * Id of the component that fired the action.
+     */
+    source_component_id?: string;
+    context?: {
+        [key: string]: unknown;
+    };
 };
 
 /**

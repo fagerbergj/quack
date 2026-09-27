@@ -2164,6 +2164,30 @@ components:
       properties:
         content:
           type: string
+          description: The user's message. May be empty when `a2ui_action` is set.
+        a2ui_action:
+          $ref: "#/components/schemas/A2uiAction"
+
+    A2uiAction:
+      type: object
+      description: |
+        A user action on an A2UI surface (a Button's `action.event`, with its
+        context paths already resolved against the surface's data model).
+        When set, it replaces `content`: the turn's user text becomes the
+        single line `[a2ui_action] <compact JSON of this object>`.
+      required: [surface_id, name]
+      properties:
+        surface_id:
+          type: string
+        name:
+          type: string
+          description: The event name, e.g. `submit_quiz`.
+        source_component_id:
+          type: string
+          description: Id of the component that fired the action.
+        context:
+          type: object
+          additionalProperties: true
 
     NodeStatus:
       type: string

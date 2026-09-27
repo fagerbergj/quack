@@ -25,6 +25,8 @@ Mounted at the process root (`internal/server/router.go`), modeled after OpenRes
 | `GET` / `DELETE /api/v1/memories/{memory_id}`, `GET /api/v1/memories`, `POST .../vote`, `POST /api/v1/memories/sweep`, `POST /api/v1/memories/rescope`, `GET /api/v1/memories/stats`, `GET .../nodes/{node_id}/memories` | The `quack memory` surface ([`cli.md`](cli.md#memory)): get/list/search, forget, vote, sweep, rescope, stats, and one node's memories. |
 | `GET` / `POST /api/v1/plugins`, `DELETE /api/v1/plugins/{name}`, `GET /api/v1/plugins/updates`, `POST /api/v1/plugins/{name}/update`, `POST /api/v1/plugins/update` | The dynamic plugin registry (epic #1427, [`agent-plugins.md`](agent-plugins.md#the-registry)): list every registered plugin, register a `github:` entry (fetched synchronously), remove one, check every `github:`-sourced row for a newer remote sha, and fetch one row or every behind row. `github:` entries only - a local root stays config-only (`plugins.seed`). |
 
+A `POST .../responses` body may carry `a2ui_action` (`surface_id`, `name`, `source_component_id`, `context`) instead of message text: a click on an A2UI surface's button. The turn's user text becomes the line `[a2ui_action] {compact JSON}`.
+
 This is what `quack chat` / `quack chat node` / `quack memory` ([`cli.md`](cli.md)) and the [web SPA](ui.md) both ride. `GET /api/v1/config`, `GET /api/v1/extensions`, `GET /api/v1/recordings`, and `GET .../chats/{chat_id}/recording` are SPA-internal (settings/extensions panels, recording browser) and not part of the CLI-facing surface above.
 
 ## Streaming
