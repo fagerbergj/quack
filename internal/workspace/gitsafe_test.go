@@ -95,3 +95,19 @@ func TestGitCmdRefusesUnreadableRepoConfig(t *testing.T) {
 		t.Error("call on a symlinked repo config: want an error")
 	}
 }
+
+// TestGitCmdNeverStripsEnclosingRepo: a dir whose .git is broken fails closed instead of stripping its parent repo's config.
+func TestGitCmdNeverStripsEnclosingRepo(t *testing.T) {
+	bin, dir := gitConfigFixture(t)
+	nested := filepath.Join(dir, "plugins", "x", "repo")
+	if err := os.MkdirAll(filepath.Join(nested, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGitCmd(t, bin, nested, "version"); err == nil {
+		t.Error("call in a dir with a broken .git: want an error")
+	}
+	out, err := exec.Command(bin, "-C", dir, "config", "--local", "http.proxy").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "http://127.0.0.1:9" {
+		t.Errorf("enclosing repo config stripped: %q %v", out, err)
+	}
+}

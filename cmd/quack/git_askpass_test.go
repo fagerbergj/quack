@@ -90,6 +90,10 @@ func TestGitAskpassAnswerTwoPrompts(t *testing.T) {
 			t.Errorf("GitAskpassAnswer(%q) = %q, want %q", c.prompt, got, c.want)
 		}
 	}
+	t.Setenv(tools.GitAskpassHostEnv, "ks.example")
+	if got := tools.GitAskpassAnswer("Password for 'https://\u212a\u017f.example': "); got != "" {
+		t.Errorf("Unicode-folded host (Kelvin sign, long s) got %q, want nothing", got)
+	}
 }
 
 // TestGitAskpassSubcommandSecondaryEntry: the hidden cobra subcommand answers
