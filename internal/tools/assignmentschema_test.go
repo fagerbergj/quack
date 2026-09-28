@@ -22,7 +22,7 @@ import (
 func TestCreatePlanEmitsAgentEnum(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}, {Name: "code-implementer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestCreatePlanEmitsAgentEnum(t *testing.T) {
 func TestEditPlanEmitsAgentEnum(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}, {Name: "code-implementer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewEditPlanTool(c, "orchestrator", nil, nil, nil, nil)
+	tl, err := NewEditPlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestCreatePlanSchemaMarksSetupIgnoredWhenTriggerBacked(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestCreatePlanSchemaMarksSetupIgnoredWhenTriggerBacked(t *testing.T) {
 func TestCreatePlanSchemaKeepsSetupOnPlainChat(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestEditPlanSchemaMarksSetupIgnoredWhenTriggerBacked(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	tl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	tl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestEditPlanSchemaMarksSetupIgnoredWhenTriggerBacked(t *testing.T) {
 func TestEditPlanSchemaKeepsSetupOnPlainChat(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewEditPlanTool(c, "orchestrator", nil, nil, nil, nil)
+	tl, err := NewEditPlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestCreatePlanRejectsMisspelledTopLevelKey(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}

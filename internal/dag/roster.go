@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -34,6 +35,23 @@ type Roster struct {
 }
 
 type rosterKey struct{}
+
+// liveRosters holds every installed roster until it dies, so a record written
+// for a run pinned to it still validates its agent after a reload drops it.
+var liveRosters sync.Map // *Roster -> struct{}
+
+// liveAgentNames is the current agent names plus those of every roster a run still pins.
+func liveAgentNames() []string {
+	names := agentNameList()
+	liveRosters.Range(func(k, _ any) bool {
+		for _, a := range k.(*Roster).Infos {
+			names = append(names, a.Name)
+		}
+		return true
+	})
+	slices.Sort(names)
+	return slices.Compact(names)
+}
 
 // pinnedRoster returns the live roster Executor.Pin stored on ctx, or nil.
 func pinnedRoster(ctx context.Context) *Roster {
@@ -68,7 +86,11 @@ func (r *Roster) unpin() {
 }
 
 func (r *Roster) maybeDie() {
-	if r.retired.Load() && r.runs.CompareAndSwap(0, -1) && r.OnDead != nil {
+	if !r.retired.Load() || !r.runs.CompareAndSwap(0, -1) {
+		return
+	}
+	liveRosters.Delete(r)
+	if r.OnDead != nil {
 		r.OnDead()
 	}
 }
@@ -86,6 +108,7 @@ func (e *Executor) SetRoster(r *Roster) {
 			panic(fmt.Sprintf("dag: SetRoster Gen %d does not follow current Gen %d", r.Gen, old.Gen))
 		}
 		if e.roster.CompareAndSwap(old, r) {
+			liveRosters.Store(r, struct{}{})
 			if old != nil {
 				old.retire()
 			}

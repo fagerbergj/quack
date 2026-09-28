@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -66,7 +67,7 @@ type builtSDKExtension struct {
 type sdkBuildDeps struct {
 	cfg       *config.Config
 	factories map[string]extsdk.Factory
-	// shapesRef: read lazily by newExtDispatch - finalizeCatalogShapes (serve.go)
+	// shapesRef: read lazily by newExtDispatch - catalogShapes (reload.go)
 	// hasn't run yet when this deps struct is built.
 	shapesRef     *atomic.Pointer[[]workflowcatalog.Shape]
 	orchRef       *atomic.Pointer[orchestrator.Orchestrator]
@@ -561,6 +562,50 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 	return found, foundName, nil
 }
 
+// pinShape pins a roster, then reads the shape. A reload landing between the
+// two can hand back a shape naming agents the pin lacks, so it re-pins once.
+func pinShape(ctx context.Context, pin func(context.Context) (context.Context, func()), name string, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], workflow string) (context.Context, func(), workflowcatalog.Shape, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		pinCtx, done := pin(ctx)
+		shape, err := lookupShape(name, shapesRef, workflow)
+		if err != nil {
+			done()
+			return nil, nil, shape, err
+		}
+		if shapeAgentsIn(shape, dag.AgentNamesFor(pinCtx)) {
+			return pinCtx, done, shape, nil
+		}
+		done()
+	}
+	return nil, nil, workflowcatalog.Shape{}, fmt.Errorf("extensions.%s: plugins reloaded while dispatching workflow %q; retry", name, workflow)
+}
+
+func shapeAgentsIn(s workflowcatalog.Shape, names []string) bool {
+	for _, a := range s.Agents {
+		if !slices.Contains(names, a) {
+			return false
+		}
+	}
+	for _, n := range s.Nodes {
+		if !slices.Contains(names, n.Agent) {
+			return false
+		}
+	}
+	return true
+}
+
+// lookupShape finds workflow in the current catalog; "" is no shape.
+func lookupShape(name string, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], workflow string) (workflowcatalog.Shape, error) {
+	if workflow == "" {
+		return workflowcatalog.Shape{}, nil
+	}
+	shape, ok := workflowcatalog.Lookup(loadShapes(shapesRef), workflow)
+	if !ok {
+		return shape, fmt.Errorf("extensions.%s: workflow %q is not in the configured workflow catalog", name, workflow)
+	}
+	return shape, nil
+}
+
 // loadShapes reads shapesRef's current catalog, tolerating a nil ref or an
 // unset pointer (both mean "no shapes configured yet") the way a nil slice does.
 func loadShapes(shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) []workflowcatalog.Shape {
@@ -583,18 +628,20 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		if req.Chat.LocalID == "" {
 			return fmt.Errorf("extensions.%s: dispatch requires Chat.LocalID", name)
 		}
-		var shape workflowcatalog.Shape
-		if req.Run.Workflow != "" {
-			var ok bool
-			shape, ok = workflowcatalog.Lookup(loadShapes(shapesRef), req.Run.Workflow)
-			if !ok {
-				return fmt.Errorf("extensions.%s: workflow %q is not in the configured workflow catalog", name, req.Run.Workflow)
-			}
-		}
 		orch := orchRef.Load()
 		if orch == nil {
 			return fmt.Errorf("extensions.%s: orchestrator not ready", name)
 		}
+		pinCtx, done, shape, err := pinShape(context.WithoutCancel(ctx), orch.Pin, name, shapesRef, req.Run.Workflow)
+		if err != nil {
+			return err
+		}
+		handedOff := false
+		defer func() {
+			if !handedOff {
+				done()
+			}
+		}()
 		// Namespaced so two extensions (or an extension and a user chat)
 		// can never collide on the same global chat id.
 		chatID := fmt.Sprintf("ext:%s:%s", name, req.Chat.LocalID)
@@ -624,12 +671,11 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// A bound shape (Nodes non-empty) skips the planner LLM call entirely: build the
 		// Plan now, synchronously, so a malformed binding is a hard dispatch error.
 		if nodes, bound := workflowcatalog.Bind(shape, req.Ask.Message); bound {
-			pinCtx, done := orch.Pin(runCtx)
 			plan, err := orch.BuildBoundPlan(pinCtx, nodes, req.Ask.Message, attachments, allowedKinds)
 			if err != nil {
-				done()
 				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
 			}
+			handedOff = true
 			go func() {
 				defer done()
 				driveBoundExtensionRun(pinCtx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, *plan, req.Run.Timeout)

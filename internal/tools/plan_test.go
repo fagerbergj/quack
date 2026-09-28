@@ -33,7 +33,7 @@ func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { retur
 func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup *dag.Setup, args map[string]any) dag.Plan {
 	t.Helper()
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestExecuteToolStampsPlanOnly(t *testing.T) {
 	cache := NewPlanCache()
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 
-	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil)
+	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestCreatePlanIgnoresWholesaleMismatchedSetup(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main", WorkBranch: "feat/real-pr-head"}
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 
 func TestNewCreatePlanToolMetadata(t *testing.T) {
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool error: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 		WorkBranch: "quack/issue-836", // no CheckoutExistingHead
 	}
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}

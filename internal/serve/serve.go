@@ -508,6 +508,9 @@ type boot struct {
 	admission *dag.Admission
 	hooks     *shutdownHooks
 	cleanups  []func()
+	// pristine is cfg before plugin seeding; a reload seeds a fresh copy of it.
+	pristine   *config.Config
+	seedOwners map[string]string // plugin-seeded agent -> plugin
 }
 
 func (b *boot) runCleanups() {
@@ -608,20 +611,18 @@ func (b *boot) initOrchestratorModel(artifacts artifact.Service) (model.LLM, err
 }
 
 // skillsInit is initSkills' result: the resolved plugins, both skill
-// sources, the native toolset, a scoped-toolset builder, and the
-// roster-rebuild hook a REST plugin add/remove/fetch calls (#1430).
+// sources, the native toolset, a scoped-toolset builder, and the reloader a
+// REST plugin add/remove/fetch calls (#1430).
 type skillsInit struct {
 	plugins          []plugin.Plugin
 	builtinSkillSrc  skill.Source
 	skillSrc         skill.Source
 	skillTS          *skilltoolset.SkillToolset
 	newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error)
-	// rebuildSkills swaps in a freshly-admitted roster and returns which
-	// (if any) non-seed rows were refused this pass - review#2: rebuild uses
-	// the SAME per-row admission as boot, not an all-or-nothing gate.
-	rebuildSkills func() (refusals map[string]error, err error)
-	// mcpDeclared reports, by row name, which plugins' mcp.json declares a
-	// server - REST's note; agent tool wiring itself stays boot-fixed.
+	// reload re-admits the registry with the SAME per-row admission as boot
+	// (review#2); it rebuilds agents too once boot attaches them.
+	reload *reloader
+	// mcpDeclared reports, by row name, which plugins' mcp.json declares a server.
 	mcpDeclared func() map[string]bool
 	// reg is the SAME registry bootPluginRegistry opened - initHTTP/mountHTTP
 	// reuse it instead of opening a second connection to a DB-backed store.
@@ -657,10 +658,21 @@ func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (plug
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	seedResults, err := SeedPluginAgentsAndShapes(b.cfg, plugins)
+	// Same split as admitPlugins: a plugins.seed row that fails to seed fails
+	// boot, a REST-added one is dropped like a reload drops it.
+	seedNames := seedPluginNames(b.cfg.Plugins.Seed)
+	b.pristine = cloneForSeeding(b.cfg)
+	cand, plugins, seedResults, err := seedPlugins(b.pristine, plugins, func(p plugin.Plugin, err error) error {
+		if seedNames[p.Name] {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	b.cfg.Agents, b.cfg.Workflows = cand.Agents, cand.Workflows
+	b.seedOwners = seedOwners(seedResults)
 	logPluginSeeds(seedResults)
 	// The merge is done now: every agent must have a bundle/model, whether a
 	// plugin supplied it or the config itself did (deferred by
@@ -675,15 +687,14 @@ func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (plug
 // already-resolved plugin set (see resolvePlugins) - buildFromConfig calls
 // this directly so plugin agents/shapes can be seeded into cfg first.
 func (b *boot) buildSkillsInit(jail *workspace.Jail, reg pluginreg.FetchRegistry, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
-	var mcpDeclaredPtr atomic.Pointer[map[string]bool]
-	mcpDeclaredPtr.Store(mcpDeclaredNames(plugins))
 	// swappable is builtinSkillSrc's registry-derived half; every consumer
-	// below holds this SAME instance, so rebuildSkills' Swap reaches native
+	// below holds this SAME instance, so a reload's Swap reaches native
 	// agents' next round with no rebuild plumbing beyond this one pointer.
-	liveSkillSrc := newSkillSource(plugins)
-	swappable := newSwappableSkillSource(liveSkillSrc)
-	// WrapRef re-reads shapesRef per call, so finalizeCatalogShapes' later
-	// Store reaches this already-built Source and everything wrapping it.
+	swappable := newSwappableSkillSource(newSkillSource(plugins))
+	reload := &reloader{cfg: b.cfg, reg: reg, skills: swappable}
+	reload.declared.Store(mcpDeclaredNames(plugins))
+	// WrapRef re-reads shapesRef per call, so a later Store of the catalog
+	// reaches this already-built Source and everything wrapping it.
 	builtinSkillSrc := workflowcatalog.WrapRef(skill.Source(swappable), shapesRef)
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
@@ -694,51 +705,11 @@ func (b *boot) buildSkillsInit(jail *workspace.Jail, reg pluginreg.FetchRegistry
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
-	var rebuildMu sync.Mutex
-	rebuildSkills := func() (map[string]error, error) {
-		rebuildMu.Lock()
-		defer rebuildMu.Unlock()
-		rows, err := reg.List(context.Background())
-		if err != nil {
-			return nil, err
-		}
-		rows = pluginreg.OrderBySeed(b.cfg.Plugins.Seed, rows)
-		rows = append(rows, pluginreg.EmbeddedQuackPlugin())
-		freshPlugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
-		if err != nil {
-			return nil, err
-		}
-		// Same admission as boot (#1430 review#2) - a refused non-seed row
-		// only drops itself; everything else still swaps in.
-		admitted, refusals, err := admitPlugins(context.Background(), reg, rows, freshPlugins, b.cfg.Plugins.Seed, b.cfg.Extensions.Modules)
-		if err != nil {
-			return nil, err
-		}
-		swappable.Swap(newSkillSource(admitted))
-		mcpDeclaredPtr.Store(mcpDeclaredNames(admitted))
-		return refusals, nil
-	}
 	return skillsInit{
 		plugins: plugins, builtinSkillSrc: builtinSkillSrc, skillSrc: skillSrc,
-		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, rebuildSkills: rebuildSkills,
-		mcpDeclared: func() map[string]bool { return *mcpDeclaredPtr.Load() },
-		reg:         reg,
+		skillTS: skillTS, newScopedSkillTS: newScopedSkillTS, reload: reload,
+		mcpDeclared: reload.mcpDeclared, reg: reg,
 	}, nil
-}
-
-// finalizeCatalogShapes drops shapes naming an agent buildAgents left out of
-// clientMap and Stores the result - shapesRef's readers (WrapRef, newExtDispatch) pick it up on their next call.
-func (b *boot) finalizeCatalogShapes(rawShapes []workflowcatalog.Shape, clientMap map[string]adkagent.Agent, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) {
-	dropped := map[string]bool{}
-	for name, ac := range b.cfg.Agents {
-		if ac.Optional {
-			if _, ok := clientMap[name]; !ok {
-				dropped[name] = true
-			}
-		}
-	}
-	filtered := workflowcatalog.DropAgents(rawShapes, dropped)
-	shapesRef.Store(&filtered)
 }
 
 // opens the task/user memory stores and the shared boot event log
@@ -753,8 +724,8 @@ func (b *boot) initMemory(ctx context.Context, st *store.Store, artifacts artifa
 	return taskStore, userStore, startSweeps, bootEventLog, nil
 }
 
-// builds the SDK extensions, plugin MCP tools, and the ledger recovery path
-func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, *artifactschema.Registry, error) {
+// builds the SDK extensions, their tools, and the ledger recovery path
+func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, *artifactschema.Registry, error) {
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
@@ -767,13 +738,6 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 	extTools := sdkExtensionTools(sdkExts)
-	// Plugin-declared MCP servers are the portable half of the same tool
-	// surface: out of process, jailed, and folded in by name like any other.
-	if mcpCaps, err := pluginSpawnCaps(b.cfg, jail); err != nil {
-		slog.Warn("plugin MCP servers skipped; sandbox caps unavailable", "component", "startup", "err", err)
-	} else {
-		extTools = append(extTools, b.bootPluginMCP(ctx, plugins, mcpCaps).tools()...)
-	}
 	// The SDK inverse interfaces' first real consumer: whichever configured module implements them
 	// (github, today) supplies quack's push credential and delivery target, not hardcoded to one extension.
 	gitTokenSource, deliver, assignmentFreshness, assignmentMeta := discoverSDKToolSources(sdkExts)
@@ -801,8 +765,19 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 	return sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, nil
 }
 
+// startPluginMCP spawns boot's plugin MCP servers: the portable half of the
+// extension tool surface, out of process and jailed. false = no caps, none spawn.
+func (b *boot) startPluginMCP(ctx context.Context, jail *workspace.Jail, plugins []plugin.Plugin) (*mcpSet, bool) {
+	caps, err := pluginSpawnCaps(b.cfg, jail)
+	if err != nil {
+		slog.Warn("plugin MCP servers skipped; sandbox caps unavailable", "component", "startup", "err", err)
+		return newMCPSet(b.cfg.Workspace.Root, caps), false
+	}
+	return b.bootPluginMCP(ctx, plugins, caps), true
+}
+
 // builds the configured agents (and their gate config, executor lookups, and classify model)
-func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM], reg pluginreg.FetchRegistry, artifactSchemas *artifactschema.Registry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, *atomic.Pointer[dag.Executor], dag.SetupFunc, error) {
+func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, judgeModelRef *atomic.Pointer[model.LLM], reg pluginreg.FetchRegistry, artifactSchemas *artifactschema.Registry) (builtAgents, vetting.JudgeFactory, vetting.PlanJudge, *atomic.Pointer[dag.Executor], dag.SetupFunc, func(*config.Config, []extTool) (builtAgents, error), error) {
 	var executorRef atomic.Pointer[dag.Executor]
 	nodeCancelled := func(chatID, nodeID string) bool {
 		ex := executorRef.Load()
@@ -833,9 +808,17 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 		}
 	}
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(b.cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore, reg, b.admission, artifactSchemas)
+	// Shared by every generation, so shutdown's closeAll also reaches nodes of a retired roster.
+	nodeServers := newPerNodeServers()
+	b.cleanups = append(b.cleanups, nodeServers.closeAll)
+	build := func(cfg *config.Config, tools []extTool, setupOut *dag.SetupFunc) (built builtAgents, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, judgeModel model.LLM, err error) {
+		built.dropped = map[string]error{}
+		built.clients, built.models, _, judgeFactory, planJudge, built.gateCfgs, judgeModel, err = buildAgents(cfg, b.res, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, jail, gitTokenSource, tools, deliver, nodeCancelled, repeatGuardTripped, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, setupOut, artifacts, ledgerStore, reg, b.admission, artifactSchemas, nodeServers, built.dropped)
+		return built, judgeFactory, planJudge, judgeModel, err
+	}
+	built, judgeFactory, planJudge, judgeModel, err := build(b.cfg, extTools, &setupFn)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("agent build failed: %w", err)
+		return builtAgents{}, nil, nil, nil, nil, nil, fmt.Errorf("agent build failed: %w", err)
 	}
 	if judgeModel != nil {
 		// An SDK extension's Classify is not a node, but judgeModel is the
@@ -853,16 +836,17 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 		classifyModel = dag.NewAdmittingLLM(classifyModel, b.admission, lightweightSpec(b.cfg, b.cfg.Gates.Judge.Model), nil, nil)
 		judgeModelRef.Store(&classifyModel)
 	}
-	b.cleanups = append(b.cleanups, func() {
-		nodeServers.closeAll()
-	})
-	return clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, &executorRef, setupFn, nil
+	// A reload rebuilds agents the same way, minus the boot-fixed judge and setup.
+	rebuild := func(cfg *config.Config, tools []extTool) (builtAgents, error) {
+		built, _, _, _, err := build(cfg, tools, nil)
+		return built, err
+	}
+	return built, judgeFactory, planJudge, &executorRef, setupFn, rebuild, nil
 }
 
 // assembles the orchestrator, re-enters resumed nodes, and starts the extensions and sweeps
-func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, clientMap map[string]adkagent.Agent, modelMap map[string]model.LLM, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, gateCfgs *gateConfigs, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resumeNodes []store.ResumableNode, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
-	agentInfos, mediaAgents, roster := buildAgentInfos(ctx, b.cfg, b.res, clientMap)
-	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, roster, agentInfos, mediaAgents, setupFn, b.admission, artifactSchemas)
+func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resumeNodes []store.ResumableNode, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
+	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, roster, judgeFactory, planJudge, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, setupFn, b.admission, artifactSchemas)
 	if err != nil {
 		return nil, err
 	}
@@ -887,8 +871,8 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 }
 
 // mounts the HTTP handler and starts the workspace GC
-func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), mcpDeclared func() map[string]bool, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
-	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, rebuildSkills, mcpDeclared, pluginReg)
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, reload *reloader, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, reload, pluginReg)
 	if err != nil {
 		return nil, err
 	}
@@ -959,7 +943,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", err
 	}
 	// Both catalog consumers below are built before buildAgents runs, so this
-	// starts unfiltered; finalizeCatalogShapes corrects it once buildAgents returns.
+	// starts unfiltered; the first generation's catalogShapes corrects it once buildAgents returns.
 	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
 	shapesRef.Store(&rawShapes)
 
@@ -971,20 +955,26 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	sdkExts, extTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, skills.plugins, &shapesRef)
+	sdkExts, sdkTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, &shapesRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	clientMap, modelMap, _, judgeFactory, planJudge, gateCfgs, _, executorRef, setupFn, err := b.initAgents(st, skills.skillTS, skills.builtinSkillSrc, skills.newScopedSkillTS, taskStore, jail, gitTokenSource, extTools, deliver, artifacts, ledgerStore, &judgeModelRef, skills.reg, artifactSchemas)
+	mcp, mcpOn := b.startPluginMCP(ctx, jail, skills.plugins)
+	built, judgeFactory, planJudge, executorRef, setupFn, rebuild, err := b.initAgents(st, skills.skillTS, skills.builtinSkillSrc, skills.newScopedSkillTS, taskStore, jail, gitTokenSource, append(slices.Clone(sdkTools), mcp.tools()...), deliver, artifacts, ledgerStore, &judgeModelRef, skills.reg, artifactSchemas)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef)
-	orch, err := b.initOrchestrator(ctx, st, llm, clientMap, modelMap, judgeFactory, planJudge, gateCfgs, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn, artifactSchemas)
+	rr := &rosterReload{pristine: b.pristine, res: b.res, build: rebuild, sdkTools: sdkTools, mcpOn: mcpOn, shapesRef: &shapesRef}
+	rr.cur = rr.generation(ctx, b.cfg, built, mcp, b.seedOwners, 1)
+	shapesRef.Store(&rr.cur.shapes)
+	orch, err := b.initOrchestrator(ctx, st, llm, rr.cur.roster, judgeFactory, planJudge, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn, artifactSchemas)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.rebuildSkills, skills.mcpDeclared, skills.reg)
+	rr.exec = executorRef.Load()
+	skills.reload.attach(rr)
+	b.cleanups = append(b.cleanups, skills.reload.shutdown)
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, built.clients, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.reload, skills.reg)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1139,8 +1129,7 @@ func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
-	nodeServers := newPerNodeServers()
+func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission, artifactSchemas *artifactschema.Registry, nodeServers *perNodeServers, dropped map[string]error) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
 
 	nodeScope := newNodeScope(jail)
 	names := make([]string, 0, len(cfg.Agents))
@@ -1204,39 +1193,40 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 
 	for _, name := range names {
 		ac := cfg.Agents[name]
-
-		prov, ok := cfg.Provider(ac.Provider)
-		if !ok {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "provider %q not found", ac.Provider)
+		prov, m, err := agentModel(cfg, name, ac, artifacts)
+		var ag adkagent.Agent
+		if err == nil && ac.Acp != nil {
+			ag, err = buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, cfg.ModelCost(ac.Model), registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, reg)
+		} else if err == nil {
+			ag, err = buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg, admission)
 		}
-		acpPricing := cfg.ModelCost(ac.Model)
-		m, err := inference.NewModelWithEffort(prov, ac.Model, artifacts, acpPricing, cfg.ModelEffort(ac.Model))
 		if err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "model: %v", err)
-		}
-
-		if ac.Acp != nil {
-			ag, err := buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, acpPricing, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, reg)
-			if err != nil {
+			if !dropOptionalAgent(name, ac, err, dropped) {
 				return nil, nil, nodeServers, nil, nil, nil, nil, err
 			}
-			clientMap[name] = ag
+			continue
+		}
+		clientMap[name] = ag
+		if ac.Acp != nil {
 			modelMap[name] = m
 			slog.Info("agent running via ACP subprocess", "component", "startup",
 				"agent", name, "command", strings.Join(ac.Acp.Command, " "), "model", ac.Model)
-			continue
 		}
-
-		na, err := buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg, admission)
-		if err != nil {
-			if !dropOptionalAgent(name, ac, err) {
-				return nil, nil, nodeServers, nil, nil, nil, nil, err
-			}
-			continue
-		}
-		clientMap[name] = na
 	}
 	return clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, nil
+}
+
+// agentModel resolves one agent's provider and builds its model.
+func agentModel(cfg *config.Config, name string, ac config.AgentConfig, artifacts artifact.Service) (config.ProviderConfig, model.LLM, error) {
+	prov, ok := cfg.Provider(ac.Provider)
+	if !ok {
+		return prov, nil, fmtErr(name, "provider %q not found", ac.Provider)
+	}
+	m, err := inference.NewModelWithEffort(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model), cfg.ModelEffort(ac.Model))
+	if err != nil {
+		return prov, nil, fmtErr(name, "model: %v", err)
+	}
+	return prov, m, nil
 }
 
 // buildGateJudge assembles the trust-gate config and judge models when the gate is enabled;
@@ -1978,9 +1968,10 @@ func discoverSDKToolSources(sdkExts []builtSDKExtension) (tools.GitTokenSource, 
 	return gitTokenSource, deliver, assignmentFreshness, assignmentMeta
 }
 
-func buildAgentInfos(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, clientMap map[string]adkagent.Agent) ([]dag.AgentInfo, map[string]bool, string) {
+func buildAgentInfos(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, clientMap map[string]adkagent.Agent) ([]dag.AgentInfo, map[string]bool, string, map[string]string) {
 	agentInfos := make([]dag.AgentInfo, 0, len(clientMap))
 	mediaAgents := make(map[string]bool)
+	bundleHashes := make(map[string]string, len(clientMap))
 	for name, c := range clientMap {
 		ac := cfg.Agents[name]
 		// Re-reads a bundle buildAgents already loaded, rather than widen its
@@ -1989,7 +1980,7 @@ func buildAgentInfos(ctx context.Context, cfg *config.Config, res *artifactsrc.R
 		if bundle, err := agent.LoadBundle(ctx, res, ac.Bundle); err != nil {
 			slog.Warn("agent bundle: re-read for default artifact failed", "component", "startup", "agent", name, "err", err)
 		} else {
-			defaultArtifact = bundle.Card.Artifact
+			defaultArtifact, bundleHashes[name] = bundle.Card.Artifact, bundle.Hash
 		}
 		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description(), ContextWindow: ac.ContextWindow, DefaultArtifact: defaultArtifact})
 		for _, inp := range ac.Inputs {
@@ -2004,10 +1995,10 @@ func buildAgentInfos(ctx context.Context, cfg *config.Config, res *artifactsrc.R
 	for _, a := range agentInfos {
 		fmt.Fprintf(&rosterSB, "- `%s` - %s\n", a.Name, a.Description)
 	}
-	return agentInfos, mediaAgents, rosterSB.String()
+	return agentInfos, mediaAgents, rosterSB.String(), bundleHashes
 }
 
-func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, st *store.Store, llm model.LLM, clientMap map[string]adkagent.Agent, modelMap map[string]model.LLM, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, gateCfgs *gateConfigs, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], executorRef *atomic.Pointer[dag.Executor], hooks *shutdownHooks, roster string, agentInfos []dag.AgentInfo, mediaAgents map[string]bool, setupFn dag.SetupFunc, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
+func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], executorRef *atomic.Pointer[dag.Executor], hooks *shutdownHooks, setupFn dag.SetupFunc, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
 	orchBundle, err := agent.LoadBundle(ctx, res, "agents/orchestrator")
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator bundle load failed: %w", err)
@@ -2037,10 +2028,9 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 		return nil, fmt.Errorf("orchestrator skills toolset init failed: %w", err)
 	}
 
-	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands, planJudge)
+	planner := dag.NewPlanner(roster.Infos, cfg.Workspace.CheckCommands, planJudge)
 	executor := dag.NewExecutor(st.Sessions, nil, nil, judgeFactory, nil, nil)
-	executor.SetRoster(&dag.Roster{Gen: 1, Agents: clientMap, Models: modelMap, Media: mediaAgents, Infos: agentInfos, Text: roster,
-		CfgFor: gateCfgs.For, SpecFor: admissionSpecFor(cfg)})
+	executor.SetRoster(roster)
 	orchSysPrompt := promptbuilder.CacheByDay(func(ctx context.Context) string {
 		return strconv.FormatUint(executor.RosterFor(ctx).Gen, 10)
 	}, func(ctx context.Context) string {
@@ -2105,7 +2095,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	return orch, nil
 }
 
-func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, rebuildSkills func() (map[string]error, error), mcpDeclared func() map[string]bool, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, reload *reloader, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
@@ -2128,7 +2118,7 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 	}
 
 	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
-	restPlugins := rest.NewPlugins(pluginReg, cfg.Plugins.Root, cfg.Plugins.Seed, rebuildSkills, mcpDeclared)
+	restPlugins := rest.NewPlugins(pluginReg, cfg.Plugins.Root, cfg.Plugins.Seed, reload.reload, reload.mcpDeclared)
 	restHandler.SetPlugins(restPlugins)
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
 
@@ -2565,13 +2555,16 @@ func contentText(c *genai.Content) string {
 	return b.String()
 }
 
-// dropOptionalAgent: an optional agent whose extension isn't enabled (its tools unresolved) is
-// dropped from the roster with a warning; any other build error still fails boot.
-func dropOptionalAgent(name string, ac config.AgentConfig, err error) bool {
-	if !ac.Optional || !errors.Is(err, tools.ErrUnknownTool) {
+// dropOptionalAgent drops an optional agent that fails to build, recording it in dropped when set:
+// a plugin-seeded one on any error, a config-authored one only when its tools are unknown.
+func dropOptionalAgent(name string, ac config.AgentConfig, err error, dropped map[string]error) bool {
+	if !ac.Optional || (ac.SeededBy == "" && !errors.Is(err, tools.ErrUnknownTool)) {
 		return false
 	}
 	slog.Warn("optional agent unavailable; dropped from the roster", "component", "startup", "agent", name, "err", err)
+	if dropped != nil {
+		dropped[name] = err
+	}
 	return true
 }
 

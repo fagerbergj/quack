@@ -50,16 +50,17 @@ type mcpEntry struct {
 	Headers map[string]string `json:"headers"`
 }
 
-// loadMCP reads <root>/mcp.json per §7.2.2: an absent file is silent, a
-// broken file disables MCP for this plugin only, and a bad single entry skips
-// just that entry. Nothing here ever fails the run.
-func loadMCP(root, name string) map[string]MCPServer {
+// loadMCP reads <root>/mcp.json per §7.2.2: a broken file disables MCP for this plugin, a bad
+// entry skips itself, never failing the run; skipped says why by server ("" = the whole file).
+func loadMCP(root, name string) (servers map[string]MCPServer, skipped map[string]string) {
+	skipped = map[string]string{}
 	b, err := os.ReadFile(filepath.Join(root, "mcp.json"))
 	if err != nil {
 		if !os.IsNotExist(err) {
 			slog.Warn("plugin mcp.json unreadable; MCP disabled for this plugin", "component", "plugin", "plugin", name, "err", err)
+			skipped[""] = "mcp.json unreadable: " + err.Error()
 		}
-		return nil
+		return nil, skipped
 	}
 
 	var f mcpFile
@@ -67,12 +68,14 @@ func loadMCP(root, name string) map[string]MCPServer {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&f); err != nil {
 		slog.Warn("plugin mcp.json invalid; MCP disabled for this plugin", "component", "plugin", "plugin", name, "err", err)
-		return nil
+		skipped[""] = "mcp.json invalid: " + err.Error()
+		return nil, skipped
 	}
 	if f.Schema != mcpSchemaID {
 		slog.Warn("plugin mcp.json targets an unrecognized Agent Plugins version; MCP disabled for this plugin",
 			"component", "plugin", "plugin", name, "schema", f.Schema, "supported", mcpSchemaID)
-		return nil
+		skipped[""] = fmt.Sprintf("mcp.json $schema %q is not %q", f.Schema, mcpSchemaID)
+		return nil, skipped
 	}
 
 	out := make(map[string]MCPServer, len(f.MCPServers))
@@ -80,6 +83,7 @@ func loadMCP(root, name string) map[string]MCPServer {
 		s, err := parseMCPEntry(raw)
 		if err != nil {
 			slog.Warn("plugin mcp.json server skipped", "component", "plugin", "plugin", name, "server", server, "err", err)
+			skipped[server] = err.Error()
 			continue
 		}
 		if s == nil {
@@ -88,9 +92,9 @@ func loadMCP(root, name string) map[string]MCPServer {
 		out[server] = *s
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, skipped
 	}
-	return out
+	return out, skipped
 }
 
 // parseMCPEntry returns nil, nil for a valid entry on a transport quack does

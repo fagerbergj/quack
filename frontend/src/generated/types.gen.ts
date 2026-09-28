@@ -723,13 +723,85 @@ export type Plugin = {
      */
     root?: string;
     /**
-     * This row's mcp.json declares at least one server. MCP servers are enumerated once at boot; adding or updating this row over the API takes effect only after a restart.
+     * This row's mcp.json declares at least one server.
      */
     declares_mcp_servers?: boolean;
+    reload?: PluginReloadReport;
 };
 
 export type PluginList = {
     plugins: Array<Plugin>;
+    reload?: PluginReloadReport;
+};
+
+export type PluginDeleted = {
+    reload: PluginReloadReport;
+};
+
+/**
+ * One roster rebuild's outcome - POST /plugins/reload's body, and the `reload` field plugin add, update and delete responses carry.
+ */
+export type PluginReloadReport = {
+    /**
+     * The roster generation now serving new runs (unchanged when nothing swapped).
+     */
+    generation: number;
+    agents: PluginReloadAgents;
+    workflows: PluginReloadNames;
+    mcp_servers: PluginReloadServers;
+    failures: Array<PluginReloadFailure>;
+};
+
+/**
+ * A refused plugin or aborted reload - ErrorResponse plus the reload's report.
+ */
+export type PluginReloadError = ErrorResponse & {
+    reload: PluginReloadReport;
+};
+
+export type PluginReloadAgents = {
+    added: Array<string>;
+    /**
+     * Agents whose bundle or resolved config changed.
+     */
+    updated: Array<PluginReloadAgentUpdate>;
+    removed: Array<string>;
+};
+
+export type PluginReloadAgentUpdate = {
+    name: string;
+    /**
+     * The new bundle's digest (agent-card.json, prompt.md, rubric.yaml).
+     */
+    bundle_hash: string;
+};
+
+export type PluginReloadNames = {
+    added: Array<string>;
+    updated: Array<string>;
+    removed: Array<string>;
+};
+
+/**
+ * Servers named plugin/server. A changed server is both stopped and started.
+ */
+export type PluginReloadServers = {
+    started: Array<string>;
+    reused: Array<string>;
+    stopped: Array<string>;
+};
+
+export type PluginReloadFailure = {
+    /**
+     * Registry row name, absent for a config-authored agent or a whole-reload failure.
+     */
+    plugin?: string;
+    /**
+     * The agent or MCP server that failed, absent for a whole-plugin failure.
+     */
+    member?: string;
+    stage: 'registry' | 'resolve' | 'admission' | 'seed' | 'config' | 'mcp' | 'agent' | 'closed';
+    error: string;
 };
 
 export type CreatePluginBody = {
@@ -1901,7 +1973,7 @@ export type CreatePluginData = {
 
 export type CreatePluginErrors = {
     /**
-     * entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, quack)
+     * entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, reload, quack)
      */
     400: ErrorResponse;
     /**
@@ -1909,9 +1981,9 @@ export type CreatePluginErrors = {
      */
     409: ErrorResponse;
     /**
-     * fetched, but the plugin's own content is refused (e.g. declares an unlinked module) - the row is stored with the refusal in `error`
+     * Fetched, but the plugin was refused (e.g. declares an unlinked module), or the roster reload that followed aborted. The row stays registered either way - a refusal is also stored in its `error` - and `reload` says why.
      */
-    422: ErrorResponse;
+    422: PluginReloadError;
 };
 
 export type CreatePluginError = CreatePluginErrors[keyof CreatePluginErrors];
@@ -1950,9 +2022,9 @@ export type UpdateAllPluginsData = {
 
 export type UpdateAllPluginsErrors = {
     /**
-     * the roster rebuild itself failed (a plugins.seed refusal, or a registry read failure) - a fetched row's OWN refusal lands in its `error` field in the 200 body instead, never as a 422
+     * the roster reload itself aborted (a plugins.seed refusal, a registry read failure, ...) - fetched rows stay fetched; a row's OWN refusal lands in its `error` field in the 200 body instead, never as a 422
      */
-    422: ErrorResponse;
+    422: PluginReloadError;
 };
 
 export type UpdateAllPluginsError = UpdateAllPluginsErrors[keyof UpdateAllPluginsErrors];
@@ -1965,6 +2037,31 @@ export type UpdateAllPluginsResponses = {
 };
 
 export type UpdateAllPluginsResponse = UpdateAllPluginsResponses[keyof UpdateAllPluginsResponses];
+
+export type ReloadPluginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/plugins/reload';
+};
+
+export type ReloadPluginsErrors = {
+    /**
+     * Nothing swapped - the registry could not be read, a plugins.seed row was refused, a config-authored agent failed to build, or the merged config is incomplete. The old roster keeps serving; `failures` names why.
+     */
+    422: PluginReloadReport;
+};
+
+export type ReloadPluginsError = ReloadPluginsErrors[keyof ReloadPluginsErrors];
+
+export type ReloadPluginsResponses = {
+    /**
+     * The new generation and what changed
+     */
+    200: PluginReloadReport;
+};
+
+export type ReloadPluginsResponse = ReloadPluginsResponses[keyof ReloadPluginsResponses];
 
 export type DeletePluginData = {
     body?: never;
@@ -1984,15 +2081,19 @@ export type DeletePluginErrors = {
      * No such plugin
      */
     404: ErrorResponse;
+    /**
+     * The row is a local root - config-only, removed by editing plugins.seed and restarting
+     */
+    409: ErrorResponse;
 };
 
 export type DeletePluginError = DeletePluginErrors[keyof DeletePluginErrors];
 
 export type DeletePluginResponses = {
     /**
-     * Removed
+     * Removed; `reload` is the roster rebuild that followed
      */
-    204: void;
+    200: PluginDeleted;
 };
 
 export type DeletePluginResponse = DeletePluginResponses[keyof DeletePluginResponses];
@@ -2012,9 +2113,9 @@ export type UpdatePluginErrors = {
      */
     404: ErrorResponse;
     /**
-     * fetched, but the roster rebuild that followed was refused (e.g. the plugin declares an unlinked module)
+     * Fetched, but the plugin was refused (e.g. declares an unlinked module), or the roster reload that followed aborted. The fetched row stays; `reload` says why.
      */
-    422: ErrorResponse;
+    422: PluginReloadError;
 };
 
 export type UpdatePluginError = UpdatePluginErrors[keyof UpdatePluginErrors];

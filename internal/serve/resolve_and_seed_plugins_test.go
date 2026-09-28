@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/pluginreg"
 )
 
 // bootPluginRegistry's own open failure (an unknown plugins.store name)
@@ -84,5 +85,34 @@ func TestResolveAndSeedPlugins_SeedErrorPropagates(t *testing.T) {
 	b := &boot{cfg: cfg}
 	if _, _, _, err := b.resolveAndSeedPlugins(context.Background(), nil); err == nil {
 		t.Fatal("expected the malformed agent.yaml error to propagate")
+	}
+}
+
+// A REST-added row that fails to seed is dropped at boot, as a reload drops it;
+// only a plugins.seed row's failure stops boot.
+func TestResolveAndSeedPlugins_RESTRowSeedErrorDrops(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "acme")
+	writeReloadPlugin(t, root, reloadPlugin{agents: map[string]string{"scout": "tools: [unterminated"}})
+	cfg := minimalPluginTestConfig()
+	cfg.Plugins = &config.PluginsConfig{Root: t.TempDir()}
+	entry, err := pluginreg.ParseEntry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginreg.NewFSRegistry(cfg.Plugins.Root).Put(context.Background(), pluginreg.FromEntry(entry)); err != nil {
+		t.Fatal(err)
+	}
+	b := &boot{cfg: cfg}
+	_, plugins, _, err := b.resolveAndSeedPlugins(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("resolveAndSeedPlugins = %v, want the REST row dropped, not fatal", err)
+	}
+	for _, p := range plugins {
+		if p.Name == "acme" {
+			t.Fatal("the plugin that failed to seed is still served")
+		}
+	}
+	if _, ok := cfg.Agents["scout"]; ok {
+		t.Fatal("the failed plugin's agent was seeded")
 	}
 }

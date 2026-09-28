@@ -8,8 +8,21 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/pluginreg"
+	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// rebuildSkills reloads a skills-only reloader and keys its admission refusals by row name.
+func rebuildSkills(s skillsInit) (map[string]string, error) {
+	rep, err := s.reload.reload(context.Background())
+	refused := map[string]string{}
+	for _, f := range rep.Failures {
+		if f.Stage == schema.Admission && f.Plugin != nil {
+			refused[*f.Plugin] = f.Error
+		}
+	}
+	return refused, err
+}
 
 // TestRebuildSkillsPicksUpNewlyRegisteredPlugin is #1430 P2's roster-rebuild
 // requirement: a plugin added to the registry AFTER boot (REST's job) must
@@ -28,7 +41,7 @@ func TestRebuildSkillsPicksUpNewlyRegisteredPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initSkills: %v", err)
 	}
-	builtinSkillSrc, rebuildSkills := skills.builtinSkillSrc, skills.rebuildSkills
+	builtinSkillSrc := skills.builtinSkillSrc
 	// A REST-style add: write a local plugin root (plugin.json + skills/) and
 	// Put it into the SAME registry initSkills resolved against - no git needed
 	// for a local entry. The registry row name is the entry's own base name
@@ -53,7 +66,7 @@ func TestRebuildSkillsPicksUpNewlyRegisteredPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if refusals, err := rebuildSkills(); err != nil || len(refusals) != 0 {
+	if refusals, err := rebuildSkills(skills); err != nil || len(refusals) != 0 {
 		t.Fatalf("rebuildSkills = (%v, %v), want no refusals and no error", refusals, err)
 	}
 
@@ -98,11 +111,11 @@ func TestRebuildSkillsDropsOnlyTheRefusedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refusals, err := skills.rebuildSkills()
+	refusals, err := rebuildSkills(skills)
 	if err != nil {
 		t.Fatalf("rebuildSkills = %v, want nil (only a seed refusal is fatal)", err)
 	}
-	if refusals[entry.Name()] == nil {
+	if refusals[entry.Name()] == "" {
 		t.Fatalf("refusals = %v, want the bad row named", refusals)
 	}
 
@@ -157,7 +170,7 @@ func TestRebuildSkillsPreExistingRefusalDoesNotBlockAnUnrelatedAdd(t *testing.T)
 	if err := reg.Put(context.Background(), pluginreg.FromEntry(badEntry)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := skills.rebuildSkills(); err != nil {
+	if _, err := rebuildSkills(skills); err != nil {
 		t.Fatalf("first rebuild (establishing the refusal) = %v, want nil", err)
 	}
 
@@ -174,11 +187,11 @@ func TestRebuildSkillsPreExistingRefusalDoesNotBlockAnUnrelatedAdd(t *testing.T)
 		t.Fatal(err)
 	}
 
-	refusals, err := skills.rebuildSkills()
+	refusals, err := rebuildSkills(skills)
 	if err != nil {
 		t.Fatalf("rebuild after an unrelated add = %v, want nil (the pre-existing refusal is not fatal)", err)
 	}
-	if refusals[badEntry.Name()] == nil {
+	if refusals[badEntry.Name()] == "" {
 		t.Errorf("refusals = %v, want the still-bad row named again", refusals)
 	}
 

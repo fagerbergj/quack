@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,16 +110,18 @@ func TestDeletePlugin500OnGenericRegistryError(t *testing.T) {
 func TestDeletePluginRebuildFailureIsWarnOnly(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
-	if err := reg.Put(context.Background(), pluginreg.Plugin{Name: "widgets", Source: pluginreg.SourceLocal, Entry: "widgets"}); err != nil {
+	if err := reg.Put(context.Background(), pluginreg.Plugin{Name: "widgets", Source: pluginreg.SourceGitHub, Entry: "github:acme/widgets", Owner: "acme", Repo: "widgets"}); err != nil {
 		t.Fatal(err)
 	}
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		return schema.PluginReloadReport{}, errors.New("roster refused")
+	}, nil))
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	w := httptest.NewRecorder()
 	h.DeletePlugin(w, r, "widgets")
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, body %s, want 204 (delete succeeds regardless of rebuild)", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s, want 200 (delete succeeds regardless of rebuild)", w.Code, w.Body.String())
 	}
 }
 
@@ -161,7 +164,9 @@ func TestUpdatePluginRebuildRefusalIs422(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		return schema.PluginReloadReport{}, errors.New("roster refused")
+	}, nil))
 	doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`) // already 422s, row still stored
 
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -197,7 +202,9 @@ func TestUpdateAllPluginsRebuildRefusalIs422(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		return schema.PluginReloadReport{}, errors.New("roster refused")
+	}, nil))
 	w := doJSON(t, h.UpdateAllPlugins, http.MethodPost, "")
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body %s, want 422", w.Code, w.Body.String())
@@ -209,8 +216,8 @@ func TestUpdateAllPluginsRebuildRefusalIs422(t *testing.T) {
 // a second line of defense, cheap to prove directly.
 func TestRebuildNilReceiverIsNoop(t *testing.T) {
 	var p *Plugins
-	if refusals, err := p.rebuild(); err != nil || refusals != nil {
-		t.Fatalf("rebuild() on a nil *Plugins = (%v, %v), want (nil, nil)", refusals, err)
+	if rep, err := p.rebuild(context.Background()); err != nil || len(rep.Failures) != 0 {
+		t.Fatalf("rebuild() on a nil *Plugins = (%v, %v), want an empty report", rep, err)
 	}
 	if p.declaresMCP("widgets") {
 		t.Fatal("declaresMCP() on a nil *Plugins = true, want false")
@@ -296,4 +303,43 @@ func TestListPluginsShadowedEmbeddedRowNotDuplicated(t *testing.T) {
 	if list.Plugins[0].Source != "github" {
 		t.Errorf("the one quack row's source = %q, want github (the real row wins, not embedded)", list.Plugins[0].Source)
 	}
+}
+
+// DELETE fails closed: an unreadable registry can't tell a local root from a github row.
+func TestDeletePlugin500OnRegistryListError(t *testing.T) {
+	reg := &failingRegistry{listErr: errors.New("disk error"), deleteErr: errors.New("must not be called")}
+	h := handlerWith(reg)
+	w := httptest.NewRecorder()
+	h.DeletePlugin(w, httptest.NewRequest(http.MethodDelete, "/", nil), "widgets")
+	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "must not be called") {
+		t.Fatalf("status = %d, body %s, want 500 before any delete", w.Code, w.Body.String())
+	}
+}
+
+// A single-row fetch runs under pluginUpdateBudget, so a hung remote can't hold writeMu.
+func TestCreatePluginFetchIsBudgeted(t *testing.T) {
+	prev := pluginUpdateBudget
+	pluginUpdateBudget = 50 * time.Millisecond
+	t.Cleanup(func() { pluginUpdateBudget = prev })
+	var deadline time.Time
+	reg := &deadlineRegistry{seen: &deadline}
+	h := handlerWith(reg)
+	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if deadline.IsZero() || time.Until(deadline) > time.Second {
+		t.Fatalf("fetch deadline = %v, want one within the budget", deadline)
+	}
+}
+
+// deadlineRegistry records the deadline Fetch was handed.
+type deadlineRegistry struct {
+	failingRegistry
+	seen *time.Time
+}
+
+func (d *deadlineRegistry) Fetch(ctx context.Context, p pluginreg.Plugin) (pluginreg.Plugin, error) {
+	*d.seen, _ = ctx.Deadline()
+	return p, nil
 }

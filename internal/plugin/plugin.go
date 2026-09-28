@@ -68,6 +68,8 @@ type Plugin struct {
 	// MCPServers are mcp.json's stdio entries, unexpanded - ${PLUGIN_DATA}
 	// is only known to the caller that owns the data directory.
 	MCPServers map[string]MCPServer
+	// MCPSkipped is why mcp.json entries were left out, by server ("" = the whole file).
+	MCPSkipped map[string]string
 }
 
 // Module is one host-coupled Go module a plugin declares. Path is carried so
@@ -150,7 +152,7 @@ func resolveRoot(root string) (*Plugin, error) {
 
 	p, err := fromRootManifest(abs)
 	if err == nil {
-		p.MCPServers = loadMCP(abs, p.Name)
+		p.MCPServers, p.MCPSkipped = loadMCP(abs, p.Name)
 		return p, nil
 	}
 	var nsErr *NamespaceError

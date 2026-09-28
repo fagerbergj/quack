@@ -2,6 +2,7 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -47,9 +48,9 @@ func newPluginsTestHandler(t *testing.T) (*Handler, *atomic.Int64) {
 	reg := pluginreg.NewFSRegistry(root)
 	var rebuilds atomic.Int64
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) {
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
 		rebuilds.Add(1)
-		return nil, nil
+		return schema.PluginReloadReport{Generation: rebuilds.Load()}, nil
 	}, nil))
 	return h, &rebuilds
 }
@@ -95,6 +96,9 @@ func TestCreatePluginRoundTrip(t *testing.T) {
 	if rebuilds.Load() == 0 {
 		t.Fatal("expected the skill roster rebuild hook to fire on create")
 	}
+	if p.Reload == nil || p.Reload.Generation != rebuilds.Load() {
+		t.Fatalf("created row reload = %+v, want the reload that followed the add", p.Reload)
+	}
 
 	w = doJSON(t, h.ListPlugins, http.MethodGet, "")
 	var list schema.PluginList
@@ -138,7 +142,7 @@ func TestPluginNoteFlagsDeclaredMCPServersAcrossUpdate(t *testing.T) {
 		}
 		return m
 	}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, nil }, mcpDeclared))
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) { return schema.PluginReloadReport{}, nil }, mcpDeclared))
 
 	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
 	p := decodePlugin(t, w)
@@ -186,11 +190,15 @@ func TestDeletePlugin(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	w := httptest.NewRecorder()
 	h.DeletePlugin(w, r, "widgets")
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if rebuilds.Load() == 0 {
 		t.Fatal("expected the skill roster rebuild hook to fire on delete")
+	}
+	var deleted schema.PluginDeleted
+	if err := json.NewDecoder(w.Body).Decode(&deleted); err != nil || deleted.Reload.Generation != rebuilds.Load() {
+		t.Fatalf("delete body = %+v (%v), want the reload that followed", deleted, err)
 	}
 
 	w = httptest.NewRecorder()
@@ -451,9 +459,10 @@ func TestRebuildRefusalIs422AndStoresError(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	refusal := errors.New(`plugin "widgets" declares module "x", which is not linked`)
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) {
-		return map[string]error{"widgets": refusal}, nil
+	name := "widgets"
+	refused := schema.PluginReloadFailure{Plugin: &name, Stage: schema.Admission, Error: `plugin "widgets" declares module "x", which is not linked`}
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		return schema.PluginReloadReport{Failures: []schema.PluginReloadFailure{refused}}, nil
 	}, nil))
 
 	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
@@ -462,5 +471,101 @@ func TestRebuildRefusalIs422AndStoresError(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "not linked") {
 		t.Fatalf("422 body should carry the refusal, got %s", w.Body.String())
+	}
+}
+
+// POST /plugins/reload: 200 with the report, or 422 with the same shape when nothing swapped.
+func TestReloadPlugins(t *testing.T) {
+	root := t.TempDir()
+	reg := pluginreg.NewFSRegistry(root)
+	plugin := "p"
+	failed := schema.PluginReloadReport{Generation: 4, Failures: []schema.PluginReloadFailure{{Plugin: &plugin, Stage: schema.Registry, Error: "registry down"}}}
+	cases := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"swapped", nil, http.StatusOK},
+		{"aborted", errors.New("registry down"), http.StatusUnprocessableEntity},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &Handler{}
+			h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) { return failed, tc.err }, nil))
+			w := doJSON(t, h.ReloadPlugins, http.MethodPost, "")
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d", w.Code, tc.status)
+			}
+			var got schema.PluginReloadReport
+			if err := json.NewDecoder(w.Body).Decode(&got); err != nil || got.Generation != 4 || len(got.Failures) != 1 {
+				t.Fatalf("body = %+v (%v), want the reload report", got, err)
+			}
+		})
+	}
+	w := doJSON(t, (&Handler{}).ReloadPlugins, http.MethodPost, "")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("unwired status = %d, want 500", w.Code)
+	}
+}
+
+func TestCreatePluginRefusesReloadName(t *testing.T) {
+	h, _ := newPluginsTestHandler(t)
+	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/reload"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for the reserved name", w.Code)
+	}
+}
+
+// A create whose reload aborts answers 422 with the report, and the row stays registered.
+func TestCreatePluginReloadAbortKeepsRowAndReports(t *testing.T) {
+	bare, _ := newFixtureRepo(t)
+	withFixedRemote(t, bare)
+	root := t.TempDir()
+	reg := pluginreg.NewFSRegistry(root)
+	h := &Handler{}
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		rep := NewReloadReport(3)
+		rep.Failures = append(rep.Failures, schema.PluginReloadFailure{Stage: schema.Registry, Error: "registry down"})
+		return rep, errors.New("registry down")
+	}, nil))
+	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", w.Code)
+	}
+	var body schema.PluginReloadError
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil || body.Error != "registry down" || body.Reload.Generation != 3 || len(body.Reload.Failures) != 1 {
+		t.Fatalf("body = %+v (%v), want the message and the reload report", body, err)
+	}
+	rows, err := reg.List(context.Background())
+	if err != nil || len(rows) != 1 || rows[0].Name != "widgets" {
+		t.Fatalf("rows = %+v (%v), want widgets kept", rows, err)
+	}
+}
+
+func TestReloadUnwiredReportsEmptyLists(t *testing.T) {
+	root := t.TempDir()
+	h := &Handler{}
+	h.SetPlugins(NewPlugins(pluginreg.NewFSRegistry(root), root, nil, nil, nil))
+	w := doJSON(t, h.ReloadPlugins, http.MethodPost, "")
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "null") {
+		t.Fatalf("unwired reload = %d %s, want 200 with empty lists", w.Code, w.Body.String())
+	}
+}
+
+// A local root is config-only: DELETE refuses it and the row survives.
+func TestDeletePluginRefusesLocalRoot(t *testing.T) {
+	h, _ := newPluginsTestHandler(t)
+	root := t.TempDir()
+	row := pluginreg.Plugin{Name: filepath.Base(root), Source: pluginreg.SourceLocal, Entry: root}
+	if err := h.plugins.reg.Put(context.Background(), row); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.DeletePlugin(w, httptest.NewRequest(http.MethodDelete, "/", nil), row.Name)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "plugins.seed") {
+		t.Fatalf("status = %d %s, want 409 naming plugins.seed", w.Code, w.Body.String())
+	}
+	if rows, _ := h.plugins.reg.List(context.Background()); len(rows) != 1 {
+		t.Fatalf("rows = %+v, want the local row kept", rows)
 	}
 }

@@ -156,3 +156,54 @@ func TestOrchestratorExecuteRunsOnPinnedRoster(t *testing.T) {
 		t.Fatalf("answer = %q, want the pinned roster's RESEARCH-RESULT", answer)
 	}
 }
+
+// planProbe hires agent via create_plan and records the tool's response.
+type planProbe struct {
+	agent string
+	mu    sync.Mutex
+	resp  map[string]any
+}
+
+func (*planProbe) Name() string { return "planProbe" }
+
+func (p *planProbe) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		for _, c := range req.Contents {
+			for _, part := range c.Parts {
+				if part.FunctionResponse != nil && part.FunctionResponse.Name == "create_plan" {
+					p.mu.Lock()
+					p.resp = part.FunctionResponse.Response
+					p.mu.Unlock()
+					yield(stubText("done"), nil)
+					return
+				}
+			}
+		}
+		yield(stubCall("create_plan", map[string]any{"assignments": []any{map[string]any{"agent": p.agent, "task": "t"}}}), nil)
+	}
+}
+
+// A reload after a turn pinned its roster leaves create_plan on that roster: an
+// agent only the old generation has is hired, one only the new generation has is not.
+func TestCreatePlanUsesPinnedRosterAcrossSwap(t *testing.T) {
+	for _, tc := range []struct {
+		agent  string
+		hireOK bool
+	}{{"web-researcher", true}, {"fresh", false}} {
+		t.Run(tc.agent, func(t *testing.T) {
+			probe := &planProbe{agent: tc.agent}
+			o := newTestOrch(t, probe)
+			pinProbe(o)
+			pinned, done := o.executor.Pin(context.Background())
+			defer done()
+			o.executor.SetRoster(&dag.Roster{Gen: 2, Infos: []dag.AgentInfo{{Name: "fresh"}}})
+			dag.SetAgentRoster([]dag.AgentInfo{{Name: "fresh"}})
+			drain(o.Run(pinned, "u", "chat", SourceApp, "plan it", nil))
+			probe.mu.Lock()
+			defer probe.mu.Unlock()
+			if _, hired := probe.resp["plan_id"]; hired != tc.hireOK {
+				t.Fatalf("create_plan(%s) response = %v, want hired=%v", tc.agent, probe.resp, tc.hireOK)
+			}
+		})
+	}
+}
