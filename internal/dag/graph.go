@@ -36,7 +36,7 @@ const (
 type nodeScopedWorker interface {
 	// Builds a node's own worker, model and tools (internal/serve's nativeAgent); see that
 	// implementation for drain, setRoundCoords, sink, ctx and release semantics.
-	ForNode(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
+	ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source is the run's origin (extension name or a fixed
@@ -81,7 +81,7 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 		var refreshPrompt func(context.Context) artifactsrc.Artifact
 		perCall := false // native workers hold admission per model call; ACP nodes per subprocess round
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
+			w, m, wt, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, vetting.AdvisorThreadToken(plan.ID, n.ID), liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
@@ -90,7 +90,7 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 			// frees between this node's model calls (tool phases overlap).
 			perCall = true
 		}
-		worker, err := withRoundAbort(worker, controls, chatID, node.ID)
+		worker, err := withRoundAbort(worker, controls, chatID, node.ID, vetting.AdvisorThreadToken(plan.ID, node.ID))
 		if err != nil {
 			return nil, nil, fmt.Errorf("dag: node %q: round-abort wrap: %w", node.ID, err)
 		}
@@ -115,17 +115,15 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 	return nodesByID, subAgents, nil
 }
 
-// withRoundAbort wraps the worker so a node cancel or RepeatGuardTripped can
-// abort its round mid-flight. Must wrap the Agent itself, not ctx deeper in
-// the call chain: workflow.RunNode's scheduler binds the child's context
-// once, at node activation, so only the Agent it calls Run on can inject a
-// cancel that reaches it.
-func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID string) (adkagent.Agent, error) {
+// withRoundAbort wraps the worker so a node cancel or RepeatGuardTripped can abort its round, and stamps
+// the node's advisor token on its ctx (an in-process ACP worker's only scope source). Must wrap the Agent itself.
+func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID, token string) (adkagent.Agent, error) {
 	return adkagent.New(adkagent.Config{
 		Name:        inner.Name(),
 		Description: inner.Description(),
 		Run: func(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
 			return func(yield func(*session.Event, error) bool) {
+				ctx = ctx.WithContext(vetting.WithAdvisorToken(ctx, token))
 				nc := controls.get(chatID, nodeID)
 				if nc == nil {
 					for ev, err := range inner.Run(ctx) {
@@ -299,7 +297,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)
-			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
+			cfg.AdvisorToken = token
 			atts := plan.Attachments
 			if !mediaAgents[node.AgentName] {
 				atts = nil

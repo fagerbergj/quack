@@ -727,7 +727,7 @@ func TestRunPrompt_EnvironmentBlockTrailsTheTask(t *testing.T) {
 	}
 	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "add the feature\n\n" + vetting.AdvisorThreadMarker(token)}}}
 	var lastText string
-	for ev, err := range r.Run(t.Context(), "u1", "s1", task, adkagent.RunConfig{}) {
+	for ev, err := range r.Run(vetting.WithAdvisorToken(t.Context(), token), "u1", "s1", task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
 		}
@@ -767,7 +767,7 @@ func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	}
 	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review the PR\n\n" + vetting.AdvisorThreadMarker(token)}}}
 	var lastText string
-	for ev, err := range r.Run(t.Context(), "u1", "s1", task, adkagent.RunConfig{}) {
+	for ev, err := range r.Run(vetting.WithAdvisorToken(t.Context(), token), "u1", "s1", task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
 		}
@@ -1019,7 +1019,7 @@ func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "add the feature\n\n" + vetting.AdvisorThreadMarker(token)}}}
-	for _, err := range r.Run(t.Context(), "u1", "s1", task, adkagent.RunConfig{}) {
+	for _, err := range r.Run(vetting.WithAdvisorToken(t.Context(), token), "u1", "s1", task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
 		}

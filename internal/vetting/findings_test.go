@@ -254,7 +254,7 @@ func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("worker: %v", err)
 	}
-	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", IsReviewer: true, ReadOnly: true}
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", IsReviewer: true, ReadOnly: true, AdvisorToken: token}
 	var res GateResult
 	node, err := newTestGatedNodeCapture("reviewer-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg, &res)
 	if err != nil {

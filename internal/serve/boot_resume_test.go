@@ -448,6 +448,7 @@ func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 
 	readFileTool, err := tools.Build([]string{"read_file"}, tools.Deps{
 		Workspace: jail, WorkspaceUserID: userID, WorkspaceCaps: workspace.DefaultCaps(),
+		CallScope: tools.CallScope{AdvisorToken: vetting.AdvisorThreadToken(plan.ID, "n1")},
 	})
 	if err != nil {
 		t.Fatalf("tools.Build: %v", err)

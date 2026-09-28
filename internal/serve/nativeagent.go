@@ -39,12 +39,12 @@ type nodeRelease func(paused bool)
 type promptRefresher func(ctx context.Context) artifactsrc.Artifact
 
 // nodeBuilder builds one native node's dispatch worker.
-type nodeBuilder func(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error)
+type nodeBuilder func(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error)
 
 // ForNode builds one node's worker and tools (#1123); sink and ctx's chat turn id are handed
 // to the tools, whose A2A-served ctx carries neither. release(paused) closes its A2A server.
-func (n nativeAgent) ForNode(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
-	return n.build(ctx, nodeKey, drain, artifacts, appName, userID, chatID, nodeID, sink)
+func (n nativeAgent) ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
+	return n.build(ctx, nodeKey, advisorToken, drain, artifacts, appName, userID, chatID, nodeID, sink)
 }
 
 // perNodeServers tracks currently-open per-node A2A servers (nativeAgent.ForNode) so process

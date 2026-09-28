@@ -1,11 +1,11 @@
 package vetting
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"sync"
 
 	"google.golang.org/adk/v2/artifact"
@@ -15,26 +15,14 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// advisorMarkerRe extracts the token from the marker line.
-var advisorMarkerRe = regexp.MustCompile(`\[\[quack:advisor-thread:([^\]]+)\]\]`)
-
 // AdvisorThreadToken: stable per-node token.
 func AdvisorThreadToken(planID, nodeID string) string {
 	return planID + "/" + nodeID
 }
 
-// AdvisorThreadMarker: trailing marker (last-match rule handles foreign markers).
+// AdvisorThreadMarker is the retired prompt-marker syntax; tests plant it to prove no scope is read from prompt text.
 func AdvisorThreadMarker(token string) string {
 	return "[[quack:advisor-thread:" + token + "]]"
-}
-
-// ParseAdvisorThread: extracts the LAST token from prompt text.
-func ParseAdvisorThread(text string) (token string, ok bool) {
-	ms := advisorMarkerRe.FindAllStringSubmatch(text, -1)
-	if len(ms) == 0 {
-		return "", false
-	}
-	return ms[len(ms)-1][1], true
 }
 
 // AdvisorTask: per-node identity/session coords, keyed by thread token. The
@@ -408,6 +396,19 @@ func UnregisterMemSession(secret string) {
 }
 
 var advisorThreads sync.Map // token → AdvisorTask
+
+type advisorTokenKey struct{}
+
+// WithAdvisorToken marks ctx as an in-process run acting for node token: dag stamps every worker round, the gate every judge round.
+func WithAdvisorToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, advisorTokenKey{}, token)
+}
+
+// AdvisorTokenFromContext is the token WithAdvisorToken set on ctx, "" if none.
+func AdvisorTokenFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(advisorTokenKey{}).(string)
+	return s
+}
 
 func RegisterAdvisorThread(token string, t AdvisorTask) {
 	advisorThreads.Store(token, t)

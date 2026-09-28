@@ -16,17 +16,18 @@ import (
 type cancelGuard struct {
 	inner     runnableTool
 	cancelled func(chatID, nodeID string) bool
+	scope     CallScope
 }
 
 // cancelledMsg: instruction to stop, not a diagnostic (retry loops defeat cancellation).
 const cancelledMsg = "This node was CANCELLED by the user. Stop calling tools. End your turn now with whatever you have."
 
-func newCancelGuard(inner tool.Tool, cancelled func(chatID, nodeID string) bool) (tool.Tool, error) {
+func newCancelGuard(inner tool.Tool, cancelled func(chatID, nodeID string) bool, scope CallScope) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
 		return nil, fmt.Errorf("tool %q does not support node cancellation (not a runnable function tool)", inner.Name())
 	}
-	return &cancelGuard{inner: rt, cancelled: cancelled}, nil
+	return &cancelGuard{inner: rt, cancelled: cancelled, scope: scope}, nil
 }
 
 func (c *cancelGuard) Name() string        { return c.inner.Name() }
@@ -46,9 +47,9 @@ func (c *cancelGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 	return rebindToolMap(c.inner, c, ctx, req)
 }
 
-// Run: refuses if node cancelled; calls without node scope are never blocked.
+// Run: refuses if node cancelled; calls without node scope, or whose thread is gone, are never blocked.
 func (c *cancelGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
-	if chatID, nodeID := nodeScope(ctx); nodeID != "" && c.cancelled(chatID, nodeID) {
+	if chatID, nodeID := c.scope.node(ctx); nodeID != "" && c.cancelled(chatID, nodeID) {
 		slog.Info("tool call refused: node cancelled by user", "component", "tools",
 			"tool", c.Name(), "chat", chatID, "node", nodeID)
 		return nil, fmt.Errorf("%s", cancelledMsg)
@@ -56,8 +57,8 @@ func (c *cancelGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	return c.inner.Run(ctx, args)
 }
 
-// nodeScope: resolves (chat, node) from the advisor-thread marker; ("", "") outside a gated node.
-func nodeScope(ctx agent.Context) (chatID, nodeID string) {
-	at, _ := advisorTask(ctx)
+// node is the calling node's (chat, node); ("", "") outside a node or when its thread is not registered.
+func (s CallScope) node(ctx agent.Context) (chatID, nodeID string) {
+	at, _ := s.advisorTask(ctx)
 	return at.ChatID, at.NodeID
 }

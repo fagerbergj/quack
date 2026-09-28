@@ -181,6 +181,7 @@ func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
 		NodeID: "reviewer-node", WorkspaceNodeID: workspace.SharedRepoScope, ChatID: "c1", SessionID: "c1",
 	})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
+	fb.scope = CallScope{AdvisorToken: token}
 	ctx := &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "review the PR\n\n" + vetting.AdvisorThreadMarker(token)}
 
 	cloneDir, err := j.EnsureDir("u1", "c1", workspace.SetupCloneDir(workspace.SharedRepoScope))

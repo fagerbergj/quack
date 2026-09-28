@@ -19,6 +19,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/skillsource"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -41,13 +42,22 @@ func (s *turnRecorder) SaveWithMeta(ctx context.Context, req *artifact.SaveReque
 // toolCallProvider answers the worker's first chat completion with a call to
 // name and every later one (after the tool result) with plain text.
 func toolCallProvider(t *testing.T, name string, args map[string]any) *httptest.Server {
+	return scriptedProvider(t, name, args, `"role":"tool"`, nil)
+}
+
+// scriptedProvider keeps calling name until a request body contains doneWhen, then answers
+// plain text; record, when set, sees every request body.
+func scriptedProvider(t *testing.T, name string, args map[string]any, doneWhen string, record func(body string)) *httptest.Server {
 	t.Helper()
 	argJSON, _ := json.Marshal(args)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		if record != nil {
+			record(string(body))
+		}
 		msg := `{"role":"assistant","content":"done"}`
 		finish := "stop"
-		if !strings.Contains(string(body), `"role":"tool"`) {
+		if !strings.Contains(string(body), doneWhen) {
 			call, _ := json.Marshal(map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": name, "arguments": string(argJSON)}})
 			msg, finish = `{"role":"assistant","content":"","tool_calls":[`+string(call)+`]}`, "tool_calls"
 		}
@@ -56,9 +66,15 @@ func toolCallProvider(t *testing.T, name string, args map[string]any) *httptest.
 	}))
 }
 
+// stubNodeOpts are buildStubNodeAgent's optional wiring: a memory store and the repeat-guard trip hook.
+type stubNodeOpts struct {
+	taskStore *memory.Store
+	tripped   func(chatID, nodeID, msg string) bool
+}
+
 // buildStubNodeAgent builds the "tutor" native agent against a stub provider,
-// offering toolNames (resolved against builtins and extTools).
-func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, extTools []extTool, artifacts artifact.Service) nativeAgent {
+// offering toolNames (resolved against builtins and extTools), and returns its workspace jail.
+func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, extTools []extTool, artifacts artifact.Service, opts stubNodeOpts) (nativeAgent, *workspace.Jail) {
 	t.Helper()
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -77,16 +93,16 @@ func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, ex
 		Agents: map[string]config.AgentConfig{
 			"tutor": {Bundle: "../../agents/web-researcher", Provider: "stub", Model: "m", Tools: toolNames},
 		},
-		Workspace: config.WorkspaceConfig{Sandbox: "none"},
+		Workspace: config.WorkspaceConfig{Sandbox: "none", MaxListEntries: 50},
 	}
 	var setupFn dag.SetupFunc
 	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, nil, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, jail, nil, extTools, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts, nil, nil, nil, nil, newPerNodeServers(), nil)
+		opts.taskStore, jail, nil, extTools, nil, nil, opts.tripped, nil, nil, nil, nil, &setupFn, artifacts, nil, nil, nil, nil, newPerNodeServers(), nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}
 	t.Cleanup(nodeServers.closeAll)
-	return clientMap["tutor"].(nativeAgent)
+	return clientMap["tutor"].(nativeAgent), jail
 }
 
 // runStubNode drives one round of a node's worker (its A2A client) with msg as the user turn.
@@ -111,7 +127,7 @@ func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
 	provider := toolCallProvider(t, "render_ui", map[string]any{"surface_id": "s1", "components": []any{map[string]any{"id": "root", "component": "Text", "text": "hi"}}})
 	defer provider.Close()
 	artifacts := &turnRecorder{Service: artifact.InMemoryService(), turns: map[string]string{}}
-	agent := buildStubNodeAgent(t, provider.URL, []string{"render_ui"}, nil, artifacts)
+	agent, _ := buildStubNodeAgent(t, provider.URL, []string{"render_ui"}, nil, artifacts, stubNodeOpts{})
 
 	var mu sync.Mutex
 	var revs []stream.ArtifactRevisionData
@@ -123,7 +139,7 @@ func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
 		}
 	}
 	ctx := stream.WithTurnID(context.Background(), "turn-7")
-	worker, _, _, _, _, release, err := agent.ForNode(ctx, "p:n1", nil, artifacts, "quack", "u1", "chat-1", "n1", sink)
+	worker, _, _, _, _, release, err := agent.ForNode(ctx, "p:n1", "p/n1", nil, artifacts, "quack", "u1", "chat-1", "n1", sink)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

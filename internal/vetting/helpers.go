@@ -103,7 +103,7 @@ type Config struct {
 	CheckCommands      []string      // prefix allowlist; empty ⇒ checks disabled
 	CheckSetup         []string      // repo bootstrap commands; run once per clone (checks.go, baseline.go) before checks are derived/run, both in the worker's tree and the base baseline worktree
 	NodeID             string        // workspace scope for checks/clone resolution
-	AdvisorToken       string        // fs tool scope token; empty = no scope
+	AdvisorToken       string        // the node's advisor token, set by dag (never parsed from the prompt); empty = no node
 	Agent              string        // observability only
 	// BundleHash: this agent's bundle content hash (agent.Bundle.Hash) -
 	// ledger provenance only (#1096), stamped onto worker ledger.Coords

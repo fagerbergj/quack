@@ -161,13 +161,12 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 	return a.runPrompt(ctx, inputText(nodeInput))
 }
 
-// resolveNode derives the node's working directory, memory-MCP credential,
-// and per-node scratch dir from the advisor-thread marker in the prompt
-// (the GitHub context-dir grant this used to also derive is gone - #1010 deleted the mechanism). memSecret is resolved separately in the memSessions registry - the advisor-thread token never doubles as the MCP bearer credential. chatID/nodeID are the advisor thread's own (at.ChatID, at.NodeID) - the executor's controls key (dag's controls.register(chatID, node.ID)), unlike cfg.NodeID (which collapses to the shared workspace scope on a setup chain's writer node) or at.SessionID (the ADK session id, a retry-only alias - see AdvisorTask.ChatID).
-func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, scratchDir, acpStateDir string, readOnly bool, chatID, nodeID, token, priorSessionID string, err error) {
-	token, ok := vetting.ParseAdvisorThread(prompt)
-	if !ok {
-		return "", "", "", "", false, "", "", "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+// resolveNode derives the node's cwd, memory-MCP credential and scratch dirs from the token dag stamps
+// on the round ctx, never the prompt; no token or no registration fails the round before any spawn.
+func (a *Agent) resolveNode(ctx context.Context) (cwd, memSecret, scratchDir, acpStateDir string, readOnly bool, chatID, nodeID, token, priorSessionID string, err error) {
+	token = vetting.AdvisorTokenFromContext(ctx)
+	if token == "" {
+		return "", "", "", "", false, "", "", "", "", errors.New("acp: round ctx carries no node token (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
@@ -205,7 +204,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, scratchDir, acpStateDir, readOnly, steerChatID, steerNodeID, advisorToken, priorSessionID, err := a.resolveNode(ctx, prompt)
+		cwd, memSecret, scratchDir, acpStateDir, readOnly, steerChatID, steerNodeID, advisorToken, priorSessionID, err := a.resolveNode(ctx)
 		if err != nil {
 			yield(nil, err)
 			return

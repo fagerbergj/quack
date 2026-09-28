@@ -51,17 +51,23 @@ type fsBinding struct {
 	cwd     string
 	chatID  string
 	nodeDir string
+	scope   CallScope
+	// scopeErr: this call's node scope failed to resolve; every path is refused.
+	scopeErr error
 }
 
 // withCwd: returns copy bound to this call's context (chat scope, node dir, cwd).
 func (b fsBinding) withCwd(ctx agent.Context) fsBinding {
-	b.chatID, b.nodeDir = scopeFromContext(ctx)
+	b.chatID, b.nodeDir, b.scopeErr = b.scope.fsScope(ctx)
 	b.cwd = cwdFromState(ctx)
 	return b
 }
 
 // resolve: cwd-, node- and chat-aware Jail.Resolve for fs tools.
 func (b fsBinding) resolve(p string) (string, error) {
+	if b.scopeErr != nil {
+		return "", b.scopeErr
+	}
 	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
 }
 
@@ -74,7 +80,7 @@ func newFSBinding(d Deps) (fsBinding, error) {
 	if userID == "" {
 		return fsBinding{}, fmt.Errorf("tools: filesystem tools require a WorkspaceUserID")
 	}
-	return fsBinding{userID: userID, jail: d.Workspace, caps: fsCaps(d)}, nil
+	return fsBinding{userID: userID, jail: d.Workspace, caps: fsCaps(d), scope: d.CallScope}, nil
 }
 
 // fsCaps: effective caps for Deps (zero means defaults).

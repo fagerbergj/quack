@@ -11,8 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// CallScope is the DAG node an extension tool call reports as sdk.CallInfo.
-// AdvisorToken is looked up directly: the prompt's last marker can be a foreign one.
+// CallScope is the DAG node a build serves: fs, guard and memory scoping and extension sdk.CallInfo
+// resolve from AdvisorToken, looked up directly because prompt text can name a foreign node.
 type CallScope struct{ AdvisorToken, ChatID, UserID string }
 
 // callInfoTool stamps sdk.CallInfo onto an extension tool's Run ctx. The gate

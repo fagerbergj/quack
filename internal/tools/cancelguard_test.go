@@ -9,7 +9,7 @@ import (
 func newCancelGuarded(t *testing.T, cancelled map[string]bool) (*fakeRunnable, *cancelGuard) {
 	t.Helper()
 	inner := &fakeRunnable{}
-	g, err := newCancelGuard(inner, func(chatID, nodeID string) bool { return cancelled[chatID+"/"+nodeID] })
+	g, err := newCancelGuard(inner, func(chatID, nodeID string) bool { return cancelled[chatID+"/"+nodeID] }, CallScope{})
 	if err != nil {
 		t.Fatalf("newCancelGuard: %v", err)
 	}
@@ -56,12 +56,11 @@ func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 	}
 }
 
-// TestCancelGuardIgnoresUngatedCalls: a call with no advisor-thread marker
-// (direct/un-gated invocation, MCP, the judge's own read tools) can't be attributed
-// to a node, so the guard must never block it - even with a "cancelled" predicate.
+// TestCancelGuardIgnoresUngatedCalls: a call with no node token (un-gated invocation, MCP) can't be
+// attributed to a node, so the guard must never block it - even with a "cancelled" predicate.
 func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 	inner := &fakeRunnable{}
-	g, err := newCancelGuard(inner, func(string, string) bool { return true })
+	g, err := newCancelGuard(inner, func(string, string) bool { return true }, CallScope{})
 	if err != nil {
 		t.Fatalf("newCancelGuard: %v", err)
 	}

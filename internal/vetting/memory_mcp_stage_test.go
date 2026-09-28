@@ -73,11 +73,11 @@ func (m fixedScoreModel) GenerateContent(_ context.Context, req *model.LLMReques
 	}
 }
 
-// runStagedMemoryNode drives one gated node whose prompt carries token's
-// advisor-thread marker, with memStage pre-loaded exactly like the ACP memory
-// MCP's stage_memory handler would leave it mid-round, and returns the gate's final verdict.
+// runStagedMemoryNode drives one gated node for token (on cfg, as dag sets it) with memStage pre-loaded
+// as the ACP memory MCP's stage_memory handler leaves it mid-round, and returns the gate's verdict.
 func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeScore float64) GateResult {
 	t.Helper()
+	cfg.AdvisorToken = token
 	m := fixedScoreModel{score: judgeScore}
 	worker, err := llmagent.New(llmagent.Config{Name: nodeID, Model: m, Description: "worker", Instruction: "answer"})
 	if err != nil {

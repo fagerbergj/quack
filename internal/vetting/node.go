@@ -409,7 +409,6 @@ type gateRun struct {
 	log              *slog.Logger
 	turnID           string
 	startedAt        time.Time // node run start; scopes artifact_valid to this run's writes
-	markerLine       string
 	advisorToken     string
 	nodeDir          string
 	receivedMemories []memory.Delivered
@@ -446,13 +445,8 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 	g.turnID = ctx.InvocationID()
 	g.startedAt = time.Now().UTC()
 	appendNodeEvent(nodeCtx, cfg, nodeID, g.turnID, ledger.KindNodeStarted, 0)
-	// Re-attach advisor-thread marker for tool-bearing rounds.
-	if token, ok := ParseAdvisorThread(prompt); ok {
-		g.markerLine = "\n\n" + AdvisorThreadMarker(token)
-		g.advisorToken = token
-	}
-	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
-	cfg.AdvisorToken = g.advisorToken
+	// The dag hands the node's token over on cfg; prompt text never carries it.
+	g.advisorToken = cfg.AdvisorToken
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
 	if g.advisorToken != "" {
 		// Draft round: seed round=1 coords before the first worker call so a
@@ -681,7 +675,7 @@ func (g *gateRun) continueWorker(sfx, answer string) (string, *gateExit) {
 		runID := fmt.Sprintf("worker-cont%d%s", attempt, sfx)
 		g.lastRunID = runID
 		var err error
-		answer, err = runWorkerNodeTraced(g.ctx, g.nodeCtx, g.cfg, g.workerModel, g.workerNode, buildContinuationPrompt(g.cfg.Task, act, g.cfg.Checks, g.cfg.ReadOnly, hasDeliverTarget, g.cfg.IsReviewer, g.cfg.ExistingPR)+g.markerLine,
+		answer, err = runWorkerNodeTraced(g.ctx, g.nodeCtx, g.cfg, g.workerModel, g.workerNode, buildContinuationPrompt(g.cfg.Task, act, g.cfg.Checks, g.cfg.ReadOnly, hasDeliverTarget, g.cfg.IsReviewer, g.cfg.ExistingPR),
 			runID, "continuation", g.promptEmit)
 		if err != nil {
 			if lerr, ok := g.repeatFailed(); ok {
@@ -906,7 +900,6 @@ type judgeRounds struct {
 	judge            JudgeFactory
 	question         *genai.Content
 	answer           string
-	markerLine       string
 	advisorToken     string
 	turnID           string
 	startedAt        time.Time // node run start; scopes artifact_valid to this run's writes
@@ -937,7 +930,7 @@ type judgeRounds struct {
 
 // runJudgeRounds: the judge/revise loop - judge, fold deterministic criteria, revise on fail.
 func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (outcome judgeRoundOutcome) {
-	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, markerLine: g.markerLine, advisorToken: g.advisorToken, turnID: g.turnID, startedAt: g.startedAt, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log, lastAnswerRunID: g.lastRunID}
+	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, advisorToken: g.advisorToken, turnID: g.turnID, startedAt: g.startedAt, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log, lastAnswerRunID: g.lastRunID}
 	// receivedMemories rides every return path so commitFinal resumes counting from here.
 	defer func() { outcome.receivedMemories = j.receivedMemories }()
 	// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
@@ -1032,7 +1025,7 @@ func (j *judgeRounds) checkTruncation(round int) bool {
 		}
 		runID := fmt.Sprintf("worker-trunc%d-r%d%s", n, round, j.sfx)
 		cont, err := runWorkerNodeTraced(j.ctx, j.nodeCtx, j.cfg, j.workerModel, j.workerNode,
-			buildTruncationContinuationPrompt(j.answer)+j.markerLine, runID, "continuation", j.promptEmit)
+			buildTruncationContinuationPrompt(j.answer), runID, "continuation", j.promptEmit)
 		if err != nil {
 			if lerr, ok := j.repeatFailed(); ok {
 				j.log.Error("truncation continuation terminated: repeat guard", "round", round, "continuation", n, "err", lerr)
@@ -1312,7 +1305,7 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 	// #762: undo this round's commits before another try, only if commit_h hygiene
 	// says it swept in off-task work - an ordinary wrong round keeps its commits.
 	resetCloneToNodeBase(j.cfg, v)
-	revisePrompt := contentPlainText(buildRevisionContent(j.cfg.Constitution, j.question, j.answer, env, act, citationOnlyFailure(v, j.cfg.Threshold), jr.Notes)) + j.markerLine
+	revisePrompt := contentPlainText(buildRevisionContent(j.cfg.Constitution, j.question, j.answer, env, act, citationOnlyFailure(v, j.cfg.Threshold), jr.Notes))
 	reviseRunID := fmt.Sprintf("worker-r%d%s", round, j.sfx)
 	// gate.revise spans the round through gate.judge's choke point; sink is nil -
 	// the SSE for this run already comes from dagStream off the worker session.

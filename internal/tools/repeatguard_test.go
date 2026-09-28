@@ -84,7 +84,7 @@ func newFailingPathTool(t *testing.T, calls *int, fail func(pathArgs) bool) runn
 // trips); all fail, and once pathFailThreshold (3) have run and failed the next attempt is refused before the tool even runs.
 func TestRepeatGuardCatchesSemanticChurn(t *testing.T) {
 	calls := 0
-	g, err := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), newRepeatStates(), nil)
+	g, err := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), newRepeatStates(), nil, CallScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func newAllFailingWebFetchTool(t *testing.T, calls *int) runnableTool {
 // failures never surface as a Go error, so the guard reads the batch itself.
 func TestRepeatGuardWebFetchAllFailedBatchCountsAsResourceFailure(t *testing.T) {
 	calls := 0
-	g, err := newRepeatGuard(newAllFailingWebFetchTool(t, &calls), newRepeatStates(), nil)
+	g, err := newRepeatGuard(newAllFailingWebFetchTool(t, &calls), newRepeatStates(), nil, CallScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestRepeatGuardResourceFailAllowsGenuineDifference(t *testing.T) {
 	states := newRepeatStates()
 
 	// Two different paths, each failing twice: neither reaches the threshold.
-	g1, _ := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), states, nil)
+	g1, _ := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), states, nil, CallScope{})
 	rg1 := g1.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 	for i, note := range []string{"a", "b"} {
@@ -220,7 +220,7 @@ func TestRepeatGuardResourceFailAllowsGenuineDifference(t *testing.T) {
 	// A path whose 3rd call succeeds resets the streak: two more failures
 	// afterward must not be refused (only 2 consecutive since the reset).
 	n := 0
-	g2, _ := newRepeatGuard(newFailingPathTool(t, &n, func(a pathArgs) bool { return a.Note != "fixed" }), states, nil)
+	g2, _ := newRepeatGuard(newFailingPathTool(t, &n, func(a pathArgs) bool { return a.Note != "fixed" }), states, nil, CallScope{})
 	rg2 := g2.(*repeatGuard)
 	seq := []string{"x", "y", "fixed", "z", "w"}
 	for i, note := range seq {
@@ -232,9 +232,8 @@ func TestRepeatGuardResourceFailAllowsGenuineDifference(t *testing.T) {
 
 // repeatCtx mirrors cd_test.go's fakeCtx surface (functiontool.Run touches
 // more of Context than just SessionID), with a configurable session id.
-// content carries the advisor-thread marker nodeScope resolves (chatID,
-// nodeID) from when set (newRepeatCtxWithAdvisorThread) - nil by default,
-// matching an orchestrator-level call, which is never node-scoped.
+// content is the prompt (nil by default, an orchestrator-level call); the
+// guard's node comes from its build-time CallScope, never this text.
 type repeatCtx struct {
 	adkagent.StrictContextMock
 	sid     string
@@ -261,17 +260,17 @@ func newRepeatCtx(sid string) *repeatCtx {
 	return &repeatCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: context.Background()}, sid: sid, state: &fakeState{m: map[string]any{}}}
 }
 
-// newRepeatCtxWithAdvisorThread is newRepeatCtx plus the advisor-thread
-// marker nodeScope resolves (chatID, nodeID) from - what a worker's tool
-// context inside a gated DAG node actually carries.
-func newRepeatCtxWithAdvisorThread(t *testing.T, sid, chatID, nodeID string) *repeatCtx {
+// newRepeatCtxWithAdvisorThread registers nodeID's advisor thread and returns its build-time
+// scope, plus a ctx whose prompt ends in a LIVE foreign node's marker that must never win.
+func newRepeatCtxWithAdvisorThread(t *testing.T, sid, chatID, nodeID string) (*repeatCtx, CallScope) {
 	t.Helper()
 	token := vetting.AdvisorThreadToken("plan-1", nodeID)
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ChatID: chatID, SessionID: sid, NodeID: nodeID})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
+	foreign := registerForeignNode(t)
 	c := newRepeatCtx(sid)
-	c.content = &genai.Content{Parts: []*genai.Part{{Text: "do the task\n\n" + vetting.AdvisorThreadMarker(token)}}}
-	return c
+	c.content = &genai.Content{Parts: []*genai.Part{{Text: "do the task\n\n" + vetting.AdvisorThreadMarker(token) + "\nqueued: " + vetting.AdvisorThreadMarker(foreign)}}}
+	return c, CallScope{AdvisorToken: token}
 }
 
 // TestRepeatGuardOrchestratorSoftRefuseLeavesTurnOpen pins the owner's
@@ -279,18 +278,18 @@ func newRepeatCtxWithAdvisorThread(t *testing.T, sid, chatID, nodeID string) *re
 // return the error to the model and let the turn continue - ending it on
 // the very first refusal denied the model any chance to correct a mistake
 // (e.g. a missing `agent` field) and retry within the same turn. A call
-// that is never node-scoped (nodeScope resolves nodeID=="" - the
+// that is never node-scoped (scope.node resolves nodeID=="" - the
 // orchestrator's own hand-built tools) must NOT touch SkipSummarization on
 // a mere soft refusal; only the hard-stop tier
 // (TestRepeatGuardEndsOrchestratorTurnOnHardStop) does.
 func TestRepeatGuardOrchestratorSoftRefuseLeavesTurnOpen(t *testing.T) {
 	calls := 0
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil)
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil, CallScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rg := g.(*repeatGuard)
-	ctx := newRepeatCtx("s1") // no advisor thread: nodeScope resolves nodeID=="", the orchestrator's own shape
+	ctx := newRepeatCtx("s1") // no advisor thread: scope.node resolves nodeID=="", the orchestrator's own shape
 	args := map[string]any{"q": "same"}
 
 	for i := 1; i <= 2; i++ {
@@ -323,7 +322,7 @@ func TestRepeatGuardOrchestratorSoftRefuseLeavesTurnOpen(t *testing.T) {
 // not on the first refusal.
 func TestRepeatGuardEndsOrchestratorTurnOnHardStop(t *testing.T) {
 	calls := 0
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil)
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil, CallScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,12 +352,12 @@ func TestRepeatGuardEndsOrchestratorTurnOnHardStop(t *testing.T) {
 // hard-stop tier (TestRepeatGuardEndsRoundAfterRefusalIgnored) ends its round, via tripped.
 func TestRepeatGuardWorkerNodeRefusalLeavesActionsAlone(t *testing.T) {
 	calls := 0
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil)
+	ctx, scope := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil, scope)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rg := g.(*repeatGuard)
-	ctx := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
 	args := map[string]any{"q": "same"}
 	for i := 1; i <= 3; i++ {
 		rg.Run(ctx, args)
@@ -373,7 +372,7 @@ func TestRepeatGuardWorkerNodeRefusalLeavesActionsAlone(t *testing.T) {
 // attempt counter so consecutive refusals are never byte-identical results.
 func TestRepeatGuardRefusesThirdIdenticalCall(t *testing.T) {
 	calls := 0
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil)
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), nil, CallScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +405,7 @@ func TestRepeatGuardRefusesThirdIdenticalCall(t *testing.T) {
 func TestRepeatGuardResets(t *testing.T) {
 	calls := 0
 	states := newRepeatStates()
-	g, _ := newRepeatGuard(newRepeatTestTool(t, &calls), states, nil)
+	g, _ := newRepeatGuard(newRepeatTestTool(t, &calls), states, nil, CallScope{})
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 
@@ -438,13 +437,13 @@ func TestRepeatGuardResets(t *testing.T) {
 func TestRepeatGuardCountsAcrossInterleavedOtherCalls(t *testing.T) {
 	calls := 0
 	states := newRepeatStates()
-	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "execute", &calls), states, nil)
+	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "execute", &calls), states, nil, CallScope{})
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 	args := map[string]any{"q": "same"}
 
 	other := 0
-	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil)
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil, CallScope{})
 	rog := og.(*repeatGuard)
 
 	for i := 1; i <= 2; i++ {
@@ -473,13 +472,13 @@ func TestRepeatGuardCountsAcrossInterleavedOtherCalls(t *testing.T) {
 func TestRepeatGuardCrossCallScopedToPlanTools(t *testing.T) {
 	calls := 0
 	states := newRepeatStates()
-	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "read_artifact", &calls), states, nil)
+	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "read_artifact", &calls), states, nil, CallScope{})
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 	args := map[string]any{"q": "same-id"}
 
 	other := 0
-	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil)
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil, CallScope{})
 	rog := og.(*repeatGuard)
 
 	for i := 1; i <= 5; i++ {
@@ -503,13 +502,13 @@ func TestRepeatGuardCrossCallScopedToPlanTools(t *testing.T) {
 func TestRepeatGuardCrossCallHardStopAfterIgnoredRefusal(t *testing.T) {
 	calls := 0
 	states := newRepeatStates()
-	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "execute", &calls), states, nil)
+	g, _ := newRepeatGuard(newNamedRepeatTestTool(t, "execute", &calls), states, nil, CallScope{})
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 	args := map[string]any{"q": "same"}
 
 	other := 0
-	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil)
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil, CallScope{})
 	rog := og.(*repeatGuard)
 
 	interleave := func(i int) {
@@ -557,13 +556,13 @@ func TestRepeatGuardVaryingResultNeverRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	states := newRepeatStates()
-	g, err := newRepeatGuard(tl.(runnableTool), states, nil)
+	g, err := newRepeatGuard(tl.(runnableTool), states, nil, CallScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rg := g.(*repeatGuard)
 	other := 0
-	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil)
+	og, _ := newRepeatGuard(newNamedRepeatTestTool(t, "edit_plan", &other), states, nil, CallScope{})
 	rog := og.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 	args := map[string]any{"q": "same plan every time"}
@@ -592,12 +591,12 @@ func TestRepeatGuardEndsRoundAfterRefusalIgnored(t *testing.T) {
 		gotChat, gotNode, gotMsg = chatID, nodeID, msg
 		return true
 	}
-	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), tripped)
+	ctx, scope := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
+	g, err := newRepeatGuard(newRepeatTestTool(t, &calls), newRepeatStates(), tripped, scope)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rg := g.(*repeatGuard)
-	ctx := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
 	args := map[string]any{"q": "same"}
 
 	for i := 1; i <= repeatThreshold+repeatHardStopAfter; i++ {
@@ -641,8 +640,8 @@ func TestRepeatWrapToolsetRefusesRepeatedLoadSkill(t *testing.T) {
 		gotChat, gotNode, gotMsg = chatID, nodeID, msg
 		return true
 	}
-	wrapped := RepeatWrapToolset(ts, newRepeatStates(), tripped)
-	ctx := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
+	ctx, scope := newRepeatCtxWithAdvisorThread(t, "s1", "chat-1", "node-1")
+	wrapped := RepeatWrapToolset(ts, newRepeatStates(), tripped, scope)
 
 	loadSkill := func() runnableTool {
 		wtools, err := wrapped.Tools(ctx)
@@ -704,7 +703,7 @@ func TestRepeatWrapToolsetEmitsLedgerEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrapped := RepeatWrapToolset(ts, newRepeatStates(), nil)
+	wrapped := RepeatWrapToolset(ts, newRepeatStates(), nil, CallScope{})
 	// The round's ctx carries the full coords (vetting/node.go stamps them before the run).
 	c := &repeatCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1", Node: "node-1", Agent: "w"})},
 		sid: "s1", state: &fakeState{m: map[string]any{}}}
@@ -794,7 +793,7 @@ func (f *fakeProcessingToolset) ProcessRequest(adkagent.Context, *model.LLMReque
 func TestRepeatWrapToolsetPassthroughs(t *testing.T) {
 	calls := 0
 	inner := &fakeToolset{name: "fake", tools: []tool.Tool{stubTool{}, newRepeatTestTool(t, &calls)}}
-	wrapped := RepeatWrapToolset(inner, newRepeatStates(), nil)
+	wrapped := RepeatWrapToolset(inner, newRepeatStates(), nil, CallScope{})
 	if wrapped.Name() != "fake" {
 		t.Fatalf("Name() = %q, want %q", wrapped.Name(), "fake")
 	}
@@ -820,7 +819,7 @@ func TestRepeatWrapToolsetPassthroughs(t *testing.T) {
 	}
 
 	processed := false
-	processing := RepeatWrapToolset(&fakeProcessingToolset{fakeToolset: fakeToolset{name: "fp"}, processed: &processed}, newRepeatStates(), nil)
+	processing := RepeatWrapToolset(&fakeProcessingToolset{fakeToolset: fakeToolset{name: "fp"}, processed: &processed}, newRepeatStates(), nil, CallScope{})
 	if err := processing.(*repeatGuardedToolset).ProcessRequest(newRepeatCtx("s1"), &model.LLMRequest{}); err != nil {
 		t.Fatal(err)
 	}

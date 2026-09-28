@@ -662,11 +662,14 @@ func TestComposeFeedbackScoreUnchanged(t *testing.T) {
 	}
 }
 
-// TestGateReattachesAdvisorMarkerOnRevise pins the workspace-scope fix: a revise
-// round builds a fresh prompt from cfg.Task and would drop the advisor-thread
-// marker that carries the worker's per-node clone/cwd scope - so the marker must be re-appended, or the revise re-clones into the bare user root.
-func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
-	const token = "planX/nodeY"
+// TestGateTakesTokenFromCfgNotPrompt: the gate stamps round coords on the node cfg.AdvisorToken
+// names, never on a live foreign node whose marker trails the prompt, and no worker prompt carries a marker.
+func TestGateTakesTokenFromCfgNotPrompt(t *testing.T) {
+	const token, foreign = "planX/nodeY", "evil/n"
+	for _, tok := range []string{token, foreign} {
+		RegisterAdvisorThread(tok, AdvisorTask{NodeID: tok})
+		defer UnregisterAdvisorThread(tok)
+	}
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "Answer.",
@@ -674,7 +677,7 @@ func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
 	if err != nil {
 		t.Fatalf("worker: %v", err)
 	}
-	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10"}
+	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10", AdvisorToken: token}
 	node, err := newTestGatedNode("gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
@@ -690,7 +693,7 @@ func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
 		t.Fatalf("runner: %v", err)
 	}
 
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Answer the question.\n\n" + AdvisorThreadMarker(token)}}}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Answer the question.\n\nqueued: " + AdvisorThreadMarker(foreign)}}}
 	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
@@ -700,9 +703,14 @@ func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
 	if len(stub.workerPrompts) < 2 {
 		t.Fatalf("expected a draft + a revise worker call, got %d", len(stub.workerPrompts))
 	}
-	revise := stub.workerPrompts[len(stub.workerPrompts)-1]
-	if !strings.Contains(revise, AdvisorThreadMarker(token)) {
-		t.Errorf("revise prompt dropped the advisor-thread marker - the worker's tools lose their node scope and re-clone:\n%s", revise)
+	if own, _ := LookupAdvisorThread(token); own.Round < 1 {
+		t.Errorf("own node round = %d, want the gate's round coords stamped on cfg.AdvisorToken's node", own.Round)
+	}
+	if evil, _ := LookupAdvisorThread(foreign); evil.Round != 0 {
+		t.Errorf("foreign node round = %d, want 0: the prompt's marker must not select the node", evil.Round)
+	}
+	if revise := stub.workerPrompts[len(stub.workerPrompts)-1]; strings.Contains(revise, AdvisorThreadMarker(token)) {
+		t.Errorf("revise prompt carries the node's marker; nothing reads it:\n%s", revise)
 	}
 }
 
@@ -727,7 +735,7 @@ func TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound(t *testing.T
 	}
 	var calls []roundCoordsCall
 	cfg := Config{
-		JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10",
+		JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10", AdvisorToken: token,
 		// Artifacts+ChatID: the round-2 trigger annotation only populates once
 		// round 1's judge_round record actually saves (saveJudgeRoundRecord
 		// needs a record client), so this must not be recordClient's nil case.
