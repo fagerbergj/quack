@@ -677,10 +677,8 @@ func newServerLoginCmd() *cobra.Command {
 	return c
 }
 
-// newServerValidateCmd: `quack server validate [path]` - loads and validates a
-// quack.yaml (parse, ${VAR} expand, validate, resolve plugins) and builds each
-// enabled extension through its Factory, without starting the server. Same
-// default-path resolution as `server run`'s --config.
+// newServerValidateCmd: builds each enabled extension as boot does, so it needs boot's
+// extension secrets; --skip-extensions is the structure-only escape.
 func newServerValidateCmd() *cobra.Command {
 	var asJSON, skipExtensions bool
 	c := &cobra.Command{
