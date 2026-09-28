@@ -7,14 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"syscall"
 	"time"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/adk/v2/session"
-	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/mcptoolset"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -170,15 +167,15 @@ func mcpDeclaredNames(plugins []plugin.Plugin) *map[string]bool {
 }
 
 // resolveRegistryPlugins resolves each row's root and stamps the registry row
-// name onto each result, never plugin.json's own name.
+// name and SHA onto each result, never plugin.json's own name.
 func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plugin.Plugin, error) {
-	nameByAbsRoot := make(map[string]string, len(rows))
+	rowByAbsRoot := make(map[string]pluginreg.Plugin, len(rows))
 	for _, p := range rows {
 		if p.Source == pluginreg.SourceEmbedded {
 			continue
 		}
 		if abs, err := filepath.Abs(p.Root(registryRoot)); err == nil {
-			nameByAbsRoot[abs] = p.Name
+			rowByAbsRoot[abs] = p
 		}
 	}
 	plugins, err := plugin.Resolve(registryPluginRoots(registryRoot, rows))
@@ -186,8 +183,8 @@ func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plu
 		return nil, err
 	}
 	for i := range plugins {
-		if name, ok := nameByAbsRoot[plugins[i].Root]; ok {
-			plugins[i].Name = name
+		if row, ok := rowByAbsRoot[plugins[i].Root]; ok {
+			plugins[i].Name, plugins[i].SHA = row.Name, row.SHA
 		}
 	}
 	return plugins, nil
@@ -381,34 +378,9 @@ func pluginSpawnCaps(cfg *config.Config, jail *workspace.Jail) (workspace.Caps, 
 	return workspace.Caps{Sandbox: sandbox, ExtraPath: cfg.Workspace.ExecPath, HomeDir: home}, nil
 }
 
-// pluginMCPTools starts every stdio MCP server declared in a plugin's mcp.json and returns its
-// tools for the agents' shared tool set, out of process through the SAME sandbox seam ACP workers
-// use (workspace.WrapArgv); a failed server costs only its own tools (spec §7.2.2 rule 5) - never the boot.
-func pluginMCPTools(ctx context.Context, plugins []plugin.Plugin, dataRoot string, caps workspace.Caps) []extTool {
-	var out []extTool
-	for _, p := range plugins {
-		names := make([]string, 0, len(p.MCPServers))
-		for name := range p.MCPServers {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			tools, err := mcpServerTools(ctx, p, p.MCPServers[name], dataRoot, caps)
-			if err != nil {
-				slog.Warn("plugin MCP server unavailable; its tools are not loaded",
-					"component", "startup", "plugin", p.Name, "server", name, "err", err)
-				continue
-			}
-			slog.Info("plugin MCP server loaded", "component", "startup", "plugin", p.Name, "server", name, "tools", len(tools))
-			for _, t := range tools {
-				out = append(out, extTool{provider: p.Name, tool: t})
-			}
-		}
-	}
-	return out
-}
-
-func mcpServerTools(ctx context.Context, p plugin.Plugin, s plugin.MCPServer, dataRoot string, caps workspace.Caps) ([]tool.Tool, error) {
+// mcpCommand builds one server's launch, out of process through the SAME sandbox seam ACP
+// workers use (workspace.WrapArgv); nothing starts until its transport connects.
+func mcpCommand(p plugin.Plugin, s plugin.MCPServer, dataRoot string, caps workspace.Caps) (*exec.Cmd, error) {
 	// §9.1: PLUGIN_DATA is client-chosen, must exist before launch, and must
 	// survive plugin updates - so it lives outside the vendored tree.
 	data := filepath.Join(dataRoot, "plugins", p.Name)
@@ -430,25 +402,16 @@ func mcpServerTools(ctx context.Context, p plugin.Plugin, s plugin.MCPServer, da
 	wrapped := workspace.WrapArgv(cwd, argv, caps, []string{p.Root}, []string{data})
 	cmd := exec.Command(wrapped[0], wrapped[1:]...)
 	cmd.Dir = cwd
+	// Own group so Close can sweep grandchildren (npx/uvx wrappers) that
+	// outlive the server; bwrap's --die-with-parent covers only its own tree.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append([]string{
 		"PATH=" + workspace.ChildPath(caps),
 		"HOME=" + data,
 		"TMPDIR=" + workspace.SandboxTmpDir(caps),
 		"NO_COLOR=1",
 	}, env...)
-
-	ts, err := mcptoolset.New(mcptoolset.Config{
-		Client:    mcp.NewClient(&mcp.Implementation{Name: "quack", Version: "1"}, nil),
-		Transport: &mcp.CommandTransport{Command: cmd},
-	})
-	if err != nil {
-		return nil, err
-	}
-	// §7.2.2 rule 5: a server that hangs on spawn, handshake, or listing must
-	// cost only its own tools. The startup context has no deadline of its own.
-	enumCtx, cancel := context.WithTimeout(ctx, mcpEnumerateTimeout)
-	defer cancel()
-	return ts.Tools(bootToolCtx{enumCtx})
+	return cmd, nil
 }
 
 // bootToolCtx satisfies agent.ReadonlyContext for the one call that needs it: quack selects tools

@@ -81,7 +81,7 @@ func TestCheckPluginConfig(t *testing.T) {
 // TestPluginMCPTools_HangingServerCostsOnlyItsTools pins the boot-enumeration
 // deadline (spec §7.2.2 rule 5): a server that never handshakes must time out
 // and cost only its own tools, not stall the boot.
-func TestPluginMCPTools_HangingServerCostsOnlyItsTools(t *testing.T) {
+func TestMCPSetNext_HangingServerCostsOnlyItsTools(t *testing.T) {
 	old := mcpEnumerateTimeout
 	mcpEnumerateTimeout = 300 * time.Millisecond
 	defer func() { mcpEnumerateTimeout = old }()
@@ -92,9 +92,12 @@ func TestPluginMCPTools_HangingServerCostsOnlyItsTools(t *testing.T) {
 	}
 	caps := workspace.Caps{Sandbox: workspace.SandboxNone}
 	start := time.Now()
-	tools := pluginMCPTools(context.Background(), []plugin.Plugin{p}, t.TempDir(), caps)
-	if len(tools) != 0 {
-		t.Errorf("tools = %d, want 0", len(tools))
+	set, rep := newMCPSet(t.TempDir(), caps).next(context.Background(), []plugin.Plugin{p})
+	if n := len(set.tools()); n != 0 {
+		t.Errorf("tools = %d, want 0", n)
+	}
+	if len(rep.Failures) != 1 {
+		t.Errorf("failures = %+v, want the hanging server reported", rep.Failures)
 	}
 	// Transport teardown adds a few seconds of kill-grace on top of the deadline.
 	if e := time.Since(start); e > 15*time.Second {

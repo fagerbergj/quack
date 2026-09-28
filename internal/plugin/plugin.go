@@ -32,6 +32,10 @@ type Plugin struct {
 	Name string
 	Root string
 
+	// SHA is the registry row's fetched commit, stamped by the host; "" for a
+	// local row, whose Root then stands in for its revision.
+	SHA string
+
 	// SkillsDir is the absolute skills directory, or "" when the plugin
 	// ships none.
 	SkillsDir string
