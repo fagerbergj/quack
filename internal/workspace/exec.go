@@ -260,31 +260,42 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	return cmd, nil
 }
 
-// reapGrace bounds how long a __reap wrapper gets after SIGTERM; it exceeds reapSweepBudget.
+// reapGrace bounds how long a __reap wrapper gets after reapStopSignal; it exceeds reapSweepBudget.
 var reapGrace = 8 * time.Second
 
-// StopChild tears down a child built from WrapArgv/childArgv argv. A __reap wrapper gets SIGTERM
-// and kills every descendant itself; otherwise (or if it overruns) its process group is SIGKILLed.
+// reapStopSignal is StopChild's private hard stop for a __reap wrapper, which forwards SIGTERM/SIGINT/
+// SIGHUP/SIGQUIT to its target instead so a graceful signal stays graceful.
+const reapStopSignal = syscall.SIGUSR2
+
+// StopChild tears down a child built from WrapArgv/childArgv argv. A __reap wrapper gets
+// reapStopSignal and kills every descendant itself; otherwise (or if it overruns) killGroup.
 func StopChild(cmd *exec.Cmd) error {
 	p := cmd.Process
 	if p == nil {
 		return nil
 	}
 	if len(cmd.Args) < 2 || cmd.Args[1] != ReapArg {
-		if err := syscall.Kill(-p.Pid, syscall.SIGKILL); err != nil { // negative pid = the process group
-			return p.Kill() // not a group leader (no Setpgid)
-		}
-		return nil
+		return killGroup(p)
 	}
-	time.AfterFunc(reapGrace, func() {
+	grace := reapGrace
+	time.AfterFunc(grace, func() {
 		if p.Signal(syscall.Signal(0)) != nil {
 			return // exited and reaped
 		}
-		slog.Error("sandbox reaper still running after SIGTERM; SIGKILLing its process group, descendants that left it may survive",
-			"component", "workspace", "pid", p.Pid, "grace", reapGrace)
-		_ = syscall.Kill(-p.Pid, syscall.SIGKILL)
+		if killGroup(p) == nil {
+			slog.Error("sandbox reaper still running after its stop signal; SIGKILLed it and its process group, descendants outside the group may survive",
+				"component", "workspace", "pid", p.Pid, "grace", grace)
+		}
 	})
-	return p.Signal(syscall.SIGTERM)
+	return p.Signal(reapStopSignal)
+}
+
+// killGroup SIGKILLs p's process group, or p alone when it leads no group (no Setpgid).
+func killGroup(p *os.Process) error {
+	if syscall.Kill(-p.Pid, syscall.SIGKILL) == nil {
+		return nil
+	}
+	return p.Kill()
 }
 
 // childWaitDelay bounds Wait() pipe I/O block after child exit. Package var for tests.
@@ -421,7 +432,7 @@ func startPipelineCmds(cmds []*exec.Cmd, stages [][]string) error {
 		if err := cmd.Start(); err != nil {
 			// Reap anything already started so nothing leaks.
 			for _, prev := range cmds[:i] {
-				_ = prev.Process.Kill()
+				_ = StopChild(prev)
 				_ = prev.Wait()
 			}
 			return fmt.Errorf("workspace: start %v: %w", stages[i], err)

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/spf13/cobra"
@@ -278,6 +279,7 @@ func spawnSandboxCmd(ctx context.Context, dir string, caps workspace.Caps, ac co
 	c.Dir = dir
 	c.Env = env
 	c.Cancel = func() error { return workspace.StopChild(c) }
+	c.WaitDelay = 10 * time.Second
 	return c
 }
 

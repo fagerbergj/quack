@@ -45,8 +45,14 @@ func reapRun(target []string) (syscall.WaitStatus, error) {
 	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, prSetChildSubreaper, 1, 0); errno != 0 {
 		return 0, fmt.Errorf("reap: PR_SET_CHILD_SUBREAPER: %w", errno)
 	}
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, reapStopSignal)
+	for _, sig := range forwardedSignals {
+		// Notify would un-ignore an inherited SIG_IGN (nohup, a background job) before the target inherits it.
+		if !signal.Ignored(sig) {
+			signal.Notify(sigs, sig)
+		}
+	}
 	defer signal.Stop(sigs)
 	// os.Process signals through a pidfd, so a late SIGTERM can't hit a reused PID once reaped below.
 	p, err := os.StartProcess(bin, target, &os.ProcAttr{Env: os.Environ(), Files: []*os.File{os.Stdin, os.Stdout, os.Stderr}})
@@ -55,19 +61,31 @@ func reapRun(target []string) (syscall.WaitStatus, error) {
 	}
 	done := make(chan struct{})
 	defer close(done)
-	go func() {
-		select {
-		case <-sigs:
-			_ = p.Signal(syscall.SIGKILL)
-		case <-done:
-		}
-	}()
+	go forwardSignals(p, sigs, done)
 	ws, werr := waitForPID(p.Pid)
 	if left := sweepDescendants(reapSweepBudget); left > 0 {
 		fmt.Fprintf(os.Stderr, "quack-reap: %d descendant(s) of %s still alive after a %s sweep\n",
 			left, filepath.Base(bin), reapSweepBudget)
 	}
 	return ws, werr
+}
+
+// forwardedSignals reach the target unchanged; its exit (trap or not) is what triggers the sweep.
+var forwardedSignals = []os.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT}
+
+// forwardSignals relays sigs to the target, turning StopChild's reapStopSignal into SIGKILL.
+func forwardSignals(p *os.Process, sigs <-chan os.Signal, done <-chan struct{}) {
+	for {
+		select {
+		case sig := <-sigs:
+			if sig == reapStopSignal {
+				sig = syscall.SIGKILL
+			}
+			_ = p.Signal(sig)
+		case <-done:
+			return
+		}
+	}
 }
 
 // waitForPID reaps children (orphans adopted meanwhile included) until pid itself exits.
@@ -90,19 +108,21 @@ func waitForPID(pid int) (syscall.WaitStatus, error) {
 // deeper as orphans reparent here. Returns how many are still alive when budget runs out.
 func sweepDescendants(budget time.Duration) int {
 	deadline := time.Now().Add(budget)
-	self := os.Getpid()
 	for {
 		if reapExited() {
 			return 0
 		}
-		kids := childPIDs(self)
+		kids := childPIDs()
 		if time.Now().After(deadline) {
 			return max(len(kids), 1) // reapExited saw at least one, even if /proc didn't
 		}
 		for _, k := range kids {
 			_ = syscall.Kill(k, syscall.SIGKILL)
 		}
-		time.Sleep(10 * time.Millisecond)
+		// Back off only on an empty round: a fork-and-die chain must not get a free pause per link.
+		if len(kids) == 0 {
+			time.Sleep(time.Millisecond)
+		}
 	}
 }
 
@@ -121,9 +141,29 @@ func reapExited() bool {
 	}
 }
 
-// childPIDs lists processes whose parent is ppid. Unreaped children can't have their PID reused,
-// so killing what this returns never hits an unrelated process.
-func childPIDs(ppid int) []int {
+// childPIDs lists this process's children from each thread's children file (CONFIG_PROC_CHILDREN),
+// else by scanning /proc. Unreaped children can't have their PID reused, so killing them is safe.
+func childPIDs() []int {
+	self := os.Getpid()
+	taskDir := "/proc/" + strconv.Itoa(self) + "/task/"
+	if _, err := os.Stat(taskDir + strconv.Itoa(self) + "/children"); err != nil {
+		return scanChildPIDs(self)
+	}
+	tasks, _ := os.ReadDir(taskDir)
+	var out []int
+	for _, t := range tasks {
+		b, _ := os.ReadFile(taskDir + t.Name() + "/children")
+		for _, f := range strings.Fields(string(b)) {
+			if pid, err := strconv.Atoi(f); err == nil {
+				out = append(out, pid)
+			}
+		}
+	}
+	return out
+}
+
+// scanChildPIDs lists processes whose parent is ppid by reading every /proc/<pid>/stat.
+func scanChildPIDs(ppid int) []int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
