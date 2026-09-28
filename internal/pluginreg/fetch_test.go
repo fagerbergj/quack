@@ -675,3 +675,36 @@ func TestFetchPutFailureLeavesTreeOnStoredSHA(t *testing.T) {
 		t.Fatalf("stored SHA = %q, want %q", stored.SHA, first.SHA)
 	}
 }
+
+// A failed checkout keeps HEAD on the old commit, so the stored row must too.
+func TestFetchCheckoutFailureStoresOldSHA(t *testing.T) {
+	bare, work := pluginregtest.NewFixtureRepo(t)
+	withFixedRemote(t, bare)
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	e, _ := ParseEntry("github:acme/widgets")
+	first, err := fetchAndPut(context.Background(), root, reg, FromEntry(e))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitAndPush(t, work, "v2")
+	dir := CloneDir(root, "widgets")
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("local edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := fetchAndPut(context.Background(), root, reg, first)
+	if err == nil {
+		t.Fatal("fetchAndPut = nil error, want the checkout conflict")
+	}
+	head := strings.TrimSpace(run(t, dir, "rev-parse", "HEAD"))
+	stored, err := reg.readRow("widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head != first.SHA || stored.SHA != head || got.SHA != head {
+		t.Fatalf("head %s, stored %s, returned %s: want all on the old %s", head, stored.SHA, got.SHA, first.SHA)
+	}
+	if stored.Error == "" {
+		t.Fatal("stored row lost the checkout error")
+	}
+}

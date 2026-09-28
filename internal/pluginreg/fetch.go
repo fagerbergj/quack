@@ -73,18 +73,17 @@ func fetch(ctx context.Context, root string, p Plugin, commit func(Plugin) error
 			return p, err
 		}
 	}
-	// sha is resolved via rev-parse --verify, never a raw ref, so it's safe
-	// bare here - "--" would make checkout read it as a pathspec instead.
-	// In place: a process started from the old checkout reads the new files from here on.
+	// sha comes from rev-parse --verify, so it's safe bare ("--" would make it a
+	// pathspec). In place: processes started from the old checkout see new files.
 	if err := gitRun(ctx, dir, "checkout", "--quiet", "--no-guess", "--detach", sha); err != nil {
-		next.Error = fmt.Sprintf("checkout: %v", err)
-		return next, err
+		p.Error = fmt.Sprintf("checkout: %v", err) // HEAD didn't move, so the row keeps the old sha
+		return p, err
 	}
 	return next, nil
 }
 
 // fetchAndPut persists the new sha BEFORE checking it out, so a row never
-// names an older sha than its tree (MCP reuse keys on it); a failure is still Put.
+// names an older sha than its tree (MCP reuse keys on it); a failure Puts the old sha with its error.
 func fetchAndPut(ctx context.Context, root string, reg Registry, p Plugin) (Plugin, error) {
 	p, fetchErr := fetch(ctx, root, p, func(next Plugin) error { return reg.Put(ctx, next) })
 	if fetchErr == nil {
