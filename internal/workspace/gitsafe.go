@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"hash/maphash"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +19,12 @@ var GitProtocol = "https"
 // filter/merge drivers redirect or run code and no -c counter-rule outranks them, so everything else is dropped.
 var gitConfigKeep = regexp.MustCompile(`^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks)|extensions\.(objectformat|refstorage)|remote\.origin\.(url|fetch)|branch\..+\.(remote|merge)|user\.(name|email))$`)
 
-// gitConfigLocks serializes in-place strips per common git dir so two quack ops (e.g. fanned-out reviewer
-// worktree provisioning off one clone) don't unset each other's keys mid-list.
-var gitConfigLocks sync.Map // map[string]*sync.Mutex
+// gitConfigLocks serializes in-place strips per config path (striped by hash, so bounded) so two quack ops
+// on one clone, e.g. fanned-out reviewer worktrees, don't unset each other's keys mid-list.
+var (
+	gitConfigLocks [64]sync.Mutex
+	gitConfigSeed  = maphash.MakeSeed()
+)
 
 // GitSafeArgs are -c overrides, which beat every config file; each protocol is named because
 // protocol.<name>.allow outranks protocol.allow. For a read-only query these neutralize the config-driven
@@ -54,13 +58,23 @@ func GitCmd(ctx context.Context, bin, dir string, argv, env []string) (*exec.Cmd
 	env = append(env, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0")
 	if dir == "" {
 		dir = home
-	} else if err := sanitizeGitConfig(ctx, bin, dir, env); err != nil {
+	} else if env, err = pinRepo(ctx, bin, dir, env); err != nil {
 		done()
 		return nil, nil, err
 	}
 	cmd := exec.CommandContext(ctx, bin, append(GitSafeArgs(), argv...)...)
 	cmd.Dir, cmd.Env = dir, env
 	return cmd, done, nil
+}
+
+// pinRepo stops repo discovery at dir, so a missing .git can't aim the strip at an enclosing repo's config.
+func pinRepo(ctx context.Context, bin, dir string, env []string) ([]string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("git: resolve %s: %w", dir, err)
+	}
+	env = append(env, "GIT_CEILING_DIRECTORIES="+filepath.Dir(abs))
+	return env, sanitizeGitConfig(ctx, bin, dir, env)
 }
 
 // sanitizeGitConfig unsets every key outside gitConfigKeep in dir's (common) repo config. Fails closed
@@ -84,9 +98,9 @@ func sanitizeGitConfig(ctx context.Context, bin, dir string, env []string) error
 	if fi, err := os.Lstat(cfg); err != nil || !fi.Mode().IsRegular() {
 		return fmt.Errorf("git: repo config %s is not a regular file", cfg)
 	}
-	mu, _ := gitConfigLocks.LoadOrStore(cfg, &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	defer mu.(*sync.Mutex).Unlock()
+	mu := &gitConfigLocks[maphash.String(gitConfigSeed, cfg)%uint64(len(gitConfigLocks))]
+	mu.Lock()
+	defer mu.Unlock()
 	keys, err := git("config", "--file", cfg, "--no-includes", "--name-only", "--list", "-z")
 	if err != nil {
 		return fmt.Errorf("git: read repo config: %w", err)

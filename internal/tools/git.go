@@ -50,7 +50,27 @@ func askpassHostMatches(prompt, want string) bool {
 		return false
 	}
 	u, err := url.Parse(prompt[start+1 : end])
-	return err == nil && strings.EqualFold(u.Host, want)
+	return err == nil && asciiEqualFold(u.Host, want)
+}
+
+// asciiEqualFold folds A-Z only: strings.EqualFold would match "\u212A" (Kelvin) to "k", a different DNS name.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
 }
 
 // ensureAskpassLink: ensures .quack-askpass symlink to current binary; tolerates concurrent creation.
@@ -139,9 +159,9 @@ func (b gitBinding) credentialFor(rawURL string) *GitCredential {
 	if err != nil || u.Host == "" {
 		return nil
 	}
-	host := strings.ToLower(u.Hostname())
+	host := u.Hostname()
 	for i := range b.credentials {
-		if strings.EqualFold(b.credentials[i].Host, host) {
+		if asciiEqualFold(b.credentials[i].Host, host) {
 			return &b.credentials[i]
 		}
 	}
@@ -179,7 +199,9 @@ func gitEnv(caps workspace.Caps, auth *gitAuth) []string {
 	}
 	// workspace.env for hooks/filters to find the toolchain.
 	for _, k := range slices.Sorted(maps.Keys(caps.Env)) {
-		env = append(env, k+"="+caps.Env[k])
+		if !strings.HasPrefix(k, "GIT_") { // GIT_DIR, GIT_CONFIG_*, GIT_EXEC_PATH would redirect quack's own git
+			env = append(env, k+"="+caps.Env[k])
+		}
 	}
 	if auth != nil {
 		env = append(env,
