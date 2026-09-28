@@ -106,6 +106,10 @@ func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 			items = append(items, item{seq: n.TerminalSeq, ev: stream.SSEEvent{Name: stream.EventNodeFailed, Data: stream.NodeFailedData{
 				NodeID: n.NodeID, FinishedAtMs: n.TerminalAt.UnixMilli(),
 			}}})
+		case "cancelled":
+			items = append(items, item{seq: n.TerminalSeq, ev: stream.SSEEvent{Name: stream.EventNodeCancelled, Data: stream.NodeCancelledData{
+				NodeID: n.NodeID, FinishedAtMs: n.TerminalAt.UnixMilli(),
+			}}})
 		}
 	}
 	// judge_round artifact.revision entries carry no dedicated SSE event yet (design

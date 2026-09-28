@@ -292,7 +292,7 @@ func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res 
 	if res.Model == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	if err := st.SetTurnUsage(ctx, chatID, turnID, res.Model, res.Usage); err != nil {
 		slog.Warn("runlog: stamp turn model/usage failed", "component", "runlog", "chat", chatID, "turn", turnID, "err", err)

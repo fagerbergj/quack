@@ -20,6 +20,7 @@ const drainPollInterval = 200 * time.Millisecond
 type nodePauser interface {
 	ActiveNodes(chatID string) []string
 	PauseNode(chatID, nodeID string, reason dag.PauseReason) bool
+	MarkShutdown(chatID string)
 }
 
 // DrainActiveRuns is SIGTERM's counterpart to store.ScanOrphanedRuns: reject
@@ -33,21 +34,7 @@ type nodePauser interface {
 func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	hub.BeginDraining()
 	ids := hub.ActiveChatIDs()
-	var paused, chats int
-	if ex != nil {
-		for _, chatID := range ids {
-			n := 0
-			for _, nodeID := range ex.ActiveNodes(chatID) {
-				if ex.PauseNode(chatID, nodeID, dag.PauseShutdown) {
-					n++
-				}
-			}
-			if n > 0 {
-				paused += n
-				chats++
-			}
-		}
-	}
+	paused, chats := pauseActive(ex, ids)
 	if len(ids) > 0 {
 		slog.Info("paused running nodes for shutdown", "component", "serve",
 			"nodes", paused, "chats", chats, "grace", grace)
@@ -59,8 +46,13 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	waitWhileAnyRegistered(hub, grace)
 
 	remaining := hub.ActiveChatIDs()
+	// Re-swept: a node that registered during the grace was never paused.
+	pauseActive(ex, remaining)
 	for _, chatID := range remaining {
 		hub.MarkInterrupted(chatID) // per-chat cut marker: only force-cancelled runs skip their RunEnded tail
+		if ex != nil {
+			ex.MarkShutdown(chatID)
+		}
 		hub.CancelRun(chatID)
 	}
 	if len(remaining) == 0 {
@@ -69,6 +61,27 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	slog.Warn("cancelled in-flight turns past the shutdown grace window; their nodes stay paused/shutdown and resume at boot",
 		"component", "serve", "count", len(remaining))
 	waitWhileAnyRegistered(hub, settleWindow)
+}
+
+// pauseActive pauses every live node on chatIDs with reason=shutdown, returning
+// how many nodes it paused and on how many chats.
+func pauseActive(ex nodePauser, chatIDs []string) (paused, chats int) {
+	if ex == nil {
+		return 0, 0
+	}
+	for _, chatID := range chatIDs {
+		n := 0
+		for _, nodeID := range ex.ActiveNodes(chatID) {
+			if ex.PauseNode(chatID, nodeID, dag.PauseShutdown) {
+				n++
+			}
+		}
+		if n > 0 {
+			paused += n
+			chats++
+		}
+	}
+	return paused, chats
 }
 
 // waitWhileAnyRegistered polls hub.ActiveChatIDs() until it is empty, or

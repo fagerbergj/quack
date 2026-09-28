@@ -300,3 +300,27 @@ func TestLoadEvents_NoWAL(t *testing.T) {
 		t.Fatalf("LoadEvents = %d events, want 0 (no table rows, no WAL)", len(evs))
 	}
 }
+
+// TestSynthesizeChatEvents_NodeCancelled: a node.cancelled entry folds to cancelled
+// and replays as node_cancelled, not node_failed.
+func TestSynthesizeChatEvents_NodeCancelled(t *testing.T) {
+	ctx := context.Background()
+	ls := ledgertest.NewMemStore()
+	payload, _ := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+	}{NodeID: "n1"})
+	for _, kind := range []string{ledger.KindNodeStarted, ledger.KindNodeCancelled} {
+		if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: "c", Kind: kind, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := fold.Fold(ctx, ls, "c", 0)
+	if err != nil || res.Nodes["n1"] == nil || res.Nodes["n1"].TerminalStatus != "cancelled" {
+		t.Fatalf("fold = %+v err=%v, want n1 cancelled", res.Nodes["n1"], err)
+	}
+	events := SynthesizeChatEvents("c", res)
+	last, _ := UnmarshalEvent(events[len(events)-1].Event)
+	if last.Name != stream.EventNodeCancelled {
+		t.Fatalf("last synthesized event = %q, want %s", last.Name, stream.EventNodeCancelled)
+	}
+}

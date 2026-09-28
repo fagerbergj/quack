@@ -583,16 +583,17 @@ func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("store open failed: %w", err)
 	}
-	resumeNodes, err := bootReconcile(reconcile, b.cfg, st, jail)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	artifactSvc, err := BuildArtifactService(b.cfg)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("artifact service init failed: %w", err)
 	}
 	artifacts := store.NewTurnAwareService(artifactSvc)
 	st.SetArtifactService(artifacts)
+	// After SetArtifactService: the reconcile mirrors each node's row status onto its dag_node record.
+	resumeNodes, err := bootReconcile(reconcile, b.cfg, st, jail)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	warnIfEpisodicRecordsWontSurvive(b.cfg)
 	return st, resumeNodes, artifacts, nil
 }

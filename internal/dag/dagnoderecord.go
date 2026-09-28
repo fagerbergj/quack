@@ -102,6 +102,16 @@ func validateDagNode(raw json.RawMessage) error {
 // cancel/done pair can't leave this record's mirror on a stale non-terminal
 // status forever (list_nodes/nodeIsRunning both read this record, not the store row).
 func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus) error {
+	return updateDagNodeStatus(ctx, artifacts, appName, userID, chatID, nodeID, status, false)
+}
+
+// SyncDagNodeStatus is UpdateDagNodeStatus without the transition check, for boot's
+// reconcile: the store-row write it mirrors (e.g. paused -> failed) is itself unconditional.
+func SyncDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus) error {
+	return updateDagNodeStatus(ctx, artifacts, appName, userID, chatID, nodeID, status, true)
+}
+
+func updateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus, force bool) error {
 	if artifacts == nil || chatID == "" || nodeID == "" {
 		return nil
 	}
@@ -117,7 +127,7 @@ func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 	if rec.Status == status {
 		return nil
 	}
-	if !CanTransition(rec.Status, status) {
+	if !force && !CanTransition(rec.Status, status) {
 		return fmt.Errorf("dag_node %s: illegal status transition %s -> %s", nodeID, rec.Status, status)
 	}
 	rec.Status = status

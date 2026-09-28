@@ -1382,7 +1382,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 			chatOf[n.PlanID] = chatID
 		}
 		if chatID == "" {
-			rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, "plan row is gone"))
+			rep.Failed = append(rep.Failed, s.FailUnresumable(ctx, "", n, "plan row is gone"))
 			continue
 		}
 		// A raw SQL delete of the chats row bypasses DeleteChat's cascade and
@@ -1400,25 +1400,27 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 		if !live {
 			slog.Warn("resume paused dag nodes: chat row is gone; skipping", "component", "store",
 				"chat", chatID, "plan", n.PlanID, "node", n.NodeID)
-			rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, "chat row is gone"))
+			rep.Failed = append(rep.Failed, s.FailUnresumable(ctx, chatID, n, "chat row is gone"))
 			continue
 		}
 		if resumable != nil {
 			if ok, why := resumable(chatID, n.PauseReason); !ok {
-				rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, why))
+				rep.Failed = append(rep.Failed, s.FailUnresumable(ctx, chatID, n, why))
 				continue
 			}
 		}
 		reason := dag.PauseReason(n.PauseReason)
-		if n.Status == string(dag.StatusRunning) {
+		status := dag.NodeStatus(n.Status)
+		if status == dag.StatusRunning {
 			// Hard kill: no shutdown ran, so nothing stamped the pause. Do it now.
-			reason = dag.PauseShutdown
+			reason, status = dag.PauseShutdown, dag.StatusPaused
 			if e := s.SetNodeStatus(ctx, n.PlanID, n.NodeID, dag.StatusPaused, reason, n.PendingQuestion); e != nil {
 				slog.Warn("resume paused dag nodes: hard-kill re-stamp failed", "component", "store",
 					"plan", n.PlanID, "node", n.NodeID, "err", e)
 				continue
 			}
 		}
+		s.syncDagNodeRecord(ctx, chatID, n.NodeID, status)
 		rn := ResumableNode{ChatID: chatID, PlanID: n.PlanID, NodeID: n.NodeID, Reason: reason}
 		if reason == dag.PauseAwaitingInput || n.Status == string(dag.StatusNeedsInput) {
 			rep.AwaitingInput = append(rep.AwaitingInput, rn)
@@ -1429,16 +1431,29 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 	return rep, nil
 }
 
-// failUnresumable marks one node failed with why in `error` - the only
-// remaining path to `failed` at boot.
-func (s *Store) failUnresumable(ctx context.Context, n DagNode, why string) UnresumableNode {
+// FailUnresumable marks one node failed with why in `error`, on both the row and
+// the dag_node record, so no later boot tries to resume it again.
+func (s *Store) FailUnresumable(ctx context.Context, chatID string, n DagNode, why string) UnresumableNode {
 	if err := s.db.WithContext(ctx).Model(&DagNode{}).
 		Where("plan_id = ? AND node_id = ?", n.PlanID, n.NodeID).
 		Updates(map[string]any{"status": string(dag.StatusFailed), "error": "cannot resume: " + why}).Error; err != nil {
 		slog.Warn("resume paused dag nodes: fail stamp failed", "component", "store",
 			"plan", n.PlanID, "node", n.NodeID, "err", err)
 	}
+	s.syncDagNodeRecord(ctx, chatID, n.NodeID, dag.StatusFailed)
 	return UnresumableNode{PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
+}
+
+// syncDagNodeRecord mirrors a boot reconcile's row status onto the dag_node record
+// (list_nodes and the artifact panel read it); best-effort like every record write.
+func (s *Store) syncDagNodeRecord(ctx context.Context, chatID, nodeID string, status dag.NodeStatus) {
+	if chatID == "" {
+		return
+	}
+	if err := dag.SyncDagNodeStatus(ctx, s.artifacts, chatAppName, s.SessionUserForChat(ctx, chatID), chatID, nodeID, status); err != nil {
+		slog.Warn("resume paused dag nodes: dag_node record sync failed", "component", "store",
+			"chat", chatID, "node", nodeID, "err", err)
+	}
 }
 
 func (s *Store) GetDagNodes(ctx context.Context, planID string) ([]DagNode, error) {

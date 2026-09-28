@@ -16,3 +16,7 @@ func (e *Executor) ActiveNodes(chatID string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// MarkShutdown flags chatID's run as cut by the shutdown drain, so its abort
+// leaves unfinished nodes for boot to resume instead of settling them cancelled.
+func (e *Executor) MarkShutdown(chatID string) { e.shutdown.Store(chatID, struct{}{}) }

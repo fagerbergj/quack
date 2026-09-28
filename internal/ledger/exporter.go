@@ -30,7 +30,7 @@ func (e *Exporter) Export(ctx context.Context, records []sdklog.Record) error {
 		return nil
 	}
 	// Detached: a stopped run's last llm.call/agent.invoke records arrive on its cancelled ctx.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	for _, r := range records {
 		entry, ok := EntryFromRecord(r)

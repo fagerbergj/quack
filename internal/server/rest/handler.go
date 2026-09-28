@@ -776,7 +776,9 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 	for ev, err := range h.orch.Run(runCtx, h.sessionUser(runCtx, chatID), chatID, orchestrator.SourceApp, message, attachments) {
 		trySendTitle()
 		if err != nil {
-			publish(stream.Errorf(err.Error()))
+			if ev, ok := stream.RunErrorf(runCtx, err); ok {
+				publish(ev)
+			}
 			publish(stream.Done())
 			return
 		}
@@ -1165,7 +1167,9 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 		userID := h.sessionUser(runCtx, chatID)
 		for ev, err := range iterFromStart(runCtx, h.orch, userID, chatID, nodeID, message) {
 			if err != nil {
-				publish(stream.Errorf(err.Error()))
+				if ev, ok := stream.RunErrorf(runCtx, err); ok {
+					publish(ev)
+				}
 				break
 			}
 			runlog.PersistNodeEvent(h.store, chatID, dp.ID, ev)
@@ -1222,7 +1226,9 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 
 		for ev, err := range h.orch.RetryNode(runCtx, h.sessionUser(runCtx, chatID), chatID, seeded, nodeID, guidance) {
 			if err != nil {
-				publish(stream.Errorf(err.Error()))
+				if ev, ok := stream.RunErrorf(runCtx, err); ok {
+					publish(ev)
+				}
 				break
 			}
 			runlog.PersistNodeEvent(h.store, chatID, dp.ID, ev) // update the re-run nodes' persisted state

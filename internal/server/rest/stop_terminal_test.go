@@ -6,6 +6,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func (m midNodeModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, 
 }
 
 // TestStoppedRunSettlesNodeAndChat: stopping a run mid-node must leave the node
-// row and dag_node record terminal, the chat not "running", and node.failed in the ledger.
+// row and dag_node record terminal, the chat not "running", and node.cancelled in the ledger.
 func TestStoppedRunSettlesNodeAndChat(t *testing.T) {
 	m := midNodeModel{started: make(chan struct{}, 1)}
 	worker, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
@@ -128,7 +129,43 @@ func TestStoppedRunSettlesNodeAndChat(t *testing.T) {
 	for _, e := range entries {
 		kinds = append(kinds, e.Kind)
 	}
-	if len(kinds) == 0 || kinds[len(kinds)-1] != ledger.KindNodeFailed {
-		t.Errorf("ledger kinds = %v, want a trailing %s", kinds, ledger.KindNodeFailed)
+	if len(kinds) == 0 || kinds[len(kinds)-1] != ledger.KindNodeCancelled {
+		t.Errorf("ledger kinds = %v, want a trailing %s", kinds, ledger.KindNodeCancelled)
+	}
+}
+
+// TestStoppedRunEmitsNoError: a user stop is not an error, so no "context canceled"
+// error event reaches the chat's durable stream.
+func TestStoppedRunEmitsNoError(t *testing.T) {
+	m := newGatedModel(0)
+	h := newTestHandlerWithModel(t, m)
+	chatID := mustCreateChat(t, h)
+	srv := runServer(t, h, chatID)
+	resp, err := http.Post(srv.URL+"/api/v1/chats/c1/responses", "application/json", strings.NewReader(`{"content":"hello"}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	responseID := readResponseID(t, resp)
+	select {
+	case <-m.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("model was never called")
+	}
+	if !h.hub.CancelResponse(chatID, responseID) {
+		t.Fatal("cancel found no run")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for h.hub.HasRegisteredRun(chatID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	rows, err := h.store.LoadChatEvents(context.Background(), chatID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if ev, _ := runlog.UnmarshalEvent(r.Event); ev.Name == stream.EventError {
+			t.Errorf("stopped run persisted an error event: %s", r.Event)
+		}
 	}
 }

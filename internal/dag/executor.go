@@ -48,6 +48,7 @@ type Executor struct {
 	judgeSpec AdmissionSpec
 
 	gateResults sync.Map
+	shutdown    sync.Map // chatID -> struct{}, see MarkShutdown
 }
 
 // SetAdmission wires the #1007 capacity ledger and the judge's own spec (nil
@@ -88,6 +89,7 @@ type DagStream struct {
 	agentByID map[string]string
 	yield     func(stream.SSEEvent, error) bool
 	only      map[string]bool
+	shutdown  func() bool
 }
 
 // ScopeToRetry: restricts terminal sweep to retried node and descendants.
@@ -134,7 +136,8 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	})
 	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
 	ds.resumedFromByID = resumedFromByID
-	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds}
+	shutdown := func() bool { _, ok := e.shutdown.Load(cancelKey); return ok }
+	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds, shutdown: shutdown}
 }
 
 // Handle: routes gate-node events → SSE (true) or orchestrator events → caller (false).
@@ -149,7 +152,7 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 	return true
 }
 
-// Finish: flushes last run and emits node_done for remaining nodes. Call after runner loop.
+// Paused reports whether any node in this stream parked on a HITL question.
 func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
 
 // NeedsInput reports which nodes this stream saw pause on a HITL question -
@@ -162,18 +165,30 @@ func (s *DagStream) NeedsInput() map[string]bool { return s.ds.needsInput }
 // never dispatched, and the caller must not treat that as "ran and failed".
 func (s *DagStream) Started() map[string]bool { return s.ds.started }
 
-func (s *DagStream) Finish() { s.settle(false) }
+// Finish flushes the last run and emits a terminal event for every unsettled
+// in-scope node. Call after the runner loop ends cleanly.
+func (s *DagStream) Finish() { s.settle(false, nil) }
 
-// Abort is Finish for a runner that ended on an error, so no node stays
-// "running"; one a user stop (ctx cancelled) cut short settles cancelled, not failed.
-func (s *DagStream) Abort() { s.settle(true) }
+// Abort is Finish for a runner that ended on err, so no started node stays "running".
+// A shutdown cut emits nothing: boot re-stamps a still-running row paused/shutdown and resumes it.
+func (s *DagStream) Abort(err error) {
+	if s.shutdown != nil && s.shutdown() {
+		return
+	}
+	if errors.Is(s.ctx.Err(), context.Canceled) {
+		s.settle(true, nil)
+		return
+	}
+	s.settle(false, err)
+}
 
-func (s *DagStream) settle(aborted bool) {
+// settle: stopped (a user stop) cancels every unsettled in-scope node; runErr
+// (any other runner failure) fails only started ones, per Started's contract.
+func (s *DagStream) settle(stopped bool, runErr error) {
 	s.ds.flush()
-	if !aborted && len(s.ds.needsInput) == 0 {
+	if !stopped && runErr == nil && len(s.ds.needsInput) == 0 {
 		ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
 	}
-	stopped := aborted && errors.Is(s.ctx.Err(), context.Canceled)
 	for _, n := range s.plan.Nodes {
 		if s.ds.doneEmitted[n.ID] {
 			continue
@@ -184,16 +199,16 @@ func (s *DagStream) settle(aborted bool) {
 		if s.ds.needsInput[n.ID] {
 			continue
 		}
-		if len(s.ds.needsInput) > 0 && !s.ds.started[n.ID] {
+		if !s.ds.started[n.ID] && (runErr != nil || len(s.ds.needsInput) > 0) {
 			continue
 		}
-		s.emitFinishTerminal(n, stopped)
+		s.emitFinishTerminal(n, stopped, runErr)
 	}
 }
 
-// emitFinishTerminal: Finish's terminal event for one settled node - the
-// delivered/paused/cancelled checks in that priority order, then done.
-func (s *DagStream) emitFinishTerminal(n Node, stopped bool) {
+// emitFinishTerminal: settle's terminal event for one node - the
+// delivered/paused/cancelled checks in that priority order, then failed or done.
+func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 	delivered := s.ds.deliveredOf != nil && s.ds.deliveredOf(n.ID)
 	if !delivered && s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
 		s.yield(stream.NodePaused(n.ID), nil)
@@ -205,11 +220,24 @@ func (s *DagStream) emitFinishTerminal(n Node, stopped bool) {
 		return
 	}
 	if !delivered && empty {
-		ev := stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID]))
-		s.yield(stream.WithContextID(ev, s.ds.contextOf(n.ID)), nil)
+		s.yield(stream.WithContextID(stream.NodeFailed(n.ID, s.failMessage(n.ID, runErr)), s.ds.contextOf(n.ID)), nil)
 		return
 	}
 	s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
+}
+
+// failMessage prefers the node's recorded gateway failure, then the runner's own
+// error, sanitized because DagNode.Error reaches RunOutcome text.
+func (s *DagStream) failMessage(nodeID string, runErr error) string {
+	msg := emptyNodeError(s.ds.chatID, s.ds.scope(nodeID), s.ds.agentByID[nodeID])
+	switch {
+	case runErr == nil || msg != SilentGapError:
+		return msg
+	case errors.Is(s.ctx.Err(), context.DeadlineExceeded):
+		return "plan run timed out"
+	}
+	class, _ := inference.SanitizeGatewayError(runErr)
+	return "plan run failed: " + class
 }
 
 // RetryPlanInNode: re-runs target node + descendants with seeded outputs.

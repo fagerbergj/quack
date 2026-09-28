@@ -130,7 +130,7 @@ func (e *Executor) driveStep(ctx context.Context, plan Plan, appName, userID, ch
 	runSess := PlanStepSessionID(chatID)
 	for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
 		if rerr != nil {
-			ds.Abort()
+			ds.Abort(rerr)
 			return nodeOutputs, ds.NeedsInput(), ds.Started(), rerr
 		}
 		if ev == nil {

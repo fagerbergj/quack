@@ -388,3 +388,22 @@ func TestPersistNodeEventRunningNodeReQueuesOnMidRunAdmissionWait(t *testing.T) 
 		t.Errorf("want no illegal-transition warning logged, got: %s", buf.String())
 	}
 }
+
+// TestStampTurnSurvivesCancelledCtx: a stopped run's tail stamps on its cancelled runCtx.
+func TestStampTurnSurvivesCancelledCtx(t *testing.T) {
+	st := newTestStore(t)
+	c, err := st.CreateChat(context.Background(), "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if err := st.SaveTurn(context.Background(), c.ID, "t1", ""); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	StampTurn(ctx, st, c.ID, "t1", DriveResult{Model: "qwen3", Usage: store.TurnUsage{PromptTokens: 7}})
+	turns, err := st.GetTurnsWithContent(context.Background(), "quack", store.SessionUserFor(*c), c.ID)
+	if err != nil || len(turns) != 1 || turns[0].Model != "qwen3" {
+		t.Fatalf("turn not stamped on a cancelled ctx: %+v err=%v", turns, err)
+	}
+}

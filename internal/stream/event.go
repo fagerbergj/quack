@@ -4,7 +4,9 @@
 package stream
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -546,6 +548,15 @@ func ChatTitle(title string) SSEEvent {
 
 // Errorf builds an error event.
 func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: ErrorData{Error: msg}} }
+
+// RunErrorf is Errorf for a run that ended on err; ok=false once ctx is cancelled, since a
+// stopped run's "context canceled" is no error (its node cards already say stopped).
+func RunErrorf(ctx context.Context, err error) (SSEEvent, bool) {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return SSEEvent{}, false
+	}
+	return Errorf(err.Error()), true
+}
 
 // Done builds the terminal done event.
 func Done() SSEEvent { return SSEEvent{Name: EventDone, Data: struct{}{}} }

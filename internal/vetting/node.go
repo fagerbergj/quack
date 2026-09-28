@@ -259,8 +259,8 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 	if err != nil {
 		return
 	}
-	// Detached: a stopped run's node.failed is written after its ctx is cancelled.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	// Detached: a stopped run's terminal node event is written after its ctx is cancelled.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
 		ChatID: cfg.ChatID, TurnID: turnID, NodeID: nodeID, Kind: kind, At: time.Now().UTC(), Payload: payload,
@@ -792,7 +792,7 @@ func (g *gateRun) commitFinal(answer string, res GateResult, episodicRoundsWritt
 }
 
 // finish: the node span close-out - verdict attributes, EndNode, and the
-// node.done/node.failed ledger event (node.started at entry used the same id).
+// node's terminal ledger event (node.started at entry used the same id).
 func (g *gateRun) finish(span oteltrace.Span, res GateResult, err error) {
 	span.SetAttributes(
 		attribute.Bool("verdict_passed", res.Passed),
@@ -800,11 +800,23 @@ func (g *gateRun) finish(span oteltrace.Span, res GateResult, err error) {
 		attribute.Int("gate_rounds", res.Rounds),
 	)
 	otelobs.EndNode(span, err)
-	doneKind := ledger.KindNodeDone
-	if err != nil {
-		doneKind = ledger.KindNodeFailed
+	if kind := g.terminalKind(err); kind != "" {
+		appendNodeEvent(g.nodeCtx, g.cfg, g.nodeID, g.turnID, kind, res.Rounds)
 	}
-	appendNodeEvent(g.nodeCtx, g.cfg, g.nodeID, g.turnID, doneKind, res.Rounds)
+}
+
+// terminalKind: "" for a paused node (user or shutdown), which resumes later and
+// so has no terminal outcome yet; a stop or cancel is node.cancelled, not node.failed.
+func (g *gateRun) terminalKind(err error) string {
+	switch {
+	case err == nil:
+		return ledger.KindNodeDone
+	case g.paused():
+		return ""
+	case g.cancelled() || errors.Is(g.nodeCtx.Err(), context.Canceled):
+		return ledger.KindNodeCancelled
+	}
+	return ledger.KindNodeFailed
 }
 
 // resolveAborted: register a never-delivered reviewer as a failed fan-out
