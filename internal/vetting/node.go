@@ -259,6 +259,9 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 	if err != nil {
 		return
 	}
+	// Detached: a stopped run's node.failed is written after its ctx is cancelled.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
 		ChatID: cfg.ChatID, TurnID: turnID, NodeID: nodeID, Kind: kind, At: time.Now().UTC(), Payload: payload,
 	}); err != nil {

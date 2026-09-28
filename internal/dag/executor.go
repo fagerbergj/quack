@@ -2,6 +2,7 @@ package dag
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -161,11 +162,18 @@ func (s *DagStream) NeedsInput() map[string]bool { return s.ds.needsInput }
 // never dispatched, and the caller must not treat that as "ran and failed".
 func (s *DagStream) Started() map[string]bool { return s.ds.started }
 
-func (s *DagStream) Finish() {
+func (s *DagStream) Finish() { s.settle(false) }
+
+// Abort is Finish for a runner that ended on an error, so no node stays
+// "running"; one a user stop (ctx cancelled) cut short settles cancelled, not failed.
+func (s *DagStream) Abort() { s.settle(true) }
+
+func (s *DagStream) settle(aborted bool) {
 	s.ds.flush()
-	if len(s.ds.needsInput) == 0 {
+	if !aborted && len(s.ds.needsInput) == 0 {
 		ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
 	}
+	stopped := aborted && errors.Is(s.ctx.Err(), context.Canceled)
 	for _, n := range s.plan.Nodes {
 		if s.ds.doneEmitted[n.ID] {
 			continue
@@ -179,23 +187,24 @@ func (s *DagStream) Finish() {
 		if len(s.ds.needsInput) > 0 && !s.ds.started[n.ID] {
 			continue
 		}
-		s.emitFinishTerminal(n)
+		s.emitFinishTerminal(n, stopped)
 	}
 }
 
 // emitFinishTerminal: Finish's terminal event for one settled node - the
 // delivered/paused/cancelled checks in that priority order, then done.
-func (s *DagStream) emitFinishTerminal(n Node) {
+func (s *DagStream) emitFinishTerminal(n Node, stopped bool) {
 	delivered := s.ds.deliveredOf != nil && s.ds.deliveredOf(n.ID)
 	if !delivered && s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
 		s.yield(stream.NodePaused(n.ID), nil)
 		return
 	}
-	if !delivered && s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
+	empty := strings.TrimSpace(s.ds.outputs[n.ID]) == ""
+	if !delivered && (stopped && empty || s.ds.cancelled != nil && s.ds.cancelled(n.ID)) {
 		s.yield(stream.WithContextID(stream.NodeCancelled(n.ID), s.ds.contextOf(n.ID)), nil)
 		return
 	}
-	if !delivered && strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
+	if !delivered && empty {
 		ev := stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID]))
 		s.yield(stream.WithContextID(ev, s.ds.contextOf(n.ID)), nil)
 		return

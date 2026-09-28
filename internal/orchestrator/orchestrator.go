@@ -313,6 +313,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry " + nodeID}}}
 		for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
 			if rerr != nil {
+				ds.Abort()
 				safeYield(stream.Errorf(rerr.Error()), nil)
 				return
 			}

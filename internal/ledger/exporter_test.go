@@ -219,6 +219,30 @@ func TestExporterDropsUnmappedRecords(t *testing.T) {
 	}
 }
 
+// ctxStore fails an append on a done ctx, as PGStore does.
+type ctxStore struct{ *ledgertest.MemStore }
+
+func (s ctxStore) AppendIntent(ctx context.Context, e ledger.Entry) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return s.MemStore.AppendIntent(ctx, e)
+}
+
+// TestExporterRecordsOnCancelledCtx: a stopped run's last records still land.
+func TestExporterRecordsOnCancelledCtx(t *testing.T) {
+	store := ctxStore{ledgertest.NewMemStore()}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var rec otellog.Record
+	rec.AddAttributes(attribute.String("gen_ai.conversation.id", "c"), attribute.String("gen_ai.operation.name", "chat"))
+	provider.Logger("test").Emit(ctx, rec)
+	if entries, _ := store.ReadEntries(context.Background(), "c", 0); len(entries) != 1 {
+		t.Fatalf("got %d entries, want the record written despite the cancelled ctx", len(entries))
+	}
+}
+
 func TestExporterDisabledStoreIsNoop(t *testing.T) {
 	if err := ledger.NewExporter(nil).Export(context.Background(), nil); err != nil {
 		t.Fatalf("Export with nil store returned an error: %v", err)
