@@ -19,6 +19,18 @@ func requireGit(t *testing.T) {
 	}
 }
 
+// rawGit runs git directly (hermetic env) for scaffolding a fixture repo - init/clone into a
+// not-yet-a-repo dir, which quack's runGit deliberately refuses.
+func rawGit(t *testing.T, dir string, argv ...string) {
+	t.Helper()
+	cmd := exec.Command("git", argv...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", argv, err, out)
+	}
+}
+
 // runGitT is a test helper that fails the test on error.
 func runGitT(t *testing.T, dir string, argv ...string) string {
 	t.Helper()
@@ -34,10 +46,10 @@ func runGitT(t *testing.T, dir string, argv ...string) string {
 func newBareRepoFixture(t *testing.T) string {
 	t.Helper()
 	bare := t.TempDir()
-	runGitT(t, bare, "init", "--bare", "--initial-branch=main")
+	rawGit(t, bare, "init", "--bare", "--initial-branch=main")
 
 	seed := t.TempDir()
-	runGitT(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	rawGit(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
 	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +62,7 @@ func newBareRepoFixture(t *testing.T) string {
 func addBranchFixture(t *testing.T, bare, branch string) {
 	t.Helper()
 	seed := t.TempDir()
-	runGitT(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	rawGit(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
 	runGitT(t, seed, "checkout", "--quiet", "-b", branch)
 	if err := os.WriteFile(filepath.Join(seed, "pr.txt"), []byte("pr change\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -71,7 +83,7 @@ func TestPushBranchRecoversFromSurvivingRemoteBranch(t *testing.T) {
 
 	jailRoot := t.TempDir()
 	target := t.TempDir()
-	runGitT(t, filepath.Dir(target), "clone", "--quiet", bare, target)
+	rawGit(t, filepath.Dir(target), "clone", "--quiet", bare, target)
 	runGitT(t, target, "checkout", "--quiet", "-b", "quack/issue-66") // fresh branch off main, unaware of the prior run
 	runGitT(t, target, "config", "user.name", "test")
 	runGitT(t, target, "config", "user.email", "test@x.local")
@@ -86,7 +98,7 @@ func TestPushBranchRecoversFromSurvivingRemoteBranch(t *testing.T) {
 	}
 
 	fetched := t.TempDir()
-	runGitT(t, filepath.Dir(fetched), "clone", "--quiet", bare, fetched)
+	rawGit(t, filepath.Dir(fetched), "clone", "--quiet", bare, fetched)
 	runGitT(t, fetched, "checkout", "--quiet", "quack/issue-66")
 	if _, err := os.Stat(filepath.Join(fetched, "pr.txt")); err != nil {
 		t.Error("recovered push lost the prior run's commit - want it preserved, not overwritten")
@@ -106,7 +118,7 @@ func TestPushBranchRebaseRecoveryFailureLeavesBranchAlone(t *testing.T) {
 
 	jailRoot := t.TempDir()
 	target := t.TempDir()
-	runGitT(t, filepath.Dir(target), "clone", "--quiet", bare, target)
+	rawGit(t, filepath.Dir(target), "clone", "--quiet", bare, target)
 	runGitT(t, target, "checkout", "--quiet", "-b", "quack/issue-66")
 	runGitT(t, target, "config", "user.name", "test")
 	runGitT(t, target, "config", "user.email", "test@x.local")
@@ -129,7 +141,7 @@ func TestPushBranchRebaseRecoveryFailureLeavesBranchAlone(t *testing.T) {
 	}
 
 	fetched := t.TempDir()
-	runGitT(t, filepath.Dir(fetched), "clone", "--quiet", bare, fetched)
+	rawGit(t, filepath.Dir(fetched), "clone", "--quiet", bare, fetched)
 	runGitT(t, fetched, "checkout", "--quiet", "quack/issue-66")
 	data, rerr := os.ReadFile(filepath.Join(fetched, "pr.txt"))
 	if rerr != nil || string(data) != "pr change\n" {
@@ -143,7 +155,7 @@ func TestPushBranchIgnoresRepoRedirectsAndHooks(t *testing.T) {
 	requireGit(t)
 	bare, decoy := newBareRepoFixture(t), newBareRepoFixture(t)
 	target := t.TempDir()
-	runGitT(t, filepath.Dir(target), "clone", "--quiet", bare, target)
+	rawGit(t, filepath.Dir(target), "clone", "--quiet", bare, target)
 	runGitT(t, target, "checkout", "--quiet", "-b", "quack/issue-7")
 	runGitT(t, target, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "--allow-empty", "-m", "work")
 

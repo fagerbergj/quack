@@ -30,9 +30,9 @@ func gitConfigFixture(t *testing.T) (bin, dir string) {
 	return bin, dir
 }
 
-func runGitCmd(t *testing.T, bin, dir string, credentialed bool, argv ...string) (string, error) {
+func runGitCmd(t *testing.T, bin, dir string, argv ...string) (string, error) {
 	t.Helper()
-	cmd, done, err := GitCmd(context.Background(), bin, dir, argv, nil, credentialed)
+	cmd, done, err := GitCmd(context.Background(), bin, dir, argv, nil)
 	if err != nil {
 		return "", err
 	}
@@ -41,31 +41,27 @@ func runGitCmd(t *testing.T, bin, dir string, credentialed bool, argv ...string)
 	return string(out), err
 }
 
-// TestGitCmdStripsRepoConfigOnlyWhenCredentialed: a credentialed call keeps gitConfigKeep and drops the rest.
-func TestGitCmdStripsRepoConfigOnlyWhenCredentialed(t *testing.T) {
+// TestGitCmdStripsRepoConfigInRepo: every in-repo call keeps gitConfigKeep and drops the rest.
+func TestGitCmdStripsRepoConfigInRepo(t *testing.T) {
 	bin, dir := gitConfigFixture(t)
-	out, err := runGitCmd(t, bin, dir, false, "config", "--local", "--list")
-	if err != nil || !strings.Contains(out, "url.file:///decoy.insteadof") {
-		t.Fatalf("uncredentialed call changed repo config: %q (err=%v)", out, err)
-	}
-	out, err = runGitCmd(t, bin, dir, true, "config", "--local", "--list")
+	out, err := runGitCmd(t, bin, dir, "config", "--local", "--list")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, gone := range []string{"url.", "include.", "http."} {
 		if strings.Contains(out, gone) {
-			t.Errorf("credentialed call kept %s* in repo config:\n%s", gone, out)
+			t.Errorf("in-repo call kept %s* in repo config:\n%s", gone, out)
 		}
 	}
 	if !strings.Contains(out, "user.name=q") {
-		t.Errorf("credentialed call dropped an allowlisted key:\n%s", out)
+		t.Errorf("in-repo call dropped an allowlisted key:\n%s", out)
 	}
 }
 
 // TestGitCmdHomeIsEmptyAndRemoved: dir "" runs in the per-call HOME, which starts empty and is removed after.
 func TestGitCmdHomeIsEmptyAndRemoved(t *testing.T) {
 	bin, _ := gitConfigFixture(t)
-	cmd, done, err := GitCmd(context.Background(), bin, "", []string{"version"}, []string{"HOME=/agent/home"}, true)
+	cmd, done, err := GitCmd(context.Background(), bin, "", []string{"version"}, []string{"HOME=/agent/home"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +77,11 @@ func TestGitCmdHomeIsEmptyAndRemoved(t *testing.T) {
 	}
 }
 
-// TestGitCmdRefusesUnreadableRepoConfig: a credentialed call fails closed outside a repo or on a symlinked config.
+// TestGitCmdRefusesUnreadableRepoConfig: an in-repo call fails closed outside a repo or on a symlinked config.
 func TestGitCmdRefusesUnreadableRepoConfig(t *testing.T) {
 	bin, dir := gitConfigFixture(t)
-	if _, err := runGitCmd(t, bin, t.TempDir(), true, "version"); err == nil {
-		t.Error("credentialed call outside a repo: want an error")
+	if _, err := runGitCmd(t, bin, t.TempDir(), "version"); err == nil {
+		t.Error("call outside a repo: want an error")
 	}
 	cfg := filepath.Join(dir, ".git", "config")
 	moved := filepath.Join(t.TempDir(), "config")
@@ -95,7 +91,7 @@ func TestGitCmdRefusesUnreadableRepoConfig(t *testing.T) {
 	if err := os.Symlink(moved, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runGitCmd(t, bin, dir, true, "version"); err == nil {
-		t.Error("credentialed call on a symlinked repo config: want an error")
+	if _, err := runGitCmd(t, bin, dir, "version"); err == nil {
+		t.Error("call on a symlinked repo config: want an error")
 	}
 }

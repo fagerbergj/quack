@@ -164,7 +164,7 @@ func runPushGit(ctx context.Context, dir string, argv []string, caps workspace.C
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd, done, err := workspace.GitCmd(cctx, bin, dir, argv, pushGitEnv(caps, auth), auth != nil)
+	cmd, done, err := workspace.GitCmd(cctx, bin, dir, argv, pushGitEnv(caps, auth))
 	if err != nil {
 		return "", "", err
 	}

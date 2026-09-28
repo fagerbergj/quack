@@ -211,7 +211,7 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd, done, err := workspace.GitCmd(cctx, bin, dir, argv, gitEnv(caps, auth), auth != nil)
+	cmd, done, err := workspace.GitCmd(cctx, bin, dir, argv, gitEnv(caps, auth))
 	if err != nil {
 		return "", "", err
 	}

@@ -8,18 +8,24 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // GitProtocol is the only transport quack's own git calls may use; tests widen it to "file" for local fixtures.
 var GitProtocol = "https"
 
-// gitConfigKeep is every repo-config key quack's own git honours: repo url.<base>.insteadOf and remote.<url>.url
-// redirect even an explicit URL and no -c counter-rule outranks them, so everything else is dropped.
+// gitConfigKeep is every repo-config key quack's own git honours. Repo url.<base>.insteadOf, remote.<url>.url and
+// filter/merge drivers redirect or run code and no -c counter-rule outranks them, so everything else is dropped.
 var gitConfigKeep = regexp.MustCompile(`^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks)|extensions\.(objectformat|refstorage)|remote\.origin\.(url|fetch)|branch\..+\.(remote|merge)|user\.(name|email))$`)
 
-// gitSafeArgs are -c overrides, which beat every config file; each protocol is named because
-// protocol.<name>.allow outranks protocol.allow.
-func gitSafeArgs() []string {
+// gitConfigLocks serializes in-place strips per common git dir so two quack ops (e.g. fanned-out reviewer
+// worktree provisioning off one clone) don't unset each other's keys mid-list.
+var gitConfigLocks sync.Map // map[string]*sync.Mutex
+
+// GitSafeArgs are -c overrides, which beat every config file; each protocol is named because
+// protocol.<name>.allow outranks protocol.allow. For a read-only query these neutralize the config-driven
+// exec vectors (hooks, fsmonitor, ssh, gpg, gc) without the file strip GitCmd does for in-repo ops.
+func GitSafeArgs() []string {
 	args := []string{"-c", "protocol.allow=never"}
 	for _, p := range []string{"file", "git", "ssh", "ext", "fd", "http", "ftp", "ftps"} {
 		args = append(args, "-c", "protocol."+p+".allow=never")
@@ -30,12 +36,16 @@ func gitSafeArgs() []string {
 		"-c", "core.hooksPath=/dev/null",
 		"-c", "core.fsmonitor=false",
 		"-c", "core.sshCommand=/bin/false",
+		"-c", "commit.gpgSign=false",
+		"-c", "gpg.program=/bin/false",
+		"-c", "gc.auto=0",
 	)
 }
 
-// GitCmd builds a quack-internal git child that reads no agent-writable config; a credentialed call first strips
-// dir's repo config to gitConfigKeep. dir "" runs in the fresh empty HOME, which the returned func removes.
-func GitCmd(ctx context.Context, bin, dir string, argv, env []string, credentialed bool) (*exec.Cmd, func(), error) {
+// GitCmd builds a quack-internal git child that reads no agent-writable config: fresh empty HOME, no
+// system/global config, and for an in-repo call (dir != "") the repo config first stripped to gitConfigKeep -
+// the drivers/rewrites -c can't override. dir "" runs in that empty HOME. The returned func removes it.
+func GitCmd(ctx context.Context, bin, dir string, argv, env []string) (*exec.Cmd, func(), error) {
 	home, err := os.MkdirTemp("", "quack-git-home-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("git: create empty HOME: %w", err)
@@ -44,21 +54,20 @@ func GitCmd(ctx context.Context, bin, dir string, argv, env []string, credential
 	env = append(env, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0")
 	if dir == "" {
 		dir = home
-	} else if credentialed {
-		if err := sanitizeGitConfig(ctx, bin, dir, env); err != nil {
-			done()
-			return nil, nil, err
-		}
+	} else if err := sanitizeGitConfig(ctx, bin, dir, env); err != nil {
+		done()
+		return nil, nil, err
 	}
-	cmd := exec.CommandContext(ctx, bin, append(gitSafeArgs(), argv...)...)
+	cmd := exec.CommandContext(ctx, bin, append(GitSafeArgs(), argv...)...)
 	cmd.Dir, cmd.Env = dir, env
 	return cmd, done, nil
 }
 
-// sanitizeGitConfig unsets every key outside gitConfigKeep in dir's repo config.
+// sanitizeGitConfig unsets every key outside gitConfigKeep in dir's (common) repo config. Fails closed
+// when dir is not a repo or the config file is not regular.
 func sanitizeGitConfig(ctx context.Context, bin, dir string, env []string) error {
 	git := func(args ...string) (string, error) {
-		cmd := exec.CommandContext(ctx, bin, append(gitSafeArgs(), args...)...)
+		cmd := exec.CommandContext(ctx, bin, append(GitSafeArgs(), args...)...)
 		cmd.Dir, cmd.Env = dir, env
 		out, err := cmd.Output()
 		return string(out), err
@@ -75,6 +84,9 @@ func sanitizeGitConfig(ctx context.Context, bin, dir string, env []string) error
 	if fi, err := os.Lstat(cfg); err != nil || !fi.Mode().IsRegular() {
 		return fmt.Errorf("git: repo config %s is not a regular file", cfg)
 	}
+	mu, _ := gitConfigLocks.LoadOrStore(cfg, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
 	keys, err := git("config", "--file", cfg, "--no-includes", "--name-only", "--list", "-z")
 	if err != nil {
 		return fmt.Errorf("git: read repo config: %w", err)
