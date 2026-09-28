@@ -83,24 +83,21 @@ func renderEnvironment(ctx context.Context, res *artifactsrc.Resolver, f envFact
 	return strings.TrimRight(b.String(), "\n"), art, nil
 }
 
-// gitInfo reports cwd's current branch and short HEAD sha via workspace.RunArgv, forced to
-// SandboxNone: this read-only query runs in the server process, not the round's sandbox, so a host with no working bwrap/landlock (no unprivileged userns, e.g. many CI runners) must still see a real repo rather than degrading to "git: no". ok=false for a non-repo cwd (the common case for a non-code node) or any git failure - the block degrades to "git: no" rather than failing the round over a cosmetic line.
+// gitInfo reports cwd's branch and short sha, run inside the round's own sandbox: the repo is agent-written.
+// ok=false for a non-repo cwd or any failure, sandbox included, so the block degrades to "git: no".
 func gitInfo(ctx context.Context, cwd string, caps workspace.Caps) (branch, sha string, ok bool) {
 	if _, err := os.Stat(filepath.Join(cwd, ".git")); err != nil {
 		return "", "", false
 	}
-	probeCaps := caps
-	probeCaps.Sandbox = workspace.SandboxNone
-	// Unsandboxed in the agent's own repo: GitSafeArgs neutralizes config-driven exec on this read-only query.
 	revParse := func(arg string) []string {
 		return append(workspace.GitSafeArgs(), "rev-parse", arg, "HEAD")
 	}
-	res, err := workspace.RunArgv(ctx, cwd, append([]string{"git"}, revParse("--abbrev-ref")...), probeCaps)
+	res, err := workspace.RunArgv(ctx, cwd, append([]string{"git"}, revParse("--abbrev-ref")...), caps)
 	if err != nil || res.ExitCode != 0 {
 		return "", "", false
 	}
 	branch = strings.TrimSpace(res.Output)
-	if res2, err := workspace.RunArgv(ctx, cwd, append([]string{"git"}, revParse("--short")...), probeCaps); err == nil && res2.ExitCode == 0 {
+	if res2, err := workspace.RunArgv(ctx, cwd, append([]string{"git"}, revParse("--short")...), caps); err == nil && res2.ExitCode == 0 {
 		sha = strings.TrimSpace(res2.Output)
 	}
 	return branch, sha, true
