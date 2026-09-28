@@ -395,6 +395,39 @@ func (e PauseReason) Valid() bool {
 	}
 }
 
+// Defines values for PluginReloadFailureStage.
+const (
+	Admission PluginReloadFailureStage = "admission"
+	Agent     PluginReloadFailureStage = "agent"
+	Config    PluginReloadFailureStage = "config"
+	Mcp       PluginReloadFailureStage = "mcp"
+	Registry  PluginReloadFailureStage = "registry"
+	Resolve   PluginReloadFailureStage = "resolve"
+	Seed      PluginReloadFailureStage = "seed"
+)
+
+// Valid indicates whether the value is a known member of the PluginReloadFailureStage enum.
+func (e PluginReloadFailureStage) Valid() bool {
+	switch e {
+	case Admission:
+		return true
+	case Agent:
+		return true
+	case Config:
+		return true
+	case Mcp:
+		return true
+	case Registry:
+		return true
+	case Resolve:
+		return true
+	case Seed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PluginSource.
 const (
 	Embedded PluginSource = "embedded"
@@ -1169,7 +1202,7 @@ type PauseReason string
 
 // Plugin defines model for Plugin.
 type Plugin struct {
-	// DeclaresMcpServers This row's mcp.json declares at least one server. MCP servers are enumerated once at boot; adding or updating this row over the API takes effect only after a restart.
+	// DeclaresMcpServers This row's mcp.json declares at least one server.
 	DeclaresMcpServers *bool `json:"declares_mcp_servers,omitempty"`
 
 	// Entry The raw entry string this row was created from. Empty for the embedded row.
@@ -1196,6 +1229,9 @@ type Plugin struct {
 	// Ref Pinned tag/branch/sha. Absent = tracks the remote default branch.
 	Ref *string `json:"ref,omitempty"`
 
+	// Reload One roster rebuild's outcome - POST /plugins/reload's body, and the `reload` field plugin add, update and delete responses carry.
+	Reload *PluginReloadReport `json:"reload,omitempty"`
+
 	// Repo Present for a github row.
 	Repo *string `json:"repo,omitempty"`
 
@@ -1206,9 +1242,76 @@ type Plugin struct {
 	Source PluginSource `json:"source"`
 }
 
+// PluginDeleted defines model for PluginDeleted.
+type PluginDeleted struct {
+	// Reload One roster rebuild's outcome - POST /plugins/reload's body, and the `reload` field plugin add, update and delete responses carry.
+	Reload PluginReloadReport `json:"reload"`
+}
+
 // PluginList defines model for PluginList.
 type PluginList struct {
 	Plugins []Plugin `json:"plugins"`
+
+	// Reload One roster rebuild's outcome - POST /plugins/reload's body, and the `reload` field plugin add, update and delete responses carry.
+	Reload *PluginReloadReport `json:"reload,omitempty"`
+}
+
+// PluginReloadAgentUpdate defines model for PluginReloadAgentUpdate.
+type PluginReloadAgentUpdate struct {
+	// BundleHash The new bundle's digest (agent-card.json, prompt.md, rubric.yaml).
+	BundleHash string `json:"bundle_hash"`
+	Name       string `json:"name"`
+}
+
+// PluginReloadAgents defines model for PluginReloadAgents.
+type PluginReloadAgents struct {
+	Added   []string `json:"added"`
+	Removed []string `json:"removed"`
+
+	// Updated Agents whose bundle or resolved config changed.
+	Updated []PluginReloadAgentUpdate `json:"updated"`
+}
+
+// PluginReloadFailure defines model for PluginReloadFailure.
+type PluginReloadFailure struct {
+	Error string `json:"error"`
+
+	// Member The agent or MCP server that failed, absent for a whole-plugin failure.
+	Member *string `json:"member,omitempty"`
+
+	// Plugin Registry row name, absent for a config-authored agent or a whole-reload failure.
+	Plugin *string                  `json:"plugin,omitempty"`
+	Stage  PluginReloadFailureStage `json:"stage"`
+}
+
+// PluginReloadFailureStage defines model for PluginReloadFailure.Stage.
+type PluginReloadFailureStage string
+
+// PluginReloadNames defines model for PluginReloadNames.
+type PluginReloadNames struct {
+	Added   []string `json:"added"`
+	Removed []string `json:"removed"`
+	Updated []string `json:"updated"`
+}
+
+// PluginReloadReport One roster rebuild's outcome - POST /plugins/reload's body, and the `reload` field plugin add, update and delete responses carry.
+type PluginReloadReport struct {
+	Agents   PluginReloadAgents    `json:"agents"`
+	Failures []PluginReloadFailure `json:"failures"`
+
+	// Generation The roster generation now serving new runs (unchanged when nothing swapped).
+	Generation int64 `json:"generation"`
+
+	// McpServers Servers named plugin/server. A changed server is both stopped and started.
+	McpServers PluginReloadServers `json:"mcp_servers"`
+	Workflows  PluginReloadNames   `json:"workflows"`
+}
+
+// PluginReloadServers Servers named plugin/server. A changed server is both stopped and started.
+type PluginReloadServers struct {
+	Reused  []string `json:"reused"`
+	Started []string `json:"started"`
+	Stopped []string `json:"stopped"`
 }
 
 // PluginSource github = a git clone under plugins.root, tracked or pinned; local = a bare root path (today's plugins: list form); embedded = quack's go:embedded baseline, the "quack" row - never created or removed via this API.
@@ -1957,6 +2060,9 @@ type ServerInterface interface {
 	// Register and fetch a plugin
 	// (POST /api/v1/plugins)
 	CreatePlugin(w http.ResponseWriter, r *http.Request)
+	// Rebuild the agent roster from the plugin registry
+	// (POST /api/v1/plugins/reload)
+	ReloadPlugins(w http.ResponseWriter, r *http.Request)
 	// Fetch every github-sourced plugin that is behind
 	// (POST /api/v1/plugins/update)
 	UpdateAllPlugins(w http.ResponseWriter, r *http.Request)
@@ -2176,6 +2282,12 @@ func (_ Unimplemented) ListPlugins(w http.ResponseWriter, r *http.Request) {
 // Register and fetch a plugin
 // (POST /api/v1/plugins)
 func (_ Unimplemented) CreatePlugin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Rebuild the agent roster from the plugin registry
+// (POST /api/v1/plugins/reload)
+func (_ Unimplemented) ReloadPlugins(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3601,6 +3713,28 @@ func (siw *ServerInterfaceWrapper) CreatePlugin(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ReloadPlugins operation middleware
+func (siw *ServerInterfaceWrapper) ReloadPlugins(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReloadPlugins(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // UpdateAllPlugins operation middleware
 func (siw *ServerInterfaceWrapper) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 
@@ -3960,6 +4094,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/plugins", wrapper.CreatePlugin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/plugins/reload", wrapper.ReloadPlugins)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/plugins/update", wrapper.UpdateAllPlugins)

@@ -27,33 +27,40 @@ type PluginSeedResult struct {
 func SeedPluginAgentsAndShapes(cfg *config.Config, plugins []plugin.Plugin) ([]PluginSeedResult, error) {
 	var results []PluginSeedResult
 	for _, p := range plugins {
-		if p.AgentsDir == "" && p.WorkflowsDir == "" {
-			continue
-		}
-		enabled, err := pluginGateEnabled(cfg, p)
+		r, err := seedPlugin(cfg, p)
 		if err != nil {
 			return nil, err
 		}
-		if !enabled {
-			continue
-		}
-		var agents, shapes []string
-		if p.AgentsDir != "" {
-			if agents, err = cfg.SeedPluginAgents(p.Name, p.AgentsDir, p.Agents); err != nil {
-				return nil, err
-			}
-		}
-		if p.WorkflowsDir != "" {
-			if shapes, err = cfg.SeedPluginShapes(p.Name, p.WorkflowsDir, p.Workflows); err != nil {
-				return nil, err
-			}
-		}
-		if len(agents) > 0 || len(shapes) > 0 {
-			results = append(results, PluginSeedResult{Plugin: p.Name, Agents: agents, Shapes: shapes})
+		if len(r.Agents) > 0 || len(r.Shapes) > 0 {
+			results = append(results, r)
 		}
 	}
 	dropUnclaimedOptionalAgents(cfg)
 	return results, nil
+}
+
+// seedPlugin is one plugin's share of SeedPluginAgentsAndShapes, without the
+// final unclaimed-override drop (a later plugin may still claim one).
+func seedPlugin(cfg *config.Config, p plugin.Plugin) (PluginSeedResult, error) {
+	r := PluginSeedResult{Plugin: p.Name}
+	if p.AgentsDir == "" && p.WorkflowsDir == "" {
+		return r, nil
+	}
+	enabled, err := pluginGateEnabled(cfg, p)
+	if err != nil || !enabled {
+		return r, err
+	}
+	if p.AgentsDir != "" {
+		if r.Agents, err = cfg.SeedPluginAgents(p.Name, p.AgentsDir, p.Agents); err != nil {
+			return r, err
+		}
+	}
+	if p.WorkflowsDir != "" {
+		if r.Shapes, err = cfg.SeedPluginShapes(p.Name, p.WorkflowsDir, p.Workflows); err != nil {
+			return r, err
+		}
+	}
+	return r, nil
 }
 
 // dropUnclaimedOptionalAgents removes a bundle:-less override no plugin

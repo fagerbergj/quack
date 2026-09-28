@@ -30,18 +30,18 @@ type Plugins struct {
 	reg  pluginreg.FetchRegistry
 	root string
 	seed []string
-	// rebuildSkills swaps in a fresh roster; refusals names non-seed rows
-	// dropped this pass - the same per-row admission boot uses (#1430).
-	rebuildSkills func() (refusals map[string]error, err error)
+	// reload rebuilds the roster from the registry; an error means nothing
+	// swapped, and a refused row is a failure with stage admission (#1430).
+	reload func(ctx context.Context) (schema.PluginReloadReport, error)
 	// mcpDeclared reports, by row name, which plugins currently declare an
 	// mcp.json server - the note on the wire row.
 	mcpDeclared func() map[string]bool
 }
 
-// NewPlugins builds the handler's registry access. rebuildSkills and
-// mcpDeclared may be nil (no-op) for a caller not keeping the roster live.
-func NewPlugins(reg pluginreg.FetchRegistry, root string, seed []string, rebuildSkills func() (map[string]error, error), mcpDeclared func() map[string]bool) *Plugins {
-	return &Plugins{reg: reg, root: root, seed: seed, rebuildSkills: rebuildSkills, mcpDeclared: mcpDeclared}
+// NewPlugins builds the handler's registry access. reload and mcpDeclared
+// may be nil (no-op) for a caller not keeping the roster live.
+func NewPlugins(reg pluginreg.FetchRegistry, root string, seed []string, reload func(context.Context) (schema.PluginReloadReport, error), mcpDeclared func() map[string]bool) *Plugins {
+	return &Plugins{reg: reg, root: root, seed: seed, reload: reload, mcpDeclared: mcpDeclared}
 }
 
 // declaresMCP reports whether name currently declares an mcp.json server.
@@ -52,24 +52,23 @@ func (p *Plugins) declaresMCP(name string) bool {
 	return p.mcpDeclared()[name]
 }
 
-// rebuild re-resolves the native skill roster. A non-nil err is fatal (a
-// seed refusal, or a registry read failure); refusals[name] is set when
-// name was refused and dropped - the caller decides what that means.
-func (p *Plugins) rebuild() (refusals map[string]error, err error) {
-	if p == nil || p.rebuildSkills == nil {
-		return nil, nil
+// rebuild reloads the roster. A non-nil err means nothing swapped (a seed
+// refusal, a registry read failure, ...); the report still says why.
+func (p *Plugins) rebuild(ctx context.Context) (schema.PluginReloadReport, error) {
+	if p == nil || p.reload == nil {
+		return schema.PluginReloadReport{}, nil
 	}
-	return p.rebuildSkills()
+	return p.reload(ctx)
 }
 
-// rebuildOrWarn is DeletePlugin's rebuild call: the delete already
-// committed, so a rebuild failure is logged, not surfaced - there is nothing
-// left to refuse.
-func (p *Plugins) rebuildOrWarn() {
-	if _, err := p.rebuild(); err != nil {
-		slog.Warn("plugin roster rebuild failed after delete; native agents may serve a stale skill list until restart",
-			"component", "rest", "err", err)
+// refusal is name's admission failure in rep, if the reload refused that row.
+func refusal(rep schema.PluginReloadReport, name string) (string, bool) {
+	for _, f := range rep.Failures {
+		if f.Stage == schema.Admission && f.Plugin != nil && *f.Plugin == name {
+			return f.Error, true
+		}
 	}
+	return "", false
 }
 
 // allRows lists every registry row plus the embedded "quack" baseline -
@@ -127,9 +126,9 @@ func pluginWire(root string, p pluginreg.Plugin, declaresMCP bool) schema.Plugin
 }
 
 // reservedPluginNames collide with a fixed REST path segment
-// (/plugins/update, /plugins/updates) or the embedded baseline.
+// (/plugins/update, /plugins/updates, /plugins/reload) or the embedded baseline.
 var reservedPluginNames = map[string]bool{
-	"update": true, "updates": true, pluginreg.EmbeddedQuackPluginName: true,
+	"update": true, "updates": true, "reload": true, pluginreg.EmbeddedQuackPluginName: true,
 }
 
 func reservedPluginNameError(name string) string {
@@ -209,19 +208,24 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error), not the response
-	refusals, rerr := h.plugins.rebuild()
-	if rerr != nil {
-		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+	h.writeReloaded(w, r, http.StatusCreated, fetched)
+}
+
+// writeReloaded reloads after an add or update of row: 422 when nothing
+// swapped or row itself was refused (admitPlugins already persisted that on it).
+func (h *Handler) writeReloaded(w http.ResponseWriter, r *http.Request, status int, row pluginreg.Plugin) {
+	rep, err := h.plugins.rebuild(r.Context())
+	if err != nil {
+		errMsg(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	if refused, ok := refusals[fetched.Name]; ok {
-		// admitPlugins already persisted refused's message onto THIS row -
-		// mirror it here rather than re-deriving or stamping the wrong row.
-		fetched.Error = refused.Error()
-		errMsg(w, http.StatusUnprocessableEntity, refused.Error())
+	if msg, ok := refusal(rep, row.Name); ok {
+		errMsg(w, http.StatusUnprocessableEntity, msg)
 		return
 	}
-	writeJSON(w, http.StatusCreated, pluginWire(h.plugins.root, fetched, h.plugins.declaresMCP(fetched.Name)))
+	wire := pluginWire(h.plugins.root, row, h.plugins.declaresMCP(row.Name))
+	wire.Reload = &rep
+	writeJSON(w, status, wire)
 }
 
 // DeletePlugin removes a row and its clone. "quack" is reserved outright,
@@ -247,8 +251,27 @@ func (h *Handler) DeletePlugin(w http.ResponseWriter, r *http.Request, name sche
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	h.plugins.rebuildOrWarn()
-	w.WriteHeader(http.StatusNoContent)
+	// The delete already committed, so a failed reload is reported, not refused.
+	rep, err := h.plugins.rebuild(r.Context())
+	if err != nil {
+		slog.Warn("plugin reload failed after delete; the previous roster keeps serving until the next reload",
+			"component", "rest", "err", err)
+	}
+	writeJSON(w, http.StatusOK, schema.PluginDeleted{Reload: rep})
+}
+
+// ReloadPlugins rebuilds the roster from the registry: 200 with what
+// changed, or 422 with the same report when nothing swapped.
+func (h *Handler) ReloadPlugins(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePlugins(w) {
+		return
+	}
+	rep, err := h.plugins.rebuild(r.Context())
+	status := http.StatusOK
+	if err != nil {
+		status = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, status, rep)
 }
 
 // ListPluginUpdates checks every github-sourced row against its tracked ref,
@@ -303,17 +326,7 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 		return
 	}
 	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error)
-	refusals, rerr := h.plugins.rebuild()
-	if rerr != nil {
-		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
-		return
-	}
-	if refused, ok := refusals[fetched.Name]; ok {
-		fetched.Error = refused.Error()
-		errMsg(w, http.StatusUnprocessableEntity, refused.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, pluginWire(h.plugins.root, fetched, h.plugins.declaresMCP(fetched.Name)))
+	h.writeReloaded(w, r, http.StatusOK, fetched)
 }
 
 // UpdateAllPlugins fetches only the rows CheckUpdate reports behind (epic:
@@ -342,7 +355,7 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 		fetched, _ := h.plugins.reg.Fetch(ctx, p) // fetch failure lands on the row (Error)
 		return fetched
 	})
-	refusals, rerr := h.plugins.rebuild()
+	rep, rerr := h.plugins.rebuild(r.Context())
 	if rerr != nil {
 		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
 		return
@@ -351,12 +364,12 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 	for i, p := range results {
 		// A refusal is reported per-row (epic: never fail the whole
 		// response) - it doesn't override a check/fetch error already set.
-		if refused, ok := refusals[p.Name]; ok && p.Error == "" {
-			p.Error = refused.Error()
+		if msg, ok := refusal(rep, p.Name); ok && p.Error == "" {
+			p.Error = msg
 		}
 		wire[i] = pluginWire(h.plugins.root, p, h.plugins.declaresMCP(p.Name))
 	}
-	writeJSON(w, http.StatusOK, schema.PluginList{Plugins: wire})
+	writeJSON(w, http.StatusOK, schema.PluginList{Plugins: wire, Reload: &rep})
 }
 
 func findPluginRow(rows []pluginreg.Plugin, name string) (pluginreg.Plugin, bool) {

@@ -723,13 +723,78 @@ export type Plugin = {
      */
     root?: string;
     /**
-     * This row's mcp.json declares at least one server. MCP servers are enumerated once at boot; adding or updating this row over the API takes effect only after a restart.
+     * This row's mcp.json declares at least one server.
      */
     declares_mcp_servers?: boolean;
+    reload?: PluginReloadReport;
 };
 
 export type PluginList = {
     plugins: Array<Plugin>;
+    reload?: PluginReloadReport;
+};
+
+export type PluginDeleted = {
+    reload: PluginReloadReport;
+};
+
+/**
+ * One roster rebuild's outcome - POST /plugins/reload's body, and the `reload` field plugin add, update and delete responses carry.
+ */
+export type PluginReloadReport = {
+    /**
+     * The roster generation now serving new runs (unchanged when nothing swapped).
+     */
+    generation: number;
+    agents: PluginReloadAgents;
+    workflows: PluginReloadNames;
+    mcp_servers: PluginReloadServers;
+    failures: Array<PluginReloadFailure>;
+};
+
+export type PluginReloadAgents = {
+    added: Array<string>;
+    /**
+     * Agents whose bundle or resolved config changed.
+     */
+    updated: Array<PluginReloadAgentUpdate>;
+    removed: Array<string>;
+};
+
+export type PluginReloadAgentUpdate = {
+    name: string;
+    /**
+     * The new bundle's digest (agent-card.json, prompt.md, rubric.yaml).
+     */
+    bundle_hash: string;
+};
+
+export type PluginReloadNames = {
+    added: Array<string>;
+    updated: Array<string>;
+    removed: Array<string>;
+};
+
+/**
+ * Servers named plugin/server. A changed server is both stopped and started.
+ */
+export type PluginReloadServers = {
+    started: Array<string>;
+    reused: Array<string>;
+    stopped: Array<string>;
+};
+
+export type PluginReloadFailure = {
+    /**
+     * Registry row name, absent for a config-authored agent or a whole-reload failure.
+     */
+    plugin?: string;
+    /**
+     * The agent or MCP server that failed, absent for a whole-plugin failure.
+     */
+    member?: string;
+    stage: 'registry' | 'resolve' | 'admission' | 'seed' | 'config' | 'mcp' | 'agent';
+    error: string;
 };
 
 export type CreatePluginBody = {
@@ -1966,6 +2031,31 @@ export type UpdateAllPluginsResponses = {
 
 export type UpdateAllPluginsResponse = UpdateAllPluginsResponses[keyof UpdateAllPluginsResponses];
 
+export type ReloadPluginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/plugins/reload';
+};
+
+export type ReloadPluginsErrors = {
+    /**
+     * Nothing swapped - the registry could not be read, a plugins.seed row was refused, a config-authored agent failed to build, or the merged config is incomplete. The old roster keeps serving; `failures` names why.
+     */
+    422: PluginReloadReport;
+};
+
+export type ReloadPluginsError = ReloadPluginsErrors[keyof ReloadPluginsErrors];
+
+export type ReloadPluginsResponses = {
+    /**
+     * The new generation and what changed
+     */
+    200: PluginReloadReport;
+};
+
+export type ReloadPluginsResponse = ReloadPluginsResponses[keyof ReloadPluginsResponses];
+
 export type DeletePluginData = {
     body?: never;
     path: {
@@ -1990,9 +2080,9 @@ export type DeletePluginError = DeletePluginErrors[keyof DeletePluginErrors];
 
 export type DeletePluginResponses = {
     /**
-     * Removed
+     * Removed; `reload` is the roster rebuild that followed
      */
-    204: void;
+    200: PluginDeleted;
 };
 
 export type DeletePluginResponse = DeletePluginResponses[keyof DeletePluginResponses];

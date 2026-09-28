@@ -113,12 +113,14 @@ func TestDeletePluginRebuildFailureIsWarnOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		return schema.PluginReloadReport{}, errors.New("roster refused")
+	}, nil))
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	w := httptest.NewRecorder()
 	h.DeletePlugin(w, r, "widgets")
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, body %s, want 204 (delete succeeds regardless of rebuild)", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s, want 200 (delete succeeds regardless of rebuild)", w.Code, w.Body.String())
 	}
 }
 
@@ -161,7 +163,9 @@ func TestUpdatePluginRebuildRefusalIs422(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		return schema.PluginReloadReport{}, errors.New("roster refused")
+	}, nil))
 	doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`) // already 422s, row still stored
 
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -197,7 +201,9 @@ func TestUpdateAllPluginsRebuildRefusalIs422(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
 	h := &Handler{}
-	h.SetPlugins(NewPlugins(reg, root, nil, func() (map[string]error, error) { return nil, errors.New("roster refused") }, nil))
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		return schema.PluginReloadReport{}, errors.New("roster refused")
+	}, nil))
 	w := doJSON(t, h.UpdateAllPlugins, http.MethodPost, "")
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body %s, want 422", w.Code, w.Body.String())
@@ -209,8 +215,8 @@ func TestUpdateAllPluginsRebuildRefusalIs422(t *testing.T) {
 // a second line of defense, cheap to prove directly.
 func TestRebuildNilReceiverIsNoop(t *testing.T) {
 	var p *Plugins
-	if refusals, err := p.rebuild(); err != nil || refusals != nil {
-		t.Fatalf("rebuild() on a nil *Plugins = (%v, %v), want (nil, nil)", refusals, err)
+	if rep, err := p.rebuild(context.Background()); err != nil || len(rep.Failures) != 0 {
+		t.Fatalf("rebuild() on a nil *Plugins = (%v, %v), want an empty report", rep, err)
 	}
 	if p.declaresMCP("widgets") {
 		t.Fatal("declaresMCP() on a nil *Plugins = true, want false")

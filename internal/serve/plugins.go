@@ -155,7 +155,7 @@ func registryPluginRoots(registryRoot string, rows []pluginreg.Plugin) []string 
 }
 
 // mcpDeclaredNames names every plugin whose mcp.json declared a server -
-// REST's live note; the agents' actual tool wiring stays boot-fixed.
+// REST's per-row note.
 func mcpDeclaredNames(plugins []plugin.Plugin) *map[string]bool {
 	m := make(map[string]bool, len(plugins))
 	for _, p := range plugins {
@@ -249,8 +249,7 @@ func checkPluginConfig(plugins []plugin.Plugin, modules map[string]yaml.Node) er
 }
 
 // checkPlugin runs both refusal checks against ONE plugin - the shared unit
-// initSkills' boot admission and rebuildSkills' whole-list gate both check
-// against (#1430 severe).
+// boot admission and a reload both check against (#1430 severe).
 func checkPlugin(p plugin.Plugin, modules map[string]yaml.Node) error {
 	if err := checkModuleLinked(p); err != nil {
 		return err
@@ -415,7 +414,7 @@ func mcpCommand(p plugin.Plugin, s plugin.MCPServer, dataRoot string, caps works
 }
 
 // bootToolCtx satisfies agent.ReadonlyContext for the one call that needs it: quack selects tools
-// per node BY NAME (extToolsByName), so an MCP server's tools have to be enumerated once at boot,
+// per node BY NAME (extToolsByName), so an MCP server's tools have to be enumerated when it spawns,
 // before any invocation exists. Every accessor is zero-valued; the real agent.Context arrives at call time.
 type bootToolCtx struct{ context.Context }
 

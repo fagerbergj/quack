@@ -49,7 +49,7 @@ import (
 
 // shapesRefOf builds the *atomic.Pointer[[]workflowcatalog.Shape] newExtDispatch
 // now takes in place of a plain slice - production fills this in after
-// buildAgents (serve.go's finalizeCatalogShapes); tests fix it once, up front.
+// buildAgents (reload.go's catalogShapes); tests fix it once, up front.
 func shapesRefOf(shapes []workflowcatalog.Shape) *atomic.Pointer[[]workflowcatalog.Shape] {
 	var ref atomic.Pointer[[]workflowcatalog.Shape]
 	ref.Store(&shapes)

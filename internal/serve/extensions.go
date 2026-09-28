@@ -66,7 +66,7 @@ type builtSDKExtension struct {
 type sdkBuildDeps struct {
 	cfg       *config.Config
 	factories map[string]extsdk.Factory
-	// shapesRef: read lazily by newExtDispatch - finalizeCatalogShapes (serve.go)
+	// shapesRef: read lazily by newExtDispatch - catalogShapes (reload.go)
 	// hasn't run yet when this deps struct is built.
 	shapesRef     *atomic.Pointer[[]workflowcatalog.Shape]
 	orchRef       *atomic.Pointer[orchestrator.Orchestrator]

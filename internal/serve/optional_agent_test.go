@@ -60,7 +60,7 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 	// Wired exactly as boot() wires it: builtinSkillSrc is WrapRef over
 	// shapesRef, so it (and everything built from it below, including
 	// newScopedSkillTS - the orchestrator's own plan-work path) live-reflects
-	// whatever finalizeCatalogShapes later Stores.
+	// whatever catalogShapes later Stores.
 	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
 	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
 	shapesRef.Store(&rawShapes)
@@ -88,13 +88,13 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 		return got
 	}
 	if before := planWorkInstructions(); !strings.Contains(before, "resolves trigger") || !strings.Contains(before, "drops trigger") {
-		t.Fatalf("both triggers must render before buildAgents/finalizeCatalogShapes run:\n%s", before)
+		t.Fatalf("both triggers must render before buildAgents/catalogShapes run:\n%s", before)
 	}
 
 	var setupFn dag.SetupFunc
 	artifacts := artifact.InMemoryService()
 	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, res, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts, nil, nil, nil, nil)
+		nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v (an optional agent's unresolved tools must not fail boot)", err)
 	}
@@ -107,7 +107,7 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 		t.Error(`clientMap["broken-optional"] present - an optional agent with unresolved tools must be dropped`)
 	}
 
-	// finalizeCatalogShapes (serve.go) must remove "drops-shape" - it names
+	// catalogShapes (reload.go) must remove "drops-shape" - it names
 	// the dropped agent - from the REAL rendered plan-work table, and log why,
 	// while "resolves-shape" (names the agent that built fine) survives.
 	var buf bytes.Buffer
@@ -115,8 +115,8 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	defer slog.SetDefault(prevLog)
 
-	b := &boot{cfg: cfg}
-	b.finalizeCatalogShapes(rawShapes, clientMap, &shapesRef)
+	filtered := catalogShapes(cfg, rawShapes, clientMap)
+	shapesRef.Store(&filtered)
 
 	after := planWorkInstructions()
 	if strings.Contains(after, "drops trigger") {

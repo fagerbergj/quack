@@ -166,8 +166,8 @@ func TestFetchedPluginMCPServerSpawnsAndEnumeratesTools(t *testing.T) {
 	}
 }
 
-// TestMCPDeclaredReflectsRosterAfterUpdate: mcpDeclared, unlike the agents'
-// baked-in tool wiring, follows the roster live through rebuildSkills.
+// TestMCPDeclaredReflectsRosterAfterUpdate: mcpDeclared follows the roster
+// live through a reload.
 func TestMCPDeclaredReflectsRosterAfterUpdate(t *testing.T) {
 	registryRoot := t.TempDir()
 	jail, err := workspace.NewJail(t.TempDir())
@@ -197,7 +197,7 @@ func TestMCPDeclaredReflectsRosterAfterUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := skills.rebuildSkills(); err != nil {
+	if _, err := rebuildSkills(skills); err != nil {
 		t.Fatalf("rebuildSkills: %v", err)
 	}
 	if !skills.mcpDeclared()[entry.Name()] {
@@ -218,11 +218,11 @@ func TestMCPDeclaredReflectsRosterAfterUpdate(t *testing.T) {
 	if err := reg.Put(context.Background(), pluginreg.FromEntry(refusedEntry)); err != nil {
 		t.Fatal(err)
 	}
-	refusals, err := skills.rebuildSkills()
+	refusals, err := rebuildSkills(skills)
 	if err != nil {
 		t.Fatalf("rebuildSkills: %v", err)
 	}
-	if refusals[refusedEntry.Name()] == nil {
+	if refusals[refusedEntry.Name()] == "" {
 		t.Fatalf("refusals = %v, want %q refused (unlinked module)", refusals, refusedEntry.Name())
 	}
 	if skills.mcpDeclared()[refusedEntry.Name()] {
