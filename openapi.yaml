@@ -1289,7 +1289,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Plugin"
         "400":
-          description: entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, quack)
+          description: entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, reload, quack)
           content:
             application/json:
               schema:

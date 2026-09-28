@@ -1973,7 +1973,7 @@ export type CreatePluginData = {
 
 export type CreatePluginErrors = {
     /**
-     * entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, quack)
+     * entry is not github:owner/repo[@ref][#path], or its name is reserved (update, updates, reload, quack)
      */
     400: ErrorResponse;
     /**

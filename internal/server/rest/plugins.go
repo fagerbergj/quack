@@ -80,6 +80,15 @@ func reloadError(w http.ResponseWriter, msg string, rep schema.PluginReloadRepor
 	writeJSON(w, http.StatusUnprocessableEntity, schema.PluginReloadError{Error: msg, Reload: rep})
 }
 
+// fetchBounded fetches one row within pluginUpdateBudget, since writeMu is
+// held across it; a failure lands on the row (Error), not the response.
+func (p *Plugins) fetchBounded(ctx context.Context, row pluginreg.Plugin) pluginreg.Plugin {
+	ctx, cancel := context.WithTimeout(ctx, pluginUpdateBudget)
+	defer cancel()
+	fetched, _ := p.reg.Fetch(ctx, row)
+	return fetched
+}
+
 // refusal is name's admission failure in rep, if the reload refused that row.
 func refusal(rep schema.PluginReloadReport, name string) (string, bool) {
 	for _, f := range rep.Failures {
@@ -228,7 +237,7 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 			row = existing
 		}
 	}
-	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error), not the response
+	fetched := h.plugins.fetchBounded(r.Context(), row)
 	h.writeReloaded(w, r, http.StatusCreated, fetched)
 }
 
@@ -262,13 +271,16 @@ func (h *Handler) DeletePlugin(w http.ResponseWriter, r *http.Request, name sche
 	}
 	h.plugins.writeMu.Lock()
 	defer h.plugins.writeMu.Unlock()
-	if rows, err := h.plugins.reg.List(r.Context()); err == nil {
-		if row, ok := findPluginRow(rows, name); ok && row.Source == pluginreg.SourceLocal {
-			errMsg(w, http.StatusConflict, fmt.Sprintf("%q is a local root from plugins.seed; remove it from quack.yaml and restart instead", name))
-			return
-		}
+	rows, err := h.plugins.reg.List(r.Context())
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
 	}
-	err := h.plugins.reg.Delete(r.Context(), name)
+	if row, ok := findPluginRow(rows, name); ok && row.Source == pluginreg.SourceLocal {
+		errMsg(w, http.StatusConflict, fmt.Sprintf("%q is a local root from plugins.seed; remove it from quack.yaml and restart instead", name))
+		return
+	}
+	err = h.plugins.reg.Delete(r.Context(), name)
 	if errors.Is(err, pluginreg.ErrInvalidName) {
 		errMsg(w, http.StatusBadRequest, err.Error())
 		return
@@ -359,7 +371,7 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
-	fetched, _ := h.plugins.reg.Fetch(r.Context(), row) // fetch failure lands on the row (Error)
+	fetched := h.plugins.fetchBounded(r.Context(), row)
 	h.writeReloaded(w, r, http.StatusOK, fetched)
 }
 

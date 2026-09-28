@@ -76,7 +76,7 @@ func fetch(ctx context.Context, root string, p Plugin, commit func(Plugin) error
 	// sha comes from rev-parse --verify, so it's safe bare ("--" would make it a
 	// pathspec). In place: processes started from the old checkout see new files.
 	if err := gitRun(ctx, dir, "checkout", "--quiet", "--no-guess", "--detach", sha); err != nil {
-		p.Error = fmt.Sprintf("checkout: %v", err) // HEAD didn't move, so the row keeps the old sha
+		p.Error = fmt.Sprintf("checkout: %v", err) // HEAD didn't move; fetchAndPut's compensating Put restores the old sha
 		return p, err
 	}
 	return next, nil

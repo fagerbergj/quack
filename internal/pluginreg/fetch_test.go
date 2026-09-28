@@ -653,7 +653,7 @@ func TestFetchPutFailureLeavesTreeOnStoredSHA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commitAndPush(t, work, "v2")
+	v2 := commitAndPush(t, work, "v2")
 
 	reg.fail = true
 	got, err := fetchAndPut(context.Background(), root, reg, first)
@@ -673,6 +673,19 @@ func TestFetchPutFailureLeavesTreeOnStoredSHA(t *testing.T) {
 	}
 	if stored.SHA != first.SHA {
 		t.Fatalf("stored SHA = %q, want %q", stored.SHA, first.SHA)
+	}
+
+	reg.fail = false
+	got, err = fetchAndPut(context.Background(), root, reg, stored)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	head = strings.TrimSpace(run(t, CloneDir(root, "widgets"), "rev-parse", "HEAD"))
+	if stored, err = reg.readRow("widgets"); err != nil {
+		t.Fatal(err)
+	}
+	if head != v2 || stored.SHA != v2 || got.SHA != v2 || stored.Error != "" {
+		t.Fatalf("after retry head %s, stored %s (%q), returned %s: want all on v2 %s", head, stored.SHA, stored.Error, got.SHA, v2)
 	}
 }
 
