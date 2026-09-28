@@ -23,8 +23,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// seedRegistry Puts each seed entry whose name is absent, so the UI/REST own
-// the list after boot; keepSeededRow decides for a name already registered.
+// seedRegistry inserts each absent seed name as a seeded row; for a name
+// already registered, keepSeededRow decides whether the seed entry replaces it.
 func seedRegistry(ctx context.Context, reg pluginreg.FetchRegistry, seed []string) error {
 	existing, err := reg.List(ctx)
 	if err != nil {
@@ -106,7 +106,7 @@ func warnRESTOwnedRow(existing, seeded pluginreg.Plugin) {
 			"component", "startup", "name", seeded.Name, "entry", seeded.Entry)
 		return
 	}
-	slog.Info("plugin row was set over REST; not following plugins.seed", "component", "startup", "name", seeded.Name, "row", existing.Entry, "seed", seeded.Entry)
+	slog.Warn("plugin row was set over REST; not following plugins.seed", "component", "startup", "name", seeded.Name, "row", existing.Entry, "seed", seeded.Entry)
 }
 
 // fetchRegistryPlugins fetches every non-local row against its pinned/tracked

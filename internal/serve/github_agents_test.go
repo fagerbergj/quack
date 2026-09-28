@@ -57,7 +57,7 @@ func TestGithubPluginSeedsAgentsWhenExtensionEnabled(t *testing.T) {
 	enableGithubExtension(t, cfg)
 	p := resolveGithubPlugin(t)
 
-	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	results, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
 	if err != nil {
 		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestGithubPluginAbsentWhenExtensionDisabled(t *testing.T) {
 	}
 	p := resolveGithubPlugin(t)
 
-	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	results, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
 	if err != nil {
 		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
 	}

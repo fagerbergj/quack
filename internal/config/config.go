@@ -1374,6 +1374,9 @@ func (c *Config) RequireAgentBundlesAndModels() error {
 
 func (c *Config) validateAgentFields(requireComplete bool) error {
 	for name, a := range c.Agents {
+		if requireComplete && a.Bundle == "" {
+			return fmt.Errorf("config: agent %q has empty bundle path", name)
+		}
 		if a.Model != "" {
 			var err error
 			if a, err = c.validateAgentModelRef(name, a); err != nil {
@@ -1387,13 +1390,8 @@ func (c *Config) validateAgentFields(requireComplete bool) error {
 		} else if requireComplete {
 			return fmt.Errorf("config: agent %q provider %q is not defined under providers", name, a.Provider)
 		}
-		if requireComplete {
-			if a.Bundle == "" {
-				return fmt.Errorf("config: agent %q has empty bundle path", name)
-			}
-			if a.Model == "" && !c.skipRuntimeValidation {
-				return fmt.Errorf("config: agent %q has empty model", name)
-			}
+		if requireComplete && a.Model == "" && !c.skipRuntimeValidation {
+			return fmt.Errorf("config: agent %q has empty model", name)
 		}
 		if a.Acp != nil && len(a.Acp.Command) == 0 {
 			return fmt.Errorf("config: agent %q has an acp block with an empty command", name)

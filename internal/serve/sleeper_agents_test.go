@@ -96,7 +96,7 @@ func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 	enableSleeperExtension(t, cfg)
 	p := resolveSleeperPlugin(t)
 
-	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	results, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
 	if err != nil {
 		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSleeperPluginAbsentWhenExtensionDisabled(t *testing.T) {
 	}
 	p := resolveSleeperPlugin(t)
 
-	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	results, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
 	if err != nil {
 		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
 	}

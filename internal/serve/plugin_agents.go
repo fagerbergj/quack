@@ -3,7 +3,9 @@ package serve
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"gopkg.in/yaml.v3"
@@ -22,21 +24,20 @@ type PluginSeedResult struct {
 }
 
 // SeedPluginAgentsAndShapes merges every admitted plugin's agents/ bundles
-// and workflows/ shapes into cfg, gated per plugin on pluginGateEnabled.
-// Call before workflowcatalog.FromConfig/buildAgents so both see the merge.
-func SeedPluginAgentsAndShapes(cfg *config.Config, plugins []plugin.Plugin) ([]PluginSeedResult, error) {
+// and workflows/ shapes into cfg, gated per plugin on pluginGateEnabled, and
+// returns the overrides no plugin claimed (dropped). Call before buildAgents.
+func SeedPluginAgentsAndShapes(cfg *config.Config, plugins []plugin.Plugin) ([]PluginSeedResult, []string, error) {
 	var results []PluginSeedResult
 	for _, p := range plugins {
 		r, err := seedPlugin(cfg, p)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(r.Agents) > 0 || len(r.Shapes) > 0 {
 			results = append(results, r)
 		}
 	}
-	dropUnclaimedOptionalAgents(cfg)
-	return results, nil
+	return results, dropUnclaimedOverrides(cfg), nil
 }
 
 // seedPlugin is one plugin's share of SeedPluginAgentsAndShapes, without the
@@ -63,15 +64,18 @@ func seedPlugin(cfg *config.Config, p plugin.Plugin) (PluginSeedResult, error) {
 	return r, nil
 }
 
-// dropUnclaimedOptionalAgents removes a bundle:-less override no plugin
-// seeded (its module disabled) - Optional's own "drop, don't fail boot" contract, applied before RequireAgentBundlesAndModels instead of at build time.
-func dropUnclaimedOptionalAgents(cfg *config.Config) {
-	for name, ac := range cfg.Agents {
-		if ac.Optional && ac.Bundle == "" {
+// dropUnclaimedOverrides removes every bundle:-less entry no plugin seeded. Such an
+// entry is only legal as a plugin override, so a missing plugin costs the agent, not the boot.
+func dropUnclaimedOverrides(cfg *config.Config) []string {
+	var dropped []string
+	for _, name := range slices.Sorted(maps.Keys(cfg.Agents)) {
+		if cfg.Agents[name].Bundle == "" {
 			delete(cfg.Agents, name)
-			slog.Warn("optional agent has no plugin-supplied bundle; dropped from the roster", "component", "startup", "agent", name)
+			dropped = append(dropped, name)
+			slog.Error(fmt.Sprintf("no plugin seeded agent %q (plugin unfetched/refused or module disabled); override dropped", name), "component", "startup")
 		}
 	}
+	return dropped
 }
 
 // pluginGateEnabled: a plugin naming no linked module seeds unconditionally;

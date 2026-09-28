@@ -367,7 +367,7 @@ func TestReloadAbortKeepsPreviousRoster(t *testing.T) {
 			rig.r.cfg.Plugins.Seed = []string{root}
 		}},
 		{"incomplete config agent", schema.Config, func(t *testing.T, rig *reloadRig, _ string) {
-			rig.r.roster.pristine.Agents = map[string]config.AgentConfig{"ghost": {}}
+			rig.r.roster.pristine.Agents = map[string]config.AgentConfig{"ghost": {Bundle: "b"}}
 		}},
 		{"agent build", schema.Agent, func(t *testing.T, rig *reloadRig, _ string) {
 			rig.r.roster.build = func(*config.Config, []extTool) (builtAgents, error) {
@@ -631,8 +631,8 @@ func TestReloadShutdownStopsAllServersAndRefusesReload(t *testing.T) {
 	}
 }
 
-// A non-optional override whose plugin stopped seeding it aborts, naming the plugin that used to.
-func TestReloadNamesPluginOfOrphanedOverride(t *testing.T) {
+// An override whose plugin stopped seeding it is dropped, reported under the plugin that used to.
+func TestReloadDropsOrphanedOverrideNamingItsPlugin(t *testing.T) {
 	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
 	cfg := reloadTestConfig()
 	cfg.Agents = map[string]config.AgentConfig{"analyst": {ContextWindow: 1234}}
@@ -642,10 +642,10 @@ func TestReloadNamesPluginOfOrphanedOverride(t *testing.T) {
 	rig.addLocal(t, root)
 	rig.reload(t)
 	writeReloadPlugin(t, root, reloadPlugin{})
-	rep, err := rig.r.reload(context.Background())
+	rep := rig.reload(t)
 	f, ok := failureFor(rep, schema.Config, "analyst")
-	if err == nil || !ok || f.Plugin == nil || *f.Plugin != "p" {
-		t.Fatalf("reload = (%+v, %v), want a config abort naming analyst and plugin p", rep.Failures, err)
+	if !ok || f.Plugin == nil || *f.Plugin != "p" || !slices.Contains(rep.Agents.Removed, "analyst") {
+		t.Fatalf("reload = %+v, want analyst removed and a config failure naming it and plugin p", rep)
 	}
 }
 

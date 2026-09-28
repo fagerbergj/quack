@@ -1,8 +1,12 @@
 package serve
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -95,7 +99,7 @@ func TestSeedPluginAgentsAndShapes_GatedOffContributesNothing(t *testing.T) {
 	writeGenericAgentBundle(t, agentsDir, "scout")
 	p := plugin.Plugin{Name: "acme", AgentsDir: agentsDir, Modules: []plugin.Module{{Name: "acme", Path: "x"}}}
 
-	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	results, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
 	if err != nil {
 		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
 	}
@@ -112,7 +116,7 @@ func TestSeedPluginAgentsAndShapes_GatedOffContributesNothing(t *testing.T) {
 func TestSeedPluginAgentsAndShapes_SkillsOnlyPluginContributesNothing(t *testing.T) {
 	cfg := minimalPluginTestConfig()
 	p := plugin.Plugin{Name: "usage", SkillsDir: "/does/not/matter"}
-	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	results, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
 	if err != nil {
 		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
 	}
@@ -131,7 +135,7 @@ func TestSeedPluginAgentsAndShapes_UnconditionalPluginSeeds(t *testing.T) {
 	writeGenericAgentBundle(t, agentsDir, "scout")
 	p := plugin.Plugin{Name: "acme", AgentsDir: agentsDir, Agents: []string{"scout"}}
 
-	results, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
+	results, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p})
 	if err != nil {
 		t.Fatalf("SeedPluginAgentsAndShapes: %v", err)
 	}
@@ -153,7 +157,7 @@ func TestPluginGateEnabled_MalformedModuleBlockErrors(t *testing.T) {
 	if _, err := pluginGateEnabled(cfg, p); err == nil {
 		t.Fatal("expected an error for a malformed extensions.acme block")
 	}
-	if _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{{Name: "acme", AgentsDir: t.TempDir(), Modules: p.Modules}}); err == nil {
+	if _, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{{Name: "acme", AgentsDir: t.TempDir(), Modules: p.Modules}}); err == nil {
 		t.Fatal("SeedPluginAgentsAndShapes must propagate the gate error")
 	}
 }
@@ -168,7 +172,7 @@ func TestSeedPluginAgentsAndShapes_AgentSeedErrorPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := plugin.Plugin{Name: "acme", AgentsDir: agentsDir, Agents: []string{"scout"}}
-	if _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p}); err == nil {
+	if _, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p}); err == nil {
 		t.Fatal("expected the malformed agent.yaml error to propagate")
 	}
 }
@@ -183,7 +187,7 @@ func TestSeedPluginAgentsAndShapes_ShapeSeedErrorPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := plugin.Plugin{Name: "acme", WorkflowsDir: workflowsDir, Workflows: []string{"acme-job"}}
-	if _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p}); err == nil {
+	if _, _, err := SeedPluginAgentsAndShapes(cfg, []plugin.Plugin{p}); err == nil {
 		t.Fatal("expected the missing-agent shape error to propagate")
 	}
 }
@@ -249,4 +253,29 @@ func TestResolveConfiguredPlugins_UnclonedGitHubEntryUnresolvable(t *testing.T) 
 
 func TestLogPluginSeeds_DoesNotPanic(t *testing.T) {
 	logPluginSeeds([]PluginSeedResult{{Plugin: "acme", Agents: []string{"scout"}, Shapes: []string{"acme-job"}}})
+}
+
+// Boot's seeding drops a bundle-less override no plugin claimed, logging an
+// error, and the roster left behind passes completeness instead of failing boot.
+func TestSeedPluginsDropsUnclaimedOverrideAndLogs(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+	cfg := minimalPluginTestConfig()
+	cfg.Agents["lineup-analyst"] = config.AgentConfig{ContextWindow: 262144}
+
+	cand, _, _, dropped, err := seedPlugins(cfg, nil, func(plugin.Plugin, error) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(dropped, []string{"lineup-analyst"}) || len(cand.Agents) != 0 {
+		t.Fatalf("dropped = %v, agents = %v; want lineup-analyst dropped", dropped, cand.Agents)
+	}
+	if err := cand.RequireAgentBundlesAndModels(); err != nil {
+		t.Fatalf("RequireAgentBundlesAndModels after the drop: %v", err)
+	}
+	if log := buf.String(); !strings.Contains(log, "level=ERROR") || !strings.Contains(log, `no plugin seeded agent \"lineup-analyst\"`) {
+		t.Errorf("log = %q, want an error naming lineup-analyst", log)
+	}
 }

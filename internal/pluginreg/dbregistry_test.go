@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"gorm.io/gorm"
 )
 
 // TestOpenDBHandlesStayIndependentAfterSequentialOpens: a shared
@@ -189,25 +190,53 @@ func TestDBRegistryPutRejectsConcurrentInsertCollision_Postgres(t *testing.T) {
 	}
 }
 
+// preSeededRow is plugin_rows as it was before the seeded column.
+type preSeededRow struct {
+	Name         string `gorm:"primaryKey"`
+	Entry        string
+	Source       string
+	Owner        string
+	Repo         string
+	Ref          string
+	Path         string
+	InstalledSHA string
+	FetchedAt    *time.Time
+	Error        string
+	UpdatedAt    time.Time
+}
+
+func (preSeededRow) TableName() string { return "plugin_rows" }
+
 // A plugin_rows table from before the seeded column gains it as false, and
-// its rows still read back.
+// its rows still read back, on both database kinds.
 func TestNewDBRegistryAddsSeededToExistingRows(t *testing.T) {
-	db, err := OpenDB("sqlite", filepath.Join(t.TempDir(), "plugins.db"))
-	if err != nil {
-		t.Fatal(err)
+	opens := map[string]func(*testing.T) *gorm.DB{
+		"sqlite": func(t *testing.T) *gorm.DB {
+			db, err := OpenDB("sqlite", filepath.Join(t.TempDir(), "plugins.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return db
+		},
+		"postgres": openPostgresDB,
 	}
-	if err := db.Exec(`CREATE TABLE plugin_rows (name text PRIMARY KEY, entry text, source text, owner text, repo text, ref text, path text, installed_sha text, fetched_at datetime, error text, updated_at datetime)`).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Exec(`INSERT INTO plugin_rows (name, entry, source) VALUES ('usage', '.agents/plugins/usage', 'local')`).Error; err != nil {
-		t.Fatal(err)
-	}
-	reg, err := NewDBRegistry(db, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows, err := reg.List(context.Background())
-	if err != nil || len(rows) != 1 || rows[0].Name != "usage" || rows[0].Seeded {
-		t.Fatalf("rows = %+v, err %v; want the old usage row, not seeded", rows, err)
+	for name, open := range opens {
+		t.Run(name, func(t *testing.T) {
+			db := open(t)
+			if err := db.AutoMigrate(&preSeededRow{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&preSeededRow{Name: "sleeper", Entry: ".agents/plugins/sleeper", Source: SourceLocal}).Error; err != nil {
+				t.Fatal(err)
+			}
+			reg, err := NewDBRegistry(db, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := reg.List(context.Background())
+			if err != nil || len(rows) != 1 || rows[0].Name != "sleeper" || rows[0].Seeded {
+				t.Fatalf("rows = %+v, err %v; want the old sleeper row, not seeded", rows, err)
+			}
+		})
 	}
 }

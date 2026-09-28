@@ -392,19 +392,32 @@ func TestServerValidate_OverrideWithoutBundleValidWhenPluginPresent(t *testing.T
 }
 
 // Same override-only config, but the plugin is never seeded (absent or its
-// module disabled) - scout stays incomplete, and validate must still give
-// the same clear "empty bundle path" error it always gave a broken config.
-func TestServerValidate_OverrideWithoutBundleErrorsWhenPluginAbsent(t *testing.T) {
+// module disabled): boot drops scout, so validate passes and warns, in text and JSON.
+func TestServerValidate_OverrideWithoutBundleWarnsWhenPluginAbsent(t *testing.T) {
 	dir := t.TempDir()
 	pluginDir := writeAcmeScoutPlugin(t, dir)
 	cfgPath := writeOverrideOnlyPluginConfig(t, dir, pluginDir, false)
 
-	c := newServerValidateCmd()
-	c.SilenceUsage = true
-	c.SetArgs([]string{cfgPath})
-	err := c.Execute()
-	if err == nil || !strings.Contains(err.Error(), `agent "scout" has empty bundle path`) {
-		t.Fatalf("server validate = %v, want the empty-bundle-path error", err)
+	run := func(args ...string) string {
+		var out bytes.Buffer
+		c := newServerValidateCmd()
+		c.SetOut(&out)
+		c.SetArgs(args)
+		if err := c.Execute(); err != nil {
+			t.Fatalf("server validate %v: %v", args, err)
+		}
+		return out.String()
+	}
+	if text := run(cfgPath); !strings.Contains(text, "agent scout: warning:") {
+		t.Errorf("text output has no scout warning:\n%s", text)
+	}
+	out := bytes.NewBufferString(run(cfgPath, "--json"))
+	var got serverValidateResult
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.DroppedOverrides) != 1 || got.DroppedOverrides[0] != "scout" {
+		t.Errorf("DroppedOverrides = %v, want [scout]", got.DroppedOverrides)
 	}
 }
 

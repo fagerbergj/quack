@@ -34,7 +34,7 @@ To exercise the image end to end, point your QA or staging instance at the dev t
 
 ## Declarative plugins
 
-`EXT` replaces Go modules only. A module's `plugin/` directory (agents, skills, workflows) reaches quack through the plugin registry, pinned in `config/quack.yaml`'s `plugins.seed`. To try a plugin change on a dev instance, seed its directory as a local root. A local row is named after its directory, so link it under the plugin's name first (`ln -s ~/quack-extensions/sleeper/plugin /opt/plugins/sleeper`, then seed `/opt/plugins/sleeper`). Or push a branch and add `github:fagerbergj/quack-extensions@<branch>#sleeper/plugin` from the Plugins page. That takes the row over from `plugins.seed`; add the seed entry back the same way when done, and config owns it again from the next boot.
+`EXT` replaces Go modules only. A module's `plugin/` directory (agents, skills, workflows) reaches quack through the plugin registry, pinned in `config/quack.yaml`'s `plugins.seed`. To try a plugin change on a dev instance, seed its directory as a local root. A local row is named after its directory, so link it under the plugin's name first (`ln -s ~/quack-extensions/sleeper/plugin /opt/plugins/sleeper`, then seed `/opt/plugins/sleeper` in place of the `github:` entry). The seeded `github:` row and its clone are replaced by the local row at boot; switching the seed back replaces the local row and clones the plugin again. Or push a branch and add `github:fagerbergj/quack-extensions@<branch>#sleeper/plugin` from the Plugins page. That takes the row over from `plugins.seed`; add the seed entry back the same way when done, and config owns it again from the next boot.
 
 ## Before merging the extension change
 

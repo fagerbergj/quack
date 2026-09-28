@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"gorm.io/gorm"
 )
 
 // regBackend is one Registry implementation under test, plus root (clone
@@ -54,30 +55,7 @@ func postgresBackend(t *testing.T) regBackend {
 	return regBackend{
 		name: "postgres",
 		open: func(t *testing.T) (Registry, string) {
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-			defer cancel()
-			ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-				tcpostgres.WithDatabase("quack_pluginreg_test"),
-				tcpostgres.WithUsername("quack"),
-				tcpostgres.WithPassword("quack"),
-				tcpostgres.BasicWaitStrategies(),
-			)
-			if err != nil {
-				t.Skipf("docker unavailable, skipping postgres registry test: %v", err)
-			}
-			t.Cleanup(func() {
-				if err := ctr.Terminate(context.Background()); err != nil {
-					t.Logf("terminate postgres container: %v", err)
-				}
-			})
-			dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
-			if err != nil {
-				t.Fatalf("connection string: %v", err)
-			}
-			db, err := OpenDB("postgres", dsn)
-			if err != nil {
-				t.Fatalf("open postgres: %v", err)
-			}
+			db := openPostgresDB(t)
 			root := t.TempDir()
 			reg, err := NewDBRegistry(db, root)
 			if err != nil {
@@ -327,4 +305,34 @@ func TestRegistryBackends(t *testing.T) {
 			})
 		})
 	}
+}
+
+// openPostgresDB starts a throwaway postgres, skipping the test when Docker isn't reachable.
+func openPostgresDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
+		tcpostgres.WithDatabase("quack_pluginreg_test"),
+		tcpostgres.WithUsername("quack"),
+		tcpostgres.WithPassword("quack"),
+		tcpostgres.BasicWaitStrategies(),
+	)
+	if err != nil {
+		t.Skipf("docker unavailable, skipping postgres registry test: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ctr.Terminate(context.Background()); err != nil {
+			t.Logf("terminate postgres container: %v", err)
+		}
+	})
+	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("connection string: %v", err)
+	}
+	db, err := OpenDB("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	return db
 }

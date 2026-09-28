@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/pluginreg"
@@ -142,5 +143,57 @@ func TestBootMigratesLocalSleeperRowToGithubPlugin(t *testing.T) {
 	}
 	if !slices.Equal(rep.Agents.Added, sleeperAgentNames) || !slices.Equal(rep.Workflows.Added, sleeperWorkflowShapeNames) {
 		t.Fatalf("added agents %v, workflows %v; want %v, %v", rep.Agents.Added, rep.Workflows.Added, sleeperAgentNames, sleeperWorkflowShapeNames)
+	}
+}
+
+// A seed ref bump on a seeded row checks the new tag out at the next boot; a
+// bump to a missing tag keeps serving the old checkout and records the error.
+func TestBootFetchFollowsSeedRefBump(t *testing.T) {
+	bare := filepath.Join(t.TempDir(), "widgets.git")
+	run(t, "", "init", "--quiet", "--bare", "--initial-branch=main", bare)
+	work := t.TempDir()
+	run(t, work, "init", "--quiet", "--initial-branch=main")
+	for _, tag := range []string{"v1", "v2"} {
+		if err := os.WriteFile(filepath.Join(work, "plugin.json"), []byte(`{"name":"widgets","version":"`+tag+`"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run(t, work, "add", ".")
+		run(t, work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", tag)
+		run(t, work, "tag", tag)
+	}
+	run(t, work, "push", "--quiet", bare, "main", "v1", "v2")
+	prev := pluginreg.RemoteURL
+	pluginreg.RemoteURL = func(string, string) string { return bare }
+	t.Cleanup(func() { pluginreg.RemoteURL = prev })
+
+	ctx := context.Background()
+	root := t.TempDir()
+	reg := pluginreg.NewFSRegistry(root)
+	boot := func(entry string) pluginreg.Plugin {
+		t.Helper()
+		if err := seedRegistry(ctx, reg, []string{entry}); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := reg.List(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fetchRegistryPlugins(ctx, reg, rows)[0]
+	}
+	head := func() string {
+		return strings.TrimSpace(run(t, pluginreg.CloneDir(root, "widgets"), "rev-parse", "HEAD"))
+	}
+	v2 := strings.TrimSpace(run(t, work, "rev-parse", "v2"))
+
+	boot("github:acme/widgets@v1")
+	if row := boot("github:acme/widgets@v2"); row.SHA != v2 || row.Error != "" || head() != v2 {
+		t.Fatalf("after bump to v2: row %+v, HEAD %s; want both at %s", row, head(), v2)
+	}
+	row := boot("github:acme/widgets@v3")
+	if row.Ref != "v3" || row.SHA != v2 || row.Error == "" || head() != v2 {
+		t.Fatalf("after bump to missing v3: row %+v, HEAD %s; want ref v3, sha and HEAD still %s, error set", row, head(), v2)
+	}
+	if listed, _ := reg.List(ctx); listed[0].SHA != v2 || listed[0].Error == "" {
+		t.Fatalf("persisted row %+v, want the v2 sha and the fetch error", listed[0])
 	}
 }
