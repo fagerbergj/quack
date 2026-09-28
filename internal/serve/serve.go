@@ -661,7 +661,7 @@ func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (plug
 	// boot, a REST-added one is dropped like a reload drops it.
 	seedNames := seedPluginNames(b.cfg.Plugins.Seed)
 	b.pristine = cloneForSeeding(b.cfg)
-	cand, plugins, seedResults, err := seedPlugins(b.pristine, plugins, func(p plugin.Plugin, err error) error {
+	cand, plugins, seedResults, _, err := seedPlugins(b.pristine, plugins, func(p plugin.Plugin, err error) error {
 		if seedNames[p.Name] {
 			return err
 		}

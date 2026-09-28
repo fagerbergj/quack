@@ -246,8 +246,8 @@ agents:
     tools: []
     inputs: [text, image]
     judge: false      # single-pass transcription with no rubric criteria to judge; not a vision limitation
-  # lineup-analyst/waiver-scout/trend-scout moved into .agents/plugins/sleeper/agents/ (#1505):
-  # the plugin seeds them itself once extensions.sleeper is configured (docs/agent-plugins.md).
+  # The Sleeper agents come from the sleeper plugin (plugins.seed below), which seeds them
+  # once extensions.sleeper is configured (docs/agent-plugins.md).
 
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +
@@ -423,7 +423,8 @@ plugins:
     - github:fagerbergj/dotagents           # general-purpose skills
     - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline
     - .agents/plugins/usage                 # manifest for the compiled-in usage extension
-    - .agents/plugins/sleeper               # skills always load; its agents/workflows seed only once extensions.sleeper below is configured
+    # Pinned to the same tag as go.mod's quack-extensions/sleeper; its agents/workflows seed only once extensions.sleeper below is configured.
+    - github:fagerbergj/quack-extensions@sleeper/v0.8.0#sleeper/plugin
     - .agents/plugins/github                # its code-implementer/reviewer/explorer agents seed only once extensions.github below is configured
 
 # workflows: a top-level key (not nested under skills:) that either teaches
@@ -456,8 +457,7 @@ plugins:
 #   # (internal/inference/openaimodel) doesn't decode inline PDF data yet, so
 #   # this shape is the intended wiring, not yet an end-to-end working one.
 
-# The four sleeper-* job shapes (lineup/waivers/trends/season-notes) moved into
-# .agents/plugins/sleeper/workflows/ (#1505); the plugin seeds them itself once
+# The sleeper-* job shapes come from the sleeper plugin, which seeds them once
 # extensions.sleeper is configured. No workflows: entries ship by default.
 
 # The agents' working disk (filesystem/git tools). One configured root; a
@@ -706,7 +706,7 @@ workspace:
 #
 #   # extensions.sleeper wires the Sleeper fantasy-football extension: read-only
 #   # Sleeper API tools, its own UI page under the nav rail, and (once this
-#   # block is present and enabled) the .agents/plugins/sleeper plugin's seven
+#   # block is present and enabled) the sleeper plugin's seven
 #   # job agents (lineup-analyst, waiver-scout, trend-scout, trade-analyst,
 #   # league-reporter, history-analyst, draft-analyst) and their sleeper-*
 #   # workflow shapes (docs/agent-plugins.md). No secrets required, so this

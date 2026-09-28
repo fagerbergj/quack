@@ -698,14 +698,14 @@ func newServerValidateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			seeded, err := serve.SeedPluginAgentsAndShapes(cfg, plugins)
+			seeded, dropped, err := serve.SeedPluginAgentsAndShapes(cfg, plugins)
 			if err != nil {
 				return err
 			}
 			if err := cfg.RequireAgentBundlesAndModels(); err != nil {
 				return err
 			}
-			res := serverValidateResult{Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, StaleBundles: staleAgentBundles(cfg)}
+			res := serverValidateResult{Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, DroppedOverrides: dropped, StaleBundles: staleAgentBundles(cfg)}
 			if !skipExtensions {
 				exts, err := serve.ValidateExtensions(cfg)
 				if err != nil {
@@ -740,6 +740,9 @@ func printServerValidate(w io.Writer, res serverValidateResult) {
 	for _, name := range res.Unresolvable {
 		fmt.Fprintf(w, "  plugin %s: not resolvable offline (not cloned locally; run a real boot or fetch first)\n", name)
 	}
+	for _, name := range res.DroppedOverrides {
+		fmt.Fprintf(w, "  agent %s: warning: no plugin seeded it (plugin unfetched/refused or module disabled); override dropped\n", name)
+	}
 	for _, name := range res.StaleBundles {
 		fmt.Fprintf(w, "  agent %s: bundle path does not exist on disk\n", name)
 	}
@@ -767,6 +770,8 @@ type serverValidateResult struct {
 	Plugins []serve.PluginSeedResult `json:"plugins,omitempty"`
 	// Unresolvable names a plugins.seed row validate couldn't check offline.
 	Unresolvable []string `json:"unresolvable,omitempty"`
+	// DroppedOverrides names each non-optional bundle-less entry no plugin seeded; boot drops it too.
+	DroppedOverrides []string `json:"dropped_overrides,omitempty"`
 	// StaleBundles names a configured agent whose bundle path is missing.
 	StaleBundles []string `json:"stale_bundles,omitempty"`
 	// Extensions names each enabled extension whose Factory accepted its config.

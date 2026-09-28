@@ -2410,6 +2410,9 @@ components:
         declares_mcp_servers:
           type: boolean
           description: This row's mcp.json declares at least one server.
+        seeded:
+          type: boolean
+          description: Output only. plugins.seed owns this row and moves it when its seed entry changes; a POST of the row's name clears it.
         reload:
           $ref: "#/components/schemas/PluginReloadReport"
 

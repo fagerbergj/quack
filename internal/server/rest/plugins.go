@@ -125,6 +125,9 @@ func pluginWire(root string, p pluginreg.Plugin, declaresMCP bool) schema.Plugin
 	if declaresMCP {
 		w.DeclaresMcpServers = &declaresMCP
 	}
+	if p.Seeded {
+		w.Seeded = &p.Seeded
+	}
 	if p.Owner != "" {
 		w.Owner = &p.Owner
 	}

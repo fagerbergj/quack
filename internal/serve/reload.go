@@ -158,12 +158,15 @@ func (r *reloader) swapSkills(admitted []plugin.Plugin) {
 // next builds the candidate generation; admitted comes back without the
 // plugins whose seeding failed.
 func (g *rosterReload) next(ctx context.Context, admitted []plugin.Plugin, rep *schema.PluginReloadReport) (*generation, []plugin.Plugin, error) {
-	cand, admitted, results, _ := seedPlugins(g.pristine, admitted, func(p plugin.Plugin, err error) error {
+	cand, admitted, results, dropped, _ := seedPlugins(g.pristine, admitted, func(p plugin.Plugin, err error) error {
 		reloadFailure(rep, p.Name, "", schema.Seed, err)
 		return nil
 	})
+	for _, name := range dropped {
+		reloadFailure(rep, g.cur.owners[name], name, schema.Config, errors.New("no plugin seeded this override; dropped"))
+	}
 	if err := cand.RequireAgentBundlesAndModels(); err != nil {
-		return nil, nil, g.abortIncomplete(rep, cand, err)
+		return nil, nil, abortReload(rep, schema.Config, err)
 	}
 	owners := seedOwners(results)
 	set := g.nextMCP(ctx, admitted, rep)
@@ -180,25 +183,9 @@ func (g *rosterReload) next(ctx context.Context, admitted []plugin.Plugin, rep *
 	return g.generation(ctx, cand, built, set, owners, g.cur.roster.Gen+1), admitted, nil
 }
 
-// abortIncomplete names each agent left without a bundle and the plugin that
-// last supplied it - a config override whose plugin stopped seeding it.
-func (g *rosterReload) abortIncomplete(rep *schema.PluginReloadReport, cand *config.Config, err error) error {
-	named := false
-	for _, name := range slices.Sorted(maps.Keys(cand.Agents)) {
-		if cand.Agents[name].Bundle == "" {
-			reloadFailure(rep, g.cur.owners[name], name, schema.Config, err)
-			named = true
-		}
-	}
-	if !named {
-		reloadFailure(rep, "", "", schema.Config, err)
-	}
-	return err
-}
-
 // seedPlugins merges each plugin into its own copy of base, so a failed seed
 // leaves none of that plugin behind; fail returns nil to drop it, non-nil to stop.
-func seedPlugins(base *config.Config, plugins []plugin.Plugin, fail func(plugin.Plugin, error) error) (*config.Config, []plugin.Plugin, []PluginSeedResult, error) {
+func seedPlugins(base *config.Config, plugins []plugin.Plugin, fail func(plugin.Plugin, error) error) (*config.Config, []plugin.Plugin, []PluginSeedResult, []string, error) {
 	cand := cloneForSeeding(base)
 	kept := make([]plugin.Plugin, 0, len(plugins))
 	var results []PluginSeedResult
@@ -207,7 +194,7 @@ func seedPlugins(base *config.Config, plugins []plugin.Plugin, fail func(plugin.
 		res, err := seedPlugin(try, p)
 		if err != nil {
 			if ferr := fail(p, err); ferr != nil {
-				return nil, nil, nil, ferr
+				return nil, nil, nil, nil, ferr
 			}
 			slog.Warn("plugin seed failed; plugin dropped", "component", "plugin", "plugin", p.Name, "err", err)
 			continue
@@ -218,8 +205,8 @@ func seedPlugins(base *config.Config, plugins []plugin.Plugin, fail func(plugin.
 			results = append(results, res)
 		}
 	}
-	dropUnclaimedOptionalAgents(cand)
-	return cand, kept, results, nil
+	dropped := dropUnclaimedOverrides(cand)
+	return cand, kept, results, dropped, nil
 }
 
 func seedOwners(results []PluginSeedResult) map[string]string {

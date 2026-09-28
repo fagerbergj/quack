@@ -1241,6 +1241,9 @@ type Plugin struct {
 	// Root Resolved on-disk plugin root this row currently serves from.
 	Root *string `json:"root,omitempty"`
 
+	// Seeded Output only. plugins.seed owns this row and moves it when its seed entry changes; a POST of the row's name clears it.
+	Seeded *bool `json:"seeded,omitempty"`
+
 	// Source github = a git clone under plugins.root, tracked or pinned; local = a bare root path (today's plugins: list form); embedded = quack's go:embedded baseline, the "quack" row - never created or removed via this API.
 	Source PluginSource `json:"source"`
 }

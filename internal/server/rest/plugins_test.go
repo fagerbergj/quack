@@ -569,3 +569,32 @@ func TestDeletePluginRefusesLocalRoot(t *testing.T) {
 		t.Fatalf("rows = %+v, want the local row kept", rows)
 	}
 }
+
+// A POST takes a seeded row over from config: plugins.seed no longer moves it.
+func TestCreatePluginClearsSeeded(t *testing.T) {
+	bare, _ := newFixtureRepo(t)
+	withFixedRemote(t, bare)
+	h, _ := newPluginsTestHandler(t)
+	ctx := context.Background()
+	if err := h.plugins.reg.Put(ctx, pluginreg.Plugin{Name: "widgets", Source: pluginreg.SourceGitHub, Entry: "github:acme/widgets@v1", Owner: "acme", Repo: "widgets", Ref: "v1", Seeded: true}); err != nil {
+		t.Fatal(err)
+	}
+	var list schema.PluginList
+	if err := json.NewDecoder(doJSON(t, h.ListPlugins, http.MethodGet, "").Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if w, ok := findWirePlugin(list.Plugins, "widgets"); !ok || w.Seeded == nil || !*w.Seeded {
+		t.Fatalf("listed widgets = %+v, want seeded on the wire", w)
+	}
+	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreatePlugin status = %d, body %s", w.Code, w.Body.String())
+	}
+	if p := decodePlugin(t, w); p.Seeded != nil {
+		t.Fatalf("created row = %+v, want seeded absent", p)
+	}
+	rows, err := h.plugins.reg.List(ctx)
+	if err != nil || len(rows) != 1 || rows[0].Seeded || rows[0].Ref != "" {
+		t.Fatalf("rows = %+v, err %v; want widgets tracked and no longer seeded", rows, err)
+	}
+}

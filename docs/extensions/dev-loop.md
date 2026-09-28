@@ -32,6 +32,10 @@ The checkout reaches the build as a BuildKit named context (`--build-context ext
 
 To exercise the image end to end, point your QA or staging instance at the dev tag and recreate its container.
 
+## Declarative plugins
+
+`EXT` replaces Go modules only. A module's `plugin/` directory (agents, skills, workflows) reaches quack through the plugin registry, pinned in `config/quack.yaml`'s `plugins.seed`. To try a plugin change on a dev instance, seed its directory as a local root. A local row is named after its directory, so link it under the plugin's name first (`ln -s ~/quack-extensions/sleeper/plugin /opt/plugins/sleeper`, then seed `/opt/plugins/sleeper` in place of the `github:` entry). The seeded `github:` row and its clone are replaced by the local row at boot; switching the seed back replaces the local row and clones the plugin again. Or push a branch and add `github:fagerbergj/quack-extensions@<branch>#sleeper/plugin` from the Plugins page. That takes the row over from `plugins.seed`; add the seed entry back the same way when done, and config owns it again from the next boot.
+
 ## Before merging the extension change
 
 The `quack-compat` workflow in `quack-extensions` builds quack against the PR's module directories through a throwaway `go.work`. It checks:
@@ -40,6 +44,7 @@ The `quack-compat` workflow in `quack-extensions` builds quack against the PR's 
 - `go test` on every quack package that imports an extension module directly or transitively.
 - `quack server validate config/quack.yaml`: quack's shipped config parses, and each plugin that declares a module finds it linked.
 - `quack server validate` on `quack-extensions/tools/quack-compat.config.yaml`: a fixture in `quack-extensions` that enables every extension with placeholder values, so each extension's Factory must accept its documented config. `server validate` runs each enabled extension's Factory as boot does, but against a throwaway data directory because some Factories open their stores eagerly; it never calls `Start`.
+- The same fixture seeds each module's `plugin/` directory from the checkout, and the script fails unless every agent and workflow its `plugin.json` lists is seeded.
 
 It runs on pull requests and pushes to `main` that touch module code. Run the same check locally from the `quack-extensions` checkout:
 
@@ -61,6 +66,6 @@ gh workflow run quack-compat.yaml -R fagerbergj/quack-extensions --ref <extensio
 
 1. Merge the `quack-extensions` PR.
 2. Tag each changed module once, e.g. `git tag sleeper/v0.7.0 && git push origin sleeper/v0.7.0`.
-3. In quack, bump the pins in one PR: `go get github.com/fagerbergj/quack-extensions/sleeper@v0.7.0 && go mod tidy`.
+3. In quack, bump the pins in one PR: `go get github.com/fagerbergj/quack-extensions/sleeper@v0.7.0 && go mod tidy`. For a module that ships a `plugin/`, move its `plugins.seed` ref in `config/quack.yaml` to the same tag in that PR; a deployment's seeded row follows at its next restart.
 
 When the change spans `sdk` and an extension that uses it, order matters: the `go.work` builds above use the local `sdk` whatever each extension's `go.mod` requires, so the tags must reproduce that. Tag `sdk` first, bump the dependent modules' `require github.com/fagerbergj/quack-extensions/sdk` to that tag in `quack-extensions`, merge, then tag the dependents and bump quack's pins.

@@ -726,6 +726,10 @@ export type Plugin = {
      * This row's mcp.json declares at least one server.
      */
     declares_mcp_servers?: boolean;
+    /**
+     * Output only. plugins.seed owns this row and moves it when its seed entry changes; a POST of the row's name clears it.
+     */
+    seeded?: boolean;
     reload?: PluginReloadReport;
 };
 

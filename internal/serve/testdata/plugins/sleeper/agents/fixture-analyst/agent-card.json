@@ -1,0 +1,5 @@
+{
+  "name": "fixture-analyst",
+  "description": "Test fixture agent that reads a Sleeper roster and writes a lineup artifact.",
+  "artifact": "lineup"
+}

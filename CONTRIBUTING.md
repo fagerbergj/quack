@@ -17,7 +17,7 @@ The per-step craft lives in loadable skills - `plan-work`, `develop-feature`, `f
 
 ## Development setup
 
-- **Cloning** - a plain `git clone`; nothing to fetch or bootstrap. `embed.go` embeds a tracked snapshot of dotagents' skills as the offline fallback; the plugin registry fetches dotagents and ponytail live at boot (see docs/agent-plugins.md).
+- **Cloning** - a plain `git clone`; nothing to fetch or bootstrap. `embed.go` embeds a tracked snapshot of dotagents' skills as the offline fallback; the plugin registry fetches dotagents, ponytail and the Sleeper plugin live at boot (see docs/agent-plugins.md).
 - **Go** - module `github.com/fagerbergj/quack`; server entrypoint `cmd/quack/main.go`.
 - **Frontend** - `cd frontend && npm install`, then `npm run dev` (hot reload on :3000).
 - **Full build** - `make build` (compiles the frontend and embeds `dist` into the binary).

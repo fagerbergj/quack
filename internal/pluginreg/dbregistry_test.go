@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"gorm.io/gorm"
 )
 
 // TestOpenDBHandlesStayIndependentAfterSequentialOpens: a shared
@@ -186,5 +187,56 @@ func TestDBRegistryPutRejectsConcurrentInsertCollision_Postgres(t *testing.T) {
 	successes, collisions := putConcurrentCollision(t, regA, regB, "widgets")
 	if successes != 1 || collisions != 1 {
 		t.Fatalf("concurrent insert-insert race = %d successes, %d collisions, want exactly 1 and 1 (last-writer-wins with no error otherwise)", successes, collisions)
+	}
+}
+
+// preSeededRow is plugin_rows as it was before the seeded column.
+type preSeededRow struct {
+	Name         string `gorm:"primaryKey"`
+	Entry        string
+	Source       string
+	Owner        string
+	Repo         string
+	Ref          string
+	Path         string
+	InstalledSHA string
+	FetchedAt    *time.Time
+	Error        string
+	UpdatedAt    time.Time
+}
+
+func (preSeededRow) TableName() string { return "plugin_rows" }
+
+// A plugin_rows table from before the seeded column gains it as false, and
+// its rows still read back, on both database kinds.
+func TestNewDBRegistryAddsSeededToExistingRows(t *testing.T) {
+	opens := map[string]func(*testing.T) *gorm.DB{
+		"sqlite": func(t *testing.T) *gorm.DB {
+			db, err := OpenDB("sqlite", filepath.Join(t.TempDir(), "plugins.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return db
+		},
+		"postgres": openPostgresDB,
+	}
+	for name, open := range opens {
+		t.Run(name, func(t *testing.T) {
+			db := open(t)
+			if err := db.AutoMigrate(&preSeededRow{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&preSeededRow{Name: "sleeper", Entry: ".agents/plugins/sleeper", Source: SourceLocal}).Error; err != nil {
+				t.Fatal(err)
+			}
+			reg, err := NewDBRegistry(db, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := reg.List(context.Background())
+			if err != nil || len(rows) != 1 || rows[0].Name != "sleeper" || rows[0].Seeded {
+				t.Fatalf("rows = %+v, err %v; want the old sleeper row, not seeded", rows, err)
+			}
+		})
 	}
 }
