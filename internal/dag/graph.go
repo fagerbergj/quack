@@ -36,7 +36,7 @@ const (
 type nodeScopedWorker interface {
 	// Builds a node's own worker, model and tools (internal/serve's nativeAgent); see that
 	// implementation for drain, setRoundCoords, sink, ctx and release semantics.
-	ForNode(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
+	ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source is the run's origin (extension name or a fixed
@@ -81,7 +81,7 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 		var refreshPrompt func(context.Context) artifactsrc.Artifact
 		perCall := false // native workers hold admission per model call; ACP nodes per subprocess round
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
+			w, m, wt, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, vetting.AdvisorThreadToken(plan.ID, n.ID), liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
@@ -298,7 +298,6 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)
 			cfg.AdvisorToken = token
-			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
 			atts := plan.Attachments
 			if !mediaAgents[node.AgentName] {
 				atts = nil

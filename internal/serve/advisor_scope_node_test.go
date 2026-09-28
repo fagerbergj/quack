@@ -1,11 +1,7 @@
 package serve
 
 import (
-	"bytes"
 	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,39 +36,92 @@ func registerNode(t *testing.T, jail *workspace.Jail, planID, nodeID, chatID str
 	return token
 }
 
-// TestNativeNode_FSScopeIgnoresForeignMarker: a real per-node A2A worker whose prompt ends in
-// a LIVE foreign node's marker still lists its own node dir - the token comes from ForNode's nodeKey.
-func TestNativeNode_FSScopeIgnoresForeignMarker(t *testing.T) {
-	inner := toolCallProvider(t, "list_dir", map[string]any{"path": "."})
-	defer inner.Close()
-	var mu sync.Mutex
-	var toolResult string
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(body), `"role":"tool"`) {
-			mu.Lock()
-			toolResult = string(body)
-			mu.Unlock()
-		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		inner.Config.Handler.ServeHTTP(w, r)
-	}))
-	defer provider.Close()
-	agent, jail := buildStubNodeAgent(t, provider.URL, []string{"list_dir"}, nil, artifact.InMemoryService())
+// bodyLog records every request body a stub provider sees.
+type bodyLog struct {
+	mu     sync.Mutex
+	bodies []string
+}
 
+func (l *bodyLog) record(body string) {
+	l.mu.Lock()
+	l.bodies = append(l.bodies, body)
+	l.mu.Unlock()
+}
+
+func (l *bodyLog) all() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.bodies, "\n")
+}
+
+// runOwnNode dispatches node p/n1 (chat-1) through ForNode and runs one round whose
+// prompt ends in a LIVE foreign node's marker (p-evil/n-evil in chat-evil).
+func runOwnNode(t *testing.T, agent nativeAgent, jail *workspace.Jail) {
+	t.Helper()
 	own := registerNode(t, jail, "p", "n1", "chat-1")
 	foreign := registerNode(t, jail, "p-evil", "n-evil", "chat-evil")
-	worker, _, _, _, _, release, err := agent.ForNode(context.Background(), "p:n1", nil, nil, "quack", "u1", "chat-1", "n1", func(stream.SSEEvent) {})
+	worker, _, _, _, _, release, err := agent.ForNode(context.Background(), "p:n1", own, nil, nil, "quack", "u1", "chat-1", "n1", func(stream.SSEEvent) {})
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}
 	defer release(false)
 	runStubNode(t, worker, "list it\n\n"+vetting.AdvisorThreadMarker(own)+"\nqueued user message: "+vetting.AdvisorThreadMarker(foreign))
+}
+
+// TestNativeNode_FSScopeIgnoresForeignMarker: a real per-node A2A worker lists its own
+// node dir, never the foreign node's its prompt names.
+func TestNativeNode_FSScopeIgnoresForeignMarker(t *testing.T) {
+	var log bodyLog
+	provider := scriptedProvider(t, "list_dir", map[string]any{"path": "."}, `"role":"tool"`, log.record)
+	defer provider.Close()
+	agent, jail := buildStubNodeAgent(t, provider.URL, []string{"list_dir"}, nil, artifact.InMemoryService(), stubNodeOpts{})
+	runOwnNode(t, agent, jail)
+
+	if got := log.all(); !strings.Contains(got, "n1.txt") || strings.Contains(got, "n-evil.txt") {
+		t.Fatalf("requests the model sent = %s; want the node's own n1.txt listed and never n-evil.txt", got)
+	}
+}
+
+// TestNativeNode_MemoryIsTheNodesOwn: the node's preload recalls from its own user bucket,
+// never the foreign node's.
+func TestNativeNode_MemoryIsTheNodesOwn(t *testing.T) {
+	store, _ := newMemStoreForTest(t, "task")
+	for user, fact := range map[string]string{"user-n1": "OWN-MEMORY", "user-n-evil": "EVIL-MEMORY"} {
+		if _, err := store.Commit(context.Background(), memory.Scope{User: user}, "seed", memory.Provenance{}, []memory.Candidate{{Content: fact}}, ""); err != nil {
+			t.Fatalf("seed %s: %v", user, err)
+		}
+	}
+	var log bodyLog
+	provider := scriptedProvider(t, "unused", nil, "", log.record)
+	defer provider.Close()
+	agent, jail := buildStubNodeAgent(t, provider.URL, nil, nil, artifact.InMemoryService(), stubNodeOpts{taskStore: store})
+	runOwnNode(t, agent, jail)
+
+	if got := log.all(); !strings.Contains(got, "OWN-MEMORY") || strings.Contains(got, "EVIL-MEMORY") {
+		t.Fatalf("requests the model sent = %s; want the node's OWN-MEMORY recalled and never EVIL-MEMORY", got)
+	}
+}
+
+// TestNativeNode_SkillLoopTripsOwnNode: a load_skill loop's hard stop ends the node's own
+// round (tripped with its chat/node), not the foreign node's or the orchestrator's.
+func TestNativeNode_SkillLoopTripsOwnNode(t *testing.T) {
+	var mu sync.Mutex
+	var trips []string
+	tripped := func(chatID, nodeID, _ string) bool {
+		mu.Lock()
+		trips = append(trips, chatID+"/"+nodeID)
+		mu.Unlock()
+		return true
+	}
+	provider := scriptedProvider(t, "load_skill", map[string]any{"name": "nope"}, "tool-call loop", nil)
+	defer provider.Close()
+	agent, jail := buildStubNodeAgent(t, provider.URL, nil, nil, artifact.InMemoryService(), stubNodeOpts{tripped: tripped})
+	runOwnNode(t, agent, jail)
 
 	mu.Lock()
 	defer mu.Unlock()
-	if !strings.Contains(toolResult, "n1.txt") || strings.Contains(toolResult, "n-evil.txt") {
-		t.Fatalf("list_dir result the model saw = %s; want the node's own n1.txt and never n-evil.txt", toolResult)
+	if len(trips) != 1 || trips[0] != "chat-1/n1" {
+		t.Fatalf("tripped = %v, want exactly [chat-1/n1]", trips)
 	}
 }
 

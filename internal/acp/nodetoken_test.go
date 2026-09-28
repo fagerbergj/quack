@@ -80,7 +80,11 @@ func TestRunPrompt_ForeignMarkerCannotRescope(t *testing.T) {
 			}
 		}
 	}
-	env := lastText[strings.Index(lastText, "<environment_context>")+1:]
+	i := strings.Index(lastText, "<environment_context>")
+	if i < 0 {
+		t.Fatalf("prompt has no environment block: %q", lastText)
+	}
+	env := lastText[i:]
 	if !strings.Contains(env, "filesystem: read-only") || !strings.Contains(env, "own.txt") || strings.Contains(env, "evil.txt") {
 		t.Fatalf("environment block = %q; want read-only in the own node's dir, never the foreign one", env)
 	}

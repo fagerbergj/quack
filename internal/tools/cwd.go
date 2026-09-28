@@ -32,8 +32,8 @@ func cwdFromState(ctx agent.Context) string {
 	return s
 }
 
-// token is the calling node's advisor token: fixed at build, else set on ctx by an in-process
-// caller (the judge round). Never the prompt's last marker, which gate-appended text can forge.
+// token is the calling node's advisor token: fixed at build, else the one dag or the gate stamped
+// on an in-process worker or judge round's ctx. Never prompt text, which gate-appended text can forge.
 func (s CallScope) token(ctx context.Context) string {
 	if s.AdvisorToken != "" || ctx == nil {
 		return s.AdvisorToken

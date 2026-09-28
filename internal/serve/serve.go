@@ -1590,7 +1590,7 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	return wag, wrapped, wm, builtins, nil
 }
 
-func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
+func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
 	// One holder per dispatch: two nodes of this agent run concurrently, and a
 	// shared one would let either move the other's prompt mid-round.
 	prompts := b.bundle.PinPrompt(b.res)
@@ -1617,8 +1617,7 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey string, drain fun
 			*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
 		}
 	}
-	// nodeKey is "<planID>:<nodeID>" (dag.buildGateNodes); a mismatch only makes CallInfo fail closed.
-	scope := tools.CallScope{AdvisorToken: vetting.AdvisorThreadToken(strings.TrimSuffix(nodeKey, ":"+nodeID), nodeID), ChatID: chatID, UserID: userID}
+	scope := tools.CallScope{AdvisorToken: advisorToken, ChatID: chatID, UserID: userID}
 	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), scope, extraTools...)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err

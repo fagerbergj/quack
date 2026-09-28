@@ -66,28 +66,32 @@ func TestFSScope_BuildTokenNotPromptMarker(t *testing.T) {
 	}
 }
 
+// buildNodeTool builds current_date through Build with d's guard wiring under scope.
+func buildNodeTool(t *testing.T, scope CallScope, d Deps) runnableTool {
+	t.Helper()
+	d.CallScope = scope
+	built, err := Build([]string{"current_date"}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return built[0].(runnableTool)
+}
+
 // TestCancelGuard_BuildTokenNotPromptMarker: the guard checks the node it was built for,
 // not a foreign trailing marker's; a miss is the un-gated case and never blocks.
 func TestCancelGuard_BuildTokenNotPromptMarker(t *testing.T) {
 	scope, ctx := ownNode(t)
 	cancelled := map[string]bool{"chat-evil/foreign": true}
-	g, err := newCancelGuard(&fakeRunnable{}, func(c, n string) bool { return cancelled[c+"/"+n] }, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := g.(*cancelGuard).Run(ctx, map[string]any{}); err != nil {
+	d := Deps{NodeCancelled: func(c, n string) bool { return cancelled[c+"/"+n] }}
+	if _, err := buildNodeTool(t, scope, d).Run(ctx, map[string]any{}); err != nil {
 		t.Errorf("foreign node cancelled: own node's call refused: %v", err)
 	}
 	cancelled["chat-own/n-own"] = true
-	if _, err := g.(*cancelGuard).Run(ctx, map[string]any{}); err == nil {
+	if _, err := buildNodeTool(t, scope, d).Run(ctx, map[string]any{}); err == nil {
 		t.Error("own node cancelled: call ran anyway")
 	}
-
-	ghost, err := newCancelGuard(&fakeRunnable{}, func(string, string) bool { return true }, ghostScope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ghost.(*cancelGuard).Run(ctx, map[string]any{}); err != nil {
+	always := Deps{NodeCancelled: func(string, string) bool { return true }}
+	if _, err := buildNodeTool(t, ghostScope, always).Run(ctx, map[string]any{}); err != nil {
 		t.Errorf("unregistered node: call blocked: %v", err)
 	}
 }
@@ -97,25 +101,39 @@ func TestCancelGuard_BuildTokenNotPromptMarker(t *testing.T) {
 func TestGuardedTool_BuildTokenNotPromptMarker(t *testing.T) {
 	scope, ctx := ownNode(t)
 	var task string
-	judge := func(_ context.Context, _, tk, _ string, _ map[string]any, _ string) (bool, string, error) {
-		task = tk
-		return true, "ok", nil
-	}
+	d := Deps{Guards: map[string]string{"current_date": "judge"}, Sessions: session.InMemoryService(),
+		SafetyJudge: func(_ context.Context, _, tk, _ string, _ map[string]any, _ string) (bool, string, error) {
+			task = tk
+			return true, "ok", nil
+		}}
 	for _, tc := range []struct {
 		scope CallScope
 		want  string
 	}{{scope, "own task"}, {ghostScope, ""}} {
 		task = "unset"
-		g, err := newGuardedTool(&fakeRunnable{}, guardTier{Judge: true}, judge, session.InMemoryService(), tc.scope)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := g.(*guardedTool).Run(ctx, map[string]any{}); err != nil {
+		if _, err := buildNodeTool(t, tc.scope, d).Run(ctx, map[string]any{}); err != nil {
 			t.Fatal(err)
 		}
 		if task != tc.want {
 			t.Errorf("scope %q: safety judge task = %q, want %q", tc.scope.AdvisorToken, task, tc.want)
 		}
+	}
+}
+
+// TestRepeatGuard_BuildTokenNotPromptMarker: a hard stop trips the node the tool was built
+// for, never the foreign node whose marker trails the prompt.
+func TestRepeatGuard_BuildTokenNotPromptMarker(t *testing.T) {
+	scope, ctx := ownNode(t)
+	var trips []string
+	rt := buildNodeTool(t, scope, Deps{RepeatGuardTripped: func(c, n, _ string) bool {
+		trips = append(trips, c+"/"+n)
+		return true
+	}})
+	for i := 0; i <= repeatThreshold+repeatHardStopAfter; i++ {
+		_, _ = rt.Run(ctx, map[string]any{})
+	}
+	if len(trips) != 1 || trips[0] != "chat-own/n-own" {
+		t.Errorf("tripped = %v, want exactly [chat-own/n-own]", trips)
 	}
 }
 

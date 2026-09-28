@@ -20,7 +20,7 @@ func AdvisorThreadToken(planID, nodeID string) string {
 	return planID + "/" + nodeID
 }
 
-// AdvisorThreadMarker is the node's marker line in worker prompts; nothing parses it, scope comes from tokens.
+// AdvisorThreadMarker is the retired prompt-marker syntax; tests plant it to prove no scope is read from prompt text.
 func AdvisorThreadMarker(token string) string {
 	return "[[quack:advisor-thread:" + token + "]]"
 }
@@ -399,7 +399,7 @@ var advisorThreads sync.Map // token → AdvisorTask
 
 type advisorTokenKey struct{}
 
-// WithAdvisorToken marks ctx as an in-process run (a judge round) whose tools act for node token.
+// WithAdvisorToken marks ctx as an in-process run acting for node token: dag stamps every worker round, the gate every judge round.
 func WithAdvisorToken(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, advisorTokenKey{}, token)
 }
