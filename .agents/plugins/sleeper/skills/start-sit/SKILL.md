@@ -39,26 +39,32 @@ baseline player and the evidence that beat it in the row's `why`.
    search the open web for what changed and cite it inline as a markdown
    link.
 3. **Locks.** Sleeper locks each slot at that player's own kickoff; a
-   locked slot cannot change. Take "now" from `current_date`: the user's
-   local time with zone and UTC offset, the UTC instant, and any DST switch
-   in the coming week. Then read each game in `sleeper_schedule`:
-   - `kickoff` (RFC3339 UTC) present: convert it to the user's zone with the
-     offset in force on the kickoff date, which differs from today's when
-     `current_date` names a switch before kickoff. `locked: true` is locked.
-   - `locked` absent: lock state is unknown; treat the slot as possibly
-     locked.
-   - `kickoff_tbd`, or no `kickoff` (a `note` says times are unavailable):
-     say the kickoff is unknown and look it up with `web_search`. Never
-     assume a time slot: Sunday games kick off at 1:00, 4:05/4:25, or 8:20
-     PM ET, and international games earlier.
-   - `canceled`/`postponed`: ignore lock state.
+   locked slot cannot change. Every player `sleeper_roster`,
+   `sleeper_matchup`, and `sleeper_player` return carries their own `game`,
+   joined in code: read it as is, and never look up, convert, or reuse
+   another game's kickoff or opponent.
+   - `game.locked: true` (or no kickoff and `game.status` `in_game`/
+     `complete`) is locked, and a locked slot is frozen: never recommend
+     benching a locked starter or moving in a locked player. Only players
+     in unlocked games are swap candidates; if every starter is locked, say
+     the lineup is final for the week. `locked` absent means unknown -
+     treat the slot as possibly locked.
+   - `game.kickoff_local` is the lock time to state, already in the user's
+     zone. Write the opponent as "vs X" when `game.is_home` is true and
+     "at X" when false (X = `game.nfl_opponent`). A Monday game is still
+     this `week`'s, never next week's.
+   - `game.kickoff_tbd`, or no kickoff (a `schedule_note` says times are
+     unavailable): say the kickoff is unknown and look it up with
+     `web_search`. Never assume a time slot.
+   - No `game`, with `bye` or `no_game_reason` instead: no game this week -
+     that player cannot score.
+   - `game.status` `canceled`/`postponed`: ignore lock state.
 
-   Never take "today" from UTC: Thursday, Sunday, and Monday night kickoffs
-   and the Friday Brazil game fall on the next day in UTC. A Thursday player
-   has no Thu/Fri/Sat report — the decision is effectively final at the
-   Wednesday 4:00 PM ET report. When a Questionable/Doubtful player's
-   kickoff is close, state the lock time in the user's zone with ET
-   alongside, e.g. "locks Sun 12:00 PM CDT (1:00 PM ET)".
+   "Now" is the result's `fetched_at_local`, or `current_date`; never
+   take today from a UTC field. A Thursday player has no Thu/Fri/Sat
+   report — the decision is effectively final at the Wednesday 4:00 PM ET
+   report. When a Questionable/Doubtful player's kickoff is close, state
+   the lock time, e.g. "locks Sun 12:00 PM CDT".
 4. **Matchup, bounded.** Pull opponent defensive context. The real, quantified
    effect is small and position-dependent: −0.07 (QB), −0.13 (RB), −0.09 (WR)
    fantasy points per one-spot change in opponent defensive rank, TE
@@ -70,9 +76,25 @@ baseline player and the evidence that beat it in the row's `why`.
    but the same study's own verdict is that team-score projection dominates
    game-script narrative — pick the higher-scoring team's players rather than
    playing the script. Weather only matters at extremes (≥20-25mph sustained
-   wind, heavy precipitation, <30°F) and trims efficiency, not volume — see
-   `weather-and-vegas.md` for the full multiplier tables and the "no
-   correlation" null result that also exists in the literature.
+   wind, heavy precipitation, <30°F) and trims efficiency, not volume. Only
+   step 2's close calls in unlocked games get a weather check - never a
+   locked or in-progress game, a close call exempt because either
+   player's game is locked, a clear projection gap, or a slot with no
+   rostered alternative (e.g. the only K). For those
+   close calls, make one `weather` call per distinct game they involve
+   whose `game.roof` is `outdoor` (after the Note-column overrides in
+   `stadiums.md`, e.g. SoFi counts as a dome), and reuse it for every
+   player in that game. Copy the coordinates for `game.venue` from
+   `stadiums.md` exactly as `latitude`/`longitude` - never estimate or
+   geocode them - and pass `game.kickoff` as is (UTC, not
+   `kickoff_local`; a game with no kickoff passes step 3's looked-up time
+   as RFC3339 with its offset), then apply `weather-and-vegas.md`'s
+   working rule to that window. When the forecast moves a call, the row's
+   `why` names the numbers (e.g. "27 mph sustained wind at Soldier
+   Field"); weather that did not move a call is never mentioned - not in
+   `why`, `summary`, or the chat reply, not even as "no adjustment" - and
+   a `weather` error (e.g. a kickoff
+   past its ~15-day horizon) is said, not guessed around.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every
    remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`
    for the floor-vs-ceiling tie-break and the PPR-specific WR-lean data.
@@ -137,6 +159,9 @@ reasoning instead — do not invent a figure to sound precise.
 - `weather-and-vegas.md` — weather multiplier tables, the null-result study,
   and implied-team-total math. Load when the game is outdoors with a
   forecast worth checking, or when a Vegas total/spread is part of the case.
+- `stadiums.md` — coordinates for every venue Sleeper reports,
+  international sites included, plus the roofs Sleeper mislabels. Load for
+  step 5 whenever a close call involves an outdoor game.
 - `flex-decisions.md` — the FLEX-specific tie-break rules and PPR
   RB-vs-WR-value data. Load whenever the FLEX slot itself is the open
   question (not a fixed RB/WR/TE slot).

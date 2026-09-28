@@ -719,6 +719,7 @@ workspace:
 #     default_league: "1356407594683482112"
 #     season: 2026                       # optional; defaults to /v1/state/nfl's current season
 #     snapshots: daily                   # off | daily; feeds trend-scout's diffing, fetches only, never dispatches
+#     timezone: ${QUACK_TIMEZONE}        # IANA zone the tools' *_local kickoff/fetch times render in
 
 # Inbound request auth (internal/auth), gating the REST + MCP surface (never
 # /health or the SPA). Absent entirely - as here - auth is disabled and every

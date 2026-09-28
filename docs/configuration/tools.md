@@ -1,6 +1,6 @@
 # Built-in tools
 
-The `tools:` config section configures quack's builtin tool registry; each agent's `tools:` list in `agents:` binds names from it (ACP agents bind none - they bring their own tools; see [agents.md](agents.md)). `internal/tools/registry.go` is the authoritative list - 15 tools:
+The `tools:` config section configures quack's builtin tool registry; each agent's `tools:` list in `agents:` binds names from it (ACP agents bind none - they bring their own tools; see [agents.md](agents.md)). `internal/tools/registry.go` is the authoritative list - 16 tools:
 
 | Tool | What it does |
 | --- | --- |
@@ -9,6 +9,7 @@ The `tools:` config section configures quack's builtin tool registry; each agent
 | `grep_artifacts` | Regex search across the chat's stored `web_page` artifacts (or a given `ids` subset), returning `artifact:line: text` hits - pairs with `read_artifact`'s `offset`/`lines` window to read around a hit without re-fetching. |
 | `summarize` | Summarize a long text block, optionally focused on a question. |
 | `current_date` | The current date, for prompts that need "today". |
+| `weather` | Hourly weather from [Open-Meteo](https://open-meteo.com/) (keyless; forecast + geocoding APIs). Place: `latitude`+`longitude` (both or neither), or a `location` name qualified with state/region and country. Window: `kickoff` (an RFC3339 instant, e.g. `sleeper_schedule`'s) or a local `date` with optional `time` (HH:MM), plus `hours` (default 4). Returns the resolved place and IANA timezone, units, and every hour overlapping the window labeled in UTC and local time, with temperature, wind speed and gusts, precipitation probability and amount, and conditions. Local windows follow the place's DST rules on that date. `units`: `imperial` (default) or `metric`. Forecasts reach about 15 days ahead; a past window is labeled archived model data, not observations. Responses are cached for 10 minutes. |
 | `read_file` | Read a file inside the agent's jail (workspace root + size caps). |
 | `list_dir` | List a directory inside the jail. |
 | `glob` | Glob file paths inside the jail. |

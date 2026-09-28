@@ -44,7 +44,13 @@ criteria:
       flags when a close call's window closes before more information
       (e.g. Thursday-only reporting, or the 90-minute inactive list) arrives.
     steps:
-    - Check no recommended swap involves a player already locked.
+    - For every lock time, opponent, or game the answer names for a player,
+      check it matches that player's own `game` in the session's
+      `sleeper_roster`/`sleeper_matchup`/`sleeper_player` results - the time is
+      its `kickoff_local`, and the opponent its `nfl_opponent`, written "vs X"
+      when `is_home` is true and "at X" when false.
+    - Check no recommended swap benches or brings in a player whose `game`
+      is locked (`locked` true, or no kickoff and status in_game/complete).
     - For a Questionable/Doubtful player with a close kickoff, check the
       answer states the lock timing (per `start-sit`'s kickoff/timing
       guidance) rather than treating the decision as open-ended.
@@ -57,10 +63,10 @@ criteria:
       meaning: locks are respected, but lock timing is not mentioned for a close call where it would help.
     - min: 1.0
       max: 1.0
-      meaning: a recommendation is ambiguous about whether the swap is still actionable.
+      meaning: a recommendation is ambiguous about whether the swap is still actionable, or a game is written with home/away flipped.
     - min: 0.0
       max: 0.0
-      meaning: a recommended swap involves a player already locked, or ignores the Thursday no-report gap.
+      meaning: a recommended swap benches or brings in a locked player, a stated lock time belongs to a different game than the player's, or the Thursday no-report gap is ignored.
     anchors:
     - quote
     - omission
@@ -227,6 +233,52 @@ criteria:
     - min: 0.0
       max: 0.0
       meaning: multiple close calls rest on Sleeper's fields alone, or a cited link is fabricated.
+    anchors:
+    - quote
+    - omission
+  weather_checked_for_outdoor_close_calls:
+    definition: >
+      Every close call in an outdoor game checks that game's forecast with
+      the `weather` tool and applies it only at the skill's extremes, as a
+      tiebreaker; a call the forecast moved says so in its `why` with the
+      forecast numbers. Outdoor means the player's `game.roof` is
+      `outdoor` after the Note-column overrides in `stadiums.md` (SoFi
+      counts as a dome, Wembley as outdoor).
+    guidance: >
+      A close call where either player's game is locked, or whose slot has
+      no rostered alternative (e.g. the only K), is exempt, as is a game
+      already played or beyond the forecast horizon, and a
+      `weather` call that errored or came back out of range counts as
+      checked when the answer acknowledges it. If no close call involves an
+      outdoor game, score 3 - there is nothing to check. One call per game
+      covers every player in it.
+    steps:
+    - List every close call (as in outside_news_for_close_calls) and its
+      game; keep the outdoor, non-exempt ones (both players' games unlocked,
+      a real alternative, not past the horizon).
+    - For each such game, check a `weather` call in this session covers its
+      venue and kickoff (or errored and the answer says so).
+    - Check each `weather` call used `stadiums.md`'s coordinates for that
+      venue (or, for a venue missing there, coordinates a `web_search`
+      returned, as `stadiums.md` allows), and none was made for a non-close
+      call, a locked game, or an exempt close call.
+    - Read the artifact and the chat reply. Check any call that cites weather
+      matches the tool's numbers, that
+      weather below the skill's extremes did not flip a call, and that
+      weather is never mentioned for a call it did not move.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every outdoor close-call game is checked, and weather moves a call only at the skill's extremes, stated with its numbers.
+    - min: 2.0
+      max: 2.0
+      meaning: every outdoor close-call game is checked, but a call weather moved lacks the forecast numbers, or weather was checked for a non-close call, a locked game, or an exempt close call.
+    - min: 1.0
+      max: 1.0
+      meaning: exactly one outdoor close-call game is unchecked, mild weather tipped a call, or a forecast is mentioned (including "no adjustment needed") for a call it did not move.
+    - min: 0.0
+      max: 0.0
+      meaning: two or more outdoor close-call games are unchecked, or a cited forecast matches no weather tool result.
     anchors:
     - quote
     - omission

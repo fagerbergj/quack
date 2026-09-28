@@ -77,6 +77,7 @@ var registry = map[string]constructor{
 	"check_mermaid":  newCheckMermaid,
 	"render_ui":      newRenderUI,
 	"grep_artifacts": newGrepArtifacts,
+	"weather":        newWeather,
 }
 
 // ErrUnknownTool: a tools: entry no builtin or enabled extension provides.

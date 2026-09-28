@@ -25,7 +25,7 @@ func TestCurrentDateUsesUserZone(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := out["result"].(string)
-	if !strings.Contains(got, "IST (UTC+05:30); UTC ") {
-		t.Errorf("current_date = %q, want IST with its offset and the UTC instant", got)
+	if !strings.Contains(got, "IST (UTC+05:30, Asia/Kolkata); UTC ") {
+		t.Errorf("current_date = %q, want IST with its offset, zone name, and the UTC instant", got)
 	}
 }
