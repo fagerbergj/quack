@@ -26,17 +26,31 @@ const defaultCloneDepth = 1
 const (
 	GitAskpassTokenEnv = "QUACK_GIT_ASKPASS_TOKEN"
 	GitAskpassUserEnv  = "QUACK_GIT_ASKPASS_USERNAME"
+	GitAskpassHostEnv  = "QUACK_GIT_ASKPASS_HOST"
 )
 
 // GitAskpassLinkName: symlink path for GIT_ASKPASS.
 const GitAskpassLinkName = ".quack-askpass"
 
-// Answers git's two-call credential protocol.
+// Answers git's two-call credential protocol, only for a prompt naming the expected host.
 func GitAskpassAnswer(prompt string) string {
+	if !askpassHostMatches(prompt, os.Getenv(GitAskpassHostEnv)) {
+		return ""
+	}
 	if strings.Contains(strings.ToLower(prompt), "username") {
 		return os.Getenv(GitAskpassUserEnv)
 	}
 	return os.Getenv(GitAskpassTokenEnv)
+}
+
+// askpassHostMatches: git prompts "Username for 'https://host': " / "Password for 'https://user@host': ".
+func askpassHostMatches(prompt, want string) bool {
+	start, end := strings.Index(prompt, "'"), strings.LastIndex(prompt, "'")
+	if want == "" || start < 0 || end <= start {
+		return false
+	}
+	u, err := url.Parse(prompt[start+1 : end])
+	return err == nil && strings.EqualFold(u.Host, want)
 }
 
 // ensureAskpassLink: ensures .quack-askpass symlink to current binary; tolerates concurrent creation.
@@ -64,6 +78,7 @@ func ensureAskpassLink(root string) (string, error) {
 type gitAuth struct {
 	cred    GitCredential
 	askpass string
+	host    string // askpass answers only prompts for this host
 }
 
 // GitTokenSource: dynamic per-host credential source.
@@ -88,7 +103,11 @@ func (b gitBinding) authFor(rawURL string) (*gitAuth, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &gitAuth{cred: *cred, askpass: link}, nil
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("git: parse %q: %w", rawURL, err)
+	}
+	return &gitAuth{cred: *cred, askpass: link, host: u.Host}, nil
 }
 
 type GitCredential struct {
@@ -149,16 +168,10 @@ func gitChildPath(caps workspace.Caps) string {
 	return strings.Join(caps.ExtraPath, ":") + ":" + base
 }
 
-func gitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
-	home := caps.HomeDir
-	if home == "" {
-		home = dir
-	}
+// gitEnv: HOME and the config-source pins come from workspace.GitCmd, after these.
+func gitEnv(caps workspace.Caps, auth *gitAuth) []string {
 	env := []string{
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_NOSYSTEM=1",
 		"PATH=" + gitChildPath(caps),
-		"HOME=" + home,
 		// Git writes loose objects via a tmp file under TMPDIR then renames it
 		// into .git/objects - unset, that defaults to the real /tmp, which can
 		// be a different device than dir and turn the rename into EXDEV (#936).
@@ -173,6 +186,7 @@ func gitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
 			"GIT_ASKPASS="+auth.askpass,
 			GitAskpassUserEnv+"="+auth.cred.Username,
 			GitAskpassTokenEnv+"="+auth.cred.Token,
+			GitAskpassHostEnv+"="+auth.host,
 		)
 	}
 	return env
@@ -197,12 +211,11 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	env := gitEnv(dir, caps, auth)
-	// Neutralize hooks (agent-written hooks would run unsandboxed).
-	fullArgv := append([]string{"-c", "core.hooksPath=/dev/null"}, argv...)
-	cmd := exec.CommandContext(cctx, bin, fullArgv...)
-	cmd.Dir = dir
-	cmd.Env = env
+	cmd, done, err := workspace.GitCmd(cctx, bin, dir, argv, gitEnv(caps, auth))
+	if err != nil {
+		return "", "", err
+	}
+	defer done()
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
@@ -286,7 +299,8 @@ func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) 
 	if err != nil {
 		return gitCloneResult{}, err
 	}
-	if _, _, err := runGit(context.Background(), relRoot, argv, b.caps, auth); err != nil {
+	// Run from an empty dir: a repo enclosing relRoot must not lend clone its config.
+	if _, _, err := runGit(context.Background(), "", argv, b.caps, auth); err != nil {
 		return gitCloneResult{}, err
 	}
 

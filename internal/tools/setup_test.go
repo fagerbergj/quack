@@ -331,7 +331,7 @@ func TestSetupCloneAndBranchReuseFetchesFreshBaseRef(t *testing.T) {
 	}
 
 	seed := t.TempDir()
-	runGitT(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	rawGit(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
 	if err := os.WriteFile(filepath.Join(seed, "upstream.txt"), []byte("new upstream work\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +557,7 @@ func TestSetupCloneAndBranchConfiguresCommitterIdentity(t *testing.T) {
 func addBranchFixture(t *testing.T, bare, branch string) {
 	t.Helper()
 	seed := t.TempDir()
-	runGitT(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	rawGit(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
 	runGitT(t, seed, "checkout", "--quiet", "-b", branch)
 	if err := os.WriteFile(filepath.Join(seed, "pr.txt"), []byte("pr change\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -649,12 +649,12 @@ func TestSetupThenPushPreservesExistingPRHeadCommit(t *testing.T) {
 		runGitT(t, target, "add", "-A")
 		runGitT(t, target, "commit", "--quiet", "-m", "fix commit")
 
-		if _, err := vetting.PushBranch(context.Background(), b.jail.Root(), target, "pr/head", vetting.GitCredential{}, b.caps); err != nil {
+		if _, err := vetting.PushBranch(context.Background(), b.jail.Root(), target, "file://"+bare, "pr/head", vetting.GitCredential{}, b.caps); err != nil {
 			t.Fatalf("PushBranch: %v", err)
 		}
 
 		fetched := t.TempDir()
-		runGitT(t, filepath.Dir(fetched), "clone", "--quiet", bare, fetched)
+		rawGit(t, filepath.Dir(fetched), "clone", "--quiet", bare, fetched)
 		runGitT(t, fetched, "checkout", "--quiet", "pr/head")
 		_, errOrig := os.Stat(filepath.Join(fetched, "pr.txt"))
 		_, errNew := os.Stat(filepath.Join(fetched, "fix.txt"))

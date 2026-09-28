@@ -164,6 +164,9 @@ func gHasResponse(req *model.LLMRequest, name string) bool {
 	return false
 }
 
+// The chain's remote is a local bare repo, so the gate's push reaches it over file://.
+func init() { workspace.GitProtocol = "file" }
+
 // chainGitCredentials stubs vetting.GitCredentialSource - the chain's local
 // bare-repo remote needs no real auth, just a non-nil credential to push.
 type chainGitCredentials struct{}
@@ -193,7 +196,7 @@ func runChainGit(t *testing.T, dir string, argv ...string) {
 // deliverCh, and a setup stub that provisions a REAL git repo (committed,
 // remoted to a local bare repo) - commitDelivery's gate-owned push now runs
 // for real when a chain stages a pull_request.
-func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliverCh chan vetting.DeliveryContext, setupCalls *int32Counter) {
+func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliverCh chan vetting.DeliveryContext, setupCalls *int32Counter, repo string) {
 	t.Helper()
 	requireChainGit(t)
 	stub := chainStub{}
@@ -242,7 +245,7 @@ func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliver
 		runChainGit(t, target, "-c", "user.name=t", "-c", "user.email=t@t.co", "commit", "--quiet", "-m", "impl")
 		return nil
 	})
-	return ex, jail, deliverCh, setupCalls
+	return ex, jail, deliverCh, setupCalls, "file://" + bare
 }
 
 func runChainPlan(t *testing.T, ex *Executor, plan Plan) {
@@ -259,10 +262,10 @@ func runChainPlan(t *testing.T, ex *Executor, plan Plan) {
 // and delivers ONE PR - at the terminal node only, even though BOTH nodes
 // stage one.
 func TestRunPlanAsGraph_ChainSharesOneCloneAndDeliversOnceAtTerminal(t *testing.T) {
-	ex, jail, deliverCh, setupCalls := newChainExecutor(t)
+	ex, jail, deliverCh, setupCalls, repo := newChainExecutor(t)
 	plan := Plan{
 		ID: "p", UserMessage: "go",
-		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Setup: &Setup{Repo: repo, BaseRef: "main", WorkBranch: "quack/work"},
 		Nodes: []Node{
 			{ID: "impl1", AgentName: implementerAgent, Task: "part one"},
 			{ID: "impl2", AgentName: implementerAgent, Task: "part two", DependsOn: []string{"impl1"}},
@@ -300,10 +303,10 @@ func TestRunPlanAsGraph_ChainSharesOneCloneAndDeliversOnceAtTerminal(t *testing.
 // the plan to the run phase - RunPlanAsGraph's own runPlanSetup must see
 // Setup.Provisioned and skip, never re-clone the same real repo fixture.
 func TestRunPlanAsGraph_EagerProvisionThenRunDoesNotDoubleClone(t *testing.T) {
-	ex, _, deliverCh, setupCalls := newChainExecutor(t)
+	ex, _, deliverCh, setupCalls, repo := newChainExecutor(t)
 	plan := Plan{
 		ID: "p", UserMessage: "go",
-		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Setup: &Setup{Repo: repo, BaseRef: "main", WorkBranch: "quack/work"},
 		Nodes: []Node{
 			{ID: "impl", AgentName: implementerAgent, Task: "the whole thing"},
 		},
@@ -335,10 +338,10 @@ func TestRunPlanAsGraph_EagerProvisionThenRunDoesNotDoubleClone(t *testing.T) {
 // (c) Regression: a single repo-touching node (no chain) still gets its clone
 // provisioned and its delivery posted, exactly as before #310.
 func TestRunPlanAsGraph_SingleRepoNodeStillDelivers(t *testing.T) {
-	ex, _, deliverCh, setupCalls := newChainExecutor(t)
+	ex, _, deliverCh, setupCalls, repo := newChainExecutor(t)
 	plan := Plan{
 		ID: "p", UserMessage: "go",
-		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Setup: &Setup{Repo: repo, BaseRef: "main", WorkBranch: "quack/work"},
 		Nodes: []Node{
 			{ID: "impl", AgentName: implementerAgent, Task: "the whole thing"},
 		},

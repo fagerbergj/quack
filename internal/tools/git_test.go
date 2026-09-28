@@ -20,6 +20,18 @@ func requireGit(t *testing.T) {
 	}
 }
 
+// rawGit runs git directly (hermetic env) for scaffolding a fixture repo - init/clone into a
+// not-yet-a-repo dir, which quack's runGit deliberately refuses.
+func rawGit(t *testing.T, dir string, argv ...string) {
+	t.Helper()
+	cmd := exec.Command("git", argv...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", argv, err, out)
+	}
+}
+
 func newTestGitBinding(t *testing.T) gitBinding {
 	t.Helper()
 	j, err := workspace.NewJail(t.TempDir())
@@ -45,10 +57,10 @@ func runGitT(t *testing.T, dir string, argv ...string) string {
 func newBareRepoFixture(t *testing.T) string {
 	t.Helper()
 	bare := t.TempDir()
-	runGitT(t, bare, "init", "--bare", "--initial-branch=main")
+	rawGit(t, bare, "init", "--bare", "--initial-branch=main")
 
 	seed := t.TempDir()
-	runGitT(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	rawGit(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
 	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +116,7 @@ func TestGitCloneAcceptsPlainHTTPS(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
-	env := gitEnv("/home/x", workspace.Caps{}, nil)
+	env := gitEnv(workspace.Caps{}, nil)
 	for _, e := range env {
 		if strings.HasPrefix(e, "GIT_ASKPASS=") || strings.HasPrefix(e, GitAskpassTokenEnv+"=") || strings.HasPrefix(e, GitAskpassUserEnv+"=") {
 			t.Errorf("no-auth env unexpectedly contains %q", e)
@@ -114,9 +126,11 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 	auth := &gitAuth{
 		cred:    GitCredential{Host: "github.com", Username: "x-access-token", Token: "secret"},
 		askpass: "/workspace/" + GitAskpassLinkName,
+		host:    "github.com",
 	}
-	env2 := gitEnv("/home/x", workspace.Caps{}, auth)
+	env2 := gitEnv(workspace.Caps{}, auth)
 	want := map[string]bool{
+		GitAskpassHostEnv + "=github.com": false,
 		// GIT_ASKPASS must be EXACTLY the executable symlink path - git execs the
 		// value directly as one program, so any "<path> <arg>" form is a broken
 		// (unexecutable) configuration: the regression guard for the live "cannot exec 'quack git-askpass'" failure.
@@ -143,7 +157,7 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 // hook or filter may legitimately need the configured toolchain).
 func TestGitEnvIncludesWorkspaceEnv(t *testing.T) {
 	caps := workspace.Caps{Env: map[string]string{"JAVA_HOME": "/opt/jdk-21"}}
-	env := gitEnv("/home/x", caps, nil)
+	env := gitEnv(caps, nil)
 	want := "JAVA_HOME=/opt/jdk-21"
 	found := false
 	for _, e := range env {
@@ -246,7 +260,7 @@ func TestRunGitNeutralizesHooks(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
 	repo := t.TempDir()
-	runGitT(t, filepath.Dir(repo), "clone", "--quiet", bare, repo)
+	rawGit(t, filepath.Dir(repo), "clone", "--quiet", bare, repo)
 
 	hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
 	marker := filepath.Join(repo, "hook-fired")
@@ -267,3 +281,154 @@ func TestRunGitNeutralizesHooks(t *testing.T) {
 // git_checkout - the reviewer's path to a PR branch. A shallow clone
 // (--depth 1, which git implies --single-branch for) lands on the default branch
 // ONLY: no other branch is reachable, so a code review of a PR was impossible before this tool existed.
+
+// anyHostToken credentials every URL, so file:// fixtures take the credentialed path.
+type anyHostToken struct{}
+
+func (anyHostToken) GitCredential(context.Context, string) (*GitCredential, error) {
+	return &GitCredential{Username: "u", Token: "tok"}, nil
+}
+
+// newDecoyRepoFixture is a bare repo whose main differs from newBareRepoFixture's by decoy.txt.
+func newDecoyRepoFixture(t *testing.T) string {
+	t.Helper()
+	bare := newBareRepoFixture(t)
+	seed := t.TempDir()
+	rawGit(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	if err := os.WriteFile(filepath.Join(seed, "decoy.txt"), []byte("decoy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, seed, "add", "-A")
+	runGitT(t, seed, "-c", "user.name=d", "-c", "user.email=d@x.local", "commit", "--quiet", "-m", "decoy")
+	runGitT(t, seed, "push", "--quiet", "origin", "main")
+	return bare
+}
+
+// TestCredentialedGitIgnoresHomeConfig: a url rewrite in the HOME git used to get (caps.HomeDir)
+// must not steer the credentialed clone or the reuse fetch away from the requested repo.
+func TestCredentialedGitIgnoresHomeConfig(t *testing.T) {
+	requireGit(t)
+	real, decoy := newBareRepoFixture(t), newDecoyRepoFixture(t)
+	b := newTestGitBinding(t)
+	b.tokenSource = anyHostToken{}
+	b.caps.HomeDir = t.TempDir()
+	rewrite := "[url \"file://" + decoy + "\"]\n\tinsteadOf = file://" + real + "\n"
+	if err := os.WriteFile(filepath.Join(b.caps.HomeDir, ".gitconfig"), []byte(rewrite), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wantMain := strings.TrimSpace(runGitT(t, real, "rev-parse", "main"))
+
+	target, err := setupCloneAndBranch(context.Background(), b, "repo", "file://"+real, "main", "quack/one", false)
+	if err != nil {
+		t.Fatalf("setup (clone): %v", err)
+	}
+	// A second work branch reuses the clone and fetches main again.
+	if _, err := setupCloneAndBranch(context.Background(), b, "repo", "file://"+real, "main", "quack/two", false); err != nil {
+		t.Fatalf("setup (reuse fetch): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "decoy.txt")); err == nil {
+		t.Fatal("clone came from the rewritten decoy repo")
+	}
+	if got := strings.TrimSpace(runGitT(t, target, "rev-parse", "origin/main")); got != wantMain {
+		t.Errorf("origin/main = %s, want the requested repo's main %s", got, wantMain)
+	}
+}
+
+// TestRunGitIgnoresRepoHooksPath: a repo-level core.hooksPath must not fire during quack's own git calls.
+func TestRunGitIgnoresRepoHooksPath(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	repo := t.TempDir()
+	rawGit(t, filepath.Dir(repo), "clone", "--quiet", bare, repo)
+	hooks, marker := t.TempDir(), filepath.Join(t.TempDir(), "hook-fired")
+	for _, h := range []string{"post-checkout", "reference-transaction"} {
+		if err := os.WriteFile(filepath.Join(hooks, h), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitT(t, repo, "config", "core.hooksPath", hooks)
+
+	runGitT(t, repo, "checkout", "-b", "other-branch")
+
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("repo-level core.hooksPath hook ran (stat err=%v)", err)
+	}
+}
+
+// TestRunGitStripsFilterDriverAndAttributes: a repo-level clean/smudge filter selected by .gitattributes
+// runs arbitrary code on checkout/reset. quack's own checkout and reset must never fire it (config stripped).
+func TestRunGitStripsFilterDriverAndAttributes(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	repo := t.TempDir()
+	rawGit(t, filepath.Dir(repo), "clone", "--quiet", bare, repo)
+
+	marker := filepath.Join(t.TempDir(), "filter-fired")
+	touch := "#!/bin/sh\ntouch " + marker + "\ncat\n"
+	drv := filepath.Join(t.TempDir(), "drv.sh")
+	if err := os.WriteFile(drv, []byte(touch), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("* filter=evil\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, repo, "config", "filter.evil.smudge", drv)
+	runGitT(t, repo, "config", "filter.evil.clean", drv)
+
+	runGitT(t, repo, "checkout", "-b", "other")
+	runGitT(t, repo, "reset", "--hard", "HEAD")
+
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("filter driver ran during quack's checkout/reset (stat err=%v)", err)
+	}
+}
+
+// TestRunGitNeutralizesGpgSign: a repo that forces commit.gpgSign with gpg.program pointing at a marker
+// must produce an unsigned commit without running that program - the -c overrides win over repo config.
+func TestRunGitNeutralizesGpgSign(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	repo := t.TempDir()
+	rawGit(t, filepath.Dir(repo), "clone", "--quiet", bare, repo)
+
+	marker := filepath.Join(t.TempDir(), "gpg-fired")
+	prog := filepath.Join(t.TempDir(), "gpg.sh")
+	if err := os.WriteFile(prog, []byte("#!/bin/sh\ntouch "+marker+"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, repo, "config", "commit.gpgSign", "true")
+	runGitT(t, repo, "config", "gpg.program", prog)
+	runGitT(t, repo, "config", "user.name", "t")
+	runGitT(t, repo, "config", "user.email", "t@x.local")
+
+	runGitT(t, repo, "commit", "--quiet", "--allow-empty", "-m", "unsigned")
+
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("gpg.program ran during quack's commit (stat err=%v)", err)
+	}
+}
+
+// TestGitEnvCarriesNoServerSecrets: the git child's env is built from gitEnv + GitCmd's pins only, never
+// quack's os.Environ - so a QUACK_* server secret set in the parent never reaches the unsandboxed git process.
+func TestGitEnvCarriesNoServerSecrets(t *testing.T) {
+	requireGit(t)
+	t.Setenv("QUACK_LLM_API_KEY", "super-secret")
+	bin, err := gitBinaryPath()
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	auth := &gitAuth{cred: GitCredential{Username: "u", Token: "tok"}, askpass: "/x/" + GitAskpassLinkName, host: "github.com"}
+	cmd, done, err := workspace.GitCmd(context.Background(), bin, "", []string{"version"}, gitEnv(workspace.DefaultCaps(), auth))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "QUACK_") &&
+			!strings.HasPrefix(e, GitAskpassTokenEnv+"=") &&
+			!strings.HasPrefix(e, GitAskpassUserEnv+"=") &&
+			!strings.HasPrefix(e, GitAskpassHostEnv+"=") {
+			t.Errorf("git env carries a QUACK_* var beyond the askpass ones: %q", e)
+		}
+	}
+}

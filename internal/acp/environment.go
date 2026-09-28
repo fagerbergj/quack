@@ -91,12 +91,16 @@ func gitInfo(ctx context.Context, cwd string, caps workspace.Caps) (branch, sha 
 	}
 	probeCaps := caps
 	probeCaps.Sandbox = workspace.SandboxNone
-	res, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--abbrev-ref", "HEAD"}, probeCaps)
+	// Unsandboxed in the agent's own repo: GitSafeArgs neutralizes config-driven exec on this read-only query.
+	revParse := func(arg string) []string {
+		return append(workspace.GitSafeArgs(), "rev-parse", arg, "HEAD")
+	}
+	res, err := workspace.RunArgv(ctx, cwd, append([]string{"git"}, revParse("--abbrev-ref")...), probeCaps)
 	if err != nil || res.ExitCode != 0 {
 		return "", "", false
 	}
 	branch = strings.TrimSpace(res.Output)
-	if res2, err := workspace.RunArgv(ctx, cwd, []string{"git", "rev-parse", "--short", "HEAD"}, probeCaps); err == nil && res2.ExitCode == 0 {
+	if res2, err := workspace.RunArgv(ctx, cwd, append([]string{"git"}, revParse("--short")...), probeCaps); err == nil && res2.ExitCode == 0 {
 		sha = strings.TrimSpace(res2.Output)
 	}
 	return branch, sha, true
