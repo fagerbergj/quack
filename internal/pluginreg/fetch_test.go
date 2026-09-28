@@ -725,15 +725,28 @@ func TestFetchCheckoutFailureStoresOldSHA(t *testing.T) {
 	}
 }
 
-// TestGitEnvIsMinimalAndTokenIsGitHubScoped: git sees none of the server's env, and the token header
+// TestGitEnvIsMinimalAndTokenIsGitHubScoped: git sees only gitPassEnv of the server's env, and the token header
 // resolves only for https://github.com/ URLs (git's http.<url>.* matching).
 func TestGitEnvIsMinimalAndTokenIsGitHubScoped(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "sekret")
 	t.Setenv("QUACK_TEST_SERVER_SECRET", "hunter2")
+	passed := map[string]string{}
+	for _, k := range gitPassEnv[1:] { // PATH keeps its real value so git and sh resolve
+		passed[k] = "/pass/" + k
+		if k == "TMPDIR" {
+			passed[k] = t.TempDir()
+		}
+		t.Setenv(k, passed[k])
+	}
 	ctx := context.Background()
 	env, err := runGit(ctx, "", "-c", "alias.env=!env", "env")
 	if err != nil {
 		t.Fatal(err)
+	}
+	for k, v := range passed {
+		if !strings.Contains("\n"+env, "\n"+k+"="+v+"\n") {
+			t.Errorf("git child env lacks allowlisted %s=%s", k, v)
+		}
 	}
 	for _, leak := range []string{"hunter2", "GITHUB_TOKEN="} {
 		if strings.Contains(env, leak) {

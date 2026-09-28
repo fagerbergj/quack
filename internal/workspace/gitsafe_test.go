@@ -65,7 +65,8 @@ func TestGitCmdHomeIsEmptyAndRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(strings.Join(cmd.Env, "\n"), "HOME="+cmd.Dir+"\nGIT_CONFIG_NOSYSTEM=1\nGIT_CONFIG_GLOBAL=/dev/null\nGIT_TERMINAL_PROMPT=0") {
+	want := "\nGIT_CONFIG_NOSYSTEM=1\nGIT_CONFIG_GLOBAL=/dev/null\nGIT_TERMINAL_PROMPT=0\nGIT_CEILING_DIRECTORIES=" + filepath.Dir(cmd.Dir)
+	if !strings.HasSuffix(strings.Join(cmd.Env, "\n"), want) {
 		t.Errorf("env does not end with the pinned HOME/config sources: %v", cmd.Env)
 	}
 	if entries, err := os.ReadDir(cmd.Dir); err != nil || len(entries) != 0 {
@@ -109,5 +110,41 @@ func TestGitCmdNeverStripsEnclosingRepo(t *testing.T) {
 	out, err := exec.Command(bin, "-C", dir, "config", "--local", "http.proxy").Output()
 	if err != nil || strings.TrimSpace(string(out)) != "http://127.0.0.1:9" {
 		t.Errorf("enclosing repo config stripped: %q %v", out, err)
+	}
+}
+
+// TestGitCmdResolvesSymlinkedDir: the ceiling applies to the real path, so a symlink into an enclosing repo
+// can't walk discovery up to it.
+func TestGitCmdResolvesSymlinkedDir(t *testing.T) {
+	bin, dir := gitConfigFixture(t)
+	nested := filepath.Join(dir, "sub", "repo")
+	if err := os.MkdirAll(filepath.Join(nested, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(nested, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGitCmd(t, bin, link, "version"); err == nil {
+		t.Error("call via a symlink to a broken .git: want an error")
+	}
+	out, err := exec.Command(bin, "-C", dir, "config", "--local", "http.proxy").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "http://127.0.0.1:9" {
+		t.Errorf("enclosing repo config stripped: %q %v", out, err)
+	}
+}
+
+// TestGitCmdRefusesListSeparatorInPath: a ':' in the parent would split GIT_CEILING_DIRECTORIES.
+func TestGitCmdRefusesListSeparatorInPath(t *testing.T) {
+	bin, _ := gitConfigFixture(t)
+	dir := filepath.Join(t.TempDir(), "a"+string(os.PathListSeparator)+"b", "repo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(bin, "-C", dir, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if _, err := runGitCmd(t, bin, dir, "version"); err == nil || !strings.Contains(err.Error(), "GIT_CEILING_DIRECTORIES") {
+		t.Errorf("err = %v, want a refusal naming GIT_CEILING_DIRECTORIES", err)
 	}
 }

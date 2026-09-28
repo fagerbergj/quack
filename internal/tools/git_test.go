@@ -157,13 +157,19 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 // TestGitEnvIncludesWorkspaceEnv: workspace.env reaches git children too (a
 // hook or filter may legitimately need the configured toolchain).
 func TestGitEnvIncludesWorkspaceEnv(t *testing.T) {
-	caps := workspace.Caps{Env: map[string]string{"JAVA_HOME": "/opt/jdk-21", "GIT_DIR": "/elsewhere", "GIT_CONFIG_COUNT": "1"}}
+	caps := workspace.Caps{Env: map[string]string{
+		"JAVA_HOME": "/opt/jdk-21", "GIT_SSL_CAINFO": "/ca.pem", "GIT_SSL_CAPATH": "/certs",
+		"GIT_DIR": "/elsewhere", "GIT_CONFIG_COUNT": "1", "SSH_ASKPASS": "/evil",
+	}}
 	env := gitEnv(caps, nil)
-	if !slices.Contains(env, "JAVA_HOME=/opt/jdk-21") {
-		t.Errorf("gitEnv = %v, want to contain JAVA_HOME", env)
+	for _, want := range []string{"JAVA_HOME=/opt/jdk-21", "GIT_SSL_CAINFO=/ca.pem", "GIT_SSL_CAPATH=/certs"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("gitEnv = %v, want to contain %q", env, want)
+		}
 	}
 	for _, e := range env {
-		if strings.HasPrefix(e, "GIT_") {
+		k, _, _ := strings.Cut(e, "=")
+		if k == "GIT_DIR" || k == "GIT_CONFIG_COUNT" || k == "SSH_ASKPASS" {
 			t.Errorf("gitEnv passed operator %q to quack's git", e)
 		}
 	}

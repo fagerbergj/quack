@@ -262,10 +262,21 @@ func firstField(out string) string {
 	return fields[0]
 }
 
-// gitEnv is quack's git env: PATH only, never the server's. GITHUB_TOKEN rides GIT_CONFIG_* (not argv, which
-// failing stderr can echo onto the row), keyed to https://github.com/ so no other host ever receives it.
+// gitPassEnv is all registry git inherits from the server: the route to the remote (proxy, private CA) and scratch space.
+var gitPassEnv = []string{
+	"PATH", "TMPDIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy",
+	"ALL_PROXY", "all_proxy", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "SSL_CERT_FILE", "SSL_CERT_DIR",
+}
+
+// gitEnv: GITHUB_TOKEN rides GIT_CONFIG_* (not argv, which failing stderr can echo onto the row), keyed to
+// https://github.com/, which git matches against the requested URL; a cross-host redirect is not covered.
 func gitEnv() []string {
-	env := []string{"PATH=" + os.Getenv("PATH")}
+	var env []string
+	for _, k := range gitPassEnv {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		env = append(env,
 			"GIT_CONFIG_COUNT=1",
