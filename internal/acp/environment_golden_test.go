@@ -95,7 +95,7 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 	if res, err := workspace.RunArgv(ctx, repo, []string{"true"}, sandboxed); err != nil || res.ExitCode != 0 {
 		t.Skipf("SKIPPING sandboxed-git golden: bubblewrap is not usable here (%v, %q)", err, res.Output)
 	}
-	block :=envOnly(environmentBlock(ctx, nil, repo, sandboxed))
+	block := envOnly(environmentBlock(ctx, nil, repo, sandboxed))
 	if !strings.Contains(block, "git: yes (branch quack/work") {
 		// The fixture repo, not the golden, is what failed - gitInfo degrades to "git: no" on
 		// ANY probe failure (environment.go), so dump the repo's own state instead of guessing.
