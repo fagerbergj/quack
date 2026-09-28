@@ -125,27 +125,44 @@ func TestEnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	}
 }
 
-// TestGitInfoBypassesRoundSandbox: a real repo must still be detected when the round's named
-// sandbox binary is unreachable (e.g. no unprivileged userns) - the probe runs unsandboxed.
-func TestGitInfoBypassesRoundSandbox(t *testing.T) {
+func gitInfoFixture(t *testing.T) (git, dir string) {
+	t.Helper()
 	git, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git not on PATH")
 	}
-	dir := t.TempDir()
+	dir = t.TempDir()
 	runGit(t, dir, "init", "-q", "-b", "quack/work")
 	runGit(t, dir, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init")
+	return git, dir
+}
 
-	// A PATH with nothing but a git symlink - bwrap (and everything else) unresolvable.
-	fakePath := t.TempDir()
+// TestGitInfoRunsInRoundSandbox: the probe honours the round's sandbox and reports the same facts as unsandboxed.
+func TestGitInfoRunsInRoundSandbox(t *testing.T) {
+	_, dir := gitInfoFixture(t)
+	caps := workspace.DefaultCaps()
+	caps.Sandbox, caps.HomeDir = workspace.SandboxBwrap, t.TempDir()
+	if res, err := workspace.RunArgv(context.Background(), dir, []string{"true"}, caps); err != nil || res.ExitCode != 0 {
+		t.Skipf("SKIPPING: bubblewrap is not usable here (%v, %q)", err, res.Output)
+	}
+	branch, sha, ok := gitInfo(context.Background(), dir, caps)
+	wantBranch, wantSha, wantOK := gitInfo(context.Background(), dir, workspace.DefaultCaps())
+	if !ok || branch != "quack/work" || sha == "" || branch != wantBranch || sha != wantSha || ok != wantOK {
+		t.Fatalf("sandboxed gitInfo = (%q, %q, %v), unsandboxed = (%q, %q, %v)", branch, sha, ok, wantBranch, wantSha, wantOK)
+	}
+}
+
+// TestGitInfoOmittedWhenSandboxUnavailable: an unreachable sandbox binary drops the git line, never runs git bare.
+func TestGitInfoOmittedWhenSandboxUnavailable(t *testing.T) {
+	git, dir := gitInfoFixture(t)
+	fakePath := t.TempDir() // nothing but git: bwrap unresolvable
 	if err := os.Symlink(git, filepath.Join(fakePath, "git")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fakePath)
 
-	branch, sha, ok := gitInfo(context.Background(), dir, workspace.Caps{Sandbox: workspace.SandboxBwrap})
-	if !ok || branch != "quack/work" || sha == "" {
-		t.Fatalf("gitInfo(%q) = (%q, %q, %v), want (\"quack/work\", <sha>, true) even with bwrap unreachable", dir, branch, sha, ok)
+	if branch, sha, ok := gitInfo(context.Background(), dir, workspace.Caps{Sandbox: workspace.SandboxBwrap}); ok {
+		t.Fatalf("gitInfo(%q) = (%q, %q, true), want ok=false with bwrap unreachable", dir, branch, sha)
 	}
 }
 
