@@ -15,7 +15,7 @@ import (
 // agent" row: the error names the field and lists every valid agent.
 func TestUpsertNodesUnknownAgentListsRoster(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}, {Name: "code-implementer"}}, nil, nil)
-	_, _, err := upsertNodes([]assignmentInput{{Agent: "not-a-real-agent", Task: "x"}}, nil, nil, "chat1", nil)
+	_, _, err := upsertNodes([]assignmentInput{{Agent: "not-a-real-agent", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNames())
 	if err == nil {
 		t.Fatal("want an error for an unknown agent")
 	}
@@ -28,7 +28,7 @@ func TestUpsertNodesUnknownAgentListsRoster(t *testing.T) {
 
 // TestUpsertNodesUnknownNodeID covers reassigning a node_id list_nodes never showed.
 func TestUpsertNodesUnknownNodeID(t *testing.T) {
-	_, _, err := upsertNodes([]assignmentInput{{NodeID: "ghost-1", Task: "x"}}, nil, nil, "chat1", nil)
+	_, _, err := upsertNodes([]assignmentInput{{NodeID: "ghost-1", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNames())
 	if err == nil || !strings.Contains(err.Error(), "unknown node id") {
 		t.Errorf("err = %v, want an unknown node id error", err)
 	}
@@ -38,7 +38,7 @@ func TestUpsertNodesUnknownNodeID(t *testing.T) {
 func TestUpsertNodesNodeCurrentlyRunning(t *testing.T) {
 	existing := []dag.DagNodeRecord{{NodeID: "impl-1", Agent: "code-implementer"}}
 	running := func(id string) bool { return id == "impl-1" }
-	_, _, err := upsertNodes([]assignmentInput{{NodeID: "impl-1", Task: "x"}}, existing, running, "chat1", nil)
+	_, _, err := upsertNodes([]assignmentInput{{NodeID: "impl-1", Task: "x"}}, existing, running, "chat1", nil, dag.AgentNames())
 	if err == nil || !strings.Contains(err.Error(), "currently running") {
 		t.Errorf("err = %v, want a currently-running error", err)
 	}
@@ -50,7 +50,7 @@ func TestUpsertNodesUnknownDependsOn(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	_, _, err := upsertNodes([]assignmentInput{
 		{Agent: "web-researcher", Task: "x", DependsOn: []string{"ghost"}},
-	}, nil, nil, "chat1", nil)
+	}, nil, nil, "chat1", nil, dag.AgentNames())
 	if err == nil || !strings.Contains(err.Error(), "depends_on") {
 		t.Errorf("err = %v, want a depends_on error", err)
 	}
@@ -64,7 +64,7 @@ func TestUpsertNodesDuplicateNodeIDInOneCall(t *testing.T) {
 	_, _, err := upsertNodes([]assignmentInput{
 		{NodeID: "impl-1", Task: "first"},
 		{NodeID: "impl-1", Task: "second"},
-	}, existing, nil, "chat1", nil)
+	}, existing, nil, "chat1", nil, dag.AgentNames())
 	if err == nil {
 		t.Fatal("want an error for the same node_id twice in one call")
 	}
@@ -80,7 +80,7 @@ func TestUpsertNodesPositionalDependsOn(t *testing.T) {
 	assignments, minted, err := upsertNodes([]assignmentInput{
 		{Agent: "web-researcher", Task: "research"},
 		{Agent: "synthesizer", Task: "write it up", DependsOn: []string{"0"}},
-	}, nil, nil, "chat1", nil)
+	}, nil, nil, "chat1", nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("upsertNodes: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestUpsertNodesPositionalDependsOn(t *testing.T) {
 // assignment carries the freshly minted, agent-prefixed id back to the caller.
 func TestUpsertNodesMintedIDEcho(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
-	assignments, minted, err := upsertNodes([]assignmentInput{{Agent: "web-researcher", Task: "x"}}, nil, nil, "chat1", nil)
+	assignments, minted, err := upsertNodes([]assignmentInput{{Agent: "web-researcher", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("upsertNodes: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestBuildNodeSummariesReportsTerminalStatusAndContextID(t *testing.T) {
 // name what actually parsed (both empty) and the roster to pick from.
 func TestUpsertNodesNeitherFieldSetEchoesReceivedShape(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}, {Name: "code-reviewer"}}, nil, nil)
-	_, _, err := upsertNodes([]assignmentInput{{Task: "do the thing"}}, nil, nil, "chat1", nil)
+	_, _, err := upsertNodes([]assignmentInput{{Task: "do the thing"}}, nil, nil, "chat1", nil, dag.AgentNames())
 	if err == nil {
 		t.Fatal("want an error when neither node_id nor agent is set")
 	}
@@ -227,7 +227,7 @@ func TestUpsertNodesNeitherFieldSetEchoesReceivedShape(t *testing.T) {
 // rejection must happen at plan-authoring time, before any node runs.
 func TestUpsertNodesRejectsAgentWhoseDeliveryIsNotAllowed(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
-	_, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "review it"}}, nil, nil, "chat1", []string{"pull_request"})
+	_, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "review it"}}, nil, nil, "chat1", []string{"pull_request"}, dag.AgentNames())
 	if err == nil {
 		t.Fatal("want an error hiring code-reviewer when only pull_request delivery is allowed")
 	}
@@ -243,13 +243,13 @@ func TestUpsertNodesRejectsAgentWhoseDeliveryIsNotAllowed(t *testing.T) {
 // with no delivery coupling (e.g. web-researcher) both pass unconditionally.
 func TestUpsertNodesAllowsAgentWhenDeliveryUnrestricted(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}, {Name: "web-researcher"}}, nil, nil)
-	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", nil); err != nil {
+	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNames()); err != nil {
 		t.Errorf("no allowedKinds restriction: %v", err)
 	}
-	if _, _, err := upsertNodes([]assignmentInput{{Agent: "web-researcher", Task: "x"}}, nil, nil, "chat1", []string{"pull_request"}); err != nil {
+	if _, _, err := upsertNodes([]assignmentInput{{Agent: "web-researcher", Task: "x"}}, nil, nil, "chat1", []string{"pull_request"}, dag.AgentNames()); err != nil {
 		t.Errorf("agent with no delivery coupling: %v", err)
 	}
-	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", []string{"review"}); err != nil {
+	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", []string{"review"}, dag.AgentNames()); err != nil {
 		t.Errorf("agent's delivery kind IS allowed: %v", err)
 	}
 }

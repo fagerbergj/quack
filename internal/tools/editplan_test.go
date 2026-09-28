@@ -17,7 +17,7 @@ func newEditPlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning func
 	t.Helper()
 	dag.NewPlanner(roster, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil)
+	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -30,7 +30,7 @@ func newEditPlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning func
 	}
 	planID, _ := res["plan_id"].(string)
 
-	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil)
+	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestEditPlanOnDeliveredPlanSurfacesDisallowedDeliverableError(t *testing.T)
 		t.Fatalf("seed dag_node: %v", err)
 	}
 
-	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nil, []string{"review"}, nil)
+	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nil, []string{"review"}, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	}
 	planID, _ := res["plan_id"].(string)
 
-	editTl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	editTl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}

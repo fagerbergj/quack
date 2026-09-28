@@ -72,11 +72,13 @@ func (s *orchRun) buildDagTools(githubSetup *dag.Setup) string {
 	if err != nil {
 		return "orchestrator: list_nodes tool: " + err.Error()
 	}
-	createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds, s.o.assignmentMeta)
+	// The pinned roster's names: a reload mid-turn must not offer agents this run can't dispatch.
+	agentNames := dag.AgentNamesFor(s.ctx)
+	createPlanTool, err := tools.NewCreatePlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds, s.o.assignmentMeta, agentNames)
 	if err != nil {
 		return "orchestrator: create_plan tool: " + err.Error()
 	}
-	editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds, s.o.assignmentMeta)
+	editPlanTool, err := tools.NewEditPlanTool(planRC, orchestratorName, githubSetup, nodeIsRunning, allowedKinds, s.o.assignmentMeta, agentNames)
 	if err != nil {
 		return "orchestrator: edit_plan tool: " + err.Error()
 	}

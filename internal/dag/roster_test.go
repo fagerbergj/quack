@@ -232,3 +232,22 @@ func TestRoster_SetRosterOwnsItsMaps(t *testing.T) {
 		t.Fatal("caller's map mutation leaked into the installed roster")
 	}
 }
+
+// A pinned run validates plan agents against its own roster, not a newer one.
+func TestAgentNamesForUsesPinnedRoster(t *testing.T) {
+	ex := NewExecutor(nil, nil, nil, nil, nil, nil)
+	ex.SetRoster(&Roster{Gen: 1, Infos: []AgentInfo{{Name: "old"}}})
+	ctx, done := ex.Pin(context.Background())
+	defer done()
+	ex.SetRoster(&Roster{Gen: 2, Infos: []AgentInfo{{Name: "new"}}})
+	SetAgentRoster([]AgentInfo{{Name: "new"}})
+	if got := AgentNamesFor(ctx); len(got) != 1 || got[0] != "old" {
+		t.Fatalf("pinned names = %v, want [old]", got)
+	}
+	if got := AgentNamesFor(context.Background()); len(got) != 1 || got[0] != "new" {
+		t.Fatalf("unpinned names = %v, want the current [new]", got)
+	}
+	if err := ValidateAgentNameIn("new", AgentNamesFor(ctx)); err == nil {
+		t.Fatal("a pinned run accepted an agent only the newer roster has")
+	}
+}

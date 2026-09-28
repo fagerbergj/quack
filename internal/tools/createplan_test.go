@@ -18,7 +18,7 @@ func newCreatePlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning fu
 	t.Helper()
 	dag.NewPlanner(roster, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestCreatePlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestCreatePlanSetupBaseRefMatchingTriggerAccepted(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 	onAssignment := func(_ agent.Context, _, _ string, a dag.Assignment) (string, map[string]any) {
 		return "github", map[string]any{"base_sha": "deadbeef"}
 	}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, onAssignment)
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, onAssignment, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestCreatePlanMetaHookRunsRegardlessOfTrigger(t *testing.T) {
 	onAssignment := func(_ agent.Context, _, _ string, a dag.Assignment) (string, map[string]any) {
 		return "acme", map[string]any{"ticket": "ACME-42"}
 	}
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, onAssignment)
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, onAssignment, dag.AgentNames())
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}

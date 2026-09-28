@@ -29,10 +29,10 @@ type createPlanArgs struct {
 // node_id, which upsertNodes mints separately. onAssignment, when non-nil,
 // stamps assignment.meta.<extension> - whichever active extension supplies
 // it, keyed by its own name (e.g. "github").
-func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
+func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, agents []string) (tool.Tool, error) {
 	artifactDesc := "`assignments[].checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its " +
 		"commands: the trust gate derives a code node's checks from the repo itself after the node clones it."
-	schema, err := assignmentInputSchema[createPlanArgs](githubSetup)
+	schema, err := assignmentInputSchema[createPlanArgs](githubSetup, agents)
 	if err != nil {
 		return nil, fmt.Errorf("create_plan: %w", err)
 	}
@@ -69,7 +69,7 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			if len(a.Assignments) == 0 {
 				return planUpsertResult{}, fmt.Errorf("create_plan: assignments must be non-empty")
 			}
-			res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a.Assignments, a.Setup, a.Delivery)
+			res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, agents, a.Assignments, a.Setup, a.Delivery)
 			if err != nil {
 				return planUpsertResult{}, fmt.Errorf("create_plan: %w", err)
 			}
@@ -85,12 +85,12 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 // is the caller's raw Setup arg (pre-override), kept separate from the
 // possibly-overridden value so setupIgnoredNote still reports on what the
 // model actually sent.
-func newPlanRecord(tc agent.Context, c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, inputs []assignmentInput, submittedSetup *dag.Setup, delivery *dag.Delivery) (planUpsertResult, error) {
+func newPlanRecord(tc agent.Context, c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, agents []string, inputs []assignmentInput, submittedSetup *dag.Setup, delivery *dag.Delivery) (planUpsertResult, error) {
 	existing, err := listDagNodeRecords(tc, c)
 	if err != nil {
 		return planUpsertResult{}, err
 	}
-	assignments, minted, err := upsertNodes(inputs, existing, nodeIsRunning, tc.SessionID(), allowedKinds)
+	assignments, minted, err := upsertNodes(inputs, existing, nodeIsRunning, tc.SessionID(), allowedKinds, agents)
 	if err != nil {
 		return planUpsertResult{}, err
 	}

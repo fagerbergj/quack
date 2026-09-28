@@ -28,8 +28,8 @@ type editPlanArgs struct {
 // "orchestrator") - unrelated to a dag_node's own node_id. onAssignment,
 // when non-nil, stamps assignment.meta.<extension> - whichever active
 // extension supplies it, keyed by its own name (e.g. "github").
-func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc) (tool.Tool, error) {
-	schema, err := assignmentInputSchema[editPlanArgs](githubSetup)
+func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, agents []string) (tool.Tool, error) {
+	schema, err := assignmentInputSchema[editPlanArgs](githubSetup, agents)
 	if err != nil {
 		return nil, fmt.Errorf("edit_plan: %w", err)
 	}
@@ -67,13 +67,13 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 				return planUpsertResult{}, err
 			}
 			if current.Status == "done" {
-				return editDeliveredPlan(tc, c, current, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a)
+				return editDeliveredPlan(tc, c, current, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, agents, a)
 			}
 			if len(a.Assignments) == 0 && len(a.Remove) == 0 && a.Setup == nil && a.Delivery == nil {
 				return planUpsertResult{}, fmt.Errorf("edit_plan: nothing to change - got plan_id %q with no assignments, remove, setup, "+
 					"or delivery; edit_plan accepts assignments (each with node_id or agent), remove, setup, and/or delivery - set at least one", a.PlanID)
 			}
-			return applyEdit(tc, c, current, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a)
+			return applyEdit(tc, c, current, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, agents, a)
 		},
 	)
 }
@@ -95,7 +95,7 @@ func editPlanPrecheck(tc agent.Context, c *recordstore.Client, planID string) (d
 
 // editDeliveredPlan: editing an already-delivered plan starts a NEW plan from
 // assignments.
-func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, a editPlanArgs) (planUpsertResult, error) {
+func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, agents []string, a editPlanArgs) (planUpsertResult, error) {
 	// The delivered-plan wording only fits when there are no assignments to even attempt:
 	// a rejection of given assignments must come from newPlanRecord verbatim.
 	if len(a.Assignments) == 0 {
@@ -104,7 +104,7 @@ func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagP
 		}
 		return planUpsertResult{}, fmt.Errorf("edit_plan: plan %q already delivered - it's finished; give `assignments` to start a new plan for further work", current.PlanID)
 	}
-	res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, a.Assignments, a.Setup, a.Delivery)
+	res, err := newPlanRecord(tc, c, nodeID, githubSetup, nodeIsRunning, allowedKinds, onAssignment, agents, a.Assignments, a.Setup, a.Delivery)
 	if err != nil {
 		return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
 	}
@@ -114,7 +114,7 @@ func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagP
 
 // applyEdit: apply remove + upserts + setup/delivery to the current plan and save it
 // (dag_plan first, then any minted dag_node rows).
-func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, a editPlanArgs) (planUpsertResult, error) {
+func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, agents []string, a editPlanArgs) (planUpsertResult, error) {
 	remaining, err := removeAssignments(current.Assignments, a.Remove)
 	if err != nil {
 		return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
@@ -130,7 +130,7 @@ func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecor
 	var upserts []dag.Assignment
 	var minted []dag.DagNodeRecord
 	if len(a.Assignments) > 0 {
-		upserts, minted, err = upsertNodes(a.Assignments, existingNodes, nodeIsRunning, tc.SessionID(), allowedKinds)
+		upserts, minted, err = upsertNodes(a.Assignments, existingNodes, nodeIsRunning, tc.SessionID(), allowedKinds, agents)
 		if err != nil {
 			return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
 		}

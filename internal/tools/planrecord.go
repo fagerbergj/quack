@@ -152,7 +152,7 @@ type assignmentInput struct {
 // handler is what actually handles it). Widening AdditionalProperties
 // instead would silently swallow a genuinely misspelled key (e.g.
 // "assignmnets") rather than rejecting it by name, which is worse.
-func assignmentInputSchema[T any](githubSetup *dag.Setup) (*jsonschema.Schema, error) {
+func assignmentInputSchema[T any](githubSetup *dag.Setup, names []string) (*jsonschema.Schema, error) {
 	schema, err := jsonschema.For[T](nil)
 	if err != nil {
 		return nil, fmt.Errorf("derive input schema: %w", err)
@@ -165,7 +165,6 @@ func assignmentInputSchema[T any](githubSetup *dag.Setup) (*jsonschema.Schema, e
 	if !ok {
 		return nil, fmt.Errorf("derive input schema: assignments[].agent missing")
 	}
-	names := dag.AgentNames()
 	agentProp.Enum = make([]any, len(names))
 	for i, n := range names {
 		agentProp.Enum[i] = n
@@ -259,7 +258,7 @@ func resolveNodeIndex(ref string, n int) (int, bool) {
 // (quackagent.WorkerSessionID) - the same deterministic id the native A2A
 // path (internal/serve buildAgents) independently recomputes when it
 // actually dispatches to this node, so the stored value is never a guess.
-func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, nodeIsLive func(nodeID string) bool, chatID string, allowedKinds []string) ([]dag.Assignment, []dag.DagNodeRecord, error) {
+func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, nodeIsLive func(nodeID string) bool, chatID string, allowedKinds, agents []string) ([]dag.Assignment, []dag.DagNodeRecord, error) {
 	known := make(map[string]dag.DagNodeRecord, len(existingNodes))
 	var existingIDs []string
 	for _, n := range existingNodes {
@@ -268,7 +267,7 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 	}
 
 	nodeIDs := make([]string, len(inputs))
-	st := upsertState{known: known, existingIDs: existingIDs, nodeIsLive: nodeIsLive, chatID: chatID, allowedKinds: allowedKinds}
+	st := upsertState{known: known, existingIDs: existingIDs, nodeIsLive: nodeIsLive, chatID: chatID, allowedKinds: allowedKinds, agents: agents}
 	for i, in := range inputs {
 		id, err := st.resolveOne(i, in)
 		if err != nil {
@@ -308,6 +307,7 @@ type upsertState struct {
 	nodeIsLive   func(nodeID string) bool
 	chatID       string
 	allowedKinds []string
+	agents       []string // the run's roster (dag.AgentNamesFor), not a newer reload's
 }
 
 // resolveOne: one input's node resolution - reuse node_id or mint an agent; the
@@ -330,7 +330,7 @@ func (st *upsertState) resolveOne(i int, in assignmentInput) (string, error) {
 		}
 		return n.NodeID, nil
 	case in.Agent != "":
-		if err := dag.ValidateAgentName(in.Agent); err != nil {
+		if err := dag.ValidateAgentNameIn(in.Agent, st.agents); err != nil {
 			return "", fmt.Errorf("assignments[%d].%w", i, err)
 		}
 		if err := validateAllowedDeliveryKind(in.Agent, st.allowedKinds); err != nil {
@@ -344,7 +344,7 @@ func (st *upsertState) resolveOne(i int, in assignmentInput) (string, error) {
 		return id, nil
 	default:
 		return "", fmt.Errorf("assignments[%d]: has neither node_id nor agent set (%s) - give node_id "+
-			"(an existing node from list_nodes) or agent (one of: %s)", i, describeAssignmentInput(in), strings.Join(dag.AgentNames(), ", "))
+			"(an existing node from list_nodes) or agent (one of: %s)", i, describeAssignmentInput(in), strings.Join(st.agents, ", "))
 	}
 }
 

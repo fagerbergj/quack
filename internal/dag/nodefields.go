@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -30,6 +31,21 @@ func SetAgentRoster(agents []AgentInfo) {
 // node_id ... or agent: one of <AgentNames>").
 func AgentNames() []string { return agentNameList() }
 
+// AgentNamesFor is AgentNames for a run Executor.Pin pinned: that roster's
+// names, not whichever roster a reload installed since.
+func AgentNamesFor(ctx context.Context) []string {
+	r := pinnedRoster(ctx)
+	if r == nil || r.Gen == 0 {
+		return agentNameList()
+	}
+	names := make([]string, len(r.Infos))
+	for i, a := range r.Infos {
+		names[i] = a.Name
+	}
+	sort.Strings(names)
+	return names
+}
+
 func agentNameList() []string {
 	agentRosterMu.RLock()
 	defer agentRosterMu.RUnlock()
@@ -46,10 +62,14 @@ func agentNameList() []string {
 // field), reusable by any node-shaped record kind regardless of how its
 // nodes are stored (inline, or as their own first-class records).
 func ValidateAgentName(name string) error {
+	return ValidateAgentNameIn(name, agentNameList())
+}
+
+// ValidateAgentNameIn is ValidateAgentName against names (e.g. AgentNamesFor's).
+func ValidateAgentNameIn(name string, names []string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("agent: must not be empty")
 	}
-	names := agentNameList()
 	for _, n := range names {
 		if n == name {
 			return nil
