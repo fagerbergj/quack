@@ -233,6 +233,11 @@ func seedOwners(results []PluginSeedResult) map[string]string {
 }
 
 func (g *rosterReload) nextMCP(ctx context.Context, admitted []plugin.Plugin, rep *schema.PluginReloadReport) *mcpSet {
+	for _, p := range admitted {
+		for _, server := range slices.Sorted(maps.Keys(p.MCPSkipped)) {
+			reloadFailure(rep, p.Name, server, schema.Mcp, errors.New(p.MCPSkipped[server]))
+		}
+	}
 	if !g.mcpOn {
 		return g.cur.mcp
 	}

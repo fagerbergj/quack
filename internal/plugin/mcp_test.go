@@ -55,6 +55,9 @@ func TestLoadMCP_BadFileDisablesMCPOnly(t *testing.T) {
 			if len(p.MCPServers) != 0 {
 				t.Errorf("MCPServers = %+v, want none", p.MCPServers)
 			}
+			if p.MCPSkipped[""] == "" {
+				t.Errorf("MCPSkipped = %+v, want the whole-file reason under \"\"", p.MCPSkipped)
+			}
 		})
 	}
 }
@@ -78,6 +81,9 @@ func TestLoadMCP_BadEntrySkippedOthersKept(t *testing.T) {
 	}
 	if _, ok := p.MCPServers["good"]; !ok {
 		t.Errorf("MCPServers = %+v, want the good entry kept", p.MCPServers)
+	}
+	if p.MCPSkipped["shellish"] == "" || p.MCPSkipped["absolute"] == "" {
+		t.Errorf("MCPSkipped = %+v, want each rejected entry's reason", p.MCPSkipped)
 	}
 }
 

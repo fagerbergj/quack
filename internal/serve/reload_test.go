@@ -302,7 +302,8 @@ func TestReloadDropsAndReportsFailingMembers(t *testing.T) {
 			"scout": "model_role: researcher\ntools: [probe]\n",
 			"lost":  "model_role: researcher\ntools: [no_such_tool]\n",
 		},
-		servers: stubServer("probe", "") + `,"broken":{"type":"stdio","command":"quack-no-such-binary"}`,
+		servers: stubServer("probe", "") + `,"broken":{"type":"stdio","command":"quack-no-such-binary"}` +
+			`,"pathy":{"type":"stdio","command":"bin/server"}`,
 	})
 	bad := filepath.Join(t.TempDir(), "badyaml")
 	writeReloadPlugin(t, bad, reloadPlugin{agents: map[string]string{"typo": "tools: [unterminated"}})
@@ -318,6 +319,9 @@ func TestReloadDropsAndReportsFailingMembers(t *testing.T) {
 	}
 	if f, ok := failureFor(rep, schema.Mcp, "broken"); !ok || *f.Plugin != "good" {
 		t.Errorf("failures = %+v, want good/broken at stage mcp", rep.Failures)
+	}
+	if f, ok := failureFor(rep, schema.Mcp, "pathy"); !ok || *f.Plugin != "good" || f.Error == "" {
+		t.Errorf("failures = %+v, want good/pathy skipped at resolve reported at stage mcp", rep.Failures)
 	}
 	if f, ok := failureFor(rep, schema.Seed, ""); !ok || *f.Plugin != "badyaml" {
 		t.Errorf("failures = %+v, want badyaml dropped at stage seed", rep.Failures)
