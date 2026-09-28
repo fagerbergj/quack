@@ -3,15 +3,18 @@ package dag
 import (
 	"context"
 	"iter"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -249,5 +252,36 @@ func TestAgentNamesForUsesPinnedRoster(t *testing.T) {
 	}
 	if err := ValidateAgentNameIn("new", AgentNamesFor(ctx)); err == nil {
 		t.Fatal("a pinned run accepted an agent only the newer roster has")
+	}
+}
+
+// A node pinned to a roster whose agent a reload removed still records its
+// final status; once that roster dies, the agent stops validating.
+func TestDagNodeStatusPersistsAfterReloadDropsItsAgent(t *testing.T) {
+	ex := NewExecutor(nil, nil, nil, nil, nil, nil)
+	ex.SetRoster(&Roster{Gen: 1, Infos: []AgentInfo{{Name: "hr-probe"}}})
+	SetAgentRoster([]AgentInfo{{Name: "hr-probe"}})
+	svc := artifact.InMemoryService()
+	c := recordstore.New(svc, "quack", "u1", "chat1")
+	rec := DagNodeRecord{NodeID: "hr-probe-1", Agent: "hr-probe", Status: StatusQueued}
+	if _, _, err := c.SaveStructured(context.Background(), kindDagNode, rec, rec.NodeID, recordstore.Lineage{NodeID: rec.NodeID}); err != nil {
+		t.Fatal(err)
+	}
+	_, done := ex.Pin(context.Background())
+	ex.SetRoster(&Roster{Gen: 2, Infos: []AgentInfo{{Name: "other"}}})
+	SetAgentRoster([]AgentInfo{{Name: "other"}})
+
+	for _, st := range []NodeStatus{StatusRunning, StatusDone} {
+		if err := UpdateDagNodeStatus(context.Background(), svc, "quack", "u1", "chat1", rec.NodeID, st); err != nil {
+			t.Fatalf("status %s: %v", st, err)
+		}
+	}
+	raw, _, _, err := c.Latest(context.Background(), kindDagNode+":"+rec.NodeID)
+	if err != nil || !strings.Contains(string(raw), `"status":"done"`) {
+		t.Fatalf("record = %s (%v), want done", raw, err)
+	}
+	done()
+	if err := validateDagNode(raw); err == nil {
+		t.Fatal("a dead roster's agent still validates")
 	}
 }

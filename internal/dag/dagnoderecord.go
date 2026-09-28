@@ -86,7 +86,9 @@ func validateDagNode(raw json.RawMessage) error {
 	if rec.NodeID == "" {
 		return errors.New("node_id: must not be empty")
 	}
-	return ValidateAgentName(rec.Agent)
+	// Live, not just current: a node finishing on a pinned roster writes its
+	// status after a reload may have removed its agent.
+	return ValidateAgentNameIn(rec.Agent, liveAgentNames())
 }
 
 // UpdateDagNodeStatus advances nodeID's persisted status to match the same
