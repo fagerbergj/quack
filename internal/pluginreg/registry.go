@@ -36,6 +36,9 @@ type Plugin struct {
 	// instead of the zero time.
 	FetchedAt *time.Time `json:"fetched_at,omitempty"`
 	Error     string     `json:"error,omitempty"`
+	// Seeded marks a row plugins.seed owns: seeding moves it when its entry
+	// changes. A REST add (FromEntry) writes it false, taking ownership.
+	Seeded bool `json:"seeded,omitempty"`
 }
 
 // FromEntry builds an unfetched row from a parsed Entry.

@@ -52,6 +52,7 @@ func seedRegistry(ctx context.Context, reg pluginreg.FetchRegistry, seed []strin
 		seenInSeed[name] = e.Raw
 		delete(stale, name)
 		row := pluginreg.FromEntry(e)
+		row.Seeded = true
 		if existingRow, ok := byName[name]; ok {
 			keep, err := keepSeededRow(ctx, reg, existingRow, row)
 			if err != nil {
@@ -76,20 +77,36 @@ func seedRegistry(ctx context.Context, reg pluginreg.FetchRegistry, seed []strin
 	return nil
 }
 
-// keepSeededRow decides whether an existing row survives its seed entry. Only
-// config writes local rows (REST refuses them), so a changed entry replaces one.
+// keepSeededRow decides whether an existing row survives its seed entry. Config
+// owns local rows (REST refuses them) and seeded ones, so a changed entry replaces those.
 func keepSeededRow(ctx context.Context, reg pluginreg.Registry, existing, seeded pluginreg.Plugin) (bool, error) {
-	if existing.Source == pluginreg.SourceLocal && existing.Entry != seeded.Entry {
-		slog.Info("plugin seed entry changed; replacing the local row", "component", "startup", "name", seeded.Name, "from", existing.Entry, "to", seeded.Entry)
-		return false, reg.Delete(ctx, seeded.Name)
+	if existing.Entry == seeded.Entry {
+		if existing.Seeded {
+			return true, nil
+		}
+		// A row predating the flag, or re-added over REST, that already matches its seed.
+		existing.Seeded = true
+		return true, reg.Put(ctx, existing)
 	}
-	// Put would only ever error here (SameIdentity is exactly its own
-	// collision check) - warn directly instead of re-deriving it.
+	if existing.Source != pluginreg.SourceLocal && !existing.Seeded {
+		warnRESTOwnedRow(existing, seeded)
+		return true, nil
+	}
+	slog.Info("plugin seed entry changed; replacing its row", "component", "startup", "name", seeded.Name, "from", existing.Entry, "to", seeded.Entry)
+	if pluginreg.SameIdentity(existing, seeded) {
+		return false, nil // Put replaces it in place, keeping the clone for the fetch to move
+	}
+	return false, reg.Delete(ctx, seeded.Name)
+}
+
+// warnRESTOwnedRow explains why a row set over REST ignores its seed entry.
+func warnRESTOwnedRow(existing, seeded pluginreg.Plugin) {
 	if !pluginreg.SameIdentity(existing, seeded) {
 		slog.Warn("plugin seed entry collides with a different plugin already registered under this name; keeping the on-disk row",
 			"component", "startup", "name", seeded.Name, "entry", seeded.Entry)
+		return
 	}
-	return true, nil
+	slog.Info("plugin row was set over REST; not following plugins.seed", "component", "startup", "name", seeded.Name, "row", existing.Entry, "seed", seeded.Entry)
 }
 
 // fetchRegistryPlugins fetches every non-local row against its pinned/tracked

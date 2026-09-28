@@ -34,7 +34,7 @@ To exercise the image end to end, point your QA or staging instance at the dev t
 
 ## Declarative plugins
 
-`EXT` replaces Go modules only. A module's `plugin/` directory (agents, skills, workflows) reaches quack through the plugin registry, pinned in `config/quack.yaml`'s `plugins.seed`. To try a plugin change on a dev instance, seed its directory as a local root. A local row is named after its directory, so link it under the plugin's name first (`ln -s ~/quack-extensions/sleeper/plugin /opt/plugins/sleeper`, then seed `/opt/plugins/sleeper`). Or push a branch and add `github:fagerbergj/quack-extensions@<branch>#sleeper/plugin` from the Plugins page.
+`EXT` replaces Go modules only. A module's `plugin/` directory (agents, skills, workflows) reaches quack through the plugin registry, pinned in `config/quack.yaml`'s `plugins.seed`. To try a plugin change on a dev instance, seed its directory as a local root. A local row is named after its directory, so link it under the plugin's name first (`ln -s ~/quack-extensions/sleeper/plugin /opt/plugins/sleeper`, then seed `/opt/plugins/sleeper`). Or push a branch and add `github:fagerbergj/quack-extensions@<branch>#sleeper/plugin` from the Plugins page. That takes the row over from `plugins.seed`; add the seed entry back the same way when done, and config owns it again from the next boot.
 
 ## Before merging the extension change
 
@@ -66,6 +66,6 @@ gh workflow run quack-compat.yaml -R fagerbergj/quack-extensions --ref <extensio
 
 1. Merge the `quack-extensions` PR.
 2. Tag each changed module once, e.g. `git tag sleeper/v0.7.0 && git push origin sleeper/v0.7.0`.
-3. In quack, bump the pins in one PR: `go get github.com/fagerbergj/quack-extensions/sleeper@v0.7.0 && go mod tidy`. For a module that ships a `plugin/`, move its `plugins.seed` ref in `config/quack.yaml` to the same tag in that PR.
+3. In quack, bump the pins in one PR: `go get github.com/fagerbergj/quack-extensions/sleeper@v0.7.0 && go mod tidy`. For a module that ships a `plugin/`, move its `plugins.seed` ref in `config/quack.yaml` to the same tag in that PR; a deployment's seeded row follows at its next restart.
 
 When the change spans `sdk` and an extension that uses it, order matters: the `go.work` builds above use the local `sdk` whatever each extension's `go.mod` requires, so the tags must reproduce that. Tag `sdk` first, bump the dependent modules' `require github.com/fagerbergj/quack-extensions/sdk` to that tag in `quack-extensions`, merge, then tag the dependents and bump quack's pins.

@@ -188,3 +188,26 @@ func TestDBRegistryPutRejectsConcurrentInsertCollision_Postgres(t *testing.T) {
 		t.Fatalf("concurrent insert-insert race = %d successes, %d collisions, want exactly 1 and 1 (last-writer-wins with no error otherwise)", successes, collisions)
 	}
 }
+
+// A plugin_rows table from before the seeded column gains it as false, and
+// its rows still read back.
+func TestNewDBRegistryAddsSeededToExistingRows(t *testing.T) {
+	db, err := OpenDB("sqlite", filepath.Join(t.TempDir(), "plugins.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE plugin_rows (name text PRIMARY KEY, entry text, source text, owner text, repo text, ref text, path text, installed_sha text, fetched_at datetime, error text, updated_at datetime)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO plugin_rows (name, entry, source) VALUES ('usage', '.agents/plugins/usage', 'local')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	reg, err := NewDBRegistry(db, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := reg.List(context.Background())
+	if err != nil || len(rows) != 1 || rows[0].Name != "usage" || rows[0].Seeded {
+		t.Fatalf("rows = %+v, err %v; want the old usage row, not seeded", rows, err)
+	}
+}

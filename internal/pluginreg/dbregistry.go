@@ -65,6 +65,7 @@ type PluginRow struct {
 	InstalledSHA string
 	FetchedAt    *time.Time
 	Error        string
+	Seeded       bool `gorm:"not null;default:false"`
 	UpdatedAt    time.Time
 }
 
@@ -73,7 +74,7 @@ func rowFromPlugin(p Plugin) PluginRow {
 		// UpdatedAt is left zero - GORM's naming convention auto-populates
 		// it on Create/Update, same as every other model in internal/store.
 		Name: p.Name, Entry: p.Entry, Source: p.Source, Owner: p.Owner, Repo: p.Repo,
-		Ref: p.Ref, Path: p.Path, InstalledSHA: p.SHA, FetchedAt: p.FetchedAt, Error: p.Error,
+		Ref: p.Ref, Path: p.Path, InstalledSHA: p.SHA, FetchedAt: p.FetchedAt, Error: p.Error, Seeded: p.Seeded,
 	}
 }
 
@@ -88,7 +89,7 @@ func pluginFromRow(r PluginRow) Plugin {
 	}
 	return Plugin{
 		Name: r.Name, Entry: r.Entry, Source: r.Source, Owner: r.Owner, Repo: r.Repo,
-		Ref: r.Ref, Path: r.Path, SHA: r.InstalledSHA, FetchedAt: fetchedAt, Error: r.Error,
+		Ref: r.Ref, Path: r.Path, SHA: r.InstalledSHA, FetchedAt: fetchedAt, Error: r.Error, Seeded: r.Seeded,
 	}
 }
 
@@ -211,7 +212,7 @@ func (r *DBRegistry) putTx(ctx context.Context, p Plugin) error {
 
 // pluginRowColumns is the upsert's DO UPDATE SET list - every PluginRow
 // column but the primary key.
-var pluginRowColumns = []string{"entry", "source", "owner", "repo", "ref", "path", "installed_sha", "fetched_at", "error", "updated_at"}
+var pluginRowColumns = []string{"entry", "source", "owner", "repo", "ref", "path", "installed_sha", "fetched_at", "error", "seeded", "updated_at"}
 
 // identityMatchClause mirrors samePlugin in SQL, for the upsert's WHERE: a
 // github row matches by source+owner+repo, anything else by source+entry -

@@ -2,7 +2,6 @@ package serve
 
 import (
 	"context"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -42,9 +41,10 @@ func sleeperPluginRemote(t *testing.T) {
 	t.Cleanup(func() { pluginreg.RemoteURL = prev })
 }
 
-// A local row is config-owned, so a changed seed entry replaces it on either
-// backend; an unchanged local row, and any github row, is left alone.
-func TestSeedRegistryReplacesLocalRowWhoseEntryChanged(t *testing.T) {
+// Seeding owns local rows and rows it created: each follows a changed seed
+// entry on either backend. A REST-owned row keeps its entry; one predating the flag
+// that still matches its seed is marked seeded.
+func TestSeedRegistryFollowsChangedEntriesOfRowsItOwns(t *testing.T) {
 	dbReg := func(t *testing.T) pluginreg.FetchRegistry {
 		db, err := pluginreg.OpenDB("sqlite", filepath.Join(t.TempDir(), "plugins.db"))
 		if err != nil {
@@ -57,32 +57,54 @@ func TestSeedRegistryReplacesLocalRowWhoseEntryChanged(t *testing.T) {
 		return reg
 	}
 	fsReg := func(t *testing.T) pluginreg.FetchRegistry { return pluginreg.NewFSRegistry(t.TempDir()) }
+	gh := func(name, entry string, seeded bool) pluginreg.Plugin {
+		e, err := pluginreg.ParseEntry(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := pluginreg.FromEntry(e)
+		p.SHA, p.Seeded = "abc123", seeded
+		return p
+	}
 	for name, newReg := range map[string]func(*testing.T) pluginreg.FetchRegistry{"fs": fsReg, "db": dbReg} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			reg := newReg(t)
-			pinned := pluginreg.Plugin{Name: "ponytail", Source: pluginreg.SourceGitHub, Entry: "github:DietrichGebert/ponytail@v1", Owner: "DietrichGebert", Repo: "ponytail", Ref: "v1"}
-			usage := pluginreg.Plugin{Name: "usage", Source: pluginreg.SourceLocal, Entry: ".agents/plugins/usage"}
-			for _, p := range []pluginreg.Plugin{oldSleeperRow, pinned, usage} {
+			rows := []pluginreg.Plugin{
+				oldSleeperRow,
+				gh("ponytail", "github:DietrichGebert/ponytail@v1", true),
+				gh("widgets", "github:acme/widgets@v1", false),
+				gh("dotagents", "github:fagerbergj/dotagents", false),
+			}
+			for _, p := range rows {
 				if err := reg.Put(ctx, p); err != nil {
 					t.Fatal(err)
 				}
 			}
-			seed := []string{sleeperSeed, "github:DietrichGebert/ponytail@v2", ".agents/plugins/usage"}
+			seed := []string{sleeperSeed, "github:DietrichGebert/ponytail@v2", "github:acme/widgets@v2", "github:fagerbergj/dotagents"}
 			if err := seedRegistry(ctx, reg, seed); err != nil {
 				t.Fatal(err)
 			}
-			rows, err := reg.List(ctx)
+			got := map[string]pluginreg.Plugin{}
+			listed, err := reg.List(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := map[string]string{}
-			for _, r := range rows {
-				got[r.Name] = r.Entry
+			for _, r := range listed {
+				got[r.Name] = r
 			}
-			want := map[string]string{"sleeper": sleeperSeed, "ponytail": pinned.Entry, "usage": usage.Entry}
-			if !maps.Equal(got, want) {
-				t.Fatalf("rows = %v, want %v", got, want)
+			check := func(name, entry, ref string, seeded bool) {
+				r := got[name]
+				if r.Entry != entry || r.Ref != ref || r.Seeded != seeded {
+					t.Errorf("%s = %+v, want entry %q ref %q seeded %v", name, r, entry, ref, seeded)
+				}
+			}
+			check("sleeper", sleeperSeed, "sleeper/v9.9.9", true)
+			check("ponytail", "github:DietrichGebert/ponytail@v2", "v2", true)
+			check("widgets", "github:acme/widgets@v1", "v1", false)
+			check("dotagents", "github:fagerbergj/dotagents", "", true)
+			if got["ponytail"].SHA != "abc123" {
+				t.Errorf("ponytail sha = %q, want the old clone's sha kept until the fetch moves it", got["ponytail"].SHA)
 			}
 		})
 	}
