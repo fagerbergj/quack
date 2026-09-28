@@ -1,0 +1,9 @@
+name: sleeper-fixture
+trigger: "Run the fixture Sleeper job"
+agents: [fixture-analyst]
+shape: "ONE `fixture-analyst` node (terminal - writes the lineup artifact)"
+nodes:
+  - id: lineup
+    agent: fixture-analyst
+    task: "Decide the lineup.\n\n{{ask}}"
+    artifact: lineup

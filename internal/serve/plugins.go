@@ -23,9 +23,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// seedRegistry inserts each seed entry into reg if its name is absent - Put
-// only when List lacks it, so the UI/REST (P2) own the list after boot. A
-// stale or identity-colliding on-disk row is warned about, not silent.
+// seedRegistry Puts each seed entry whose name is absent, so the UI/REST own
+// the list after boot; keepSeededRow decides for a name already registered.
 func seedRegistry(ctx context.Context, reg pluginreg.FetchRegistry, seed []string) error {
 	existing, err := reg.List(ctx)
 	if err != nil {
@@ -54,13 +53,13 @@ func seedRegistry(ctx context.Context, reg pluginreg.FetchRegistry, seed []strin
 		delete(stale, name)
 		row := pluginreg.FromEntry(e)
 		if existingRow, ok := byName[name]; ok {
-			// Put would only ever error here (SameIdentity is exactly its
-			// own collision check) - warn directly instead of re-deriving it.
-			if !pluginreg.SameIdentity(existingRow, row) {
-				slog.Warn("plugin seed entry collides with a different plugin already registered under this name; keeping the on-disk row",
-					"component", "startup", "name", name, "entry", e.Raw)
+			keep, err := keepSeededRow(ctx, reg, existingRow, row)
+			if err != nil {
+				return err
 			}
-			continue
+			if keep {
+				continue
+			}
 		}
 		if err := reg.Put(ctx, row); err != nil {
 			return err
@@ -75,6 +74,22 @@ func seedRegistry(ctx context.Context, reg pluginreg.FetchRegistry, seed []strin
 		slog.Warn("plugin registry rows are absent from plugins.seed; they still load", "component", "startup", "names", names)
 	}
 	return nil
+}
+
+// keepSeededRow decides whether an existing row survives its seed entry. Only
+// config writes local rows (REST refuses them), so a changed entry replaces one.
+func keepSeededRow(ctx context.Context, reg pluginreg.Registry, existing, seeded pluginreg.Plugin) (bool, error) {
+	if existing.Source == pluginreg.SourceLocal && existing.Entry != seeded.Entry {
+		slog.Info("plugin seed entry changed; replacing the local row", "component", "startup", "name", seeded.Name, "from", existing.Entry, "to", seeded.Entry)
+		return false, reg.Delete(ctx, seeded.Name)
+	}
+	// Put would only ever error here (SameIdentity is exactly its own
+	// collision check) - warn directly instead of re-deriving it.
+	if !pluginreg.SameIdentity(existing, seeded) {
+		slog.Warn("plugin seed entry collides with a different plugin already registered under this name; keeping the on-disk row",
+			"component", "startup", "name", seeded.Name, "entry", seeded.Entry)
+	}
+	return true, nil
 }
 
 // fetchRegistryPlugins fetches every non-local row against its pinned/tracked
