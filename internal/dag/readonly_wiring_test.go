@@ -25,6 +25,8 @@ type advisorSnoopStub struct {
 	mu       sync.Mutex
 	sawTask  bool
 	readOnly bool
+	kinds    []string
+	planOnly bool
 }
 
 func (s *advisorSnoopStub) Name() string { return "advisorSnoopStub" }
@@ -38,7 +40,7 @@ func (s *advisorSnoopStub) GenerateContent(_ context.Context, req *model.LLMRequ
 		if token, ok := vetting.ParseAdvisorThread(gUserText(req)); ok {
 			if at, ok := vetting.LookupAdvisorThread(token); ok {
 				s.mu.Lock()
-				s.sawTask, s.readOnly = true, at.ReadOnly
+				s.sawTask, s.readOnly, s.kinds, s.planOnly = true, at.ReadOnly, at.AllowedDeliveryKinds, at.PlanOnly
 				s.mu.Unlock()
 			}
 		}
@@ -86,7 +88,7 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, 
 // node must be read-only in the sandbox-facing AdvisorTask (what
 // internal/acp's resolveNode reads to set Caps.ReadOnly per round), not merely in vetting.Config - the forcing #739 does happens dynamically per run and must survive past nodeGateConfig into the registry a real ACP round consults.
 func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
-	plan := Plan{ID: "t-planonly", UserMessage: "x", PlanOnly: true,
+	plan := Plan{ID: "t-planonly", UserMessage: "x", PlanOnly: true, AllowedDeliveryKinds: []string{},
 		Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
 	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
@@ -104,6 +106,12 @@ func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
 	}
 	if !stub.readOnly {
 		t.Error("AdvisorTask.ReadOnly = false for a planOnly node, want true - #754 wiring gap")
+	}
+	if !stub.planOnly {
+		t.Error("AdvisorTask.PlanOnly = false for a planOnly plan")
+	}
+	if stub.kinds == nil || len(stub.kinds) != 0 {
+		t.Errorf("AdvisorTask.AllowedDeliveryKinds = %#v, want the plan's deny-all []string{}", stub.kinds)
 	}
 }
 
@@ -128,5 +136,11 @@ func TestNonPlanRunAdvisorTaskIsWritable(t *testing.T) {
 	}
 	if stub.readOnly {
 		t.Error("AdvisorTask.ReadOnly = true for an ordinary writable node, want false")
+	}
+	if stub.planOnly {
+		t.Error("AdvisorTask.PlanOnly = true for an ordinary plan")
+	}
+	if stub.kinds != nil {
+		t.Errorf("AdvisorTask.AllowedDeliveryKinds = %#v, want nil (unrestricted)", stub.kinds)
 	}
 }

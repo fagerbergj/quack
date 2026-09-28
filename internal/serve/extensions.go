@@ -161,6 +161,7 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 		DataDir:       dataDir,
 		Version:       Version,
 		PublicURL:     d.cfg.Server.PublicURL,
+		Location:      d.cfg.ConfiguredLocation(),
 		ReadArtifact:  readExtInputArtifact(d.st, d.artifacts),
 		WriteArtifact: writeExtInputArtifact(d.st, d.artifacts),
 		ChatUser:      extChatUser(d.st),

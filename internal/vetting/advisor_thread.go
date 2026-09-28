@@ -63,6 +63,10 @@ type AdvisorTask struct {
 	// Round/TurnID/HeadSHA (SetAdvisorThreadRound) so a tool-initiated write
 	// carries the same trigger_annotation chain as gate-written artifacts (design V4 §7 case 3, #1092).
 	TriggerAnnotation string
+
+	// AllowedDeliveryKinds mirrors vetting.Config's: nil = unrestricted, non-nil empty = deny-all.
+	AllowedDeliveryKinds []string
+	PlanOnly             bool // the run's deliverable is a plan (quack:plan): nothing may be written or posted
 }
 
 // MemSession: ACP memory MCP resolution for one node.

@@ -46,16 +46,21 @@ func contentText(c *genai.Content) string {
 	return sb.String()
 }
 
-// scopeFromContext: derives per-chat and per-node scopes from advisor-thread marker.
-func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
+// advisorTask: the calling node's registered AdvisorTask, found via the advisor-thread marker in its prompt.
+func advisorTask(ctx agent.Context) (vetting.AdvisorTask, bool) {
 	if ctx == nil {
-		return "", ""
+		return vetting.AdvisorTask{}, false
 	}
 	token, ok := vetting.ParseAdvisorThread(contentText(ctx.UserContent()))
 	if !ok {
-		return "", ""
+		return vetting.AdvisorTask{}, false
 	}
-	at, ok := vetting.LookupAdvisorThread(token)
+	return vetting.LookupAdvisorThread(token)
+}
+
+// scopeFromContext: derives per-chat and per-node scopes from advisor-thread marker.
+func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
+	at, ok := advisorTask(ctx)
 	if !ok {
 		return "", ""
 	}

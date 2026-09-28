@@ -10,7 +10,6 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
-	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // cancelGuard: refuses calls when the calling node has been cancelled (latency: one tool call).
@@ -59,16 +58,6 @@ func (c *cancelGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 
 // nodeScope: resolves (chat, node) from the advisor-thread marker; ("", "") outside a gated node.
 func nodeScope(ctx agent.Context) (chatID, nodeID string) {
-	if ctx == nil {
-		return "", ""
-	}
-	token, ok := vetting.ParseAdvisorThread(contentText(ctx.UserContent()))
-	if !ok {
-		return "", ""
-	}
-	at, ok := vetting.LookupAdvisorThread(token)
-	if !ok {
-		return "", ""
-	}
+	at, _ := advisorTask(ctx)
 	return at.ChatID, at.NodeID
 }

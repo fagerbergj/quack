@@ -1534,7 +1534,7 @@ type nativeNodeBuilder struct {
 	schemas            *artifactschema.Registry
 }
 
-func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
+func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, scope tools.CallScope, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
 	base, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1582,6 +1582,7 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			Coords:             coords,
 			Sink:               sink,
 			TurnID:             turnID,
+			CallScope:          scope,
 		}); err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("tools: %w", err)
 		}
@@ -1627,7 +1628,9 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey string, drain fun
 			*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
 		}
 	}
-	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), extraTools...)
+	// nodeKey is "<planID>:<nodeID>" (dag.buildGateNodes); a mismatch only makes CallInfo fail closed.
+	scope := tools.CallScope{AdvisorToken: vetting.AdvisorThreadToken(strings.TrimSuffix(nodeKey, ":"+nodeID), nodeID), ChatID: chatID, UserID: userID}
+	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), scope, extraTools...)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -1822,7 +1825,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		res:                res,
 		schemas:            gateCfg.Schemas,
 	}
-	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil, "")
+	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil, "", tools.CallScope{})
 	if err != nil {
 		return nil, fmtErr(name, "%w", err)
 	}

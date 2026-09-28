@@ -486,7 +486,7 @@ func TestServerPublicURL(t *testing.T) {
 }
 
 // TestTimezone: QUACK_TIMEZONE resolves to its IANA zone, an unknown name
-// fails load, and unset falls back to time.Local.
+// fails load, and unset falls back to time.Local (ConfiguredLocation: nil).
 func TestTimezone(t *testing.T) {
 	for _, tc := range []struct {
 		env  string
@@ -501,10 +501,10 @@ func TestTimezone(t *testing.T) {
 			}
 		case err != nil:
 			t.Errorf("QUACK_TIMEZONE=%q: Load: %v", tc.env, err)
-		case tc.want == "Local" && c.Location() != time.Local:
-			t.Errorf("QUACK_TIMEZONE unset: Location() = %s, want time.Local", c.Location())
-		case tc.want != "Local" && c.Location().String() != tc.want:
-			t.Errorf("QUACK_TIMEZONE=%q: Location() = %s, want %s", tc.env, c.Location(), tc.want)
+		case tc.want == "Local" && (c.Location() != time.Local || c.ConfiguredLocation() != nil):
+			t.Errorf("QUACK_TIMEZONE unset: Location() = %s, ConfiguredLocation() = %v, want time.Local and nil", c.Location(), c.ConfiguredLocation())
+		case tc.want != "Local" && (c.Location().String() != tc.want || c.ConfiguredLocation() != c.Location()):
+			t.Errorf("QUACK_TIMEZONE=%q: Location() = %s, ConfiguredLocation() = %v, want %s for both", tc.env, c.Location(), c.ConfiguredLocation(), tc.want)
 		}
 	}
 }
