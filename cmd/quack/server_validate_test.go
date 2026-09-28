@@ -594,7 +594,7 @@ func TestServerValidate_ReportsAcceptedExtensions(t *testing.T) {
 	cfg := "providers:\n  default:\n    kind: openai\n    endpoint: http://localhost:1\n    api_key: x\n" +
 		"orchestrator:\n  provider: default\n  model: m\nmodels:\n  m:\n    provider: default\n    role: worker\n" +
 		"stores:\n  default:\n    kind: sqlite\n    url: " + filepath.Join(dir, "store.db") + "\nsession:\n  store: default\n" +
-		"workspace:\n  root: " + filepath.Join(dir, "workspace") + "\nextensions:\n  noop:\n    greeting: hi\n"
+		"workspace:\n  root: " + filepath.Join(dir, "workspace") + "\nextensions:\n  noop:\n    greeting: hi\n  usage:\n    enabled: false\n"
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -605,7 +605,33 @@ func TestServerValidate_ReportsAcceptedExtensions(t *testing.T) {
 	if err := c.Execute(); err != nil {
 		t.Fatalf("server validate: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "extension noop: config accepted") {
-		t.Errorf("output lacks the accepted noop extension:\n%s", out.String())
+	for _, want := range []string{"extension noop: config accepted", "extension usage: disabled (not checked)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// --skip-extensions is structure-only: a block the extension would reject still passes.
+func TestServerValidate_SkipExtensions(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "quack.yaml")
+	cfg := "providers:\n  default:\n    kind: openai\n    endpoint: http://localhost:1\n    api_key: x\n" +
+		"orchestrator:\n  provider: default\n  model: m\nmodels:\n  m:\n    provider: default\n    role: worker\n" +
+		"stores:\n  default:\n    kind: sqlite\n    url: " + filepath.Join(dir, "store.db") + "\nsession:\n  store: default\n" +
+		"workspace:\n  root: " + filepath.Join(dir, "workspace") + "\nextensions:\n  usage:\n    tempo_url: http://t\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args    []string
+		wantErr bool
+	}{{[]string{cfgPath}, true}, {[]string{cfgPath, "--skip-extensions"}, false}} {
+		c := newServerValidateCmd()
+		c.SetOut(&bytes.Buffer{})
+		c.SetArgs(tc.args)
+		if err := c.Execute(); (err != nil) != tc.wantErr {
+			t.Errorf("validate %v: err = %v, wantErr %v", tc.args, err, tc.wantErr)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"iter"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
@@ -95,7 +97,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, ev
 	for _, name := range names {
 		factory, ok := d.factories[name]
 		if !ok {
-			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(knownExtensionNames(d.factories), ", "))
+			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(sortedExtensionNames(d.factories), ", "))
 		}
 		b, disabled, err := buildOneSDKExtension(name, factory, d)
 		if err != nil {
@@ -110,85 +112,133 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, ev
 	return built, nil
 }
 
-// knownExtensionNames: the sorted keys of an extension-name map (factories or config blocks).
-func knownExtensionNames[V any](factories map[string]V) []string {
-	known := make([]string, 0, len(factories))
-	for k := range factories {
+// sortedExtensionNames: the sorted keys of an extension-name map (factories or config blocks).
+func sortedExtensionNames[V any](byName map[string]V) []string {
+	known := make([]string, 0, len(byName))
+	for k := range byName {
 		known = append(known, k)
 	}
 	sort.Strings(known)
 	return known
 }
 
-// ValidateExtensions runs every configured, enabled extension's Factory against a
-// throwaway data dir, for `server validate`; Factories are side-effect free by SDK contract.
-func ValidateExtensions(cfg *config.Config) ([]string, error) {
+// extensionConfig is one configured extension's boot/validate prelude, so the two can't diverge.
+type extensionConfig struct {
+	raw     []byte
+	enabled bool
+	dataDir string
+}
+
+// loadExtensionConfig checks the name is route-safe, re-marshals the block, and
+// resolves enabled and data_dir (default <workspace.root>/extensions/<name>).
+func loadExtensionConfig(cfg *config.Config, name string) (extensionConfig, error) {
+	if err := server.ValidateExtensionName(name); err != nil {
+		return extensionConfig{}, fmt.Errorf("config: extensions.%s: %w", name, err)
+	}
+	enabled, err := moduleEnabledIn(cfg.Extensions.Modules, name)
+	if err != nil {
+		return extensionConfig{}, err
+	}
+	node := cfg.Extensions.Modules[name]
+	raw, err := yaml.Marshal(&node)
+	if err != nil {
+		return extensionConfig{}, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+	}
+	var base extsdk.BaseConfig
+	_ = yaml.Unmarshal(raw, &base) // moduleEnabledIn already parsed these same bytes
+	dataDir := base.DataDir
+	if dataDir == "" {
+		dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
+	}
+	return extensionConfig{raw: raw, enabled: enabled, dataDir: dataDir}, nil
+}
+
+// ExtensionCheck is ValidateExtensions' per-extension verdict.
+type ExtensionCheck struct {
+	Accepted []string
+	Disabled []string
+}
+
+// ValidateExtensions runs each configured, enabled extension's Factory as boot does, but with a
+// throwaway data dir: some Factories open their stores eagerly, and validate must not touch the real one.
+func ValidateExtensions(cfg *config.Config) (ExtensionCheck, error) {
+	var res ExtensionCheck
 	tmp, err := os.MkdirTemp("", "quack-validate-ext-")
 	if err != nil {
-		return nil, err
+		return res, err
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	factories := extsdk.Registered()
-	var validated []string
-	for _, name := range knownExtensionNames(cfg.Extensions.Modules) {
-		factory, ok := factories[name]
-		if !ok {
-			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(knownExtensionNames(factories), ", "))
+	var errs []error
+	for _, name := range sortedExtensionNames(cfg.Extensions.Modules) {
+		enabled, err := validateOneExtension(cfg, name, factories, filepath.Join(tmp, name))
+		switch {
+		case err != nil:
+			errs = append(errs, err)
+		case enabled:
+			res.Accepted = append(res.Accepted, name)
+		default:
+			res.Disabled = append(res.Disabled, name)
 		}
-		enabled, err := moduleEnabled(cfg, name)
-		if err != nil {
-			return nil, err
-		}
-		if !enabled {
-			continue
-		}
-		node := cfg.Extensions.Modules[name]
-		raw, err := yaml.Marshal(&node)
-		if err != nil {
-			return nil, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
-		}
-		host := extsdk.Host{Log: slog.Default().With("component", "ext."+name), DataDir: filepath.Join(tmp, name), Version: Version, PublicURL: cfg.Server.PublicURL}
-		if err := os.MkdirAll(host.DataDir, 0o755); err != nil {
-			return nil, err
-		}
-		if _, err := factory(host, raw); err != nil {
-			return nil, fmt.Errorf("extensions.%s: factory: %w", name, err)
-		}
-		validated = append(validated, name)
 	}
-	return validated, nil
+	return res, errors.Join(errs...)
+}
+
+// validateOneExtension: one extension's share of ValidateExtensions; enabled=false means dormant, not checked.
+func validateOneExtension(cfg *config.Config, name string, factories map[string]extsdk.Factory, scratch string) (bool, error) {
+	factory, ok := factories[name]
+	if !ok {
+		return false, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(sortedExtensionNames(factories), ", "))
+	}
+	ec, err := loadExtensionConfig(cfg, name)
+	if err != nil || !ec.enabled {
+		return false, err
+	}
+	if err := dirCreatable(ec.dataDir); err != nil {
+		return false, fmt.Errorf("extensions.%s: data dir: %w", name, err)
+	}
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		return false, err
+	}
+	host := extsdk.Host{Log: slog.Default().With("component", "ext."+name), DataDir: scratch, Version: Version, PublicURL: cfg.Server.PublicURL}
+	if _, err := factory(host, ec.raw); err != nil {
+		return false, fmt.Errorf("extensions.%s: factory: %w", name, err)
+	}
+	return true, nil
+}
+
+// dirCreatable reports whether boot's MkdirAll(dir) could succeed, without creating anything:
+// the nearest existing ancestor must be a directory this process can write.
+func dirCreatable(dir string) error {
+	for p := filepath.Clean(dir); ; p = filepath.Dir(p) {
+		fi, err := os.Stat(p)
+		if err == nil {
+			if !fi.IsDir() {
+				return fmt.Errorf("%s is not a directory", p)
+			}
+			if err := syscall.Access(p, 0x2); err != nil { // W_OK
+				return fmt.Errorf("%s is not writable: %w", p, err)
+			}
+			return nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) || p == filepath.Dir(p) {
+			return err
+		}
+	}
 }
 
 // buildOneSDKExtension: validate, marshal, and mount one configured extension;
 // disabled=true when its config says enabled:false (stays dormant).
 func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (builtSDKExtension, bool, error) {
-	// Only a name that will actually be mounted needs to be route-safe -
-	// a compiled-but-unconfigured module never reaches this check.
-	if err := server.ValidateExtensionName(name); err != nil {
-		return builtSDKExtension{}, false, fmt.Errorf("config: extensions.%s: %w", name, err)
-	}
-	node := d.cfg.Extensions.Modules[name]
-	raw, err := yaml.Marshal(&node)
-	if err != nil {
-		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
-	}
-	enabled, err := moduleEnabled(d.cfg, name)
+	ec, err := loadExtensionConfig(d.cfg, name)
 	if err != nil {
 		return builtSDKExtension{}, false, err
 	}
-	if !enabled {
+	if !ec.enabled {
 		slog.Info("sdk extension disabled by config; staying dormant", "component", "startup", "extension", name)
 		return builtSDKExtension{}, true, nil
 	}
-	var base extsdk.BaseConfig
-	if err := yaml.Unmarshal(raw, &base); err != nil {
-		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
-	}
-
-	dataDir := base.DataDir
-	if dataDir == "" {
-		dataDir = filepath.Join(d.cfg.Workspace.Root, "extensions", name)
-	}
+	dataDir := ec.dataDir
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: data dir: %w", name, err)
 	}
@@ -219,7 +269,7 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 			return classifyWithModel(ctx, *m, prompt)
 		},
 	}
-	ext, err := factory(host, raw)
+	ext, err := factory(host, ec.raw)
 	if err != nil {
 		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: factory: %w", name, err)
 	}

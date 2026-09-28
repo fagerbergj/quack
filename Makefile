@@ -30,7 +30,7 @@ DEV_GOWORK := $(CURDIR)/.dev/go.work
 DEV_VERSION = dev+ext.$(shell git -C $(EXT) describe --always --dirty --exclude='*' 2>/dev/null)
 
 dev-check:
-	@test -n "$(wildcard $(EXT)/*/go.mod)" || { echo "EXT='$(EXT)' has no */go.mod module dirs; set EXT to a quack-extensions checkout, e.g. make $(MAKECMDGOALS) EXT=../quack-extensions" >&2; exit 1; }
+	@test -n "$(EXT)" && test -n "$(wildcard $(EXT)/*/go.mod)" || { echo "EXT='$(EXT)' has no */go.mod module dirs; set EXT to a quack-extensions checkout, e.g. make $(MAKECMDGOALS) EXT=../quack-extensions" >&2; exit 1; }
 
 # Throwaway go.work kept out of the repo root, so plain go/make commands never pick it up.
 dev-work: dev-check

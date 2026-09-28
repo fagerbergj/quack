@@ -144,7 +144,7 @@ func TestSeedPluginAgentsAndShapes_UnconditionalPluginSeeds(t *testing.T) {
 }
 
 // A malformed extensions.<module> block (enabled: isn't a bool) makes
-// moduleEnabled error, which pluginGateEnabled and SeedPluginAgentsAndShapes
+// moduleEnabledIn error, which pluginGateEnabled and SeedPluginAgentsAndShapes
 // both propagate rather than silently treating as disabled.
 func TestPluginGateEnabled_MalformedModuleBlockErrors(t *testing.T) {
 	cfg := minimalPluginTestConfig()

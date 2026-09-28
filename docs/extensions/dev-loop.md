@@ -39,7 +39,7 @@ The `quack-compat` workflow in `quack-extensions` builds quack against the PR's 
 - `go build ./...` and `go vet ./...` over all of quack (vet type-checks every test file against the local modules).
 - `go test` on every quack package that imports an extension module directly or transitively.
 - `quack server validate config/quack.yaml`: quack's shipped config parses, and each plugin that declares a module finds it linked.
-- `quack server validate` on `quack-extensions/tools/quack-compat.config.yaml`: a fixture in `quack-extensions` that enables every extension with placeholder values, so each extension's Factory must accept its documented config. `server validate` runs each enabled extension's Factory against a throwaway data directory; it never calls `Start`, and Factories are side-effect free by SDK contract.
+- `quack server validate` on `quack-extensions/tools/quack-compat.config.yaml`: a fixture in `quack-extensions` that enables every extension with placeholder values, so each extension's Factory must accept its documented config. `server validate` runs each enabled extension's Factory as boot does, but against a throwaway data directory because some Factories open their stores eagerly; it never calls `Start`.
 
 It runs on pull requests and pushes to `main` that touch module code. Run the same check locally from the `quack-extensions` checkout:
 
