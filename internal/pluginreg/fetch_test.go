@@ -628,3 +628,50 @@ func TestLocalEntryFetchIsNoClone(t *testing.T) {
 		t.Fatalf("local Root() = %q, want the path itself", got.Root(root))
 	}
 }
+
+// failingPut is an FSRegistry whose Put fails once armed.
+type failingPut struct {
+	*FSRegistry
+	fail bool
+}
+
+func (f *failingPut) Put(ctx context.Context, p Plugin) error {
+	if f.fail {
+		return os.ErrPermission
+	}
+	return f.FSRegistry.Put(ctx, p)
+}
+
+// A Put failure must stop the checkout, so the stored sha never trails the tree.
+func TestFetchPutFailureLeavesTreeOnStoredSHA(t *testing.T) {
+	bare, work := pluginregtest.NewFixtureRepo(t)
+	withFixedRemote(t, bare)
+	root := t.TempDir()
+	reg := &failingPut{FSRegistry: NewFSRegistry(root)}
+	e, _ := ParseEntry("github:acme/widgets")
+	first, err := fetchAndPut(context.Background(), root, reg, FromEntry(e))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitAndPush(t, work, "v2")
+
+	reg.fail = true
+	got, err := fetchAndPut(context.Background(), root, reg, first)
+	if err == nil {
+		t.Fatal("fetchAndPut = nil error, want the Put failure")
+	}
+	if got.SHA != first.SHA {
+		t.Fatalf("returned SHA = %q, want the unchanged %q", got.SHA, first.SHA)
+	}
+	head := strings.TrimSpace(run(t, CloneDir(root, "widgets"), "rev-parse", "HEAD"))
+	if head != first.SHA {
+		t.Fatalf("clone HEAD = %q, want %q: checkout ran although the row kept the old sha", head, first.SHA)
+	}
+	stored, err := reg.readRow("widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SHA != first.SHA {
+		t.Fatalf("stored SHA = %q, want %q", stored.SHA, first.SHA)
+	}
+}

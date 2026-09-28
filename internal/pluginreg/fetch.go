@@ -43,6 +43,12 @@ var RemoteURL = func(owner, repo string) string {
 // updated row. Free function (not an FSRegistry method) so P3's sqlite/
 // postgres backends can reuse the same git logic against their own root.
 func Fetch(ctx context.Context, root string, p Plugin) (Plugin, error) {
+	return fetch(ctx, root, p, nil)
+}
+
+// fetch runs commit (when set) on the row it is about to check out, so a
+// failed commit leaves the row and the tree both on the old sha.
+func fetch(ctx context.Context, root string, p Plugin, commit func(Plugin) error) (Plugin, error) {
 	if p.Source == SourceLocal {
 		return p, nil // no clone; Root() serves the path directly
 	}
@@ -58,25 +64,33 @@ func Fetch(ctx context.Context, root string, p Plugin) (Plugin, error) {
 		p.Error = err.Error()
 		return p, err
 	}
+	next := p
+	now := time.Now().UTC()
+	next.SHA, next.FetchedAt, next.Error = sha, &now, ""
+	if commit != nil {
+		if err := commit(next); err != nil {
+			p.Error = err.Error()
+			return p, err
+		}
+	}
 	// sha is resolved via rev-parse --verify, never a raw ref, so it's safe
 	// bare here - "--" would make checkout read it as a pathspec instead.
+	// In place: a process started from the old checkout reads the new files from here on.
 	if err := gitRun(ctx, dir, "checkout", "--quiet", "--no-guess", "--detach", sha); err != nil {
-		p.Error = fmt.Sprintf("checkout: %v", err)
-		return p, err
+		next.Error = fmt.Sprintf("checkout: %v", err)
+		return next, err
 	}
-	now := time.Now().UTC()
-	p.SHA = sha
-	p.FetchedAt = &now
-	p.Error = ""
-	return p, nil
+	return next, nil
 }
 
-// fetchAndPut runs the free Fetch against root and persists via reg
-// regardless of success - shared by every backend's own Fetch method.
+// fetchAndPut persists the new sha BEFORE checking it out, so a row never
+// names an older sha than its tree (MCP reuse keys on it); a failure is still Put.
 func fetchAndPut(ctx context.Context, root string, reg Registry, p Plugin) (Plugin, error) {
-	p, fetchErr := Fetch(ctx, root, p)
-	putErr := reg.Put(ctx, p)
-	return p, errors.Join(fetchErr, putErr)
+	p, fetchErr := fetch(ctx, root, p, func(next Plugin) error { return reg.Put(ctx, next) })
+	if fetchErr == nil {
+		return p, nil
+	}
+	return p, errors.Join(fetchErr, reg.Put(ctx, p))
 }
 
 // Fetch runs the free Fetch against r's root and persists the result
