@@ -24,11 +24,12 @@ import {
   listPluginUpdates as sdkListPluginUpdates,
   updatePlugin as sdkUpdatePlugin,
   updateAllPlugins as sdkUpdateAllPlugins,
+  reloadPlugins as sdkReloadPlugins,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo, NodeMemory, NodeMemoryList, MemoryStats, MemoryWeekStats, MemoryScopeStats, Plugin, PluginUpdate } from './generated'
+export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo, NodeMemory, NodeMemoryList, MemoryStats, MemoryWeekStats, MemoryScopeStats, Plugin, PluginUpdate, PluginReloadReport } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList, MemoryStats, Plugin, PluginList, PluginUpdateList } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList, MemoryStats, Plugin, PluginList, PluginUpdateList, PluginDeleted, PluginReloadReport } from './generated'
 
 // VoteDirection is the UI-facing shape of a manual vote - "none" clears the
 // caller's own prior vote (the Reddit-style toggle-off), matching the
@@ -47,7 +48,9 @@ function unwrap<T>(r: Result<T>): T {
       r.error && typeof r.error === 'object' && 'error' in r.error
         ? String((r.error as { error: unknown }).error)
         : `Request failed (${r.response ? r.response.status : 'no response'})`
-    throw new Error(msg)
+    // A plugin 422 carries the reload report beside the message; keep it for the page.
+    const reload = r.error && typeof r.error === 'object' && 'reload' in r.error ? r.error.reload : undefined
+    throw Object.assign(new Error(msg), { reload })
   }
   return r.data as T
 }
@@ -155,9 +158,8 @@ export const api = {
   createPlugin: async (entry: string): Promise<Plugin> =>
     unwrap(await sdkCreatePlugin({ body: { entry } })),
 
-  deletePlugin: async (name: string): Promise<void> => {
-    unwrap(await sdkDeletePlugin({ path: { name } }))
-  },
+  deletePlugin: async (name: string): Promise<PluginDeleted> =>
+    unwrap(await sdkDeletePlugin({ path: { name } })),
 
   listPluginUpdates: async (): Promise<PluginUpdateList> => unwrap(await sdkListPluginUpdates()),
 
@@ -165,6 +167,13 @@ export const api = {
     unwrap(await sdkUpdatePlugin({ path: { name } })),
 
   updateAllPlugins: async (): Promise<PluginList> => unwrap(await sdkUpdateAllPlugins()),
+
+  // A 422 body is the report itself (nothing swapped), so it resolves as aborted rather than throwing.
+  reloadPlugins: async (): Promise<{ reload: PluginReloadReport; aborted: boolean }> => {
+    const r = await sdkReloadPlugins()
+    if (r.response?.status === 422 && r.error) return { reload: r.error, aborted: true }
+    return { reload: unwrap(r), aborted: false }
+  },
 }
 
 // The REST path of one artifact revision (base '/'), for the panel's

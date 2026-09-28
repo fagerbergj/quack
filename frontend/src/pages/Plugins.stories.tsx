@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import Plugins from './Plugins'
-import type { Plugin, PluginUpdate } from '../api'
+import type { Plugin, PluginUpdate, PluginReloadReport } from '../api'
 
 const meta: Meta<typeof Plugins> = {
   title: 'Pages/Plugins',
@@ -89,4 +89,51 @@ export const ActionErrorDark390: Story = {
       <Story />
     </div>
   )],
+}
+
+const sampleReload: PluginReloadReport = {
+  generation: 7,
+  agents: {
+    added: ['sleeper-analyst'],
+    updated: [{ name: 'code-reviewer', bundle_hash: '9f3c2a1b7e6d5c4b3a291807f6e5d4c3b2a19087' }],
+    removed: ['legacy-planner'],
+  },
+  workflows: { added: ['weekly-digest'], updated: [], removed: [] },
+  mcp_servers: { started: ['ponytail/lint'], reused: ['dotagents/search', 'dotagents/fetch'], stopped: ['ponytail/old-lint'] },
+  failures: [
+    { plugin: 'ponytail', member: 'lint', stage: 'mcp', error: 'spawn ponytail-lint: exec: "ponytail-lint": executable file not found in $PATH' },
+    { plugin: 'broken', stage: 'admission', error: 'plugin declares unlinked module "acme/broken/tools"' },
+  ],
+}
+
+// ReloadReport: what a Reload (or an add/update/remove) changed, with dropped members as warnings.
+export const ReloadReport: Story = {
+  args: { ...Default.args, initialReload: { reload: sampleReload } },
+}
+
+export const ReloadReportDark390: Story = {
+  ...ReloadReport,
+  globals: { theme: 'dark' },
+  decorators: [Story => (
+    <div className="w-[390px] h-[844px] overflow-hidden border border-gray-300 dark:border-gray-600">
+      <Story />
+    </div>
+  )],
+}
+
+// ReloadAborted: the reload endpoint's 422 - nothing swapped, so the report names why.
+export const ReloadAborted: Story = {
+  args: {
+    ...Default.args,
+    initialReload: {
+      aborted: true,
+      reload: {
+        generation: 6,
+        agents: { added: [], updated: [], removed: [] },
+        workflows: { added: [], updated: [], removed: [] },
+        mcp_servers: { started: [], reused: [], stopped: [] },
+        failures: [{ stage: 'registry', error: 'list plugins: pq: relation "plugins" does not exist' }],
+      },
+    },
+  },
 }

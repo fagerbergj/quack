@@ -51,15 +51,15 @@ describe('Plugins touch targets', () => {
   })
 })
 
-describe('Plugins row MCP restart note', () => {
-  it('shows the restart note only when the row declares MCP servers', () => {
+describe('Plugins row MCP servers note', () => {
+  it('shows the note only when the row declares MCP servers', () => {
     renderRow({ name: 'dotagents', entry: 'github:fagerbergj/dotagents', source: 'github', declares_mcp_servers: true })
-    expect(screen.getByText('MCP servers: apply at restart')).toBeTruthy()
+    expect(screen.getByText('MCP servers').title).toContain('reload')
   })
 
   it('omits the note for a row with no mcp.json', () => {
     renderRow({ name: 'dotagents', entry: 'github:fagerbergj/dotagents', source: 'github' })
-    expect(screen.queryByText('MCP servers: apply at restart')).toBeNull()
+    expect(screen.queryByText('MCP servers')).toBeNull()
   })
 })
 
