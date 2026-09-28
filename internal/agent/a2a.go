@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
@@ -39,6 +41,7 @@ type A2AServer struct {
 	// Published AgentCard with loopback URL.
 	Card     *a2a.AgentCard
 	listener net.Listener
+	runs     *workerRuns
 }
 
 // Serve starts an A2A server for ag on 127.0.0.1:<ephemeral> and returns it with the AgentCard. comp.Enabled wires adk/v2's native runner-level compaction here; the zero Compaction leaves the runner's Compaction nil and changes nothing. nodeID/sink re-emit a `compaction` SSE event,
@@ -83,16 +86,65 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, a
 		OutputMode: adka2a.OutputArtifactPerEvent,
 	})
 
+	runs := &workerRuns{}
 	mux := http.NewServeMux()
 	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
-	mux.Handle(invokePath, a2asrv.NewJSONRPCHandler(a2asrv.NewHandler(executor)))
+	mux.Handle(invokePath, a2asrv.NewJSONRPCHandler(a2asrv.NewHandler(trackedExecutor{AgentExecutor: executor, runs: runs})))
 
 	// otelhttp extracts the client's traceparent header so the request ctx's
 	// span (see clientNamed's transport) continues the caller's trace instead
 	// of rooting a fresh one (#1046).
 	go func() { _ = http.Serve(listener, otelhttp.NewHandler(mux, "a2a.invoke")) }()
 
-	return &A2AServer{Card: card, listener: listener}, nil
+	return &A2AServer{Card: card, listener: listener, runs: runs}, nil
+}
+
+// workerRuns maps a context id to its in-flight worker execution. a2a-go runs a worker on a
+// detached ctx, so a cancelled client must stop it here or it outlives the node.
+type workerRuns struct{ m sync.Map }
+
+type workerRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// stopTimeout bounds how long a cancelled node waits for its worker to stop.
+const stopTimeout = 10 * time.Second
+
+// stop cancels contextID's worker and waits (bounded) for it to exit.
+// ponytail: a send cancelled before its Execute registered is missed.
+func (w *workerRuns) stop(contextID string) {
+	v, ok := w.m.Load(contextID)
+	if !ok {
+		return
+	}
+	run := v.(*workerRun)
+	run.cancel()
+	select {
+	case <-run.done:
+	case <-time.After(stopTimeout):
+		slog.Warn("a2a: worker still running after cancel", "component", "agent", "context_id", contextID)
+	}
+}
+
+// trackedExecutor registers each execution in runs for the client's stop.
+type trackedExecutor struct {
+	a2asrv.AgentExecutor
+	runs *workerRuns
+}
+
+func (t trackedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		ctx, cancel := context.WithCancel(ctx)
+		run := &workerRun{cancel: cancel, done: make(chan struct{})}
+		t.runs.m.Store(execCtx.ContextID, run)
+		defer func() {
+			t.runs.m.CompareAndDelete(execCtx.ContextID, run)
+			cancel()
+			close(run.done)
+		}()
+		t.AgentExecutor.Execute(ctx, execCtx)(yield)
+	}
 }
 
 // Close stops the A2A server's listener.
@@ -211,7 +263,7 @@ func (s *A2AServer) clientNamed(name, contextID string) (adkagent.Agent, error) 
 			if err != nil {
 				return nil, err
 			}
-			return scopedClient{A2AClient: c, contextID: contextID}, nil
+			return scopedClient{A2AClient: c, contextID: contextID, runs: s.runs}, nil
 		},
 		GenAIPartConverter:        sanitizeWorkflowPlumbingPart,
 		RemoteTaskCleanupCallback: func(context.Context, *a2a.AgentCard, remoteagent.A2AClient, a2a.TaskInfo, error) {},
@@ -223,16 +275,32 @@ func (s *A2AServer) clientNamed(name, contextID string) (adkagent.Agent, error) 
 type scopedClient struct {
 	remoteagent.A2AClient
 	contextID string
+	runs      *workerRuns
 }
 
 func (c scopedClient) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
 	scopeMessage(ctx, req, c.contextID)
+	defer c.stopIfCancelled(ctx, req)
 	return c.A2AClient.SendMessage(ctx, req)
 }
 
 func (c scopedClient) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	scopeMessage(ctx, req, c.contextID)
-	return c.A2AClient.SendStreamingMessage(ctx, req)
+	return func(yield func(a2a.Event, error) bool) {
+		defer c.stopIfCancelled(ctx, req)
+		for ev, err := range c.A2AClient.SendStreamingMessage(ctx, req) {
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+// stopIfCancelled keeps a cancelled node's worker from outliving the node's run.
+func (c scopedClient) stopIfCancelled(ctx context.Context, req *a2a.SendMessageRequest) {
+	if ctx.Err() != nil && c.runs != nil && req.Message != nil {
+		c.runs.stop(req.Message.ContextID)
+	}
 }
 
 // scopeMessage rewrites req's parts in place, scoped to invocation + branch,
