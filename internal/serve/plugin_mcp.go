@@ -12,6 +12,8 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/adk/v2/tool"
@@ -21,8 +23,12 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// errTransportClosed is what ADK's reconnect-on-EOF gets after Close, so a
-// retired server's tool call fails instead of respawning the process.
+// mcpTerminateGrace is how long Close waits after stdin EOF, and again after
+// SIGTERM, before escalating. A var so tests can shrink it.
+var mcpTerminateGrace = 5 * time.Second
+
+// errTransportClosed names why ADK's reconnect-on-EOF failed after Close; a
+// respawn was already impossible (exec.Cmd starts once), this makes it explicit.
 var errTransportClosed = errors.New("plugin MCP server stopped")
 
 // closableTransport records the connection mcptoolset opens, since the toolset
@@ -49,8 +55,8 @@ func (t *closableTransport) Connect(ctx context.Context) (mcp.Connection, error)
 	return conn, nil
 }
 
-// Close blocks until the child exits: the SDK closes stdin, then SIGTERMs and
-// SIGKILLs after its TerminateDuration grace each.
+// Close blocks until the child exits (the SDK closes stdin, then SIGTERMs and
+// SIGKILLs after a grace each), then kills whatever it left in its group.
 func (t *closableTransport) Close() error {
 	t.mu.Lock()
 	t.closed = true
@@ -59,7 +65,9 @@ func (t *closableTransport) Close() error {
 	if conn == nil {
 		return nil
 	}
-	return conn.Close()
+	err := conn.Close()
+	_ = syscall.Kill(-t.cmd.Command.Process.Pid, syscall.SIGKILL)
+	return err
 }
 
 // mcpKey identifies one server process; a change in any field is a restart.
@@ -78,7 +86,7 @@ type mcpProc struct {
 	key       mcpKey
 	transport *closableTransport
 	tools     []tool.Tool
-	refs      atomic.Int32 // live sets listing this proc
+	refs      atomic.Int32 // unreleased sets listing this proc
 }
 
 func (p *mcpProc) release() {
@@ -86,17 +94,17 @@ func (p *mcpProc) release() {
 		return
 	}
 	if err := p.transport.Close(); err != nil {
-		slog.Debug("plugin MCP server exited uncleanly", "component", "plugin", "server", p.key, "err", err)
+		slog.Debug("plugin MCP server exited uncleanly", "component", "plugin", "server", p.key.String(), "err", err)
 	}
 }
 
-// mcpSet is one generation of plugin MCP servers. next's caller owns one hold;
-// Acquire adds more, and each server closes once no live set lists it.
+// mcpSet is one generation of plugin MCP servers; each server closes once no
+// unreleased set lists it.
 type mcpSet struct {
 	dataRoot string
 	caps     workspace.Caps
 	procs    []*mcpProc
-	refs     atomic.Int32
+	release  sync.Once
 }
 
 // mcpReport names servers as "plugin/server". A changed server is both
@@ -113,13 +121,11 @@ type mcpFailure struct {
 
 // newMCPSet is the empty generation boot advances from.
 func newMCPSet(dataRoot string, caps workspace.Caps) *mcpSet {
-	s := &mcpSet{dataRoot: dataRoot, caps: caps}
-	s.refs.Store(1)
-	return s
+	return &mcpSet{dataRoot: dataRoot, caps: caps}
 }
 
 // next builds admitted's generation: an unchanged server keeps its process and
-// tools, a new or changed one is spawned and enumerated. s must still be held.
+// tools, a new or changed one is spawned and enumerated. s must be unreleased.
 func (s *mcpSet) next(ctx context.Context, admitted []plugin.Plugin) (*mcpSet, mcpReport) {
 	live := make(map[mcpKey]*mcpProc, len(s.procs))
 	for _, p := range s.procs {
@@ -131,14 +137,14 @@ func (s *mcpSet) next(ctx context.Context, admitted []plugin.Plugin) (*mcpSet, m
 		for _, name := range slices.Sorted(maps.Keys(p.MCPServers)) {
 			proc, reused, err := out.acquireOrSpawn(ctx, p, name, live)
 			if err != nil {
-				slog.Warn("plugin MCP server unavailable; its tools are not loaded", "component", "plugin", "plugin", p.Name, "server", name, "err", err)
+				slog.Warn("plugin MCP server unavailable; its tools are not loaded", "component", "startup", "plugin", p.Name, "server", name, "err", err)
 				rep.Failures = append(rep.Failures, mcpFailure{Plugin: p.Name, Server: name, Err: err})
 				continue
 			}
 			if reused {
 				rep.Reused = append(rep.Reused, proc.key.String())
 			} else {
-				slog.Info("plugin MCP server loaded", "component", "plugin", "plugin", p.Name, "server", name, "tools", len(proc.tools))
+				slog.Info("plugin MCP server loaded", "component", "startup", "plugin", p.Name, "server", name, "tools", len(proc.tools))
 				rep.Started = append(rep.Started, proc.key.String())
 			}
 			delete(live, proc.key)
@@ -170,7 +176,7 @@ func (s *mcpSet) acquireOrSpawn(ctx context.Context, p plugin.Plugin, name strin
 // spawnMCP starts one server and enumerates its tools: quack binds tools per
 // node BY NAME (extToolsByName), so they must be known before any invocation.
 func spawnMCP(ctx context.Context, key mcpKey, cmd *exec.Cmd) (*mcpProc, error) {
-	tr := &closableTransport{cmd: &mcp.CommandTransport{Command: cmd}}
+	tr := &closableTransport{cmd: &mcp.CommandTransport{Command: cmd, TerminateDuration: mcpTerminateGrace}}
 	ts, err := mcptoolset.New(mcptoolset.Config{
 		Client:    mcp.NewClient(&mcp.Implementation{Name: "quack", Version: "1"}, nil),
 		Transport: tr,
@@ -203,18 +209,16 @@ func (s *mcpSet) tools() []extTool {
 	return out
 }
 
-// Acquire adds a hold on s; pair each with one Release.
-func (s *mcpSet) Acquire() { s.refs.Add(1) }
-
-// Release drops one hold; the last one drops s's servers. It blocks while a
-// server closes, so a caller on a run's exit path should call it in a goroutine.
+// Release drops s's hold on its servers, closing in parallel any no other set
+// lists; idempotent. It blocks while they exit, so a run's exit path should not wait on it.
 func (s *mcpSet) Release() {
-	if s.refs.Add(-1) != 0 {
-		return
-	}
-	for _, p := range s.procs {
-		p.release()
-	}
+	s.release.Do(func() {
+		var wg sync.WaitGroup
+		for _, p := range s.procs {
+			wg.Go(p.release)
+		}
+		wg.Wait()
+	})
 }
 
 // bootPluginMCP starts boot's generation of plugin MCP servers and releases it

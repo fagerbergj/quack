@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
@@ -401,6 +402,9 @@ func mcpCommand(p plugin.Plugin, s plugin.MCPServer, dataRoot string, caps works
 	wrapped := workspace.WrapArgv(cwd, argv, caps, []string{p.Root}, []string{data})
 	cmd := exec.Command(wrapped[0], wrapped[1:]...)
 	cmd.Dir = cwd
+	// Own group so Close can sweep grandchildren (npx/uvx wrappers) that
+	// outlive the server; bwrap's --die-with-parent covers only its own tree.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append([]string{
 		"PATH=" + workspace.ChildPath(caps),
 		"HOME=" + data,

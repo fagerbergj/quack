@@ -4,7 +4,9 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -33,14 +35,31 @@ func runMCPStubServer() {
 	if args := os.Args[1:]; len(args) >= 2 {
 		_ = os.WriteFile(args[1], []byte(args[0]), 0o644)
 	}
+	// Stubborn mode ignores both stdin EOF and SIGTERM, so only SIGKILL stops it.
+	stubborn := os.Getenv(stubStubborn) != ""
+	if stubborn {
+		signal.Ignore(syscall.SIGTERM)
+	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "quack-mcp-stub", Version: "0.0.0"}, nil)
 	mcp.AddTool(srv, &mcp.Tool{Name: "probe", Description: "test probe tool"}, probeHandler)
 	_ = srv.Run(context.Background(), &mcp.StdioTransport{})
+	if stubborn {
+		select {}
+	}
 }
+
+// stubSlow makes the probe tool block, for a call still in flight at Close.
+const (
+	stubSlow     = "_QUACK_MCP_STUB_SLOW"
+	stubStubborn = "_QUACK_MCP_STUB_STUBBORN"
+)
 
 type probeArgs struct{}
 
-func probeHandler(_ context.Context, _ *mcp.CallToolRequest, _ probeArgs) (*mcp.CallToolResult, any, error) {
+func probeHandler(ctx context.Context, _ *mcp.CallToolRequest, _ probeArgs) (*mcp.CallToolResult, any, error) {
+	if os.Getenv(stubSlow) != "" {
+		<-ctx.Done()
+	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
 }
 
