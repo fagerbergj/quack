@@ -2081,6 +2081,10 @@ export type DeletePluginErrors = {
      * No such plugin
      */
     404: ErrorResponse;
+    /**
+     * The row is a local root - config-only, removed by editing plugins.seed and restarting
+     */
+    409: ErrorResponse;
 };
 
 export type DeletePluginError = DeletePluginErrors[keyof DeletePluginErrors];

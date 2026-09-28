@@ -109,7 +109,7 @@ func TestDeletePlugin500OnGenericRegistryError(t *testing.T) {
 func TestDeletePluginRebuildFailureIsWarnOnly(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
-	if err := reg.Put(context.Background(), pluginreg.Plugin{Name: "widgets", Source: pluginreg.SourceLocal, Entry: "widgets"}); err != nil {
+	if err := reg.Put(context.Background(), pluginreg.Plugin{Name: "widgets", Source: pluginreg.SourceGitHub, Entry: "github:acme/widgets", Owner: "acme", Repo: "widgets"}); err != nil {
 		t.Fatal(err)
 	}
 	h := &Handler{}

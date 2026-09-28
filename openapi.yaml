@@ -1405,6 +1405,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The row is a local root - config-only, removed by editing plugins.seed and restarting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/plugins/{name}/update:
     post:

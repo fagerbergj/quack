@@ -250,8 +250,8 @@ func (h *Handler) writeReloaded(w http.ResponseWriter, r *http.Request, status i
 	writeJSON(w, status, wire)
 }
 
-// DeletePlugin removes a row and its clone. "quack" is reserved outright,
-// even against a github row that shadows it (unshadowing is out of scope).
+// DeletePlugin removes a github row and its clone. "quack" is reserved outright,
+// even against a github row that shadows it; a local root is config-only (409).
 func (h *Handler) DeletePlugin(w http.ResponseWriter, r *http.Request, name schema.PluginName) {
 	if !h.requirePlugins(w) {
 		return
@@ -262,6 +262,12 @@ func (h *Handler) DeletePlugin(w http.ResponseWriter, r *http.Request, name sche
 	}
 	h.plugins.writeMu.Lock()
 	defer h.plugins.writeMu.Unlock()
+	if rows, err := h.plugins.reg.List(r.Context()); err == nil {
+		if row, ok := findPluginRow(rows, name); ok && row.Source == pluginreg.SourceLocal {
+			errMsg(w, http.StatusConflict, fmt.Sprintf("%q is a local root from plugins.seed; remove it from quack.yaml and restart instead", name))
+			return
+		}
+	}
 	err := h.plugins.reg.Delete(r.Context(), name)
 	if errors.Is(err, pluginreg.ErrInvalidName) {
 		errMsg(w, http.StatusBadRequest, err.Error())

@@ -551,3 +551,21 @@ func TestReloadUnwiredReportsEmptyLists(t *testing.T) {
 		t.Fatalf("unwired reload = %d %s, want 200 with empty lists", w.Code, w.Body.String())
 	}
 }
+
+// A local root is config-only: DELETE refuses it and the row survives.
+func TestDeletePluginRefusesLocalRoot(t *testing.T) {
+	h, _ := newPluginsTestHandler(t)
+	root := t.TempDir()
+	row := pluginreg.Plugin{Name: filepath.Base(root), Source: pluginreg.SourceLocal, Entry: root}
+	if err := h.plugins.reg.Put(context.Background(), row); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.DeletePlugin(w, httptest.NewRequest(http.MethodDelete, "/", nil), row.Name)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "plugins.seed") {
+		t.Fatalf("status = %d %s, want 409 naming plugins.seed", w.Code, w.Body.String())
+	}
+	if rows, _ := h.plugins.reg.List(context.Background()); len(rows) != 1 {
+		t.Fatalf("rows = %+v, want the local row kept", rows)
+	}
+}
