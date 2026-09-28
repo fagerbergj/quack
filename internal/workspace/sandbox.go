@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -28,6 +30,9 @@ const (
 
 // SandboxExecArg: hidden argv[1] dispatch for Landlock self-exec (analogue of GIT_ASKPASS). Dispatched before cobra.
 const SandboxExecArg = "__sandbox-exec"
+
+// ReapArg: hidden argv[1] dispatch for the descendant reaper (ReapMain) that wraps every non-bwrap child.
+const ReapArg = "__reap"
 
 // SandboxEnvMarker: env var the Landlock shim stamps into the process. Observability only - never read for safety decisions.
 const SandboxEnvMarker = "QUACK_SANDBOX"
@@ -129,10 +134,10 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	inner := append([]string{bin}, argv[1:]...)
 	switch caps.Sandbox {
 	case SandboxLandlock:
-		return landlockArgv(dir, inner, caps)
+		return withReaper(landlockArgv(dir, inner, caps))
 	case SandboxBwrap:
 	default:
-		return withLimits(inner, caps.Limits, false)
+		return withReaper(withLimits(inner, caps.Limits, false))
 	}
 	args := bwrapSystemArgs()
 	args = append(args, tmpArgs(caps)...)
@@ -686,11 +691,14 @@ var landlockSelfExe = sync.OnceValue(func() string {
 // No version handshake: the sidecar is assumed to come from the same image
 // build as self (Dockerfile builds and copies both together).
 func resolveLandlockSelfExe(self string) string {
-	if sidecar := filepath.Join(filepath.Dir(self), "quack-sandbox"); isExecutableRegularFile(sidecar) {
+	if sidecar := filepath.Join(filepath.Dir(self), sandboxSidecar); isExecutableRegularFile(sidecar) {
 		return sidecar
 	}
 	return self
 }
+
+// sandboxSidecar is the small self-exec binary's file name (cmd/quack-sandbox).
+const sandboxSidecar = "quack-sandbox"
 
 // isExecutableRegularFile: Lstat (not Stat) so a symlink - which could point
 // anywhere - is never trusted as the sandbox re-exec target.
@@ -699,13 +707,40 @@ func isExecutableRegularFile(path string) bool {
 	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }
 
-// RunSandboxExecIfInvoked: argv[0] dispatch for Landlock self-exec. Call at top of main() before cobra.
+// selfExecDispatch: this binary answers __sandbox-exec/__reap. Without it a self-exec would rerun
+// the host binary itself - a test binary with no TestMain dispatch recursing into its own tests.
+var selfExecDispatch atomic.Bool
+
+// withReaper runs argv under a __reap subreaper so no descendant outlives it (bwrap's PID namespace
+// already does). Unchanged off Linux or when neither the sidecar nor the dispatch is available.
+func withReaper(argv []string) []string {
+	self := landlockSelfExe()
+	if len(argv) == 0 || runtime.GOOS != "linux" || (!selfExecDispatch.Load() && filepath.Base(self) != sandboxSidecar) {
+		return argv
+	}
+	out := append([]string{self, ReapArg, "--"}, argv...)
+	// Resolve on the server's PATH like exec.Command would; the reaper only sees the child's PATH.
+	if p, err := exec.LookPath(argv[0]); err == nil {
+		out[3] = p
+	}
+	return out
+}
+
+// RunSandboxExecIfInvoked: argv[1] dispatch for the __sandbox-exec and __reap self-execs. Call at
+// the top of main() (or TestMain) before cobra.
 func RunSandboxExecIfInvoked() {
-	if len(os.Args) < 2 || os.Args[1] != SandboxExecArg {
+	var run func([]string) error
+	if len(os.Args) > 1 && os.Args[1] == SandboxExecArg {
+		run = SandboxExecMain
+	} else if len(os.Args) > 1 && os.Args[1] == ReapArg {
+		run = ReapMain
+	}
+	if run == nil {
+		selfExecDispatch.Store(true)
 		return
 	}
 	// os.Exit always so main/test can't fall through into its own execution.
-	if err := SandboxExecMain(os.Args[2:]); err != nil {
+	if err := run(os.Args[2:]); err != nil {
 		fmt.Fprintln(os.Stderr, "sandbox-exec:", err)
 		os.Exit(1)
 	}
@@ -797,7 +832,7 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 		if caps.ReadOnly {
 			warnReadOnlyUnenforced(caps.Sandbox)
 		}
-		return argv
+		return withReaper(argv)
 	}
 	rw, ro := landlockGrants(dir, caps)
 	rw = append(rw, extraRW...)
@@ -805,7 +840,7 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 	if caps.Sandbox == SandboxBwrap {
 		return bwrapWrapArgv(dir, argv, caps, rw, ro)
 	}
-	return assembleSandboxExec(rw, ro, argv)
+	return withReaper(assembleSandboxExec(rw, ro, argv))
 }
 
 // EnforcesBoundary reports whether mode gives a WrapArgv'd child an OS-enforced

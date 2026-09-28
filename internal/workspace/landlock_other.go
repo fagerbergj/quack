@@ -15,3 +15,8 @@ func probeLandlock() error {
 func SandboxExecMain(args []string) error {
 	return fmt.Errorf("sandbox-exec: landlock is only supported on Linux")
 }
+
+// ReapMain: unreachable in practice - withReaper only emits __reap argv on Linux.
+func ReapMain(args []string) error {
+	return fmt.Errorf("reap: subreaper mode is only supported on Linux")
+}

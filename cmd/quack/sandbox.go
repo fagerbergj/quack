@@ -277,6 +277,7 @@ func spawnSandboxCmd(ctx context.Context, dir string, caps workspace.Caps, ac co
 	c := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	c.Dir = dir
 	c.Env = env
+	c.Cancel = func() error { return workspace.StopChild(c) }
 	return c
 }
 

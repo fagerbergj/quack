@@ -193,7 +193,7 @@ func TestWrapArgvScratchDirUnwrappedUnderNone(t *testing.T) {
 	scratch := t.TempDir()
 	for _, mode := range []SandboxMode{SandboxNone, ""} {
 		caps := Caps{Sandbox: mode, ScratchDir: scratch}
-		got := WrapArgv(dir, []string{"pi-acp", "run"}, caps, nil, nil)
+		got := unreaped(WrapArgv(dir, []string{"pi-acp", "run"}, caps, nil, nil))
 		if len(got) != 2 || got[0] != "pi-acp" || got[1] != "run" {
 			t.Errorf("mode %q: WrapArgv = %v, want argv unchanged", mode, got)
 		}
