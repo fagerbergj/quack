@@ -54,18 +54,19 @@ type guardedTool struct {
 	tier     guardTier
 	judge    SafetyJudge
 	sessions session.Service
+	scope    CallScope
 
 	mu     sync.Mutex
 	coords ledger.Coords
 }
 
 // newGuardedTool wraps inner with tier; fails loudly if not runnable.
-func newGuardedTool(inner tool.Tool, tier guardTier, judge SafetyJudge, sessions session.Service) (tool.Tool, error) {
+func newGuardedTool(inner tool.Tool, tier guardTier, judge SafetyJudge, sessions session.Service, scope CallScope) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
 		return nil, fmt.Errorf("tool %q does not support the guard ladder (not a runnable function tool)", inner.Name())
 	}
-	return &guardedTool{inner: rt, tier: tier, judge: judge, sessions: sessions}, nil
+	return &guardedTool{inner: rt, tier: tier, judge: judge, sessions: sessions, scope: scope}, nil
 }
 
 // SetLedgerCoords: learned after Build, same as emitTool - #1052's fix so the
@@ -159,7 +160,7 @@ func (g *guardedTool) confirmDecision(ctx agent.Context, args map[string]any) (a
 
 // guardSession: resolves the calling node's workflow session from the guard-thread registry.
 func (g *guardedTool) guardSession(ctx agent.Context) (sess session.Session, invocationID, nodeID string) {
-	token, nodeID := guardThread(ctx)
+	token, nodeID := g.scope.guardThread(ctx)
 	if nodeID == "" {
 		return nil, "", ""
 	}
@@ -181,7 +182,7 @@ func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (al
 	}
 	var task, activity string
 	if g.sessions != nil {
-		if token, nodeID := guardThread(ctx); nodeID != "" {
+		if token, nodeID := g.scope.guardThread(ctx); nodeID != "" {
 			if at, found := vetting.LookupAdvisorThread(token); found {
 				task = at.Task
 			}
@@ -226,12 +227,9 @@ func fillBlankCoords(c, stamp ledger.Coords) ledger.Coords {
 	return c
 }
 
-// guardThread: resolves the gated node from the prompt marker; ("", "") for un-gated invocations.
-func guardThread(tc agent.Context) (token, nodeID string) {
-	tok, ok := vetting.ParseAdvisorThread(contentText(tc.UserContent()))
-	if !ok {
-		return "", ""
-	}
+// guardThread: the calling node's token and node id; ("", "") for un-gated invocations.
+func (s CallScope) guardThread(ctx agent.Context) (token, nodeID string) {
+	tok := s.token(ctx)
 	if i := strings.LastIndex(tok, "/"); i >= 0 && i+1 < len(tok) {
 		return tok, tok[i+1:]
 	}

@@ -1,6 +1,7 @@
 package vetting
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -408,6 +409,19 @@ func UnregisterMemSession(secret string) {
 }
 
 var advisorThreads sync.Map // token → AdvisorTask
+
+type advisorTokenKey struct{}
+
+// WithAdvisorToken marks ctx as an in-process run (a judge round) whose tools act for node token.
+func WithAdvisorToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, advisorTokenKey{}, token)
+}
+
+// AdvisorTokenFromContext is the token WithAdvisorToken set on ctx, "" if none.
+func AdvisorTokenFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(advisorTokenKey{}).(string)
+	return s
+}
 
 func RegisterAdvisorThread(token string, t AdvisorTask) {
 	advisorThreads.Store(token, t)

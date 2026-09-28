@@ -1,11 +1,12 @@
 package tools
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 
 	"google.golang.org/adk/v2/agent"
-	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -31,44 +32,40 @@ func cwdFromState(ctx agent.Context) string {
 	return s
 }
 
-// contentText concatenates a content's plain-text parts.
-func contentText(c *genai.Content) string {
-	if c == nil {
-		return ""
+// token is the calling node's advisor token: fixed at build, else set on ctx by an in-process
+// caller (the judge round). Never the prompt's last marker, which gate-appended text can forge.
+func (s CallScope) token(ctx context.Context) string {
+	if s.AdvisorToken != "" || ctx == nil {
+		return s.AdvisorToken
 	}
-	var sb strings.Builder
-	for _, p := range c.Parts {
-		if p != nil && !p.Thought && p.Text != "" {
-			sb.WriteString(p.Text)
-			sb.WriteByte('\n')
-		}
-	}
-	return sb.String()
+	return vetting.AdvisorTokenFromContext(ctx)
 }
 
-// advisorTask: the calling node's registered AdvisorTask, found via the advisor-thread marker in its prompt.
-func advisorTask(ctx agent.Context) (vetting.AdvisorTask, bool) {
-	if ctx == nil {
-		return vetting.AdvisorTask{}, false
+// advisorTask is the calling node's registered AdvisorTask; false outside a node or on a miss.
+func (s CallScope) advisorTask(ctx context.Context) (vetting.AdvisorTask, bool) {
+	if tok := s.token(ctx); tok != "" {
+		return vetting.LookupAdvisorThread(tok)
 	}
-	token, ok := vetting.ParseAdvisorThread(contentText(ctx.UserContent()))
-	if !ok {
-		return vetting.AdvisorTask{}, false
-	}
-	return vetting.LookupAdvisorThread(token)
+	return vetting.AdvisorTask{}, false
 }
 
-// scopeFromContext: derives per-chat and per-node scopes from advisor-thread marker.
-func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
-	at, ok := advisorTask(ctx)
+// errNodeScopeGone fails fs calls closed: the unscoped fallback is the whole user root.
+var errNodeScopeGone = errors.New("workspace: this node's scope is not registered; refusing to resolve paths outside it")
+
+// fsScope is the chat and node dir fs tools resolve under; outside a node it is unscoped.
+func (s CallScope) fsScope(ctx context.Context) (chatID, nodeDir string, err error) {
+	if s.token(ctx) == "" {
+		return "", "", nil
+	}
+	at, ok := s.advisorTask(ctx)
 	if !ok {
-		return "", ""
+		return "", "", errNodeScopeGone
 	}
 	wsID := at.WorkspaceNodeID
 	if wsID == "" {
 		wsID = at.NodeID
 	}
-	return at.ChatID, workspace.NodeDir(wsID)
+	return at.ChatID, workspace.NodeDir(wsID), nil
 }
 
 // jailPath: turns a model-written path into the chat-relative path Jail.Resolve takes.
@@ -114,6 +111,9 @@ func joinCwd(cwd, p string) string {
 
 // workRoot: absolute path of the calling node's own directory.
 func (b fsBinding) workRoot() string {
+	if b.scopeErr != nil {
+		return ""
+	}
 	root, err := b.jail.Resolve(b.userID, b.chatID, b.nodeDir)
 	if err != nil {
 		return ""

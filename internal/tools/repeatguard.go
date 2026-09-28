@@ -24,6 +24,7 @@ type repeatGuard struct {
 	// tripped fires on every hard stop - the signal a caller outside this
 	// package uses to tell a hard stop apart from a turn that simply produced nothing.
 	tripped func(chatID, nodeID, msg string) bool
+	scope   CallScope
 }
 
 // repeatThreshold: consecutive identical calls before refusal (1st=run, 2nd=retry, 3rd=refused).
@@ -179,12 +180,12 @@ func (s *repeatStates) observeResourceFail(sessionID, resourceKey string, failed
 	return s.fails[k]
 }
 
-func newRepeatGuard(inner tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
+func newRepeatGuard(inner tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool, scope CallScope) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
 		return nil, fmt.Errorf("tool %q does not support repeat guarding (not a runnable function tool)", inner.Name())
 	}
-	return &repeatGuard{inner: rt, states: states, tripped: tripped}, nil
+	return &repeatGuard{inner: rt, states: states, tripped: tripped, scope: scope}, nil
 }
 
 func (g *repeatGuard) Name() string        { return g.inner.Name() }
@@ -222,17 +223,8 @@ const pathFailThreshold = 3
 // turn regardless, so entries never outlive the turn that created them.
 var crossCallTools = map[string]bool{"create_plan": true, "edit_plan": true, "execute": true}
 
-// Run: refuses on an immediate back-to-back identical call, a same-tool
-// identical-args-identical-result streak persisting across other calls
-// between occurrences (crossCallTools only), or resource-failure churn.
-// Every refusal returns the error to the model and lets the turn continue -
-// the owner's settled direction is to end the turn only once the model
-// keeps re-issuing the refused call regardless (repeatHardStopAfter more
-// times): ending it on the first refusal gave the model no chance to
-// correct and retry within the same turn. A worker node's round ends via
-// tripped; the orchestrator's own turn (nodeScope resolves nodeID=="", it
-// has no gate/continuation loop of its own) ends directly via
-// SkipSummarization - same hard-stop tier, different mechanism per caller.
+// Run refuses back-to-back identical calls, identical cross-call streaks (crossCallTools) and resource-failure churn; a refusal
+// leaves the turn open until repeatHardStopAfter more repeats, then tripped ends a node's round, SkipSummarization the orchestrator's.
 func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
@@ -241,7 +233,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	sessionID := ctx.SessionID()
 	fingerprint := g.Name() + ":" + string(argsJSON)
 	crossKey := sessionID + "|" + fingerprint
-	chatID, nodeID := nodeScope(ctx)
+	chatID, nodeID := g.scope.node(ctx)
 	crossTracked := crossCallTools[g.Name()]
 
 	// Adjacency: this exact call immediately repeated, regardless of
@@ -435,8 +427,8 @@ func ordinal(n int) string {
 }
 
 // repeatWrap applies the identical-call breaker.
-func repeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
-	return newRepeatGuard(t, states, tripped)
+func repeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool, scope CallScope) (tool.Tool, error) {
+	return newRepeatGuard(t, states, tripped, scope)
 }
 
 // NewRepeatStates and RepeatWrap expose the identical-call breaker to a
@@ -450,7 +442,7 @@ func NewRepeatStates() *repeatStates { return newRepeatStates() }
 // RepeatWrap is repeatWrap, exported for the same reason as NewRepeatStates.
 // tripped fires on a hard stop (see repeatGuard.tripped); pass nil to ignore it.
 func RepeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
-	return repeatWrap(t, states, tripped)
+	return repeatWrap(t, states, tripped, CallScope{})
 }
 
 // SupportsRepeatGuard reports whether t can be passed to RepeatWrap - false
@@ -471,12 +463,13 @@ type repeatGuardedToolset struct {
 	inner   tool.Toolset
 	states  *repeatStates
 	tripped func(chatID, nodeID, msg string) bool
+	scope   CallScope
 }
 
 // RepeatWrapToolset wraps every tool ts exposes with states/tripped - the SAME instances
-// a caller's other repeat-guarded tools use, so ts's calls share that one budget.
-func RepeatWrapToolset(ts tool.Toolset, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) tool.Toolset {
-	return &repeatGuardedToolset{inner: ts, states: states, tripped: tripped}
+// a caller's other repeat-guarded tools use, so ts's calls share that one budget. scope is the node's (zero outside one).
+func RepeatWrapToolset(ts tool.Toolset, states *repeatStates, tripped func(chatID, nodeID, msg string) bool, scope CallScope) tool.Toolset {
+	return &repeatGuardedToolset{inner: ts, states: states, tripped: tripped, scope: scope}
 }
 
 func (w *repeatGuardedToolset) Name() string { return w.inner.Name() }
@@ -494,7 +487,7 @@ func (w *repeatGuardedToolset) Tools(ctx agent.ReadonlyContext) ([]tool.Tool, er
 			out[i] = t
 			continue
 		}
-		if out[i], err = repeatWrap(t, w.states, w.tripped); err != nil {
+		if out[i], err = repeatWrap(t, w.states, w.tripped, w.scope); err != nil {
 			return nil, err
 		}
 		// #1478: toolset-expanded tools never pass Build's registry, so without

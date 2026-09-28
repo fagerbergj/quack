@@ -892,7 +892,8 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		return verdict{}, judgeReadCounters{}, fmt.Errorf("vetting: judge runner: %w", err)
 	}
 	st.jr = jr
-	st.runCtx, st.cancel = context.WithCancel(ctx)
+	// The judge's fs tools resolve the worker's node scope from this, not from its prompt's markers.
+	st.runCtx, st.cancel = context.WithCancel(WithAdvisorToken(ctx, cfg.AdvisorToken))
 	defer st.cancel()
 	st.sessionID = judgeSessionID(cfg.ChatID, "verdict")
 
@@ -955,15 +956,11 @@ type judgeRoundState struct {
 }
 
 // judgePromptContent builds the judge's user content: the (prebuilt or built) prompt
-// plus the advisor-thread marker and the question's inline attachments.
+// plus the question's inline attachments.
 func judgePromptContent(cfg Config, prebuilt, answer, changedFiles, knownFailures string, act workerActivity, question *genai.Content) *genai.Content {
 	promptText := prebuilt
 	if promptText == "" {
 		promptText = buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, cfg.UpstreamAnswers, question, answer, changedFiles, act, knownFailures)
-	}
-	// Stamp advisor-thread token so judge resolves fs tools into the worker's node scope.
-	if cfg.AdvisorToken != "" {
-		promptText += "\n\n" + AdvisorThreadMarker(cfg.AdvisorToken)
 	}
 	parts := []*genai.Part{{Text: promptText}}
 	for _, p := range question.Parts {

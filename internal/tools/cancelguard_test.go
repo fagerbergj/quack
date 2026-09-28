@@ -9,7 +9,7 @@ import (
 func newCancelGuarded(t *testing.T, cancelled map[string]bool) (*fakeRunnable, *cancelGuard) {
 	t.Helper()
 	inner := &fakeRunnable{}
-	g, err := newCancelGuard(inner, func(chatID, nodeID string) bool { return cancelled[chatID+"/"+nodeID] })
+	g, err := newCancelGuard(inner, func(chatID, nodeID string) bool { return cancelled[chatID+"/"+nodeID] }, CallScope{})
 	if err != nil {
 		t.Fatalf("newCancelGuard: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 // to a node, so the guard must never block it - even with a "cancelled" predicate.
 func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 	inner := &fakeRunnable{}
-	g, err := newCancelGuard(inner, func(string, string) bool { return true })
+	g, err := newCancelGuard(inner, func(string, string) bool { return true }, CallScope{})
 	if err != nil {
 		t.Fatalf("newCancelGuard: %v", err)
 	}

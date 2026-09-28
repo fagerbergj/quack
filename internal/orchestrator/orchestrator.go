@@ -526,7 +526,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		var toolsets []tool.Toolset
 		if o.skillTS != nil {
 			// Same repeats/guardTripped as s.toolList below - load_skill is as loop-prone as any hand-built tool.
-			toolsets = []tool.Toolset{tools.RepeatWrapToolset(o.skillTS, repeats, guardTripped)}
+			toolsets = []tool.Toolset{tools.RepeatWrapToolset(o.skillTS, repeats, guardTripped, tools.CallScope{})}
 		}
 		s.toolsets = toolsets
 		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's doc. One pass over the whole toolList, once every tool this turn offers is assembled.

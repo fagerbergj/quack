@@ -21,6 +21,8 @@ It's worth being precise about this, because the two boundaries protect against 
 
 **The jail** is a path check on the *tools* (`internal/workspace`'s one path-resolution function). Every filesystem/git operation resolves inside a per-user directory under `root` (`<root>/<user_id>/`); `..`, absolute paths, and symlinks pointing outside the jail are all rejected. It never constrained a *child process* - only the `cwd` a tool handed it.
 
+Inside a DAG node the jail narrows further, to that node's own directory under its chat. The node comes from the worker quack built for it, never from a marker in the prompt, so text appended to a node's prompt cannot move its tools into another node's tree. If that node's registration is missing, every path is refused rather than widened to the per-user root.
+
 **The OS sandbox** (`workspace.sandbox`) is the boundary every `run_command` / gate-check / ACP-agent *child process* runs inside - three modes:
 
 - **`bwrap`** (the default, for host deploys): wraps each child in a [bubblewrap](https://github.com/containers/bubblewrap) namespace - a read-only view of the system dirs toolchains need, plus exactly two writable paths, the child's own working directory and its isolated `$HOME`. Nothing else exists in there: not `~/.ssh`, not `~/.aws`, not another node's clone. Because that namespace *is* the wall, `run_command` gives the model a real shell inside it (`/bin/sh -c "<command>"`) - pipes, redirects, `$()`, all of it works, and quack doesn't bother rejecting shell metacharacters on that path (they were never a real wall; `sh -c "…"` doesn't contain any of them).

@@ -145,6 +145,7 @@ func newGuardA2ARun(t *testing.T) *guardA2ARun {
 		Sessions:        sessions,
 		Guards:          map[string]string{"delete_path": "confirm"},
 		ExtTools:        map[string]tool.Tool{"delete_path": wipe},
+		CallScope:       tools.CallScope{AdvisorToken: vetting.AdvisorThreadToken("p", "n1")}, // the node the plan below runs
 	})
 	if err != nil {
 		t.Fatalf("tools.Build: %v", err)
@@ -362,6 +363,7 @@ func TestGuardConfirm_OverA2A_RaisedDuringRevision(t *testing.T) {
 		Sessions:        sessions,
 		Guards:          map[string]string{"delete_path": "confirm"},
 		ExtTools:        map[string]tool.Tool{"delete_path": wipe},
+		CallScope:       tools.CallScope{AdvisorToken: vetting.AdvisorThreadToken("p", "n1")}, // the node the plan below runs
 	})
 	if err != nil {
 		t.Fatalf("tools.Build: %v", err)

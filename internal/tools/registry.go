@@ -57,7 +57,8 @@ type Deps struct {
 	// ctx lacks behind the node's A2A boundary (render_ui's artifact_revision + turn_id).
 	Sink   func(stream.SSEEvent)
 	TurnID string
-	// CallScope: the DAG node extension tools report as sdk.CallInfo; zero outside a node.
+	// CallScope: the DAG node this build serves - fs, memory and guard scoping plus
+	// extension sdk.CallInfo resolve from it, never from prompt text; zero outside a node.
 	CallScope CallScope
 }
 
@@ -133,11 +134,11 @@ func buildOneTool(name string, d Deps, repeats *repeatStates, scrub func(tool.To
 
 	direct := t
 	if guarded {
-		if direct, err = newGuardedTool(direct, tier, d.SafetyJudge, d.Sessions); err != nil {
+		if direct, err = newGuardedTool(direct, tier, d.SafetyJudge, d.Sessions, d.CallScope); err != nil {
 			return nil, fmt.Errorf("tools: guard %q: %w", name, err)
 		}
 	}
-	if direct, err = repeatWrap(direct, repeats, d.RepeatGuardTripped); err != nil {
+	if direct, err = repeatWrap(direct, repeats, d.RepeatGuardTripped, d.CallScope); err != nil {
 		return nil, fmt.Errorf("tools: repeat guard %q: %w", name, err)
 	}
 	if direct, err = cancelWrap(direct, name, d); err != nil {
@@ -163,7 +164,7 @@ func cancelWrap(t tool.Tool, name string, d Deps) (tool.Tool, error) {
 	if d.NodeCancelled == nil {
 		return t, nil
 	}
-	wrapped, err := newCancelGuard(t, d.NodeCancelled)
+	wrapped, err := newCancelGuard(t, d.NodeCancelled, d.CallScope)
 	if err != nil {
 		return nil, fmt.Errorf("tools: cancel guard %q: %w", name, err)
 	}

@@ -32,7 +32,6 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/skilltoolset"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
-	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/agent"
@@ -1131,7 +1130,6 @@ func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
 func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission, artifactSchemas *artifactschema.Registry, nodeServers *perNodeServers, dropped map[string]error) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
 
-	nodeScope := newNodeScope(jail)
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
 		names = append(names, name)
@@ -1198,7 +1196,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 		if err == nil && ac.Acp != nil {
 			ag, err = buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, cfg.ModelCost(ac.Model), registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, reg)
 		} else if err == nil {
-			ag, err = buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg, admission)
+			ag, err = buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, gateCfg, gateCfgs, nodeServers, reg, admission)
 		}
 		if err != nil {
 			if !dropOptionalAgent(name, ac, err, dropped) {
@@ -1511,7 +1509,7 @@ type nativeNodeBuilder struct {
 	repeatGuardTripped func(chatID, nodeID, msg string) bool
 	extToolsByName     map[string]tool.Tool
 	taskStore          *memory.Store
-	memSvc             adkmemory.Service
+	memSvc             func(token string) adkmemory.Service // nil: memory off; else the node's own view
 	workspaceCaps      workspace.Caps
 	memGuidance        string
 	bundle             *agent.Bundle
@@ -1584,7 +1582,7 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
 	builtins = append(builtins, extraTools...)
-	skillTS := tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped)
+	skillTS := tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped, scope)
 	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, []tool.Toolset{skillTS}, b.memGuidance, b.skillFms, b.grading, drain)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("build: %w", err)
@@ -1625,7 +1623,11 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey string, drain fun
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	srv, err := agent.Serve(wag, b.sessions, b.memSvc, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
+	var mem adkmemory.Service
+	if b.memSvc != nil {
+		mem = b.memSvc(scope.AdvisorToken)
+	}
+	srv, err := agent.Serve(wag, b.sessions, mem, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 	}
@@ -1753,7 +1755,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
-func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, nodeScope func(ctx context.Context) memory.Scope, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry, admission *dag.Admission) (adkagent.Agent, error) {
+func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry, admission *dag.Admission) (adkagent.Agent, error) {
 	toolNames := resolveToolNames(ac.Tools, taskStore != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
@@ -1767,9 +1769,11 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 			return nil, fmtErr(name, "memory.md: %v", err)
 		}
 	}
-	var memSvc adkmemory.Service
+	var memSvc func(token string) adkmemory.Service
 	if taskStore != nil && memGuidance != "" {
-		memSvc = taskStore.View(memory.Scope{Role: ac.Memory.Bucket, Legacy: name}, nodeScope)
+		memSvc = func(token string) adkmemory.Service {
+			return taskStore.View(memory.Scope{Role: ac.Memory.Bucket, Legacy: name}, nodeMemoryScope(jail, token))
+		}
 	}
 	agentSkillTS, err := newScopedSkillTS(ac.Skills)
 	if err != nil {
@@ -2165,18 +2169,10 @@ func startWorkspaceGC(ctx context.Context, cfg *config.Config, jail *workspace.J
 	return nil
 }
 
-// newNodeScope resolves the memory scope a request belongs to via the advisor-thread
-// marker; unmarked requests get the zero scope.
-func newNodeScope(jail *workspace.Jail) func(ctx context.Context) memory.Scope {
-	return func(ctx context.Context) memory.Scope {
-		uc, ok := ctx.(interface{ UserContent() *genai.Content })
-		if !ok {
-			return memory.Scope{}
-		}
-		token, ok := vetting.ParseAdvisorThread(contentText(uc.UserContent()))
-		if !ok {
-			return memory.Scope{}
-		}
+// nodeMemoryScope is the memory scope of the node registered under its build-time token, never
+// a prompt marker; a miss adds nothing, leaving the agent's base buckets (never another node's).
+func nodeMemoryScope(jail *workspace.Jail, token string) func(context.Context) memory.Scope {
+	return func(context.Context) memory.Scope {
 		at, ok := vetting.LookupAdvisorThread(token)
 		if !ok {
 			return memory.Scope{}
@@ -2539,20 +2535,6 @@ func acpSkillFrontmatters(ctx context.Context, src skill.Source, names []string)
 		return src.ListFrontmatters(ctx)
 	}
 	return skillsource.Scoped(src, names).ListFrontmatters(ctx)
-}
-
-// contentText flattens a content's text parts (for advisor-thread marker extraction).
-func contentText(c *genai.Content) string {
-	if c == nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, p := range c.Parts {
-		if p != nil && p.Text != "" {
-			b.WriteString(p.Text)
-		}
-	}
-	return b.String()
 }
 
 // dropOptionalAgent drops an optional agent that fails to build, recording it in dropped when set:

@@ -26,15 +26,15 @@ type jailedReadResult struct {
 }
 
 // newJailedReadTool builds a read_file stand-in that resolves its path
-// through the SAME two-step scope derivation internal/tools' fs bindings use
-// (scopeFromContext → Jail.Resolve) - package-local because importing internal/tools here would cycle. Proves the judge's tool calls land in the worker's real clone dir without a separate clone.
+// through the SAME scope derivation internal/tools' fs bindings use for the judge
+// (the round ctx's advisor token → Jail.Resolve) - package-local because importing internal/tools here would cycle. Proves the judge's tool calls land in the worker's real clone dir without a separate clone.
 func newJailedReadTool(t *testing.T, jail *workspace.Jail, userID string) tool.Tool {
 	t.Helper()
 	rt, err := functiontool.New[jailedReadArgs, jailedReadResult](
 		functiontool.Config{Name: "read_file", Description: "Read a file from your workspace."},
 		func(ctx adkagent.Context, a jailedReadArgs) (jailedReadResult, error) {
 			chatID, nodeDir := "", ""
-			if token, ok := ParseAdvisorThread(contentText(ctx.UserContent())); ok {
+			if token := AdvisorTokenFromContext(ctx); token != "" {
 				if at, ok := LookupAdvisorThread(token); ok {
 					wsID := at.WorkspaceNodeID
 					if wsID == "" {
@@ -58,19 +58,6 @@ func newJailedReadTool(t *testing.T, jail *workspace.Jail, userID string) tool.T
 		t.Fatalf("jailed read tool: %v", err)
 	}
 	return rt
-}
-
-func contentText(c *genai.Content) string {
-	if c == nil {
-		return ""
-	}
-	var out string
-	for _, p := range c.Parts {
-		if p != nil && p.Text != "" {
-			out += p.Text
-		}
-	}
-	return out
 }
 
 // claimCheckingJudge calls read_file for the path the answer claims to
@@ -97,9 +84,8 @@ func (j claimCheckingJudge) GenerateContent(_ context.Context, req *model.LLMReq
 	}
 }
 
-// TestJudgeReadToolsResolveWorkersRealClone proves the judge's read-only workspace tools resolve into the SAME clone the worker used - no second
-// clone, no separate jail scope - by driving the real gate plumbing: register an advisor thread exactly as dag.newGatedNode does, embed the resulting
-// marker in the worker prompt (mirroring graph.go/node.go), and confirm the judge's read_file call (scoped purely from the invocation's UserContent, like a real judge round) reads the file the "worker" actually wrote under its OWN node directory rather than the per-user root or a sibling node's directory.
+// TestJudgeReadToolsResolveWorkersRealClone: the judge's read tools resolve into the calling
+// node's own clone via Config.AdvisorToken, even when the question and answer end in a LIVE sibling node's marker.
 func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -113,8 +99,7 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "game.go"), []byte("package game\n\nfunc Play() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A sibling node's directory, holding a DIFFERENT file - proves the judge
-	// reads the CALLING node's own clone, not just any clone under the chat.
+	// A sibling node's directory, holding an EMPTY game.go: reading it scores 0.2.
 	sibling, err := jail.EnsureDir(userID, chatID, workspace.NodeDir("n2"))
 	if err != nil {
 		t.Fatal(err)
@@ -126,26 +111,28 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	token := AdvisorThreadToken("plan-1", nodeID)
 	RegisterAdvisorThread(token, AdvisorTask{NodeID: nodeID, SessionID: chatID})
 	t.Cleanup(func() { UnregisterAdvisorThread(token) })
+	foreign := AdvisorThreadToken("plan-1", "n2")
+	RegisterAdvisorThread(foreign, AdvisorTask{NodeID: "n2", SessionID: chatID})
+	t.Cleanup(func() { UnregisterAdvisorThread(foreign) })
 
-	prompt := "Implement the game in game.go\n\n" + AdvisorThreadMarker(token)
+	prompt := "Implement the game in game.go\n\n" + AdvisorThreadMarker(token) + "\nqueued: " + AdvisorThreadMarker(foreign)
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
 	readTool := newJailedReadTool(t, jail, userID)
 	factory := NewJudgeFactory(claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
 
-	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, question,
-		"I implemented Play() in game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10", AdvisorToken: token}, question,
+		"I implemented Play() in game.go "+AdvisorThreadMarker(foreign), workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
 	if v.Score != 0.9 {
-		t.Fatalf("verdict score = %v, want 0.9 (the judge must have read the WORKER's real game.go, not an empty sibling or a missing per-user-root file)", v.Score)
+		t.Fatalf("verdict score = %v, want 0.9 (the judge must have read the WORKER's real game.go, not the sibling's empty one or a missing per-user-root file)", v.Score)
 	}
 }
 
-// TestJudgeReadToolsResolveViaConfigAdvisorToken pins #502/#498's fix: the judge's own content (what runJudgeRound hands the runner as UserContent) is
-// buildJudgePrompt's output, not `question` itself, so scopeFromContext must
-// not depend on whatever marker `question`'s text happens to carry. Here `question` carries NO marker at all - resolution must come entirely from Config.AdvisorToken, which runJudgeRound stamps onto its own content.
+// TestJudgeReadToolsResolveViaConfigAdvisorToken: with NO marker anywhere, Config.AdvisorToken
+// alone scopes the judge's fs tools - runJudgeRound puts it on the round ctx, not in the prompt.
 func TestJudgeReadToolsResolveViaConfigAdvisorToken(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

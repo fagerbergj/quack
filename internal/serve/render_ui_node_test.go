@@ -57,8 +57,8 @@ func toolCallProvider(t *testing.T, name string, args map[string]any) *httptest.
 }
 
 // buildStubNodeAgent builds the "tutor" native agent against a stub provider,
-// offering toolNames (resolved against builtins and extTools).
-func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, extTools []extTool, artifacts artifact.Service) nativeAgent {
+// offering toolNames (resolved against builtins and extTools), and returns its workspace jail.
+func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, extTools []extTool, artifacts artifact.Service) (nativeAgent, *workspace.Jail) {
 	t.Helper()
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -77,7 +77,7 @@ func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, ex
 		Agents: map[string]config.AgentConfig{
 			"tutor": {Bundle: "../../agents/web-researcher", Provider: "stub", Model: "m", Tools: toolNames},
 		},
-		Workspace: config.WorkspaceConfig{Sandbox: "none"},
+		Workspace: config.WorkspaceConfig{Sandbox: "none", MaxListEntries: 50},
 	}
 	var setupFn dag.SetupFunc
 	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, nil, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
@@ -86,7 +86,7 @@ func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, ex
 		t.Fatalf("buildAgents: %v", err)
 	}
 	t.Cleanup(nodeServers.closeAll)
-	return clientMap["tutor"].(nativeAgent)
+	return clientMap["tutor"].(nativeAgent), jail
 }
 
 // runStubNode drives one round of a node's worker (its A2A client) with msg as the user turn.
@@ -111,7 +111,7 @@ func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
 	provider := toolCallProvider(t, "render_ui", map[string]any{"surface_id": "s1", "components": []any{map[string]any{"id": "root", "component": "Text", "text": "hi"}}})
 	defer provider.Close()
 	artifacts := &turnRecorder{Service: artifact.InMemoryService(), turns: map[string]string{}}
-	agent := buildStubNodeAgent(t, provider.URL, []string{"render_ui"}, nil, artifacts)
+	agent, _ := buildStubNodeAgent(t, provider.URL, []string{"render_ui"}, nil, artifacts)
 
 	var mu sync.Mutex
 	var revs []stream.ArtifactRevisionData

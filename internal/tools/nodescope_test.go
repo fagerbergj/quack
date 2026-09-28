@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,9 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// gatedCtx is a worker's tool-call context INSIDE a gated DAG node: a durable
-// session state (the `cd` cwd) plus the advisor-thread marker in the prompt -
-// the one identity channel the workspace tools recover chat AND node scope from (see scopeFromContext).
+// gatedCtx is a tool-call context inside a gated DAG node: a durable session
+// state (the `cd` cwd) plus the node's prompt, which no scope is ever read from.
 type gatedCtx struct {
 	fakeCtx
 	prompt string
@@ -24,14 +24,26 @@ func (c *gatedCtx) UserContent() *genai.Content {
 	return &genai.Content{Parts: []*genai.Part{{Text: c.prompt}}}
 }
 
-// newGatedCtx registers a node's advisor thread (as dag.newGatedNode does at
-// node entry) and returns the tool context a worker in that node calls with.
+// newGatedCtx registers a node's advisor thread (as dag.newGatedNode does) and returns
+// an in-process (judge-style) tool ctx carrying its token, its prompt ending in a live foreign marker.
 func newGatedCtx(t *testing.T, planID, nodeID, chatID string) *gatedCtx {
 	t.Helper()
 	token := vetting.AdvisorThreadToken(planID, nodeID)
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ChatID: chatID, SessionID: chatID, NodeID: nodeID})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
-	return &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "do the task\n\n" + vetting.AdvisorThreadMarker(token)}
+	c := &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "do the task\n\n" + vetting.AdvisorThreadMarker(token) + "\nqueued: " + vetting.AdvisorThreadMarker(registerForeignNode(t))}
+	c.Ctx = vetting.WithAdvisorToken(context.Background(), token)
+	return c
+}
+
+// registerForeignNode registers a live node in another chat and returns its token -
+// the marker an attacker would plant after a node's own.
+func registerForeignNode(t *testing.T) string {
+	t.Helper()
+	token := vetting.AdvisorThreadToken("plan-evil", "foreign-"+t.Name())
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ChatID: "chat-evil", SessionID: "chat-evil", NodeID: "foreign", Task: "foreign task"})
+	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
+	return token
 }
 
 // TestConcurrentNodesEachSeeOnlyTheirOwnClone is the bug: two nodes of the SAME
@@ -121,8 +133,7 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 	}
 }
 
-// seedNodeFile writes content under the node scope the ctx's advisor-thread
-// marker names - standing in for the clone the node's external worker makes.
+// seedNodeFile writes content under the node scope ctx's token names - standing in for the clone the node's external worker makes.
 func seedNodeFile(b fsBinding, ctx *gatedCtx, rel, content string) error {
 	scoped := b.withCwd(ctx)
 	real, err := scoped.resolve(rel)

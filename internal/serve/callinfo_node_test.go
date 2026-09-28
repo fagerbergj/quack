@@ -37,7 +37,7 @@ func TestNativeNode_ExtToolSeesPlanCallInfo(t *testing.T) {
 	}
 	provider := toolCallProvider(t, "probe", map[string]any{})
 	defer provider.Close()
-	agent := buildStubNodeAgent(t, provider.URL, []string{"probe"}, []extTool{{provider: "fake", tool: probe}}, artifact.InMemoryService())
+	agent, _ := buildStubNodeAgent(t, provider.URL, []string{"probe"}, []extTool{{provider: "fake", tool: probe}}, artifact.InMemoryService())
 
 	ex := dag.NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"tutor": agent}, nil,
 		vetting.NewJudgeFactory(&resumeStubLLM{}, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)

@@ -79,7 +79,7 @@ func TestGuardJudgeDenyReturnsRefusalWithoutExecuting(t *testing.T) {
 	deny := func(_ context.Context, _, _, toolName string, _ map[string]any, _ string) (bool, string, error) {
 		return false, "not in service of the task", nil
 	}
-	g, err := newGuardedTool(inner, guardTier{Judge: true}, deny, nil)
+	g, err := newGuardedTool(inner, guardTier{Judge: true}, deny, nil, CallScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestGuardJudgeAllowExecutes(t *testing.T) {
 	allow := func(_ context.Context, _, _, _ string, _ map[string]any, _ string) (bool, string, error) {
 		return true, "on task", nil
 	}
-	g, err := newGuardedTool(inner, guardTier{Judge: true}, allow, nil)
+	g, err := newGuardedTool(inner, guardTier{Judge: true}, allow, nil, CallScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestGuardJudgeAllowExecutes(t *testing.T) {
 
 func TestGuardJudgeUnavailableFailsClosed(t *testing.T) {
 	inner := &fakeRunnable{}
-	g, err := newGuardedTool(inner, guardTier{Judge: true}, nil, nil) // no SafetyJudge configured
+	g, err := newGuardedTool(inner, guardTier{Judge: true}, nil, nil, CallScope{}) // no SafetyJudge configured
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func newConfirmHarness(t *testing.T) (*dag.Executor, dag.Plan, session.Service, 
 	t.Helper()
 	sessions := session.InMemoryService()
 	inner := &fakeRunnable{}
-	guarded, err := newGuardedTool(inner, guardTier{Confirm: true}, nil, sessions)
+	guarded, err := newGuardedTool(inner, guardTier{Confirm: true}, nil, sessions, CallScope{AdvisorToken: vetting.AdvisorThreadToken("t", "n1")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +410,7 @@ func (s *pinStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 	sessions := session.InMemoryService()
 	inner := &fakeRunnable{}
-	guarded, err := newGuardedTool(inner, guardTier{Confirm: true}, nil, sessions)
+	guarded, err := newGuardedTool(inner, guardTier{Confirm: true}, nil, sessions, CallScope{AdvisorToken: vetting.AdvisorThreadToken("t", "n1")})
 	if err != nil {
 		t.Fatal(err)
 	}
