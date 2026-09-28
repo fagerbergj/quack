@@ -97,7 +97,7 @@ func mergeAgentConfig(base, override AgentConfig) AgentConfig {
 	if override.Acp != nil {
 		merged.Acp = override.Acp
 	}
-	merged.Bundle = base.Bundle
+	merged.Bundle, merged.SeededBy = base.Bundle, base.SeededBy
 	merged.Optional = true
 	return merged
 }
@@ -149,6 +149,7 @@ func (c *Config) SeedPluginAgents(pluginName, agentsDir string, listed []string)
 			Skills:        defaults.Skills,
 			JudgeRounds:   defaults.JudgeRounds,
 			Optional:      true,
+			SeededBy:      pluginName,
 		}
 		seeded := base
 		if override, ok := c.Agents[name]; ok {

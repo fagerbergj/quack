@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"net/http"
 	"os"
@@ -33,6 +34,7 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/skillsource"
+	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -353,6 +355,17 @@ func TestReloadAbortKeepsPreviousRoster(t *testing.T) {
 		{"registry read", schema.Registry, func(t *testing.T, rig *reloadRig, _ string) {
 			rig.r.reg = failingList{rig.reg}
 		}},
+		{"namespace block unreadable", schema.Resolve, func(t *testing.T, _ *reloadRig, root string) {
+			body := `{"$schema":"https://agent-plugins.org/schemas/1.1.0/plugin.schema.json","name":"p",` +
+				`"extensions":{"io.github.fagerbergj.quack":{"schemaVersion":2}}}`
+			if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"refused plugins.seed row", schema.Admission, func(t *testing.T, rig *reloadRig, root string) {
+			writeGhostPluginManifest(t, root, "p")
+			rig.r.cfg.Plugins.Seed = []string{root}
+		}},
 		{"incomplete config agent", schema.Config, func(t *testing.T, rig *reloadRig, _ string) {
 			rig.r.roster.pristine.Agents = map[string]config.AgentConfig{"ghost": {}}
 		}},
@@ -649,5 +662,79 @@ func TestCatalogShapesDropsShapesNamingMissingAgents(t *testing.T) {
 	got := catalogShapes(raw, map[string]adkagent.Agent{"here": a})
 	if len(got) != 1 || got[0].Name != "ok" {
 		t.Fatalf("catalog = %+v, want only ok", got)
+	}
+}
+
+// A hand-configured optional agent keeps main's rule: dropped only when its
+// tools are unknown; any other build error still aborts the reload.
+func TestReloadHandConfiguredOptionalAgent(t *testing.T) {
+	bundle := t.TempDir()
+	cfg := reloadTestConfig()
+	cfg.Agents = map[string]config.AgentConfig{"handmade": {Bundle: bundle, Provider: "default", Model: "m", Optional: true}}
+	rig := newReloadRig(t, cfg, realBuild(t))
+
+	rep, err := rig.r.reload(context.Background())
+	if f, ok := failureFor(rep, schema.Agent, ""); err == nil || !ok || f.Plugin != nil {
+		t.Fatalf("broken bundle = (%+v, %v), want an agent-stage abort", rep.Failures, err)
+	}
+
+	for rel, body := range map[string]string{"agent-card.json": `{"name":"handmade","description":"d"}`, "prompt.md": "p"} {
+		if err := os.WriteFile(filepath.Join(bundle, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ac := rig.r.roster.pristine.Agents["handmade"]
+	ac.Tools = []string{"no_such_tool"}
+	rig.r.roster.pristine.Agents["handmade"] = ac
+	rep = rig.reload(t)
+	if _, ok := failureFor(rep, schema.Agent, "handmade"); !ok || len(rep.Agents.Added) != 0 {
+		t.Fatalf("unknown tool = %+v, want handmade dropped and reported", rep)
+	}
+}
+
+func TestDropOptionalAgentScope(t *testing.T) {
+	broken := errors.New("bundle: no agent-card.json")
+	unknown := fmt.Errorf("tools: %w", tools.ErrUnknownTool)
+	cases := []struct {
+		ac   config.AgentConfig
+		err  error
+		drop bool
+	}{
+		{config.AgentConfig{Optional: true, SeededBy: "p"}, broken, true},
+		{config.AgentConfig{Optional: true}, broken, false},
+		{config.AgentConfig{Optional: true}, unknown, true},
+		{config.AgentConfig{}, unknown, false},
+	}
+	for i, c := range cases {
+		if got := dropOptionalAgent("a", c.ac, c.err, nil); got != c.drop {
+			t.Errorf("case %d: drop = %v, want %v", i, got, c.drop)
+		}
+	}
+}
+
+// A reload between a dispatch's pin and its shape read re-pins onto the
+// roster the shape was built for; a shape no roster can serve is refused.
+func TestPinShapeRepinsAfterRacingReload(t *testing.T) {
+	ex := dag.NewExecutor(nil, nil, nil, nil, nil, nil)
+	ex.SetRoster(&dag.Roster{Gen: 1, Infos: []dag.AgentInfo{{Name: "old"}}})
+	var shapes atomic.Pointer[[]workflowcatalog.Shape]
+	shapes.Store(&[]workflowcatalog.Shape{{Name: "flow", Agents: []string{"new"}}})
+	pins := 0
+	racingPin := func(ctx context.Context) (context.Context, func()) {
+		pinCtx, done := ex.Pin(ctx)
+		if pins++; pins == 1 {
+			ex.SetRoster(&dag.Roster{Gen: 2, Infos: []dag.AgentInfo{{Name: "new"}}})
+		}
+		return pinCtx, done
+	}
+	pinCtx, done, shape, err := pinShape(context.Background(), racingPin, "x", &shapes, "flow")
+	if err != nil || shape.Name != "flow" || ex.RosterFor(pinCtx).Gen != 2 || pins != 2 {
+		t.Fatalf("pinShape = (gen %v, %+v, %v) after %d pins, want flow on gen 2 after a re-pin", ex.RosterFor(pinCtx), shape, err, pins)
+	}
+	done()
+
+	shapes.Store(&[]workflowcatalog.Shape{{Name: "flow", Nodes: []config.WorkflowNode{{ID: "n", Agent: "gone"}}}})
+	if _, _, _, err := pinShape(context.Background(), ex.Pin, "x", &shapes, "flow"); err == nil || !strings.Contains(err.Error(), "retry") {
+		t.Fatalf("err = %v, want a reloaded-during-dispatch refusal", err)
 	}
 }

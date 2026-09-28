@@ -628,6 +628,8 @@ type AgentConfig struct {
 	// Optional: buildAgents warns and drops this agent from the roster instead
 	// of failing boot if it fails to build (e.g. its extension is disabled).
 	Optional bool `yaml:"optional"`
+	// SeededBy names the plugin whose bundle this agent is; "" = config-authored.
+	SeededBy string `yaml:"-"`
 }
 
 type MemoryConfig struct {

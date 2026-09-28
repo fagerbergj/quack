@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -2554,10 +2555,10 @@ func contentText(c *genai.Content) string {
 	return b.String()
 }
 
-// dropOptionalAgent: an optional agent (every plugin-seeded one is) that fails to build is dropped
-// with a warning, and recorded in dropped when set; a non-optional agent's error still fails boot.
+// dropOptionalAgent drops an optional agent that fails to build, recording it in dropped when set:
+// a plugin-seeded one on any error, a config-authored one only when its tools are unknown.
 func dropOptionalAgent(name string, ac config.AgentConfig, err error, dropped map[string]error) bool {
-	if !ac.Optional {
+	if !ac.Optional || (ac.SeededBy == "" && !errors.Is(err, tools.ErrUnknownTool)) {
 		return false
 	}
 	slog.Warn("optional agent unavailable; dropped from the roster", "component", "startup", "agent", name, "err", err)

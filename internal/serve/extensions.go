@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -561,6 +562,38 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 	return found, foundName, nil
 }
 
+// pinShape pins a roster, then reads the shape. A reload landing between the
+// two can hand back a shape naming agents the pin lacks, so it re-pins once.
+func pinShape(ctx context.Context, pin func(context.Context) (context.Context, func()), name string, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], workflow string) (context.Context, func(), workflowcatalog.Shape, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		pinCtx, done := pin(ctx)
+		shape, err := lookupShape(name, shapesRef, workflow)
+		if err != nil {
+			done()
+			return nil, nil, shape, err
+		}
+		if shapeAgentsIn(shape, dag.AgentNamesFor(pinCtx)) {
+			return pinCtx, done, shape, nil
+		}
+		done()
+	}
+	return nil, nil, workflowcatalog.Shape{}, fmt.Errorf("extensions.%s: plugins reloaded while dispatching workflow %q; retry", name, workflow)
+}
+
+func shapeAgentsIn(s workflowcatalog.Shape, names []string) bool {
+	for _, a := range s.Agents {
+		if !slices.Contains(names, a) {
+			return false
+		}
+	}
+	for _, n := range s.Nodes {
+		if !slices.Contains(names, n.Agent) {
+			return false
+		}
+	}
+	return true
+}
+
 // lookupShape finds workflow in the current catalog; "" is no shape.
 func lookupShape(name string, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], workflow string) (workflowcatalog.Shape, error) {
 	if workflow == "" {
@@ -599,19 +632,16 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		if orch == nil {
 			return fmt.Errorf("extensions.%s: orchestrator not ready", name)
 		}
-		// Pinned before the shape is read: a reload stores shapes before its roster,
-		// so the shape never names an agent the pinned roster lacks.
-		pinCtx, done := orch.Pin(context.WithoutCancel(ctx))
+		pinCtx, done, shape, err := pinShape(context.WithoutCancel(ctx), orch.Pin, name, shapesRef, req.Run.Workflow)
+		if err != nil {
+			return err
+		}
 		handedOff := false
 		defer func() {
 			if !handedOff {
 				done()
 			}
 		}()
-		shape, err := lookupShape(name, shapesRef, req.Run.Workflow)
-		if err != nil {
-			return err
-		}
 		// Namespaced so two extensions (or an extension and a user chat)
 		// can never collide on the same global chat id.
 		chatID := fmt.Sprintf("ext:%s:%s", name, req.Chat.LocalID)
