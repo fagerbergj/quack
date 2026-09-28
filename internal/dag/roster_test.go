@@ -222,3 +222,13 @@ func TestPlanner_UsesPinnedInfos(t *testing.T) {
 		t.Fatal("a reload roster with no agents fell back to the boot agents")
 	}
 }
+
+func TestRoster_SetRosterOwnsItsMaps(t *testing.T) {
+	ex := NewExecutor(nil, nil, nil, nil, nil, nil)
+	media := map[string]bool{"w": true}
+	ex.SetRoster(&Roster{Gen: 1, Media: media})
+	media["w"] = false
+	if !ex.RosterFor(context.Background()).Media["w"] {
+		t.Fatal("caller's map mutation leaked into the installed roster")
+	}
+}

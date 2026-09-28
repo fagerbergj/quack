@@ -16,6 +16,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/genai"
 
@@ -99,7 +100,7 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, a
 	return &A2AServer{Card: card, listener: listener, runs: runs}, nil
 }
 
-// workerRuns maps a context id to its in-flight worker execution. a2a-go runs a worker on a
+// workerRuns maps a send's runKeyMeta to its in-flight worker. a2a-go runs a worker on a
 // detached ctx, so a cancelled client must stop it here or it outlives the node.
 type workerRuns struct{ m sync.Map }
 
@@ -111,10 +112,13 @@ type workerRun struct {
 // stopTimeout bounds how long a cancelled node waits for its worker to stop.
 const stopTimeout = 10 * time.Second
 
-// stop cancels contextID's worker and waits (bounded) for it to exit.
+// runKeyMeta: request metadata carrying a per-send key; unlike ContextID, a HITL resume never clears it.
+const runKeyMeta = "quack_run_key"
+
+// stop cancels key's worker and waits (bounded) for it to exit.
 // ponytail: a send cancelled before its Execute registered is missed.
-func (w *workerRuns) stop(contextID string) {
-	v, ok := w.m.Load(contextID)
+func (w *workerRuns) stop(key string) {
+	v, ok := w.m.Load(key)
 	if !ok {
 		return
 	}
@@ -123,7 +127,7 @@ func (w *workerRuns) stop(contextID string) {
 	select {
 	case <-run.done:
 	case <-time.After(stopTimeout):
-		slog.Warn("a2a: worker still running after cancel", "component", "agent", "context_id", contextID)
+		slog.Warn("a2a: worker still running after cancel", "component", "agent", "run_key", key)
 	}
 }
 
@@ -134,12 +138,16 @@ type trackedExecutor struct {
 }
 
 func (t trackedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	key, _ := execCtx.Metadata[runKeyMeta].(string)
+	if key == "" {
+		return t.AgentExecutor.Execute(ctx, execCtx)
+	}
 	return func(yield func(a2a.Event, error) bool) {
 		ctx, cancel := context.WithCancel(ctx)
 		run := &workerRun{cancel: cancel, done: make(chan struct{})}
-		t.runs.m.Store(execCtx.ContextID, run)
+		t.runs.m.Store(key, run)
 		defer func() {
-			t.runs.m.CompareAndDelete(execCtx.ContextID, run)
+			t.runs.m.Delete(key)
 			cancel()
 			close(run.done)
 		}()
@@ -280,14 +288,15 @@ type scopedClient struct {
 
 func (c scopedClient) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
 	scopeMessage(ctx, req, c.contextID)
-	defer c.stopIfCancelled(ctx, req)
+	defer c.stopIfCancelled(ctx, tagRun(req))
 	return c.A2AClient.SendMessage(ctx, req)
 }
 
 func (c scopedClient) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	scopeMessage(ctx, req, c.contextID)
+	key := tagRun(req)
 	return func(yield func(a2a.Event, error) bool) {
-		defer c.stopIfCancelled(ctx, req)
+		defer c.stopIfCancelled(ctx, key)
 		for ev, err := range c.A2AClient.SendStreamingMessage(ctx, req) {
 			if !yield(ev, err) {
 				return
@@ -297,10 +306,20 @@ func (c scopedClient) SendStreamingMessage(ctx context.Context, req *a2a.SendMes
 }
 
 // stopIfCancelled keeps a cancelled node's worker from outliving the node's run.
-func (c scopedClient) stopIfCancelled(ctx context.Context, req *a2a.SendMessageRequest) {
-	if ctx.Err() != nil && c.runs != nil && req.Message != nil {
-		c.runs.stop(req.Message.ContextID)
+func (c scopedClient) stopIfCancelled(ctx context.Context, key string) {
+	if ctx.Err() != nil && c.runs != nil {
+		c.runs.stop(key)
 	}
+}
+
+// tagRun stamps req with a fresh run key for trackedExecutor and returns it.
+func tagRun(req *a2a.SendMessageRequest) string {
+	key := uuid.NewString()
+	if req.Metadata == nil {
+		req.Metadata = map[string]any{}
+	}
+	req.Metadata[runKeyMeta] = key
+	return key
 }
 
 // scopeMessage rewrites req's parts in place, scoped to invocation + branch,

@@ -34,8 +34,15 @@ func (m untilCancelled) GenerateContent(ctx context.Context, _ *model.LLMRequest
 }
 
 // a2a-go runs the worker on a detached ctx, so a cancelled node must stop it
-// explicitly; the client may only return once the worker has.
+// explicitly; the client may only return once the worker has. An empty context id is
+// the HITL-resume path, where scopeMessage leaves the server to mint one.
 func TestA2AClientCancelStopsWorker(t *testing.T) {
+	for _, contextID := range []string{"cancel-ctx", ""} {
+		t.Run("context="+contextID, func(t *testing.T) { cancelStopsWorker(t, contextID) })
+	}
+}
+
+func cancelStopsWorker(t *testing.T, contextID string) {
 	m := untilCancelled{entered: make(chan struct{}), exited: make(chan struct{})}
 	worker, err := llmagent.New(llmagent.Config{Name: "blocker", Model: m, Description: "blocks", Instruction: "block"})
 	if err != nil {
@@ -46,7 +53,7 @@ func TestA2AClientCancelStopsWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer srv.Close()
-	client, err := srv.ClientForNode("n", "cancel-ctx")
+	client, err := srv.ClientForNode("n", contextID)
 	if err != nil {
 		t.Fatal(err)
 	}

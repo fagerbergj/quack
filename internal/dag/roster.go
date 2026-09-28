@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -15,7 +16,8 @@ import (
 // Roster is one immutable generation of the agent set: a run pinned to it
 // keeps executing against it even after SetRoster installs a newer one.
 type Roster struct {
-	Gen     uint64 // 0 only for NewExecutor's placeholder; SetRoster requires it to grow
+	Gen uint64 // 0 only for NewExecutor's placeholder; SetRoster requires it to grow
+	// SetRoster copies Agents/Models/Media; no field may be mutated once the roster is installed.
 	Agents  map[string]adkagent.Agent
 	Models  map[string]model.LLM
 	Media   map[string]bool
@@ -77,6 +79,7 @@ func (e *Executor) SetRoster(r *Roster) {
 	if r == nil || r.retired.Load() {
 		panic("dag: SetRoster needs a fresh roster, not nil or a retired one")
 	}
+	r.Agents, r.Models, r.Media = maps.Clone(r.Agents), maps.Clone(r.Models), maps.Clone(r.Media)
 	for {
 		old := e.roster.Load()
 		if old != nil && r.Gen <= old.Gen {
