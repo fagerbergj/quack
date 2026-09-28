@@ -6,12 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // gitTimeout bounds every git call: a hung remote must not block a fetch or
@@ -121,8 +122,12 @@ func fetchInto(ctx context.Context, dir, url string) error {
 			return err
 		}
 	}
-	// Full clone, not blob-filtered: the pi-acp shim and skilltoolset read files.
-	return gitRun(ctx, "", "clone", "--quiet", url, dir)
+	// Absolute: clone runs from a throwaway HOME. Full, not blob-filtered: the pi-acp shim and skilltoolset read files.
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	return gitRun(ctx, "", "clone", "--quiet", url, abs)
 }
 
 // isGitRepo reports whether dir is itself a git repo, not merely inside one -
@@ -257,19 +262,18 @@ func firstField(out string) string {
 	return fields[0]
 }
 
-// gitAuthEnv carries GITHUB_TOKEN as an http.extraheader via git's env-based
-// config (GIT_CONFIG_*) rather than argv, so a failing command's stderr -
-// which Fetch stores verbatim on the row - never contains the token.
-func gitAuthEnv() []string {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		return nil
+// gitEnv is quack's git env: PATH only, never the server's. GITHUB_TOKEN rides GIT_CONFIG_* (not argv, which
+// failing stderr can echo onto the row), keyed to https://github.com/ so no other host ever receives it.
+func gitEnv() []string {
+	env := []string{"PATH=" + os.Getenv("PATH")}
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		env = append(env,
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.https://github.com/.extraheader",
+			"GIT_CONFIG_VALUE_0=AUTHORIZATION: bearer "+token,
+		)
 	}
-	return []string{
-		"GIT_CONFIG_COUNT=1",
-		"GIT_CONFIG_KEY_0=http.extraheader",
-		"GIT_CONFIG_VALUE_0=AUTHORIZATION: bearer " + token,
-	}
+	return env
 }
 
 func gitRun(ctx context.Context, dir string, args ...string) error {
@@ -284,11 +288,11 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	if env := gitAuthEnv(); env != nil {
-		cmd.Env = append(os.Environ(), env...)
+	cmd, done, err := workspace.GitCmd(ctx, "git", dir, args, gitEnv())
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}
+	defer done()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
