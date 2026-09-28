@@ -199,7 +199,7 @@ func gitEnv(caps workspace.Caps, auth *gitAuth) []string {
 	}
 	// workspace.env for hooks/filters to find the toolchain.
 	for _, k := range slices.Sorted(maps.Keys(caps.Env)) {
-		if !strings.HasPrefix(k, "GIT_") { // GIT_DIR, GIT_CONFIG_*, GIT_EXEC_PATH would redirect quack's own git
+		if keepForGit(k) {
 			env = append(env, k+"="+caps.Env[k])
 		}
 	}
@@ -212,6 +212,15 @@ func gitEnv(caps workspace.Caps, auth *gitAuth) []string {
 		)
 	}
 	return env
+}
+
+// keepForGit drops workspace.env keys that would redirect quack's own git (GIT_DIR, GIT_CONFIG_*, GIT_EXEC_PATH,
+// SSH_ASKPASS); a private CA bundle still passes.
+func keepForGit(k string) bool {
+	if k == "GIT_SSL_CAINFO" || k == "GIT_SSL_CAPATH" {
+		return true
+	}
+	return !strings.HasPrefix(k, "GIT_") && k != "SSH_ASKPASS"
 }
 
 func capOutput(s string, max int) string {
