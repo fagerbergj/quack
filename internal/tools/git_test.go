@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -156,17 +157,21 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 // TestGitEnvIncludesWorkspaceEnv: workspace.env reaches git children too (a
 // hook or filter may legitimately need the configured toolchain).
 func TestGitEnvIncludesWorkspaceEnv(t *testing.T) {
-	caps := workspace.Caps{Env: map[string]string{"JAVA_HOME": "/opt/jdk-21"}}
+	caps := workspace.Caps{Env: map[string]string{
+		"JAVA_HOME": "/opt/jdk-21", "GIT_SSL_CAINFO": "/ca.pem", "GIT_SSL_CAPATH": "/certs",
+		"GIT_DIR": "/elsewhere", "GIT_CONFIG_COUNT": "1", "SSH_ASKPASS": "/evil",
+	}}
 	env := gitEnv(caps, nil)
-	want := "JAVA_HOME=/opt/jdk-21"
-	found := false
-	for _, e := range env {
-		if e == want {
-			found = true
+	for _, want := range []string{"JAVA_HOME=/opt/jdk-21", "GIT_SSL_CAINFO=/ca.pem", "GIT_SSL_CAPATH=/certs"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("gitEnv = %v, want to contain %q", env, want)
 		}
 	}
-	if !found {
-		t.Errorf("gitEnv = %v, want to contain %q", env, want)
+	for _, e := range env {
+		k, _, _ := strings.Cut(e, "=")
+		if k == "GIT_DIR" || k == "GIT_CONFIG_COUNT" || k == "SSH_ASKPASS" {
+			t.Errorf("gitEnv passed operator %q to quack's git", e)
+		}
 	}
 }
 
@@ -250,6 +255,13 @@ func TestCredentialForMatchesExactHostOnly(t *testing.T) {
 	}
 	if b.credentialFor("https://sub.github.com/a/b.git") != nil {
 		t.Error("expected no match for a subdomain (exact host match only)")
+	}
+	if b.credentialFor("https://GitHub.COM/a/b.git") == nil {
+		t.Error("expected an ASCII case-insensitive match")
+	}
+	b.credentials = []GitCredential{{Host: "ks.example", Username: "x", Token: "t"}}
+	if b.credentialFor("https://\u212a\u017f.example/a/b.git") != nil {
+		t.Error("expected no Unicode case folding (Kelvin sign, long s)")
 	}
 }
 
