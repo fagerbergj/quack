@@ -365,12 +365,8 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
           )}
           {fetched && <span>fetched {fetched}</span>}
           {p.declares_mcp_servers && (
-            <span
-              className="inline-flex items-center gap-1"
-              title="This plugin declares MCP servers; an add or update here starts them only after the next restart"
-            >
-              <Icon name="restart_alt" className="w-3.5 h-3.5 shrink-0" />
-              MCP servers: apply at restart
+            <span title="This plugin declares MCP servers; a reload (or an add, update or remove) starts or restarts them">
+              MCP servers
             </span>
           )}
           {update?.error && (
