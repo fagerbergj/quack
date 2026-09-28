@@ -1446,7 +1446,7 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 	}
 	// skill_paths is filled in per spawn (proc.go's mergeSkillPaths), not
 	// baked in here - see skillPathsFn below.
-	env := piACPEnv(prov, ac, nil)
+	env := piACPEnv(prov, ac, nil, workspaceCaps.Sandbox)
 	env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 	skillPathsFn := acpRegistrySkillPaths(cfg, reg)
 	extraROFn := acpRegistryExtraRO(cfg)
@@ -2299,9 +2299,9 @@ func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
 	return env
 }
 
-// piACPEnv generates PI_ACP_CONFIG: only the fields the pi-acp shim reads
-// (tools/pi-acp/pi-acp.mjs). No permission data here - git push stays denied via the shim's checkPolicy (mcp-client.mjs), not this payload.
-func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string) []string {
+// piACPEnv generates PI_ACP_CONFIG: only the fields the pi-acp shim reads (tools/pi-acp/pi-acp.mjs).
+// allow_clone lifts checkPolicy's clone deny only where the sandbox OS-enforces the read-only work tree.
+func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string, sandbox workspace.SandboxMode) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey
 	if apiKey == "" {
@@ -2319,6 +2319,13 @@ func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []st
 	}
 	if len(skillPaths) > 0 {
 		cfg["skill_paths"] = skillPaths
+	}
+	if ac.Acp != nil && ac.Acp.AllowClone && ac.Acp.ReadOnly {
+		if workspace.EnforcesBoundary(sandbox) {
+			cfg["allow_clone"] = true
+		} else {
+			slog.Warn("acp.allow_clone ignored: sandbox does not enforce the read-only work tree", "component", "acp", "sandbox", sandbox)
+		}
 	}
 	content, err := json.Marshal(cfg)
 	if err != nil {

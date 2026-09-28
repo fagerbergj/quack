@@ -29,6 +29,7 @@ jobs:
           cache-dependency-path: scripts/package-lock.json
       - run: npm ci
         working-directory: scripts
+      - run: node tools/pi-acp/test.mjs
       - run: go vet ./...
       # One pass, under the race detector: it is a superset of the plain run and the
       # concurrency regression guards (#1016, #1032) pass vacuously without it.

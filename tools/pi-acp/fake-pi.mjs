@@ -59,7 +59,7 @@ let seq = 0;
 async function guardedCall(cfg, toolName, args) {
   const id = "call_g" + ++seq;
   out({ type: "tool_execution_start", toolCallId: id, toolName, args });
-  const v = checkPolicy(toolName, args);
+  const v = checkPolicy(toolName, args, cfg);
   let blocked = null;
   if (v?.block) blocked = v.block;
   else if (v?.ask) {
@@ -98,6 +98,7 @@ createInterface({ input: process.stdin }).on("line", async (l) => {
     await guardedCall(cfg, "bash", { command: "git push origin main" }); // config-deny, no round-trip
     await guardedCall(cfg, "read", { path: "app/.env" });                // ask -> allow
     await guardedCall(cfg, "read", { path: "app/.env.prod" });           // ask -> deny
+    await guardedCall(cfg, "bash", { command: "git clone --depth 1 https://example.invalid/x.git" }); // denied unless allowClone
   }
   out({ type: "message_start", message: { role: "assistant" } });
   out({ type: "message_update", usage: { input: 10, output: 1, cacheRead: 6, cacheWrite: 3, totalTokens: 99 }, assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "done: hi" } });
