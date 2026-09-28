@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
 
+# Release builds keep the default; only `make dev-image` overrides it.
+ARG QUACK_SRC=backend-src
+
 # 1) Build the SPA (the committed src/generated client is used as-is).
 # bookworm (glibc), NOT alpine (musl): the runtime stage copies node out of this
 # stage, and a musl-linked node cannot run on the debian runtime base.
@@ -24,17 +27,26 @@ COPY scripts/mermaid-validate.mjs ./
 # 2) Build the Go server with the SPA embedded.
 # bookworm (glibc), NOT alpine (musl) - same reason as the frontend stage: the
 # runtime copies /usr/local/go from here and must be able to execute it.
-FROM golang:1.26-bookworm AS backend
+FROM golang:1.26-bookworm AS backend-src
 WORKDIR /app
-# VERSION stamps main.version (cmd/quack/main.go); cd.yaml passes the release
-# tag, defaults to "dev" so a plain `docker build` / `make build` still works.
-ARG VERSION=dev
 COPY go.mod go.sum ./
 # Not cache-mounted (#936): a cache mount's writes never land in an image layer,
 # and the runtime stage needs this cache to survive into one - see GOMODCACHE below.
 RUN go mod download
 COPY . .
 COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
+
+# `make dev-image` only: --build-context ext=<checkout> replaces this empty stage,
+# and QUACK_SRC=backend-src-ext builds against those modules via a go.work.
+FROM scratch AS ext
+FROM backend-src AS backend-src-ext
+COPY --from=ext --exclude=.git / /ext/
+RUN go work init . $(dirname /ext/*/go.mod)
+
+FROM ${QUACK_SRC} AS backend
+# VERSION stamps main.version (cmd/quack/main.go); cd.yaml passes the release
+# tag, defaults to "dev" so a plain `docker build` / `make build` still works.
+ARG VERSION=dev
 # -trimpath + -ldflags="-s -w": strip local paths and the symbol/DWARF tables
 # (smaller, reproducible binary). Build cache is mounted (pure speed, discarded);
 # /go/pkg/mod is not - see the go mod download comment above.

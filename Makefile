@@ -1,4 +1,4 @@
-.PHONY: build run test vet fmt generate frontend-build docker-up docker-down clean docs-check slop
+.PHONY: build run test vet fmt generate frontend-build docker-up docker-down clean docs-check slop dev-build dev-image dev-check dev-work
 
 BINARY := quack
 SANDBOX_BINARY := quack-sandbox
@@ -14,6 +14,28 @@ frontend-build:
 	rm -rf internal/serve/web/dist
 	cp -R frontend/dist internal/serve/web/dist
 	touch internal/serve/web/dist/.gitkeep   # keep the embed placeholder tracked
+
+## dev-build: build quack + sandbox against a local quack-extensions checkout (EXT=../quack-extensions); go.mod untouched
+dev-build: dev-work
+	GOWORK=$(DEV_GOWORK) go build -ldflags "-X main.version=$(DEV_VERSION)" -o $(BINARY) ./cmd/quack
+	GOWORK=$(DEV_GOWORK) go build -o $(SANDBOX_BINARY) ./cmd/quack-sandbox
+
+## dev-image: build the Docker image against EXT's modules, tagged $(DEV_IMAGE)
+dev-image: dev-check
+	docker build --build-context ext=$(EXT) --build-arg QUACK_SRC=backend-src-ext \
+	  --build-arg VERSION=$(DEV_VERSION) -t $(DEV_IMAGE) .
+
+DEV_IMAGE ?= quack:dev
+DEV_GOWORK := $(CURDIR)/.dev/go.work
+DEV_VERSION = dev+ext.$(shell git -C $(EXT) describe --always --dirty --exclude='*' 2>/dev/null)
+
+dev-check:
+	@test -n "$(EXT)" && test -n "$(wildcard $(EXT)/*/go.mod)" || { echo "EXT='$(EXT)' has no */go.mod module dirs; set EXT to a quack-extensions checkout, e.g. make $(MAKECMDGOALS) EXT=../quack-extensions" >&2; exit 1; }
+
+# Throwaway go.work kept out of the repo root, so plain go/make commands never pick it up.
+dev-work: dev-check
+	rm -f $(DEV_GOWORK) $(DEV_GOWORK).sum && mkdir -p $(dir $(DEV_GOWORK))
+	GOWORK=$(DEV_GOWORK) go work init $(CURDIR) $(abspath $(dir $(wildcard $(EXT)/*/go.mod)))
 
 ## run: build and run locally (expects env: QUACK_DATABASE_URL, QUACK_LLM_ENDPOINT, QUACK_ORCH_MODEL)
 run: build

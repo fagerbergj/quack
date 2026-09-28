@@ -91,14 +91,8 @@ func pluginModuleGateEnabled(modules map[string]yaml.Node, p plugin.Plugin) (boo
 	return true, nil
 }
 
-// moduleEnabled reports whether extensions.<name> is configured and not
-// explicitly disabled - the same decision buildOneSDKExtension makes before
-// mounting the module itself; both call this one helper.
-func moduleEnabled(cfg *config.Config, name string) (bool, error) {
-	return moduleEnabledIn(cfg.Extensions.Modules, name)
-}
-
-// moduleEnabledIn is moduleEnabled's modules-map form - see pluginModuleGateEnabled.
+// moduleEnabledIn reports whether extensions.<name> is configured and not explicitly
+// disabled - the one decision plugin gating and loadExtensionConfig (boot, validate) share.
 func moduleEnabledIn(modules map[string]yaml.Node, name string) (bool, error) {
 	node, ok := modules[name]
 	if !ok {

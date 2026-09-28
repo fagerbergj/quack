@@ -677,14 +677,13 @@ func newServerLoginCmd() *cobra.Command {
 	return c
 }
 
-// newServerValidateCmd: `quack server validate [path]` - loads and validates a
-// quack.yaml (config.Load: parse, ${VAR} expand, validate) without starting the
-// server. Same default-path resolution as `server run`'s --config.
+// newServerValidateCmd: builds each enabled extension as boot does, so it needs boot's
+// extension secrets; --skip-extensions is the structure-only escape.
 func newServerValidateCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, skipExtensions bool
 	c := &cobra.Command{
 		Use:   "validate [path]",
-		Short: "Load and validate a quack.yaml without starting the server",
+		Short: "Load and validate a quack.yaml and build each enabled extension, without starting the server",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := defaultConfigPath()
@@ -706,27 +705,44 @@ func newServerValidateCmd() *cobra.Command {
 			if err := cfg.RequireAgentBundlesAndModels(); err != nil {
 				return err
 			}
-			stale := staleAgentBundles(cfg)
+			res := serverValidateResult{Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, StaleBundles: staleAgentBundles(cfg)}
+			if !skipExtensions {
+				exts, err := serve.ValidateExtensions(cfg)
+				if err != nil {
+					return err
+				}
+				res.Extensions, res.DisabledExtensions = exts.Accepted, exts.Disabled
+			}
 			if asJSON {
-				return cli.WriteJSON(cmd.OutOrStdout(), serverValidateResult{
-					Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, StaleBundles: stale,
-				})
+				return cli.WriteJSON(cmd.OutOrStdout(), res)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: OK\n", path)
-			for _, r := range seeded {
-				fmt.Fprintf(cmd.OutOrStdout(), "  plugin %s: agents %v, shapes %v\n", r.Plugin, r.Agents, r.Shapes)
-			}
-			for _, name := range unresolvable {
-				fmt.Fprintf(cmd.OutOrStdout(), "  plugin %s: not resolvable offline (not cloned locally; run a real boot or fetch first)\n", name)
-			}
-			for _, name := range stale {
-				fmt.Fprintf(cmd.OutOrStdout(), "  agent %s: bundle path does not exist on disk\n", name)
-			}
+			printServerValidate(cmd.OutOrStdout(), res)
 			return nil
 		},
 	}
 	asJSONFlag(c, &asJSON)
+	c.Flags().BoolVar(&skipExtensions, "skip-extensions", false, "structure-only: don't build extensions (no extension secrets, key files or data dirs needed)")
 	return c
+}
+
+// printServerValidate is `server validate`'s human-readable form of res.
+func printServerValidate(w io.Writer, res serverValidateResult) {
+	fmt.Fprintf(w, "%s: OK\n", res.Path)
+	for _, name := range res.Extensions {
+		fmt.Fprintf(w, "  extension %s: config accepted\n", name)
+	}
+	for _, name := range res.DisabledExtensions {
+		fmt.Fprintf(w, "  extension %s: disabled (not checked)\n", name)
+	}
+	for _, r := range res.Plugins {
+		fmt.Fprintf(w, "  plugin %s: agents %v, shapes %v\n", r.Plugin, r.Agents, r.Shapes)
+	}
+	for _, name := range res.Unresolvable {
+		fmt.Fprintf(w, "  plugin %s: not resolvable offline (not cloned locally; run a real boot or fetch first)\n", name)
+	}
+	for _, name := range res.StaleBundles {
+		fmt.Fprintf(w, "  agent %s: bundle path does not exist on disk\n", name)
+	}
 }
 
 // staleAgentBundles catches a stale or typo'd `bundle:` path up front, via
@@ -753,6 +769,10 @@ type serverValidateResult struct {
 	Unresolvable []string `json:"unresolvable,omitempty"`
 	// StaleBundles names a configured agent whose bundle path is missing.
 	StaleBundles []string `json:"stale_bundles,omitempty"`
+	// Extensions names each enabled extension whose Factory accepted its config.
+	Extensions []string `json:"extensions,omitempty"`
+	// DisabledExtensions names each configured extension with enabled: false (not built).
+	DisabledExtensions []string `json:"disabled_extensions,omitempty"`
 }
 
 // newServerInitCmd: `quack server init` - the server-config wizard (LLM
