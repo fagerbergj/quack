@@ -208,7 +208,7 @@ func TestWrapArgvNoneStaysUnwrapped(t *testing.T) {
 	dir := t.TempDir()
 	argv := []string{"pi-acp", "run"}
 	for _, mode := range []SandboxMode{SandboxNone, ""} {
-		got := WrapArgv(dir, argv, Caps{Sandbox: mode, HomeDir: t.TempDir()}, []string{"/skills"}, nil)
+		got := unreaped(WrapArgv(dir, argv, Caps{Sandbox: mode, HomeDir: t.TempDir()}, []string{"/skills"}, nil))
 		if len(got) != 2 || got[0] != "pi-acp" || got[1] != "run" {
 			t.Errorf("mode %q: WrapArgv = %v, want argv unchanged", mode, got)
 		}

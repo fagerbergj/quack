@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -252,16 +253,49 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	// so the scrub (no inherited secrets, a fixed PATH, the isolated HOME) holds
 	// identically in both modes.
 	cmd.Env = childEnv(dir, caps)
-	// Own process group + group kill + WaitDelay to prevent grandchild hangs.
+	// Own process group + StopChild + WaitDelay to prevent grandchild hangs.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // negative pid = the process group
-	}
+	cmd.Cancel = func() error { return StopChild(cmd) }
 	cmd.WaitDelay = childWaitDelay
 	return cmd, nil
+}
+
+// reapGrace bounds how long a __reap wrapper gets after reapStopSignal; it exceeds reapSweepBudget.
+var reapGrace = 8 * time.Second
+
+// reapStopSignal is StopChild's private hard stop for a __reap wrapper, which forwards SIGTERM/SIGINT/
+// SIGHUP/SIGQUIT to its target instead so a graceful signal stays graceful.
+const reapStopSignal = syscall.SIGUSR2
+
+// StopChild tears down a child built from WrapArgv/childArgv argv. A __reap wrapper gets
+// reapStopSignal and kills every descendant itself; otherwise (or if it overruns) killGroup.
+func StopChild(cmd *exec.Cmd) error {
+	p := cmd.Process
+	if p == nil {
+		return nil
+	}
+	if len(cmd.Args) < 2 || cmd.Args[1] != ReapArg {
+		return killGroup(p)
+	}
+	grace := reapGrace
+	time.AfterFunc(grace, func() {
+		if p.Signal(syscall.Signal(0)) != nil {
+			return // exited and reaped
+		}
+		if killGroup(p) == nil {
+			slog.Error("sandbox reaper still running after its stop signal; SIGKILLed it and its process group, descendants outside the group may survive",
+				"component", "workspace", "pid", p.Pid, "grace", grace)
+		}
+	})
+	return p.Signal(reapStopSignal)
+}
+
+// killGroup SIGKILLs p's process group, or p alone when it leads no group (no Setpgid).
+func killGroup(p *os.Process) error {
+	if syscall.Kill(-p.Pid, syscall.SIGKILL) == nil {
+		return nil
+	}
+	return p.Kill()
 }
 
 // childWaitDelay bounds Wait() pipe I/O block after child exit. Package var for tests.
@@ -398,7 +432,7 @@ func startPipelineCmds(cmds []*exec.Cmd, stages [][]string) error {
 		if err := cmd.Start(); err != nil {
 			// Reap anything already started so nothing leaks.
 			for _, prev := range cmds[:i] {
-				_ = prev.Process.Kill()
+				_ = StopChild(prev)
 				_ = prev.Wait()
 			}
 			return fmt.Errorf("workspace: start %v: %w", stages[i], err)

@@ -22,10 +22,13 @@ import (
 const runAsMCPStub = "_QUACK_MCP_STUB_SERVER"
 
 func TestMain(m *testing.M) {
+	// Before the stub intercept: the __reap wrapper inherits runAsMCPStub too.
+	workspace.RunSandboxExecIfInvoked()
 	if os.Getenv(runAsMCPStub) != "" {
 		runMCPStubServer()
 		return
 	}
+	workspace.GitProtocol = "file" // plugin fixtures are local bare repos
 	os.Exit(m.Run())
 }
 

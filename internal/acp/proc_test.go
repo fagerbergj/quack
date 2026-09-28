@@ -157,7 +157,7 @@ func TestSpawnEnvAllowsLocalGitPush(t *testing.T) {
 }
 
 // TestWrappedArgvLandlock: mode landlock wraps Command through the Landlock
-// shim - argv[1] is the SandboxExecArg dispatch, and the node dir (cwd) is
+// shim - argv carries the SandboxExecArg dispatch, and the node dir (cwd) is
 // granted, with the original command preserved past "--".
 func TestWrappedArgvLandlock(t *testing.T) {
 	cwd := t.TempDir()
@@ -167,8 +167,8 @@ func TestWrappedArgvLandlock(t *testing.T) {
 		SkillPaths: func() []string { return []string{"/skills"} },
 	}}
 	argv := a.wrappedArgv(cwd, a.opts.Caps)
-	if len(argv) < 2 || argv[1] != workspace.SandboxExecArg {
-		t.Fatalf("wrappedArgv landlock = %v, want argv[1] == %q", argv, workspace.SandboxExecArg)
+	if !slices.Contains(argv, workspace.SandboxExecArg) {
+		t.Fatalf("wrappedArgv landlock = %v, want the %q dispatch", argv, workspace.SandboxExecArg)
 	}
 	joined := strings.Join(argv, " ")
 	if !strings.Contains(joined, cwd) {
@@ -216,6 +216,9 @@ func TestWrappedArgvUnwrappedUnderNone(t *testing.T) {
 	for _, mode := range []workspace.SandboxMode{workspace.SandboxNone, ""} {
 		a := &Agent{opts: Options{Command: []string{"pi-acp", "run"}, Caps: workspace.Caps{Sandbox: mode}}}
 		argv := a.wrappedArgv(t.TempDir(), a.opts.Caps)
+		if len(argv) > 3 && argv[1] == workspace.ReapArg {
+			argv = argv[3:] // the descendant reaper is not a sandbox boundary
+		}
 		if len(argv) != 2 || argv[0] != "pi-acp" || argv[1] != "run" {
 			t.Errorf("mode %q: wrappedArgv = %v, want unchanged [pi-acp run]", mode, argv)
 		}

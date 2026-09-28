@@ -9,7 +9,10 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/pluginreg/pluginregtest"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+func init() { workspace.GitProtocol = "file" } // fixtures are local bare repos
 
 // run/newFixtureRepo/commitAndPush wrap pluginregtest, the implementation
 // shared with internal/server/rest's plugin handler tests (#1430).
@@ -719,5 +722,47 @@ func TestFetchCheckoutFailureStoresOldSHA(t *testing.T) {
 	}
 	if stored.Error == "" {
 		t.Fatal("stored row lost the checkout error")
+	}
+}
+
+// TestGitEnvIsMinimalAndTokenIsGitHubScoped: git sees only gitPassEnv of the server's env, and the token header
+// resolves only for https://github.com/ URLs (git's http.<url>.* matching).
+func TestGitEnvIsMinimalAndTokenIsGitHubScoped(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "sekret")
+	t.Setenv("QUACK_TEST_SERVER_SECRET", "hunter2")
+	passed := map[string]string{}
+	for _, k := range gitPassEnv[1:] { // PATH keeps its real value so git and sh resolve
+		passed[k] = "/pass/" + k
+		if k == "TMPDIR" {
+			passed[k] = t.TempDir()
+		}
+		t.Setenv(k, passed[k])
+	}
+	ctx := context.Background()
+	env, err := runGit(ctx, "", "-c", "alias.env=!env", "env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range passed {
+		if !strings.Contains("\n"+env, "\n"+k+"="+v+"\n") {
+			t.Errorf("git child env lacks allowlisted %s=%s", k, v)
+		}
+	}
+	for _, leak := range []string{"hunter2", "GITHUB_TOKEN="} {
+		if strings.Contains(env, leak) {
+			t.Errorf("git child env carries %q:\n%s", leak, env)
+		}
+	}
+	header := func(url string) string {
+		out, _ := runGit(ctx, "", "config", "--get-urlmatch", "http.extraheader", url)
+		return strings.TrimSpace(out)
+	}
+	if got := header("https://github.com/o/r.git"); got != "AUTHORIZATION: bearer sekret" {
+		t.Errorf("github.com header = %q, want the bearer token", got)
+	}
+	for _, url := range []string{"https://example.com/o/r.git", "https://github.com.evil.example/o/r.git", "https://gist.github.com/o/r.git", "http://github.com/o/r.git"} {
+		if got := header(url); got != "" {
+			t.Errorf("%s header = %q, want none", url, got)
+		}
 	}
 }

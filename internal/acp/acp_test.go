@@ -30,6 +30,8 @@ import (
 // with QUACK_ACP_FAKE set, and this intercept runs the agent side of the
 // protocol over stdio instead of the test suite - a real subprocess round with no external dependency.
 func TestMain(m *testing.M) {
+	// Before the fake-agent intercept: the __reap wrapper inherits QUACK_ACP_FAKE too.
+	workspace.RunSandboxExecIfInvoked()
 	if mode := os.Getenv("QUACK_ACP_FAKE"); mode != "" {
 		runFakeAgent(mode)
 		os.Exit(0)

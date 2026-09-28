@@ -18,7 +18,10 @@ import (
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/pluginreg/pluginregtest"
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+func init() { workspace.GitProtocol = "file" } // plugin fixtures are local bare repos
 
 // newFixtureRepo/commitAndPush are pluginregtest's shared git fixture -
 // see internal/pluginreg/fetch_test.go for the same wrapping.
