@@ -770,7 +770,7 @@ type serverValidateResult struct {
 	Plugins []serve.PluginSeedResult `json:"plugins,omitempty"`
 	// Unresolvable names a plugins.seed row validate couldn't check offline.
 	Unresolvable []string `json:"unresolvable,omitempty"`
-	// DroppedOverrides names each bundle-less agents: entry no plugin seeded; boot drops it too.
+	// DroppedOverrides names each non-optional bundle-less entry no plugin seeded; boot drops it too.
 	DroppedOverrides []string `json:"dropped_overrides,omitempty"`
 	// StaleBundles names a configured agent whose bundle path is missing.
 	StaleBundles []string `json:"stale_bundles,omitempty"`

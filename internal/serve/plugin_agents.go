@@ -64,16 +64,22 @@ func seedPlugin(cfg *config.Config, p plugin.Plugin) (PluginSeedResult, error) {
 	return r, nil
 }
 
-// dropUnclaimedOverrides removes every bundle:-less entry no plugin seeded. Such an
-// entry is only legal as a plugin override, so a missing plugin costs the agent, not the boot.
+// dropUnclaimedOverrides removes every bundle:-less entry no plugin seeded (only legal as a plugin
+// override, so a missing plugin costs the agent, not the boot); it returns the non-optional ones.
 func dropUnclaimedOverrides(cfg *config.Config) []string {
 	var dropped []string
 	for _, name := range slices.Sorted(maps.Keys(cfg.Agents)) {
-		if cfg.Agents[name].Bundle == "" {
-			delete(cfg.Agents, name)
-			dropped = append(dropped, name)
-			slog.Error(fmt.Sprintf("no plugin seeded agent %q (plugin unfetched/refused or module disabled); override dropped", name), "component", "startup")
+		ac := cfg.Agents[name]
+		if ac.Bundle != "" {
+			continue
 		}
+		delete(cfg.Agents, name)
+		if ac.Optional {
+			slog.Warn("optional agent has no plugin-supplied bundle; dropped from the roster", "component", "startup", "agent", name)
+			continue
+		}
+		dropped = append(dropped, name)
+		slog.Error(fmt.Sprintf("no plugin seeded agent %q (plugin unfetched/refused or module disabled); override dropped", name), "component", "startup")
 	}
 	return dropped
 }

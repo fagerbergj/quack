@@ -279,3 +279,25 @@ func TestSeedPluginsDropsUnclaimedOverrideAndLogs(t *testing.T) {
 		t.Errorf("log = %q, want an error naming lineup-analyst", log)
 	}
 }
+
+// An override the operator marked optional is expected to go unclaimed: it is
+// dropped with a warning, not reported as a failure.
+func TestSeedPluginsDropsOptionalUnclaimedOverrideQuietly(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+	cfg := minimalPluginTestConfig()
+	cfg.Agents["code-reviewer"] = config.AgentConfig{Optional: true}
+
+	cand, _, _, dropped, err := seedPlugins(cfg, nil, func(plugin.Plugin, error) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dropped) != 0 || len(cand.Agents) != 0 {
+		t.Fatalf("dropped = %v, agents = %v; want code-reviewer removed but not reported", dropped, cand.Agents)
+	}
+	if log := buf.String(); strings.Contains(log, "level=ERROR") || !strings.Contains(log, "level=WARN") {
+		t.Errorf("log = %q, want one warning and no error", log)
+	}
+}
