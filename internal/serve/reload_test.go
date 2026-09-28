@@ -31,6 +31,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/skillsource"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -106,7 +107,7 @@ func newReloadRig(t *testing.T, cfg *config.Config, build func(*config.Config, [
 	rig.r = &reloader{cfg: cfg, reg: rig.reg, skills: newSwappableSkillSource(newSkillSource(nil))}
 	rig.r.declared.Store(&map[string]bool{})
 	rr := &rosterReload{pristine: cloneForSeeding(cfg), build: build, mcpOn: true, exec: rig.exec, shapesRef: &rig.shapes}
-	rr.cur = rr.generation(context.Background(), cfg, builtAgents{gateCfgs: newGateConfigs(0)}, newMCPSet(cfg.Workspace.Root, noSandbox()), 1)
+	rr.cur = rr.generation(context.Background(), cfg, builtAgents{gateCfgs: newGateConfigs(0)}, newMCPSet(cfg.Workspace.Root, noSandbox()), nil, 1)
 	rig.exec.SetRoster(rr.cur.roster)
 	rig.r.attach(rr)
 	t.Cleanup(rig.r.shutdown)
@@ -473,7 +474,7 @@ func TestDiffGenerations(t *testing.T) {
 		configs: map[string]string{"same": "c", "rebundled": "c", "reconfigured": "c2", "new": "c"},
 		shapes:  []workflowcatalog.Shape{{Name: "kept"}, {Name: "edited", Trigger: "b"}, {Name: "added"}},
 	}
-	rep := newReloadReport(1)
+	rep := rest.NewReloadReport(1)
 	diffGenerations(old, next, &rep)
 	want := schema.PluginReloadAgents{
 		Added:   []string{"new"},
@@ -493,7 +494,7 @@ func TestDiffGenerations(t *testing.T) {
 
 // The wire report never carries null lists.
 func TestNewReloadReportListsAreEmptyNotNull(t *testing.T) {
-	raw, _ := json.Marshal(newReloadReport(7))
+	raw, _ := json.Marshal(rest.NewReloadReport(7))
 	if strings.Contains(string(raw), "null") {
 		t.Fatalf("report = %s, want [] for every list", raw)
 	}
@@ -534,5 +535,115 @@ func TestInProcessBootServesPluginReload(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK || rep.Generation != 2 {
 		t.Fatalf("reload = %d %+v, want 200 at generation 2", resp.StatusCode, rep)
+	}
+}
+
+// Any build error on a plugin agent drops that agent, named with its plugin;
+// the rest of the reload still swaps in.
+func TestReloadDropsPluginAgentWithBrokenBundle(t *testing.T) {
+	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
+	rig := newReloadRig(t, reloadTestConfig(), realBuild(t))
+	good := filepath.Join(t.TempDir(), "good")
+	writeReloadPlugin(t, good, reloadPlugin{agents: map[string]string{"scout": "model_role: researcher\n"}})
+	bad := filepath.Join(t.TempDir(), "bad")
+	writeReloadPlugin(t, bad, reloadPlugin{agents: map[string]string{"typo": "model_role: researcher\n"}})
+	if err := os.WriteFile(filepath.Join(bad, "agents", "typo", "agent-card.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rig.addLocal(t, good)
+	rig.addLocal(t, bad)
+	rep := rig.reload(t)
+	if !slices.Equal(rep.Agents.Added, []string{"scout"}) {
+		t.Fatalf("added = %v, want scout alone", rep.Agents.Added)
+	}
+	if f, ok := failureFor(rep, schema.Agent, "typo"); !ok || f.Plugin == nil || *f.Plugin != "bad" {
+		t.Fatalf("failures = %+v, want typo dropped, owned by bad", rep.Failures)
+	}
+	rep = rig.reload(t)
+	if rep.Generation != 3 {
+		t.Fatalf("second reload generation = %d, want 3: a broken plugin must not poison later reloads", rep.Generation)
+	}
+}
+
+// Concurrent reloads serialize: each one advances the generation once.
+func TestReloadConcurrentReloadsSerialize(t *testing.T) {
+	installMCPStub(t)
+	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
+	rig := newReloadRig(t, reloadTestConfig(), fakeBuild(func() model.LLM { return stubLLM{} }))
+	root := filepath.Join(t.TempDir(), "p")
+	writeReloadPlugin(t, root, reloadPlugin{agents: map[string]string{"scout": "model_role: researcher\n"}, servers: stubServer("s", "")})
+	rig.addLocal(t, root)
+	var wg sync.WaitGroup
+	for range 6 {
+		wg.Go(func() { _, _ = rig.r.reload(context.Background()) })
+		wg.Go(func() {
+			ctx, done := rig.exec.Pin(context.Background())
+			_ = rig.exec.RosterFor(ctx)
+			done()
+		})
+	}
+	wg.Wait()
+	if g := rig.cur().roster.Gen; g != 7 {
+		t.Fatalf("generation = %d, want 7 after six reloads", g)
+	}
+}
+
+// Shutdown stops every generation's servers, retired ones included, and a
+// later reload refuses instead of spawning servers nothing would stop.
+func TestReloadShutdownStopsAllServersAndRefusesReload(t *testing.T) {
+	installMCPStub(t)
+	rig := newReloadRig(t, reloadTestConfig(), fakeBuild(func() model.LLM { return stubLLM{} }))
+	root := filepath.Join(t.TempDir(), "p")
+	writeReloadPlugin(t, root, reloadPlugin{servers: stubServer("s", "")})
+	rig.addLocal(t, root)
+	rig.reload(t)
+	oldPID := procPID(procFor(t, rig.cur().mcp, "p/s"))
+	_, done := rig.exec.Pin(context.Background())
+	defer done()
+	writeReloadPlugin(t, root, reloadPlugin{servers: stubServer("s", `,"GEN":"2"`)})
+	rig.reload(t)
+	newPID := procPID(procFor(t, rig.cur().mcp, "p/s"))
+
+	rig.r.shutdown()
+	if pidAlive(oldPID) || pidAlive(newPID) {
+		t.Fatal("shutdown returned with a server still running (the retired one is still pinned)")
+	}
+	rep, err := rig.r.reload(context.Background())
+	if _, ok := failureFor(rep, schema.Closed, ""); err == nil || !ok {
+		t.Fatalf("reload after shutdown = (%+v, %v), want a closed refusal", rep, err)
+	}
+}
+
+// A non-optional override whose plugin stopped seeding it aborts, naming the plugin that used to.
+func TestReloadNamesPluginOfOrphanedOverride(t *testing.T) {
+	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
+	cfg := reloadTestConfig()
+	cfg.Agents = map[string]config.AgentConfig{"analyst": {ContextWindow: 1234}}
+	rig := newReloadRig(t, cfg, fakeBuild(func() model.LLM { return stubLLM{} }))
+	root := filepath.Join(t.TempDir(), "p")
+	writeReloadPlugin(t, root, reloadPlugin{agents: map[string]string{"analyst": "model_role: researcher\n"}})
+	rig.addLocal(t, root)
+	rig.reload(t)
+	writeReloadPlugin(t, root, reloadPlugin{})
+	rep, err := rig.r.reload(context.Background())
+	f, ok := failureFor(rep, schema.Config, "analyst")
+	if err == nil || !ok || f.Plugin == nil || *f.Plugin != "p" {
+		t.Fatalf("reload = (%+v, %v), want a config abort naming analyst and plugin p", rep.Failures, err)
+	}
+}
+
+// A shape naming an agent that never built is dropped from the catalog, not served dangling.
+func TestCatalogShapesDropsShapesNamingMissingAgents(t *testing.T) {
+	a, err := llmagent.New(llmagent.Config{Name: "here", Model: stubLLM{}, Instruction: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []workflowcatalog.Shape{
+		{Name: "ok", Agents: []string{"here"}},
+		{Name: "dangling", Agents: []string{"here"}, Nodes: []config.WorkflowNode{{ID: "n", Agent: "gone"}}},
+	}
+	got := catalogShapes(raw, map[string]adkagent.Agent{"here": a})
+	if len(got) != 1 || got[0].Name != "ok" {
+		t.Fatalf("catalog = %+v, want only ok", got)
 	}
 }

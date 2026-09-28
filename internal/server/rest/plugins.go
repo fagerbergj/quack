@@ -36,6 +36,9 @@ type Plugins struct {
 	// mcpDeclared reports, by row name, which plugins currently declare an
 	// mcp.json server - the note on the wire row.
 	mcpDeclared func() map[string]bool
+	// writeMu serializes every fetch/delete with the reload after it, so a
+	// reload never reads a clone mid-checkout.
+	writeMu sync.Mutex
 }
 
 // NewPlugins builds the handler's registry access. reload and mcpDeclared
@@ -56,9 +59,25 @@ func (p *Plugins) declaresMCP(name string) bool {
 // refusal, a registry read failure, ...); the report still says why.
 func (p *Plugins) rebuild(ctx context.Context) (schema.PluginReloadReport, error) {
 	if p == nil || p.reload == nil {
-		return schema.PluginReloadReport{}, nil
+		return NewReloadReport(0), nil
 	}
 	return p.reload(ctx)
+}
+
+// NewReloadReport starts every list empty, never null, on the wire.
+func NewReloadReport(gen uint64) schema.PluginReloadReport {
+	return schema.PluginReloadReport{
+		Generation: int64(gen),
+		Agents:     schema.PluginReloadAgents{Added: []string{}, Updated: []schema.PluginReloadAgentUpdate{}, Removed: []string{}},
+		Workflows:  schema.PluginReloadNames{Added: []string{}, Updated: []string{}, Removed: []string{}},
+		McpServers: schema.PluginReloadServers{Started: []string{}, Reused: []string{}, Stopped: []string{}},
+		Failures:   []schema.PluginReloadFailure{},
+	}
+}
+
+// reloadError is a 422 carrying the reload's report next to the message.
+func reloadError(w http.ResponseWriter, msg string, rep schema.PluginReloadReport) {
+	writeJSON(w, http.StatusUnprocessableEntity, schema.PluginReloadError{Error: msg, Reload: rep})
 }
 
 // refusal is name's admission failure in rep, if the reload refused that row.
@@ -191,6 +210,8 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row := pluginreg.FromEntry(entry)
+	h.plugins.writeMu.Lock()
+	defer h.plugins.writeMu.Unlock()
 	if err := h.plugins.reg.Put(r.Context(), row); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, pluginreg.ErrNameCollision) {
@@ -212,15 +233,16 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeReloaded reloads after an add or update of row: 422 when nothing
-// swapped or row itself was refused (admitPlugins already persisted that on it).
+// swapped or row itself was refused (admitPlugins already persisted that on
+// it). The row stays registered either way, to be fixed and updated.
 func (h *Handler) writeReloaded(w http.ResponseWriter, r *http.Request, status int, row pluginreg.Plugin) {
 	rep, err := h.plugins.rebuild(r.Context())
 	if err != nil {
-		errMsg(w, http.StatusUnprocessableEntity, err.Error())
+		reloadError(w, err.Error(), rep)
 		return
 	}
 	if msg, ok := refusal(rep, row.Name); ok {
-		errMsg(w, http.StatusUnprocessableEntity, msg)
+		reloadError(w, msg, rep)
 		return
 	}
 	wire := pluginWire(h.plugins.root, row, h.plugins.declaresMCP(row.Name))
@@ -238,6 +260,8 @@ func (h *Handler) DeletePlugin(w http.ResponseWriter, r *http.Request, name sche
 		errMsg(w, http.StatusBadRequest, `"quack" is reserved for the built-in embedded plugin and cannot be removed`)
 		return
 	}
+	h.plugins.writeMu.Lock()
+	defer h.plugins.writeMu.Unlock()
 	err := h.plugins.reg.Delete(r.Context(), name)
 	if errors.Is(err, pluginreg.ErrInvalidName) {
 		errMsg(w, http.StatusBadRequest, err.Error())
@@ -266,6 +290,8 @@ func (h *Handler) ReloadPlugins(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
 		return
 	}
+	h.plugins.writeMu.Lock()
+	defer h.plugins.writeMu.Unlock()
 	rep, err := h.plugins.rebuild(r.Context())
 	status := http.StatusOK
 	if err != nil {
@@ -315,6 +341,8 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 	if !h.requirePlugins(w) {
 		return
 	}
+	h.plugins.writeMu.Lock()
+	defer h.plugins.writeMu.Unlock()
 	rows, err := h.plugins.reg.List(r.Context())
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -336,6 +364,8 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
 		return
 	}
+	h.plugins.writeMu.Lock()
+	defer h.plugins.writeMu.Unlock()
 	rows, err := h.plugins.reg.List(r.Context())
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -357,7 +387,7 @@ func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 	})
 	rep, rerr := h.plugins.rebuild(r.Context())
 	if rerr != nil {
-		errMsg(w, http.StatusUnprocessableEntity, rerr.Error())
+		reloadError(w, rerr.Error(), rep)
 		return
 	}
 	wire := make([]schema.Plugin, len(results))

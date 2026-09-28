@@ -1301,11 +1301,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: fetched, but the plugin's own content is refused (e.g. declares an unlinked module) - the row is stored with the refusal in `error`
+          description: >-
+            Fetched, but the plugin was refused (e.g. declares an unlinked module), or
+            the roster reload that followed aborted. The row stays registered either
+            way - a refusal is also stored in its `error` - and `reload` says why.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/PluginReloadError"
 
   /api/v1/plugins/updates:
     get:
@@ -1342,11 +1345,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/PluginList"
         "422":
-          description: the roster rebuild itself failed (a plugins.seed refusal, or a registry read failure) - a fetched row's OWN refusal lands in its `error` field in the 200 body instead, never as a 422
+          description: the roster reload itself aborted (a plugins.seed refusal, a registry read failure, ...) - fetched rows stay fetched; a row's OWN refusal lands in its `error` field in the 200 body instead, never as a 422
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/PluginReloadError"
 
   /api/v1/plugins/reload:
     post:
@@ -1423,11 +1426,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: fetched, but the roster rebuild that followed was refused (e.g. the plugin declares an unlinked module)
+          description: >-
+            Fetched, but the plugin was refused (e.g. declares an unlinked module), or
+            the roster reload that followed aborted. The fetched row stays; `reload` says why.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/PluginReloadError"
 
 components:
   parameters:
@@ -2442,6 +2447,16 @@ components:
           items:
             $ref: "#/components/schemas/PluginReloadFailure"
 
+    PluginReloadError:
+      description: A refused plugin or aborted reload - ErrorResponse plus the reload's report.
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          required: [reload]
+          properties:
+            reload:
+              $ref: "#/components/schemas/PluginReloadReport"
+
     PluginReloadAgents:
       type: object
       required: [added, updated, removed]
@@ -2517,7 +2532,7 @@ components:
           description: The agent or MCP server that failed, absent for a whole-plugin failure.
         stage:
           type: string
-          enum: [registry, resolve, admission, seed, config, mcp, agent]
+          enum: [registry, resolve, admission, seed, config, mcp, agent, closed]
         error:
           type: string
 

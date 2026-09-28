@@ -515,3 +515,39 @@ func TestCreatePluginRefusesReloadName(t *testing.T) {
 		t.Fatalf("status = %d, want 400 for the reserved name", w.Code)
 	}
 }
+
+// A create whose reload aborts answers 422 with the report, and the row stays registered.
+func TestCreatePluginReloadAbortKeepsRowAndReports(t *testing.T) {
+	bare, _ := newFixtureRepo(t)
+	withFixedRemote(t, bare)
+	root := t.TempDir()
+	reg := pluginreg.NewFSRegistry(root)
+	h := &Handler{}
+	h.SetPlugins(NewPlugins(reg, root, nil, func(context.Context) (schema.PluginReloadReport, error) {
+		rep := NewReloadReport(3)
+		rep.Failures = append(rep.Failures, schema.PluginReloadFailure{Stage: schema.Registry, Error: "registry down"})
+		return rep, errors.New("registry down")
+	}, nil))
+	w := doJSON(t, h.CreatePlugin, http.MethodPost, `{"entry":"github:acme/widgets"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", w.Code)
+	}
+	var body schema.PluginReloadError
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil || body.Error != "registry down" || body.Reload.Generation != 3 || len(body.Reload.Failures) != 1 {
+		t.Fatalf("body = %+v (%v), want the message and the reload report", body, err)
+	}
+	rows, err := reg.List(context.Background())
+	if err != nil || len(rows) != 1 || rows[0].Name != "widgets" {
+		t.Fatalf("rows = %+v (%v), want widgets kept", rows, err)
+	}
+}
+
+func TestReloadUnwiredReportsEmptyLists(t *testing.T) {
+	root := t.TempDir()
+	h := &Handler{}
+	h.SetPlugins(NewPlugins(pluginreg.NewFSRegistry(root), root, nil, nil, nil))
+	w := doJSON(t, h.ReloadPlugins, http.MethodPost, "")
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "null") {
+		t.Fatalf("unwired reload = %d %s, want 200 with empty lists", w.Code, w.Body.String())
+	}
+}

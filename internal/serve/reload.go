@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"maps"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
 )
 
@@ -34,6 +36,7 @@ type reloader struct {
 	// roster is nil until boot has built the agents; a reload before then
 	// (or in a skills-only test) swaps skills alone.
 	roster *rosterReload
+	closed bool // set by shutdown; a later reload would spawn servers nothing stops
 }
 
 // rosterReload is the agent half of a reload: what boot built the first
@@ -47,6 +50,9 @@ type rosterReload struct {
 	exec      *dag.Executor
 	shapesRef *atomic.Pointer[[]workflowcatalog.Shape]
 	cur       *generation
+
+	setsMu sync.Mutex // OnDead's goroutine untracks without reloadMu
+	sets   map[*mcpSet]struct{}
 }
 
 // builtAgents is one buildAgents pass; dropped holds the optional agents it left out.
@@ -63,6 +69,7 @@ type generation struct {
 	mcp     *mcpSet
 	bundles map[string]string // agent -> bundle hash
 	configs map[string]string // agent -> resolved config digest
+	owners  map[string]string // plugin-seeded agent -> plugin
 	shapes  []workflowcatalog.Shape
 }
 
@@ -73,12 +80,14 @@ func (r *reloader) attach(rr *rosterReload) {
 	r.roster = rr
 }
 
-// shutdown releases whichever MCP set is current; retired sets close as their last run ends.
+// shutdown releases every generation's MCP set, waiting for them to exit,
+// and refuses later reloads.
 func (r *reloader) shutdown() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.closed = true
 	if r.roster != nil {
-		r.roster.cur.mcp.Release()
+		r.roster.releaseAll()
 	}
 }
 
@@ -91,7 +100,10 @@ func (r *reloader) reload(ctx context.Context) (schema.PluginReloadReport, error
 	defer r.mu.Unlock()
 	// A client hanging up must not leave half-spawned servers behind.
 	ctx = context.WithoutCancel(ctx)
-	rep := newReloadReport(r.generation())
+	rep := rest.NewReloadReport(r.generation())
+	if r.closed {
+		return rep, abortReload(&rep, schema.Closed, errors.New("server is shutting down"))
+	}
 	admitted, err := r.admit(ctx, &rep)
 	if err != nil {
 		return rep, err
@@ -146,46 +158,78 @@ func (r *reloader) swapSkills(admitted []plugin.Plugin) {
 // next builds the candidate generation; admitted comes back without the
 // plugins whose seeding failed.
 func (g *rosterReload) next(ctx context.Context, admitted []plugin.Plugin, rep *schema.PluginReloadReport) (*generation, []plugin.Plugin, error) {
-	cand, admitted, owners := g.seed(admitted, rep)
+	cand, admitted, results, _ := seedPlugins(g.pristine, admitted, func(p plugin.Plugin, err error) error {
+		reloadFailure(rep, p.Name, "", schema.Seed, err)
+		return nil
+	})
 	if err := cand.RequireAgentBundlesAndModels(); err != nil {
-		return nil, nil, abortReload(rep, schema.Config, err)
+		return nil, nil, g.abortIncomplete(rep, cand, err)
 	}
+	owners := seedOwners(results)
 	set := g.nextMCP(ctx, admitted, rep)
 	built, err := g.build(cand, append(slices.Clone(g.sdkTools), set.tools()...))
 	if err != nil {
 		if set != g.cur.mcp {
-			go set.Release()
+			set.Release()
 		}
 		return nil, nil, abortReload(rep, schema.Agent, err)
 	}
 	for _, name := range slices.Sorted(maps.Keys(built.dropped)) {
 		reloadFailure(rep, owners[name], name, schema.Agent, built.dropped[name])
 	}
-	return g.generation(ctx, cand, built, set, g.cur.roster.Gen+1), admitted, nil
+	return g.generation(ctx, cand, built, set, owners, g.cur.roster.Gen+1), admitted, nil
 }
 
-// seed merges each plugin into its own copy of the candidate, so one plugin's
-// failed seed is dropped without leaving half its agents behind.
-func (g *rosterReload) seed(admitted []plugin.Plugin, rep *schema.PluginReloadReport) (*config.Config, []plugin.Plugin, map[string]string) {
-	cand := cloneForSeeding(g.pristine)
-	kept := make([]plugin.Plugin, 0, len(admitted))
-	owners := map[string]string{}
-	for _, p := range admitted {
+// abortIncomplete names each agent left without a bundle and the plugin that
+// last supplied it - a config override whose plugin stopped seeding it.
+func (g *rosterReload) abortIncomplete(rep *schema.PluginReloadReport, cand *config.Config, err error) error {
+	named := false
+	for _, name := range slices.Sorted(maps.Keys(cand.Agents)) {
+		if cand.Agents[name].Bundle == "" {
+			reloadFailure(rep, g.cur.owners[name], name, schema.Config, err)
+			named = true
+		}
+	}
+	if !named {
+		reloadFailure(rep, "", "", schema.Config, err)
+	}
+	return err
+}
+
+// seedPlugins merges each plugin into its own copy of base, so a failed seed
+// leaves none of that plugin behind; fail returns nil to drop it, non-nil to stop.
+func seedPlugins(base *config.Config, plugins []plugin.Plugin, fail func(plugin.Plugin, error) error) (*config.Config, []plugin.Plugin, []PluginSeedResult, error) {
+	cand := cloneForSeeding(base)
+	kept := make([]plugin.Plugin, 0, len(plugins))
+	var results []PluginSeedResult
+	for _, p := range plugins {
 		try := cloneForSeeding(cand)
 		res, err := seedPlugin(try, p)
 		if err != nil {
-			slog.Warn("plugin seed failed at reload; plugin dropped", "component", "reload", "plugin", p.Name, "err", err)
-			reloadFailure(rep, p.Name, "", schema.Seed, err)
+			if ferr := fail(p, err); ferr != nil {
+				return nil, nil, nil, ferr
+			}
+			slog.Warn("plugin seed failed; plugin dropped", "component", "plugin", "plugin", p.Name, "err", err)
 			continue
 		}
 		cand = try
 		kept = append(kept, p)
-		for _, a := range res.Agents {
-			owners[a] = p.Name
+		if len(res.Agents) > 0 || len(res.Shapes) > 0 {
+			results = append(results, res)
 		}
 	}
 	dropUnclaimedOptionalAgents(cand)
-	return cand, kept, owners
+	return cand, kept, results, nil
+}
+
+func seedOwners(results []PluginSeedResult) map[string]string {
+	owners := map[string]string{}
+	for _, r := range results {
+		for _, a := range r.Agents {
+			owners[a] = r.Plugin
+		}
+	}
+	return owners
 }
 
 func (g *rosterReload) nextMCP(ctx context.Context, admitted []plugin.Plugin, rep *schema.PluginReloadReport) *mcpSet {
@@ -203,42 +247,80 @@ func (g *rosterReload) nextMCP(ctx context.Context, admitted []plugin.Plugin, re
 }
 
 // generation wraps one build as a roster whose death releases set.
-func (g *rosterReload) generation(ctx context.Context, cfg *config.Config, built builtAgents, set *mcpSet, gen uint64) *generation {
+func (g *rosterReload) generation(ctx context.Context, cfg *config.Config, built builtAgents, set *mcpSet, owners map[string]string, gen uint64) *generation {
+	g.track(set)
 	infos, media, text, bundles := buildAgentInfos(ctx, cfg, g.res, built.clients)
 	roster := &dag.Roster{
 		Gen: gen, Agents: built.clients, Models: built.models, Media: media, Infos: infos, Text: text,
 		CfgFor: built.gateCfgs.For, SpecFor: admissionSpecFor(cfg),
 		// A retired server still runs from the plugin's one clone dir, which Fetch
 		// checks out in place, so it may read the new generation's files.
-		OnDead: func() { go set.Release() },
+		OnDead: func() {
+			go func() {
+				set.Release()
+				g.untrack(set)
+			}()
+		},
 	}
 	configs := make(map[string]string, len(built.clients))
 	for name := range built.clients {
 		configs[name] = digest(cfg.Agents[name])
 	}
-	shapes := catalogShapes(cfg, workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision), built.clients)
-	return &generation{roster: roster, mcp: set, bundles: bundles, configs: configs, shapes: shapes}
+	shapes := catalogShapes(workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision), built.clients)
+	return &generation{roster: roster, mcp: set, bundles: bundles, configs: configs, owners: owners, shapes: shapes}
+}
+
+func (g *rosterReload) track(set *mcpSet) {
+	g.setsMu.Lock()
+	defer g.setsMu.Unlock()
+	if g.sets == nil {
+		g.sets = map[*mcpSet]struct{}{}
+	}
+	g.sets[set] = struct{}{}
+}
+
+func (g *rosterReload) untrack(set *mcpSet) {
+	g.setsMu.Lock()
+	defer g.setsMu.Unlock()
+	delete(g.sets, set)
+}
+
+// releaseAll waits for every tracked set; Release is once-only, so a set an
+// OnDead goroutine is already releasing is just waited on.
+func (g *rosterReload) releaseAll() {
+	g.setsMu.Lock()
+	sets := slices.Collect(maps.Keys(g.sets))
+	g.setsMu.Unlock()
+	var wg sync.WaitGroup
+	for _, set := range sets {
+		wg.Go(set.Release)
+	}
+	wg.Wait()
 }
 
 // swap installs next for unpinned runs; a run pinned to the old roster keeps it.
+// Names and shapes go first, so a run that pins the new roster never sees older ones.
 func (g *rosterReload) swap(next *generation, rep *schema.PluginReloadReport) {
-	g.exec.SetRoster(next.roster)
 	dag.SetAgentRoster(next.roster.Infos)
 	g.shapesRef.Store(&next.shapes)
+	g.exec.SetRoster(next.roster)
 	diffGenerations(g.cur, next, rep)
 	g.cur = next
 	rep.Generation = int64(next.roster.Gen)
 }
 
-// catalogShapes drops shapes naming an optional agent the build left out.
-func catalogShapes(cfg *config.Config, raw []workflowcatalog.Shape, clients map[string]adkagent.Agent) []workflowcatalog.Shape {
-	dropped := map[string]bool{}
-	for name, ac := range cfg.Agents {
-		if _, ok := clients[name]; ac.Optional && !ok {
-			dropped[name] = true
+// catalogShapes drops shapes naming an agent the build left out or seeding never supplied.
+func catalogShapes(raw []workflowcatalog.Shape, clients map[string]adkagent.Agent) []workflowcatalog.Shape {
+	missing := map[string]bool{}
+	for _, s := range raw {
+		for _, a := range s.Agents {
+			missing[a] = clients[a] == nil
+		}
+		for _, n := range s.Nodes {
+			missing[n.Agent] = clients[n.Agent] == nil
 		}
 	}
-	return workflowcatalog.DropAgents(raw, dropped)
+	return workflowcatalog.DropAgents(raw, missing)
 }
 
 // cloneForSeeding copies the two fields plugin seeding writes (Agents,
@@ -299,17 +381,6 @@ func digest(v any) string {
 	raw, _ := json.Marshal(v)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
-}
-
-// newReloadReport starts every list empty, never null, on the wire.
-func newReloadReport(gen uint64) schema.PluginReloadReport {
-	return schema.PluginReloadReport{
-		Generation: int64(gen),
-		Agents:     schema.PluginReloadAgents{Added: []string{}, Updated: []schema.PluginReloadAgentUpdate{}, Removed: []string{}},
-		Workflows:  schema.PluginReloadNames{Added: []string{}, Updated: []string{}, Removed: []string{}},
-		McpServers: schema.PluginReloadServers{Started: []string{}, Reused: []string{}, Stopped: []string{}},
-		Failures:   []schema.PluginReloadFailure{},
-	}
 }
 
 func reloadFailure(rep *schema.PluginReloadReport, pluginName, member string, stage schema.PluginReloadFailureStage, err error) {

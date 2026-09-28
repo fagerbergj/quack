@@ -177,7 +177,7 @@ func (c *Config) SeedPluginShapes(pluginName, workflowsDir string, listed []stri
 	for _, w := range c.Workflows {
 		existing[w.Name] = true
 	}
-	var attempted []string
+	var added []WorkflowShape
 	for _, f := range files {
 		if !allowed[strings.TrimSuffix(filepath.Base(f), ".yaml")] {
 			continue
@@ -195,22 +195,19 @@ func (c *Config) SeedPluginShapes(pluginName, workflowsDir string, listed []stri
 		if existing[shape.Name] {
 			continue
 		}
-		c.Workflows = append(c.Workflows, shape)
+		added = append(added, shape)
 		existing[shape.Name] = true
-		attempted = append(attempted, shape.Name)
 	}
-	if err := c.validateWorkflows(); err != nil {
+	// Only this plugin's shapes are checked, so an error blames the plugin that owns them.
+	own := *c
+	own.Workflows = added
+	if err := own.validateWorkflows(); err != nil {
 		return nil, fmt.Errorf("plugin %q: %w", pluginName, err)
 	}
-	present := make(map[string]bool, len(c.Workflows))
-	for _, w := range c.Workflows {
-		present[w.Name] = true
-	}
-	seeded := attempted[:0] // in-place filter: validateWorkflows may have dropped some
-	for _, n := range attempted {
-		if present[n] {
-			seeded = append(seeded, n)
-		}
+	c.Workflows = append(c.Workflows, own.Workflows...)
+	seeded := make([]string, 0, len(own.Workflows))
+	for _, w := range own.Workflows {
+		seeded = append(seeded, w.Name)
 	}
 	return seeded, nil
 }

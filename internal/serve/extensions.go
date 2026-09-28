@@ -561,6 +561,18 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 	return found, foundName, nil
 }
 
+// lookupShape finds workflow in the current catalog; "" is no shape.
+func lookupShape(name string, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], workflow string) (workflowcatalog.Shape, error) {
+	if workflow == "" {
+		return workflowcatalog.Shape{}, nil
+	}
+	shape, ok := workflowcatalog.Lookup(loadShapes(shapesRef), workflow)
+	if !ok {
+		return shape, fmt.Errorf("extensions.%s: workflow %q is not in the configured workflow catalog", name, workflow)
+	}
+	return shape, nil
+}
+
 // loadShapes reads shapesRef's current catalog, tolerating a nil ref or an
 // unset pointer (both mean "no shapes configured yet") the way a nil slice does.
 func loadShapes(shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) []workflowcatalog.Shape {
@@ -583,17 +595,22 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		if req.Chat.LocalID == "" {
 			return fmt.Errorf("extensions.%s: dispatch requires Chat.LocalID", name)
 		}
-		var shape workflowcatalog.Shape
-		if req.Run.Workflow != "" {
-			var ok bool
-			shape, ok = workflowcatalog.Lookup(loadShapes(shapesRef), req.Run.Workflow)
-			if !ok {
-				return fmt.Errorf("extensions.%s: workflow %q is not in the configured workflow catalog", name, req.Run.Workflow)
-			}
-		}
 		orch := orchRef.Load()
 		if orch == nil {
 			return fmt.Errorf("extensions.%s: orchestrator not ready", name)
+		}
+		// Pinned before the shape is read: a reload stores shapes before its roster,
+		// so the shape never names an agent the pinned roster lacks.
+		pinCtx, done := orch.Pin(context.WithoutCancel(ctx))
+		handedOff := false
+		defer func() {
+			if !handedOff {
+				done()
+			}
+		}()
+		shape, err := lookupShape(name, shapesRef, req.Run.Workflow)
+		if err != nil {
+			return err
 		}
 		// Namespaced so two extensions (or an extension and a user chat)
 		// can never collide on the same global chat id.
@@ -624,12 +641,11 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// A bound shape (Nodes non-empty) skips the planner LLM call entirely: build the
 		// Plan now, synchronously, so a malformed binding is a hard dispatch error.
 		if nodes, bound := workflowcatalog.Bind(shape, req.Ask.Message); bound {
-			pinCtx, done := orch.Pin(runCtx)
 			plan, err := orch.BuildBoundPlan(pinCtx, nodes, req.Ask.Message, attachments, allowedKinds)
 			if err != nil {
-				done()
 				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
 			}
+			handedOff = true
 			go func() {
 				defer done()
 				driveBoundExtensionRun(pinCtx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, *plan, req.Run.Timeout)

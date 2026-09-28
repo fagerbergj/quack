@@ -5,7 +5,6 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -509,7 +508,8 @@ type boot struct {
 	hooks     *shutdownHooks
 	cleanups  []func()
 	// pristine is cfg before plugin seeding; a reload seeds a fresh copy of it.
-	pristine *config.Config
+	pristine   *config.Config
+	seedOwners map[string]string // plugin-seeded agent -> plugin
 }
 
 func (b *boot) runCleanups() {
@@ -657,11 +657,21 @@ func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (plug
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// Same split as admitPlugins: a plugins.seed row that fails to seed fails
+	// boot, a REST-added one is dropped like a reload drops it.
+	seedNames := seedPluginNames(b.cfg.Plugins.Seed)
 	b.pristine = cloneForSeeding(b.cfg)
-	seedResults, err := SeedPluginAgentsAndShapes(b.cfg, plugins)
+	cand, plugins, seedResults, err := seedPlugins(b.pristine, plugins, func(p plugin.Plugin, err error) error {
+		if seedNames[p.Name] {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	b.cfg.Agents, b.cfg.Workflows = cand.Agents, cand.Workflows
+	b.seedOwners = seedOwners(seedResults)
 	logPluginSeeds(seedResults)
 	// The merge is done now: every agent must have a bundle/model, whether a
 	// plugin supplied it or the config itself did (deferred by
@@ -954,7 +964,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", err
 	}
 	rr := &rosterReload{pristine: b.pristine, res: b.res, build: rebuild, sdkTools: sdkTools, mcpOn: mcpOn, shapesRef: &shapesRef}
-	rr.cur = rr.generation(ctx, b.cfg, built, mcp, 1)
+	rr.cur = rr.generation(ctx, b.cfg, built, mcp, b.seedOwners, 1)
 	shapesRef.Store(&rr.cur.shapes)
 	orch, err := b.initOrchestrator(ctx, st, llm, rr.cur.roster, judgeFactory, planJudge, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn, artifactSchemas)
 	if err != nil {
@@ -1182,39 +1192,40 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 
 	for _, name := range names {
 		ac := cfg.Agents[name]
-
-		prov, ok := cfg.Provider(ac.Provider)
-		if !ok {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "provider %q not found", ac.Provider)
+		prov, m, err := agentModel(cfg, name, ac, artifacts)
+		var ag adkagent.Agent
+		if err == nil && ac.Acp != nil {
+			ag, err = buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, cfg.ModelCost(ac.Model), registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, reg)
+		} else if err == nil {
+			ag, err = buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg, admission)
 		}
-		acpPricing := cfg.ModelCost(ac.Model)
-		m, err := inference.NewModelWithEffort(prov, ac.Model, artifacts, acpPricing, cfg.ModelEffort(ac.Model))
-		if err != nil {
-			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "model: %v", err)
-		}
-
-		if ac.Acp != nil {
-			ag, err := buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, acpPricing, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, reg)
-			if err != nil {
-				return nil, nil, nodeServers, nil, nil, nil, nil, err
-			}
-			clientMap[name] = ag
-			modelMap[name] = m
-			slog.Info("agent running via ACP subprocess", "component", "startup",
-				"agent", name, "command", strings.Join(ac.Acp.Command, " "), "model", ac.Model)
-			continue
-		}
-
-		na, err := buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg, admission)
 		if err != nil {
 			if !dropOptionalAgent(name, ac, err, dropped) {
 				return nil, nil, nodeServers, nil, nil, nil, nil, err
 			}
 			continue
 		}
-		clientMap[name] = na
+		clientMap[name] = ag
+		if ac.Acp != nil {
+			modelMap[name] = m
+			slog.Info("agent running via ACP subprocess", "component", "startup",
+				"agent", name, "command", strings.Join(ac.Acp.Command, " "), "model", ac.Model)
+		}
 	}
 	return clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, nil
+}
+
+// agentModel resolves one agent's provider and builds its model.
+func agentModel(cfg *config.Config, name string, ac config.AgentConfig, artifacts artifact.Service) (config.ProviderConfig, model.LLM, error) {
+	prov, ok := cfg.Provider(ac.Provider)
+	if !ok {
+		return prov, nil, fmtErr(name, "provider %q not found", ac.Provider)
+	}
+	m, err := inference.NewModelWithEffort(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model), cfg.ModelEffort(ac.Model))
+	if err != nil {
+		return prov, nil, fmtErr(name, "model: %v", err)
+	}
+	return prov, m, nil
 }
 
 // buildGateJudge assembles the trust-gate config and judge models when the gate is enabled;
@@ -2543,10 +2554,10 @@ func contentText(c *genai.Content) string {
 	return b.String()
 }
 
-// dropOptionalAgent: an optional agent whose extension isn't enabled (its tools unresolved) is
-// dropped from the roster with a warning, and recorded in dropped when set; any other build error still fails boot.
+// dropOptionalAgent: an optional agent (every plugin-seeded one is) that fails to build is dropped
+// with a warning, and recorded in dropped when set; a non-optional agent's error still fails boot.
 func dropOptionalAgent(name string, ac config.AgentConfig, err error, dropped map[string]error) bool {
-	if !ac.Optional || !errors.Is(err, tools.ErrUnknownTool) {
+	if !ac.Optional {
 		return false
 	}
 	slog.Warn("optional agent unavailable; dropped from the roster", "component", "startup", "agent", name, "err", err)

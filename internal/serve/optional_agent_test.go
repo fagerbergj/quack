@@ -115,7 +115,7 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	defer slog.SetDefault(prevLog)
 
-	filtered := catalogShapes(cfg, rawShapes, clientMap)
+	filtered := catalogShapes(rawShapes, clientMap)
 	shapesRef.Store(&filtered)
 
 	after := planWorkInstructions()

@@ -752,6 +752,13 @@ export type PluginReloadReport = {
     failures: Array<PluginReloadFailure>;
 };
 
+/**
+ * A refused plugin or aborted reload - ErrorResponse plus the reload's report.
+ */
+export type PluginReloadError = ErrorResponse & {
+    reload: PluginReloadReport;
+};
+
 export type PluginReloadAgents = {
     added: Array<string>;
     /**
@@ -793,7 +800,7 @@ export type PluginReloadFailure = {
      * The agent or MCP server that failed, absent for a whole-plugin failure.
      */
     member?: string;
-    stage: 'registry' | 'resolve' | 'admission' | 'seed' | 'config' | 'mcp' | 'agent';
+    stage: 'registry' | 'resolve' | 'admission' | 'seed' | 'config' | 'mcp' | 'agent' | 'closed';
     error: string;
 };
 
@@ -1974,9 +1981,9 @@ export type CreatePluginErrors = {
      */
     409: ErrorResponse;
     /**
-     * fetched, but the plugin's own content is refused (e.g. declares an unlinked module) - the row is stored with the refusal in `error`
+     * Fetched, but the plugin was refused (e.g. declares an unlinked module), or the roster reload that followed aborted. The row stays registered either way - a refusal is also stored in its `error` - and `reload` says why.
      */
-    422: ErrorResponse;
+    422: PluginReloadError;
 };
 
 export type CreatePluginError = CreatePluginErrors[keyof CreatePluginErrors];
@@ -2015,9 +2022,9 @@ export type UpdateAllPluginsData = {
 
 export type UpdateAllPluginsErrors = {
     /**
-     * the roster rebuild itself failed (a plugins.seed refusal, or a registry read failure) - a fetched row's OWN refusal lands in its `error` field in the 200 body instead, never as a 422
+     * the roster reload itself aborted (a plugins.seed refusal, a registry read failure, ...) - fetched rows stay fetched; a row's OWN refusal lands in its `error` field in the 200 body instead, never as a 422
      */
-    422: ErrorResponse;
+    422: PluginReloadError;
 };
 
 export type UpdateAllPluginsError = UpdateAllPluginsErrors[keyof UpdateAllPluginsErrors];
@@ -2102,9 +2109,9 @@ export type UpdatePluginErrors = {
      */
     404: ErrorResponse;
     /**
-     * fetched, but the roster rebuild that followed was refused (e.g. the plugin declares an unlinked module)
+     * Fetched, but the plugin was refused (e.g. declares an unlinked module), or the roster reload that followed aborted. The fetched row stays; `reload` says why.
      */
-    422: ErrorResponse;
+    422: PluginReloadError;
 };
 
 export type UpdatePluginError = UpdatePluginErrors[keyof UpdatePluginErrors];

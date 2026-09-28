@@ -13,6 +13,14 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
+const emptyReload = {
+  generation: 2,
+  agents: { added: [], updated: [], removed: [] },
+  workflows: { added: [], updated: [], removed: [] },
+  mcp_servers: { started: [], reused: [], stopped: [] },
+  failures: [],
+}
+
 const ROW = {
   name: 'dotagents', entry: 'github:fagerbergj/dotagents', source: 'github' as const,
   installed_sha: 'c886ce1a8474939dc42f7c194f8c57242223ea1',
@@ -139,7 +147,7 @@ describe('Plugins', () => {
     vi.stubGlobal('fetch', routedFetch({
       'GET /plugins/updates': [jsonResponse({ updates: [] }), jsonResponse({ updates: [] })],
       'GET /plugins': [jsonResponse({ plugins: [ROW] }), jsonResponse({ plugins: [] })],
-      'DELETE /plugins/dotagents': [new Response(null, { status: 204 })],
+      'DELETE /plugins/dotagents': [jsonResponse({ reload: emptyReload })],
     }))
     await renderAndFlush()
 
@@ -203,7 +211,7 @@ describe('Plugins', () => {
         jsonResponse({ plugins: [ROW, ROW2] }),
         jsonResponse({ error: 'boom' }, 500),
       ],
-      'DELETE /plugins/dotagents': [new Response(null, { status: 204 })],
+      'DELETE /plugins/dotagents': [jsonResponse({ reload: emptyReload })],
     }))
     await renderAndFlush()
     expect(host!.textContent).toContain('dotagents')

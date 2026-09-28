@@ -399,6 +399,7 @@ func (e PauseReason) Valid() bool {
 const (
 	Admission PluginReloadFailureStage = "admission"
 	Agent     PluginReloadFailureStage = "agent"
+	Closed    PluginReloadFailureStage = "closed"
 	Config    PluginReloadFailureStage = "config"
 	Mcp       PluginReloadFailureStage = "mcp"
 	Registry  PluginReloadFailureStage = "registry"
@@ -412,6 +413,8 @@ func (e PluginReloadFailureStage) Valid() bool {
 	case Admission:
 		return true
 	case Agent:
+		return true
+	case Closed:
 		return true
 	case Config:
 		return true
@@ -1270,6 +1273,18 @@ type PluginReloadAgents struct {
 
 	// Updated Agents whose bundle or resolved config changed.
 	Updated []PluginReloadAgentUpdate `json:"updated"`
+}
+
+// PluginReloadError defines model for PluginReloadError.
+type PluginReloadError struct {
+	// Detail Optional additional context (e.g. which field failed validation).
+	Detail *string `json:"detail,omitempty"`
+
+	// Error Human-readable summary of what went wrong.
+	Error string `json:"error"`
+
+	// Reload One roster rebuild's outcome - POST /plugins/reload's body, and the `reload` field plugin add, update and delete responses carry.
+	Reload PluginReloadReport `json:"reload"`
 }
 
 // PluginReloadFailure defines model for PluginReloadFailure.
