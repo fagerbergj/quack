@@ -1119,9 +1119,6 @@ func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
 func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission, artifactSchemas *artifactschema.Registry, nodeServers *perNodeServers, dropped map[string]error) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
-	if nodeServers == nil {
-		nodeServers = newPerNodeServers()
-	}
 
 	nodeScope := newNodeScope(jail)
 	names := make([]string, 0, len(cfg.Agents))
@@ -1210,11 +1207,8 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 
 		na, err := buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, nodeScope, gateCfg, gateCfgs, nodeServers, reg, admission)
 		if err != nil {
-			if !dropOptionalAgent(name, ac, err) {
+			if !dropOptionalAgent(name, ac, err, dropped) {
 				return nil, nil, nodeServers, nil, nil, nil, nil, err
-			}
-			if dropped != nil {
-				dropped[name] = err
 			}
 			continue
 		}
@@ -2550,12 +2544,15 @@ func contentText(c *genai.Content) string {
 }
 
 // dropOptionalAgent: an optional agent whose extension isn't enabled (its tools unresolved) is
-// dropped from the roster with a warning; any other build error still fails boot.
-func dropOptionalAgent(name string, ac config.AgentConfig, err error) bool {
+// dropped from the roster with a warning, and recorded in dropped when set; any other build error still fails boot.
+func dropOptionalAgent(name string, ac config.AgentConfig, err error, dropped map[string]error) bool {
 	if !ac.Optional || !errors.Is(err, tools.ErrUnknownTool) {
 		return false
 	}
 	slog.Warn("optional agent unavailable; dropped from the roster", "component", "startup", "agent", name, "err", err)
+	if dropped != nil {
+		dropped[name] = err
+	}
 	return true
 }
 
