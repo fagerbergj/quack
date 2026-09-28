@@ -70,26 +70,30 @@ func TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield(t *testing.T) {
 	}
 
 	sessions := session.InMemoryService()
-	ex := dag.NewExecutor(sessions,
-		map[string]adkagent.Agent{"web-researcher": worker, "synthesizer": synth},
-		map[string]model.LLM{"web-researcher": stub, "synthesizer": stub},
-		vetting.NewJudgeFactory(stub, nil, nil),
-		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	ex := dag.NewExecutor(sessions, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), nil, nil)
+	ex.SetRoster(&dag.Roster{
+		Gen: 1,
+		Infos: []dag.AgentInfo{
+			{Name: "web-researcher", Description: "researches the web"},
+			{Name: "synthesizer", Description: "synthesizes findings"},
+		},
+		Agents: map[string]adkagent.Agent{"web-researcher": worker, "synthesizer": synth},
+		Models: map[string]model.LLM{"web-researcher": stub, "synthesizer": stub},
+		CfgFor: func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
+		SpecFor: func(agentName string) dag.AdmissionSpec {
+			if agentName == "web-researcher" {
+				return dag.AdmissionSpec{Model: "wr"}
+			}
+			return dag.AdmissionSpec{}
+		},
+	})
 
 	// Cap web-researcher at 1 concurrent session: 3 ready nodes, so 2 MUST
 	// queue and fire onQueued while a sibling is still executing.
 	admission := dag.NewAdmission(map[string]int{"wr": 1}, nil, nil, 0)
-	ex.SetAdmission(admission, func(agentName string) dag.AdmissionSpec {
-		if agentName == "web-researcher" {
-			return dag.AdmissionSpec{Model: "wr"}
-		}
-		return dag.AdmissionSpec{}
-	}, dag.AdmissionSpec{})
+	ex.SetAdmission(admission, dag.AdmissionSpec{})
 
-	planner := dag.NewPlanner([]dag.AgentInfo{
-		{Name: "web-researcher", Description: "researches the web"},
-		{Name: "synthesizer", Description: "synthesizes findings"},
-	}, nil, nil)
+	planner := dag.NewPlanner(ex.RosterFor(context.Background()).Infos, nil, nil)
 	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 
 	// Unsynchronized append - the shape production and runTurn both use.

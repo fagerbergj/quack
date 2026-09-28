@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -27,16 +28,13 @@ import (
 
 // Executor runs a Plan as an ADK v2 graph workflow.
 type Executor struct {
-	sessions    session.Service
-	agents      map[string]adkagent.Agent
-	models      map[string]model.LLM
-	judge       vetting.JudgeFactory
-	cfgFor      func(ctx context.Context, agentName string) vetting.Config
-	mediaAgents map[string]bool
-	controls    *runControls
-	maxActive   int
-	setupFn     SetupFunc
-	artifacts   artifact.Service // ADK's own artifact tools/debug console; see SetArtifacts
+	sessions  session.Service
+	roster    atomic.Pointer[Roster]
+	judge     vetting.JudgeFactory
+	controls  *runControls
+	maxActive int
+	setupFn   SetupFunc
+	artifacts artifact.Service // ADK's own artifact tools/debug console; see SetArtifacts
 	// walLedger: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100),
 	// gated to a postgres-backed ledger only by SetWALLedger's caller - see
 	// vetting.Config.Ledger's doc. nil = no WAL.
@@ -45,17 +43,16 @@ type Executor struct {
 	// builds (SetSchemas) - stamped regardless of that node's own gated setting.
 	schemas   *artifactschema.Registry
 	admission *Admission
-	specFor   func(agentName string) AdmissionSpec
 	// judgeSpec: one judge model serves every agent, so it's a single spec, not per-agent.
 	judgeSpec AdmissionSpec
 
 	gateResults sync.Map
 }
 
-// SetAdmission wires the #1007 capacity ledger, its per-agent worker spec
-// resolver, and the judge's own spec (nil admission runs unbounded).
-func (e *Executor) SetAdmission(admission *Admission, specFor func(agentName string) AdmissionSpec, judgeSpec AdmissionSpec) {
-	e.admission, e.specFor, e.judgeSpec = admission, specFor, judgeSpec
+// SetAdmission wires the #1007 capacity ledger and the judge's own spec (nil
+// admission runs unbounded); per-agent worker specs come from Roster.SpecFor.
+func (e *Executor) SetAdmission(admission *Admission, judgeSpec AdmissionSpec) {
+	e.admission, e.judgeSpec = admission, judgeSpec
 }
 
 // SetMaxActive: sets concurrent-node cap (no-op for n < 1).
@@ -242,10 +239,10 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 		slog.Warn("dag: no session, skipping artifact tools", "component", "dag", "chat_id", chatID)
 	}
 	sink, _ := stream.YieldFromContext(ctx)
-	gateNodes, _, err := buildGateNodes(ctx, plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
+	gateNodes, _, err := buildGateNodes(ctx, plan, e.RosterFor(ctx), e.judge, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.specFor, e.judgeSpec, artifacts, e.walLedger, e.schemas, nil, sink) // a subset run never re-runs setup, so nothing to refresh
+		}, e.admission, e.judgeSpec, artifacts, e.walLedger, e.schemas, nil, sink) // a subset run never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}
@@ -280,9 +277,12 @@ func (e *Executor) resetNativeWorkerSession(ctx context.Context, plan Plan, chat
 	}
 }
 
-// NewExecutor: returns a graph Executor.
+// NewExecutor: returns a graph Executor over a Gen 0 roster of agents, models,
+// cfgFor and mediaAgents; SetRoster replaces it.
 func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(context.Context, string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, models: models, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
+	e := &Executor{sessions: sessions, judge: judge, controls: newRunControls(), maxActive: 2}
+	e.roster.Store(&Roster{Agents: agents, Models: models, CfgFor: cfgFor, Media: mediaAgents})
+	return e
 }
 
 // gateScore: node's trust-gate result.
