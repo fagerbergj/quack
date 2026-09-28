@@ -59,7 +59,7 @@ Every registry row has a **name**, which prefixes its skills as `<name>:<skill>`
 
 - A `github:` entry's name is the repo component (`github:fagerbergj/dotagents` -> `dotagents`) - or, with a `#path`, the last path segment (`github:fagerbergj/quack-extensions#sleeper/plugin` -> `sleeper`; a trailing `plugin` names its parent, `#sleeper` -> `sleeper`), so one repo can host several plugins. Never `plugin.json`'s own `name` field.
 - A local entry's name is the base name of its path (`/opt/checkouts/my-checkout` -> `my-checkout:<skill>`), also never the manifest's name.
-- `update` and `updates` are reserved outright: they collide with the fixed REST path segments `/api/v1/plugins/update` and `/api/v1/plugins/updates`, and `POST /api/v1/plugins` refuses either name. `quack` is reserved from `POST /api/v1/plugins` the same way, but a `plugins.seed` entry may be named `quack` - that is how a fetched copy shadows the embedded baseline (see below). `DELETE /api/v1/plugins/quack` is refused either way, seed or REST: the embedded baseline itself is never removable.
+- `update`, `updates` and `reload` are reserved outright: they collide with the fixed REST path segments `/api/v1/plugins/update`, `/api/v1/plugins/updates` and `/api/v1/plugins/reload`, and `POST /api/v1/plugins` refuses each name. `quack` is reserved from `POST /api/v1/plugins` the same way, but a `plugins.seed` entry may be named `quack` - that is how a fetched copy shadows the embedded baseline (see below). `DELETE /api/v1/plugins/quack` is refused either way, seed or REST: the embedded baseline itself is never removable.
 
 A bare skill name (no `plugin:` prefix) - in an agent's `skills:` scope, or a boot-time lookup - resolves to the first plugin providing that name in seed order; rows added later over REST sort after the seed. An explicit `other:skill` outside an agent's scope is not-found, never silently substituted for an in-scope plugin's copy.
 
@@ -88,11 +88,30 @@ All three keep clones on disk under `plugins.root` regardless of which one holds
 
 A fetch failure - unreachable remote, moved/deleted ref, etc. - is stored on the row's `error` field and surfaced in the UI. It never fails boot or a run: the last good clone keeps serving until a later fetch succeeds. An admission failure (a declared module not linked, or similar) is handled per [Admission](#admission) below.
 
-A fetch or update rebuilds the skill roster with no server restart: native agents' skill toolsets re-list on their next round, and an ACP-agent spawn rebuilds `skill_paths` from the registry on every round.
+### Reload
 
-MCP servers are different: they're enumerated once at boot and their tools baked into each native agent's toolset for that process's whole life, the same way local-root MCP servers always worked. A fetch or update that changes a plugin's `mcp.json` does **not** spawn or re-enumerate anything live - the new servers start at the next restart. The wire row's `declares_mcp_servers` flags whether the plugin *currently* ships a server, so this is visible without checking the logs; the tools an agent can call this session are still whatever booted.
+Every add, update, update-all and delete ends in a **reload**, and `POST /api/v1/plugins/reload` runs one on its own. A reload re-runs boot's plugin pipeline with no restart and swaps the result in as a new roster *generation*:
 
-Agent bundles and workflow shapes are boot-only too: seeding happens once, during startup, from whatever `plugins.seed` resolved to at that moment. A plugin added, updated, or removed at runtime (REST) does not change the roster or the planner table until the next restart - unlike skills, there is no rebuild hook for either.
+1. List the registry, then resolve and admit every row exactly as boot does (see [Admission](#admission)).
+2. Seed each plugin's agents and workflow shapes into a fresh copy of the config as it was before any plugin seeded into it, so a deployment's `agents.<name>:` override keeps winning and an edited shape replaces the old one.
+3. Start MCP servers for the admitted plugins. A server whose plugin, revision (root and installed sha) and launch spec are unchanged keeps its running process; a new or changed one is spawned and its tools enumerated.
+4. Build the agents, then swap in the skills, agents, planner table and workflow catalog together.
+
+A run already in flight finishes on the generation it started on: its agents, tools and MCP servers stay as they were until that run ends, and a server the new generation no longer uses stops once the last such run finishes. New runs use the new generation. A `local` root's sha is always empty, so editing code under it does not restart its servers unless the `mcp.json` launch spec itself changes. A fetch checks the new sha out in place, so a still-running server of an old generation reads the new files from then on. `prompt.md` and `rubric.yaml` are still re-read from disk per round and per run.
+
+The response is a report:
+
+| Field | Meaning |
+| --- | --- |
+| `generation` | The generation now serving new runs; unchanged if nothing swapped |
+| `agents` | `added`, `removed`, and `updated` (bundle or resolved config changed, with the new `bundle_hash`) |
+| `workflows` | `added`, `updated`, `removed` shape names |
+| `mcp_servers` | `started`, `reused`, `stopped`, each `plugin/server`; a changed server is both stopped and started |
+| `failures` | `{plugin, member, stage, error}` for each piece that was dropped or that stopped the reload |
+
+One broken piece costs only itself: a plugin whose agents or shapes fail to seed is dropped (stage `seed`), a server that fails to start or list its tools is dropped (`mcp`), and a plugin agent that fails to build - bad `agent-card.json`, rubric, memory, model, or tools - is dropped (`agent`). A reload stops with **nothing swapped** and the previous generation still serving when the registry can't be read (`registry`), a `plugins.seed` row is refused (`admission`), a config-authored agent is left incomplete - for example an override whose plugin stopped supplying its bundle, named with that plugin (`config`), a non-optional config agent fails to build (`agent`), or the server is shutting down (`closed`). `POST /api/v1/plugins/reload` then answers `422` with the same report. The plugin endpoints carry the report as `reload`: add and update in their `200`/`201` body, or in the `422` body (with `error`) when that row was refused or the reload stopped - the row stays registered either way. `DELETE /api/v1/plugins/{name}` answers `200` with `{reload}`.
+
+The wire row's `declares_mcp_servers` flags whether the plugin *currently* ships a server.
 
 ### Admission
 
@@ -102,6 +121,8 @@ A newly fetched or re-fetched plugin still runs the same checks as any other (li
 - A **REST-added row** failing admission is **dropped**, not fatal: `POST /api/v1/plugins` and `POST /api/v1/plugins/{name}/update` return `422` with the refusal, the row's `error` is persisted, and the rest of the roster (every other plugin) still loads - the plugin stays registered, visible with its error, just not contributing skills until fixed. A refusal hit during `POST /api/v1/plugins/update` (update-all) does not fail that call's `200`; it is reported per-row in the response body instead.
 
 So a refused row never blocks any other row from admitting only when it was added or updated over REST; a refused seed row is fatal to boot, by design.
+
+Seeding follows the same split at boot: a seed row whose agents or shapes fail to seed (a malformed `agent.yaml`, a shape naming an unknown agent) stops the boot, while a REST-added row's failure drops that plugin and logs it. A reload drops either kind and reports it (stage `seed`).
 
 ### Provenance
 
@@ -214,7 +235,7 @@ The manifest is documentation the compiler is checked against.
 
 ## Agent bundles and workflow shapes
 
-A plugin can also ship its own agent roster and DAG shapes, seeded into `config.Config` at boot the same way skills are - `agents:` and `workflows:` stay the deployment's own mechanisms; a plugin only adds entries to them before `buildAgents`/`workflowcatalog.FromConfig` run.
+A plugin can also ship its own agent roster and DAG shapes, seeded into `config.Config` at boot and on every [reload](#reload) - `agents:` and `workflows:` stay the deployment's own mechanisms; a plugin only adds entries to them before `buildAgents`/`workflowcatalog.FromConfig` run.
 
 ### Layout
 
@@ -252,13 +273,13 @@ model_role: researcher   # researcher | coder | judge
 
 ### Precedence
 
-A deployment's `agents.<name>:` entry - already in `config.Agents` before a plugin's bundles are seeded - overrides the plugin's `agent.yaml` defaults field by field (`provider`, `model`, `context_window`, `tools`, `skills`, `judge_rounds`, `memory`, `gated`, `judge`, `acp`, `inputs`); an unset field keeps the plugin's own value. `bundle` and `optional: true` are never overridable - every plugin agent is implicitly optional, so `buildAgents`' existing drop-on-unresolved-tools path (`tools.ErrUnknownTool`) still applies unchanged if a bundle's tools somehow fail to resolve even with its extension on.
+A deployment's `agents.<name>:` entry - already in `config.Agents` before a plugin's bundles are seeded - overrides the plugin's `agent.yaml` defaults field by field (`provider`, `model`, `context_window`, `tools`, `skills`, `judge_rounds`, `memory`, `gated`, `judge`, `acp`, `inputs`); an unset field keeps the plugin's own value. `bundle` and `optional: true` are never overridable - every plugin agent is implicitly optional, so one that fails to build for any reason (unresolved tools, a broken bundle, a bad model) is dropped from the roster with a warning, at boot and on a reload alike.
 
-`tools:` **replaces** the plugin's list wholesale, never merges with it - the documented way to drop a tool whose backend the deployment doesn't run. `tools.ErrUnknownTool` (an unrecognized tool *name*) is what triggers the optional-agent drop; a recognized tool that fails to *build* because its backend isn't configured (e.g. `web_search` with no SearXNG url or Exa key) is a hard boot error by design - a real misconfiguration, not a signal the extension is off. Override `agents.<name>.tools` to the subset the deployment can actually build.
+`tools:` **replaces** the plugin's list wholesale, never merges with it - the documented way to drop a tool whose backend the deployment doesn't run. A plugin agent whose tool fails to build because its backend isn't configured (e.g. `web_search` with no SearXNG url or Exa key) is dropped like any other build failure, so override `agents.<name>.tools` to the subset the deployment can actually build rather than lose the agent.
 
 An override may leave `bundle:` (and `model:`, `provider:`) unset entirely, trusting the plugin to supply them - `config.Load` defers requiring them until after plugin seeding runs, so the override alone is never rejected before the plugin gets a chance to complete it. What happens if the plugin's module ends up disabled (or the plugin is absent) depends on whether the override itself sets `optional: true`: without it, the agent stays incomplete and boot/`server validate` fails with the same clear "empty bundle path" error a broken config-authored entry gets (the deployment declared this agent non-optional, so its absence is a bug); with `optional: true` already on the raw entry, an unclaimed override is dropped from the roster after seeding instead - the GitHub extension's `code-implementer`/`code-reviewer`/`code-explorer` in `config/quack.yaml` are the shipped example, since a deployment with `extensions.github` off is expected to have no code agents, not a boot failure.
 
-A plugin workflow shape is appended to the raw `workflows:` list and validated by the exact same `validateWorkflows` path a config-authored shape gets (agent existence, bound-node artifact kinds, DAG acyclicity) - a shape naming a missing agent fails boot naming the plugin, not just the shape.
+A plugin workflow shape is appended to the raw `workflows:` list and validated by the exact same `validateWorkflows` path a config-authored shape gets (agent existence, bound-node artifact kinds, DAG acyclicity), one plugin's shapes at a time, so a shape naming a missing agent fails that plugin's seed naming the plugin, not just the shape (see [Admission](#admission) for whether that stops boot). A shape whose agent was later dropped from the roster - it failed to build - is left out of the workflow catalog rather than served dangling.
 
 ### Gating
 
