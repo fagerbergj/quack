@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -252,16 +253,38 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	// so the scrub (no inherited secrets, a fixed PATH, the isolated HOME) holds
 	// identically in both modes.
 	cmd.Env = childEnv(dir, caps)
-	// Own process group + group kill + WaitDelay to prevent grandchild hangs.
+	// Own process group + StopChild + WaitDelay to prevent grandchild hangs.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // negative pid = the process group
-	}
+	cmd.Cancel = func() error { return StopChild(cmd) }
 	cmd.WaitDelay = childWaitDelay
 	return cmd, nil
+}
+
+// reapGrace bounds how long a __reap wrapper gets after SIGTERM; it exceeds reapSweepBudget.
+var reapGrace = 8 * time.Second
+
+// StopChild tears down a child built from WrapArgv/childArgv argv. A __reap wrapper gets SIGTERM
+// and kills every descendant itself; otherwise (or if it overruns) its process group is SIGKILLed.
+func StopChild(cmd *exec.Cmd) error {
+	p := cmd.Process
+	if p == nil {
+		return nil
+	}
+	if len(cmd.Args) < 2 || cmd.Args[1] != ReapArg {
+		if err := syscall.Kill(-p.Pid, syscall.SIGKILL); err != nil { // negative pid = the process group
+			return p.Kill() // not a group leader (no Setpgid)
+		}
+		return nil
+	}
+	time.AfterFunc(reapGrace, func() {
+		if p.Signal(syscall.Signal(0)) != nil {
+			return // exited and reaped
+		}
+		slog.Error("sandbox reaper still running after SIGTERM; SIGKILLing its process group, descendants that left it may survive",
+			"component", "workspace", "pid", p.Pid, "grace", reapGrace)
+		_ = syscall.Kill(-p.Pid, syscall.SIGKILL)
+	})
+	return p.Signal(syscall.SIGTERM)
 }
 
 // childWaitDelay bounds Wait() pipe I/O block after child exit. Package var for tests.
