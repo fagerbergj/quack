@@ -2060,6 +2060,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	// depend on load_artifacts in orchestrator.tools (a prod config dropped plans, #1122).
 	orch.SetArtifacts(artifacts)
 	orch.SetNodeSessionReaper(st.ReapNodeSessions)
+	orch.SetPlanLoader(st.LoadExecPlan)
 	orch.SetAssignmentFreshnessCheck(assignmentFreshness)
 	orch.SetAssignmentMetaHook(assignmentMeta)
 	// Same source of truth as buildAgents' per-node compactionFor (cfg.Session.Compaction),

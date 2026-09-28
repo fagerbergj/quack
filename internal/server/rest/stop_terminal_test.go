@@ -13,16 +13,19 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledgertest"
+	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -166,6 +169,55 @@ func TestStoppedRunEmitsNoError(t *testing.T) {
 	for _, r := range rows {
 		if ev, _ := runlog.UnmarshalEvent(r.Event); ev.Name == stream.EventError {
 			t.Errorf("stopped run persisted an error event: %s", r.Event)
+		}
+	}
+}
+
+// TestStoppedStartNodeEmitsNoError: the same for a node started via StartNode, whose
+// orchestrator path yields its own "resume: ... context canceled" error event.
+func TestStoppedStartNodeEmitsNoError(t *testing.T) {
+	m := midNodeModel{started: make(chan struct{}, 1)}
+	worker, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newTestHandler(t)
+	ex := dag.NewExecutor(h.store.Sessions, map[string]adkagent.Agent{"w": worker}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	h.orch = orchestrator.New(h.store.Sessions, stubModel{}, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
+	bg := context.Background()
+	chatID := mustCreateChat(t, h)
+	seedPlan(t, h, chatID, "p1", "n1")
+	plan := dag.Plan{ID: "p1", UserMessage: "go", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "t"}}}
+	planJSON, _ := json.Marshal(plan)
+	if _, err := h.store.Sessions.Create(bg, &session.CreateRequest{AppName: orchestrator.AppName, UserID: h.store.SessionUserForChat(bg, chatID),
+		SessionID: chatID, State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
+		t.Fatal(err)
+	}
+	dp, err := h.store.GetLatestDagPlan(bg, chatID)
+	if err != nil || dp == nil {
+		t.Fatalf("GetLatestDagPlan: %v", err)
+	}
+	if !h.startNodeAsync(dp, chatID, "n1", "go") {
+		t.Fatal("start not dispatched")
+	}
+	select {
+	case <-m.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("node never started")
+	}
+	h.hub.CancelResponse(chatID, dp.TurnID)
+	deadline := time.Now().Add(10 * time.Second)
+	for h.hub.HasRegisteredRun(chatID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	rows, err := h.store.LoadChatEvents(bg, chatID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if ev, _ := runlog.UnmarshalEvent(r.Event); ev.Name == stream.EventError {
+			t.Errorf("stopped StartNode persisted an error event: %s", r.Event)
 		}
 	}
 }

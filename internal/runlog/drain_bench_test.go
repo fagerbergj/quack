@@ -153,7 +153,7 @@ func TestFinishRunDeliversBufferedTailBeforeUnregister(t *testing.T) {
 	defer unsubscribe()
 
 	const n = 500 // large enough that the batched DB write takes many spin-loop iterations
-	pub := NewPublisher(hub, l, chatID)
+	pub := NewPublisher(context.Background(), hub, l, chatID)
 	for i := 0; i < n; i++ {
 		pub.Publish(stream.SSEEvent{Name: "token", Data: map[string]any{"i": i}})
 	}

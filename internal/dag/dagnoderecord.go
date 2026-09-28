@@ -105,8 +105,8 @@ func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 	return updateDagNodeStatus(ctx, artifacts, appName, userID, chatID, nodeID, status, false)
 }
 
-// SyncDagNodeStatus is UpdateDagNodeStatus without the transition check, for boot's
-// reconcile: the store-row write it mirrors (e.g. paused -> failed) is itself unconditional.
+// SyncDagNodeStatus is UpdateDagNodeStatus for boot's reconcile: no transition check (the row
+// write it mirrors, e.g. paused -> failed, is unconditional) and no agent check (no roster yet).
 func SyncDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus) error {
 	return updateDagNodeStatus(ctx, artifacts, appName, userID, chatID, nodeID, status, true)
 }
@@ -135,7 +135,11 @@ func updateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 		rec.Started = true
 	}
 	lineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
-	_, _, err = c.SaveStructured(ctx, kindDagNode, rec, nodeID, lineage)
+	save := c.SaveStructured
+	if force {
+		save = c.ResaveStructured
+	}
+	_, _, err = save(ctx, kindDagNode, rec, nodeID, lineage)
 	return err
 }
 

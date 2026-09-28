@@ -4,6 +4,7 @@ package runlog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"log/slog"
 	"runtime/debug"
@@ -185,17 +186,23 @@ func UnmarshalEvent(s string) (stream.SSEEvent, error) {
 
 // Publisher fans one chat's events to hub + durable log under a monotonic seq (not safe for concurrent use).
 type Publisher struct {
+	ctx    context.Context
 	hub    *stream.Hub
 	log    *EventLog
 	chatID string
 	seq    int64
 }
 
-func NewPublisher(hub *stream.Hub, log *EventLog, chatID string) *Publisher {
-	return &Publisher{hub: hub, log: log, chatID: chatID}
+// NewPublisher binds a publisher to the run's ctx, which only gates error events (see Publish).
+func NewPublisher(ctx context.Context, hub *stream.Hub, log *EventLog, chatID string) *Publisher {
+	return &Publisher{ctx: ctx, hub: hub, log: log, chatID: chatID}
 }
 
 func (p *Publisher) Publish(ev stream.SSEEvent) {
+	// A stopped run's errors are the stop's own "context canceled"; its node cards already say stopped.
+	if ev.Name == stream.EventError && errors.Is(p.ctx.Err(), context.Canceled) {
+		return
+	}
 	p.seq++
 	p.hub.Publish(p.chatID, p.seq, ev)
 	p.log.Append(p.chatID, p.seq, ev)
@@ -397,6 +404,13 @@ func SaveDagPlan(st *store.Store, chatID, turnID string, d stream.DagPlanData) {
 	go func() {
 		if err := st.SaveDagPlan(context.Background(), chatID, d.PlanID, turnID, string(planJSON)); err != nil {
 			slog.Warn("runlog: save dag plan failed", "component", "dag", "chat", chatID, "plan_id", d.PlanID, "err", err)
+			return
+		}
+		if len(d.ExecPlan) == 0 {
+			return
+		}
+		if err := st.SaveExecPlan(context.Background(), d.PlanID, string(d.ExecPlan)); err != nil {
+			slog.Warn("runlog: save exec plan failed", "component", "dag", "chat", chatID, "plan_id", d.PlanID, "err", err)
 		}
 	}()
 }

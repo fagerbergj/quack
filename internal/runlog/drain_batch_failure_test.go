@@ -62,7 +62,7 @@ func TestAppendRacingFinishRunNeverLostSilently(t *testing.T) {
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	hub.RegisterRun(chatID, "turn-1", cancelRun)
 
-	pub := NewPublisher(hub, l, chatID)
+	pub := NewPublisher(context.Background(), hub, l, chatID)
 	for i := int64(1); i <= 5; i++ {
 		pub.Publish(stream.SSEEvent{Name: "token", Data: map[string]any{"i": i}})
 	}

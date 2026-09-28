@@ -239,9 +239,7 @@ func (s *orchRun) buildContent(pending PendingQuestion, hasPending bool) *genai.
 func (s *orchRun) invoke(content *genai.Content) (produced, stop bool) {
 	for ev, err := range s.runner.Run(s.ctx, s.userID, s.sessionID, content, adkagent.RunConfig{}) {
 		if err != nil {
-			if ev, ok := stream.RunErrorf(s.ctx, err); ok {
-				s.safeYield(ev, nil)
-			}
+			s.safeYield(stream.Errorf(err.Error()), nil)
 			return false, true
 		}
 		if ev == nil {

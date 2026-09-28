@@ -38,9 +38,8 @@ func (m stopModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ b
 	}
 }
 
-// TestRetryNode_StopSettlesCancelledWithoutError: stopping a retry mid-node settles the
-// node cancelled and emits no "context canceled" error event.
-func TestRetryNode_StopSettlesCancelledWithoutError(t *testing.T) {
+// TestRetryNode_StopSettlesCancelled: stopping a retry mid-node settles the node cancelled.
+func TestRetryNode_StopSettlesCancelled(t *testing.T) {
 	m := stopModel{started: make(chan struct{}, 1)}
 	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
 	if err != nil {
@@ -65,19 +64,32 @@ func TestRetryNode_StopSettlesCancelledWithoutError(t *testing.T) {
 		case <-time.After(10 * time.Second):
 		}
 	}()
-	var cancelled, errored bool
-	for ev := range orch.RetryNode(ctx, "u", "chat", nil, "n1", "") {
+	var cancelled bool
+	for ev := range orch.RetryNode(ctx, "u", "chat", "p", nil, "n1", "") {
 		if d, ok := ev.Data.(stream.NodeCancelledData); ok && d.NodeID == "n1" {
 			cancelled = true
-		}
-		if ev.Name == stream.EventError {
-			errored = true
 		}
 	}
 	if !cancelled {
 		t.Error("n1 was not settled cancelled after the stop")
 	}
-	if errored {
-		t.Error("a user stop emitted an error event")
+}
+
+// TestRetryNode_RefusesStaleStash: a stash holding another plan (a run cut mid-execute)
+// must not run that plan's task under the node's id, nor announce it as the chat's plan.
+func TestRetryNode_RefusesStaleStash(t *testing.T) {
+	sessions := session.InMemoryService()
+	orch := New(sessions, nil, func(context.Context) string { return "" }, nil, dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
+	planJSON, _ := json.Marshal(dag.Plan{ID: "old", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "old task"}}})
+	if _, err := sessions.Create(context.Background(), &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "chat",
+		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for ev := range orch.RetryNode(context.Background(), "u", "chat", "new", nil, "n1", "") {
+		names = append(names, ev.Name)
+	}
+	if len(names) != 1 || names[0] != stream.EventError {
+		t.Fatalf("events = %v, want exactly one error", names)
 	}
 }

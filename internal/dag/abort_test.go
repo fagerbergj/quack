@@ -13,6 +13,8 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -156,5 +158,33 @@ func TestAbort_ShutdownLeavesNodesForBoot(t *testing.T) {
 	<-done
 	if ev, ok := rec.of("n1"); ok {
 		t.Errorf("n1 got terminal %s on a shutdown cut, want none", ev.Name)
+	}
+}
+
+// TestPausedNodeWritesNoTerminalLedgerEntry: a paused node resumes later, so a cut that
+// lands on it records no node.failed/node.cancelled, just its node.started.
+func TestPausedNodeWritesNoTerminalLedgerEntry(t *testing.T) {
+	ex, m := blockingExecutor(t)
+	led := ledgertest.NewMemStore()
+	ex.SetWALLedger(led)
+	ctx, stop := context.WithCancel(stream.WithYield(context.Background(), func(stream.SSEEvent) {}))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _, _ = ex.RunPlanStep(ctx, chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+	}()
+	waitStarted(t, m)
+	if !ex.PauseNode("chat", "n1", PauseShutdown) {
+		t.Fatal("PauseNode found no live control")
+	}
+	stop()
+	<-done
+	entries, _ := led.ReadEntries(context.Background(), "chat", 0)
+	var kinds []string
+	for _, e := range entries {
+		kinds = append(kinds, e.Kind)
+	}
+	if len(kinds) != 1 || kinds[0] != ledger.KindNodeStarted {
+		t.Fatalf("ledger kinds = %v, want only %s", kinds, ledger.KindNodeStarted)
 	}
 }

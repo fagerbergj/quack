@@ -4,9 +4,7 @@
 package stream
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
@@ -233,6 +231,9 @@ type DagPlanData struct {
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 	// TraceID cross-references the OTel trace for this run; "" when otel is disabled.
 	TraceID string `json:"trace_id,omitempty"`
+	// ExecPlan is the full dag.Plan JSON, persisted server-side so a resume can run
+	// the node's own plan (see store.LoadExecPlan); never sent to clients.
+	ExecPlan json.RawMessage `json:"-"`
 }
 
 // `node_queued` event payload.
@@ -548,15 +549,6 @@ func ChatTitle(title string) SSEEvent {
 
 // Errorf builds an error event.
 func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: ErrorData{Error: msg}} }
-
-// RunErrorf is Errorf for a run that ended on err; ok=false once ctx is cancelled, since a
-// stopped run's "context canceled" is no error (its node cards already say stopped).
-func RunErrorf(ctx context.Context, err error) (SSEEvent, bool) {
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return SSEEvent{}, false
-	}
-	return Errorf(err.Error()), true
-}
 
 // Done builds the terminal done event.
 func Done() SSEEvent { return SSEEvent{Name: EventDone, Data: struct{}{}} }

@@ -59,6 +59,11 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 		slog.Error("resume paused dag nodes", "component", "store", "err", err)
 		return nil
 	}
+	if n, err := st.SyncTerminalDagNodeRecords(ctx); err != nil {
+		slog.Warn("sync finished nodes' dag_node records", "component", "store", "err", err)
+	} else {
+		slog.Debug("checked finished nodes' dag_node records against their rows", "component", "startup", "nodes", n)
+	}
 	// After the reconcile: a hard-kill orphan is `paused` by now, so the chat
 	// scan sees it and stamps the chat paused instead of interrupted.
 	pausedChats, interrupted, err := st.ScanOrphanedRuns(ctx)
@@ -167,7 +172,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
 	defer eventLog.FinishRun(hub, chatID, plan.TurnID, cancelRun)
 
-	pub := runlog.NewPublisher(hub, eventLog, chatID)
+	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(plan.TurnID))
 
 	var res runlog.DriveResult
@@ -181,7 +186,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 			continue
 		}
 		var resumeErr string
-		run := lastErrorOf(orch.RetryNode(runCtx, userID, chatID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), &resumeErr)
+		run := lastErrorOf(orch.RetryNode(runCtx, userID, chatID, plan.ID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), &resumeErr)
 		res = runlog.Drive(plan.TurnID, st, pub, run, func(err error) {
 			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
 		})

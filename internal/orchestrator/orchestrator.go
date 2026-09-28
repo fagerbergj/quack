@@ -54,6 +54,7 @@ const SourceApp = "app"
 
 // Orchestrator: ADK llmagent that selects direct answer or plan + execute.
 type Orchestrator struct {
+	planLoader  func(ctx context.Context, planID string) (dag.Plan, bool)
 	sessions    session.Service
 	model       model.LLM
 	sysPrompt   func(context.Context) string
@@ -255,8 +256,9 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 }
 
 // RetryNode re-runs a finished node and its descendants with optional
-// guidance; node-level dag.Admission still gates the work.
-func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+// guidance; node-level dag.Admission still gates the work. A non-empty planID
+// names the node's own plan (see planFor), so a stale stash never runs another plan's task.
+func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		ctx, done := o.executor.Pin(ctx)
 		defer done()
@@ -268,9 +270,9 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		defer otelobs.End(span, nil)
 		otelobs.RunStarted()
 		defer otelobs.RunFinished()
-		plan, ok := o.stashedPlan(ctx, userID, chatID)
+		plan, ok := o.planFor(ctx, userID, chatID, planID)
 		if !ok {
-			yield(stream.Errorf("retry: no plan in session to retry"), nil)
+			yield(stream.Errorf("retry: no plan to retry"), nil)
 			return
 		}
 		if guidance = strings.TrimSpace(guidance); guidance != "" {
@@ -314,9 +316,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
 			if rerr != nil {
 				ds.Abort(rerr)
-				if ev, ok := stream.RunErrorf(ctx, rerr); ok {
-					safeYield(ev, nil)
-				}
+				safeYield(stream.Errorf(rerr.Error()), nil)
 				return
 			}
 			if ev == nil {
@@ -616,6 +616,25 @@ func turnProduced(ev *session.Event) bool {
 		}
 	}
 	return false
+}
+
+// SetPlanLoader wires the store's copy of each plan's full dag.Plan (store.LoadExecPlan).
+func (o *Orchestrator) SetPlanLoader(load func(ctx context.Context, planID string) (dag.Plan, bool)) {
+	o.planLoader = load
+}
+
+// planFor returns plan planID: the session stash when it holds it, else the store's copy,
+// since the stash commits only with execute's tool response and a run cut mid-execute misses it.
+// An empty planID takes whatever the stash holds.
+func (o *Orchestrator) planFor(ctx context.Context, userID, chatID, planID string) (dag.Plan, bool) {
+	plan, ok := o.stashedPlan(ctx, userID, chatID)
+	if planID == "" || ok && plan.ID == planID {
+		return plan, ok
+	}
+	if o.planLoader == nil {
+		return dag.Plan{}, false
+	}
+	return o.planLoader(ctx, planID)
 }
 
 // stashedPlan loads the dag.Plan the execute tool stored in session state.
