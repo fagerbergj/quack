@@ -75,7 +75,7 @@ func TestRun_ConsumerStopsRangingMidRun_ProcessSurvives(t *testing.T) {
 
 	sessions := session.InMemoryService()
 	ex := dag.NewExecutor(sessions, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), nil, nil)
-	ex.SetRoster(&dag.Roster{Agents: agents, Models: models,
+	ex.SetRoster(&dag.Roster{Gen: 1, Agents: agents, Models: models, Infos: infos,
 		CfgFor:  func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
 		SpecFor: func(string) dag.AdmissionSpec { return dag.AdmissionSpec{Model: "m"} }})
 	ex.SetMaxActive(fanN)

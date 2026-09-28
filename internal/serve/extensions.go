@@ -624,11 +624,16 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// A bound shape (Nodes non-empty) skips the planner LLM call entirely: build the
 		// Plan now, synchronously, so a malformed binding is a hard dispatch error.
 		if nodes, bound := workflowcatalog.Bind(shape, req.Ask.Message); bound {
-			plan, err := orch.BuildBoundPlan(runCtx, nodes, req.Ask.Message, attachments, allowedKinds)
+			pinCtx, done := orch.Pin(runCtx)
+			plan, err := orch.BuildBoundPlan(pinCtx, nodes, req.Ask.Message, attachments, allowedKinds)
 			if err != nil {
+				done()
 				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
 			}
-			go driveBoundExtensionRun(runCtx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, *plan, req.Run.Timeout)
+			go func() {
+				defer done()
+				driveBoundExtensionRun(pinCtx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, *plan, req.Run.Timeout)
+			}()
 			return nil
 		}
 

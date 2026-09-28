@@ -207,9 +207,9 @@ func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup,
 }
 
 // infosFor: the pinned roster's agents (Executor.Pin), else the ones NewPlanner
-// was given - also for a NewExecutor Gen 0 roster, which carries no Infos.
+// was given - also for NewExecutor's Gen 0 placeholder, which carries no Infos.
 func (p *Planner) infosFor(ctx context.Context) []AgentInfo {
-	if r := pinnedRoster(ctx); r != nil && r.Infos != nil {
+	if r := pinnedRoster(ctx); r != nil && r.Gen > 0 {
 		return r.Infos
 	}
 	return p.agents

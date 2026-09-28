@@ -72,6 +72,11 @@ func TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield(t *testing.T) {
 	sessions := session.InMemoryService()
 	ex := dag.NewExecutor(sessions, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), nil, nil)
 	ex.SetRoster(&dag.Roster{
+		Gen: 1,
+		Infos: []dag.AgentInfo{
+			{Name: "web-researcher", Description: "researches the web"},
+			{Name: "synthesizer", Description: "synthesizes findings"},
+		},
 		Agents: map[string]adkagent.Agent{"web-researcher": worker, "synthesizer": synth},
 		Models: map[string]model.LLM{"web-researcher": stub, "synthesizer": stub},
 		CfgFor: func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
@@ -88,10 +93,7 @@ func TestRun_NodeQueuedDuringSiblingRun_NoUnsynchronizedYield(t *testing.T) {
 	admission := dag.NewAdmission(map[string]int{"wr": 1}, nil, nil, 0)
 	ex.SetAdmission(admission, dag.AdmissionSpec{})
 
-	planner := dag.NewPlanner([]dag.AgentInfo{
-		{Name: "web-researcher", Description: "researches the web"},
-		{Name: "synthesizer", Description: "synthesizes findings"},
-	}, nil, nil)
+	planner := dag.NewPlanner(ex.RosterFor(context.Background()).Infos, nil, nil)
 	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 
 	// Unsynchronized append - the shape production and runTurn both use.

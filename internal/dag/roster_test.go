@@ -52,6 +52,7 @@ func rosterWith(t *testing.T, llm fixedLLM) *Roster {
 func TestRoster_PinnedRunSurvivesSetRoster(t *testing.T) {
 	swapped := make(chan struct{})
 	old := rosterWith(t, fixedLLM{reply: "FROM-OLD", wait: swapped})
+	old.Gen = 1
 	var deaths atomic.Int32
 	old.OnDead = func() { deaths.Add(1) }
 	ex := NewExecutor(session.InMemoryService(), nil, nil, vetting.NewJudgeFactory(fixedLLM{reply: "judge"}, nil, nil), nil, nil)
@@ -64,13 +65,13 @@ func TestRoster_PinnedRunSurvivesSetRoster(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; ; i++ {
+		for i := 2; ; i++ {
 			select {
 			case <-stop:
 				return
 			default:
 			}
-			ex.SetRoster(&Roster{Agents: fresh.Agents, Models: fresh.Models, CfgFor: fresh.CfgFor})
+			ex.SetRoster(&Roster{Gen: uint64(i), Agents: fresh.Agents, Models: fresh.Models, CfgFor: fresh.CfgFor})
 			if i == 50 {
 				close(swapped)
 			}
@@ -100,8 +101,8 @@ func TestRoster_OnDeadOncePerRetiredNeverCurrent(t *testing.T) {
 	ex := NewExecutor(nil, nil, nil, nil, nil, nil)
 	var mu sync.Mutex
 	deaths := map[*Roster]int{}
-	mk := func() *Roster {
-		r := &Roster{}
+	mk := func(gen int) *Roster {
+		r := &Roster{Gen: uint64(gen)}
 		r.OnDead = func() { mu.Lock(); deaths[r]++; mu.Unlock() }
 		return r
 	}
@@ -117,8 +118,8 @@ func TestRoster_OnDeadOncePerRetiredNeverCurrent(t *testing.T) {
 			}
 		}()
 	}
-	for range 100 {
-		r := mk()
+	for i := range 100 {
+		r := mk(i + 1)
 		all = append(all, r)
 		ex.SetRoster(r)
 	}
@@ -146,18 +147,60 @@ func TestRoster_NestedPinKeepsRoster(t *testing.T) {
 		t.Fatalf("nested pin Gen = %d, want 1", got)
 	}
 	innerDone()
-	if first.dead.Load() {
+	if first.runs.Load() < 0 {
 		t.Fatal("roster died while the outer pin was live")
 	}
 	done()
-	if !first.dead.Load() {
+	if first.runs.Load() >= 0 {
 		t.Fatal("retired roster not dead after its last done")
+	}
+}
+
+// A ctx that outlived its run (context.WithoutCancel after done) must not revive a dead roster.
+func TestRoster_EscapedCtxRepinsCurrent(t *testing.T) {
+	ex := NewExecutor(nil, nil, nil, nil, nil, nil)
+	var deaths atomic.Int32
+	ex.SetRoster(&Roster{Gen: 1, OnDead: func() { deaths.Add(1) }})
+	ctx, done := ex.Pin(context.Background())
+	escaped := context.WithoutCancel(ctx)
+	done()
+	ex.SetRoster(&Roster{Gen: 2})
+	if got := ex.RosterFor(escaped).Gen; got != 2 {
+		t.Fatalf("RosterFor on a dead pin = Gen %d, want current 2", got)
+	}
+	repinned, redone := ex.Pin(escaped)
+	defer redone()
+	if got := ex.RosterFor(repinned).Gen; got != 2 {
+		t.Fatalf("nested pin on a dead roster = Gen %d, want current 2", got)
+	}
+	if deaths.Load() != 1 {
+		t.Fatalf("OnDead = %d, want 1", deaths.Load())
+	}
+}
+
+func TestRoster_SetRosterRejectsReuse(t *testing.T) {
+	ex := NewExecutor(nil, nil, nil, nil, nil, nil)
+	a := &Roster{Gen: 1}
+	ex.SetRoster(a)
+	ex.SetRoster(&Roster{Gen: 2})
+	for name, r := range map[string]*Roster{"nil": nil, "retired": a, "stale gen": {Gen: 2}} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("SetRoster(%s) did not panic", name)
+				}
+			}()
+			ex.SetRoster(r)
+		}()
+	}
+	if got := ex.RosterFor(context.Background()).Gen; got != 2 {
+		t.Fatalf("current Gen = %d after rejected sets, want 2", got)
 	}
 }
 
 func TestPlanner_UsesPinnedInfos(t *testing.T) {
 	ex := NewExecutor(nil, nil, nil, nil, nil, nil)
-	ex.SetRoster(&Roster{Infos: []AgentInfo{{Name: "fresh"}}})
+	ex.SetRoster(&Roster{Gen: 1, Infos: []AgentInfo{{Name: "fresh"}}})
 	p := &Planner{agents: []AgentInfo{{Name: "boot"}}}
 	nodes := func(agent string) []RawNode { return []RawNode{{ID: "n", Agent: agent, Task: "t"}} }
 	pinned, done := ex.Pin(context.Background())
@@ -170,5 +213,12 @@ func TestPlanner_UsesPinnedInfos(t *testing.T) {
 	}
 	if _, err := p.BuildBound(context.Background(), nodes("boot"), nil, nil, "m", nil, nil); err != nil {
 		t.Fatalf("unpinned ctx lost the planner's own agents: %v", err)
+	}
+	empty := NewExecutor(nil, nil, nil, nil, nil, nil)
+	empty.SetRoster(&Roster{Gen: 1})
+	emptyCtx, emptyDone := empty.Pin(context.Background())
+	defer emptyDone()
+	if _, err := p.BuildBound(emptyCtx, nodes("boot"), nil, nil, "m", nil, nil); err == nil {
+		t.Fatal("a reload roster with no agents fell back to the boot agents")
 	}
 }
