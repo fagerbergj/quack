@@ -26,6 +26,7 @@ func TestMain(m *testing.M) {
 		runMCPStubServer()
 		return
 	}
+	workspace.GitProtocol = "file" // plugin fixtures are local bare repos
 	os.Exit(m.Run())
 }
 
