@@ -21,6 +21,14 @@ const emptyReload = {
   failures: [],
 }
 
+const changedReload = {
+  generation: 3,
+  agents: { added: ['sleeper-analyst'], updated: [{ name: 'code-reviewer', bundle_hash: 'abcdef1234567890' }], removed: ['legacy-planner'] },
+  workflows: { added: ['weekly-digest'], updated: [], removed: [] },
+  mcp_servers: { started: ['ponytail/lint'], reused: ['dotagents/search'], stopped: [] },
+  failures: [],
+}
+
 const ROW = {
   name: 'dotagents', entry: 'github:fagerbergj/dotagents', source: 'github' as const,
   installed_sha: 'c886ce1a8474939dc42f7c194f8c57242223ea1',
@@ -34,7 +42,7 @@ const ROW2 = {
 // Routes each fetch by method+path substring to a queue of canned responses,
 // so a test only has to set up the endpoints it actually cares about -
 // list/updates/create/delete/update all interleave in one page.
-function routedFetch(routes: Record<string, Response[]>) {
+function routedFetch(routes: Record<string, Array<Response | Promise<Response>>>) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     // The generated client calls fetch(new Request(...)) - method lives on
@@ -158,6 +166,8 @@ describe('Plugins', () => {
     })
     expect(window.confirm).toHaveBeenCalled()
     expect(host!.textContent).toContain('No plugins registered')
+    expect(host!.textContent).toContain('Reloaded - generation 2')
+    expect(host!.textContent).toContain('No changes')
   })
 
   it('sends no DELETE when the remove confirm is declined', async () => {
@@ -228,5 +238,104 @@ describe('Plugins', () => {
     expect(host!.textContent).toContain('dotagents')
     expect(host!.textContent).toContain('ponytail')
     expect(host!.textContent).toContain('boom')
+  })
+
+  describe('reload report', () => {
+    const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+    const panel = () => host!.querySelector('[aria-live="polite"]')!.textContent ?? ''
+    const button = (name: string) =>
+      [...host!.querySelectorAll('button')].find(b => b.textContent?.trim() === name || b.getAttribute('aria-label') === name) as HTMLButtonElement
+
+    async function click(name: string) {
+      await act(async () => {
+        button(name).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+        await tick()
+      })
+    }
+
+    const listTwice = () => ({
+      'GET /plugins/updates': [jsonResponse({ updates: [] }), jsonResponse({ updates: [] })],
+      'GET /plugins': [jsonResponse({ plugins: [ROW] }), jsonResponse({ plugins: [ROW] })],
+    })
+
+    it('disables Reload while in flight, then shows what changed', async () => {
+      let release!: (r: Response) => void
+      const pending = new Promise<Response>(resolve => { release = resolve })
+      vi.stubGlobal('fetch', routedFetch({ ...listTwice(), 'POST /plugins/reload': [pending] }))
+      await renderAndFlush()
+
+      await click('Reload')
+      expect(button('Reload').disabled).toBe(true)
+      await act(async () => { release(jsonResponse(changedReload)); await tick() })
+
+      expect(button('Reload').disabled).toBe(false)
+      for (const want of ['Reloaded - generation 3', 'sleeper-analyst', 'code-reviewer (abcdef1)', 'legacy-planner', 'weekly-digest', 'ponytail/lint', 'dotagents/search']) {
+        expect(panel()).toContain(want)
+      }
+    })
+
+    it('lists dropped members as warnings', async () => {
+      const report = {
+        ...changedReload,
+        failures: [
+          { plugin: 'ponytail', member: 'lint', stage: 'mcp', error: 'spawn ponytail-lint: not found' },
+          { stage: 'config', error: 'agent "x": unknown model' },
+        ],
+      }
+      vi.stubGlobal('fetch', routedFetch({ ...listTwice(), 'POST /plugins/reload': [jsonResponse(report)] }))
+      await renderAndFlush()
+      await click('Reload')
+
+      expect(panel()).toContain('ponytail/lint (mcp): spawn ponytail-lint: not found')
+      expect(panel()).toContain('reload (config): agent "x": unknown model')
+      const list = host!.querySelector('section[aria-label="Reload report"] ul')!
+      expect(list.className).toContain('text-amber-700')
+    })
+
+    it('shows a 422 as aborted on the still-serving generation, and dismisses', async () => {
+      const report = { ...emptyReload, failures: [{ stage: 'registry', error: 'list plugins: connection refused' }] }
+      vi.stubGlobal('fetch', routedFetch({ ...listTwice(), 'POST /plugins/reload': [jsonResponse(report, 422)] }))
+      await renderAndFlush()
+      await click('Reload')
+
+      expect(panel()).toContain('Reload aborted - still serving generation 2')
+      expect(panel()).toContain('list plugins: connection refused')
+      await click('Dismiss reload report')
+      expect(panel()).toBe('')
+    })
+
+    it('shows the reload an Update returned without a separate Reload', async () => {
+      vi.stubGlobal('fetch', routedFetch({ ...listTwice(), 'POST /plugins/dotagents/update': [jsonResponse({ ...ROW, reload: changedReload })] }))
+      await renderAndFlush()
+      await click('Update dotagents')
+      expect(panel()).toContain('Reloaded - generation 3')
+      expect(panel()).toContain('sleeper-analyst')
+    })
+
+    it('shows both the message and the report when an Update is refused with a 422', async () => {
+      const report = { ...emptyReload, failures: [{ plugin: 'dotagents', stage: 'admission', error: 'declares unlinked module' }] }
+      vi.stubGlobal('fetch', routedFetch({
+        ...listTwice(),
+        'POST /plugins/dotagents/update': [jsonResponse({ error: 'plugin dotagents refused', reload: report }, 422)],
+      }))
+      await renderAndFlush()
+      await click('Update dotagents')
+      expect(host!.textContent).toContain('plugin dotagents refused')
+      expect(panel()).toContain('dotagents (admission): declares unlinked module')
+    })
+
+    it('shows the reload an Add returned', async () => {
+      vi.stubGlobal('fetch', routedFetch({ ...listTwice(), 'POST /plugins': [jsonResponse({ ...ROW, reload: changedReload }, 201)] }))
+      await renderAndFlush()
+      const input = host!.querySelector('input[aria-label="Plugin entry"]') as HTMLInputElement
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
+      await act(async () => {
+        setter.call(input, 'github:fagerbergj/dotagents')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        host!.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+        await tick()
+      })
+      expect(panel()).toContain('Reloaded - generation 3')
+    })
   })
 })
