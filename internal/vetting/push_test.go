@@ -81,7 +81,7 @@ func TestPushBranchRecoversFromSurvivingRemoteBranch(t *testing.T) {
 	runGitT(t, target, "add", "-A")
 	runGitT(t, target, "commit", "--quiet", "-m", "fix commit")
 
-	if _, err := PushBranch(context.Background(), jailRoot, target, "quack/issue-66", GitCredential{}, workspace.DefaultCaps()); err != nil {
+	if _, err := PushBranch(context.Background(), jailRoot, target, "file://"+bare, "quack/issue-66", GitCredential{}, workspace.DefaultCaps()); err != nil {
 		t.Fatalf("PushBranch: %v; want it to recover via fetch+rebase+retry", err)
 	}
 
@@ -117,7 +117,7 @@ func TestPushBranchRebaseRecoveryFailureLeavesBranchAlone(t *testing.T) {
 	runGitT(t, target, "add", "-A")
 	runGitT(t, target, "commit", "--quiet", "-m", "conflicting commit")
 
-	if _, err := PushBranch(context.Background(), jailRoot, target, "quack/issue-66", GitCredential{}, workspace.DefaultCaps()); err == nil {
+	if _, err := PushBranch(context.Background(), jailRoot, target, "file://"+bare, "quack/issue-66", GitCredential{}, workspace.DefaultCaps()); err == nil {
 		t.Fatal("expected PushBranch to fail when rebase recovery hits a conflict")
 	}
 
@@ -134,6 +134,48 @@ func TestPushBranchRebaseRecoveryFailureLeavesBranchAlone(t *testing.T) {
 	data, rerr := os.ReadFile(filepath.Join(fetched, "pr.txt"))
 	if rerr != nil || string(data) != "pr change\n" {
 		t.Errorf("remote branch was modified despite failed recovery: %q, err=%v", data, rerr)
+	}
+}
+
+// TestPushBranchIgnoresRepoRedirectsAndHooks: a clone whose own config repoints origin, rewrites the
+// validated URL, or sets core.hooksPath still pushes to that URL, and no hook runs.
+func TestPushBranchIgnoresRepoRedirectsAndHooks(t *testing.T) {
+	requireGit(t)
+	bare, decoy := newBareRepoFixture(t), newBareRepoFixture(t)
+	target := t.TempDir()
+	runGitT(t, filepath.Dir(target), "clone", "--quiet", bare, target)
+	runGitT(t, target, "checkout", "--quiet", "-b", "quack/issue-7")
+	runGitT(t, target, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "--allow-empty", "-m", "work")
+
+	hooks, marker := t.TempDir(), filepath.Join(t.TempDir(), "hook-fired")
+	for _, h := range []string{"pre-push", "reference-transaction"} {
+		if err := os.WriteFile(filepath.Join(hooks, h), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitT(t, target, "remote", "set-url", "origin", decoy)
+	runGitT(t, target, "config", "url.file://"+decoy+".insteadOf", "file://"+bare)
+	runGitT(t, target, "config", "remote.file://"+bare+".url", decoy)
+	runGitT(t, target, "config", "core.hooksPath", hooks)
+
+	if _, err := PushBranch(context.Background(), t.TempDir(), target, "file://"+bare, "quack/issue-7", GitCredential{}, workspace.DefaultCaps()); err != nil {
+		t.Fatalf("PushBranch: %v", err)
+	}
+	runGitT(t, bare, "rev-parse", "--verify", "--quiet", "refs/heads/quack/issue-7")
+	if _, _, err := runPushGit(context.Background(), decoy, []string{"rev-parse", "--verify", "--quiet", "refs/heads/quack/issue-7"}, workspace.DefaultCaps(), nil); err == nil {
+		t.Error("branch landed in the decoy repo the clone's config pointed at")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("repo-level core.hooksPath hook ran during PushBranch (stat err=%v)", err)
+	}
+}
+
+// TestPushBranchRejectsUnvalidatedURL: only a credential-free URL of the allowed transport is pushed to.
+func TestPushBranchRejectsUnvalidatedURL(t *testing.T) {
+	for _, u := range []string{"", "origin", "https://github.com/a/b.git", "file://tok@host/x"} {
+		if _, err := PushBranch(context.Background(), t.TempDir(), t.TempDir(), u, "b", GitCredential{}, workspace.DefaultCaps()); err == nil {
+			t.Errorf("PushBranch(%q): want a rejection", u)
+		}
 	}
 }
 

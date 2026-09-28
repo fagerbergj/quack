@@ -85,6 +85,8 @@ workspace:
 
 `git_credentials` is deployment-level, one HTTPS identity per host. `token` must be an `${VAR}` reference in the raw YAML - a literal here is a startup error, checked on the raw file text before `${VAR}` expansion, so it can't slip through as a "just for now" secret. Never put a credential in a clone URL; `git_clone` rejects that outright.
 
+Quack's own git calls (setup clone and fetch, the gate's push) ignore git configuration an agent can write. Each runs with an empty per-call `HOME`, no system or global config, hooks, fsmonitor and credential helpers off, and `https` as the only transport. Before a credentialed call, quack strips the clone's repository config down to core settings, `remote.origin.url`/`fetch`, branch tracking and `user.name`/`email`, then fetches and pushes against the repository URL itself rather than a named remote. The credential helper answers only prompts for that URL's host.
+
 `git_push` (the one outward-facing, non-undoable git operation) is gated through `guards.git_push` below, not a top-level toggle - there is no `workspace.git_push` field. Even when the guard passes, a push can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
 
 ## `gc`: the workspace reaper

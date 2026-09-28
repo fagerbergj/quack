@@ -104,7 +104,7 @@ func TestGitCloneAcceptsPlainHTTPS(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
-	env := gitEnv("/home/x", workspace.Caps{}, nil)
+	env := gitEnv(workspace.Caps{}, nil)
 	for _, e := range env {
 		if strings.HasPrefix(e, "GIT_ASKPASS=") || strings.HasPrefix(e, GitAskpassTokenEnv+"=") || strings.HasPrefix(e, GitAskpassUserEnv+"=") {
 			t.Errorf("no-auth env unexpectedly contains %q", e)
@@ -114,9 +114,11 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 	auth := &gitAuth{
 		cred:    GitCredential{Host: "github.com", Username: "x-access-token", Token: "secret"},
 		askpass: "/workspace/" + GitAskpassLinkName,
+		host:    "github.com",
 	}
-	env2 := gitEnv("/home/x", workspace.Caps{}, auth)
+	env2 := gitEnv(workspace.Caps{}, auth)
 	want := map[string]bool{
+		GitAskpassHostEnv + "=github.com": false,
 		// GIT_ASKPASS must be EXACTLY the executable symlink path - git execs the
 		// value directly as one program, so any "<path> <arg>" form is a broken
 		// (unexecutable) configuration: the regression guard for the live "cannot exec 'quack git-askpass'" failure.
@@ -143,7 +145,7 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 // hook or filter may legitimately need the configured toolchain).
 func TestGitEnvIncludesWorkspaceEnv(t *testing.T) {
 	caps := workspace.Caps{Env: map[string]string{"JAVA_HOME": "/opt/jdk-21"}}
-	env := gitEnv("/home/x", caps, nil)
+	env := gitEnv(caps, nil)
 	want := "JAVA_HOME=/opt/jdk-21"
 	found := false
 	for _, e := range env {
@@ -267,3 +269,76 @@ func TestRunGitNeutralizesHooks(t *testing.T) {
 // git_checkout - the reviewer's path to a PR branch. A shallow clone
 // (--depth 1, which git implies --single-branch for) lands on the default branch
 // ONLY: no other branch is reachable, so a code review of a PR was impossible before this tool existed.
+
+// anyHostToken credentials every URL, so file:// fixtures take the credentialed path.
+type anyHostToken struct{}
+
+func (anyHostToken) GitCredential(context.Context, string) (*GitCredential, error) {
+	return &GitCredential{Username: "u", Token: "tok"}, nil
+}
+
+// newDecoyRepoFixture is a bare repo whose main differs from newBareRepoFixture's by decoy.txt.
+func newDecoyRepoFixture(t *testing.T) string {
+	t.Helper()
+	bare := newBareRepoFixture(t)
+	seed := t.TempDir()
+	runGitT(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	if err := os.WriteFile(filepath.Join(seed, "decoy.txt"), []byte("decoy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, seed, "add", "-A")
+	runGitT(t, seed, "-c", "user.name=d", "-c", "user.email=d@x.local", "commit", "--quiet", "-m", "decoy")
+	runGitT(t, seed, "push", "--quiet", "origin", "main")
+	return bare
+}
+
+// TestCredentialedGitIgnoresHomeConfig: a url rewrite in the HOME git used to get (caps.HomeDir)
+// must not steer the credentialed clone or the reuse fetch away from the requested repo.
+func TestCredentialedGitIgnoresHomeConfig(t *testing.T) {
+	requireGit(t)
+	real, decoy := newBareRepoFixture(t), newDecoyRepoFixture(t)
+	b := newTestGitBinding(t)
+	b.tokenSource = anyHostToken{}
+	b.caps.HomeDir = t.TempDir()
+	rewrite := "[url \"file://" + decoy + "\"]\n\tinsteadOf = file://" + real + "\n"
+	if err := os.WriteFile(filepath.Join(b.caps.HomeDir, ".gitconfig"), []byte(rewrite), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wantMain := strings.TrimSpace(runGitT(t, real, "rev-parse", "main"))
+
+	target, err := setupCloneAndBranch(context.Background(), b, "repo", "file://"+real, "main", "quack/one", false)
+	if err != nil {
+		t.Fatalf("setup (clone): %v", err)
+	}
+	// A second work branch reuses the clone and fetches main again.
+	if _, err := setupCloneAndBranch(context.Background(), b, "repo", "file://"+real, "main", "quack/two", false); err != nil {
+		t.Fatalf("setup (reuse fetch): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "decoy.txt")); err == nil {
+		t.Fatal("clone came from the rewritten decoy repo")
+	}
+	if got := strings.TrimSpace(runGitT(t, target, "rev-parse", "origin/main")); got != wantMain {
+		t.Errorf("origin/main = %s, want the requested repo's main %s", got, wantMain)
+	}
+}
+
+// TestRunGitIgnoresRepoHooksPath: a repo-level core.hooksPath must not fire during quack's own git calls.
+func TestRunGitIgnoresRepoHooksPath(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	repo := t.TempDir()
+	runGitT(t, filepath.Dir(repo), "clone", "--quiet", bare, repo)
+	hooks, marker := t.TempDir(), filepath.Join(t.TempDir(), "hook-fired")
+	for _, h := range []string{"post-checkout", "reference-transaction"} {
+		if err := os.WriteFile(filepath.Join(hooks, h), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitT(t, repo, "config", "core.hooksPath", hooks)
+
+	runGitT(t, repo, "checkout", "-b", "other-branch")
+
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("repo-level core.hooksPath hook ran (stat err=%v)", err)
+	}
+}

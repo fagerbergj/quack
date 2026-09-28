@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,7 @@ type GitCredentialSource interface {
 const (
 	gitAskpassTokenEnv  = "QUACK_GIT_ASKPASS_TOKEN"
 	gitAskpassUserEnv   = "QUACK_GIT_ASKPASS_USERNAME"
+	gitAskpassHostEnv   = "QUACK_GIT_ASKPASS_HOST"
 	gitAskpassLinkName  = ".quack-askpass"
 	maxGitPushOutputLen = 64 * 1024
 )
@@ -66,7 +68,7 @@ func ensurePush(ctx context.Context, cfg Config, dc *DeliveryContext) error {
 	if cred == nil {
 		return fmt.Errorf("push %q: no credential available for %q", dc.Branch, dc.CloneURL)
 	}
-	sha, err := PushBranch(ctx, cfg.Workspace.Root(), dc.CloneDir, dc.Branch, *cred, workspace.DefaultCaps())
+	sha, err := PushBranch(ctx, cfg.Workspace.Root(), dc.CloneDir, dc.CloneURL, dc.Branch, *cred, workspace.DefaultCaps())
 	if err != nil {
 		return fmt.Errorf("push %q: %w", dc.Branch, err)
 	}
@@ -78,6 +80,8 @@ func ensurePush(ctx context.Context, cfg Config, dc *DeliveryContext) error {
 type gitAuth struct {
 	cred    GitCredential
 	askpass string
+	host    string // askpass answers only prompts for this host
+	url     string
 }
 
 // ensureAskpassLink: ensures .quack-askpass symlink to current binary; tolerates concurrent creation.
@@ -119,16 +123,10 @@ func pushGitChildPath(caps workspace.Caps) string {
 	return strings.Join(caps.ExtraPath, ":") + ":" + base
 }
 
-func pushGitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
-	home := caps.HomeDir
-	if home == "" {
-		home = dir
-	}
+// pushGitEnv: HOME and the config-source pins come from workspace.GitCmd, after these.
+func pushGitEnv(caps workspace.Caps, auth *gitAuth) []string {
 	env := []string{
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_NOSYSTEM=1",
 		"PATH=" + pushGitChildPath(caps),
-		"HOME=" + home,
 		// Git writes loose objects via a tmp file under TMPDIR then renames it
 		// into .git/objects - unset, that defaults to the real /tmp, which can
 		// be a different device than dir and turn the rename into EXDEV (#936).
@@ -139,6 +137,7 @@ func pushGitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
 			"GIT_ASKPASS="+auth.askpass,
 			gitAskpassUserEnv+"="+auth.cred.Username,
 			gitAskpassTokenEnv+"="+auth.cred.Token,
+			gitAskpassHostEnv+"="+auth.host,
 		)
 	}
 	return env
@@ -165,12 +164,11 @@ func runPushGit(ctx context.Context, dir string, argv []string, caps workspace.C
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	env := pushGitEnv(dir, caps, auth)
-	// Neutralize hooks (agent-written hooks would run unsandboxed).
-	fullArgv := append([]string{"-c", "core.hooksPath=/dev/null"}, argv...)
-	cmd := exec.CommandContext(cctx, bin, fullArgv...)
-	cmd.Dir = dir
-	cmd.Env = env
+	cmd, done, err := workspace.GitCmd(cctx, bin, dir, argv, pushGitEnv(caps, auth), auth != nil)
+	if err != nil {
+		return "", "", err
+	}
+	defer done()
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
@@ -198,16 +196,21 @@ func runPushGit(ctx context.Context, dir string, argv []string, caps workspace.C
 	return out, errOut, nil
 }
 
-// PushBranch: force-pushes branch to origin (delivery step, outside any agent tool call).
-func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCredential, caps workspace.Caps) (sha string, err error) {
+// PushBranch: force-pushes branch to repoURL itself, never a named remote the clone's config could repoint
+// (delivery step, outside any agent tool call).
+func PushBranch(ctx context.Context, jailRoot, dir, repoURL, branch string, cred GitCredential, caps workspace.Caps) (sha string, err error) {
 	if protectedBranches[branch] {
 		return "", fmt.Errorf("git: pushing to %q is rejected - a human merges", branch)
+	}
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Scheme != workspace.GitProtocol || u.User != nil {
+		return "", fmt.Errorf("git: push url %q must be a credential-free %s:// URL", repoURL, workspace.GitProtocol)
 	}
 	link, err := ensureAskpassLink(jailRoot)
 	if err != nil {
 		return "", err
 	}
-	auth := &gitAuth{cred: cred, askpass: link}
+	auth := &gitAuth{cred: cred, askpass: link, host: u.Host, url: repoURL}
 	// --force: each run starts fresh, so leftover remote is never a fast-forward.
 	if pushErr := pushForce(ctx, dir, branch, caps, auth); pushErr != nil {
 		// A branch surviving from a prior run on the same issue is normal (#714):
@@ -227,13 +230,13 @@ func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCrede
 }
 
 func pushForce(ctx context.Context, dir, branch string, caps workspace.Caps, auth *gitAuth) error {
-	_, _, err := runPushGit(ctx, dir, []string{"push", "--quiet", "--force", "origin", branch}, caps, auth)
+	_, _, err := runPushGit(ctx, dir, []string{"push", "--quiet", "--force", auth.url, branch}, caps, auth)
 	return err
 }
 
 // rebaseOntoRemote replays local commits on top of the surviving remote branch; aborts cleanly on conflict so a failed retry leaves the branch untouched.
 func rebaseOntoRemote(ctx context.Context, dir, branch string, caps workspace.Caps, auth *gitAuth) error {
-	if _, _, err := runPushGit(ctx, dir, []string{"fetch", "--quiet", "origin", branch}, caps, auth); err != nil {
+	if _, _, err := runPushGit(ctx, dir, []string{"fetch", "--quiet", auth.url, branch}, caps, auth); err != nil {
 		return err
 	}
 	if _, _, err := runPushGit(ctx, dir, []string{"rebase", "FETCH_HEAD"}, caps, nil); err != nil {

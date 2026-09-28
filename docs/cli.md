@@ -115,7 +115,7 @@ See [`docs/sandbox-cli.md`](sandbox-cli.md) for the detail.
 
 ## Misc
 
-`quack version` prints the version. `quack git-askpass` is a helper quack invokes for itself during git operations - not something you run directly; it reads the credential from `QUACK_GIT_ASKPASS_USERNAME`/`QUACK_GIT_ASKPASS_TOKEN`, set by the calling process for that one invocation.
+`quack version` prints the version. `quack git-askpass` is a helper quack invokes for itself during git operations - not something you run directly; it reads the credential from `QUACK_GIT_ASKPASS_USERNAME`/`QUACK_GIT_ASKPASS_TOKEN`, set by the calling process for that one invocation, and answers only a prompt for the host in `QUACK_GIT_ASKPASS_HOST`.
 
 ## Raw API access
 

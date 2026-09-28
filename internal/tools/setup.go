@@ -107,7 +107,7 @@ func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, bas
 	auth, err := b.authFor(repoURL)
 	if err == nil {
 		refspec := "refs/heads/" + workBranch + ":refs/remotes/origin/" + workBranch
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", refspec}, b.caps, auth); err == nil {
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", repoURL, refspec}, b.caps, auth); err == nil {
 			upstream = "origin/" + workBranch
 		}
 	}
@@ -173,6 +173,11 @@ func isShallowRepo(ctx context.Context, dir string, caps workspace.Caps) bool {
 	return err == nil && strings.TrimSpace(out) == "true"
 }
 
+// trackingRefspec: an explicit-URL fetch updates no remote-tracking ref on its own, unlike a fetch of "origin".
+func trackingRefspec(ref string) string {
+	return "+refs/heads/" + ref + ":refs/remotes/origin/" + ref
+}
+
 // runSetupCheckout lands target on workBranch, given a clone that either was
 // just cut fresh (reused=false, HEAD already sits on baseRef's tip) or is
 // being reused from a prior turn (reused=true, so baseRef's local ref may be
@@ -187,11 +192,11 @@ func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRe
 		}
 		if isShallowRepo(ctx, target, b.caps) {
 			// Unshallow so three-dot diff has a merge-base.
-			if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "--unshallow", "origin"}, b.caps, auth); err != nil {
+			if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "--unshallow", repoURL, trackingRefspec(baseRef)}, b.caps, auth); err != nil {
 				return fmt.Errorf("setup: unshallow base history for review: %w", err)
 			}
 		}
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", workBranch + ":refs/remotes/origin/" + workBranch}, b.caps, auth); err != nil {
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", repoURL, workBranch + ":refs/remotes/origin/" + workBranch}, b.caps, auth); err != nil {
 			return fmt.Errorf("setup: fetch review head %q: %w", workBranch, err)
 		}
 		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + workBranch}, b.caps, nil); err != nil {
@@ -215,7 +220,7 @@ func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRe
 		if err != nil {
 			return fmt.Errorf("setup: resolve credentials for %s: %w", repoURL, err)
 		}
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", baseRef}, b.caps, auth); err != nil {
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", repoURL, trackingRefspec(baseRef)}, b.caps, auth); err != nil {
 			return fmt.Errorf("setup: fetch base ref %q: %w", baseRef, err)
 		}
 		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + baseRef}, b.caps, nil); err != nil {

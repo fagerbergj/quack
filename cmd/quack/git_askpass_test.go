@@ -57,6 +57,7 @@ func TestGitAskpassSymlinkExecsBothPrompts(t *testing.T) {
 	env := map[string]string{
 		tools.GitAskpassUserEnv:  "x-access-token",
 		tools.GitAskpassTokenEnv: "sekret-token",
+		tools.GitAskpassHostEnv:  "github.com",
 	}
 	if got := execAskpass(t, link, "Username for 'https://github.com': ", env); got != "x-access-token\n" {
 		t.Errorf("Username prompt answered %q, want %q", got, "x-access-token\n")
@@ -66,18 +67,23 @@ func TestGitAskpassSymlinkExecsBothPrompts(t *testing.T) {
 	}
 }
 
-// TestGitAskpassAnswerTwoPrompts covers the in-process answer logic: username
-// prompts (any case) get the username, everything else gets the token.
+// TestGitAskpassAnswerTwoPrompts covers the in-process answer logic: prompts for
+// the expected host get the username or token; any other host, or no host, gets nothing.
 func TestGitAskpassAnswerTwoPrompts(t *testing.T) {
 	t.Setenv(tools.GitAskpassUserEnv, "x-access-token")
 	t.Setenv(tools.GitAskpassTokenEnv, "sekret-token")
+	t.Setenv(tools.GitAskpassHostEnv, "github.com")
 	cases := []struct {
 		prompt, want string
 	}{
 		{"Username for 'https://github.com': ", "x-access-token"},
-		{"username: ", "x-access-token"},
-		{"Password for 'https://github.com': ", "sekret-token"},
-		{"", "sekret-token"},
+		{"Password for 'https://x-access-token@GitHub.com': ", "sekret-token"},
+		{"Username for 'https://example.com': ", ""},
+		{"Password for 'https://x-access-token@example.com': ", ""},
+		{"Password for 'https://github.com.example.com': ", ""},
+		{"Password for 'https://github.com:8443': ", ""},
+		{"username: ", ""},
+		{"", ""},
 	}
 	for _, c := range cases {
 		if got := tools.GitAskpassAnswer(c.prompt); got != c.want {
@@ -91,6 +97,7 @@ func TestGitAskpassAnswerTwoPrompts(t *testing.T) {
 func TestGitAskpassSubcommandSecondaryEntry(t *testing.T) {
 	t.Setenv(tools.GitAskpassUserEnv, "u1")
 	t.Setenv(tools.GitAskpassTokenEnv, "tok")
+	t.Setenv(tools.GitAskpassHostEnv, "github.com")
 	root := newRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)

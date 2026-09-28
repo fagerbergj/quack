@@ -12,5 +12,6 @@ import (
 // workspace.SandboxExecArg), and without this it would run as a test with nonsense flags and hang until the per-call timeout.
 func TestMain(m *testing.M) {
 	workspace.RunSandboxExecIfInvoked()
+	workspace.GitProtocol = "file" // fixtures are local bare repos
 	os.Exit(m.Run())
 }
