@@ -40,7 +40,7 @@ COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
 # and QUACK_SRC=backend-src-ext builds against those modules via a go.work.
 FROM scratch AS ext
 FROM backend-src AS backend-src-ext
-COPY --from=ext / /ext/
+COPY --from=ext --exclude=.git / /ext/
 RUN go work init . $(dirname /ext/*/go.mod)
 
 FROM ${QUACK_SRC} AS backend

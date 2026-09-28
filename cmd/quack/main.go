@@ -706,13 +706,20 @@ func newServerValidateCmd() *cobra.Command {
 			if err := cfg.RequireAgentBundlesAndModels(); err != nil {
 				return err
 			}
+			exts, err := serve.ValidateExtensions(cfg)
+			if err != nil {
+				return err
+			}
 			stale := staleAgentBundles(cfg)
 			if asJSON {
 				return cli.WriteJSON(cmd.OutOrStdout(), serverValidateResult{
-					Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, StaleBundles: stale,
+					Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, StaleBundles: stale, Extensions: exts,
 				})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: OK\n", path)
+			for _, name := range exts {
+				fmt.Fprintf(cmd.OutOrStdout(), "  extension %s: config accepted\n", name)
+			}
 			for _, r := range seeded {
 				fmt.Fprintf(cmd.OutOrStdout(), "  plugin %s: agents %v, shapes %v\n", r.Plugin, r.Agents, r.Shapes)
 			}
@@ -753,6 +760,8 @@ type serverValidateResult struct {
 	Unresolvable []string `json:"unresolvable,omitempty"`
 	// StaleBundles names a configured agent whose bundle path is missing.
 	StaleBundles []string `json:"stale_bundles,omitempty"`
+	// Extensions names each enabled extension whose Factory accepted its config.
+	Extensions []string `json:"extensions,omitempty"`
 }
 
 // newServerInitCmd: `quack server init` - the server-config wizard (LLM

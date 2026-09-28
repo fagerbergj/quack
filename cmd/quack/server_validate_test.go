@@ -585,3 +585,27 @@ func TestServerValidate_JSONInvalid(t *testing.T) {
 		t.Errorf("invalid config should print no JSON status, got %q", out.String())
 	}
 }
+
+// validate runs each enabled extension's Factory and names the accepted ones
+// (the rejection cases live in internal/serve's ValidateExtensions test).
+func TestServerValidate_ReportsAcceptedExtensions(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "quack.yaml")
+	cfg := "providers:\n  default:\n    kind: openai\n    endpoint: http://localhost:1\n    api_key: x\n" +
+		"orchestrator:\n  provider: default\n  model: m\nmodels:\n  m:\n    provider: default\n    role: worker\n" +
+		"stores:\n  default:\n    kind: sqlite\n    url: " + filepath.Join(dir, "store.db") + "\nsession:\n  store: default\n" +
+		"workspace:\n  root: " + filepath.Join(dir, "workspace") + "\nextensions:\n  noop:\n    greeting: hi\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	c := newServerValidateCmd()
+	c.SetOut(&out)
+	c.SetArgs([]string{cfgPath})
+	if err := c.Execute(); err != nil {
+		t.Fatalf("server validate: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "extension noop: config accepted") {
+		t.Errorf("output lacks the accepted noop extension:\n%s", out.String())
+	}
+}

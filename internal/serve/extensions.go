@@ -110,14 +110,53 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, ev
 	return built, nil
 }
 
-// knownExtensionNames: the sorted names of the compiled extension factories.
-func knownExtensionNames(factories map[string]extsdk.Factory) []string {
+// knownExtensionNames: the sorted keys of an extension-name map (factories or config blocks).
+func knownExtensionNames[V any](factories map[string]V) []string {
 	known := make([]string, 0, len(factories))
 	for k := range factories {
 		known = append(known, k)
 	}
 	sort.Strings(known)
 	return known
+}
+
+// ValidateExtensions runs every configured, enabled extension's Factory against a
+// throwaway data dir, for `server validate`; Factories are side-effect free by SDK contract.
+func ValidateExtensions(cfg *config.Config) ([]string, error) {
+	tmp, err := os.MkdirTemp("", "quack-validate-ext-")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	factories := extsdk.Registered()
+	var validated []string
+	for _, name := range knownExtensionNames(cfg.Extensions.Modules) {
+		factory, ok := factories[name]
+		if !ok {
+			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(knownExtensionNames(factories), ", "))
+		}
+		enabled, err := moduleEnabled(cfg, name)
+		if err != nil {
+			return nil, err
+		}
+		if !enabled {
+			continue
+		}
+		node := cfg.Extensions.Modules[name]
+		raw, err := yaml.Marshal(&node)
+		if err != nil {
+			return nil, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+		}
+		host := extsdk.Host{Log: slog.Default().With("component", "ext."+name), DataDir: filepath.Join(tmp, name), Version: Version, PublicURL: cfg.Server.PublicURL}
+		if err := os.MkdirAll(host.DataDir, 0o755); err != nil {
+			return nil, err
+		}
+		if _, err := factory(host, raw); err != nil {
+			return nil, fmt.Errorf("extensions.%s: factory: %w", name, err)
+		}
+		validated = append(validated, name)
+	}
+	return validated, nil
 }
 
 // buildOneSDKExtension: validate, marshal, and mount one configured extension;
