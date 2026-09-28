@@ -59,7 +59,7 @@ let seq = 0;
 async function guardedCall(cfg, toolName, args) {
   const id = "call_g" + ++seq;
   out({ type: "tool_execution_start", toolCallId: id, toolName, args });
-  const v = checkPolicy(toolName, args);
+  const v = checkPolicy(toolName, args, cfg);
   let blocked = null;
   if (v?.block) blocked = v.block;
   else if (v?.ask) {

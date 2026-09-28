@@ -10,6 +10,14 @@ import { strict as assert } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { checkPolicy } from "./mcp-client.mjs";
+
+// clone is denied unless PI_ACP_CONFIG's allow_clone lifts it; push is denied either way.
+for (const cmd of ["git clone --depth 1 https://x/y", "gh repo clone x/y"]) {
+  assert.ok(checkPolicy("bash", { command: cmd })?.block, `${cmd} not denied by default`);
+  assert.equal(checkPolicy("bash", { command: cmd }, { allowClone: true }), null, `${cmd} denied despite allowClone`);
+}
+assert.ok(checkPolicy("bash", { command: "git push origin main" }, { allowClone: true })?.block, "allowClone lifted the push deny");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const env = { ...process.env };
@@ -118,7 +126,9 @@ if (!process.env.ACP_CMD) {
   const bridge = JSON.parse(readFileSync(join(piDir, "extensions", "quackmcp.json"), "utf8"));
   assert.equal(bridge.prefix, "quackmcp");
   assert.equal(bridge.tools[0].name, "stage_review");
-  readFileSync(join(piDir, "extensions", "quackmcp.ts")); // extension generated
+  assert.equal(bridge.allowClone, false, "allowClone set without allow_clone in PI_ACP_CONFIG");
+  const ext = readFileSync(join(piDir, "extensions", "quackmcp.ts"), "utf8");
+  assert.match(ext, /checkPolicy\(event\.toolName, event\.input, cfg\)/, "extension guard ignores quackmcp.json's allowClone");
 
   const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
   assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's context_window");
@@ -321,10 +331,10 @@ mcpSrv.close();
 otlpSrv.close();
 
 // no limit.context configured -> omit contextWindow rather than write 0, so
-// pi keeps its own default instead of tripping provider-composer's reject.
+// pi keeps its own default instead of tripping provider-composer's reject. Also carries allow_clone through to the bridge.
 if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   const noLimitEnv = { ...env, PI_ACP_CONFIG: JSON.stringify({
-    endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub",
+    endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub", allow_clone: true,
   }) };
   const { shim: shim2, call: call2 } = connectShim(noLimitEnv);
   await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
@@ -332,5 +342,7 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   const models2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "models.json"), "utf8"));
   assert.ok(!("contextWindow" in models2.providers.quack.models[0]), "contextWindow written when unset");
   assert.ok(!("maxTokens" in models2.providers.quack.models[0]), "maxTokens written when unset");
+  const bridge2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "extensions", "quackmcp.json"), "utf8"));
+  assert.equal(bridge2.allowClone, true, "allow_clone never reached the extension's policy config");
   shim2.stdin.end();
 }
