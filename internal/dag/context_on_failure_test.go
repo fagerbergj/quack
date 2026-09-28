@@ -23,13 +23,13 @@ import (
 type establishThenEmptyStub struct{}
 
 func (establishThenEmptyStub) Name() string { return "establishThenEmptyStub" }
-func (establishThenEmptyStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (establishThenEmptyStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
 			yield(gCall("submit_verdict", map[string]any{"score": 0.9}), nil)
 			return
 		}
-		if token, ok := vetting.ParseAdvisorThread(gUserText(req)); ok {
+		if token := vetting.AdvisorTokenFromContext(ctx); token != "" {
 			vetting.SetAdvisorThreadSessionID(token, "acp-real-session-on-failure")
 		}
 		yield(gText(""), nil)

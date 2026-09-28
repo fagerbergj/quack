@@ -446,13 +446,11 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 	g.turnID = ctx.InvocationID()
 	g.startedAt = time.Now().UTC()
 	appendNodeEvent(nodeCtx, cfg, nodeID, g.turnID, ledger.KindNodeStarted, 0)
-	// Re-attach advisor-thread marker for tool-bearing rounds.
-	if token, ok := ParseAdvisorThread(prompt); ok {
-		g.markerLine = "\n\n" + AdvisorThreadMarker(token)
-		g.advisorToken = token
+	// The token comes from the dag on cfg, never from prompt text; the marker line is inert.
+	if cfg.AdvisorToken != "" {
+		g.markerLine = "\n\n" + AdvisorThreadMarker(cfg.AdvisorToken)
+		g.advisorToken = cfg.AdvisorToken
 	}
-	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
-	cfg.AdvisorToken = g.advisorToken
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
 	if g.advisorToken != "" {
 		// Draft round: seed round=1 coords before the first worker call so a

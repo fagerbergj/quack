@@ -90,7 +90,7 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 			// frees between this node's model calls (tool phases overlap).
 			perCall = true
 		}
-		worker, err := withRoundAbort(worker, controls, chatID, node.ID)
+		worker, err := withRoundAbort(worker, controls, chatID, node.ID, vetting.AdvisorThreadToken(plan.ID, node.ID))
 		if err != nil {
 			return nil, nil, fmt.Errorf("dag: node %q: round-abort wrap: %w", node.ID, err)
 		}
@@ -115,17 +115,15 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 	return nodesByID, subAgents, nil
 }
 
-// withRoundAbort wraps the worker so a node cancel or RepeatGuardTripped can
-// abort its round mid-flight. Must wrap the Agent itself, not ctx deeper in
-// the call chain: workflow.RunNode's scheduler binds the child's context
-// once, at node activation, so only the Agent it calls Run on can inject a
-// cancel that reaches it.
-func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID string) (adkagent.Agent, error) {
+// withRoundAbort wraps the worker so a node cancel or RepeatGuardTripped can abort its round, and stamps
+// the node's advisor token on its ctx (an in-process ACP worker's only scope source). Must wrap the Agent itself.
+func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID, token string) (adkagent.Agent, error) {
 	return adkagent.New(adkagent.Config{
 		Name:        inner.Name(),
 		Description: inner.Description(),
 		Run: func(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
 			return func(yield func(*session.Event, error) bool) {
+				ctx = ctx.WithContext(vetting.WithAdvisorToken(ctx, token))
 				nc := controls.get(chatID, nodeID)
 				if nc == nil {
 					for ev, err := range inner.Run(ctx) {
@@ -299,6 +297,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)
+			cfg.AdvisorToken = token
 			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
 			atts := plan.Attachments
 			if !mediaAgents[node.AgentName] {

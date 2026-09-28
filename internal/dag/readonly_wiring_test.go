@@ -31,13 +31,13 @@ type advisorSnoopStub struct {
 
 func (s *advisorSnoopStub) Name() string { return "advisorSnoopStub" }
 
-func (s *advisorSnoopStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (s *advisorSnoopStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
 			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
 			return
 		}
-		if token, ok := vetting.ParseAdvisorThread(gUserText(req)); ok {
+		if token := vetting.AdvisorTokenFromContext(ctx); token != "" {
 			if at, ok := vetting.LookupAdvisorThread(token); ok {
 				s.mu.Lock()
 				s.sawTask, s.readOnly, s.kinds, s.planOnly = true, at.ReadOnly, at.AllowedDeliveryKinds, at.PlanOnly
@@ -56,7 +56,12 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	wn, err := vetting.NewWorkerNode(ag)
+	// The same per-node wrapper buildGateNodes applies: it stamps the node's advisor token on the worker ctx.
+	wrapped, err := withRoundAbort(ag, &runControls{}, "", plan.Nodes[0].ID, vetting.AdvisorThreadToken(plan.ID, plan.Nodes[0].ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wn, err := vetting.NewWorkerNode(wrapped)
 	if err != nil {
 		t.Fatal(err)
 	}

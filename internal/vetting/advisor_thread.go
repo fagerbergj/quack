@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"sync"
 
 	"google.golang.org/adk/v2/artifact"
@@ -16,26 +15,14 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// advisorMarkerRe extracts the token from the marker line.
-var advisorMarkerRe = regexp.MustCompile(`\[\[quack:advisor-thread:([^\]]+)\]\]`)
-
 // AdvisorThreadToken: stable per-node token.
 func AdvisorThreadToken(planID, nodeID string) string {
 	return planID + "/" + nodeID
 }
 
-// AdvisorThreadMarker: trailing marker (last-match rule handles foreign markers).
+// AdvisorThreadMarker is the node's marker line in worker prompts; nothing parses it, scope comes from tokens.
 func AdvisorThreadMarker(token string) string {
 	return "[[quack:advisor-thread:" + token + "]]"
-}
-
-// ParseAdvisorThread: extracts the LAST token from prompt text.
-func ParseAdvisorThread(text string) (token string, ok bool) {
-	ms := advisorMarkerRe.FindAllStringSubmatch(text, -1)
-	if len(ms) == 0 {
-		return "", false
-	}
-	return ms[len(ms)-1][1], true
 }
 
 // AdvisorTask: per-node identity/session coords, keyed by thread token. The

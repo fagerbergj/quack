@@ -29,9 +29,9 @@ type seenACPSessionIDStub struct {
 
 func (*seenACPSessionIDStub) Name() string { return "seenACPSessionIDStub" }
 
-func (s *seenACPSessionIDStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (s *seenACPSessionIDStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		if token, ok := vetting.ParseAdvisorThread(atAllText(req)); ok {
+		if token := vetting.AdvisorTokenFromContext(ctx); token != "" {
 			if at, ok := vetting.LookupAdvisorThread(token); ok {
 				s.mu.Lock()
 				s.seen, s.ok = at.ACPSessionID, true

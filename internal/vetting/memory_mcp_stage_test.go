@@ -78,6 +78,7 @@ func (m fixedScoreModel) GenerateContent(_ context.Context, req *model.LLMReques
 // MCP's stage_memory handler would leave it mid-round, and returns the gate's final verdict.
 func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeScore float64) GateResult {
 	t.Helper()
+	cfg.AdvisorToken = token
 	m := fixedScoreModel{score: judgeScore}
 	worker, err := llmagent.New(llmagent.Config{Name: nodeID, Model: m, Description: "worker", Instruction: "answer"})
 	if err != nil {
