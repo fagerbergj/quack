@@ -11,6 +11,7 @@ Setup and configuration guides for humans to use quack. For how the code itself 
 - [`extensions/remarkable.md`](extensions/remarkable.md) - the reMarkable document-ingest trigger.
 - [`extensions/usage.md`](extensions/usage.md) - the in-app Prometheus usage dashboard.
 - [`extensions/ui-kit.md`](extensions/ui-kit.md) - the CSS kit an extension's own HTML pages link to look native to the SPA.
+- [`extensions/dev-loop.md`](extensions/dev-loop.md) - building quack and its image against a local `quack-extensions` checkout, and tagging once when done.
 - [`sandbox-cli.md`](sandbox-cli.md) - `quack sandbox`: entering or probing the real agent jail.
 - [`memory-lifecycle.md`](memory-lifecycle.md) - the memory lifecycle design: how a memory is committed, recalled, and forgotten.
 - [`qa-mocks.md`](qa-mocks.md) - exercising the GitHub and reMarkable flows against a QA server, no real credentials.

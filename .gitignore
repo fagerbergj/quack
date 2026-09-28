@@ -5,6 +5,7 @@ frontend/render-check/
 frontend/.vitest-attachments/
 frontend/src/__screenshots__/
 /quack
+/quack-sandbox
 .test/
 # Embedded SPA is built into internal/serve/web/dist by `make build`. Ignore
 # the build output; only the .gitkeep placeholder is tracked so a fresh `go
@@ -15,6 +16,11 @@ frontend/src/__screenshots__/
 *.log
 *.swp
 *~
+
+# make dev-build's throwaway workspace; a committed go.work would change every build
+go.work
+go.work.sum
+/.dev/
 
 # Local env (secrets)
 .env

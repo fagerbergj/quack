@@ -11,6 +11,9 @@ frontend/dist
 internal/serve/web/dist/assets
 /quack
 /quack-sandbox
+go.work
+go.work.sum
+.dev
 *.test
 *.out
 .env

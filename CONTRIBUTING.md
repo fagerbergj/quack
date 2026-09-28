@@ -22,6 +22,7 @@ The per-step craft lives in loadable skills - `plan-work`, `develop-feature`, `f
 - **Frontend** - `cd frontend && npm install`, then `npm run dev` (hot reload on :3000).
 - **Full build** - `make build` (compiles the frontend and embeds `dist` into the binary).
 - **Local stack** - `cp .env.example .env` (set `QUACK_LLM_ENDPOINT` to something reachable from the container), then `make docker-up` brings up app + Postgres + searxng + qdrant via Docker.
+- **Extensions** - `make dev-build EXT=../quack-extensions` / `make dev-image EXT=...` build against a local `quack-extensions` checkout without tagging; see [docs/extensions/dev-loop.md](docs/extensions/dev-loop.md).
 
 ## Before you open a PR
 
