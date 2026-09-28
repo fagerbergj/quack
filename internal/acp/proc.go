@@ -181,15 +181,13 @@ func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) 
 	return h, nil
 }
 
-// close kills the subprocess's whole process group and reaps it. Idempotent.
+// close kills the subprocess and every descendant (workspace.StopChild), then reaps it. Idempotent.
 func (h *procHandle) close(log *slog.Logger) {
 	h.once.Do(func() {
 		if h.cmd == nil {
 			return
 		}
-		if h.cmd.Process != nil {
-			_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
-		}
+		_ = workspace.StopChild(h.cmd)
 		if err := h.cmd.Wait(); err != nil && log != nil {
 			log.Debug("acp subprocess exit", "err", err, "stderr", h.stderr.String())
 		}

@@ -409,6 +409,10 @@ func pidsWithEnv(kv string) []int {
 		if err != nil {
 			continue
 		}
+		argv, _ := os.ReadFile("/proc/" + e.Name() + "/cmdline")
+		if bytes.Contains(argv, []byte("\x00"+workspace.ReapArg+"\x00")) {
+			continue // the __reap wrapper shares the server's env; count the server itself
+		}
 		if raw, err := os.ReadFile("/proc/" + e.Name() + "/environ"); err == nil && bytes.Contains(raw, []byte(kv+"\x00")) {
 			pids = append(pids, pid)
 		}

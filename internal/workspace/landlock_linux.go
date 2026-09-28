@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
+	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
 )
 
 // landlockABI is the minimum ABI SandboxExecMain requires. V3 adds file truncation.
@@ -68,7 +69,7 @@ func SandboxExecMain(args []string) error {
 	if len(ro) > 0 {
 		rules = append(rules, landlock.RODirs(ro...).IgnoreIfMissing())
 	}
-	if err := landlockABI.RestrictPaths(rules...); err != nil {
+	if err := withSignalScope(landlockABI).Restrict(rules...); err != nil {
 		return fmt.Errorf("sandbox-exec: restrict: %w", err)
 	}
 	execArgv := append([]string{bin}, target[1:]...)
@@ -78,6 +79,15 @@ func SandboxExecMain(args []string) error {
 	env := append(os.Environ(), fmt.Sprintf("%s=landlock:abi%d:rw%d:ro%d",
 		SandboxEnvMarker, landlockABIVersion, len(rw), len(ro)))
 	return syscall.Exec(bin, execArgv, env)
+}
+
+// withSignalScope adds signal scoping where the kernel has it (ABI 6+, 6.12+): the child can't kill
+// the __reap wrapper above it (orphaning past the sweep) or the server. One ruleset: a second layer denies REFER.
+func withSignalScope(cfg landlock.Config) landlock.Config {
+	if v, err := ll.LandlockGetABIVersion(); err == nil && v >= 6 {
+		cfg.Scoped = landlock.ScopedSet(ll.ScopeSignal)
+	}
+	return cfg
 }
 
 // parseSandboxExecArgs splits the __sandbox-exec argv into its repeatable

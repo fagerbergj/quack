@@ -249,7 +249,7 @@ func TestWrapArgvReadOnlyDegradesAndLogsUnderNone(t *testing.T) {
 			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 			warnReadOnlyUnenforcedOnce = sync.Once{}
 			argv := []string{"pi-acp", "run"}
-			got := WrapArgv(t.TempDir(), argv, Caps{Sandbox: mode, ReadOnly: true}, nil, nil)
+			got := unreaped(WrapArgv(t.TempDir(), argv, Caps{Sandbox: mode, ReadOnly: true}, nil, nil))
 			slog.SetDefault(restore)
 
 			if len(got) != len(argv) || got[0] != argv[0] || got[1] != argv[1] {
