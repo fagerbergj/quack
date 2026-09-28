@@ -43,7 +43,7 @@ func TestPiACPEnvContextWindow(t *testing.T) {
 // pi-acp shim reads - a stray extra key here is one pi silently ignores.
 func TestPiACPEnvFlatShape(t *testing.T) {
 	env := piACPEnv(config.ProviderConfig{Endpoint: "http://x/v1", APIKey: "k"},
-		config.AgentConfig{Model: "m", ContextWindow: 65536, Acp: &config.AcpAgentConfig{}},
+		config.AgentConfig{Model: "m", ContextWindow: 65536, Acp: &config.AcpAgentConfig{ReadOnly: true, AllowClone: true}},
 		[]string{"/skills"}, workspace.SandboxBwrap)
 	if len(env) != 1 || !strings.HasPrefix(env[0], "PI_ACP_CONFIG=") {
 		t.Fatalf("unexpected env: %v", env)
@@ -94,6 +94,7 @@ func TestPiACPEnvAllowClone(t *testing.T) {
 		{"landlock", config.AcpAgentConfig{ReadOnly: true, AllowClone: true}, workspace.SandboxLandlock, true},
 		{"none drops it", config.AcpAgentConfig{ReadOnly: true, AllowClone: true}, workspace.SandboxNone, false},
 		{"unset", config.AcpAgentConfig{ReadOnly: true}, workspace.SandboxBwrap, false},
+		{"without read_only", config.AcpAgentConfig{AllowClone: true}, workspace.SandboxBwrap, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

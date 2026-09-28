@@ -126,9 +126,7 @@ if (!process.env.ACP_CMD) {
   const bridge = JSON.parse(readFileSync(join(piDir, "extensions", "quackmcp.json"), "utf8"));
   assert.equal(bridge.prefix, "quackmcp");
   assert.equal(bridge.tools[0].name, "stage_review");
-  assert.equal(bridge.allowClone, false, "allowClone set without allow_clone in PI_ACP_CONFIG");
-  const ext = readFileSync(join(piDir, "extensions", "quackmcp.ts"), "utf8");
-  assert.match(ext, /checkPolicy\(event\.toolName, event\.input, cfg\)/, "extension guard ignores quackmcp.json's allowClone");
+  readFileSync(join(piDir, "extensions", "quackmcp.ts")); // extension generated
 
   const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
   assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's context_window");
@@ -218,6 +216,7 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   assert.equal(permAsks[0].toolCall.rawInput.path, "app/.env");
   assert.equal(end("call_g2").status, "completed", ".env read not allowed after judge approval");
   assert.equal(end("call_g3").status, "failed", "denied .env read not refused");
+  assert.equal(end("call_g4").status, "failed", "git clone not blocked without allow_clone");
   assert.ok(kinds.includes("agent_thought_chunk"));
   const tc = updates.find((u) => u.sessionUpdate === "tool_call");
   assert.equal(tc.kind, "execute");
@@ -236,7 +235,7 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
 // OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
 if (!process.env.ACP_CMD) {
   for (let i = 0; i < 50 && otlpSpans.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(otlpSpans.length, 7, `expected the 7 parity spans, got ${otlpSpans.length}`);
+  assert.equal(otlpSpans.length, 8, `expected the 8 parity spans, got ${otlpSpans.length}`);
   assert.ok(otlpSpans.every((sp) => sp.traceId === TRACE_ID), "span not under quack's trace id");
   assert.ok(otlpSpans.every((sp) => sp.parentSpanId === PARENT_ID), "span not parented under the round span");
   const gens = otlpSpans.filter((sp) => sp.name.startsWith("chat "));
@@ -259,15 +258,17 @@ if (!process.env.ACP_CMD) {
 console.log("ok -", updates.length, "updates,", mcpCalls.length, "mcp call(s),", otlpSpans.length, "otlp span(s)");
 
 // connectShim: a second shim process, auto-allowing every permission ask -
-// fake-pi.mjs's 3 guarded calls fire even with mcpServers: [], and hang without a reply.
+// fake-pi.mjs's 4 guarded calls fire even with mcpServers: [], and hang without a reply.
 function connectShim(spawnEnv) {
   const s = spawn(argv[0], argv.slice(1), { env: spawnEnv, stdio: ["pipe", "pipe", "inherit"] });
   const pend = new Map();
   let id = 1;
+  const upd = [];
   createInterface({ input: s.stdout }).on("line", (l) => {
     if (!l.trim()) return;
     const m = JSON.parse(l);
-    if (m.method === "session/request_permission") {
+    if (m.method === "session/update") upd.push(m.params.update);
+    else if (m.method === "session/request_permission") {
       s.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { outcome: { outcome: "selected", optionId: "allow" } } }) + "\n");
     } else if (m.id !== undefined && pend.has(m.id)) {
       const { resolve, reject } = pend.get(m.id);
@@ -280,7 +281,7 @@ function connectShim(spawnEnv) {
     s.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: rid, method, params }) + "\n");
     return new Promise((resolve, reject) => pend.set(rid, { resolve, reject }));
   };
-  return { shim: s, call: call2 };
+  return { shim: s, call: call2, updates: upd };
 }
 
 // session/load on a FRESH shim process must resume, not start blank - proven
@@ -336,13 +337,14 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   const noLimitEnv = { ...env, PI_ACP_CONFIG: JSON.stringify({
     endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub", allow_clone: true,
   }) };
-  const { shim: shim2, call: call2 } = connectShim(noLimitEnv);
+  const { shim: shim2, call: call2, updates: upd2 } = connectShim(noLimitEnv);
   await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
   const sess2 = await call2("session/new", { cwd: process.cwd(), mcpServers: [] });
   const models2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "models.json"), "utf8"));
   assert.ok(!("contextWindow" in models2.providers.quack.models[0]), "contextWindow written when unset");
   assert.ok(!("maxTokens" in models2.providers.quack.models[0]), "maxTokens written when unset");
-  const bridge2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "extensions", "quackmcp.json"), "utf8"));
-  assert.equal(bridge2.allowClone, true, "allow_clone never reached the extension's policy config");
+  await call2("session/prompt", { sessionId: sess2.sessionId, prompt: [{ type: "text", text: "clone" }] });
+  const clone = upd2.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === "call_g4");
+  assert.equal(clone?.status, "completed", "allow_clone did not lift the git clone deny");
   shim2.stdin.end();
 }

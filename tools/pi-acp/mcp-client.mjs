@@ -55,8 +55,8 @@ export class McpClient {
   }
 }
 
-// Permission policy: pi has no native equivalent, so this hardcodes the safety-critical
-// subset. Hard denies never leave the process; "ask" escalates to quack's safety judge via the shim's loopback endpoint.
+// Permission policy: DENY matches only a leading command, a nudge not a boundary - quack strips git credentials (proc.go spawnEnv).
+// Hard denies never leave the process; "ask" escalates to quack's safety judge via the shim's loopback endpoint.
 const DENY = [/^git push(\s|$)/];
 // allowClone (PI_ACP_CONFIG allow_clone): quack sets it only for a read-only agent under an enforced sandbox.
 const CLONE = [/^git clone(\s|$)/, /^gh repo clone(\s|$)/];

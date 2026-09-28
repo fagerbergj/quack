@@ -2320,7 +2320,7 @@ func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []st
 	if len(skillPaths) > 0 {
 		cfg["skill_paths"] = skillPaths
 	}
-	if ac.Acp != nil && ac.Acp.AllowClone {
+	if ac.Acp != nil && ac.Acp.AllowClone && ac.Acp.ReadOnly {
 		if workspace.EnforcesBoundary(sandbox) {
 			cfg["allow_clone"] = true
 		} else {

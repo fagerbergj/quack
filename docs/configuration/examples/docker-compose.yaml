@@ -104,7 +104,6 @@ agents:
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
-      allow_clone: true
   synthesizer:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan, pr-authoring]

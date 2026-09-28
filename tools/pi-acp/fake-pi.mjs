@@ -98,6 +98,7 @@ createInterface({ input: process.stdin }).on("line", async (l) => {
     await guardedCall(cfg, "bash", { command: "git push origin main" }); // config-deny, no round-trip
     await guardedCall(cfg, "read", { path: "app/.env" });                // ask -> allow
     await guardedCall(cfg, "read", { path: "app/.env.prod" });           // ask -> deny
+    await guardedCall(cfg, "bash", { command: "git clone --depth 1 https://example.invalid/x.git" }); // denied unless allowClone
   }
   out({ type: "message_start", message: { role: "assistant" } });
   out({ type: "message_update", usage: { input: 10, output: 1, cacheRead: 6, cacheWrite: 3, totalTokens: 99 }, assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "done: hi" } });
