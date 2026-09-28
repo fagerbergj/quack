@@ -64,7 +64,7 @@ func TestUpsertNodesDuplicateNodeIDInOneCall(t *testing.T) {
 	_, _, err := upsertNodes([]assignmentInput{
 		{NodeID: "impl-1", Task: "first"},
 		{NodeID: "impl-1", Task: "second"},
-	}, existing, nil, "chat1", nil, dag.AgentNames())
+	}, existing, nil, "chat1", nil, []string{"code-implementer"})
 	if err == nil {
 		t.Fatal("want an error for the same node_id twice in one call")
 	}
@@ -321,5 +321,17 @@ func TestBuildNodeSummariesReportsLastTaskID(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].LastTaskID != "task-abc-123" {
 		t.Fatalf("out = %+v, want impl-1 with last_task_id=task-abc-123", out)
+	}
+}
+
+// A reused node whose agent the run's roster no longer has is refused at authoring time.
+func TestUpsertNodesReusedNodeOutsideRoster(t *testing.T) {
+	existing := []dag.DagNodeRecord{{NodeID: "probe-1", Agent: "hr-probe"}}
+	_, _, err := upsertNodes([]assignmentInput{{NodeID: "probe-1", Task: "again"}}, existing, nil, "chat1", nil, []string{"web-researcher"})
+	if err == nil || !strings.Contains(err.Error(), `unknown agent "hr-probe"`) {
+		t.Fatalf("err = %v, want the reused node's agent refused", err)
+	}
+	if _, _, err := upsertNodes([]assignmentInput{{NodeID: "probe-1", Task: "again"}}, existing, nil, "chat1", nil, []string{"hr-probe"}); err != nil {
+		t.Fatalf("err = %v, want reuse allowed while the roster has hr-probe", err)
 	}
 }

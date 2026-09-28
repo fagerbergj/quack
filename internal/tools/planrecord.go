@@ -325,6 +325,10 @@ func (st *upsertState) resolveOne(i int, in assignmentInput) (string, error) {
 		if st.nodeIsLive != nil && st.nodeIsLive(in.NodeID) {
 			return "", fmt.Errorf("assignments[%d].node_id: %q is currently running - wait for it to finish before reassigning it", i, in.NodeID)
 		}
+		// A reload may have dropped this node's agent from the roster this run dispatches on.
+		if err := dag.ValidateAgentNameIn(n.Agent, st.agents); err != nil {
+			return "", fmt.Errorf("assignments[%d].node_id: %q's %w", i, in.NodeID, err)
+		}
 		if err := validateAllowedDeliveryKind(n.Agent, st.allowedKinds); err != nil {
 			return "", fmt.Errorf("assignments[%d].%w", i, err)
 		}
