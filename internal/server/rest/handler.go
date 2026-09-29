@@ -223,8 +223,8 @@ func chatsScopeFor(params schema.ListChatsParams) (store.ChatsScope, error) {
 	return store.ChatsScope{Active: true}, nil
 }
 
-// ListChats is a single table read (#738: status is a stamp on the chat row - see
-// store.StampRunOutcome - plus a cheap in-memory hub check, not a per-chat DB read).
+// ListChats is three queries per page, never per chat (#738): the chat rows (status is the
+// stamp store.StampRunOutcome leaves), their usage totals, and which have a running node.
 // It's also a conditional GET: an unchanged page costs a 304 with no body, so the SPA's 5s poll is cheap on the wire when nothing changed (still no TTL - every poll reaches this handler and revalidates against the live rows). The ETag is hashed from the marshaled page body, which embeds NextPageToken, so it varies with page token and limit as well as content - a stale ETag from a different page never reads as a match.
 func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schema.ListChatsParams) {
 	limit := 0
@@ -1624,7 +1624,8 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64, runningNode bool) s
 // chatStatus is the one status rule for the chat list and detail: running if the hub or a
 // latest-plan node row (runningNode) says so, else the stamp; a leftover ActiveTurnID means the run died unstamped.
 func (h *Handler) chatStatus(c store.Chat, runningNode bool) (schema.ChatStatus, *string) {
-	if h.hub.Active(c.ID) || runningNode {
+	// HasRegisteredRun covers a run dispatched but not yet publishing (MarkRunActive already set).
+	if h.hub.Active(c.ID) || h.hub.HasRegisteredRun(c.ID) || runningNode {
 		return schema.ChatStatusRunning, nil
 	}
 	if c.ActiveTurnID != "" {
@@ -1643,7 +1644,10 @@ func (h *Handler) chatStatus(c store.Chat, runningNode bool) (schema.ChatStatus,
 
 // chatHasRunningNode is ChatsWithRunningNode for one chat; a lookup error reads as not running.
 func (h *Handler) chatHasRunningNode(ctx context.Context, chatID string) bool {
-	running, _ := h.store.ChatsWithRunningNode(ctx, []string{chatID})
+	running, err := h.store.ChatsWithRunningNode(ctx, []string{chatID})
+	if err != nil {
+		slog.Warn("chat status: running-node lookup failed", "component", "rest", "chat", chatID, "err", err)
+	}
 	return running[chatID]
 }
 

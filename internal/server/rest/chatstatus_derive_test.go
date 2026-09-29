@@ -39,6 +39,12 @@ func TestChatStatus_ListAndDetailAgree(t *testing.T) {
 		{"running on the hub", func(_ *testing.T, h *Handler, chatID string) {
 			h.hub.Publish(chatID, 1, stream.ResponseCreated("turn-1"))
 		}, schema.ChatStatusRunning},
+		{"dispatched, not yet publishing", func(t *testing.T, h *Handler, chatID string) {
+			h.hub.RegisterRun(chatID, "turn-1", func() {})
+			if err := h.store.MarkRunActive(ctx, chatID, "turn-1"); err != nil {
+				t.Fatal(err)
+			}
+		}, schema.ChatStatusRunning},
 		{"paused for boot", func(t *testing.T, h *Handler, chatID string) {
 			if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusPaused, ""); err != nil {
 				t.Fatal(err)
