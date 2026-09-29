@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/fagerbergj/quack/internal/schema"
@@ -64,7 +63,7 @@ func printChatSnapshot(out io.Writer, d schema.ChatDetail) {
 		printNodeTable(out, dagItem)
 	}
 	if n := len(d.Turns); n > 0 {
-		if answer := strings.TrimSpace(AssistantText(d.Turns[n-1].Output)); answer != "" {
+		if answer := answerText(d.Turns[n-1].Output); answer != "" {
 			fmt.Fprintln(out)
 			fmt.Fprintln(out, answer)
 		}

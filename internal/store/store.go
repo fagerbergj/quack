@@ -31,6 +31,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/pgdial"
 	"github.com/fagerbergj/quack/internal/sqlitedsn"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
@@ -219,6 +220,10 @@ type TurnContent struct {
 	UserText  string
 	AsstText  string
 	AsstThink string
+	// Answer is the turn's delivered DAG answer (stream.DeliveredAnswerMeta), "" when none;
+	// AnswerAt is when it was delivered.
+	Answer    string
+	AnswerAt  time.Time
 	ToolCalls []ToolCallRecord // orchestrator-level tool calls, in event order
 	Plan      *DagPlan
 	Nodes     []DagNode
@@ -261,6 +266,13 @@ type turnGroup struct {
 	userText, asstText, asstThink                                              strings.Builder
 	toolCalls                                                                  []ToolCallRecord
 	promptTokens, completionTokens, reasoningTokens, cachedTokens, totalTokens int32
+	// answers: delivered answers seen in this group, by the turn id their marker names ("" = this group's).
+	answers map[string]markedAnswer
+}
+
+type markedAnswer struct {
+	text string
+	at   time.Time
 }
 
 // groupSessionEvents buckets session events into per-turn groups, split on user events.
@@ -290,11 +302,71 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 		if ev.UsageMetadata != nil {
 			addUsage(cur, ev.UsageMetadata)
 		}
+		if turnID, ok := deliveredTurn(ev); ok {
+			// Not narration: a retry's answer belongs to its plan's turn, and the last one wins.
+			if cur.answers == nil {
+				cur.answers = map[string]markedAnswer{}
+			}
+			keepLatest(cur.answers, turnID, markedAnswer{text: plainText(ev.Content), at: deliveredAt(ev)})
+			continue
+		}
 		for _, p := range ev.Content.Parts {
 			recordAssistantPart(cur, p)
 		}
 	}
 	return groups
+}
+
+// deliveredTurn reads a delivered-answer marker: the turn id it names, "" for the event's own turn.
+func deliveredTurn(ev *session.Event) (string, bool) {
+	switch v := ev.CustomMetadata[stream.DeliveredAnswerMeta].(type) {
+	case string:
+		return v, true
+	case bool:
+		return "", v
+	}
+	return "", false
+}
+
+// deliveredAt is the marker's own delivery time, falling back to the event's (coarser) timestamp.
+func deliveredAt(ev *session.Event) time.Time {
+	if s, ok := ev.CustomMetadata[stream.DeliveredAtMeta].(string); ok {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return t
+		}
+	}
+	return ev.Timestamp
+}
+
+// keepLatest stores a unless m already holds a later delivery for key; on a tie the one seen
+// later in session order wins.
+func keepLatest(m map[string]markedAnswer, key string, a markedAnswer) {
+	if prev, ok := m[key]; !ok || !a.at.Before(prev.at) {
+		m[key] = a
+	}
+}
+
+func plainText(c *genai.Content) string {
+	var sb strings.Builder
+	for _, p := range c.Parts {
+		if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
+			sb.WriteString(p.Text)
+		}
+	}
+	return sb.String()
+}
+
+// keyedAnswers merges every group's turn-keyed delivered answers; the latest delivery wins.
+func keyedAnswers(groups []turnGroup) map[string]markedAnswer {
+	out := map[string]markedAnswer{}
+	for _, g := range groups {
+		for turnID, a := range g.answers {
+			if turnID != "" {
+				keepLatest(out, turnID, a)
+			}
+		}
+	}
+	return out
 }
 
 // appendUserPart: one user-message part into cur.userText - plain text, or the
@@ -1483,8 +1555,8 @@ func (s *Store) FailUnresumable(ctx context.Context, chatID string, n DagNode, w
 	return UnresumableNode{PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
 }
 
-// appendNodeFailed records the settle in the ledger so a ledger-only replay agrees with the row.
-// No-op before the WAL is wired, which is the case during boot's reconcile.
+// appendNodeFailed records the settle in the ledger so a ledger-only replay agrees with the row;
+// boot wires the WAL before its reconcile for exactly this.
 func (s *Store) appendNodeFailed(ctx context.Context, chatID string, n DagNode) {
 	if s.walLedger == nil || chatID == "" {
 		return
@@ -1592,7 +1664,7 @@ func (s *Store) CountDagPlans(ctx context.Context, chatID string) (int64, error)
 
 // buildTurnContent joins one ChatTurn row with its session-derived group
 // (nil if the turn has none - e.g. it fell outside the alignment window, or ResetHistory wiped the session outright, #1226), its DAG plan, and that plan's nodes. Shared by GetTurnsWithContent and GetLastTurnWithContent so the two loaders can't drift on how a turn's content is assembled.
-func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[string][]DagNode) TurnContent {
+func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[string][]DagNode, answers map[string]markedAnswer) TurnContent {
 	tc := TurnContent{
 		ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model,
 		// Stamped by SetTurnUsage at run end - the SQL-summable source of
@@ -1605,6 +1677,9 @@ func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[s
 		tc.UserText = g.userText.String()
 		tc.AsstText = g.asstText.String()
 		tc.AsstThink = g.asstThink.String()
+		if a, ok := g.answers[""]; ok {
+			tc.Answer, tc.AnswerAt = a.text, a.at
+		}
 		tc.ToolCalls = g.toolCalls
 		if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
 			tc.PromptTokens = g.promptTokens
@@ -1618,6 +1693,9 @@ func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[s
 	// the turn row at SaveTurn.
 	if tc.UserText == "" {
 		tc.UserText = t.UserText
+	}
+	if a, ok := answers[t.ID]; ok {
+		tc.Answer, tc.AnswerAt = a.text, a.at
 	}
 	if plan != nil {
 		tc.Plan = plan
@@ -1683,7 +1761,11 @@ func (s *Store) GetLastTurnWithContent(ctx context.Context, appName, userID, cha
 		return nil, err
 	}
 
-	tc := buildTurnContent(t, gPtr, plan, nodesByPlan)
+	var answers map[string]markedAnswer
+	if gPtr != nil {
+		answers = keyedAnswers([]turnGroup{*gPtr})
+	}
+	tc := buildTurnContent(t, gPtr, plan, nodesByPlan, answers)
 	return &tc, nil
 }
 
@@ -1725,13 +1807,14 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 	// groups can be shorter than turns - a ResetHistory dispatch (#1195) wipes
 	// older session events while every ChatTurn row survives forever, and only ever removes OLDER events, never reorders what's left. So the surviving groups always line up with the MOST RECENT len(groups) turns, never the first: align from the end, not the front, or a reset silently shifts every later turn's content onto the wrong (earlier) turn.
 	offset := len(turns) - len(groups)
+	answers := keyedAnswers(groups)
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {
 		var g *turnGroup
 		if gi := i - offset; gi >= 0 && gi < len(groups) {
 			g = &groups[gi]
 		}
-		result[i] = buildTurnContent(t, g, planByTurn[t.ID], nodesByPlan)
+		result[i] = buildTurnContent(t, g, planByTurn[t.ID], nodesByPlan, answers)
 	}
 	return result, nil
 }

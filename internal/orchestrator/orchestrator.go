@@ -266,6 +266,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		// A retry/resume is its own run, not a continuation of whatever
 		// finished run left this node retryable - it needs its own trace so
 		// a stale trace_id from the earlier run is never mistaken for this one.
+		ctx = runCoords(ctx, chatID, userID)
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, chatID))
 		defer otelobs.End(span, nil)
@@ -326,9 +327,38 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 			ds.Handle(ev)
 		}
 		ds.Finish()
+		o.settleRetried(ctx, userID, chatID, plan.ID, ds.Started(), nodeOutputs)
 		if answer := o.finalizeAnswer(ctx, plan, nodeOutputs, chatID); answer != "" {
 			o.persistAnswer(ctx, userID, chatID, answer)
 		}
+	}
+}
+
+// settleRetried records a retry's fresh outputs on the dag_plan record, clearing an earlier stop:
+// otherwise later deliveries mask, and later nodes seed from, the stale stopped draft.
+func (o *Orchestrator) settleRetried(ctx context.Context, userID, chatID, planID string, started map[string]bool, outputs map[string]string) {
+	if o.artifacts == nil {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	rec, _, ok, err := dag.LoadDagPlanRecord(ctx, o.artifacts, artifactref.AppName, userID, chatID)
+	if err != nil || !ok || rec.PlanID != planID {
+		return
+	}
+	changed := false
+	for i := range rec.Assignments {
+		a := &rec.Assignments[i]
+		out := outputs[a.NodeID]
+		if !started[a.NodeID] || strings.TrimSpace(out) == "" || o.executor.NodeStopped(chatID, a.NodeID) {
+			continue
+		}
+		a.Result, a.Stopped, changed = out, false, true
+	}
+	if !changed {
+		return
+	}
+	if _, _, err := dag.SaveDagPlanRecord(ctx, o.artifacts, artifactref.AppName, userID, chatID, "", rec); err != nil {
+		slog.Warn("retry: dag_plan update failed", "component", "orchestrator", "chat", chatID, "err", err)
 	}
 }
 
@@ -557,6 +587,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		// the wrapped one - #1021 fixed the other three entrypoints but missed Run().
 		s.safeYield = newSafeYield(yield)
 		s.ctx = stream.WithYield(s.ctx, func(ev stream.SSEEvent) { s.safeYield(ev, nil) })
+		s.ctx = tools.WithNodeStopped(s.ctx, func(nodeID string) bool { return o.executor.NodeStopped(sessionID, nodeID) })
 
 		content := s.buildContent(pending, hasPending)
 		s.translator = stream.NewTranslator()
@@ -617,6 +648,12 @@ func turnProduced(ev *session.Event) bool {
 		}
 	}
 	return false
+}
+
+// runCoords stamps the chat, user and source a run's ledger records and root span file under, as
+// Run does - retry, resume and node starts enter without Run's stamp. ctx wins per field.
+func runCoords(ctx context.Context, chatID, userID string) context.Context {
+	return ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), ledger.Coords{ChatID: chatID, User: userID, Source: SourceApp}))
 }
 
 // SetPlanLoader wires the store's copy of each plan's full dag.Plan (store.LoadExecPlan).
@@ -721,6 +758,11 @@ func (o *Orchestrator) persistAnswer(ctx context.Context, userID, sessionID, ans
 		aev := session.NewEvent(persistCtx, "")
 		aev.Author = orchestratorName
 		aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
+		// Keyed by the turn the run answers: a retry or resume appends with no user event of its own.
+		aev.CustomMetadata = map[string]any{
+			stream.DeliveredAnswerMeta: stream.TurnIDFromContext(ctx),
+			stream.DeliveredAtMeta:     time.Now().UTC().Format(time.RFC3339Nano),
+		}
 		_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
 	}
 }
@@ -739,6 +781,7 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, planID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
 	ctx, done := o.executor.Pin(ctx)
 	defer done()
+	ctx = runCoords(ctx, sessionID, userID)
 	o.executor.StartNode(sessionID, nodeID)
 	if p, ok := latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, sessionID)); ok && p.nodeID == nodeID {
 		o.startNodeRun(ctx, userID, sessionID, planID, message, &p, nodeID, yield)
@@ -797,7 +840,7 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 			// the step already confirmed it isn't) - a resumed node with
 			// empty output is exactly as "failed" as a freshly-run one, and
 			// must not silently finalize on it (#slice3 review).
-			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false) == "failed" {
+			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false, o.executor.NodeStopped(sessionID, pend.nodeID)) == "failed" {
 				anyFailed = true
 			}
 		}
@@ -818,13 +861,15 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	}
 
 	if !anyFailed && rec.Delivery != nil {
-		final := map[string]string{}
-		for _, a := range rec.Assignments {
-			final[a.NodeID] = a.Result
-		}
-		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID))
+		o.deliverFromRecord(ctx, userID, sessionID, plan, rec)
 	}
 	yield(stream.Done(), nil)
+}
+
+// deliverFromRecord finalizes a resumed plan from its record; a stopped assignment's draft is masked
+// there because the executor's own stop flag is gone once the turn that stopped it ended.
+func (o *Orchestrator) deliverFromRecord(ctx context.Context, userID, sessionID string, plan dag.Plan, rec dag.DagPlanRecord) {
+	o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, tools.DeliverableResults(rec.Assignments), sessionID))
 }
 
 // loadResumePlan: the plan and its record for an incremental resume.
@@ -865,7 +910,7 @@ func (o *Orchestrator) driveUnblocked(ctx context.Context, plan dag.Plan, rec da
 		if len(next) == 0 {
 			break
 		}
-		roundOutputs, roundNeedsInput, roundStarted, rerr := o.executor.RunPlanStep(ctx, plan, AppName, userID, sessionID, seededFrom(rec), next)
+		roundOutputs, roundNeedsInput, roundStarted, rerr := o.executor.RunPlanStep(dag.WithUnreviewedSeeds(ctx, tools.UnreviewedSeeds(rec.Assignments)), plan, AppName, userID, sessionID, seededFrom(rec), next)
 		if rerr != nil {
 			safeYield(stream.Errorf("resume: "+rerr.Error()), nil)
 			turnEnded = true
@@ -880,7 +925,7 @@ func (o *Orchestrator) driveUnblocked(ctx context.Context, plan dag.Plan, rec da
 			if !roundStarted[nid] {
 				continue
 			}
-			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], roundOutputs[nid], roundNeedsInput[nid]) == "failed" {
+			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], roundOutputs[nid], roundNeedsInput[nid], o.executor.NodeStopped(sessionID, nid)) == "failed" {
 				anyFailed = true
 			}
 		}

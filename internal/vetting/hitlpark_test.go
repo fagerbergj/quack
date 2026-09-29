@@ -18,6 +18,7 @@ func (p *parkCtrl) PauseForInput(q string)        { p.question = q }
 func (p *parkCtrl) MarkDelivered()                {}
 func (p *parkCtrl) RepeatFailure() (string, bool) { return "", false }
 func (p *parkCtrl) ShuttingDown() bool            { return false }
+func (p *parkCtrl) NoteDraft(string)              {}
 
 // TestParkForInput: a worker question folds into the one pause path -
 // markPaused(awaiting_input) with the question - and returns ErrNodePaused,

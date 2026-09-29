@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
@@ -66,28 +67,36 @@ func TestScanOrphanedRuns_SettlesInterruptedOnce(t *testing.T) {
 	}
 }
 
-// TestChatHasRunningNode pins that a chat with a running node reads true,
-// and one with none reads false.
-func TestChatHasRunningNode(t *testing.T) {
-	cases := []struct {
-		name  string
-		nodes []DagNode
-		want  bool
-	}{
-		{"no nodes", nil, false},
-		{"all done", []DagNode{{NodeID: "n1", Status: string(dag.StatusDone)}}, false},
-		{"one running", []DagNode{
-			{NodeID: "n1", Status: string(dag.StatusDone)},
-			{NodeID: "n2", Status: string(dag.StatusRunning)},
-		}, true},
-		{"paused, not running", []DagNode{{NodeID: "n1", Status: string(dag.StatusPaused)}}, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := ChatHasRunningNode(tc.nodes); got != tc.want {
-				t.Errorf("ChatHasRunningNode(%+v) = %v, want %v", tc.nodes, got, tc.want)
+// TestChatsWithRunningNode: only a running node in a chat's LATEST plan marks it running.
+func TestChatsWithRunningNode(t *testing.T) {
+	st := newRunStatusTestStore(t)
+	ctx := context.Background()
+	seed := func(chatID, planID string, at time.Time, nodes ...DagNode) {
+		t.Helper()
+		if err := st.SetChatOrigin(ctx, chatID, "u1", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.db.Create(&DagPlan{ID: planID, ChatID: chatID, PlanJSON: "{}", CreatedAt: at}).Error; err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range nodes {
+			n.PlanID = planID
+			if err := st.UpsertDagNode(ctx, n); err != nil {
+				t.Fatal(err)
 			}
-		})
+		}
+	}
+	now := time.Now().UTC()
+	seed("running", "p-run", now, DagNode{NodeID: "n1", Status: string(dag.StatusDone)}, DagNode{NodeID: "n2", Status: string(dag.StatusRunning)})
+	seed("paused", "p-pause", now, DagNode{NodeID: "n1", Status: string(dag.StatusPaused)})
+	seed("stale", "p-old", now.Add(-time.Hour), DagNode{NodeID: "n1", Status: string(dag.StatusRunning)})
+	seed("stale", "p-new", now, DagNode{NodeID: "n1", Status: string(dag.StatusDone)})
+	got, err := st.ChatsWithRunningNode(ctx, []string{"running", "paused", "stale", "none"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["running"] || got["paused"] || got["stale"] || got["none"] {
+		t.Errorf("running chats = %v, want only [running]", got)
 	}
 }
 
@@ -274,5 +283,24 @@ func TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle(t *testing.T) {
 	}
 	if c.RunStatus != RunStatusIdle {
 		t.Errorf("stamped RunStatus = %q, want idle", c.RunStatus)
+	}
+}
+
+// TestSeedOutputs_Classification: which re-run seeds carry the not-reviewed warning.
+func TestSeedOutputs_Classification(t *testing.T) {
+	seeded, unreviewed := SeedOutputs([]DagNode{
+		{NodeID: "passed", Status: "done", Output: "A", JudgeRounds: 1, JudgePassed: true},
+		{NodeID: "unjudged", Status: "done", Output: "B"},
+		{NodeID: "rejected", Status: "done", Output: "C", JudgeRounds: 2, JudgePassed: false},
+		{NodeID: "stopped", Status: "cancelled", Output: "D"},
+		{NodeID: "empty", Status: "done"},
+	})
+	for id, want := range map[string]bool{"passed": false, "unjudged": false, "rejected": true, "stopped": true} {
+		if seeded[id] == "" || unreviewed[id] != want {
+			t.Errorf("%s: seeded=%q unreviewed=%v, want seeded with unreviewed=%v", id, seeded[id], unreviewed[id], want)
+		}
+	}
+	if _, ok := seeded["empty"]; ok {
+		t.Error("a node with no output was seeded")
 	}
 }

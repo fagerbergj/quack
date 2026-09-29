@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"iter"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -259,6 +260,227 @@ func TestStopDuringJudge(t *testing.T) {
 			if tc.want != "" && (!ok || ev.Name != tc.want) {
 				t.Errorf("n1 terminal = %q (ok=%v), want %s", ev.Name, ok, tc.want)
 			}
+			if d, isCancel := ev.Data.(stream.NodeCancelledData); isCancel && d.Output != "THE ANSWER" {
+				t.Errorf("node_cancelled output = %q, want the worker's draft carried", d.Output)
+			}
 		})
+	}
+}
+
+// passJudgeModel answers the worker, then holds the judge until its ctx ends.
+type passJudgeModel struct{ judging chan struct{} }
+
+func (passJudgeModel) Name() string { return "pass-judge" }
+
+func (m passJudgeModel) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if !gHasTool(req, "submit_verdict") {
+			yield(gText("THE ANSWER"), nil)
+			return
+		}
+		select {
+		case m.judging <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		yield(nil, ctx.Err())
+	}
+}
+
+// TestNodeStopDuringJudge: a per-node stop while the judge runs aborts the judge's call (it
+// would otherwise never return), and the node ends cancelled and undelivered.
+func TestNodeStopDuringJudge(t *testing.T) {
+	m := passJudgeModel{judging: make(chan struct{}, 1)}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+	led := ledgertest.NewMemStore()
+	ex.SetWALLedger(led)
+	rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), rec.record), chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+	}()
+	select {
+	case <-m.judging:
+	case <-time.After(10 * time.Second):
+		t.Fatal("judge never started")
+	}
+	ex.CancelNode("chat", "n1")
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stop never aborted the judge's call")
+	}
+	ev, ok := rec.of("n1")
+	if !ok || ev.Name != stream.EventNodeCancelled || !ex.NodeStopped("chat", "n1") {
+		t.Errorf("n1 terminal = %q (ok=%v) stopped=%v, want cancelled and undelivered", ev.Name, ok, ex.NodeStopped("chat", "n1"))
+	}
+	entries, _ := led.ReadEntries(context.Background(), "chat", 0)
+	if n := len(entries); n == 0 || entries[n-1].Kind != ledger.KindNodeCancelled {
+		t.Errorf("ledger = %+v, want a trailing %s for a per-node stop", entries, ledger.KindNodeCancelled)
+	}
+}
+
+// emptyWorkerModel returns an empty answer every call; the first call waits for release.
+type emptyWorkerModel struct {
+	calls            *atomic.Int32
+	started, release chan struct{}
+}
+
+func (emptyWorkerModel) Name() string { return "empty" }
+
+func (m emptyWorkerModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if m.calls.Add(1) == 1 {
+			m.started <- struct{}{}
+			<-m.release
+		}
+		yield(gText(""), nil)
+	}
+}
+
+// TestStoppedNodeMakesNoMoreCalls: a node stopped before it had a draft neither runs its
+// continuation rounds nor the tool-less writer - no model call after the stop.
+func TestStoppedNodeMakesNoMoreCalls(t *testing.T) {
+	m := emptyWorkerModel{calls: &atomic.Int32{}, started: make(chan struct{}, 1), release: make(chan struct{})}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), func(stream.SSEEvent) {}), chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+	}()
+	<-m.started
+	ex.CancelNode("chat", "n1")
+	close(m.release)
+	<-done
+	if n := m.calls.Load(); n != 1 {
+		t.Errorf("model calls = %d, want 1 (none after the stop)", n)
+	}
+}
+
+// TestCancelledNodeDraftStaysForDependents: a cancelled node keeps its draft as output (for
+// dependents, flagged unreviewed) but reads as stopped, so it is never delivered.
+func TestCancelledNodeDraftStaysForDependents(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+	go func() {
+		<-stub.started
+		ex.CancelNode("chat", "n1")
+		close(stub.unblock)
+	}()
+	rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
+	outputs, _, _, err := ex.RunPlanStep(stream.WithYield(context.Background(), rec.record), plan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outputs["n1"] != "draft" || !ex.NodeStopped("chat", "n1") {
+		t.Errorf("outputs[n1] = %q stopped=%v, want the draft kept and the node stopped", outputs["n1"], ex.NodeStopped("chat", "n1"))
+	}
+	ev, ok := rec.of("n1")
+	if d, _ := ev.Data.(stream.NodeCancelledData); !ok || d.Output != "draft" {
+		t.Errorf("n1 terminal = %+v (ok=%v), want node_cancelled carrying the draft", ev, ok)
+	}
+}
+
+// phasedModel: phase 1 drafts then blocks in the judge; phase 2 blocks before drafting.
+type phasedModel struct {
+	phase   *atomic.Int32
+	waiting chan struct{}
+}
+
+func (phasedModel) Name() string { return "phased" }
+
+func (m phasedModel) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if m.phase.Load() == 1 && !gHasTool(req, "submit_verdict") {
+			yield(gText("RUN1 DRAFT"), nil)
+			return
+		}
+		m.waiting <- struct{}{}
+		<-ctx.Done()
+		yield(nil, ctx.Err())
+	}
+}
+
+// TestStoppedRunCarriesOnlyItsOwnDraft: a second run of the node, stopped before it drafted,
+// must not report the first run's draft as its own.
+func TestStoppedRunCarriesOnlyItsOwnDraft(t *testing.T) {
+	m := phasedModel{phase: &atomic.Int32{}, waiting: make(chan struct{}, 1)}
+	m.phase.Store(1)
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	run := func() stream.NodeCancelledData {
+		rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
+		ctx, stop := context.WithCancel(stream.WithYield(context.Background(), rec.record))
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _, _, _ = ex.RunPlanStep(ctx, chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+		}()
+		<-m.waiting
+		stop()
+		<-done
+		ev, _ := rec.of("n1")
+		d, _ := ev.Data.(stream.NodeCancelledData)
+		return d
+	}
+	if d := run(); d.Output != "RUN1 DRAFT" {
+		t.Fatalf("run 1 node_cancelled output = %q, want its draft", d.Output)
+	}
+	m.phase.Store(2)
+	if d := run(); d.Output != "" {
+		t.Errorf("run 2 node_cancelled output = %q, want none (it never drafted)", d.Output)
+	}
+}
+
+// promptModel answers every worker call and records its prompt.
+type promptModel struct {
+	mu      sync.Mutex
+	prompts []string
+}
+
+func (*promptModel) Name() string { return "prompt" }
+
+func (m *promptModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		m.mu.Lock()
+		m.prompts = append(m.prompts, gUserText(req))
+		m.mu.Unlock()
+		yield(gText("B ANSWER"), nil)
+	}
+}
+
+// TestRunPlanStep_UnreviewedSeedCarriesWarning: a step seeding a dependent from a stopped
+// draft tells the dependent that input never passed review, like retry and boot seeds.
+func TestRunPlanStep_UnreviewedSeedCarriesWarning(t *testing.T) {
+	m := &promptModel{}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	ctx := WithUnreviewedSeeds(stream.WithYield(context.Background(), func(stream.SSEEvent) {}), map[string]bool{"n1": true})
+	if _, _, _, err := ex.RunPlanStep(ctx, chainPlan, "quack", "u", "chat", map[string]string{"n1": "STOPPED DRAFT"}, map[string]bool{"n2": true}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.prompts) == 0 || !strings.Contains(m.prompts[0], "STOPPED DRAFT") || !strings.Contains(m.prompts[0], "FAILED independent quality vetting") {
+		t.Errorf("n2's prompt lacks the warning on its stopped seed: %q", m.prompts)
 	}
 }

@@ -9,7 +9,7 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
+import type { Turn, DagOutputItem, MessageOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
 import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
@@ -151,11 +151,12 @@ function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
 function turnFromLiveTurn(live: LiveTurn): Turn {
   const finalId = live.dag ? terminalNodeId(live.dag.nodes) : undefined
   const text = live.dag ? (finalId != null ? (live.dag.nodeAnswer[finalId] ?? '') : live.text) : live.text
+  const stopped = live.dag && finalId != null && live.dag.nodeStates[finalId]?.status === 'cancelled' ? true : undefined
   return {
     id: live.id,
     created_at: live.createdAt ?? new Date().toISOString(),
     input: { role: 'user', content: live.userText },
-    output: [{ id: `${live.id}-msg`, type: 'message', status: 'completed', content: [{ type: 'output_text', text }] }],
+    output: [{ id: `${live.id}-msg`, type: 'message', status: 'completed', content: [{ type: 'output_text', text }], stopped }],
   }
 }
 
@@ -1107,6 +1108,11 @@ export function activityFromTurn(turn: Turn): AgentRun[] {
 }
 
 // textFromTurn extracts the final answer text from a completed Turn.
+// stoppedFromTurn reports the turn's answer came from a node the user stopped (server-marked).
+export function stoppedFromTurn(turn: Turn): boolean {
+  return turn.output.some(item => item.type === 'message' && (item as MessageOutputItem).stopped === true)
+}
+
 export function textFromTurn(turn: Turn): string {
   for (const item of turn.output) {
     if (item.type === 'message') {
@@ -1128,6 +1134,8 @@ export interface Attribution {
   agent: string
   model?: string
   tokens?: number
+  // The answering node was stopped, so its text is an unreviewed draft.
+  stopped?: boolean
 }
 
 // terminalNodeId returns the DAG's terminal node - the one with no successor,
@@ -1153,7 +1161,7 @@ export function dagAnswerAttribution(dag: DagTurnState): Attribution | undefined
   const node = dag.nodes.find(n => n.id === id)
   if (!node) return undefined
   const state = dag.nodeStates[id]
-  return { agent: node.agent, model: state?.model, tokens: state?.totalTokens }
+  return { agent: node.agent, model: state?.model, tokens: state?.totalTokens, stopped: state?.status === 'cancelled' || undefined }
 }
 
 // turnUsageTotal sums a persisted Turn's usage (input + output tokens), or

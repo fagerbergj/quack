@@ -102,7 +102,8 @@ func SetInProcess() { inProcess.Store(true) }
 // and returns an enriched error.
 func (o *OpenAIModel) apiErr(ctx context.Context, op string, err error) error {
 	level := slog.LevelError
-	if IsBestEffort(ctx) || inProcess.Load() {
+	// A cancelled request is a stop or shutdown, not a gateway fault.
+	if IsBestEffort(ctx) || inProcess.Load() || errors.Is(ctx.Err(), context.Canceled) {
 		level = slog.LevelDebug
 	}
 	var ae *openai.Error

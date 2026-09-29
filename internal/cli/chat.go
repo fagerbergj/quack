@@ -238,7 +238,7 @@ func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON
 	fmt.Fprintf(out, "# %s\n\n", title)
 	for _, t := range detail.Turns {
 		fmt.Fprintf(out, "## You\n\n%s\n\n", strings.TrimSpace(t.Input.Content))
-		if a := strings.TrimSpace(AssistantText(t.Output)); a != "" {
+		if a := answerText(t.Output); a != "" {
 			fmt.Fprintf(out, "## Duck\n\n%s\n\n", a)
 		}
 	}
@@ -469,6 +469,21 @@ func chatTitle(t *string) string {
 		return *t
 	}
 	return "(untitled)"
+}
+
+// answerText is AssistantText as the CLI prints it: a stopped node's draft (MessageOutputItem.stopped)
+// is labelled like the UI's badge, never shown as a plain answer.
+func answerText(items []schema.OutputItem) string {
+	text := strings.TrimSpace(AssistantText(items))
+	for _, it := range items {
+		if m, err := it.AsMessageOutputItem(); err == nil && string(m.Type) == "message" && m.Stopped != nil && *m.Stopped {
+			if text == "" {
+				return "[Stopped]"
+			}
+			return "[Stopped - not reviewed]\n" + text
+		}
+	}
+	return text
 }
 
 // AssistantText concatenates the text of every message output item in a turn,

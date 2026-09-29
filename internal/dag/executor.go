@@ -134,6 +134,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		return e.NodeQueueGuidance(cancelKey, nodeID, gen)
 	})
 	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
+	ds.draftOf = func(nodeID string) string { return e.controls.draftOf(cancelKey, nodeID) }
 	ds.resumedFromByID = resumedFromByID
 	shutdown := func() bool { _, ok := e.controls.shutdown.Load(cancelKey); return ok }
 	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds, shutdown: shutdown}
@@ -215,7 +216,7 @@ func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 	}
 	empty := strings.TrimSpace(s.ds.outputs[n.ID]) == ""
 	if !delivered && (stopped && empty || s.ds.cancelled != nil && s.ds.cancelled(n.ID)) {
-		s.yield(stream.WithContextID(stream.NodeCancelled(n.ID), s.ds.contextOf(n.ID)), nil)
+		s.yield(s.ds.cancelledEvent(n.ID), nil)
 		return
 	}
 	if !delivered && empty {
@@ -421,6 +422,8 @@ type dagStream struct {
 	// every test, which is safe (handle's switch guards it) and keeps every
 	// existing newDagStream(...) test call site unchanged.
 	deliveredOf func(string) bool
+	// draftOf: the gate's latest draft for a node (NoteDraft); nil in tests.
+	draftOf func(string) string
 	// resumedFromByID: per-node dag.Node.ResumedFrom, keyed the same way as
 	// agentByID. Same "set post-construction" reason as deliveredOf; a nil
 	// map reads as "" everywhere, the fresh-node default.
@@ -795,6 +798,19 @@ func outputString(o any) string {
 	return ""
 }
 
+// cancelledEvent is node_cancelled carrying the draft the node had, so it persists as a stopped draft.
+func (s *dagStream) cancelledEvent(node string) stream.SSEEvent {
+	ev := stream.NodeCancelled(node)
+	d := ev.Data.(stream.NodeCancelledData)
+	d.Output = s.outputs[node]
+	if d.Output == "" && s.draftOf != nil {
+		d.Output = s.draftOf(node)
+	}
+	d.OutputPreview = preview(d.Output)
+	ev.Data = d
+	return stream.WithContextID(ev, s.contextOf(node))
+}
+
 func preview(s string) string {
 	const n = 250
 	if len(s) <= n {
@@ -1024,7 +1040,7 @@ func (s *dagStream) terminalSpec(node, out string, pauseReason PauseReason) stre
 		// Live user/HITL pause: node.go's cooperative check caught this before commitDelivery ran, so the draft answer was never delivered.
 		return stream.NodePaused(node)
 	case s.cancelled != nil && s.cancelled(node):
-		return stream.WithContextID(stream.NodeCancelled(node), s.contextOf(node))
+		return s.cancelledEvent(node)
 	case out != "":
 		// A delivered answer wins over a shutdown-drain pause flipped after the gate loop
 		// last checked (e.g. inside commitDelivery) - the work already happened; serve.DrainActiveRuns pauses exactly this population on SIGTERM.

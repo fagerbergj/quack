@@ -1100,9 +1100,12 @@ type MemoryWeekStats struct {
 
 // MessageOutputItem defines model for MessageOutputItem.
 type MessageOutputItem struct {
-	Content []ContentPart         `json:"content"`
-	Id      string                `json:"id"`
-	Status  ItemStatus            `json:"status"`
+	Content []ContentPart `json:"content"`
+	Id      string        `json:"id"`
+	Status  ItemStatus    `json:"status"`
+
+	// Stopped True when the turn's answering (terminal) node was stopped by the user - the text, if any, is its unreviewed draft, not an answer, and clients badge it as such.
+	Stopped *bool                 `json:"stopped,omitempty"`
 	Type    MessageOutputItemType `json:"type"`
 }
 

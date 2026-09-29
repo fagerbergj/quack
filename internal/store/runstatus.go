@@ -82,15 +82,23 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 	return RunStatusIdle, "", ""
 }
 
-// ChatHasRunningNode reports whether any node row is StatusRunning - the
-// derived signal a resumed node needs before the in-memory Hub catches up.
-func ChatHasRunningNode(nodes []DagNode) bool {
-	for _, n := range nodes {
-		if n.Status == string(dag.StatusRunning) {
-			return true
-		}
+// ChatsWithRunningNode reports which of chatIDs have a running node in their latest plan -
+// the signal a resumed node needs before the in-memory Hub catches up; one query per list page.
+func (s *Store) ChatsWithRunningNode(ctx context.Context, chatIDs []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(chatIDs) == 0 {
+		return out, nil
 	}
-	return false
+	var ids []string
+	err := s.db.WithContext(ctx).Table("dag_nodes").
+		Joins("JOIN dag_plans ON dag_plans.id = dag_nodes.plan_id").
+		Where("dag_nodes.status = ? AND dag_plans.chat_id IN ?", string(dag.StatusRunning), chatIDs).
+		Where("dag_plans.created_at = (SELECT MAX(p2.created_at) FROM dag_plans p2 WHERE p2.chat_id = dag_plans.chat_id)").
+		Distinct().Pluck("dag_plans.chat_id", &ids).Error
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, err
 }
 
 // orchestratorGiveUpError reports the classified model-gateway error when the
@@ -204,4 +212,20 @@ func failedDagNodeError(nodes []DagNode) (errText string, failed bool) {
 		}
 	}
 	return "", false
+}
+
+// SeedOutputs is a re-run's seed from a plan's node rows: every finished output, plus which
+// of them never passed review (stopped by the user, or rejected by the judge).
+func SeedOutputs(nodes []DagNode) (seeded map[string]string, unreviewed map[string]bool) {
+	seeded, unreviewed = make(map[string]string, len(nodes)), map[string]bool{}
+	for _, n := range nodes {
+		if n.Output == "" {
+			continue
+		}
+		seeded[n.NodeID] = n.Output
+		if n.Status == string(dag.StatusCancelled) || n.JudgeRounds > 0 && !n.JudgePassed {
+			unreviewed[n.NodeID] = true
+		}
+	}
+	return seeded, unreviewed
 }

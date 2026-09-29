@@ -2689,6 +2689,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ContentPart"
+        stopped:
+          type: boolean
+          description: True when the turn's answering (terminal) node was stopped
+            by the user - the text, if any, is its unreviewed draft, not an
+            answer, and clients badge it as such.
 
     ContentPart:
       oneOf:

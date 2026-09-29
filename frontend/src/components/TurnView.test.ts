@@ -48,3 +48,33 @@ describe('TurnView - user bubble', () => {
     expect(out).toContain('Plan')
   })
 })
+
+describe('TurnView - stopped answer', () => {
+  const dag = (status: 'cancelled' | 'done') => ({
+    type: 'quack:dag' as const, id: 'd1', status: 'completed' as const, plan_id: 'p1',
+    nodes: [{ id: 'n1', agent: 'web-researcher', task: 'Research Rust', depends_on: [] }],
+    edges: [],
+    node_states: { n1: { status } },
+  })
+  const msg = (text: string, stopped?: boolean) => ({
+    type: 'message' as const, id: 'm1', status: 'completed' as const, content: text ? [{ type: 'output_text' as const, text }] : [], stopped,
+  })
+
+  it('badges a stopped node\'s draft as not reviewed, on any turn it is persisted for', () => {
+    const out = renderToStaticMarkup(createElement(TurnView, { ...baseProps, turn: turn('Find the Rust 1.0 year', dag('cancelled'), msg('Rust reached 1.0 in 2015', true)) }))
+    expect(out).toContain('Rust reached 1.0 in 2015')
+    expect(out).toContain('Stopped - not reviewed')
+  })
+
+  it('shows a bare Stopped marker when the stopped node left no draft', () => {
+    const out = renderToStaticMarkup(createElement(TurnView, { ...baseProps, turn: turn('Find the Rust 1.0 year', dag('cancelled'), msg('', true)) }))
+    expect(out).toContain('Stopped')
+    expect(out).not.toContain('not reviewed')
+    expect(out).toContain('Web researcher')
+  })
+
+  it('leaves a finished node\'s answer unbadged', () => {
+    const out = renderToStaticMarkup(createElement(TurnView, { ...baseProps, turn: turn('Find the Rust 1.0 year', dag('done'), msg('Rust reached 1.0 in 2015')) }))
+    expect(out).not.toContain('Stopped')
+  })
+})

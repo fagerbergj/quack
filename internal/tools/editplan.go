@@ -130,6 +130,9 @@ func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecor
 	var upserts []dag.Assignment
 	var minted []dag.DagNodeRecord
 	if len(a.Assignments) > 0 {
+		if err := refuseStopped(tc, a.Assignments); err != nil {
+			return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)
+		}
 		upserts, minted, err = upsertNodes(a.Assignments, existingNodes, nodeIsRunning, tc.SessionID(), allowedKinds, agents)
 		if err != nil {
 			return planUpsertResult{}, fmt.Errorf("edit_plan: %w", err)

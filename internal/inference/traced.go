@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"sync"
@@ -88,8 +89,11 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 			otelobs.RecordModelCallDuration(t.name, time.Since(t0))
 			emitChatEvent(ctx, t.name, req, last, callErr, t.pricing)
 			recordUsageMetrics(ctx, t.name, t.defaultAgent, t.pricing, last)
-			// Outlives ADK's own error handling - see failure.go's doc comment.
-			RecordCallResult(callCoords.ChatID, callCoords.Node, callCoords.Agent, callErr)
+			// Outlives ADK's own error handling - see failure.go's doc comment. A call cancelled by a
+			// stop or shutdown says nothing about the gateway, so it neither fails nor clears the streak.
+			if !errors.Is(ctx.Err(), context.Canceled) {
+				RecordCallResult(callCoords.ChatID, callCoords.Node, callCoords.Agent, callErr)
+			}
 		}()
 		inner(func(resp *model.LLMResponse, err error) bool {
 			if err != nil {

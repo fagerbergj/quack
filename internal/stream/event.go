@@ -319,6 +319,9 @@ type NodeCancelledData struct {
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
 	// ContextID: see NodeDoneData.ContextID.
 	ContextID string `json:"context_id,omitempty"`
+	// Output is the draft the node had when stopped - unreviewed, never the answer.
+	Output        string `json:"output,omitempty"`
+	OutputPreview string `json:"output_preview,omitempty"`
 }
 
 // NodeCancelled builds a node_cancelled event, stamping FinishedAtMs now (see NodeDone).
@@ -546,6 +549,14 @@ func NodeFailed(nodeID, errMsg string) SSEEvent {
 func ChatTitle(title string) SSEEvent {
 	return SSEEvent{Name: EventChatTitle, Data: ChatTitleData{Title: title}}
 }
+
+// DeliveredAnswerMeta marks (in session event CustomMetadata) the orchestrator message carrying a
+// turn's delivered answer; its value is that turn's id ("" = the turn the event falls in).
+const DeliveredAnswerMeta = "quack_delivered_answer"
+
+// DeliveredAtMeta is the delivery's own nanosecond time (RFC3339Nano): stored event timestamps can
+// tie between quick successive answers, and the latest delivery for a turn must win deterministically.
+const DeliveredAtMeta = "quack_delivered_at"
 
 // Errorf builds an error event.
 func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: ErrorData{Error: msg}} }

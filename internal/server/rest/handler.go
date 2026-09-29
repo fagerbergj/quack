@@ -223,8 +223,8 @@ func chatsScopeFor(params schema.ListChatsParams) (store.ChatsScope, error) {
 	return store.ChatsScope{Active: true}, nil
 }
 
-// ListChats is a single table read (#738: status is a stamp on the chat row - see
-// store.StampRunOutcome - plus a cheap in-memory hub check, not a per-chat DB read).
+// ListChats is three queries per page, never per chat (#738): the chat rows (status is the
+// stamp store.StampRunOutcome leaves), their usage totals, and which have a running node.
 // It's also a conditional GET: an unchanged page costs a 304 with no body, so the SPA's 5s poll is cheap on the wire when nothing changed (still no TTL - every poll reaches this handler and revalidates against the live rows). The ETag is hashed from the marshaled page body, which embeds NextPageToken, so it varies with page token and limit as well as content - a stale ETag from a different page never reads as a match.
 func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schema.ListChatsParams) {
 	limit := 0
@@ -261,9 +261,13 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 		totals = map[string]int64{}
 	}
 
+	running, err := h.store.ChatsWithRunningNode(r.Context(), h.notLive(ids))
+	if err != nil {
+		slog.Warn("list chats: running-node lookup failed", "component", "rest", "err", err)
+	}
 	out := schema.ChatList{Data: make([]schema.ChatSummary, len(chats))}
 	for i, c := range chats {
-		out.Data[i] = h.toSummary(c, totals[c.ID])
+		out.Data[i] = h.toSummary(c, totals[c.ID], running[c.ID])
 	}
 	if next != "" {
 		out.NextPageToken = &next
@@ -306,7 +310,7 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A brand-new chat has no turns/nodes yet - 0 tokens, no query needed.
-	writeJSON(w, http.StatusOK, h.toSummary(*c, 0))
+	writeJSON(w, http.StatusOK, h.toSummary(*c, 0, false))
 }
 
 func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -319,7 +323,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	status, pendingQuestion := h.chatStatus(r.Context(), chatID, turns)
+	status, pendingQuestion := h.chatStatus(*c, h.chatHasRunningNode(r.Context(), chatID))
 	usage, err := h.store.GetChatUsage(r.Context(), chatID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -366,19 +370,22 @@ func terminalNodeID(plan stream.DagPlanData) string {
 	return ""
 }
 
-// terminalNodeOutput returns the terminal node's full vetted output, or ""
-// when the plan has no terminal node with output yet.
-func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) string {
+// terminalNodeOutput returns the terminal node's full output (or "" when it has none yet);
+// stopped reports the user stopped it (so that output is a draft) and at when.
+func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool, at time.Time) {
 	id := terminalNodeID(plan)
 	if id == "" {
-		return ""
+		return "", false, time.Time{}
 	}
 	for _, n := range nodes {
 		if n.NodeID == id {
-			return strings.TrimSpace(n.Output)
+			if n.FinishedAt != nil {
+				at = *n.FinishedAt
+			}
+			return strings.TrimSpace(n.Output), n.Status == string(dag.StatusCancelled), at
 		}
 	}
-	return ""
+	return "", false, time.Time{}
 }
 
 // usageAggregateToSchema always populates every field (unlike Turn.usage,
@@ -511,7 +518,7 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		}
 	}
 
-	writeJSON(w, http.StatusOK, h.toSummary(*c, h.chatTotalTokens(r.Context(), chatID)))
+	writeJSON(w, http.StatusOK, h.toSummary(*c, h.chatTotalTokens(r.Context(), chatID), h.chatHasRunningNode(r.Context(), chatID)))
 }
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -1193,7 +1200,7 @@ func (h *Handler) armRun(chatID, turnID string) (context.Context, context.Cancel
 	h.eventLog.Reset(runCtx, chatID)
 	h.hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
-	return runCtx, cancelRun
+	return stream.WithTurnID(runCtx, turnID), cancelRun
 }
 
 // retryNodeAsync re-runs nodeID and descendants in background, reusing the
@@ -1204,12 +1211,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		return false
 	}
 	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
-	seeded := make(map[string]string, len(nodes))
-	for _, n := range nodes {
-		if n.Output != "" {
-			seeded[n.NodeID] = n.Output
-		}
-	}
+	seeded, unreviewed := store.SeedOutputs(nodes)
 	runCtx, cancelRun := h.armRun(chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
@@ -1220,7 +1222,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		publish := runlog.NewPublisher(runCtx, h.hub, h.eventLog, chatID).Publish
 		publish(stream.ResponseCreated(dp.TurnID))
 
-		for ev, err := range h.orch.RetryNode(runCtx, h.sessionUser(runCtx, chatID), chatID, dp.ID, seeded, nodeID, guidance) {
+		for ev, err := range h.orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), h.sessionUser(runCtx, chatID), chatID, dp.ID, seeded, nodeID, guidance) {
 			if err != nil {
 				publish(stream.Errorf(err.Error()))
 				break
@@ -1405,6 +1407,27 @@ func buildUsage(tc store.TurnContent) *schema.Usage {
 	return usage
 }
 
+// answerBubble is the turn's answer and reasoning: a stopped terminal's draft, the answer the turn
+// delivered, the terminal node's output, or else the orchestrator's own reply, in that order.
+func answerBubble(tc store.TurnContent, planData stream.DagPlanData, planOK bool) (text, think string, stopped bool) {
+	var out string
+	var stoppedAt time.Time
+	if planOK {
+		out, stopped, stoppedAt = terminalNodeOutput(planData, tc.Nodes)
+	}
+	switch {
+	case stopped && (tc.Answer == "" || stoppedAt.After(tc.AnswerAt)):
+		// A stopped terminal's draft stands alone, badged, unless the turn delivered after the stop.
+		return out, "", true
+	case tc.Answer != "":
+		// What this turn delivered wins: a plan extended across turns keeps an older sink first.
+		return tc.Answer, tc.AsstThink, false
+	case out != "":
+		return out, tc.AsstThink, false
+	}
+	return tc.AsstText, tc.AsstThink, false
+}
+
 func buildTurn(tc store.TurnContent) schema.Turn {
 	// planData is the turn's DAG shape; unmarshaled once for both the DAG
 	// output item and the answer bubble's text below.
@@ -1413,19 +1436,14 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 
 	// DAG turns: the answer bubble carries the terminal node's OUTPUT - what
 	// the live stream rendered - not the orchestrator's planning narration.
-	bubbleText := tc.AsstText
-	if planOK {
-		if out := terminalNodeOutput(planData, tc.Nodes); out != "" {
-			bubbleText = out
-		}
-	}
+	bubbleText, think, stopped := answerBubble(tc, planData, planOK)
 
 	var msgItem schema.OutputItem
-	if bubbleText != "" || tc.AsstThink != "" {
+	if bubbleText != "" || think != "" || stopped {
 		content := make([]schema.ContentPart, 0, 2)
-		if tc.AsstThink != "" {
+		if think != "" {
 			var cp schema.ContentPart
-			_ = cp.FromReasoningPart(schema.ReasoningPart{Text: tc.AsstThink})
+			_ = cp.FromReasoningPart(schema.ReasoningPart{Text: think})
 			content = append(content, cp)
 		}
 		if bubbleText != "" {
@@ -1437,6 +1455,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 			Id:      tc.ID + ":msg",
 			Status:  schema.Completed,
 			Content: content,
+			Stopped: boolPtr(stopped),
 		})
 	}
 
@@ -1581,11 +1600,10 @@ func (h *Handler) chatTotalTokens(ctx context.Context, chatID string) int64 {
 	return totals[chatID]
 }
 
-// Builds a ChatSummary from the chat row alone: running is a cheap in-memory hub check,
-// everything else is the stamp StampRunOutcome left at the last run's end - no turns/session
-// read per chat (#738; that per-chat read is what GetChat's chatStatus below still does, which is fine there since GetChat already loads turns for the full detail body). totalTokens is the chat's compact token count for the sidebar (see ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
-func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary {
-	status, pendingQuestion := h.liveOrStampedStatus(c)
+// Builds a ChatSummary from the chat row plus runningNode (see chatStatus) - no turns/session
+// read per chat (#738). totalTokens is the chat's compact token count for the sidebar (see ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
+func (h *Handler) toSummary(c store.Chat, totalTokens int64, runningNode bool) schema.ChatSummary {
+	status, pendingQuestion := h.chatStatus(c, runningNode)
 	s := schema.ChatSummary{
 		Id:              c.ID,
 		Title:           strPtr(c.Title),
@@ -1606,11 +1624,10 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary 
 	return s
 }
 
-// liveOrStampedStatus resolves running live, else the chat row's stamped outcome.
-// A non-empty ActiveTurnID with no live signal means the run that set it died before
-// StampRunOutcome could clear it - report failed rather than trust a stale idle/needs_input stamp from a run before that one (#738 test 3; single-instance Hub, see stream.NewHub).
-func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string) {
-	if h.hub.Active(c.ID) {
+// chatStatus is the one status rule for the chat list and detail: running if the hub or a
+// latest-plan node row (runningNode) says so, else the stamp; a leftover ActiveTurnID means the run died unstamped.
+func (h *Handler) chatStatus(c store.Chat, runningNode bool) (schema.ChatStatus, *string) {
+	if h.liveRun(c.ID) || runningNode {
 		return schema.ChatStatusRunning, nil
 	}
 	if c.ActiveTurnID != "" {
@@ -1627,27 +1644,33 @@ func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string)
 	}
 }
 
-// Computes a chat's LIVE derived status: running (hub or a node row says so),
-// needs_input, failed, or idle. Used by GetChat, which already loads turns.
-func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
-	if h.hub.Active(chatID) || h.chatHasRunningNode(ctx, chatID) {
-		return schema.ChatStatusRunning, nil
-	}
-	return h.terminalStatus(ctx, chatID, turns)
+// liveRun is the hub's own running signal; HasRegisteredRun covers a run dispatched but not yet
+// publishing (MarkRunActive already set).
+func (h *Handler) liveRun(chatID string) bool {
+	return h.hub.Active(chatID) || h.hub.HasRegisteredRun(chatID)
 }
 
-// chatHasRunningNode trusts a running row with no staleness check, and is
-// deliberately GetChat-only (#738 keeps ListChats to one table read) - do not add this to toSummary.
+// notLive drops the chats the hub already reports running: their node rows needn't be queried.
+func (h *Handler) notLive(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !h.liveRun(id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// chatHasRunningNode is ChatsWithRunningNode for one chat; a lookup error reads as not running.
 func (h *Handler) chatHasRunningNode(ctx context.Context, chatID string) bool {
-	plan, err := h.store.GetLatestDagPlan(ctx, chatID)
-	if err != nil || plan == nil {
-		return false
+	if h.liveRun(chatID) {
+		return true // already running per the hub; skip the query
 	}
-	nodes, err := h.store.GetDagNodes(ctx, plan.ID)
+	running, err := h.store.ChatsWithRunningNode(ctx, []string{chatID})
 	if err != nil {
-		return false
+		slog.Warn("chat status: running-node lookup failed", "component", "rest", "chat", chatID, "err", err)
 	}
-	return store.ChatHasRunningNode(nodes)
+	return running[chatID]
 }
 
 // terminalStatus is chatStatus without the live queued/running checks: the outcome a run
@@ -1659,6 +1682,17 @@ func (h *Handler) terminalStatus(ctx context.Context, chatID string, turns []sto
 		return schema.ChatStatusNeedsInput, &question
 	}
 	return schema.ChatStatus(status), nil
+}
+
+// settleStoppedPlan cancels the records of nodes a user-stopped run planned but never dispatched
+// (a stop between create_plan and execute): no row or run will ever settle them otherwise.
+func (h *Handler) settleStoppedPlan(ctx, runCtx context.Context, chatID string) {
+	if !errors.Is(runCtx.Err(), context.Canceled) {
+		return
+	}
+	if err := dag.CancelUnstartedDagNodeRecords(ctx, h.store.Artifacts(), artifactref.AppName, h.sessionUser(ctx, chatID), chatID); err != nil {
+		slog.Warn("stopped run: planned dag_node records not settled", "component", "rest", "chat", chatID, "err", err)
+	}
 }
 
 // stampRunOutcome persists a finished run's terminal status on the chat row so ListChats can
@@ -1681,6 +1715,7 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 		}
 		return
 	}
+	h.settleStoppedPlan(ctx, parent, chatID)
 	// terminalStatus's DeriveTerminalStatus only ever reads the last turn, so load just that
 	// one instead of decoding the whole chat's ADK session on every run end (perf audit #3).
 	last, err := h.store.GetLastTurnWithContent(ctx, orchestrator.AppName, h.sessionUser(ctx, chatID), chatID)

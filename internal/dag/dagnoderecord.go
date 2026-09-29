@@ -146,6 +146,17 @@ func updateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 // FailOpenDagNodeRecords marks every chat's dag_node record not yet done/failed/cancelled
 // as failed - boot's settle for a run killed before it had any resumable state.
 func FailOpenDagNodeRecords(ctx context.Context, artifacts artifact.Service, appName, userID, chatID string) error {
+	return settleOpenDagNodeRecords(ctx, artifacts, appName, userID, chatID, StatusFailed, true)
+}
+
+// CancelUnstartedDagNodeRecords marks the chat's queued (planned, never run) dag_node records
+// cancelled - a user stop before execute dispatched them; paused nodes are left to resume.
+func CancelUnstartedDagNodeRecords(ctx context.Context, artifacts artifact.Service, appName, userID, chatID string) error {
+	return settleOpenDagNodeRecords(ctx, artifacts, appName, userID, chatID, StatusCancelled, false)
+}
+
+// settleOpenDagNodeRecords moves open records to `to`; all=false leaves live and paused ones alone.
+func settleOpenDagNodeRecords(ctx context.Context, artifacts artifact.Service, appName, userID, chatID string, to NodeStatus, all bool) error {
 	if artifacts == nil {
 		return nil
 	}
@@ -163,8 +174,12 @@ func FailOpenDagNodeRecords(ctx context.Context, artifacts artifact.Service, app
 		switch rec.Status {
 		case StatusDone, StatusFailed, StatusCancelled:
 			continue
+		case StatusPaused, StatusNeedsInput, StatusRunning:
+			if !all {
+				continue
+			}
 		}
-		if err := SyncDagNodeStatus(ctx, artifacts, appName, userID, chatID, rec.NodeID, StatusFailed); err != nil {
+		if err := SyncDagNodeStatus(ctx, artifacts, appName, userID, chatID, rec.NodeID, to); err != nil {
 			return err
 		}
 	}

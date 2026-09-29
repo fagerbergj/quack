@@ -1136,6 +1136,11 @@ describe('answer-bubble attribution helpers', () => {
     expect(dagAnswerAttribution(d)).toEqual({ agent: 'synthesizer', model: 'gpt-oss-120b', tokens: 500 })
   })
 
+  it('dagAnswerAttribution marks a stopped terminal node, so its draft is badged unreviewed', () => {
+    expect(dagAnswerAttribution(dag({ b: { status: 'cancelled' } }))?.stopped).toBe(true)
+    expect(dagAnswerAttribution(dag({ b: { status: 'done' } }))?.stopped).toBeUndefined()
+  })
+
   it('dagAnswerAttribution omits model/tokens when the terminal node has none yet', () => {
     const d = dag({ b: { status: 'running' } })
     expect(dagAnswerAttribution(d)).toEqual({ agent: 'synthesizer', model: undefined, tokens: undefined })

@@ -574,7 +574,7 @@ func (b *boot) initWorkspace(ctx context.Context) (*workspace.Jail, error) {
 }
 
 // opens the session store and artifact service, reconciling resumable nodes
-func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.Jail) (*store.Store, []store.ResumableNode, *store.TurnAwareService, error) {
+func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.Jail, ledgerStore ledger.LedgerStore) (*store.Store, []store.ResumableNode, *store.TurnAwareService, error) {
 	sessionStore, ok := b.cfg.Store(b.cfg.Session.Store)
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("session store %q not found in stores registry", b.cfg.Session.Store)
@@ -589,6 +589,10 @@ func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.
 	}
 	artifacts := store.NewTurnAwareService(artifactSvc)
 	st.SetArtifactService(artifacts)
+	if ledgerStore != nil {
+		// #1144 P5: chat/turn/plan writes go through AppendIntent; wired before the reconcile so its settles reach the ledger.
+		st.SetWALLedger(ledgerStore)
+	}
 	// After SetArtifactService: the reconcile mirrors each node's row status onto its dag_node record.
 	resumeNodes, err := bootReconcile(reconcile, b.cfg, st, jail)
 	if err != nil {
@@ -742,8 +746,6 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 	// (github, today) supplies quack's push credential and delivery target, not hardcoded to one extension.
 	gitTokenSource, deliver, assignmentFreshness, assignmentMeta := discoverSDKToolSources(sdkExts)
 	if ledgerStore != nil {
-		// #1144 P5: chat/turn/plan writes go through AppendIntent too now.
-		st.SetWALLedger(ledgerStore)
 		// #1144 P3: seed a caught-up watermark (sse, artifact, node_state) for any chat that already
 		// has that projection's data, before the first watermark-gated write - not a literal MAX(seq)
 		// copy (SeedProjectionWatermarks doc); cheap, idempotent, runs every boot.
@@ -917,7 +919,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	st, resumeNodes, artifacts, err := b.initStorage(ctx, reconcile, jail)
+	st, resumeNodes, artifacts, err := b.initStorage(ctx, reconcile, jail, ledgerStore)
 	if err != nil {
 		return nil, nil, "", err
 	}
