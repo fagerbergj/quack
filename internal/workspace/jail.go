@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -226,6 +227,33 @@ func (j *Jail) Resolve(userID, chatID, relPath string) (string, error) {
 		return "", ErrEscape
 	}
 	return real, nil
+}
+
+// ResolveRepoDir is Resolve for a dir quack clones or adds a worktree into, but never follows a symlink: one standing
+// in for the dir or a parent below the scope root is removed with a WARN, so the caller re-clones into a real dir.
+func (j *Jail) ResolveRepoDir(userID, chatID, relPath string) (string, error) {
+	scopeRoot, err := j.scopeRoot(userID, chatID)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsLocal(relPath) {
+		return "", ErrEscape
+	}
+	p := scopeRoot
+	for _, c := range strings.Split(filepath.Clean(relPath), string(filepath.Separator)) {
+		p = filepath.Join(p, c)
+		fi, err := os.Lstat(p)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		slog.Warn("git: a symlink stands in for a repository dir; removing it to re-clone into a real dir",
+			"component", "workspace", "link", p)
+		if err := os.Remove(p); err != nil {
+			return "", fmt.Errorf("workspace: remove symlink %s: %w", p, err)
+		}
+		break
+	}
+	return filepath.Join(scopeRoot, relPath), nil
 }
 
 // Deletes a chat's workspace subtree. Empty chatID rejected (ErrInvalidChatID) so it can never delete the user root.

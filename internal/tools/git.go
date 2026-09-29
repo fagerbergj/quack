@@ -154,6 +154,11 @@ func (b gitBinding) resolve(p string) (string, error) {
 	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
 }
 
+// resolveRepoDir: resolve for a dir quack clones or adds a worktree into (see workspace.Jail.ResolveRepoDir).
+func (b gitBinding) resolveRepoDir(p string) (string, error) {
+	return b.jail.ResolveRepoDir(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
+}
+
 func (b gitBinding) credentialFor(rawURL string) *GitCredential {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {

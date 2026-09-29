@@ -54,7 +54,11 @@ func fetch(ctx context.Context, root string, p Plugin, commit func(Plugin) error
 	if p.Source == SourceLocal {
 		return p, nil // no clone; Root() serves the path directly
 	}
-	dir := CloneDir(root, p.Name)
+	dir, err := realParentDir(CloneDir(root, p.Name))
+	if err != nil {
+		p.Error = err.Error()
+		return p, err
+	}
 	defer lockClone(dir)()
 	url := RemoteURL(p.Owner, p.Repo)
 	if err := fetchInto(ctx, dir, url); err != nil {
@@ -126,26 +130,26 @@ func fetchInto(ctx context.Context, dir, url string) error {
 			return err
 		}
 	}
-	return cloneInto(ctx, dir, url)
+	// Full, not blob-filtered: the pi-acp shim and skilltoolset read files.
+	_, err := runGitRW(ctx, "", []string{dir}, "clone", "--quiet", url, dir)
+	return err
 }
 
-// cloneInto clones url to dir via dir's real parent, since the confined clone grant refuses any symlink on its path
-// (the plugins root is the operator's). Full, not blob-filtered: the pi-acp shim and skilltoolset read files.
-func cloneInto(ctx context.Context, dir, url string) error {
+// realParentDir is dir under its parent's real path, the parent created: quack's git refuses a repo path through a
+// symlink, and the operator's plugins root may be one.
+func realParentDir(dir string) (string, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
 	if err != nil {
-		return err
+		return "", err
 	}
-	abs = filepath.Join(parent, filepath.Base(abs))
-	_, err = runGitRW(ctx, "", []string{abs}, "clone", "--quiet", url, abs)
-	return err
+	return filepath.Join(parent, filepath.Base(abs)), nil
 }
 
 // isGitRepo reports whether dir is itself a git repo, not merely inside one -

@@ -28,3 +28,6 @@ func ReapMain(args []string) error {
 func openNoFollow(p string, _ bool) (*os.File, error) {
 	return nil, fmt.Errorf("git: %s: no-symlink open is only supported on Linux", p)
 }
+
+// kernelLandlockABI: Landlock is Linux-only.
+func kernelLandlockABI() int { return 0 }

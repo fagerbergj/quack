@@ -67,6 +67,7 @@ var GitFixtureDirs []string
 
 var (
 	gitConfined        atomic.Bool
+	gitConfinedNoted   sync.Once
 	gitUnconfinedNoted sync.Once
 )
 
@@ -89,7 +90,11 @@ func ConfineGit(want bool) bool {
 		}
 	}
 	gitConfined.Store(err == nil)
-	if err != nil {
+	if err == nil {
+		gitConfinedNoted.Do(func() {
+			slog.Info(fmt.Sprintf("quack git confined (landlock abi %d)", kernelLandlockABI()), "component", "workspace")
+		})
+	} else {
 		gitUnconfinedNoted.Do(func() {
 			slog.Warn("quack's own git runs unconfined: without Landlock, symlinks or alternates in an agent-writable "+
 				".git can reach other repositories", "component", "workspace", "err", err)
@@ -250,7 +255,7 @@ func checkRepo(clone, dir string) (work, gitDir, common string, err error) {
 	if clone == "" {
 		return "", "", "", fmt.Errorf("no trusted clone given")
 	}
-	root, err := realPath(clone)
+	root, err := linkFreePath(clone)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -258,7 +263,7 @@ func checkRepo(clone, dir string) (work, gitDir, common string, err error) {
 	if fi, err := os.Lstat(common); err != nil || !fi.IsDir() {
 		return "", "", "", fmt.Errorf("%s is not a directory", common)
 	}
-	if work, err = realPath(dir); err != nil {
+	if work, err = linkFreePath(dir); err != nil {
 		return "", "", "", err
 	}
 	gitDir = common
@@ -353,6 +358,19 @@ func readPointer(p string) (string, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(f, 4096))
 	return strings.TrimSpace(string(data)), err
+}
+
+// linkFreePath resolves p but refuses it when any component is a symlink: quack's git never follows one to a repo.
+func linkFreePath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err == nil && real != abs {
+		err = fmt.Errorf("%s is reached through a symlink", p)
+	}
+	return real, err
 }
 
 func realPath(p string) (string, error) {

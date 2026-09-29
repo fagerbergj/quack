@@ -17,7 +17,7 @@ import (
 func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, parentDir, nodeRelDir, branch string, caps workspace.Caps, checkSetup []string) (string, error) {
 	b := gitBinding{userID: userID, jail: jail, caps: caps}
 	b.chatID = chatID
-	target, err := b.resolve(nodeRelDir)
+	target, err := b.resolveRepoDir(nodeRelDir)
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve worktree dir: %w", err)
 	}

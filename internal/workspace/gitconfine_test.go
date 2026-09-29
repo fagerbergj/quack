@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 )
@@ -313,5 +315,40 @@ func TestConfinedGitReadsSymlinkedResolvConf(t *testing.T) {
 	}
 	if out, code := runSandboxExec(t, append(args, "--", "cat", "/etc/resolv.conf")...); code != 0 {
 		t.Errorf("confined read of /etc/resolv.conf failed: exit=%d %s", code, out)
+	}
+}
+
+// TestGitCmdRefusesSymlinkedRepoPath: a clone or linked worktree reached through a symlink is refused, not followed.
+func TestGitCmdRefusesSymlinkedRepoPath(t *testing.T) {
+	bin, clone, wt := repoWithWorktree(t)
+	for name, pair := range map[string][2]string{"clone": {clone, clone}, "worktree": {clone, wt}} {
+		link := filepath.Join(t.TempDir(), "link")
+		if err := os.Symlink(pair[1], link); err != nil {
+			t.Fatal(err)
+		}
+		c := pair[0]
+		if name == "clone" {
+			c = link
+		}
+		if _, err := runGitCmdIn(t, bin, c, link, "status"); err == nil || !strings.Contains(err.Error(), "reached through a symlink") {
+			t.Errorf("%s via a symlink: err = %v, want a refusal", name, err)
+		}
+	}
+}
+
+// TestConfineGitLogsConfinedOnce: a successful ConfineGit says so at Info, with the kernel's ABI.
+func TestConfineGitLogsConfinedOnce(t *testing.T) {
+	requireLandlock(t)
+	var logs strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	gitConfinedNoted = sync.Once{}
+	t.Cleanup(func() { slog.SetDefault(prev); ConfineGit(false) })
+	if !ConfineGit(true) {
+		t.Fatal("ConfineGit(true) = false with Landlock available")
+	}
+	ConfineGit(true)
+	if n := strings.Count(logs.String(), "quack git confined (landlock abi "); n != 1 {
+		t.Errorf("confined log lines = %d, want 1:\n%s", n, logs.String())
 	}
 }

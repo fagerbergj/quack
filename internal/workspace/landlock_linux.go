@@ -148,6 +148,12 @@ func splitFiles(paths []string) (dirs, files []string) {
 	return dirs, files
 }
 
+// kernelLandlockABI is the running kernel's Landlock ABI, 0 when unknown.
+func kernelLandlockABI() int {
+	v, _ := ll.LandlockGetABIVersion()
+	return v
+}
+
 // withSignalScope adds signal scoping where the kernel has it (ABI 6+, 6.12+): the child can't kill
 // the __reap wrapper above it (orphaning past the sweep) or the server. One ruleset: a second layer denies REFER.
 func withSignalScope(cfg landlock.Config) landlock.Config {
