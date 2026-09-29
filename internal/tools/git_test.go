@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -46,6 +47,16 @@ func newTestGitBinding(t *testing.T) gitBinding {
 func runGitT(t *testing.T, dir string, argv ...string) string {
 	t.Helper()
 	out, _, err := runGit(context.Background(), dir, argv, workspace.DefaultCaps(), nil)
+	if err != nil {
+		t.Fatalf("git %s: %v", strings.Join(argv, " "), err)
+	}
+	return out
+}
+
+// runGitInT runs quack's git in dir, a linked worktree of clone, failing the test on error.
+func runGitInT(t *testing.T, clone, dir string, argv ...string) string {
+	t.Helper()
+	out, _, err := runGitIn(context.Background(), clone, dir, argv, workspace.DefaultCaps(), nil)
 	if err != nil {
 		t.Fatalf("git %s: %v", strings.Join(argv, " "), err)
 	}
@@ -328,7 +339,11 @@ func TestCredentialedGitIgnoresHomeConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.caps.HomeDir, ".gitconfig"), []byte(rewrite), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	wantMain := strings.TrimSpace(runGitT(t, real, "rev-parse", "main"))
+	out, err := exec.Command("git", "-C", real, "rev-parse", "main").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMain := strings.TrimSpace(string(out))
 
 	target, err := setupCloneAndBranch(context.Background(), b, "repo", "file://"+real, "main", "quack/one", false)
 	if err != nil {
@@ -430,7 +445,7 @@ func TestGitEnvCarriesNoServerSecrets(t *testing.T) {
 		t.Skip("git not on PATH")
 	}
 	auth := &gitAuth{cred: GitCredential{Username: "u", Token: "tok"}, askpass: "/x/" + GitAskpassLinkName, host: "github.com"}
-	cmd, done, err := workspace.GitCmd(context.Background(), bin, "", []string{"version"}, gitEnv(workspace.DefaultCaps(), auth))
+	cmd, done, err := workspace.GitCmd(context.Background(), bin, "", "", []string{"version"}, gitEnv(workspace.DefaultCaps(), auth))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,5 +457,91 @@ func TestGitEnvCarriesNoServerSecrets(t *testing.T) {
 			!strings.HasPrefix(e, GitAskpassHostEnv+"=") {
 			t.Errorf("git env carries a QUACK_* var beyond the askpass ones: %q", e)
 		}
+	}
+}
+
+// nestedRepoFixture: an upstream whose tree commits a gitlink "inner", and a clone of it holding its own inner
+// repo with a staged change - the shape a child git in inner would inspect.
+func nestedRepoFixture(t *testing.T) (bare, seed, clone string) {
+	t.Helper()
+	bare, seed, clone = t.TempDir(), t.TempDir(), t.TempDir()
+	rawGit(t, bare, "init", "--quiet", "--bare", "--initial-branch=main")
+	rawGit(t, seed, "init", "--quiet", "--initial-branch=main")
+	commitInner(t, seed)
+	rawGit(t, seed, "push", "--quiet", bare, "main")
+	rawGit(t, filepath.Dir(clone), "clone", "--quiet", bare, clone)
+	inner := filepath.Join(clone, "inner")
+	rawGit(t, clone, "init", "--quiet", inner)
+	rawGit(t, inner, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "--allow-empty", "-m", "own")
+	if err := os.WriteFile(filepath.Join(inner, "f"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rawGit(t, inner, "add", "f")
+	return bare, seed, clone
+}
+
+// commitInner advances seed's nested inner repo and commits the moved gitlink.
+func commitInner(t *testing.T, seed string) {
+	t.Helper()
+	inner := filepath.Join(seed, "inner")
+	if _, err := os.Stat(inner); err != nil {
+		rawGit(t, seed, "init", "--quiet", inner)
+	}
+	rawGit(t, inner, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "--allow-empty", "-m", "inner")
+	rawGit(t, seed, "add", "inner")
+	rawGit(t, seed, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "-m", "gitlink")
+}
+
+var innerCd = regexp.MustCompile(`"cd":"([^"]*/)?inner"`)
+
+// nestedChildren runs quack's git in clone under trace2 and returns the child processes it started inside inner.
+func nestedChildren(t *testing.T, clone string, argv ...string) (out string, children []string) {
+	t.Helper()
+	bin, err := gitBinaryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace := filepath.Join(t.TempDir(), "trace2.json")
+	cmd, done, err := workspace.GitCmd(context.Background(), bin, clone, clone, argv, append(gitEnv(workspace.DefaultCaps(), nil), "GIT_TRACE2_EVENT="+trace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	o, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", argv, err, o)
+	}
+	events, _ := os.ReadFile(trace)
+	for _, line := range strings.Split(string(events), "\n") {
+		if strings.Contains(line, `"event":"child_start"`) && innerCd.MatchString(line) {
+			children = append(children, line)
+		}
+	}
+	return string(o), children
+}
+
+// TestQuackGitSpawnsNoGitInNestedRepos: status and fetch never start a child git inside a nested repo, whose own
+// config quack does not strip - even when the tree's .gitmodules asks for it.
+func TestQuackGitSpawnsNoGitInNestedRepos(t *testing.T) {
+	requireGit(t)
+	bare, seed, clone := nestedRepoFixture(t)
+	if _, kids := nestedChildren(t, clone, "status", "--porcelain", "--untracked-files=no"); len(kids) != 0 {
+		t.Errorf("plain status started git in the nested repo: %v", kids)
+	}
+	gitmodules := "[submodule \"inner\"]\n\tpath = inner\n\turl = ./inner\n\tignore = none\n\tfetchRecurseSubmodules = true\n"
+	if err := os.WriteFile(filepath.Join(clone, ".gitmodules"), []byte(gitmodules), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, kids := nestedChildren(t, clone, cleanStatusArgv...)
+	if len(kids) != 0 {
+		t.Errorf("reuse-check status started git in the nested repo: %v", kids)
+	}
+	if !strings.Contains(out, "inner") {
+		t.Errorf("reuse-check status hid the moved gitlink: %q", out)
+	}
+	commitInner(t, seed)
+	rawGit(t, seed, "push", "--quiet", bare, "main")
+	if _, kids := nestedChildren(t, clone, "fetch", "--quiet", "file://"+bare, "+refs/heads/main:refs/remotes/origin/main"); len(kids) != 0 {
+		t.Errorf("fetch recursed into the nested repo: %v", kids)
 	}
 }

@@ -268,7 +268,7 @@ func TestSetupCloneAndBranchReuseKeepsLocalCommit(t *testing.T) {
 func TestSetupCloneAndBranchDifferentBaseRefReClones(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
-	runGitT(t, bare, "branch", "other")
+	rawGit(t, bare, "branch", "other")
 	b := newTestGitBinding(t)
 
 	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)

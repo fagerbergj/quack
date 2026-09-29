@@ -79,7 +79,7 @@ func TestPushBranchRecoversFromSurvivingRemoteBranch(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
 	addBranchFixture(t, bare, "quack/issue-66") // prior run's surviving branch (adds pr.txt)
-	runGitT(t, bare, "config", "receive.denyNonFastforwards", "true")
+	rawGit(t, bare, "config", "receive.denyNonFastforwards", "true")
 
 	jailRoot := t.TempDir()
 	target := t.TempDir()
@@ -114,7 +114,7 @@ func TestPushBranchRebaseRecoveryFailureLeavesBranchAlone(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
 	addBranchFixture(t, bare, "quack/issue-66") // prior run wrote pr.txt = "pr change"
-	runGitT(t, bare, "config", "receive.denyNonFastforwards", "true")
+	rawGit(t, bare, "config", "receive.denyNonFastforwards", "true")
 
 	jailRoot := t.TempDir()
 	target := t.TempDir()
@@ -173,8 +173,8 @@ func TestPushBranchIgnoresRepoRedirectsAndHooks(t *testing.T) {
 	if _, err := PushBranch(context.Background(), t.TempDir(), target, "file://"+bare, "quack/issue-7", GitCredential{}, workspace.DefaultCaps()); err != nil {
 		t.Fatalf("PushBranch: %v", err)
 	}
-	runGitT(t, bare, "rev-parse", "--verify", "--quiet", "refs/heads/quack/issue-7")
-	if _, _, err := runPushGit(context.Background(), decoy, []string{"rev-parse", "--verify", "--quiet", "refs/heads/quack/issue-7"}, workspace.DefaultCaps(), nil); err == nil {
+	rawGit(t, bare, "rev-parse", "--verify", "--quiet", "refs/heads/quack/issue-7")
+	if exec.Command("git", "-C", decoy, "rev-parse", "--verify", "--quiet", "refs/heads/quack/issue-7").Run() == nil {
 		t.Error("branch landed in the decoy repo the clone's config pointed at")
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {

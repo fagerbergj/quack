@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,11 +21,12 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve worktree dir: %w", err)
 	}
-	if worktreeValid(target, parentDir) && syncWorktree(ctx, target, parentDir, caps) {
+	if worktreeValid(target, parentDir) && syncWorktree(ctx, target, parentDir, branch, caps) {
 		workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 		workspace.RunCheckSetup(target, checkSetup, caps)
 		return target, nil
 	}
+	warnDiscard(parentDir, target)
 	if err := os.RemoveAll(target); err != nil {
 		return "", fmt.Errorf("setup: clear stale worktree dir: %w", err)
 	}
@@ -43,28 +45,31 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	return target, nil
 }
 
-// PruneWorktree detaches dir from the parent clone's bookkeeping before removal.
-func PruneWorktree(ctx context.Context, dir string, caps workspace.Caps) error {
-	common := workspace.WorktreeCommonGitDir(dir)
-	if common == "" {
-		return nil
+// warnDiscard: recovery from a redirected clone or worktree is otherwise silent.
+func warnDiscard(clone, dir string) {
+	if err := workspace.RepoRedirect(clone, dir); err != nil {
+		slog.Warn("git: discarding a tree that failed quack's repository checks; recreating it", "component", "tools", "dir", dir, "err", err)
 	}
-	parent := filepath.Dir(common)
-	if _, err := os.Stat(parent); err != nil {
-		return nil
+}
+
+// PruneWorktree detaches dir from its owning clone's bookkeeping before removal; that clone must lie inside root.
+func PruneWorktree(ctx context.Context, root, dir string, caps workspace.Caps) error {
+	clone, err := workspace.WorktreeClone(root, dir)
+	if clone == "" || err != nil {
+		return err
 	}
-	_, _, err := runGit(ctx, parent, []string{"worktree", "remove", "--force", dir}, caps, nil)
+	_, _, err = runGit(ctx, clone, []string{"worktree", "remove", "--force", dir}, caps, nil)
 	return err
 }
 
-// syncWorktree moves a reused worktree to the shared clone's current HEAD: only read-only
-// nodes get one, so nothing of theirs lives in it, and a re-review after a push must read the new head.
-func syncWorktree(ctx context.Context, target, parentDir string, caps workspace.Caps) bool {
+// syncWorktree moves a reused (read-only node's) worktree to the shared clone's HEAD on its own named branch;
+// a plain reset would follow the agent-writable worktree HEAD, which can name a shared branch.
+func syncWorktree(ctx context.Context, target, parentDir, branch string, caps workspace.Caps) bool {
 	head, _, err := runGit(ctx, parentDir, []string{"rev-parse", "HEAD"}, caps, nil)
 	if err != nil {
 		return false
 	}
-	_, _, err = runGit(ctx, target, []string{"reset", "--quiet", "--hard", strings.TrimSpace(head)}, caps, nil)
+	_, _, err = runGitIn(ctx, parentDir, target, []string{"checkout", "--quiet", "--force", "-B", branch, strings.TrimSpace(head)}, caps, nil)
 	return err == nil
 }
 

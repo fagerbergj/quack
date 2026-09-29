@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -45,8 +48,8 @@ func TestSetupWorktreeCreatesDistinctDirsAndBranches(t *testing.T) {
 		t.Errorf("worktree 2 missing the parent clone's content: %v", err)
 	}
 
-	branch1 := strings.TrimSpace(runGitT(t, dir1, "rev-parse", "--abbrev-ref", "HEAD"))
-	branch2 := strings.TrimSpace(runGitT(t, dir2, "rev-parse", "--abbrev-ref", "HEAD"))
+	branch1 := strings.TrimSpace(runGitInT(t, parentDir, dir1, "rev-parse", "--abbrev-ref", "HEAD"))
+	branch2 := strings.TrimSpace(runGitInT(t, parentDir, dir2, "rev-parse", "--abbrev-ref", "HEAD"))
 	if branch1 == branch2 {
 		t.Fatalf("both worktrees checked out the SAME branch %q, want distinct (git would refuse this for real)", branch1)
 	}
@@ -126,13 +129,13 @@ func TestSetupWorktreeFollowsMovedParentHead(t *testing.T) {
 	if _, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil); err != nil {
 		t.Fatalf("second SetupWorktree: %v", err)
 	}
-	if got := strings.TrimSpace(runGitT(t, dir, "rev-parse", "HEAD")); got != want {
+	if got := strings.TrimSpace(runGitInT(t, parentDir, dir, "rev-parse", "HEAD")); got != want {
 		t.Errorf("worktree HEAD = %s, want the shared clone's new head %s", got, want)
 	}
 	if body, _ := os.ReadFile(filepath.Join(dir, "README.md")); string(body) != "pushed after the first review\n" {
 		t.Errorf("worktree README.md = %q, want the new head's content", body)
 	}
-	if st := runGitT(t, dir, "status", "--porcelain", "--untracked-files=no"); strings.TrimSpace(st) != "" {
+	if st := runGitInT(t, parentDir, dir, "status", "--porcelain", "--untracked-files=no"); strings.TrimSpace(st) != "" {
 		t.Errorf("worktree left dirty after sync:\n%s", st)
 	}
 }
@@ -236,5 +239,141 @@ func TestSetupWorktreeCheckSetupFailureWarnsAndProceeds(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Errorf("worktree missing after a failed check_setup: %v", err)
+	}
+}
+
+// TestPruneWorktreeStaysInsideRoot: a worktree registered to a clone outside root is never pruned from it; one
+// whose clone lies inside root is.
+func TestPruneWorktreeStaysInsideRoot(t *testing.T) {
+	requireGit(t)
+	newClone := func(parent string) (clone, wt string) {
+		clone, wt = filepath.Join(parent, "clone"), filepath.Join(t.TempDir(), "wt")
+		rawGit(t, parent, "init", "--quiet", "--initial-branch=main", clone)
+		rawGit(t, clone, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "--allow-empty", "-m", "init")
+		rawGit(t, clone, "worktree", "add", "--quiet", "--detach", wt)
+		return clone, wt
+	}
+	registered := func(clone, wt string) bool {
+		out, err := exec.Command("git", "-C", clone, "worktree", "list", "--porcelain").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Contains(string(out), filepath.Base(filepath.Dir(wt)))
+	}
+	root := t.TempDir()
+	inClone, inWT := newClone(root)
+	outClone, outWT := newClone(t.TempDir())
+
+	if err := PruneWorktree(context.Background(), root, outWT, workspace.DefaultCaps()); err == nil {
+		t.Error("PruneWorktree of a worktree owned by a clone outside root: want an error")
+	}
+	if !registered(outClone, outWT) {
+		t.Error("the outside clone's worktree bookkeeping was touched")
+	}
+	if err := PruneWorktree(context.Background(), root, inWT, workspace.DefaultCaps()); err != nil {
+		t.Fatalf("PruneWorktree inside root: %v", err)
+	}
+	if registered(inClone, inWT) {
+		t.Error("the inside clone still registers the pruned worktree")
+	}
+}
+
+// TestSetupWorktreeSyncIgnoresRetargetedHead: a worktree HEAD rewritten to name a shared branch doesn't make the
+// re-sync move that branch; the worktree lands on its own branch at the clone's head.
+func TestSetupWorktreeSyncIgnoresRetargetedHead(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	parentDir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+	nodeRel, branch := workspace.NodeDir("review1"), workspace.WorktreeBranch("review1")
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil)
+	if err != nil {
+		t.Fatalf("first SetupWorktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, parentDir, "commit", "--quiet", "-am", "work")
+	head, mainBefore := runGitT(t, parentDir, "rev-parse", "HEAD"), runGitT(t, parentDir, "rev-parse", "main")
+	ptr, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminHead := filepath.Join(strings.TrimPrefix(strings.TrimSpace(string(ptr)), "gitdir: "), "HEAD")
+	if err := os.WriteFile(adminHead, []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil); err != nil {
+		t.Fatalf("second SetupWorktree: %v", err)
+	}
+	if got := runGitT(t, parentDir, "rev-parse", "main"); got != mainBefore {
+		t.Errorf("shared main moved to %s, want it left at %s", got, mainBefore)
+	}
+	if got := strings.TrimSpace(runGitInT(t, parentDir, dir, "symbolic-ref", "HEAD")); got != "refs/heads/"+branch {
+		t.Errorf("worktree HEAD = %s, want refs/heads/%s", got, branch)
+	}
+	if got := runGitInT(t, parentDir, dir, "rev-parse", "HEAD"); got != head {
+		t.Errorf("worktree at %s, want the clone's head %s", got, head)
+	}
+}
+
+// TestRedirectRecoveryWarns: a shared clone or worktree whose .git was aimed at another repo is still discarded and
+// recreated, but now with a WARN naming the dir and why; a first-time setup logs none.
+func TestRedirectRecoveryWarns(t *testing.T) {
+	requireGit(t)
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	bare, other := newBareRepoFixture(t), t.TempDir()
+	rawGit(t, other, "init", "--quiet")
+	b := newTestGitBinding(t)
+	setup := func() string {
+		dir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope), "file://"+bare, "main", "quack/work", false)
+		if err != nil {
+			t.Fatalf("setup the shared clone: %v", err)
+		}
+		return dir
+	}
+	worktree := func(parent string) string {
+		dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parent, workspace.NodeDir("review1"), workspace.WorktreeBranch("review1"), b.caps, nil)
+		if err != nil {
+			t.Fatalf("SetupWorktree: %v", err)
+		}
+		return dir
+	}
+	parent := setup()
+	wt := worktree(parent)
+	if logs.Len() != 0 {
+		t.Fatalf("first-time setup warned: %s", logs.String())
+	}
+
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+filepath.Join(other, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worktree(parent)
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "dir="+wt) || !strings.Contains(logs.String(), "not a repository quack created") {
+		t.Errorf("redirected worktree recovered without a WARN naming it:\n%s", logs.String())
+	}
+
+	logs.Reset()
+	if err := os.RemoveAll(filepath.Join(parent, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(other, ".git"), filepath.Join(parent, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	setup()
+	if !strings.Contains(logs.String(), "dir="+parent) || !strings.Contains(logs.String(), "not a repository quack created") {
+		t.Errorf("redirected shared clone recovered without a WARN naming it:\n%s", logs.String())
+	}
+	if fi, err := os.Lstat(filepath.Join(parent, ".git")); err != nil || !fi.IsDir() {
+		t.Errorf("shared clone not recloned: %v %v", fi, err)
 	}
 }

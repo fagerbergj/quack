@@ -122,6 +122,10 @@ func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, bas
 	return n, true
 }
 
+// cleanStatusArgv: the flag outranks a .gitmodules ignore=none, so status never runs a child git in a nested repo
+// (whose config is unstripped); a moved gitlink still shows.
+var cleanStatusArgv = []string{"status", "--porcelain", "--untracked-files=no", "--ignore-submodules=dirty"}
+
 // unwipeableReason says why target must not be wiped, or "" when it's safe
 // to discard. Checked in order: an interrupted rebase/merge (invisible to
 // `git status` when the working tree itself is untouched), an uncommitted
@@ -134,7 +138,7 @@ func unwipeableReason(ctx context.Context, b gitBinding, target, repoURL, baseRe
 	if hasRebaseOrMergeState(target) {
 		return "a rebase or merge is in progress"
 	}
-	out, _, err := runGit(ctx, target, []string{"status", "--porcelain", "--untracked-files=no"}, b.caps, nil)
+	out, _, err := runGit(ctx, target, cleanStatusArgv, b.caps, nil)
 	if err != nil {
 		return "its working tree state could not be checked"
 	}
@@ -276,6 +280,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	}
 	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
 	// error must never read as the repository being unreachable (#1213).
+	warnDiscard(target, target)
 	if err := workspace.RemoveAllForce(target); err != nil {
 		return "", &cleanupError{path: target, cause: err}
 	}
