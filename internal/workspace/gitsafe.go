@@ -48,10 +48,8 @@ func GitSafeArgs() []string {
 	)
 }
 
-// GitCmd builds a quack-internal git child that reads no agent-writable config: fresh empty HOME, no
-// system/global config, and for an in-repo call (dir != "") the repo pinned by resolveRepo(clone, dir) with its
-// config first stripped to gitConfigKeep - the drivers/rewrites -c can't override. dir "" runs in that empty HOME.
-// The returned func removes it.
+// GitCmd builds quack's own git child: empty per-call HOME (removed by the returned func), no system/global
+// config, and for dir != "" the repo resolveRepo(clone, dir) pins, its config stripped to gitConfigKeep.
 func GitCmd(ctx context.Context, bin, clone, dir string, argv, env []string) (*exec.Cmd, func(), error) {
 	home, err := os.MkdirTemp("", "quack-git-home-")
 	if err != nil {
@@ -90,9 +88,8 @@ func pinRepo(ctx context.Context, bin, clone, dir, home string, env []string) (s
 	return abs, append(env, "GIT_CEILING_DIRECTORIES="+parent), nil
 }
 
-// resolveRepo pins the only repository quack's git may touch for dir: clone's own real .git directory, with dir
-// either clone itself or a linked worktree whose gitdir is <clone>/.git/worktrees/<name> and whose commondir
-// leads back. Returned paths are symlink-resolved; anything else, or object alternates, fails closed.
+// resolveRepo pins clone's real .git as the only repo quack's git may touch; dir is clone or a linked worktree
+// at <clone>/.git/worktrees/<name> whose commondir leads back. No alternates; paths are symlink-resolved.
 func resolveRepo(clone, dir string) (work, gitDir, common string, err error) {
 	if work, gitDir, common, err = checkRepo(clone, dir); err != nil {
 		return "", "", "", fmt.Errorf("git: %s is not a repository quack created at %s: %w", dir, clone, err)
