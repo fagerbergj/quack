@@ -123,7 +123,7 @@ func TestToSummaryReadsStampedOutcome(t *testing.T) {
 	}
 
 	before := h.store.QueryCount()
-	got := h.toSummary(*stamped, 0)
+	got := h.toSummary(*stamped, 0, false)
 	spent := h.store.QueryCount() - before
 
 	if got.Status != schema.ChatStatusFailed {
@@ -156,7 +156,7 @@ func TestCrashedRunDoesNotStickAtRunning(t *testing.T) {
 	if err != nil || c2 == nil {
 		t.Fatalf("GetChat: %+v, %v", c2, err)
 	}
-	got := h.toSummary(*c2, 0)
+	got := h.toSummary(*c2, 0, false)
 	if got.Status == schema.ChatStatusRunning {
 		t.Fatal("status = running, want anything but running - a dead run must not read as still live")
 	}

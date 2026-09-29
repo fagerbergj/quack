@@ -261,9 +261,13 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 		totals = map[string]int64{}
 	}
 
+	running, err := h.store.ChatsWithRunningNode(r.Context(), ids)
+	if err != nil {
+		slog.Warn("list chats: running-node lookup failed", "component", "rest", "err", err)
+	}
 	out := schema.ChatList{Data: make([]schema.ChatSummary, len(chats))}
 	for i, c := range chats {
-		out.Data[i] = h.toSummary(c, totals[c.ID])
+		out.Data[i] = h.toSummary(c, totals[c.ID], running[c.ID])
 	}
 	if next != "" {
 		out.NextPageToken = &next
@@ -306,7 +310,7 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A brand-new chat has no turns/nodes yet - 0 tokens, no query needed.
-	writeJSON(w, http.StatusOK, h.toSummary(*c, 0))
+	writeJSON(w, http.StatusOK, h.toSummary(*c, 0, false))
 }
 
 func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -319,7 +323,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	status, pendingQuestion := h.chatStatus(r.Context(), chatID, turns)
+	status, pendingQuestion := h.chatStatus(*c, h.chatHasRunningNode(r.Context(), chatID))
 	usage, err := h.store.GetChatUsage(r.Context(), chatID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -511,7 +515,7 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		}
 	}
 
-	writeJSON(w, http.StatusOK, h.toSummary(*c, h.chatTotalTokens(r.Context(), chatID)))
+	writeJSON(w, http.StatusOK, h.toSummary(*c, h.chatTotalTokens(r.Context(), chatID), h.chatHasRunningNode(r.Context(), chatID)))
 }
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -1581,11 +1585,10 @@ func (h *Handler) chatTotalTokens(ctx context.Context, chatID string) int64 {
 	return totals[chatID]
 }
 
-// Builds a ChatSummary from the chat row alone: running is a cheap in-memory hub check,
-// everything else is the stamp StampRunOutcome left at the last run's end - no turns/session
-// read per chat (#738; that per-chat read is what GetChat's chatStatus below still does, which is fine there since GetChat already loads turns for the full detail body). totalTokens is the chat's compact token count for the sidebar (see ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
-func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary {
-	status, pendingQuestion := h.liveOrStampedStatus(c)
+// Builds a ChatSummary from the chat row plus runningNode (see chatStatus) - no turns/session
+// read per chat (#738). totalTokens is the chat's compact token count for the sidebar (see ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
+func (h *Handler) toSummary(c store.Chat, totalTokens int64, runningNode bool) schema.ChatSummary {
+	status, pendingQuestion := h.chatStatus(c, runningNode)
 	s := schema.ChatSummary{
 		Id:              c.ID,
 		Title:           strPtr(c.Title),
@@ -1606,11 +1609,10 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary 
 	return s
 }
 
-// liveOrStampedStatus resolves running live, else the chat row's stamped outcome.
-// A non-empty ActiveTurnID with no live signal means the run that set it died before
-// StampRunOutcome could clear it - report failed rather than trust a stale idle/needs_input stamp from a run before that one (#738 test 3; single-instance Hub, see stream.NewHub).
-func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string) {
-	if h.hub.Active(c.ID) {
+// chatStatus is the one status rule for the chat list and detail: running if the hub or a
+// latest-plan node row (runningNode) says so, else the stamp; a leftover ActiveTurnID means the run died unstamped.
+func (h *Handler) chatStatus(c store.Chat, runningNode bool) (schema.ChatStatus, *string) {
+	if h.hub.Active(c.ID) || runningNode {
 		return schema.ChatStatusRunning, nil
 	}
 	if c.ActiveTurnID != "" {
@@ -1627,27 +1629,10 @@ func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string)
 	}
 }
 
-// Computes a chat's LIVE derived status: running (hub or a node row says so),
-// needs_input, failed, or idle. Used by GetChat, which already loads turns.
-func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
-	if h.hub.Active(chatID) || h.chatHasRunningNode(ctx, chatID) {
-		return schema.ChatStatusRunning, nil
-	}
-	return h.terminalStatus(ctx, chatID, turns)
-}
-
-// chatHasRunningNode trusts a running row with no staleness check, and is
-// deliberately GetChat-only (#738 keeps ListChats to one table read) - do not add this to toSummary.
+// chatHasRunningNode is ChatsWithRunningNode for one chat; a lookup error reads as not running.
 func (h *Handler) chatHasRunningNode(ctx context.Context, chatID string) bool {
-	plan, err := h.store.GetLatestDagPlan(ctx, chatID)
-	if err != nil || plan == nil {
-		return false
-	}
-	nodes, err := h.store.GetDagNodes(ctx, plan.ID)
-	if err != nil {
-		return false
-	}
-	return store.ChatHasRunningNode(nodes)
+	running, _ := h.store.ChatsWithRunningNode(ctx, []string{chatID})
+	return running[chatID]
 }
 
 // terminalStatus is chatStatus without the live queued/running checks: the outcome a run

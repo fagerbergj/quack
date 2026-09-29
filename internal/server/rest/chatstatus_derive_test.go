@@ -2,45 +2,74 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestChatStatus_RunningNodeReadsRunningWithoutHub pins that chat status
-// derives from the latest plan's node rows, not only the in-memory Hub.
-func TestChatStatus_RunningNodeReadsRunningWithoutHub(t *testing.T) {
-	h := newTestHandler(t)
+// TestChatStatus_ListAndDetailAgree: GET /chats and GET /chats/{id} read one status rule,
+// so a chat never shows failed in the list and idle in the detail (or the reverse).
+func TestChatStatus_ListAndDetailAgree(t *testing.T) {
 	ctx := context.Background()
-	chatID, planID, nodeID := "chat-1", "plan-1", "n1"
-	seedPlan(t, h, chatID, planID, nodeID)
-	if err := h.store.UpsertDagNode(ctx, store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
-		t.Fatalf("seed running node: %v", err)
-	}
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, h *Handler, chatID string)
+		want  schema.ChatStatus
+	}{
+		{"idle", func(*testing.T, *Handler, string) {}, schema.ChatStatusIdle},
+		{"failed by the orphan scan", func(t *testing.T, h *Handler, chatID string) {
+			if err := h.store.MarkRunActive(ctx, chatID, "turn-1"); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := h.store.ScanOrphanedRuns(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}, schema.ChatStatusFailed},
+		{"running on a node row", func(t *testing.T, h *Handler, chatID string) {
+			seedPlan(t, h, chatID, "p-"+chatID, "n1")
+			if err := h.store.UpsertDagNode(ctx, store.DagNode{NodeID: "n1", PlanID: "p-" + chatID, Status: "running"}); err != nil {
+				t.Fatal(err)
+			}
+		}, schema.ChatStatusRunning},
+		{"running on the hub", func(_ *testing.T, h *Handler, chatID string) {
+			h.hub.Publish(chatID, 1, stream.ResponseCreated("turn-1"))
+		}, schema.ChatStatusRunning},
+		{"paused for boot", func(t *testing.T, h *Handler, chatID string) {
+			if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusPaused, ""); err != nil {
+				t.Fatal(err)
+			}
+		}, schema.ChatStatusIdle},
+		{"needs input", func(t *testing.T, h *Handler, chatID string) {
+			if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusNeedsInput, "which?"); err != nil {
+				t.Fatal(err)
+			}
+		}, schema.ChatStatusNeedsInput},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHandler(t)
+			chatID := mustCreateChat(t, h)
+			tc.setup(t, h, chatID)
 
-	if h.hub.Active(chatID) {
-		t.Fatal("test setup: hub must have no live signal for this chat")
-	}
-	status, _ := h.chatStatus(ctx, chatID, nil)
-	if status != schema.ChatStatusRunning {
-		t.Errorf("status = %q, want running (derived from the node row, not the Hub)", status)
-	}
-}
-
-// TestChatStatus_NoNodesReadsIdle is TestChatStatus_RunningNodeReadsRunningWithoutHub's
-// negative case: a chat with a plan but no running node falls through to idle.
-func TestChatStatus_NoNodesReadsIdle(t *testing.T) {
-	h := newTestHandler(t)
-	ctx := context.Background()
-	chatID, planID, nodeID := "chat-2", "plan-2", "n1"
-	seedPlan(t, h, chatID, planID, nodeID)
-	if err := h.store.UpsertDagNode(ctx, store.DagNode{NodeID: nodeID, PlanID: planID, Status: "done"}); err != nil {
-		t.Fatalf("seed done node: %v", err)
-	}
-
-	status, _ := h.chatStatus(ctx, chatID, nil)
-	if status != schema.ChatStatusIdle {
-		t.Errorf("status = %q, want idle", status)
+			rec := httptest.NewRecorder()
+			h.GetChat(rec, httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID, nil), chatID)
+			var detail schema.ChatDetail
+			if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+				t.Fatalf("GetChat: %d %s", rec.Code, rec.Body.String())
+			}
+			rec = httptest.NewRecorder()
+			h.ListChats(rec, httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil), schema.ListChatsParams{})
+			var list schema.ChatList
+			if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Data) != 1 {
+				t.Fatalf("ListChats: %d %s", rec.Code, rec.Body.String())
+			}
+			if detail.Status != tc.want || list.Data[0].Status != tc.want {
+				t.Errorf("detail = %q, list = %q, want both %q", detail.Status, list.Data[0].Status, tc.want)
+			}
+		})
 	}
 }

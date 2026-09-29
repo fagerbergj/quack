@@ -125,7 +125,7 @@ func TestChatStatusIdle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	got := h.toSummary(*c, 0)
+	got := h.toSummary(*c, 0, false)
 	if got.Status != schema.ChatStatusIdle {
 		t.Errorf("status = %q, want idle", got.Status)
 	}
@@ -148,7 +148,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("GetChat: %+v err=%v", c, err)
 	}
-	got := h.toSummary(*c, 0)
+	got := h.toSummary(*c, 0, false)
 	if got.GithubUrl == nil || *got.GithubUrl != "https://github.com/acme/widget-app/pull/7" {
 		t.Errorf("github_url = %v, want the pull URL", got.GithubUrl)
 	}
@@ -160,7 +160,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	got = h.toSummary(*plain, 0)
+	got = h.toSummary(*plain, 0, false)
 	if got.GithubUrl != nil || got.GithubRepo != nil {
 		t.Errorf("non-github chat should have nil github fields, got url=%v repo=%v", got.GithubUrl, got.GithubRepo)
 	}
@@ -177,7 +177,7 @@ func TestChatStatusRunning(t *testing.T) {
 	}
 	h.hub.Publish(c.ID, 1, stream.SSEEvent{Name: "node_start"})
 
-	got := h.toSummary(*c, 0)
+	got := h.toSummary(*c, 0, false)
 	if got.Status != schema.ChatStatusRunning {
 		t.Errorf("status = %q, want running", got.Status)
 	}
@@ -202,7 +202,8 @@ func getChatStatus(t *testing.T, h *Handler, chatID string) (schema.ChatStatus, 
 
 // TestChatStatusNeedsInput: a pending get_user_choice clarification in the
 // chat's session - the SAME scan Run's resume dispatch uses
-// (orchestrator.LatestPendingQuestion) - surfaces as needs_input with the question text. GetChat derives this live (it loads turns for the detail body regardless); toSummary's fast path only sees it once a run stamps it (#738, see TestToSummaryReadsStampedOutcome).
+// (orchestrator.LatestPendingQuestion) - surfaces as needs_input with the question text once
+// the run that parked on it stamps its outcome; GetChat and ListChats read that one stamp.
 func TestChatStatusNeedsInput(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -234,6 +235,7 @@ func TestChatStatusNeedsInput(t *testing.T) {
 	if err := h.store.Sessions.AppendEvent(ctx, resp.Session, placeholder); err != nil {
 		t.Fatalf("AppendEvent: %v", err)
 	}
+	h.stampRunOutcome(ctx, c.ID)
 
 	status, pendingQuestion := getChatStatus(t, h, c.ID)
 	if status != schema.ChatStatusNeedsInput {
@@ -246,8 +248,7 @@ func TestChatStatusNeedsInput(t *testing.T) {
 
 // TestChatStatusNeedsInputFromPlanStepSession: a node dispatched by execute()'s
 // incremental step asks its question under dag.PlanStepSessionID(chatID), not the
-// chat's own session. Both GetChat (live) and the stamped ListChats path must
-// still report needs_input with that question.
+// chat's own session. The run's stamp must still report needs_input with that question.
 func TestChatStatusNeedsInputFromPlanStepSession(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -266,6 +267,7 @@ func TestChatStatusNeedsInputFromPlanStepSession(t *testing.T) {
 	if err := h.store.Sessions.AppendEvent(ctx, stepResp.Session, ask); err != nil {
 		t.Fatalf("AppendEvent: %v", err)
 	}
+	h.stampRunOutcome(ctx, c.ID)
 
 	status, pendingQuestion := getChatStatus(t, h, c.ID)
 	if status != schema.ChatStatusNeedsInput {
@@ -275,13 +277,11 @@ func TestChatStatusNeedsInputFromPlanStepSession(t *testing.T) {
 		t.Errorf("GetChat pending_question = %v, want %q", pendingQuestion, "which source?")
 	}
 
-	// The list path only ever reads the stamp a run leaves at run end (#738).
-	h.stampRunOutcome(ctx, c.ID)
 	stamped, err := h.store.GetChat(ctx, c.ID)
 	if err != nil || stamped == nil {
 		t.Fatalf("GetChat after stamp: %+v, %v", stamped, err)
 	}
-	summary := h.toSummary(*stamped, 0)
+	summary := h.toSummary(*stamped, 0, false)
 	if summary.Status != schema.ChatStatusNeedsInput {
 		t.Fatalf("toSummary status = %q, want needs_input", summary.Status)
 	}
@@ -298,6 +298,7 @@ func TestChatStatusNeedsInputFromPlanStepSession(t *testing.T) {
 	if err := h.store.Sessions.AppendEvent(ctx, stepResp.Session, answer); err != nil {
 		t.Fatalf("AppendEvent answer: %v", err)
 	}
+	h.stampRunOutcome(ctx, c.ID)
 	status, _ = getChatStatus(t, h, c.ID)
 	if status == schema.ChatStatusNeedsInput {
 		t.Fatal("after answer: still needs_input")
@@ -305,8 +306,7 @@ func TestChatStatusNeedsInputFromPlanStepSession(t *testing.T) {
 }
 
 // TestChatStatusFailed: the last turn's DAG has a failed node and no assistant
-// text followed it. GetChat derives this live; toSummary's fast path only sees
-// it once a run stamps it (#738, see TestToSummaryReadsStampedOutcome).
+// text followed it, so the run's stamp (which GetChat reads) says failed.
 func TestChatStatusFailed(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -323,6 +323,7 @@ func TestChatStatusFailed(t *testing.T) {
 	if err := h.store.UpsertDagNode(ctx, store.DagNode{NodeID: "n1", PlanID: "p1", Status: "failed", Error: "boom"}); err != nil {
 		t.Fatalf("UpsertDagNode: %v", err)
 	}
+	h.stampRunOutcome(ctx, c.ID)
 
 	status, _ := getChatStatus(t, h, c.ID)
 	if status != schema.ChatStatusFailed {

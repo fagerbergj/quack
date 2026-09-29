@@ -64,7 +64,7 @@ func TestStampRunOutcome_Interrupted(t *testing.T) {
 func TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed(t *testing.T) {
 	h := newTestHandler(t)
 	c := store.Chat{ID: "chat-x", ActiveTurnID: "turn-1"}
-	status, _ := h.liveOrStampedStatus(c)
+	status, _ := h.chatStatus(c, false)
 	if status != schema.ChatStatusFailed {
 		t.Errorf("status = %q, want failed", status)
 	}
@@ -75,7 +75,7 @@ func TestLiveOrStampedStatus_StuckActiveTurnIDMapsToFailed(t *testing.T) {
 func TestLiveOrStampedStatus_LegacyInterruptedRowMapsToFailed(t *testing.T) {
 	h := newTestHandler(t)
 	c := store.Chat{ID: "chat-legacy", RunStatus: store.RunStatusInterruptedLegacy}
-	status, _ := h.liveOrStampedStatus(c)
+	status, _ := h.chatStatus(c, false)
 	if status != schema.ChatStatusFailed {
 		t.Errorf("status = %q, want failed", status)
 	}
