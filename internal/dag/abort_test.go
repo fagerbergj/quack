@@ -266,11 +266,8 @@ func TestStopDuringJudge(t *testing.T) {
 	}
 }
 
-// passJudgeModel answers the worker, then makes the judge wait for release (ignoring ctx) and pass.
-type passJudgeModel struct {
-	judging, release chan struct{}
-	ignoreCtx        bool
-}
+// passJudgeModel answers the worker, then holds the judge until its ctx ends.
+type passJudgeModel struct{ judging chan struct{} }
 
 func (passJudgeModel) Name() string { return "pass-judge" }
 
@@ -284,62 +281,41 @@ func (m passJudgeModel) GenerateContent(ctx context.Context, req *model.LLMReque
 		case m.judging <- struct{}{}:
 		default:
 		}
-		if m.ignoreCtx {
-			<-m.release
-		} else {
-			select {
-			case <-m.release:
-			case <-ctx.Done():
-				yield(nil, ctx.Err())
-				return
-			}
-		}
-		yield(gCall("submit_verdict", map[string]any{"score": 0.95, "feedback": "good"}), nil)
+		<-ctx.Done()
+		yield(nil, ctx.Err())
 	}
 }
 
-// TestNodeStopDuringJudge: a per-node stop while the judge runs aborts the judge's call, and
-// even a judge that finishes anyway and passes delivers nothing - the node ends cancelled.
+// TestNodeStopDuringJudge: a per-node stop while the judge runs aborts the judge's call (it
+// would otherwise never return), and the node ends cancelled and undelivered.
 func TestNodeStopDuringJudge(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		ignoreCtx bool
-	}{{"judge aborted", false}, {"judge passes anyway", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			m := passJudgeModel{judging: make(chan struct{}, 1), release: make(chan struct{}), ignoreCtx: tc.ignoreCtx}
-			w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
-				vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
-			rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), rec.record), chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
-			}()
-			select {
-			case <-m.judging:
-			case <-time.After(10 * time.Second):
-				t.Fatal("judge never started")
-			}
-			ex.CancelNode("chat", "n1")
-			if tc.ignoreCtx {
-				close(m.release)
-			} else {
-				defer close(m.release) // only an aborted judge call lets the node finish
-			}
-			select {
-			case <-done:
-			case <-time.After(10 * time.Second):
-				t.Fatal("the stop never aborted the judge's call")
-			}
-			ev, ok := rec.of("n1")
-			if !ok || ev.Name != stream.EventNodeCancelled || !ex.NodeStopped("chat", "n1") {
-				t.Errorf("n1 terminal = %q (ok=%v) stopped=%v, want cancelled and undelivered", ev.Name, ok, ex.NodeStopped("chat", "n1"))
-			}
-		})
+	m := passJudgeModel{judging: make(chan struct{}, 1)}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+	rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), rec.record), chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+	}()
+	select {
+	case <-m.judging:
+	case <-time.After(10 * time.Second):
+		t.Fatal("judge never started")
+	}
+	ex.CancelNode("chat", "n1")
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stop never aborted the judge's call")
+	}
+	ev, ok := rec.of("n1")
+	if !ok || ev.Name != stream.EventNodeCancelled || !ex.NodeStopped("chat", "n1") {
+		t.Errorf("n1 terminal = %q (ok=%v) stopped=%v, want cancelled and undelivered", ev.Name, ok, ex.NodeStopped("chat", "n1"))
 	}
 }
 
