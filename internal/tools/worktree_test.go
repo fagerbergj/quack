@@ -275,3 +275,47 @@ func TestPruneWorktreeStaysInsideRoot(t *testing.T) {
 		t.Error("the inside clone still registers the pruned worktree")
 	}
 }
+
+// TestSetupWorktreeSyncIgnoresRetargetedHead: a worktree HEAD rewritten to name a shared branch doesn't make the
+// re-sync move that branch; the worktree lands on its own branch at the clone's head.
+func TestSetupWorktreeSyncIgnoresRetargetedHead(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	parentDir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+	nodeRel, branch := workspace.NodeDir("review1"), workspace.WorktreeBranch("review1")
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil)
+	if err != nil {
+		t.Fatalf("first SetupWorktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, parentDir, "commit", "--quiet", "-am", "work")
+	head, mainBefore := runGitT(t, parentDir, "rev-parse", "HEAD"), runGitT(t, parentDir, "rev-parse", "main")
+	ptr, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminHead := filepath.Join(strings.TrimPrefix(strings.TrimSpace(string(ptr)), "gitdir: "), "HEAD")
+	if err := os.WriteFile(adminHead, []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil); err != nil {
+		t.Fatalf("second SetupWorktree: %v", err)
+	}
+	if got := runGitT(t, parentDir, "rev-parse", "main"); got != mainBefore {
+		t.Errorf("shared main moved to %s, want it left at %s", got, mainBefore)
+	}
+	if got := strings.TrimSpace(runGitInT(t, parentDir, dir, "symbolic-ref", "HEAD")); got != "refs/heads/"+branch {
+		t.Errorf("worktree HEAD = %s, want refs/heads/%s", got, branch)
+	}
+	if got := runGitInT(t, parentDir, dir, "rev-parse", "HEAD"); got != head {
+		t.Errorf("worktree at %s, want the clone's head %s", got, head)
+	}
+}

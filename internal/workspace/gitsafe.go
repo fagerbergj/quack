@@ -1,5 +1,8 @@
 package workspace
 
+// Ceiling of GitCmd's repo pinning: symlinks inside a validated .git, alternates added after the check, and
+// GC's jail-wide prune root stay open.
+
 import (
 	"context"
 	"fmt"
@@ -45,6 +48,10 @@ func GitSafeArgs() []string {
 		"-c", "commit.gpgSign=false",
 		"-c", "gpg.program=/bin/false",
 		"-c", "gc.auto=0",
+		// No child git in a nested repo (its config is never stripped); .gitmodules can outrank diff.ignoreSubmodules.
+		"-c", "diff.ignoreSubmodules=all",
+		"-c", "submodule.recurse=false",
+		"-c", "fetch.recurseSubmodules=false",
 	)
 }
 
