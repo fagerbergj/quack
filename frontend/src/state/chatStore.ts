@@ -9,7 +9,7 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
+import type { Turn, DagOutputItem, MessageOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
 import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
@@ -1110,7 +1110,7 @@ export function activityFromTurn(turn: Turn): AgentRun[] {
 // textFromTurn extracts the final answer text from a completed Turn.
 // stoppedFromTurn reports the turn's answer came from a node the user stopped (server-marked).
 export function stoppedFromTurn(turn: Turn): boolean {
-  return turn.output.some(item => item.type === 'message' && (item as import('../generated').MessageOutputItem).stopped === true)
+  return turn.output.some(item => item.type === 'message' && (item as MessageOutputItem).stopped === true)
 }
 
 export function textFromTurn(turn: Turn): string {

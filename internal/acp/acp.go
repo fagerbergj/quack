@@ -336,6 +336,9 @@ func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact,
 func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace.Caps, outbound string, envArt artifactsrc.Artifact, steerChatID, steerNodeID, advisorToken, priorSessionID string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
+	// This round's own chat/node (the advisor thread's), ahead of the agent-wide stamp below:
+	// concurrent nodes share one Agent, so the stamp can belong to another chat.
+	ctx = ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), ledger.Coords{ChatID: steerChatID, Node: steerNodeID}))
 
 	// Snapshot now, before any subprocess I/O - see SetLedgerCoords.
 	a.mu.Lock()
@@ -402,9 +405,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	// artifacts is filled in below, AFTER steerHooks - Preamble's build (called
 	// from steerHooks) is what stashes PreambleArtifact's value for this round.
 	var artifacts []ledger.ArtifactRef
-	// This round's own node ids, not the shared agent's last stamp: concurrent nodes share one Agent.
-	invokeCtx := ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), ledger.Coords{ChatID: steerChatID, Node: steerNodeID, Agent: a.name}))
-	defer func() { emitInvokeAgent(invokeCtx, a.name, h.sent, h.received, err, plugins, artifacts) }()
+	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err, plugins, artifacts) }()
 
 	if !fromPinned {
 		sessID, toolNames, resumed, err = a.handshake(ctx, cwd, memSecret, advisorToken, priorSessionID, h)

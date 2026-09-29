@@ -611,13 +611,13 @@ func (e *Executor) CancelNode(chatID, nodeID string) bool {
 	return true
 }
 
-// NodeCancelled queries cancel state for the tool layer (fast-fails the next tool call).
 // NodeStopped reports a node the user cancelled before it delivered: its output is an
 // unreviewed draft, never the answer (dependents still get it, flagged as not passing review).
 func (e *Executor) NodeStopped(chatID, nodeID string) bool {
 	return e.controls.wasCancelled(chatID, nodeID) && !e.controls.wasDelivered(chatID, nodeID)
 }
 
+// NodeCancelled queries cancel state for the tool layer (fast-fails the next tool call).
 func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 	return e.controls.wasCancelled(chatID, nodeID)
 }

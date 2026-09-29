@@ -263,9 +263,8 @@ func TestStopDuringJudge(t *testing.T) {
 	}
 }
 
-// TestCancelledNodeDraftStaysForDependents: a node cancelled after its draft keeps that draft
-// as its output (dependents receive it, flagged as not passing review) but reads as stopped,
-// which is what keeps it from ever being delivered as the answer.
+// TestCancelledNodeDraftStaysForDependents: a cancelled node keeps its draft as output (for
+// dependents, flagged unreviewed) but reads as stopped, so it is never delivered.
 func TestCancelledNodeDraftStaysForDependents(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)

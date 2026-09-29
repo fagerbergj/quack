@@ -804,9 +804,8 @@ func TestUpdateChat_ArchiveLeavesRunningRunAlone(t *testing.T) {
 	waitFor(t, 2*time.Second, "chat A's run finished", func() bool { return !h.hub.HasRegisteredRun(chatA) })
 }
 
-// TestBuildTurnStoppedTerminalNode: a stopped terminal node's draft comes back as a message
-// item marked stopped - never the orchestrator's own text - and with no draft, a bare
-// stopped marker, so every stopped turn (not just the latest) renders as stopped.
+// TestBuildTurnStoppedTerminalNode: a stopped terminal node's draft (or nothing) comes back as a
+// message item marked stopped, never the orchestrator's text, on every turn.
 func TestBuildTurnStoppedTerminalNode(t *testing.T) {
 	planJSON := `{"nodes":[{"id":"r","agent":"web-researcher","task":"find","depends_on":[]}],"edges":[]}`
 	for _, tc := range []struct {
