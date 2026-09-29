@@ -803,3 +803,41 @@ func TestUpdateChat_ArchiveLeavesRunningRunAlone(t *testing.T) {
 	close(bm.unblock)
 	waitFor(t, 2*time.Second, "chat A's run finished", func() bool { return !h.hub.HasRegisteredRun(chatA) })
 }
+
+// TestBuildTurnStoppedTerminalNode: a stopped terminal node's draft comes back as a message
+// item marked stopped - never the orchestrator's own text - and with no draft, a bare
+// stopped marker, so every stopped turn (not just the latest) renders as stopped.
+func TestBuildTurnStoppedTerminalNode(t *testing.T) {
+	planJSON := `{"nodes":[{"id":"r","agent":"web-researcher","task":"find","depends_on":[]}],"edges":[]}`
+	for _, tc := range []struct {
+		name, draft string
+	}{{"with a draft", "Rust reached 1.0 in 2015"}, {"without a draft", ""}} {
+		t.Run(tc.name, func(t *testing.T) {
+			turn := buildTurn(store.TurnContent{
+				ID: "t1", CreatedAt: time.Now(), UserText: "q", AsstText: "orchestrator narration", AsstThink: "orchestrator thinking",
+				Plan:  &store.DagPlan{ID: "p1", TurnID: "t1", PlanJSON: planJSON},
+				Nodes: []store.DagNode{{NodeID: "r", Status: "cancelled", Output: tc.draft}},
+			})
+			var msg *schema.MessageOutputItem
+			for _, o := range turn.Output {
+				if m, err := o.AsMessageOutputItem(); err == nil && m.Type == "message" {
+					msg = &m
+				}
+			}
+			if msg == nil || msg.Stopped == nil || !*msg.Stopped {
+				t.Fatalf("message item = %+v, want one marked stopped", msg)
+			}
+			var got string
+			for _, p := range msg.Content {
+				if tp, err := p.AsOutputTextPart(); err == nil {
+					got += tp.Text
+				} else {
+					t.Errorf("unexpected content part %+v", p)
+				}
+			}
+			if got != tc.draft {
+				t.Errorf("text = %q, want only the node's draft %q", got, tc.draft)
+			}
+		})
+	}
+}

@@ -151,11 +151,12 @@ function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
 function turnFromLiveTurn(live: LiveTurn): Turn {
   const finalId = live.dag ? terminalNodeId(live.dag.nodes) : undefined
   const text = live.dag ? (finalId != null ? (live.dag.nodeAnswer[finalId] ?? '') : live.text) : live.text
+  const stopped = live.dag && finalId != null && live.dag.nodeStates[finalId]?.status === 'cancelled' ? true : undefined
   return {
     id: live.id,
     created_at: live.createdAt ?? new Date().toISOString(),
     input: { role: 'user', content: live.userText },
-    output: [{ id: `${live.id}-msg`, type: 'message', status: 'completed', content: [{ type: 'output_text', text }] }],
+    output: [{ id: `${live.id}-msg`, type: 'message', status: 'completed', content: [{ type: 'output_text', text }], stopped }],
   }
 }
 
@@ -1107,6 +1108,11 @@ export function activityFromTurn(turn: Turn): AgentRun[] {
 }
 
 // textFromTurn extracts the final answer text from a completed Turn.
+// stoppedFromTurn reports the turn's answer came from a node the user stopped (server-marked).
+export function stoppedFromTurn(turn: Turn): boolean {
+  return turn.output.some(item => item.type === 'message' && (item as import('../generated').MessageOutputItem).stopped === true)
+}
+
 export function textFromTurn(turn: Turn): string {
   for (const item of turn.output) {
     if (item.type === 'message') {

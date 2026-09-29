@@ -370,19 +370,19 @@ func terminalNodeID(plan stream.DagPlanData) string {
 	return ""
 }
 
-// terminalNodeOutput returns the terminal node's full vetted output, or ""
-// when the plan has no terminal node with output yet.
-func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) string {
+// terminalNodeOutput returns the terminal node's full output, or "" when the plan has no terminal
+// node with output yet; stopped reports the user stopped it, so that output is only a draft.
+func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool) {
 	id := terminalNodeID(plan)
 	if id == "" {
-		return ""
+		return "", false
 	}
 	for _, n := range nodes {
 		if n.NodeID == id {
-			return strings.TrimSpace(n.Output)
+			return strings.TrimSpace(n.Output), n.Status == string(dag.StatusCancelled)
 		}
 	}
-	return ""
+	return "", false
 }
 
 // usageAggregateToSchema always populates every field (unlike Turn.usage,
@@ -1409,6 +1409,22 @@ func buildUsage(tc store.TurnContent) *schema.Usage {
 	return usage
 }
 
+// answerBubble is the turn's answer text and reasoning: a DAG turn's terminal node output, else
+// the orchestrator's own reply. A stopped terminal node's draft stands alone, never mixed with the orchestrator's text.
+func answerBubble(tc store.TurnContent, planData stream.DagPlanData, planOK bool) (text, think string, stopped bool) {
+	if !planOK {
+		return tc.AsstText, tc.AsstThink, false
+	}
+	out, stopped := terminalNodeOutput(planData, tc.Nodes)
+	switch {
+	case stopped:
+		return out, "", true
+	case out != "":
+		return out, tc.AsstThink, false
+	}
+	return tc.AsstText, tc.AsstThink, false
+}
+
 func buildTurn(tc store.TurnContent) schema.Turn {
 	// planData is the turn's DAG shape; unmarshaled once for both the DAG
 	// output item and the answer bubble's text below.
@@ -1417,19 +1433,14 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 
 	// DAG turns: the answer bubble carries the terminal node's OUTPUT - what
 	// the live stream rendered - not the orchestrator's planning narration.
-	bubbleText := tc.AsstText
-	if planOK {
-		if out := terminalNodeOutput(planData, tc.Nodes); out != "" {
-			bubbleText = out
-		}
-	}
+	bubbleText, think, stopped := answerBubble(tc, planData, planOK)
 
 	var msgItem schema.OutputItem
-	if bubbleText != "" || tc.AsstThink != "" {
+	if bubbleText != "" || think != "" || stopped {
 		content := make([]schema.ContentPart, 0, 2)
-		if tc.AsstThink != "" {
+		if think != "" {
 			var cp schema.ContentPart
-			_ = cp.FromReasoningPart(schema.ReasoningPart{Text: tc.AsstThink})
+			_ = cp.FromReasoningPart(schema.ReasoningPart{Text: think})
 			content = append(content, cp)
 		}
 		if bubbleText != "" {
@@ -1441,6 +1452,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 			Id:      tc.ID + ":msg",
 			Status:  schema.Completed,
 			Content: content,
+			Stopped: boolPtr(stopped),
 		})
 	}
 

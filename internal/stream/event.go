@@ -319,6 +319,9 @@ type NodeCancelledData struct {
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
 	// ContextID: see NodeDoneData.ContextID.
 	ContextID string `json:"context_id,omitempty"`
+	// Output is the draft the node had when stopped - unreviewed, never the answer.
+	Output        string `json:"output,omitempty"`
+	OutputPreview string `json:"output_preview,omitempty"`
 }
 
 // NodeCancelled builds a node_cancelled event, stamping FinishedAtMs now (see NodeDone).

@@ -435,3 +435,22 @@ func TestSaveDagPlanStoresExecPlan(t *testing.T) {
 	}
 	t.Fatal("exec plan never stored")
 }
+
+// TestPersistNodeEventKeepsStoppedDraft: a cancelled node's draft lands on its row, which is
+// what a reload shows (badged as stopped) for that turn.
+func TestPersistNodeEventKeepsStoppedDraft(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveDagPlan(ctx, c.ID, "p1", "turn-1", `{"plan_id":"p1"}`); err != nil {
+		t.Fatal(err)
+	}
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeCancelled, Data: stream.NodeCancelledData{NodeID: "n1", Output: "DRAFT", OutputPreview: "DRAFT"}})
+	n, err := st.GetDagNode(ctx, "p1", "n1")
+	if err != nil || n == nil || n.Status != "cancelled" || n.Output != "DRAFT" {
+		t.Fatalf("row = %+v err=%v, want cancelled with the draft", n, err)
+	}
+}

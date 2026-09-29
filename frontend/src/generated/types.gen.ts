@@ -886,6 +886,10 @@ export type MessageOutputItem = {
     type: 'message';
     status: ItemStatus;
     content: Array<ContentPart>;
+    /**
+     * True when the turn's answering (terminal) node was stopped by the user - the text, if any, is its unreviewed draft, not an answer, and clients badge it as such.
+     */
+    stopped?: boolean;
 };
 
 export type ContentPart = ({

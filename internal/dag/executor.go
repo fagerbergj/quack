@@ -215,7 +215,7 @@ func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 	}
 	empty := strings.TrimSpace(s.ds.outputs[n.ID]) == ""
 	if !delivered && (stopped && empty || s.ds.cancelled != nil && s.ds.cancelled(n.ID)) {
-		s.yield(stream.WithContextID(stream.NodeCancelled(n.ID), s.ds.contextOf(n.ID)), nil)
+		s.yield(s.ds.cancelledEvent(n.ID), nil)
 		return
 	}
 	if !delivered && empty {
@@ -795,6 +795,16 @@ func outputString(o any) string {
 	return ""
 }
 
+// cancelledEvent is node_cancelled carrying the draft the node had, so it persists as a stopped draft.
+func (s *dagStream) cancelledEvent(node string) stream.SSEEvent {
+	ev := stream.NodeCancelled(node)
+	d := ev.Data.(stream.NodeCancelledData)
+	d.Output = s.outputs[node]
+	d.OutputPreview = preview(d.Output)
+	ev.Data = d
+	return stream.WithContextID(ev, s.contextOf(node))
+}
+
 func preview(s string) string {
 	const n = 250
 	if len(s) <= n {
@@ -1024,7 +1034,7 @@ func (s *dagStream) terminalSpec(node, out string, pauseReason PauseReason) stre
 		// Live user/HITL pause: node.go's cooperative check caught this before commitDelivery ran, so the draft answer was never delivered.
 		return stream.NodePaused(node)
 	case s.cancelled != nil && s.cancelled(node):
-		return stream.WithContextID(stream.NodeCancelled(node), s.contextOf(node))
+		return s.cancelledEvent(node)
 	case out != "":
 		// A delivered answer wins over a shutdown-drain pause flipped after the gate loop
 		// last checked (e.g. inside commitDelivery) - the work already happened; serve.DrainActiveRuns pauses exactly this population on SIGTERM.

@@ -282,7 +282,8 @@ func TestCancelledNodeDraftStaysForDependents(t *testing.T) {
 	if outputs["n1"] != "draft" || !ex.NodeStopped("chat", "n1") {
 		t.Errorf("outputs[n1] = %q stopped=%v, want the draft kept and the node stopped", outputs["n1"], ex.NodeStopped("chat", "n1"))
 	}
-	if ev, ok := rec.of("n1"); !ok || ev.Name != stream.EventNodeCancelled {
-		t.Errorf("n1 terminal = %+v (ok=%v), want node_cancelled", ev, ok)
+	ev, ok := rec.of("n1")
+	if d, _ := ev.Data.(stream.NodeCancelledData); !ok || d.Output != "draft" {
+		t.Errorf("n1 terminal = %+v (ok=%v), want node_cancelled carrying the draft", ev, ok)
 	}
 }

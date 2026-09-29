@@ -139,10 +139,19 @@ export function AssistantText({ text, streaming = false }: { text: string; strea
   )
 }
 
+// StoppedBadge labels an answer card whose node the user stopped: a draft is shown
+// "not reviewed"; with no draft the card is just a "Stopped" marker.
+export type StoppedBadge = 'draft' | 'bare'
+
+export function stoppedBadge(stopped: boolean | undefined, text: string | undefined): StoppedBadge | undefined {
+  if (!stopped) return undefined
+  return text ? 'draft' : 'bare'
+}
+
 // Compact author line atop an assistant bubble: real usage only, no
 // estimate - model/tokens omitted when not (yet) known. `status` is optional (#416):
 // only the live orchestrator card shows a StatusDot by the name (matching DagNode's header) - completed turns and DAG-terminal attribution have no live status.
-export function BubbleHeader({ agent, model, tokens, status, stopped }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: boolean }) {
+export function BubbleHeader({ agent, model, tokens, status, stopped }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: StoppedBadge }) {
   return (
     <div className="flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
       {status && <StatusDot status={status} />}
@@ -152,7 +161,7 @@ export function BubbleHeader({ agent, model, tokens, status, stopped }: { agent:
           className="inline-flex items-center gap-0.5 font-medium text-amber-600 dark:text-amber-400"
           title="This agent was stopped before it finished, so this draft never passed the quality check"
         >
-          <Icon name="warning" className="w-3 h-3" /> Stopped - not reviewed
+          <Icon name="warning" className="w-3 h-3" /> {stopped === 'draft' ? 'Stopped - not reviewed' : 'Stopped'}
         </span>
       )}
       {model && (

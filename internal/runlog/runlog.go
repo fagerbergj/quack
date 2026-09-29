@@ -350,6 +350,7 @@ func nodeEventRow(st *store.Store, planID string, ev stream.SSEEvent) (n store.D
 	case stream.NodeCancelledData:
 		nodeID, to = d.NodeID, dag.StatusCancelled
 		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
+		n.Output, n.OutputPreview = d.Output, d.OutputPreview
 		contextID = d.ContextID
 	default:
 		return n, "", "", "", false

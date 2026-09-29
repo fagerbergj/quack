@@ -1,12 +1,12 @@
 import { memo, useMemo } from 'react'
-import { AssistantText, ActivityList, BubbleHeader } from './AgentParts'
+import { AssistantText, ActivityList, BubbleHeader, stoppedBadge, type StoppedBadge } from './AgentParts'
 import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
 import { TriggerMessage } from './TriggerEnvelope'
 import { AttachmentPreviews, type AttachmentPreview } from './AttachmentUI'
 import { TurnSurfaces } from './A2uiArtifact'
 import type { SurfaceRef } from '../lib/a2ui'
-import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, dagTurnStateFromItem, type DagTurnState } from '../state/chatStore'
+import { dagFromTurn, textFromTurn, stoppedFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, dagTurnStateFromItem, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn } from '../generated'
 
@@ -65,10 +65,10 @@ function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity:
 
 // TurnAnswerBubble is the completed turn's answer card: the attributed
 // header, the (DAG-less) activity, and the markdown answer.
-function TurnAnswerBubble({ dagState, activity, text, attribution }: { dagState: DagTurnState | undefined; activity: Activity[]; text: string | undefined; attribution: ReturnType<typeof dagAnswerAttribution> | undefined }) {
+function TurnAnswerBubble({ dagState, activity, text, attribution, stopped }: { dagState: DagTurnState | undefined; activity: Activity[]; text: string | undefined; attribution: ReturnType<typeof dagAnswerAttribution> | undefined; stopped: StoppedBadge | undefined }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={attribution?.stopped} />
+      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stopped} />
       {!dagState && activity.length > 0 && <ActivityList activity={activity} />}
       {text && <AssistantText text={text} />}
     </div>
@@ -114,7 +114,8 @@ export const TurnView = memo(function TurnView({
   const attribution = dagState ? dagAnswerAttribution(dagState) : plainReplyAttribution(turn)
   // Skip the answer bubble when the turn produced no visible content for it
   // (e.g. a DAG with no text yet, or a plain turn that only held a tool call).
-  const hasAnswerContent = dagState ? !!text : (turnActivity.length > 0 || !!text)
+  const stopped = stoppedBadge(stoppedFromTurn(turn), text)
+  const hasAnswerContent = dagState ? (!!text || !!stopped) : (turnActivity.length > 0 || !!text)
   const copyKey = `turn-${turn.id}`
   // Stable element identity (PR #1300 review nit) so memo(TriggerMessage)
   // bails on the persisted path too, not just the live one.
@@ -140,7 +141,7 @@ export const TurnView = memo(function TurnView({
       <div className="flex justify-start">
         <div className="w-full space-y-3">
           {dagState && <TurnDagBubble dag={dagState} activity={turnActivity} chatId={chatId} />}
-          {hasAnswerContent && <TurnAnswerBubble dagState={dagState} activity={turnActivity} text={text} attribution={attribution} />}
+          {hasAnswerContent && <TurnAnswerBubble dagState={dagState} activity={turnActivity} text={text} attribution={attribution} stopped={stopped} />}
           {turnChoice && (
             <QuestionBubble
               agent="orchestrator"

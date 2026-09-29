@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
 import { navigate, useChatId } from '../router'
 import { api, type ChatSummary } from '../api'
-import { AssistantText, ActivityList, LiveStatusLine, BubbleHeader, Dots } from '../components/AgentParts'
+import { AssistantText, ActivityList, LiveStatusLine, BubbleHeader, Dots, stoppedBadge } from '../components/AgentParts'
 import { QuestionBubble } from '../components/QuestionBubble'
 import { DagView, DagBubbleHeader } from '../components/DagView'
 import { Composer } from '../components/Composer'
@@ -216,7 +216,7 @@ function liveTurnDerived(live: NonNullable<ChatState['live']>, liveActive: boole
     ? dagAnswerAttribution(liveDag)
     : { agent: 'orchestrator', model: orchRun?.model, tokens: orchRun?.totalTokens }
   // Skip the answer bubble when there's nothing in it yet.
-  const hasAnswerBubble = showSpinner || (liveDag ? !!liveText : (orchActivity.length > 0 || !!liveTopText))
+  const hasAnswerBubble = showSpinner || (liveDag ? (!!liveText || !!answerAttribution?.stopped) : (orchActivity.length > 0 || !!liveTopText))
   return { liveDag, liveTopText, liveDone, liveText, orchActivity, showSpinner, answerAttribution, hasAnswerBubble }
 }
 
@@ -293,12 +293,7 @@ function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveAct
       {showSpinner ? (
         <Dots className="h-5" size="w-2 h-2" />
       ) : liveDag ? (
-        liveText && (
-          <>
-            <BubbleHeader agent={answerAttribution?.agent ?? 'orchestrator'} model={answerAttribution?.model} tokens={answerAttribution?.tokens} stopped={answerAttribution?.stopped} />
-            <AssistantText text={liveText} streaming={liveActive} />
-          </>
-        )
+        <LiveDagAnswer liveText={liveText} liveActive={liveActive} attribution={answerAttribution} />
       ) : (
         // No DAG: orchestrator answered directly (conversational or
         // tool-based research where DAG events don't reach the frontend).
@@ -318,6 +313,18 @@ function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveAct
         </div>
       )}
     </div>
+  )
+}
+
+// LiveDagAnswer is the DAG turn's answer: the terminal node's streamed text, or for a node the
+// user stopped, its draft badged "not reviewed" (or a bare "Stopped" marker without one).
+function LiveDagAnswer({ liveText, liveActive, attribution }: { liveText: string; liveActive: boolean; attribution: { agent?: string; model?: string; tokens?: number; stopped?: boolean } | undefined }) {
+  if (!liveText && !attribution?.stopped) return null
+  return (
+    <>
+      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stoppedBadge(attribution?.stopped, liveText)} />
+      {liveText && <AssistantText text={liveText} streaming={liveActive} />}
+    </>
   )
 }
 
