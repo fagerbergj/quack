@@ -557,6 +557,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		// the wrapped one - #1021 fixed the other three entrypoints but missed Run().
 		s.safeYield = newSafeYield(yield)
 		s.ctx = stream.WithYield(s.ctx, func(ev stream.SSEEvent) { s.safeYield(ev, nil) })
+		s.ctx = tools.WithNodeStopped(s.ctx, func(nodeID string) bool { return o.executor.NodeStopped(sessionID, nodeID) })
 
 		content := s.buildContent(pending, hasPending)
 		s.translator = stream.NewTranslator()
@@ -797,7 +798,7 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 			// the step already confirmed it isn't) - a resumed node with
 			// empty output is exactly as "failed" as a freshly-run one, and
 			// must not silently finalize on it (#slice3 review).
-			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false) == "failed" {
+			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false, o.executor.NodeStopped(sessionID, pend.nodeID)) == "failed" {
 				anyFailed = true
 			}
 		}
@@ -880,7 +881,7 @@ func (o *Orchestrator) driveUnblocked(ctx context.Context, plan dag.Plan, rec da
 			if !roundStarted[nid] {
 				continue
 			}
-			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], roundOutputs[nid], roundNeedsInput[nid]) == "failed" {
+			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], roundOutputs[nid], roundNeedsInput[nid], o.executor.NodeStopped(sessionID, nid)) == "failed" {
 				anyFailed = true
 			}
 		}

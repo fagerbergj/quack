@@ -132,6 +132,10 @@ func formatAnswer(ctx context.Context, m model.LLM, message, answer, chatID stri
 
 // finalizeAnswer: single place every delivery path formats node outputs for the user.
 func (o *Orchestrator) finalizeAnswer(ctx context.Context, plan dag.Plan, nodeOutputs map[string]string, chatID string) string {
+	// A terminal node the user stopped left only an unreviewed draft; that is never the answer.
+	if o.executor.NodeStopped(chatID, tools.TerminalNodeID(plan)) {
+		return ""
+	}
 	answer := tools.TerminalOutput(plan, nodeOutputs)
 	if !needsFormatPass(plan, answer) {
 		return answer

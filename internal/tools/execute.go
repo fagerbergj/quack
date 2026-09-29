@@ -64,7 +64,7 @@ type executeArgs struct {
 // separate list_nodes round-trip.
 type assignmentResult struct {
 	NodeID    string   `json:"node_id"`
-	Status    string   `json:"status"` // "done" | "failed" | "paused" | "queued" (requested this step but never dispatched - a dependency paused first)
+	Status    string   `json:"status"` // "done" | "failed" | "paused" | "cancelled" (the user stopped it) | "queued" (requested this step but never dispatched - a dependency paused first)
 	Summary   string   `json:"summary,omitempty"`
 	Artifacts []string `json:"artifacts,omitempty"`
 	TaskID    string   `json:"task_id"`
@@ -290,6 +290,7 @@ func provisionAndPersist(tc agent.Context, plan *dag.Plan, provision ProvisionFu
 // each outcome into the model-facing results - "queued" means requested, never dispatched.
 func executeStep(tc agent.Context, c *recordstore.Client, rec *dag.DagPlanRecord, plan *dag.Plan, runStep RunStepFunc) (results []assignmentResult, stepPaused, stepFailed bool, err error) {
 	run, seeded := partitionAssignments(rec.Assignments)
+	stopped := NodeStoppedFromContext(tc)
 	var outputs map[string]string
 	var needsInput map[string]bool
 	var started map[string]bool
@@ -317,13 +318,17 @@ func executeStep(tc agent.Context, c *recordstore.Client, rec *dag.DagPlanRecord
 			continue
 		}
 		out := outputs[nid]
-		status := ApplyAssignmentOutcome(&rec.Assignments[i], out, needsInput[nid])
+		status := ApplyAssignmentOutcome(&rec.Assignments[i], out, needsInput[nid], stopped(nid))
 		if status == "failed" {
 			stepFailed = true
 		}
+		summary := previewText(out)
+		if status == "cancelled" {
+			summary = stoppedSummary
+		}
 		arts, _ := nodeArtifactIDs(tc, c, nid)
 		results = append(results, assignmentResult{
-			NodeID: nid, Status: status, Summary: previewText(out), Artifacts: arts, TaskID: rec.Assignments[i].TaskID,
+			NodeID: nid, Status: status, Summary: summary, Artifacts: arts, TaskID: rec.Assignments[i].TaskID,
 		})
 	}
 	return results, stepPaused, stepFailed, nil
@@ -334,7 +339,8 @@ func executeStep(tc agent.Context, c *recordstore.Client, rec *dag.DagPlanRecord
 func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, finalize FinalizeAnswerFunc, nodeID string, rec *dag.DagPlanRecord, plan *dag.Plan, results []assignmentResult, stepPaused, stepFailed bool) (executeResult, error) {
 	// Only deliver on a step whose own run succeeded - a failed or paused
 	// delivering node must not mark the plan done and finalize on garbage.
-	delivering := rec.Delivery != nil && !stepPaused && !stepFailed
+	terminalStopped := stoppedTerminal(*plan, results)
+	delivering := rec.Delivery != nil && !stepPaused && !stepFailed && !terminalStopped
 	rec.Status = "running"
 	if delivering {
 		rec.Status = "done"
@@ -353,7 +359,7 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 		}
 		cache.SetDelivered(finalize(tc, *plan, final))
 	}
-	if delivering || stepPaused {
+	if delivering || stepPaused || terminalStopped {
 		// End the llmagent turn: delivery fired (nothing more to plan) or a node
 		// waits on the user; a failed step does NOT end it - the model must react.
 
@@ -368,6 +374,8 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 		status = "delivered"
 	case stepPaused:
 		status = "paused"
+	case terminalStopped:
+		status = "stopped"
 	}
 	return executeResult{Status: status, Results: results}, nil
 }
@@ -397,8 +405,13 @@ func partitionAssignments(assignments []dag.Assignment) (run map[string]bool, se
 // as a failure (#slice3 review). paused=false always reports "done" or
 // "failed", never "paused" - a resume calls this only after confirming the
 // step itself finished (dag.Executor's own paused flag already false).
-func ApplyAssignmentOutcome(a *dag.Assignment, output string, paused bool) (status string) {
+func ApplyAssignmentOutcome(a *dag.Assignment, output string, paused, stopped bool) (status string) {
 	switch {
+	case stopped:
+		// Ran and was stopped by the user: never re-dispatched, its draft kept for dependents.
+		a.TaskID = uuid.NewString()
+		a.Result = output
+		return "cancelled"
 	case strings.TrimSpace(output) != "":
 		a.TaskID = uuid.NewString()
 		a.Result = output
@@ -433,8 +446,22 @@ func previewText(s string) string {
 	return s[:summaryPreviewLen] + "…"
 }
 
-// TerminalOutput: returns the output of the terminal node (no successors). Exported for resume path.
-func TerminalOutput(plan dag.Plan, outputs map[string]string) string {
+// stoppedSummary tells the orchestrator model what a cancelled assignment means.
+const stoppedSummary = "stopped by the user before it finished - do not re-run or re-plan this work"
+
+// stoppedTerminal reports this step stopped the plan's terminal node, so there is no answer to deliver.
+func stoppedTerminal(plan dag.Plan, results []assignmentResult) bool {
+	id := TerminalNodeID(plan)
+	for _, r := range results {
+		if r.NodeID == id && r.Status == "cancelled" {
+			return true
+		}
+	}
+	return false
+}
+
+// TerminalNodeID is the plan's terminal node: the first with no successor.
+func TerminalNodeID(plan dag.Plan) string {
 	hasSuccessor := make(map[string]bool, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		for _, dep := range n.DependsOn {
@@ -443,10 +470,16 @@ func TerminalOutput(plan dag.Plan, outputs map[string]string) string {
 	}
 	for _, n := range plan.Nodes {
 		if !hasSuccessor[n.ID] {
-			if out, ok := outputs[n.ID]; ok {
-				return stream.StripThinking(out)
-			}
+			return n.ID
 		}
+	}
+	return ""
+}
+
+// TerminalOutput: returns the output of the terminal node (no successors). Exported for resume path.
+func TerminalOutput(plan dag.Plan, outputs map[string]string) string {
+	if out, ok := outputs[TerminalNodeID(plan)]; ok {
+		return stream.StripThinking(out)
 	}
 	for i := len(plan.Nodes) - 1; i >= 0; i-- {
 		if out, ok := outputs[plan.Nodes[i].ID]; ok {

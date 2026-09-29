@@ -93,3 +93,26 @@ func TestRetryNode_RefusesStaleStash(t *testing.T) {
 		t.Fatalf("events = %v, want exactly one error", names)
 	}
 }
+
+// TestFinalizeAnswer_StoppedTerminalIsNoAnswer: once the user stopped the terminal node,
+// every delivery path's finalize yields nothing, whatever draft its outputs hold.
+func TestFinalizeAnswer_StoppedTerminalIsNoAnswer(t *testing.T) {
+	m := stopModel{started: make(chan struct{}, 1)}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.InMemoryService()
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	orch := New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
+	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "t"}}}
+	go func() {
+		<-m.started
+		ex.CancelNode("chat", "n1")
+	}()
+	_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), func(stream.SSEEvent) {}), plan, AppName, "u", "chat", nil, map[string]bool{"n1": true})
+	if got := orch.finalizeAnswer(context.Background(), plan, map[string]string{"n1": "DRAFT"}, "chat"); got != "" {
+		t.Errorf("finalizeAnswer = %q, want no answer for a stopped terminal node", got)
+	}
+}

@@ -59,3 +59,18 @@ func PlanOnlyFromContext(ctx context.Context) bool {
 	v, _ := ctx.Value(planOnlyContextKey{}).(bool)
 	return v
 }
+
+type nodeStoppedContextKey struct{}
+
+// WithNodeStopped attaches the run's "did the user stop this node before it delivered" check.
+func WithNodeStopped(ctx context.Context, stopped func(nodeID string) bool) context.Context {
+	return context.WithValue(ctx, nodeStoppedContextKey{}, stopped)
+}
+
+// NodeStoppedFromContext reads back WithNodeStopped's check; without one, nothing is stopped.
+func NodeStoppedFromContext(ctx context.Context) func(nodeID string) bool {
+	if f, ok := ctx.Value(nodeStoppedContextKey{}).(func(string) bool); ok {
+		return f
+	}
+	return func(string) bool { return false }
+}

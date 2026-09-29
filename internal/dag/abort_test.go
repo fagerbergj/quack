@@ -263,9 +263,10 @@ func TestStopDuringJudge(t *testing.T) {
 	}
 }
 
-// TestCancelledNodeDraftIsNotAnOutput: a node cancelled after its draft but before
-// review returns that draft; it must not land in the outputs execute delivers from.
-func TestCancelledNodeDraftIsNotAnOutput(t *testing.T) {
+// TestCancelledNodeDraftStaysForDependents: a node cancelled after its draft keeps that draft
+// as its output (dependents receive it, flagged as not passing review) but reads as stopped,
+// which is what keeps it from ever being delivered as the answer.
+func TestCancelledNodeDraftStaysForDependents(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
 	go func() {
@@ -278,10 +279,10 @@ func TestCancelledNodeDraftIsNotAnOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out := outputs["n1"]; out != "" {
-		t.Errorf("outputs[n1] = %q, want no output for a cancelled node", out)
+	if outputs["n1"] != "draft" || !ex.NodeStopped("chat", "n1") {
+		t.Errorf("outputs[n1] = %q stopped=%v, want the draft kept and the node stopped", outputs["n1"], ex.NodeStopped("chat", "n1"))
 	}
 	if ev, ok := rec.of("n1"); !ok || ev.Name != stream.EventNodeCancelled {
-		t.Errorf("n1 terminal = %q (ok=%v), want %s", ev.Name, ok, stream.EventNodeCancelled)
+		t.Errorf("n1 terminal = %+v (ok=%v), want node_cancelled", ev, ok)
 	}
 }

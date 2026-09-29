@@ -506,15 +506,6 @@ func (r *runControls) wasDelivered(chatID, nodeID string) bool {
 	return r.delivered[chatID][nodeID]
 }
 
-// keptAnswer drops the draft of a node cancelled before delivering, so no caller (execute's
-// delivery, a retry or resume) can present that unreviewed text as the node's answer.
-func (r *runControls) keptAnswer(chatID, nodeID, answer string) string {
-	if r != nil && r.wasCancelled(chatID, nodeID) && !r.wasDelivered(chatID, nodeID) {
-		return ""
-	}
-	return answer
-}
-
 // resetCancelled clears flags and overrides for a new turn.
 func (r *runControls) resetCancelled(chatID string) {
 	r.mu.Lock()
@@ -621,6 +612,12 @@ func (e *Executor) CancelNode(chatID, nodeID string) bool {
 }
 
 // NodeCancelled queries cancel state for the tool layer (fast-fails the next tool call).
+// NodeStopped reports a node the user cancelled before it delivered: its output is an
+// unreviewed draft, never the answer (dependents still get it, flagged as not passing review).
+func (e *Executor) NodeStopped(chatID, nodeID string) bool {
+	return e.controls.wasCancelled(chatID, nodeID) && !e.controls.wasDelivered(chatID, nodeID)
+}
+
 func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 	return e.controls.wasCancelled(chatID, nodeID)
 }
