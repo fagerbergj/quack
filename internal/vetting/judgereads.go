@@ -104,7 +104,7 @@ const judgePriorReadsChars = 32_000
 // priorReadsSection renders c's reads for a retry of the same answer within limit chars;
 // "" when there are none or no room.
 func priorReadsSection(c judgeReadCounters, limit int) string {
-	const header = "READS FROM YOUR PREVIOUS ATTEMPT on this same answer - already done, do not repeat them:\n"
+	const header = "READS FROM YOUR PREVIOUS ATTEMPT on this same answer - reuse them instead of repeating them; a read marked \"excerpt truncated\" may be read again for the part it cut:\n"
 	if c.reads == nil || len(*c.reads) == 0 || limit < len(header)+200 {
 		return ""
 	}

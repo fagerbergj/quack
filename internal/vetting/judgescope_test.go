@@ -3,8 +3,10 @@ package vetting
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -16,6 +18,7 @@ import (
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
@@ -65,29 +68,71 @@ func TestCitationScore_ReadStoredPageBacksCitation(t *testing.T) {
 	}
 }
 
-// seedScopedChat stores one sibling artifact, one upstream artifact, and a web page a
-// sibling fetched first but this node fetched too (so its lineage names the sibling).
+// revisionMetaStore keeps each revision's lineage, as the production row store does;
+// version 0 (a latest read) answers with the newest revision's.
+type revisionMetaStore struct {
+	artifact.Service
+	mu   sync.Mutex
+	meta map[string][]byte
+}
+
+func (m *revisionMetaStore) key(r *artifact.LoadRequest) string {
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%d", r.AppName, r.UserID, r.SessionID, r.FileName, r.Version)
+}
+
+func (m *revisionMetaStore) SaveWithMeta(ctx context.Context, req *artifact.SaveRequest, _, _ string, lineage []byte, _ string) (*artifact.SaveResponse, error) {
+	resp, err := m.Service.Save(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, v := range []int64{0, resp.Version} {
+		m.meta[m.key(&artifact.LoadRequest{AppName: req.AppName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName, Version: v})] = lineage
+	}
+	return resp, nil
+}
+
+func (m *revisionMetaStore) LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, string, string, []byte, error) {
+	resp, err := m.Service.Load(ctx, req)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return resp, "", "", m.meta[m.key(req)], nil
+}
+
+// seedScopedChat stores a sibling's artifact, an upstream artifact a sibling edited last, a
+// web page a sibling fetched first but this node fetched too, and a bytes input.
 func seedScopedChat(t *testing.T) (rc *recordstore.Client, sibID, upID, pageURL string) {
 	t.Helper()
 	ctx := context.Background()
-	rc = recordstore.New(newMetaAwareInMemory(), artifactref.AppName, "u1", "chat1")
+	rc = recordstore.New(&revisionMetaStore{Service: artifact.InMemoryService(), meta: map[string][]byte{}}, artifactref.AppName, "u1", "chat1")
 	var err error
 	if sibID, _, err = rc.SaveBlob(ctx, "text", []byte("sibling notes"), "text/plain", "sib", recordstore.Lineage{NodeID: "web-researcher-2"}); err != nil {
 		t.Fatal(err)
 	}
-	if upID, _, err = rc.SaveBlob(ctx, "text", []byte("upstream notes"), "text/plain", "up", recordstore.Lineage{NodeID: "research-0"}); err != nil {
+	if upID, _, err = rc.SaveBlob(ctx, "text", []byte("upstream draft"), "text/plain", "up", recordstore.Lineage{NodeID: "research-0"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = rc.SaveBlob(ctx, "text", []byte("upstream notes"), "text/plain", "up", recordstore.Lineage{NodeID: "web-researcher-2"}); err != nil {
 		t.Fatal(err)
 	}
 	pageURL = "https://shared.test/page"
+	pageID(t, pageURL)                                                                 // registers the web_page kind
 	page := strings.Repeat("a long line of page text that goes on for a while. ", 400) // ~20KB, one line
 	if _, _, err = rc.SaveBlob(ctx, webPageKind, []byte(page), "text/markdown", pageURL, recordstore.Lineage{NodeID: "web-researcher-2", SourceURL: pageURL}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = rc.SaveBlob(ctx, kindBytes, []byte(page), "text/plain", "files", recordstore.Lineage{}); err != nil {
 		t.Fatal(err)
 	}
 	return rc, sibID, upID, pageURL
 }
 
 // TestJudgeArtifactTools_ScopeAndBudget: within a judge round the tools hide a sibling's
-// artifacts, keep upstream and self-fetched ones, and cap source-page reads.
+// artifacts, keep upstream and self-fetched ones, and cap web_page reads when budgeted.
 func TestJudgeArtifactTools_ScopeAndBudget(t *testing.T) {
 	rc, sibID, upID, pageURL := seedScopedChat(t)
 	tools, err := NewJudgeArtifactTools(rc)
@@ -96,13 +141,13 @@ func TestJudgeArtifactTools_ScopeAndBudget(t *testing.T) {
 	}
 	list, read := tools[0].(runnableTool), tools[1].(runnableTool)
 	act := workerActivity{fetched: map[string]struct{}{pageURL: {}}}
-	view := &judgeView{foreign: map[string]bool{"web-researcher-2": true}, own: act.ownArtifactIDs()}
+	view := newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}, judgeEvidence: "CITED EVIDENCE"}, act)
 	ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), view))}
 
 	out, err := list.Run(ctx, map[string]any{})
 	listing, _ := out["result"].(string)
 	if err != nil || strings.Contains(listing, sibID) || !strings.Contains(listing, upID) || !strings.Contains(listing, pageID(t, pageURL)) {
-		t.Errorf("list_artifacts = %q (err %v), want upstream and the self-fetched page, not %s", listing, err, sibID)
+		t.Errorf("list_artifacts = %q (err %v), want the upstream document a sibling edited last and the self-fetched page, not %s", listing, err, sibID)
 	}
 	if _, err := read.Run(ctx, map[string]any{"id": sibID}); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("read of a sibling artifact: err = %v, want not found", err)
@@ -118,7 +163,38 @@ func TestJudgeArtifactTools_ScopeAndBudget(t *testing.T) {
 		t.Errorf("read %d of a source page = %.80q, want the budget refusal", judgeSourceReadBudget+1, body)
 	}
 	if out, err := read.Run(ctx, map[string]any{"id": upID}); err != nil || out["result"] != "upstream notes" {
-		t.Errorf("a non-source read after the budget = %v, %v, want it unaffected", out["result"], err)
+		t.Errorf("a non-page read after the budget = %v, %v, want it unaffected", out["result"], err)
+	}
+}
+
+// TestJudgeArtifactTools_UnbudgetedJudges: a judge with no CITED EVIDENCE (pr-tutor opening
+// diff hunks, code-reviewer reading bytes inputs) and bytes reads anywhere keep the full reads.
+func TestJudgeArtifactTools_UnbudgetedJudges(t *testing.T) {
+	rc, _, _, pageURL := seedScopedChat(t)
+	tools, err := NewJudgeArtifactTools(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := tools[1].(runnableTool)
+	bytesID, err := recordstore.IdentityFor(kindBytes, nil, "files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	act := workerActivity{fetched: map[string]struct{}{pageURL: {}}}
+	for name, cfg := range map[string]Config{"no evidence": {}, "evidence": {judgeEvidence: "CITED EVIDENCE"}} {
+		ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), newJudgeView(cfg, act)))}
+		ids := []string{bytesID}
+		if name == "no evidence" {
+			ids = append(ids, pageID(t, pageURL))
+		}
+		for _, id := range ids {
+			for i := 1; i <= judgeSourceReadBudget+3; i++ {
+				out, err := read.Run(ctx, map[string]any{"id": id})
+				if body, _ := out["result"].(string); err != nil || len(body) < judgeSourceReadCap*2 {
+					t.Fatalf("%s: read %d of %s = %d chars, err %v, want the whole ~20KB body", name, i, id, len(body), err)
+				}
+			}
+		}
 	}
 }
 
@@ -357,5 +433,79 @@ func TestRetryNoVerdict_SeedsAndCreditsPriorReads(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&judge.fresh); got != 2 {
 		t.Errorf("fresh judge sessions = %d, want 2 (a seeded pass must not be re-judged as unread)", got)
+	}
+}
+
+// deliverableRereadJudge reads the deliverable and a page, leaves a criterion unscored, then
+// captures the re-judge's prompt.
+type deliverableRereadJudge struct {
+	calls  int32
+	second string
+}
+
+func (*deliverableRereadJudge) Name() string { return "deliverable-reread-judge" }
+
+func (j *deliverableRereadJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		crit := map[string]any{"shortfall": "fine"}
+		switch atomic.AddInt32(&j.calls, 1) {
+		case 1:
+			yield(stubCall("read_artifact", map[string]any{"id": "web_page:p"}), nil)
+			return
+		case 2:
+			yield(stubCall("read_artifact", map[string]any{"id": "text:report"}), nil)
+			return
+		case 3:
+		default:
+			j.second = stubAllText(req)
+			crit["score"] = 3.0
+		}
+		raw, _ := json.Marshal(map[string]any{"score": 3.0, "criteria": map[string]any{"accuracy": crit}, "feedback": ""})
+		yield(stubText(string(raw)), nil)
+	}
+}
+
+// TestReJudge_SeedsWholeDeliverableRead: the deliverable read reaches the retry whole and
+// first; another read is cut to the page cap.
+func TestReJudge_SeedsWholeDeliverableRead(t *testing.T) {
+	report, page := strings.Repeat("r", 20_000), strings.Repeat("p", 20_000)
+	read, err := functiontool.New[spyReadArtifactArgs, string](functiontool.Config{Name: "read_artifact", Description: "Read an artifact."},
+		func(_ adkagent.Context, a spyReadArtifactArgs) (string, error) {
+			if a.ID == "text:report" {
+				return report, nil
+			}
+			return page, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	judge := &deliverableRereadJudge{}
+	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, JudgeArtifactTools: []tool.Tool{read},
+		RubricSpecs: map[string]criterionSpec{"accuracy": {Name: "accuracy"}}}
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Write the report"}}}
+	act := workerActivity{artifactsWritten: []string{"text:report"}}
+	if _, err := runJudgeAgent(t.Context(), NewJudgeFactory(judge, nil, nil), cfg, q, "see text:report", act, nil, nil, func(*genai.Part) bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	r, p := strings.Index(judge.second, report), strings.Index(judge.second, strings.Repeat("p", 100))
+	if r < 0 || p < r || strings.Contains(judge.second, page) {
+		t.Errorf("re-judge prompt: deliverable at %d, page at %d, page whole %v - want the whole deliverable first and the page cut", r, p, strings.Contains(judge.second, page))
+	}
+}
+
+// TestBoundJudgeArtifactRead_ReplayBudget: replay's REST read tool shares the live budget.
+func TestBoundJudgeArtifactRead_ReplayBudget(t *testing.T) {
+	ctx := withJudgeView(context.Background(), newJudgeView(Config{judgeEvidence: "CITED EVIDENCE"}, workerActivity{}))
+	body := []byte(strings.Repeat("x", 20_000))
+	for i := 1; i <= judgeSourceReadBudget; i++ {
+		if got := BoundJudgeArtifactRead(ctx, "web_page:p", body, "", 0, 0); len(got) > judgeSourceReadCap {
+			t.Fatalf("page read %d = %d chars, want at most %d", i, len(got), judgeSourceReadCap)
+		}
+	}
+	if got := BoundJudgeArtifactRead(ctx, "web_page:p", body, "", 0, 0); got != judgeBudgetSpent {
+		t.Errorf("page read past the budget = %.60q, want the refusal", got)
+	}
+	if got := BoundJudgeArtifactRead(ctx, "bytes:files", body, "", 0, 0); len(got) != len(body) {
+		t.Errorf("bytes read = %d chars, want the whole body", len(got))
 	}
 }

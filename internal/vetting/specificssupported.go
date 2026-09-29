@@ -67,7 +67,8 @@ const (
 	judgeExcerptChars  = 500
 )
 
-const judgeEvidenceHeader = "CITED EVIDENCE - each cited specific in the deliverable, the code verifier's reading of it, and an excerpt of the cited page (or the search snippet) around it, lower-cased with numbers written as digits. " +
+const judgeEvidenceHeader = "CITED EVIDENCE - each cited specific in the deliverable, the code verifier's reading of it, and an excerpt of the cited page (or the search snippet) around it. " +
+	"Excerpts are lower-cased; around a figure, number words appear as digits without thousands separators, and around a quote, curly punctuation and markup are normalized. " +
 	"Check citation wording and quotes against these excerpts; read a source page with read_artifact only when an excerpt cannot settle a finding - source reads are capped at " +
 	"%d per round, %d characters each. A specific marked unsupported already fails the code-owned specifics_supported; do not re-score it.\n"
 
@@ -113,7 +114,15 @@ func evidenceEntry(c UnitCheck) string {
 	case c.Verdict.Reason != "":
 		result += " - " + c.Verdict.Reason
 	}
-	out := fmt.Sprintf("- %q in %q (%s)\n  verifier: %s\n", c.Specific.Value, clipRunes(c.Unit.Text, 160), c.Citation, result)
+	source := c.Citation
+	if source == "" { // no page resolved: name what the claim cites
+		source = strings.Join(c.Unit.Citations, ", ")
+	}
+	out := fmt.Sprintf("- %q in %q", c.Specific.Value, clipRunes(c.Unit.Text, 160))
+	if source != "" {
+		out += " (" + source + ")"
+	}
+	out += "\n  verifier: " + result + "\n"
 	if c.Window != "" {
 		out += fmt.Sprintf("  excerpt: %q\n", centerClip(c.Window, judgeExcerptChars))
 	}

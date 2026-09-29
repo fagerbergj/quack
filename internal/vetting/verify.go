@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -31,13 +32,17 @@ type Verifier struct {
 	Memo map[string]Verdict
 }
 
-// verifyKey: the page, the detail and the exact evidence window the verdict was read from.
+// verifyKey: the claim, its detail, the page and the exact evidence window the verdict was read from.
 func verifyKey(c UnitCheck) string {
-	sum := sha256.Sum256([]byte(c.Window))
+	sum := sha256.Sum256([]byte(withoutLinks(c.Unit.Text) + "\x00" + c.Window))
 	return c.Citation + "\x00" + c.Specific.Kind + ":" + c.Specific.Norm + "\x00" + hex.EncodeToString(sum[:])
 }
 
 const verifyBatch = 20
+
+// verifyConcurrency bounds parallel verifier calls; they run inside the judge's admission
+// slot, whose KV reservation (the judge's whole window) covers a few small batches.
+const verifyConcurrency = 4
 
 const verifyInstruction = `You check whether a passage of evidence supports a specific detail in a claim. For EVERY numbered item answer one object {"n": <number>, "state": "supported" | "unsupported" | "cannot_tell", "quote": <verbatim text copied from that item's <Evidence>>}. "supported" means the evidence states the same detail (the same figure, date or wording, allowing rounding words like "about"); "unsupported" means the evidence gives a different value or contradicts it; "cannot_tell" means the evidence does not settle it. The quote must be copied exactly from the item's own <Evidence> and, for supported or unsupported, must contain the value you relied on; a quote that is not in the evidence is rejected. Respond with exactly one JSON object {"items": [...]}, nothing else.`
 
@@ -62,9 +67,9 @@ func (v Verifier) VerifyChecks(ctx context.Context, checks []UnitCheck) []UnitCh
 		idx = append(idx, i)
 	}
 	v.verifyByPage(ctx, checks, idx)
-	v.recheckUnsupported(ctx, checks, idx)
+	failed := v.recheckUnsupported(ctx, checks, idx)
 	for _, i := range idx {
-		if v.Memo != nil && checks[i].Verdict.State != "not_checked" {
+		if v.Memo != nil && checks[i].Verdict.State != "not_checked" && !failed[i] {
 			v.Memo[keys[i]] = checks[i].Verdict
 		}
 	}
@@ -73,7 +78,9 @@ func (v Verifier) VerifyChecks(ctx context.Context, checks []UnitCheck) []UnitCh
 
 // recheckUnsupported reads every unsupported item of among once more in a window three
 // times wider: a false fail costs a revise, so an item stays unsupported only when both reads agree.
-func (v Verifier) recheckUnsupported(ctx context.Context, checks []UnitCheck, among []int) {
+// failed: items whose second look got no answer, whose cannot_tell is not worth remembering.
+func (v Verifier) recheckUnsupported(ctx context.Context, checks []UnitCheck, among []int) (failed map[int]bool) {
+	failed = map[int]bool{}
 	first := map[int]Verdict{}
 	var idx []int
 	for _, i := range among {
@@ -96,9 +103,11 @@ func (v Verifier) recheckUnsupported(ctx context.Context, checks []UnitCheck, am
 			checks[i].Verdict.Reason = "confirmed by a second look in a wider window"
 		case "supported":
 		default:
+			failed[i] = checks[i].Verdict.State == "not_checked"
 			checks[i].Verdict = Verdict{State: "cannot_tell", Quote: first[i].Quote, Reason: "a second look in a wider window did not confirm it"}
 		}
 	}
+	return failed
 }
 
 // verifyByPage asks about idx's items in batches that share one cited page.
@@ -112,12 +121,20 @@ func (v Verifier) verifyByPage(ctx context.Context, checks []UnitCheck, idx []in
 		pages = append(pages, p)
 	}
 	sort.Strings(pages)
+	sem := make(chan struct{}, verifyConcurrency)
+	var wg sync.WaitGroup
 	for _, p := range pages {
 		idx := byPage[p]
 		for start := 0; start < len(idx); start += verifyBatch {
-			v.verifyBatch(ctx, checks, idx[start:min(len(idx), start+verifyBatch)])
+			batch := idx[start:min(len(idx), start+verifyBatch)]
+			sem <- struct{}{}
+			wg.Go(func() { // each batch writes only its own checks[i]
+				defer func() { <-sem }()
+				v.verifyBatch(ctx, checks, batch)
+			})
 		}
 	}
+	wg.Wait()
 }
 
 func (v Verifier) verifyBatch(ctx context.Context, checks []UnitCheck, idx []int) {

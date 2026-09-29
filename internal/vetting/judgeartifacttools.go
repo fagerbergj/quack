@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -22,23 +23,28 @@ import (
 // artifact can't blow the judge's own prompt budget.
 const judgeArtifactReadCap = 24_000
 
-// judgeSourceReadBudget/judgeSourceReadCap bound one judge round's reads of fetched
-// pages and inputs: the prompt already carries each cited claim's excerpt.
+// judgeSourceReadBudget/judgeSourceReadCap bound one judge round's web_page reads when
+// its prompt carries CITED EVIDENCE: that section already holds each cited claim's excerpt.
 const (
 	judgeSourceReadBudget = 4
 	judgeSourceReadCap    = 8_000
 )
 
-// judgeView is one judge round's view of the chat: a foreign node's artifacts
-// are hidden unless this node itself wrote, fetched or read them.
+var judgeBudgetSpent = fmt.Sprintf("[read budget spent: %d web_page reads per round. Score from the CITED EVIDENCE excerpts and the reads you already made.]", judgeSourceReadBudget)
+
+// judgeView is one judge round's view of the chat: a foreign node's artifacts are hidden
+// unless this node wrote, fetched or read them, or its own lineage wrote a revision.
 type judgeView struct {
-	foreign     map[string]bool
-	own         map[string]bool
-	sourceReads atomic.Int32
+	foreign   map[string]bool
+	own       map[string]bool
+	budgeted  bool
+	pageReads atomic.Int32
+	mu        sync.Mutex
+	history   map[string]bool // per id: some revision was written outside the foreign nodes
 }
 
 func newJudgeView(cfg Config, act workerActivity) *judgeView {
-	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs()}
+	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs(), budgeted: cfg.judgeEvidence != "", history: map[string]bool{}}
 	for _, n := range cfg.ForeignNodes {
 		v.foreign[n] = true
 	}
@@ -57,16 +63,44 @@ func judgeViewFrom(ctx context.Context) *judgeView {
 	return s
 }
 
-func (s *judgeView) visible(id, author string) bool {
-	return s == nil || s.own[id] || !s.foreign[author]
+func (s *judgeView) visible(ctx context.Context, c *recordstore.Client, id, author string) bool {
+	if s == nil || s.own[id] || !s.foreign[author] {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen, ok := s.history[id]
+	if !ok {
+		seen = s.writtenInScope(ctx, c, id)
+		s.history[id] = seen
+	}
+	return seen
 }
 
-// readCap charges a source read against the round's budget; ok=false once it is spent.
+// writtenInScope: an upstream (or own) revision of id exists, e.g. a fan-in's input a sibling
+// edited last. A web_page is skipped: fetching it, not authoring it, is what makes it the node's.
+func (s *judgeView) writtenInScope(ctx context.Context, c *recordstore.Client, id string) bool {
+	if recordstore.KindOf(id) == webPageKind {
+		return false
+	}
+	versions, err := c.Versions(ctx, id)
+	if err != nil {
+		return false
+	}
+	for _, v := range versions {
+		if _, lin, ok, err := c.LoadVersionWithMeta(ctx, id, v); err == nil && ok && !s.foreign[lin.NodeID] {
+			return true
+		}
+	}
+	return false
+}
+
+// readCap charges a web_page read against a budgeted round; ok=false once it is spent.
 func (s *judgeView) readCap(id string) (int, bool) {
-	if s == nil || !isSourceArtifactID(id) {
+	if s == nil || !s.budgeted || recordstore.KindOf(id) != webPageKind {
 		return judgeArtifactReadCap, true
 	}
-	return judgeSourceReadCap, s.sourceReads.Add(1) <= judgeSourceReadBudget
+	return judgeSourceReadCap, s.pageReads.Add(1) <= judgeSourceReadBudget
 }
 
 // judgeHiddenKinds: gate-owned records excluded from list_artifacts - a judge
@@ -105,7 +139,7 @@ func newJudgeListArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 			view := judgeViewFrom(ctx)
 			var b strings.Builder
 			for _, it := range items {
-				if judgeHiddenKinds[it.Kind] || !view.visible(it.ID, it.NodeID) {
+				if judgeHiddenKinds[it.Kind] || !view.visible(ctx, c, it.ID, it.NodeID) {
 					continue
 				}
 				fmt.Fprintf(&b, "%s\trevision=%d\tkind=%s\tnode=%s\n", it.ID, it.Revision, it.Kind, it.NodeID)
@@ -143,12 +177,12 @@ func newJudgeReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
 			view := judgeViewFrom(ctx)
-			if !ok || !view.visible(a.ID, author) {
+			if !ok || !view.visible(ctx, c, a.ID, author) {
 				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
 			}
 			limit, ok := view.readCap(a.ID)
 			if !ok {
-				return fmt.Sprintf("[read budget spent: %d source reads per round. Score from the CITED EVIDENCE excerpts and the reads you already made.]", judgeSourceReadBudget), nil
+				return judgeBudgetSpent, nil
 			}
 			return shapeJudgeReadArtifact(data, mime, a, limit), nil
 		},
@@ -215,8 +249,12 @@ func judgeWindowLines(lines []string, offset, want, total, limit int) string {
 	return fmt.Sprintf("%s\n\n[lines %d-%d of %d (end).]", body, start, end, total)
 }
 
-// BoundJudgeArtifactRead shapes an artifact body for a judge exactly as the live
-// read_artifact tool does (24KB text cap, 500-line windows, base64 for binary).
-func BoundJudgeArtifactRead(data []byte, mime string, offset, lines int) string {
-	return shapeJudgeReadArtifact(data, mime, judgeReadArtifactArgs{Offset: offset, Lines: lines}, judgeArtifactReadCap)
+// BoundJudgeArtifactRead shapes artifact id's body for a judge exactly as the live read_artifact
+// tool does, including the round's web_page budget when ctx is a judge round's.
+func BoundJudgeArtifactRead(ctx context.Context, id string, data []byte, mime string, offset, lines int) string {
+	limit, ok := judgeViewFrom(ctx).readCap(id)
+	if !ok {
+		return judgeBudgetSpent
+	}
+	return shapeJudgeReadArtifact(data, mime, judgeReadArtifactArgs{Offset: offset, Lines: lines}, limit)
 }

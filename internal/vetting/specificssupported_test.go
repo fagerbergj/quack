@@ -2,9 +2,13 @@ package vetting
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -16,6 +20,8 @@ type seqLLM struct {
 	prompts *[]string
 }
 
+var seqLLMMu sync.Mutex // the verifier calls pages concurrently
+
 func (seqLLM) Name() string { return "seq-llm" }
 
 func (m seqLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
@@ -25,8 +31,10 @@ func (m seqLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool
 			b.WriteString(p.Text)
 		}
 	}
+	seqLLMMu.Lock()
 	*m.prompts = append(*m.prompts, b.String())
 	text := m.answers[min(len(*m.prompts), len(m.answers))-1]
+	seqLLMMu.Unlock()
 	return func(yield func(*model.LLMResponse, error) bool) {
 		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: text}}}}, nil)
 	}
@@ -164,6 +172,48 @@ func TestRunVerify_MemoSkipsUnchangedClaims(t *testing.T) {
 	}
 }
 
+// TestRunVerify_MemoKeysOnClaimText: the same figure on the same page in a reworded claim is
+// read again - a corrected claim loses its stale unsupported, a wrongly reworded one its supported.
+func TestRunVerify_MemoKeysOnClaimText(t *testing.T) {
+	u := "https://example.test/survey"
+	item := func(state string) string {
+		return `{"n":1,"state":"` + state + `","quote":"users rose 30% in 2024"},{"n":2,"state":"` + state + `","quote":"users rose 30% in 2024"}`
+	}
+	sup, uns := `{"items":[`+item("supported")+`]}`, `{"items":[`+item("unsupported")+`]}`
+	var prompts []string
+	cfg := Config{RecordReader: fakeLoader{pageID(t, u): secondLookPage},
+		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
+		JudgeModel:  seqLLM{answers: []string{sup, uns, uns, sup}, prompts: &prompts}}
+	act := workerActivity{fetched: map[string]struct{}{u: {}}}
+	memo := map[string]Verdict{}
+	for _, step := range []struct {
+		claim, want string
+		calls       int
+	}{
+		{"Desktop users rose 30% in 2024", "supported", 1},
+		{"Mobile users rose 30% in 2024", "unsupported", 3}, // a reworded claim, confirmed on a second look
+		{"Desktop and mobile users rose 30% in 2024", "supported", 4},
+		{"Desktop users rose 30% in 2024", "supported", 4}, // unchanged: memo hit
+	} {
+		checks := runVerify(context.Background(), cfg, step.claim+" ([survey]("+u+")).", act, memo)
+		if checks[0].Verdict.State != step.want || len(prompts) != step.calls {
+			t.Errorf("%q: %s after %d verifier calls, want %s after %d", step.claim, checks[0].Verdict.State, len(prompts), step.want, step.calls)
+		}
+	}
+}
+
+// TestVerifyChecks_FailedSecondLookNotMemoized: a second look that got no answer leaves a
+// cannot_tell for this round only; the next round reads the claim again.
+func TestVerifyChecks_FailedSecondLookNotMemoized(t *testing.T) {
+	var prompts []string
+	memo := map[string]Verdict{}
+	v := Verifier{LLM: seqLLM{answers: []string{`{"items":[{"n":1,"state":"unsupported","quote":"users rose 30% in 2024"}]}`, `not json`}, prompts: &prompts}, Memo: memo}
+	got := v.VerifyChecks(context.Background(), []UnitCheck{secondLookCheck()})
+	if got[0].Verdict.State != "cannot_tell" || len(memo) != 0 {
+		t.Errorf("verdict %+v, memo %v: want cannot_tell and nothing remembered", got[0].Verdict, memo)
+	}
+}
+
 // TestJudgeEvidenceSection: every cited specific reaches the judge with its verifier
 // result and a bounded excerpt; uncited ones are specifics_cited's business, not listed.
 func TestJudgeEvidenceSection(t *testing.T) {
@@ -182,6 +232,10 @@ func TestJudgeEvidenceSection(t *testing.T) {
 	}
 	if judgeEvidenceSection([]UnitCheck{uncited}) != "" {
 		t.Error("no cited specific: the section must be absent")
+	}
+	unread := UnitCheck{Unit: Unit{Text: "Churn was 4%.", Citations: []string{"https://q/2"}}, Specific: Specific{Value: "4%"}, State: "no_stored_text"}
+	if got := evidenceEntry(unread); strings.Contains(got, `("")`) || strings.Contains(got, "()") || !strings.Contains(got, "(https://q/2)") {
+		t.Errorf("entry for an unread page = %q, want the claim's own citation named", got)
 	}
 }
 
@@ -226,5 +280,36 @@ func TestVerifyChecks_SnippetNeverContradicts(t *testing.T) {
 	prompts = nil
 	if got := (Verifier{LLM: seqLLM{answers: []string{ok}, prompts: &prompts}}).VerifyChecks(context.Background(), []UnitCheck{c}); got[0].Verdict.State != "supported" {
 		t.Errorf("a snippet that states the figure must back it: %+v", got[0].Verdict)
+	}
+}
+
+// inflightLLM records the most verifier calls it saw at once.
+type inflightLLM struct{ now, peak *atomic.Int32 }
+
+func (inflightLLM) Name() string { return "inflight-llm" }
+
+func (m inflightLLM) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := m.now.Add(1)
+		for p := m.peak.Load(); n > p && !m.peak.CompareAndSwap(p, n); p = m.peak.Load() {
+		}
+		time.Sleep(20 * time.Millisecond)
+		m.now.Add(-1)
+		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"items":[]}`}}}}, nil)
+	}
+}
+
+// TestVerifyChecks_PagesInParallel: page batches run concurrently, never more than verifyConcurrency.
+func TestVerifyChecks_PagesInParallel(t *testing.T) {
+	var checks []UnitCheck
+	for i := range 10 {
+		c := secondLookCheck()
+		c.Citation = fmt.Sprintf("https://p/%d", i)
+		checks = append(checks, c)
+	}
+	var now, peak atomic.Int32
+	Verifier{LLM: inflightLLM{now: &now, peak: &peak}}.VerifyChecks(context.Background(), checks)
+	if p := peak.Load(); p < 2 || p > verifyConcurrency {
+		t.Errorf("peak concurrent verifier calls = %d, want 2..%d", p, verifyConcurrency)
 	}
 }

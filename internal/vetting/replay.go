@@ -200,7 +200,7 @@ func decodeContent(raw string) *genai.Content {
 // CountingJudgeFactory wraps factory, incrementing *calls on invocation -
 // lets a caller outside this package prove a judge factory was never reached.
 func CountingJudgeFactory(factory JudgeFactory, calls *int) JudgeFactory {
-	return func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
+	return func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
 		*calls++
 		return factory(prompt, sink, forced, maxIters, maxOutputTokens, thinkingLevel, receivedIDs, artifactTools)
 	}

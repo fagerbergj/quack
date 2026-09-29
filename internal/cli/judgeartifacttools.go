@@ -46,7 +46,7 @@ func RESTArtifactTools(c *Client, chatID string) ([]tool.Tool, error) {
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
-			return vetting.BoundJudgeArtifactRead(body, "", a.Offset, a.Lines), nil
+			return vetting.BoundJudgeArtifactRead(ctx, a.ID, body, "", a.Offset, a.Lines), nil
 		},
 	)
 	if err != nil {

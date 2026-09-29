@@ -156,12 +156,12 @@ type verdict struct {
 // JudgeFactory: builds a fresh agentic judge per round, per-factory read-only tools, per-round judgeReadCounters. maxIters wires forcedVerdictCallback so the round's last allowed turn (or a repeated identical tool
 // call) forces a text-only verdict instead of silently exhausting the budget (#853). maxOutputTokens caps the round's own reply tokens against a runaway generation loop; <= 0 leaves it uncapped (#889). forced is set true by forcedVerdictCallback the moment it strips tools for a forced close - the
 // caller's own signal that this round already spent its last allowed turn (#1235). receivedIDs (#1259): the round's recalled-memory ids, so the tool description and force-close instruction can require votes on the exact set delivered this round, not a generic reminder. artifactTools (#1497): this round's list_artifacts/read_artifact, from cfg.JudgeArtifactTools - per-round, never baked into the factory like readTools.
-type JudgeFactory func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error)
+type JudgeFactory func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error)
 
 // NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
 	hasReadTools, hasSkills := len(readTools) > 0, len(skillsets) > 0
-	return func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
+	return func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
 		behaviour, version := prompt.behaviour(hasReadTools, hasSkills), prompt.art.VersionID
 		submit, err := newSubmitVerdictTool(sink, receivedIDs)
 		if err != nil {
@@ -236,10 +236,16 @@ const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for th
 	`{"score": <0-3 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-3>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
 	" Score every criterion the rubric named, from what you have already verified."
 
-// forcedVerdictCallback disables tool calls (tool_choice none) and appends judgeForceCloseInstruction on the round's last allowed turn, or the turn right after the judge repeats an identical tool call (model stutter that
-// would otherwise burn the rest of the budget repeating itself, #853). forced (may be nil) is set true
-// the moment tools are disabled - the round's own signal that this turn is tool-less, so callers must not offer or demand a tool call afterward (#1235: nudging submit_verdict contradicted this instruction in the same request).
-func forcedVerdictCallback(maxIters int, forced *bool, receivedIDs []string) llmagent.BeforeModelCallback {
+// forceClose is how a round's forced close went: forced once tools are disabled or stripped (callers
+// must not then demand a tool call, #1235), stripped once they were removed from the request.
+type forceClose struct{ forced, stripped bool }
+
+// forcedVerdictCallback appends judgeForceCloseInstruction on the round's last allowed turn with tool_choice none, keeping the prefix
+// cache; a stutter (#853) or a second forced turn strips the tools instead, since a parser may drop the call none refused.
+func forcedVerdictCallback(maxIters int, forced *forceClose, receivedIDs []string) llmagent.BeforeModelCallback {
+	if forced == nil {
+		forced = &forceClose{}
+	}
 	turn := 0
 	instruction := judgeForceCloseInstruction
 	if len(receivedIDs) > 0 {
@@ -250,17 +256,20 @@ func forcedVerdictCallback(maxIters int, forced *bool, receivedIDs []string) llm
 	}
 	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
 		turn++
-		if turn < maxIters && !repeatsLastToolCall(req.Contents) {
+		stutter := repeatsLastToolCall(req.Contents)
+		if turn < maxIters && !stutter {
 			return nil, nil
 		}
-		if forced != nil {
-			*forced = true
-		}
-		// Declarations stay: dropping them rewrites the prompt head and loses the server's prefix cache.
 		if req.Config == nil {
 			req.Config = &genai.GenerateContentConfig{}
 		}
-		req.Config.ToolConfig = &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{Mode: genai.FunctionCallingConfigModeNone}}
+		if stutter || forced.forced {
+			forced.stripped = true
+			req.Tools, req.Config.Tools = nil, nil
+		} else {
+			req.Config.ToolConfig = &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{Mode: genai.FunctionCallingConfigModeNone}}
+		}
+		forced.forced = true
 		req.Contents = append(req.Contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: instruction}}})
 		return nil, nil
 	}
@@ -905,14 +914,17 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		maxIters = defaultJudgeMaxIterations
 	}
 	receivedIDs := memoryIDs(received)
-	st := &judgeRoundState{cfg: cfg, maxIters: maxIters, emit: emit, ctx: ctx}
+	st := &judgeRoundState{cfg: cfg, maxIters: maxIters, emit: emit, ctx: ctx, produced: map[string]bool{}}
+	for _, id := range act.producedArtifacts() {
+		st.produced[id] = true
+	}
 	prompt, err := judgePromptFor(ctx, cfg)
 	if err != nil {
 		return verdict{}, judgeReadCounters{}, err
 	}
-	// forcedClose is flipped by forcedVerdictCallback the instant it strips tools for
+	// closed is set by forcedVerdictCallback the instant it disables or strips tools for
 	// a forced close (#1235) - the round's own signal, not the turn counter.
-	judgeAgent, counters, err := factory(prompt, &st.sink, &st.forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs, cfg.JudgeArtifactTools)
+	judgeAgent, counters, err := factory(prompt, &st.sink, &st.closed, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs, cfg.JudgeArtifactTools)
 	if err != nil {
 		return verdict{}, judgeReadCounters{}, fmt.Errorf("vetting: build judge agent: %w", err)
 	}
@@ -937,7 +949,10 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	if err := st.runTurn(content); err != nil {
 		return verdict{}, counters, err
 	}
-	v, ok := st.verdictFrom()
+	v, ok, err := st.verdictOrStrippedClose()
+	if err != nil {
+		return verdict{}, counters, err
+	}
 	// #1259: a verdict that reached submit_verdict or the text-JSON fallback but
 	// skipped the required memory votes gets the same one-shot nudge, naming the owed ids.
 	owedIDs := owedMemoryVoteIDs(receivedIDs, v)
@@ -967,6 +982,21 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	return verdict{}, counters, ErrJudgeNoVerdict
 }
 
+// verdictOrStrippedClose is the round's verdict or, when a tool_choice-none close gave none (vLLM's
+// parser drops the refused call), one more close with the tools stripped, as before that close existed.
+func (s *judgeRoundState) verdictOrStrippedClose() (verdict, bool, error) {
+	v, ok := s.verdictFrom()
+	if ok || !s.closed.forced || s.closed.stripped || s.aborted || s.ctx.Err() != nil {
+		return v, ok, nil
+	}
+	s.maxIters++ // the extra close is not a runaway turn
+	if err := s.runTurn(&genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Your last reply held no verdict."}}}); err != nil {
+		return verdict{}, false, err
+	}
+	v, ok = s.verdictFrom()
+	return v, ok, nil
+}
+
 // judgeRoundState carries the turn state shared by the initial judge turn and the
 // in-session nudges, so a nudge counts against the same maxIters budget.
 type judgeRoundState struct {
@@ -979,7 +1009,7 @@ type judgeRoundState struct {
 	jr            *runner.Runner
 	sessionID     string
 	sink          verdict
-	forcedClose   bool
+	closed        forceClose
 	submitted     bool
 	turns         int
 	accum         strings.Builder
@@ -991,6 +1021,7 @@ type judgeRoundState struct {
 	parseFrom int
 	calls     map[string]*genai.FunctionCall // by call id, to pair a read's args with its result
 	reads     []string
+	produced  map[string]bool // the ids the worker wrote this round: the deliverable reads
 }
 
 func (s *judgeRoundState) noteCall(fc *genai.FunctionCall) {
@@ -1000,19 +1031,26 @@ func (s *judgeRoundState) noteCall(fc *genai.FunctionCall) {
 	s.calls[fc.ID] = fc
 }
 
-// recordRead keeps one successful tool result for a retry's prompt, capped like a source read.
+// recordRead keeps one successful tool result for a retry's prompt, capped like a web_page read;
+// a read of the deliverable keeps the full read cap and goes first, so a tight budget drops others.
 func (s *judgeRoundState) recordRead(fr *genai.FunctionResponse) {
 	if _, failed := fr.Response["error"]; failed {
 		return
 	}
-	args := []byte("{}")
+	args, deliverable := []byte("{}"), false
 	if fc := s.calls[fr.ID]; fc != nil {
 		args, _ = json.Marshal(fc.Args)
+		id, _ := fc.Args["id"].(string)
+		deliverable = fr.Name == "read_artifact" && s.produced[id]
 	}
 	body, ok := fr.Response["result"].(string)
 	if !ok {
 		raw, _ := json.Marshal(fr.Response)
 		body = string(raw)
+	}
+	if deliverable {
+		s.reads = slices.Insert(s.reads, 0, fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeArtifactReadCap)))
+		return
 	}
 	s.reads = append(s.reads, fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeSourceReadCap)))
 }
@@ -1140,7 +1178,7 @@ func (s *judgeRoundState) verdictFrom() (verdict, bool) {
 // nudgeAllowed mirrors the #1235/#1236 guard shared by both nudges: a forced-close
 // turn already stripped tools, and an aborted turn already cancel()ed runCtx.
 func (s *judgeRoundState) nudgeAllowed() bool {
-	return !s.forcedClose && !s.aborted && s.ctx.Err() == nil
+	return !s.closed.forced && !s.aborted && s.ctx.Err() == nil
 }
 
 // nudgeMemories sends the one-shot memory-vote nudge naming the owed ids (#1259).

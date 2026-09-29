@@ -154,7 +154,7 @@ func TestLoadReplayRubric_BundleDirWithNoRubric(t *testing.T) {
 
 func TestCountingJudgeFactory_CountsInvocations(t *testing.T) {
 	calls := 0
-	base := JudgeFactory(func(judgePrompt, *verdict, *bool, int, int, string, []string, []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
+	base := JudgeFactory(func(judgePrompt, *verdict, *forceClose, int, int, string, []string, []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
 		return nil, judgeReadCounters{}, nil
 	})
 	wrapped := CountingJudgeFactory(base, &calls)
