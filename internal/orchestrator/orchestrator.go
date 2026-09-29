@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"maps"
 	"regexp"
 	"runtime/debug"
 	"slices"
@@ -548,9 +547,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			return
 		}
 		s.history = buildHistory(prior)
-		if waivesPlanJudge(pending, hasPending, message) {
-			slog.Info("plan judge waived: the user chose to run the rejected plan as is", "component", "orchestrator", "chat", sessionID)
-			s.ctx = dag.WithPlanJudgeWaived(s.ctx)
+		if key := waivedPlanShape(pending, hasPending, message); key != "" {
+			slog.Info("plan judge waived for the rejected plan: the user chose to run it as is", "component", "orchestrator", "chat", sessionID, "shape", key)
+			s.ctx = tools.WithWaivedPlanShape(s.ctx, key)
 		}
 		var githubSetup *dag.Setup
 		if ghs, ok := tools.GitHubSetupFromContext(ctx); ok {
@@ -877,32 +876,58 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 // there because the executor's own stop flag is gone once the turn that stopped it ended.
 func (o *Orchestrator) deliverFromRecord(ctx context.Context, userID, sessionID string, plan dag.Plan, rec dag.DagPlanRecord) {
 	final, stopped := tools.DeliverableResults(rec.Assignments)
-	o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID, stopped))
+	o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, onlySinks(final, rec.Sinks), sessionID, stopped))
 }
 
-// withRecordedSinks takes, for a multi-sink plan, the dag_plan record's result for each sink this run did
-// not run: a retry or resume of one sink persists the turn's whole answer, and a sibling's stopped draft stays masked.
-func (o *Orchestrator) withRecordedSinks(ctx context.Context, userID, chatID string, plan dag.Plan, outputs map[string]string, ran func(string) bool) (map[string]string, map[string]bool) {
-	sinks := dag.TerminalIDs(plan.Nodes)
-	if len(sinks) < 2 || o.artifacts == nil {
-		return outputs, nil
+// onlySinks keeps just the recorded step's sinks, so an extended plan's earlier turns' sinks stay out
+// of this turn's answer; a record without them keeps every output.
+func onlySinks(outputs map[string]string, sinks []string) map[string]string {
+	if len(sinks) == 0 {
+		return outputs
 	}
-	rec, _, ok, err := dag.LoadDagPlanRecord(context.WithoutCancel(ctx), o.artifacts, artifactref.AppName, userID, chatID)
-	if err != nil || !ok || rec.PlanID != plan.ID {
+	own := make(map[string]string, len(sinks))
+	for _, id := range sinks {
+		own[id] = outputs[id]
+	}
+	return own
+}
+
+// withRecordedSinks narrows a retry or resume to the sinks the plan's latest step delivers, taking the
+// record's result for each one this run did not run; a stopped sibling's draft stays masked.
+func (o *Orchestrator) withRecordedSinks(ctx context.Context, userID, chatID string, plan dag.Plan, outputs map[string]string, ran func(string) bool) (map[string]string, map[string]bool) {
+	terminals := dag.TerminalIDs(plan.Nodes)
+	rec, hasRec := o.planRecord(ctx, userID, chatID, plan.ID)
+	sinks := terminals
+	if hasRec && len(rec.Sinks) > 0 {
+		sinks = rec.Sinks
+	}
+	if len(sinks) < 2 && slices.Equal(sinks, terminals) {
 		return outputs, nil
 	}
 	final, stopped := tools.DeliverableResults(rec.Assignments)
-	merged := maps.Clone(outputs)
-	recStopped := map[string]bool{}
+	// No record (an older plan's retry): the seeds' unreviewed flags are the only stop marks left.
+	unreviewed := dag.UnreviewedSeedsFrom(ctx)
+	own, recStopped := make(map[string]string, len(sinks)), map[string]bool{}
 	for _, id := range sinks {
-		if ran(id) {
-			continue
-		}
-		if out, ok := final[id]; ok {
-			merged[id], recStopped[id] = out, stopped[id]
+		switch out, seeded := outputs[id]; {
+		case ran(id):
+			own[id] = out
+		case hasRec:
+			own[id], recStopped[id] = final[id], stopped[id]
+		case seeded:
+			own[id], recStopped[id] = out, unreviewed[id]
 		}
 	}
-	return merged, recStopped
+	return own, recStopped
+}
+
+// planRecord is the chat's dag_plan record when it records planID.
+func (o *Orchestrator) planRecord(ctx context.Context, userID, chatID, planID string) (dag.DagPlanRecord, bool) {
+	if o.artifacts == nil {
+		return dag.DagPlanRecord{}, false
+	}
+	rec, _, ok, err := dag.LoadDagPlanRecord(context.WithoutCancel(ctx), o.artifacts, artifactref.AppName, userID, chatID)
+	return rec, err == nil && ok && rec.PlanID == planID
 }
 
 // loadResumePlan: the plan and its record for an incremental resume.

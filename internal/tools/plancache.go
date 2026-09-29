@@ -1,6 +1,9 @@
 package tools
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"slices"
 	"strings"
 	"sync"
@@ -20,6 +23,7 @@ type PlanCache struct {
 	rejectionReason string
 	rejectedShapes  map[string]bool
 	loopTripped     bool
+	loopShape       string
 }
 
 // MaxPlanRejections caps plan-judge rejections per turn before the user is asked instead.
@@ -81,16 +85,38 @@ func (c *PlanCache) RecordRejection(reason, shape string) (tripped bool) {
 	if c.rejectedShapes == nil {
 		c.rejectedShapes = map[string]bool{}
 	}
-	c.loopTripped = c.loopTripped || c.rejectedShapes[shape] || c.rejectionCount >= MaxPlanRejections
+	if !c.loopTripped && (c.rejectedShapes[shape] || c.rejectionCount >= MaxPlanRejections) {
+		c.loopTripped, c.loopShape = true, shape
+	}
 	c.rejectedShapes[shape] = true
 	return c.loopTripped
 }
 
-// LoopGuard reports the plan loop guard tripped this turn, with the judge's latest reason.
-func (c *PlanCache) LoopGuard() (reason string, tripped bool) {
+// LoopGuard reports the plan loop guard tripped this turn, with the judge's latest reason and the
+// ShapeKey of the plan it tripped on.
+func (c *PlanCache) LoopGuard() (reason, shapeKey string, tripped bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.rejectionReason, c.loopTripped
+	return c.rejectionReason, ShapeKey(c.loopShape), c.loopTripped
+}
+
+// ShapeKey is a short, id-safe hash of a PlanShape.
+func ShapeKey(shape string) string {
+	sum := sha256.Sum256([]byte(shape))
+	return hex.EncodeToString(sum[:6])
+}
+
+type waivedShapeKey struct{}
+
+// WithWaivedPlanShape lets execute run the plan whose ShapeKey is key past the plan judge: the user
+// chose to run that rejected plan as is. Any other plan is still judged.
+func WithWaivedPlanShape(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, waivedShapeKey{}, key)
+}
+
+func waivedPlanShape(ctx context.Context) string {
+	key, _ := ctx.Value(waivedShapeKey{}).(string)
+	return key
 }
 
 // PlanShape fingerprints a plan by structure alone - each node's agent and its dependencies' agents,

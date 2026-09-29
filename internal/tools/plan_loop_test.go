@@ -48,8 +48,8 @@ func TestRecordRejection_LoopGuard(t *testing.T) {
 	if !c.RecordRejection("second", "s1") {
 		t.Fatal("the same shape rejected twice did not trip the guard")
 	}
-	if reason, tripped := c.LoopGuard(); !tripped || reason != "second" {
-		t.Errorf("LoopGuard = %q %v, want the latest reason, tripped", reason, tripped)
+	if reason, key, tripped := c.LoopGuard(); !tripped || reason != "second" || key != ShapeKey("s1") {
+		t.Errorf("LoopGuard = %q %q %v, want the latest reason and the looping shape, tripped", reason, key, tripped)
 	}
 }
 
@@ -78,5 +78,34 @@ func TestExecuteTool_LoopGuardEndsTurn(t *testing.T) {
 	out, ctx, err := run("research it, more carefully")
 	if err != nil || out["status"] != "needs_user" || !ctx.actions.SkipSummarization {
 		t.Fatalf("second rejection: out=%v err=%v skip=%v, want needs_user ending the turn", out, err, ctx.actions.SkipSummarization)
+	}
+}
+
+// TestExecuteTool_WaiverOnlyForRejectedShape: "run it as is" waives the judge for that plan's shape
+// only - a different plan (or a later, grown step) is still judged.
+func TestExecuteTool_WaiverOnlyForRejectedShape(t *testing.T) {
+	judge := vetting.PlanJudge(func(context.Context, string, string, string) (bool, string, error) { return false, "no", nil })
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, judge)
+	rejected := []dag.RawNode{{ID: "r-1", Agent: "web-researcher"}}
+	run := func(assignments []dag.Assignment) error {
+		nodes := make([]dag.DagNodeRecord, 0, len(assignments))
+		for _, a := range assignments {
+			nodes = append(nodes, dag.DagNodeRecord{NodeID: a.NodeID, Agent: "web-researcher"})
+		}
+		c := seedPlanRecord(t, dag.DagPlanRecord{PlanID: "p1", Assignments: assignments}, nodes)
+		tl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, nil, nil, nil, "q", nil, nil, nil, "", nil, false, "orchestrator", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := newExecToolCtx()
+		ctx.Ctx = WithWaivedPlanShape(context.Background(), ShapeKey(PlanShape(rejected, nil)))
+		_, err = tl.(runnableTool).Run(ctx, map[string]any{"plan_id": "p1"})
+		return err
+	}
+	if err := run([]dag.Assignment{{NodeID: "x-9", Task: "reworded"}}); err != nil {
+		t.Errorf("the waived shape was judged again: %v", err)
+	}
+	if err := run([]dag.Assignment{{NodeID: "x-9", Task: "a"}, {NodeID: "y-9", Task: "b"}}); err == nil {
+		t.Error("a different plan ran past the judge on another plan's waiver")
 	}
 }

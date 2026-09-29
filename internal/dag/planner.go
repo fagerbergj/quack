@@ -200,6 +200,11 @@ func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup,
 	if err != nil {
 		return nil, err
 	}
+	// ponytail: one sink only - a bound run has no dag_plan record to fill a retried sink's siblings
+	// from; allow several once retry/resume can seed them from the completed nodes' outputs.
+	if sinks := TerminalIDs(plan.Nodes); len(sinks) > 1 {
+		return nil, fmt.Errorf("bound workflow has %d terminal nodes (%s); a bound shape must end in one node", len(sinks), strings.Join(sinks, ", "))
+	}
 	span.SetAttributes(attribute.String(otelobs.GenAIWorkflowName, plan.ID), attribute.Int("node_count", len(plan.Nodes)))
 	plan.UserMessage = message
 	plan.Attachments = attachments
@@ -412,7 +417,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	}
 
 	// Harden: synthesizer fan-in.
-	plan.Nodes = hardenSynthesizer(plan.Nodes)
+	plan.Nodes = hardenSynthesizer(plan.Nodes, known)
 
 	if _, topoErr := topoLayers(*plan); topoErr != nil {
 		return nil, topoErr
@@ -606,21 +611,43 @@ func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, id
 	}, nil
 }
 
-// hardenSynthesizer: the synthesizer depends on every non-synthesizer node NOT downstream of it.
-func hardenSynthesizer(nodes []Node) []Node {
+// hardenSynthesizer: the synthesizer depends on every non-synthesizer node NOT downstream of it. Only a
+// review fan-out (2+ reviewers) without one gets a synthesizer appended: it stages the overall verdict.
+func hardenSynthesizer(nodes []Node, known map[string]AgentInfo) []Node {
+	reviewers, hasSynth := 0, false
 	for i, n := range nodes {
-		if n.AgentName != synthesizerAgent {
-			continue
+		switch n.AgentName {
+		case reviewerAgent:
+			reviewers++
+		case synthesizerAgent:
+			hasSynth = true
+			nodes[i].DependsOn = synthDeps(nodes, n.ID)
 		}
-		down := descendants(nodes, n.ID)
-		var deps []string
-		for _, m := range nodes {
-			if m.ID == n.ID || m.AgentName == synthesizerAgent || down[m.ID] {
-				continue
-			}
+	}
+	synthInfo, hasSynthAgent := known[synthesizerAgent]
+	if hasSynth || reviewers < 2 || !hasSynthAgent {
+		return nodes
+	}
+	all := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		all = append(all, n.ID)
+	}
+	return append(nodes, Node{
+		ID:            "synthesize",
+		AgentName:     synthesizerAgent,
+		Task:          "Combine the reviewers' findings into one review and stage its single overall verdict.",
+		DependsOn:     all,
+		ContextWindow: synthInfo.ContextWindow,
+	})
+}
+
+func synthDeps(nodes []Node, synthID string) []string {
+	down := descendants(nodes, synthID)
+	var deps []string
+	for _, m := range nodes {
+		if m.ID != synthID && m.AgentName != synthesizerAgent && !down[m.ID] {
 			deps = append(deps, m.ID)
 		}
-		nodes[i].DependsOn = deps
 	}
-	return nodes
+	return deps
 }

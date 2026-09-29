@@ -195,6 +195,32 @@ func TestBuildKeepsIndependentSinks(t *testing.T) {
 	}
 }
 
+// TestBuildAppendsSynthesizerForReviewFanout: 2+ reviewers and no synthesizer still get the fan-in,
+// which stages the single overall verdict review automation waits on.
+func TestBuildAppendsSynthesizerForReviewFanout(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}, {Name: "synthesizer", ContextWindow: 65536}}, nil, nil)
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "r1", Agent: "code-reviewer", Task: "review A"}, {ID: "r2", Agent: "code-reviewer", Task: "review B"},
+	}, nil, nil, nil, "review", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := plan.Nodes[len(plan.Nodes)-1]
+	if len(plan.Nodes) != 3 || last.AgentName != "synthesizer" || !slices.Equal(last.DependsOn, []string{"r1", "r2"}) || last.ContextWindow != 65536 {
+		t.Errorf("nodes = %+v, want a synthesizer fan-in over both reviewers", plan.Nodes)
+	}
+}
+
+// TestBuildBoundRejectsMultipleSinks: a bound run has no plan record to fill a retried sink's siblings from.
+func TestBuildBoundRejectsMultipleSinks(t *testing.T) {
+	p := testPlanner()
+	if _, err := p.BuildBound(context.Background(), []RawNode{
+		{ID: "a", Agent: "web-researcher", Task: "A"}, {ID: "b", Agent: "web-researcher", Task: "B"},
+	}, nil, nil, "m", nil, nil); err == nil || !strings.Contains(err.Error(), "2 terminal nodes") {
+		t.Errorf("BuildBound err = %v, want the multi-sink refusal", err)
+	}
+}
+
 // TestBuildNoSynthesizerAppendedForChain: a linear chain has one terminal -
 // nothing to fan in, no synthesizer appended.
 func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {

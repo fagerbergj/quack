@@ -272,4 +272,24 @@ func TestExecuteTool_ExtensionDeliversItsOwnSinks(t *testing.T) {
 	if got, want := cache.Delivered(), "## w-4\n\nW4\n\n## w-5\n\nW5"; got != want {
 		t.Errorf("delivered %q, want %q", got, want)
 	}
+	if saved, _, _, _ := loadDagPlan(context.Background(), c); !slices.Equal(saved.Sinks, []string{"w-4", "w-5"}) {
+		t.Errorf("recorded sinks = %v, want the step's own [w-4 w-5] for a later retry or resume", saved.Sinks)
+	}
+}
+
+// TestExecuteTool_NoSinkRanIsNotDelivered: a delivering step in which nothing reached running has no
+// answer, so it must not report the plan delivered.
+func TestExecuteTool_NoSinkRanIsNotDelivered(t *testing.T) {
+	rec := dag.DagPlanRecord{PlanID: "p1", Assignments: []dag.Assignment{{NodeID: "a-1", Task: "a"}}, Delivery: &dag.Delivery{Kind: "comment"}}
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "a-1", Agent: "web-researcher"}})
+	step := &fakeRunStep{notStarted: map[string]bool{"a-1": true}}
+	tl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, step.run, answerOf, nil, "q", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tl.(runnableTool).Run(newExecToolCtx(), map[string]any{"plan_id": "p1"})
+	if err != nil || out["status"] == "delivered" {
+		t.Errorf("status = %v err=%v, want no delivery with no sink run", out["status"], err)
+	}
 }

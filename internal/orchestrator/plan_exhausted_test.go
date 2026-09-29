@@ -43,10 +43,13 @@ func planCallWidened() *model.LLMResponse {
 }
 
 // TestOrchestrator_PlanLoopAsksUser: the judge rejecting the same plan twice (only reworded) ends
-// the turn with a get_user_choice carrying its reason, not a third plan or a failure; answering
-// "run it as is" next turn runs the plan past the judge.
+// the turn with a get_user_choice, not a third plan or a failure; answering "run it as is" - even
+// wrapped, as a GitHub reply is - runs that plan past the judge next turn.
+//
+// #693 keeps the judge's text out of replies. This in-app question is the one exception: it shows the
+// reason on one line, truncated to planLoopReasonMax, so the user can decide.
 func TestOrchestrator_PlanLoopAsksUser(t *testing.T) {
-	const reason = "the user asked for no synthesizer"
+	reason := "the user asked for no synthesizer\n" + strings.Repeat("x", 400)
 	stub := &orchStub{replies: []*model.LLMResponse{planCall(), planCall(), planCall()}}
 	o := newTestOrchWithJudge(t, stub, rejectAlwaysJudge(reason))
 
@@ -55,19 +58,28 @@ func TestOrchestrator_PlanLoopAsksUser(t *testing.T) {
 		t.Fatalf("orchestrator calls = %d events=%v, want two plans and no error", stub.invocations(), evs)
 	}
 	q, ok := o.PendingQuestion(context.Background(), "u", "chat")
-	if !ok || !strings.Contains(q, reason) {
-		t.Fatalf("pending question = %q %v, want the choice naming the judge's reason", q, ok)
+	if !ok || !strings.Contains(q, "the user asked for no synthesizer "+strings.Repeat("x", 266)+"…") || strings.Contains(q, strings.Repeat("x", 267)) {
+		t.Fatalf("pending question = %q %v, want the reason on one line, truncated", q, ok)
 	}
-	if !hasToolCall(evs, "get_user_choice") {
-		t.Errorf("the live stream never showed the choice; events=%v", evs)
+	if !strings.Contains(q, planLoopRunAsIs) || !hasToolCall(evs, "get_user_choice") {
+		t.Errorf("question %q / events %v, want the options named and the choice streamed", q, evs)
 	}
 
-	evs = runTurn(t, o, planLoopRunAsIs)
+	evs = runTurn(t, o, "<reply>"+strings.ToLower(planLoopRunAsIs)+", please</reply>")
 	if hasEvent(evs, stream.EventError) || !hasEvent(evs, stream.EventNodeDone) {
 		t.Fatalf("running the plan as is: events=%v, want it to run past the judge", evs)
 	}
 	if _, pending := o.PendingQuestion(context.Background(), "u", "chat"); pending {
 		t.Error("the choice is still pending after the user answered it")
+	}
+}
+
+// TestPlanLoopQuestion_NonAppSourceHidesReason: GitHub and extension runs get fixed text naming the
+// options - never the judge's reason (#693), which can quote recalled memory.
+func TestPlanLoopQuestion_NonAppSourceHidesReason(t *testing.T) {
+	q := planLoopQuestion("github", "SECRET MEMORY")
+	if strings.Contains(q, "SECRET") || !strings.Contains(q, planLoopRunAsIs) || !strings.Contains(q, planLoopRephrase) {
+		t.Errorf("question = %q, want fixed text naming both options", q)
 	}
 }
 

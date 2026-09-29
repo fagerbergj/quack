@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,6 +220,65 @@ func TestWithRecordedSinks_RetryKeepsSiblingSinks(t *testing.T) {
 	single := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "a"}, {ID: "b", DependsOn: []string{"a"}}}}
 	if got, _ := o.withRecordedSinks(ctx, "u", "c", single, retried, func(string) bool { return false }); !maps.Equal(got, retried) {
 		t.Errorf("single-sink outputs = %v, want them unchanged", got)
+	}
+}
+
+// TestWithRecordedSinks_NoRecordMasksUnreviewedSeed: retrying in a plan the record no longer
+// describes still masks a stopped sibling, from the seeds' unreviewed flags.
+func TestWithRecordedSinks_NoRecordMasksUnreviewedSeed(t *testing.T) {
+	sessions := session.InMemoryService()
+	o := &Orchestrator{sessions: sessions, artifacts: artifact.InMemoryService(), executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	ctx := dag.WithUnreviewedSeeds(context.Background(), map[string]bool{"b": true})
+	plan := dag.Plan{ID: "older", Nodes: []dag.Node{{ID: "a"}, {ID: "b"}}}
+	outputs, recStopped := o.withRecordedSinks(ctx, "u", "c", plan, map[string]string{"a": "NEW A", "b": "B STOPPED DRAFT"}, func(id string) bool { return id == "a" })
+	want := "## a\n\nNEW A\n\n## b\n\n" + stream.StoppedSinkNote
+	if got := o.finalizeAnswer(ctx, plan, outputs, "c", recStopped); got != want {
+		t.Errorf("finalizeAnswer = %q, want %q", got, want)
+	}
+}
+
+// TestWithRecordedSinks_ExtendedPlanKeepsItsStepSinks: turn 1 ran r1 and r2, turn 2 added r3; a
+// retry of r3 answers with r3 alone, the sinks the record says that step delivers.
+func TestWithRecordedSinks_ExtendedPlanKeepsItsStepSinks(t *testing.T) {
+	sessions := session.InMemoryService()
+	svc := artifact.InMemoryService()
+	o := &Orchestrator{sessions: sessions, artifacts: svc, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	ctx := context.Background()
+	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "c", "", dag.DagPlanRecord{
+		PlanID: "p", Sinks: []string{"r3"},
+		Assignments: []dag.Assignment{{NodeID: "r1", Task: "a", Result: "R1"}, {NodeID: "r2", Task: "b", Result: "R2"}, {NodeID: "r3", Task: "c", Result: "OLD R3"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "r1"}, {ID: "r2"}, {ID: "r3"}}}
+	outputs, recStopped := o.withRecordedSinks(ctx, "u", "c", plan, map[string]string{"r1": "R1", "r2": "R2", "r3": "NEW R3"}, func(id string) bool { return id == "r3" })
+	if got := o.finalizeAnswer(ctx, plan, outputs, "c", recStopped); got != "NEW R3" {
+		t.Errorf("finalizeAnswer = %q, want only this step's sink", got)
+	}
+	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	o.deliverFromRecord(stream.WithTurnID(ctx, "t2"), "u", "c", plan, dag.DagPlanRecord{PlanID: "p", Sinks: []string{"r3"},
+		Assignments: []dag.Assignment{{NodeID: "r1", Result: "R1"}, {NodeID: "r2", Result: "R2"}, {NodeID: "r3", Result: "RESUMED R3"}}})
+	if got := o.LatestAnswer(ctx, "u", "c"); got != "RESUMED R3" {
+		t.Errorf("resume delivered %q, want only this step's sink", got)
+	}
+}
+
+// TestFinalizeAnswer_SectionsSkipFormatPass: a long multi-sink answer keeps its sections verbatim;
+// the format pass could merge them into the synthesis the plan left out.
+func TestFinalizeAnswer_SectionsSkipFormatPass(t *testing.T) {
+	sessions := session.InMemoryService()
+	o := &Orchestrator{sessions: sessions, model: answerModel{text: "REFORMATTED"}, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	long := strings.Repeat("finding ", 400)
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "a", AgentName: "w"}, {ID: "b", AgentName: "w"}}}
+	got := o.finalizeAnswer(context.Background(), plan, map[string]string{"a": long, "b": long}, "c", nil)
+	if want := "## a\n\n" + strings.TrimSpace(long) + "\n\n## b\n\n" + strings.TrimSpace(long); got != want {
+		t.Errorf("finalizeAnswer reformatted a %d-char sectioned answer: %.60q", len(want), got)
+	}
+	single := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "a", AgentName: "w"}}}
+	if got := o.finalizeAnswer(context.Background(), single, map[string]string{"a": long}, "c", nil); got != "REFORMATTED" {
+		t.Errorf("single long sink = %.60q, want the format pass as before", got)
 	}
 }
 

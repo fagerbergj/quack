@@ -370,9 +370,9 @@ func sinkNodeIDs(plan stream.DagPlanData) []string {
 	return ids
 }
 
-// terminalNodeOutput returns the sinks' full output (or "" when none has any yet): one sink's as is,
+// sinksOutput returns the sinks' full output (or "" when none has any yet): one sink's as is,
 // several as labelled sections. stopped reports the user stopped every one (so it is a draft), at when.
-func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool, at time.Time) {
+func sinksOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool, at time.Time) {
 	byID := make(map[string]store.DagNode, len(nodes))
 	for _, n := range nodes {
 		byID[n.NodeID] = n
@@ -1451,7 +1451,7 @@ func answerBubble(tc store.TurnContent, planData stream.DagPlanData, planOK bool
 	var out string
 	var stoppedAt time.Time
 	if planOK {
-		out, stopped, stoppedAt = terminalNodeOutput(planData, tc.Nodes)
+		out, stopped, stoppedAt = sinksOutput(planData, tc.Nodes)
 	}
 	switch {
 	case stopped && (tc.Answer == "" || stoppedAt.After(tc.AnswerAt)):

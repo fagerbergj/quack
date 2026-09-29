@@ -464,7 +464,7 @@ func TestBuildTurnDAGCarriesArtifact(t *testing.T) {
 }
 
 // TestBuildTurnPlainReplyKeepsNarration: a non-DAG turn's bubble stays the
-// orchestrator's own AsstText - terminalNodeOutput only applies to DAG turns.
+// orchestrator's own AsstText - sinksOutput only applies to DAG turns.
 func TestBuildTurnPlainReplyKeepsNarration(t *testing.T) {
 	tc := store.TurnContent{ID: "t2", CreatedAt: time.Now(), UserText: "hi", AsstText: "direct reply"}
 	turn := buildTurn(tc)

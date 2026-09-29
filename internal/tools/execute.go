@@ -147,9 +147,13 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 
 			// ChatID-only Coords: plan judge's chat call files under this chat.
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
+			shape := PlanShape(rawNodes, rec.Delivery)
+			if key := waivedPlanShape(tc); key != "" && key == ShapeKey(shape) {
+				planCtx = dag.WithPlanJudgeWaived(planCtx)
+			}
 			plan, err := planner.Build(planCtx, rawNodes, setup, rec.Delivery, history, message, attachments, allowedKinds)
 			if err != nil {
-				if recordPlanRejection(tc, c, nodeID, cache, err, PlanShape(rawNodes, rec.Delivery)) {
+				if recordPlanRejection(tc, c, nodeID, cache, err, shape) {
 					return planLoopResult(tc, rec.PlanID), nil
 				}
 				return executeResult{}, fmt.Errorf("execute: %w", err)
@@ -355,9 +359,11 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 	// Only deliver on a step whose own run succeeded - a failed or paused
 	// delivering node must not mark the plan done and finalize on garbage.
 	// Only a delivering step has an answer to lose; a partial step just reports the cancelled node.
-	sinks := stepSinks(*plan, results)
+	sinks := stepSinks(*plan, results, false)
 	terminalStopped := rec.Delivery != nil && allStopped(results, sinks)
-	delivering := rec.Delivery != nil && !stepPaused && !stepFailed && !terminalStopped
+	delivering := rec.Delivery != nil && !stepPaused && !stepFailed && !terminalStopped && len(sinks) > 0
+	// Queued sinks count: a paused step's resume delivers them once they run.
+	rec.Sinks = stepSinks(*plan, results, true)
 	rec.Status = "running"
 	if delivering {
 		rec.Status = "done"
@@ -516,10 +522,10 @@ func ownSinkResults(assignments []dag.Assignment, sinks []string) map[string]str
 
 // stepSinks are the nodes a delivering step answers with: every node this step ran that no other
 // node it ran depends on - in an extended plan, not an earlier turn's (re-wired) sink.
-func stepSinks(plan dag.Plan, results []assignmentResult) []string {
+func stepSinks(plan dag.Plan, results []assignmentResult, withQueued bool) []string {
 	ran := make(map[string]bool, len(results))
 	for _, r := range results {
-		if r.Status != "queued" {
+		if withQueued || r.Status != "queued" {
 			ran[r.NodeID] = true
 		}
 	}

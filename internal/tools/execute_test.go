@@ -195,6 +195,9 @@ func TestDeliveredAnswer(t *testing.T) {
 	if got, sectioned := DeliveredAnswer(two, map[string]string{"a": "A", "b": "B"}, never); got != "## b\n\nB\n\n## a\n\nA" || !sectioned {
 		t.Errorf("two sinks: got %q sectioned=%v", got, sectioned)
 	}
+	if got := answer(two, map[string]string{"a": "", "b": "B"}, never); got != "## b\n\nB\n\n## a\n\n_No output._" {
+		t.Errorf("a sink with no output: got %q, want its section marked", got)
+	}
 	if got := answer(two, map[string]string{"a": "A", "b": "B"}, func(string) bool { return true }); got != "" {
 		t.Errorf("every sink stopped: got %q, want no answer", got)
 	}

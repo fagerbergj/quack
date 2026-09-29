@@ -53,16 +53,11 @@ func needsFormatPass(plan dag.Plan, answer string) bool {
 	return true
 }
 
-// terminalNode returns the terminal node (nil if empty). Replicates dag.terminalIDs' walk for AgentName.
+// terminalNode returns the plan's first sink (nil if empty).
 func terminalNode(nodes []dag.Node) *dag.Node {
-	hasSuccessor := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		for _, dep := range n.DependsOn {
-			hasSuccessor[dep] = true
-		}
-	}
+	ids := dag.TerminalIDs(nodes)
 	for i := range nodes {
-		if !hasSuccessor[nodes[i].ID] {
+		if len(ids) > 0 && nodes[i].ID == ids[0] {
 			return &nodes[i]
 		}
 	}

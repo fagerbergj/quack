@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync/atomic"
@@ -263,7 +264,7 @@ func (s *orchRun) invoke(content *genai.Content) (produced, stop bool) {
 	if _, pending := s.planCache.Pending(); pending {
 		produced = false
 	}
-	if _, tripped := s.planCache.LoopGuard(); tripped {
+	if _, _, tripped := s.planCache.LoopGuard(); tripped {
 		produced = true // the turn hands the user a choice; no continuation nudge
 	}
 	return produced, false
@@ -303,20 +304,18 @@ const (
 	planLoopChoicePrefix = "plan-loop-"
 	planLoopRunAsIs      = "Run the plan as is"
 	planLoopRephrase     = "Let me rephrase"
+	planLoopReasonMax    = 300
 )
 
 // askAfterPlanLoop asks the user, through a get_user_choice call of the orchestrator's own, whether to
-// run the plan the judge keeps rejecting; the answer arrives next turn like any pending choice.
-func (s *orchRun) askAfterPlanLoop(reason string) {
+// run the plan the judge keeps rejecting; its id carries that plan's ShapeKey for the answer's turn.
+func (s *orchRun) askAfterPlanLoop(reason, shapeKey string) {
 	ctx := context.WithoutCancel(s.ctx)
 	ev := session.NewEvent(ctx, "")
 	ev.Author = orchestratorName
 	ev.Content = &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{
-		ID: planLoopChoicePrefix + uuid.NewString(), Name: tools.ChoiceToolName,
-		Args: map[string]any{
-			"question": "The plan reviewer keeps rejecting this plan: " + reason + "\n\nRun it anyway, or rephrase the request?",
-			"options":  []any{planLoopRunAsIs, planLoopRephrase},
-		},
+		ID: planLoopChoicePrefix + shapeKey + "-" + uuid.NewString(), Name: tools.ChoiceToolName,
+		Args: map[string]any{"question": planLoopQuestion(s.source, reason), "options": []any{planLoopRunAsIs, planLoopRephrase}},
 	}}}}
 	if resp, err := s.o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: s.userID, SessionID: s.sessionID}); err == nil && resp != nil {
 		if err := s.o.sessions.AppendEvent(ctx, resp.Session, ev); err != nil {
@@ -330,10 +329,29 @@ func (s *orchRun) askAfterPlanLoop(reason string) {
 	s.safeYield(stream.Done(), nil)
 }
 
-// waivesPlanJudge: this turn answers the plan loop choice with "run it as is".
-func waivesPlanJudge(pending PendingQuestion, hasPending bool, message string) bool {
-	return hasPending && strings.HasPrefix(pending.choiceCallID, planLoopChoicePrefix) &&
-		strings.EqualFold(strings.TrimSpace(message), planLoopRunAsIs)
+// planLoopQuestion names the options in its text (a GitHub comment shows only the question). Only the app
+// shows the judge's reason, one line and truncated: it can quote recalled memory, never for GitHub/extensions (#693).
+func planLoopQuestion(source, reason string) string {
+	reply := fmt.Sprintf("Reply %q to run it anyway, or %q.", planLoopRunAsIs, planLoopRephrase)
+	if source != SourceApp {
+		return "The plan reviewer rejected this plan repeatedly. " + reply
+	}
+	line := []rune(strings.Join(strings.Fields(reason), " "))
+	if len(line) > planLoopReasonMax {
+		line = append(line[:planLoopReasonMax], '…')
+	}
+	return "The plan reviewer rejected this plan repeatedly: " + string(line) + "\n\n" + reply
+}
+
+// waivedPlanShape is the ShapeKey this turn's answer to the plan loop choice waives the judge for, or
+// "". Contains, not equals: a GitHub reply arrives wrapped in its envelope.
+func waivedPlanShape(pending PendingQuestion, hasPending bool, message string) string {
+	rest, ok := strings.CutPrefix(pending.choiceCallID, planLoopChoicePrefix)
+	if !hasPending || !ok || !strings.Contains(strings.ToLower(message), strings.ToLower(planLoopRunAsIs)) {
+		return ""
+	}
+	key, _, _ := strings.Cut(rest, "-")
+	return key
 }
 
 // finishLoop: every terminal outcome after the first invoke - continue-retry,
@@ -358,8 +376,8 @@ func (s *orchRun) finishLoop(produced, stop bool) (int, bool) {
 			"Please try again or rephrase your request."), nil)
 		return attempts, true
 	}
-	if reason, tripped := s.planCache.LoopGuard(); tripped {
-		s.askAfterPlanLoop(reason)
+	if reason, key, tripped := s.planCache.LoopGuard(); tripped {
+		s.askAfterPlanLoop(reason, key)
 		return attempts, true
 	}
 	s.emitAgentComplete()
