@@ -81,6 +81,13 @@ func ConfineGit(want bool) bool {
 	if canSelfExec() {
 		err = probeLandlockHook()
 	}
+	if err == nil {
+		// Every grant opens through openat2, which a seccomp profile may block even where Landlock works.
+		var f *os.File
+		if f, err = openNoFollow("/dev/null", false); err == nil {
+			_ = f.Close()
+		}
+	}
 	gitConfined.Store(err == nil)
 	if err != nil {
 		gitUnconfinedNoted.Do(func() {
@@ -94,12 +101,14 @@ func ConfineGit(want bool) bool {
 // GitCmd builds quack's own git child with an empty per-call HOME and no system/global config, pinned for dir != ""
 // to the repo resolveRepo(clone, dir) checks. rw: dirs it writes outside that repo, created when confined.
 func GitCmd(ctx context.Context, bin, clone, dir string, argv, env []string, rw ...string) (*exec.Cmd, func(), error) {
-	home, err := os.MkdirTemp("", "quack-git-home-")
+	tmp, err := os.MkdirTemp("", "quack-git-home-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("git: create empty HOME: %w", err)
 	}
-	if real, rerr := realPath(home); rerr == nil {
-		home = real // a symlinked TMPDIR would fail the no-symlink grant
+	home, err := realPath(tmp) // GIT_CEILING_DIRECTORIES and the no-symlink grant need it real
+	if err != nil {
+		_ = os.RemoveAll(tmp)
+		return nil, nil, fmt.Errorf("git: resolve empty HOME: %w", err)
 	}
 	env = append(env, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0")
 	g, err := newGitGrants(bin, home, env, rw)
@@ -213,15 +222,11 @@ func pinRepo(ctx context.Context, g *gitGrants, bin, clone, dir, home string, en
 		env = append(env, "GIT_DIR="+gitDir, "GIT_WORK_TREE="+work, "GIT_COMMON_DIR="+common)
 		return work, env, sanitizeGitConfig(ctx, g, bin, work, filepath.Join(common, "config"), env)
 	}
-	abs, err := realPath(home)
-	if err != nil {
-		return "", nil, fmt.Errorf("git: resolve %s: %w", home, err)
-	}
-	parent := filepath.Dir(abs)
+	parent := filepath.Dir(home)
 	if strings.ContainsRune(parent, os.PathListSeparator) {
 		return "", nil, fmt.Errorf("git: %s contains %q, which would split GIT_CEILING_DIRECTORIES", parent, os.PathListSeparator)
 	}
-	return abs, append(env, "GIT_CEILING_DIRECTORIES="+parent), nil
+	return home, append(env, "GIT_CEILING_DIRECTORIES="+parent), nil
 }
 
 // resolveRepo pins clone's real .git as the only repo quack's git may touch; dir is clone or a linked worktree

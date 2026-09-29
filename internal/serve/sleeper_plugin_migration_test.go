@@ -33,7 +33,7 @@ func sleeperPluginRemote(t *testing.T) {
 	run(t, work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "sleeper plugin")
 	run(t, work, "tag", "sleeper/v9.9.9")
 	run(t, work, "push", "--quiet", bare, "main", "sleeper/v9.9.9")
-	grantGitFixture(t, bare)
+	confineWithFixture(t, bare)
 	prev := pluginreg.RemoteURL
 	pluginreg.RemoteURL = func(owner, repo string) string {
 		if owner == "fagerbergj" && repo == "quack-extensions" {
@@ -44,15 +44,16 @@ func sleeperPluginRemote(t *testing.T) {
 	t.Cleanup(func() { pluginreg.RemoteURL = prev })
 }
 
+// confineWithFixture runs boot's git confined, as an earlier boot test in this binary leaves it, with bare granted.
+func confineWithFixture(t *testing.T, bare string) {
+	workspace.GitFixtureDirs = []string{bare}
+	workspace.ConfineGit(true)
+	t.Cleanup(func() { workspace.GitFixtureDirs = nil; workspace.ConfineGit(false) })
+}
+
 // Seeding owns local rows and rows it created: each follows a changed seed
 // entry on either backend. A REST-owned row keeps its entry; one predating the flag
 // that still matches its seed is marked seeded.
-// grantGitFixture lets boot's confined git reach the local bare remote.
-func grantGitFixture(t *testing.T, bare string) {
-	workspace.GitFixtureDirs = []string{bare}
-	t.Cleanup(func() { workspace.GitFixtureDirs = nil })
-}
-
 func TestSeedRegistryFollowsChangedEntriesOfRowsItOwns(t *testing.T) {
 	dbReg := func(t *testing.T) pluginreg.FetchRegistry {
 		db, err := pluginreg.OpenDB("sqlite", filepath.Join(t.TempDir(), "plugins.db"))
@@ -170,7 +171,7 @@ func TestBootFetchFollowsSeedRefBump(t *testing.T) {
 		run(t, work, "tag", tag)
 	}
 	run(t, work, "push", "--quiet", bare, "main", "v1", "v2")
-	grantGitFixture(t, bare)
+	confineWithFixture(t, bare)
 	prev := pluginreg.RemoteURL
 	pluginreg.RemoteURL = func(string, string) string { return bare }
 	t.Cleanup(func() { pluginreg.RemoteURL = prev })

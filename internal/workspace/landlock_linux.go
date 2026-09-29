@@ -64,6 +64,9 @@ func SandboxExecMain(args []string) error {
 		return fmt.Errorf("sandbox-exec: %q not found: %w", target[0], err)
 	}
 
+	if err := claimGrantFDs(append(rw, ro...)); err != nil {
+		return err
+	}
 	rwDirs, rwFiles := splitFiles(rw)
 	roDirs, roFiles := splitFiles(ro)
 	var rules []landlock.Rule
@@ -85,7 +88,6 @@ func SandboxExecMain(args []string) error {
 	if err := withSignalScope(landlockABI).Restrict(rules...); err != nil {
 		return fmt.Errorf("sandbox-exec: restrict: %w", err)
 	}
-	closeGrantFDs(append(rw, ro...))
 	execArgv := append([]string{bin}, target[1:]...)
 	// Stamp the ruleset into the environment we exec into. syscall.Exec
 	// replaces this process image, so a confined child is
@@ -95,15 +97,21 @@ func SandboxExecMain(args []string) error {
 	return syscall.Exec(bin, execArgv, env)
 }
 
-// closeGrantFDs keeps the handles behind /proc/self/fd grants from reaching the target.
-func closeGrantFDs(paths []string) {
+// claimGrantFDs refuses a /proc/self/fd grant with no open handle behind it (IgnoreIfMissing would drop it
+// silently) and keeps each handle from reaching the target.
+func claimGrantFDs(paths []string) error {
 	for _, p := range paths {
-		if n, ok := strings.CutPrefix(p, "/proc/self/fd/"); ok {
-			if fd, err := strconv.Atoi(n); err == nil {
-				syscall.CloseOnExec(fd)
-			}
+		n, ok := strings.CutPrefix(p, "/proc/self/fd/")
+		if !ok {
+			continue
 		}
+		fd, err := strconv.Atoi(n)
+		if _, serr := os.Stat(p); err != nil || serr != nil {
+			return fmt.Errorf("sandbox-exec: grant %s has no open handle: %v", p, errors.Join(err, serr))
+		}
+		syscall.CloseOnExec(fd)
 	}
+	return nil
 }
 
 // openNoFollow opens p as an O_PATH handle, refusing a symlink in any component; create makes missing dirs the
