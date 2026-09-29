@@ -132,6 +132,9 @@ func TestPersistAnswerMarksDeliveredAnswer(t *testing.T) {
 	}
 	for ev := range resp.Session.Events().All() {
 		if turn, _ := ev.CustomMetadata[stream.DeliveredAnswerMeta].(string); turn == "t1" {
+			if at, _ := ev.CustomMetadata[stream.DeliveredAtMeta].(string); at == "" {
+				t.Error("the delivered answer carries no delivery time to order retries by")
+			}
 			return
 		}
 	}

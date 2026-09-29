@@ -307,7 +307,7 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 			if cur.answers == nil {
 				cur.answers = map[string]markedAnswer{}
 			}
-			cur.answers[turnID] = markedAnswer{text: plainText(ev.Content), at: ev.Timestamp}
+			keepLatest(cur.answers, turnID, markedAnswer{text: plainText(ev.Content), at: deliveredAt(ev)})
 			continue
 		}
 		for _, p := range ev.Content.Parts {
@@ -328,6 +328,24 @@ func deliveredTurn(ev *session.Event) (string, bool) {
 	return "", false
 }
 
+// deliveredAt is the marker's own delivery time, falling back to the event's (coarser) timestamp.
+func deliveredAt(ev *session.Event) time.Time {
+	if s, ok := ev.CustomMetadata[stream.DeliveredAtMeta].(string); ok {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return t
+		}
+	}
+	return ev.Timestamp
+}
+
+// keepLatest stores a unless m already holds a later delivery for key; on a tie the one seen
+// later in session order wins.
+func keepLatest(m map[string]markedAnswer, key string, a markedAnswer) {
+	if prev, ok := m[key]; !ok || !a.at.Before(prev.at) {
+		m[key] = a
+	}
+}
+
 func plainText(c *genai.Content) string {
 	var sb strings.Builder
 	for _, p := range c.Parts {
@@ -338,13 +356,13 @@ func plainText(c *genai.Content) string {
 	return sb.String()
 }
 
-// keyedAnswers merges every group's turn-keyed delivered answers; a later marker wins.
+// keyedAnswers merges every group's turn-keyed delivered answers; the latest delivery wins.
 func keyedAnswers(groups []turnGroup) map[string]markedAnswer {
 	out := map[string]markedAnswer{}
 	for _, g := range groups {
 		for turnID, a := range g.answers {
 			if turnID != "" {
-				out[turnID] = a
+				keepLatest(out, turnID, a)
 			}
 		}
 	}

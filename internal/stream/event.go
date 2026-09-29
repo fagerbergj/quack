@@ -554,6 +554,10 @@ func ChatTitle(title string) SSEEvent {
 // turn's delivered answer; its value is that turn's id ("" = the turn the event falls in).
 const DeliveredAnswerMeta = "quack_delivered_answer"
 
+// DeliveredAtMeta is the delivery's own nanosecond time (RFC3339Nano): stored event timestamps can
+// tie between quick successive answers, and the latest delivery for a turn must win deterministically.
+const DeliveredAtMeta = "quack_delivered_at"
+
 // Errorf builds an error event.
 func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: ErrorData{Error: msg}} }
 

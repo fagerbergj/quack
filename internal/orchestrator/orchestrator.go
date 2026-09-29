@@ -730,7 +730,10 @@ func (o *Orchestrator) persistAnswer(ctx context.Context, userID, sessionID, ans
 		aev.Author = orchestratorName
 		aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
 		// Keyed by the turn the run answers: a retry or resume appends with no user event of its own.
-		aev.CustomMetadata = map[string]any{stream.DeliveredAnswerMeta: stream.TurnIDFromContext(ctx)}
+		aev.CustomMetadata = map[string]any{
+			stream.DeliveredAnswerMeta: stream.TurnIDFromContext(ctx),
+			stream.DeliveredAtMeta:     time.Now().UTC().Format(time.RFC3339Nano),
+		}
 		_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
 	}
 }
