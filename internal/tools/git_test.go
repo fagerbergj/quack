@@ -52,6 +52,16 @@ func runGitT(t *testing.T, dir string, argv ...string) string {
 	return out
 }
 
+// runGitInT runs quack's git in dir, a linked worktree of clone, failing the test on error.
+func runGitInT(t *testing.T, clone, dir string, argv ...string) string {
+	t.Helper()
+	out, _, err := runGitIn(context.Background(), clone, dir, argv, workspace.DefaultCaps(), nil)
+	if err != nil {
+		t.Fatalf("git %s: %v", strings.Join(argv, " "), err)
+	}
+	return out
+}
+
 // newBareRepoFixture creates a bare "remote" repo (outside any jail) seeded
 // with one commit on main containing README.md, entirely via runGit - no
 // network. Returns the bare repo's path.
@@ -328,7 +338,11 @@ func TestCredentialedGitIgnoresHomeConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.caps.HomeDir, ".gitconfig"), []byte(rewrite), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	wantMain := strings.TrimSpace(runGitT(t, real, "rev-parse", "main"))
+	out, err := exec.Command("git", "-C", real, "rev-parse", "main").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMain := strings.TrimSpace(string(out))
 
 	target, err := setupCloneAndBranch(context.Background(), b, "repo", "file://"+real, "main", "quack/one", false)
 	if err != nil {
@@ -430,7 +444,7 @@ func TestGitEnvCarriesNoServerSecrets(t *testing.T) {
 		t.Skip("git not on PATH")
 	}
 	auth := &gitAuth{cred: GitCredential{Username: "u", Token: "tok"}, askpass: "/x/" + GitAskpassLinkName, host: "github.com"}
-	cmd, done, err := workspace.GitCmd(context.Background(), bin, "", []string{"version"}, gitEnv(workspace.DefaultCaps(), auth))
+	cmd, done, err := workspace.GitCmd(context.Background(), bin, "", "", []string{"version"}, gitEnv(workspace.DefaultCaps(), auth))
 	if err != nil {
 		t.Fatal(err)
 	}

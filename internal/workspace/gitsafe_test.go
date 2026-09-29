@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -32,7 +33,12 @@ func gitConfigFixture(t *testing.T) (bin, dir string) {
 
 func runGitCmd(t *testing.T, bin, dir string, argv ...string) (string, error) {
 	t.Helper()
-	cmd, done, err := GitCmd(context.Background(), bin, dir, argv, nil)
+	return runGitCmdIn(t, bin, dir, dir, argv...)
+}
+
+func runGitCmdIn(t *testing.T, bin, clone, dir string, argv ...string) (string, error) {
+	t.Helper()
+	cmd, done, err := GitCmd(context.Background(), bin, clone, dir, argv, nil)
 	if err != nil {
 		return "", err
 	}
@@ -61,7 +67,7 @@ func TestGitCmdStripsRepoConfigInRepo(t *testing.T) {
 // TestGitCmdHomeIsEmptyAndRemoved: dir "" runs in the per-call HOME, which starts empty and is removed after.
 func TestGitCmdHomeIsEmptyAndRemoved(t *testing.T) {
 	bin, _ := gitConfigFixture(t)
-	cmd, done, err := GitCmd(context.Background(), bin, "", []string{"version"}, []string{"HOME=/agent/home"})
+	cmd, done, err := GitCmd(context.Background(), bin, "", "", []string{"version"}, []string{"HOME=/agent/home"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +119,8 @@ func TestGitCmdNeverStripsEnclosingRepo(t *testing.T) {
 	}
 }
 
-// TestGitCmdResolvesSymlinkedDir: the ceiling applies to the real path, so a symlink into an enclosing repo
-// can't walk discovery up to it.
+// TestGitCmdResolvesSymlinkedDir: a symlink to a dir with a broken .git fails closed instead of reaching the
+// enclosing repo.
 func TestGitCmdResolvesSymlinkedDir(t *testing.T) {
 	bin, dir := gitConfigFixture(t)
 	nested := filepath.Join(dir, "sub", "repo")
@@ -134,17 +140,165 @@ func TestGitCmdResolvesSymlinkedDir(t *testing.T) {
 	}
 }
 
-// TestGitCmdRefusesListSeparatorInPath: a ':' in the parent would split GIT_CEILING_DIRECTORIES.
+// TestGitCmdRefusesListSeparatorInPath: a ':' in the empty HOME's parent would split GIT_CEILING_DIRECTORIES.
 func TestGitCmdRefusesListSeparatorInPath(t *testing.T) {
 	bin, _ := gitConfigFixture(t)
-	dir := filepath.Join(t.TempDir(), "a"+string(os.PathListSeparator)+"b", "repo")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	tmp := filepath.Join(t.TempDir(), "a"+string(os.PathListSeparator)+"b")
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(bin, "-C", dir, "init", "--quiet").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
-	if _, err := runGitCmd(t, bin, dir, "version"); err == nil || !strings.Contains(err.Error(), "GIT_CEILING_DIRECTORIES") {
+	t.Setenv("TMPDIR", tmp)
+	if _, err := runGitCmd(t, bin, "", "version"); err == nil || !strings.Contains(err.Error(), "GIT_CEILING_DIRECTORIES") {
 		t.Errorf("err = %v, want a refusal naming GIT_CEILING_DIRECTORIES", err)
+	}
+}
+
+// repoWithWorktree: gitConfigFixture plus one commit and a linked worktree of it.
+func repoWithWorktree(t *testing.T) (bin, clone, wt string) {
+	t.Helper()
+	bin, clone = gitConfigFixture(t)
+	wt = filepath.Join(t.TempDir(), "wt")
+	for _, args := range [][]string{
+		{"-c", "user.email=q@x.local", "commit", "--quiet", "--allow-empty", "-m", "init"},
+		{"worktree", "add", "--quiet", "--detach", wt},
+	} {
+		if out, err := exec.Command(bin, append([]string{"-C", clone}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return bin, clone, wt
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGitCmdRefusesRepoRedirects: a writable tree can't aim quack's git at another repo; the other repo's config
+// (which an in-repo call would strip) survives untouched.
+func TestGitCmdRefusesRepoRedirects(t *testing.T) {
+	for name, redirect := range map[string]func(t *testing.T, clone, wt, other string) (dir string){
+		"dot git symlink": func(t *testing.T, clone, _, other string) string {
+			if err := os.RemoveAll(filepath.Join(clone, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(other, ".git"), filepath.Join(clone, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			return clone
+		},
+		"dot git file in clone": func(t *testing.T, clone, _, other string) string {
+			if err := os.RemoveAll(filepath.Join(clone, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(clone, ".git"), "gitdir: "+filepath.Join(other, ".git")+"\n")
+			return clone
+		},
+		"worktree gitdir outside clone": func(t *testing.T, _, wt, other string) string {
+			writeFile(t, filepath.Join(wt, ".git"), "gitdir: "+filepath.Join(other, ".git")+"\n")
+			return wt
+		},
+		"worktree commondir elsewhere": func(t *testing.T, clone, wt, other string) string {
+			writeFile(t, filepath.Join(clone, ".git", "worktrees", "wt", "commondir"), filepath.Join(other, ".git")+"\n")
+			return wt
+		},
+		"worktree gitdir outside worktrees dir": func(t *testing.T, clone, wt, _ string) string {
+			fake := filepath.Join(t.TempDir(), "wt")
+			if err := os.Rename(filepath.Join(clone, ".git", "worktrees", "wt"), fake); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(fake, "commondir"), filepath.Join(clone, ".git")+"\n")
+			writeFile(t, filepath.Join(wt, ".git"), "gitdir: "+fake+"\n")
+			return wt
+		},
+		"worktree pointer is a fifo": func(t *testing.T, _, wt, _ string) string {
+			if err := os.Remove(filepath.Join(wt, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(filepath.Join(wt, ".git"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return wt
+		},
+		"clone commondir": func(t *testing.T, clone, _, other string) string {
+			writeFile(t, filepath.Join(clone, ".git", "commondir"), filepath.Join(other, ".git")+"\n")
+			return clone
+		},
+		"alternates": func(t *testing.T, clone, _, other string) string {
+			writeFile(t, filepath.Join(clone, ".git", "objects", "info", "alternates"), filepath.Join(other, ".git", "objects")+"\n")
+			return clone
+		},
+		"http alternates": func(t *testing.T, clone, _, _ string) string {
+			writeFile(t, filepath.Join(clone, ".git", "objects", "info", "http-alternates"), "https://example.com/objects\n")
+			return clone
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bin, clone, wt := repoWithWorktree(t)
+			_, other := gitConfigFixture(t)
+			dir := redirect(t, clone, wt, other)
+			if _, err := runGitCmdIn(t, bin, clone, dir, "config", "--local", "--list"); err == nil || !strings.Contains(err.Error(), "not a repository quack created") {
+				t.Errorf("err = %v, want a refusal", err)
+			}
+			out, err := exec.Command(bin, "-C", other, "config", "--local", "http.proxy").Output()
+			if err != nil || strings.TrimSpace(string(out)) != "http://127.0.0.1:9" {
+				t.Errorf("other repo's config was touched: %q %v", out, err)
+			}
+		})
+	}
+}
+
+// TestGitCmdPinsLegitimateRepos: the clone itself and its own linked worktree still run, each on its own gitdir.
+func TestGitCmdPinsLegitimateRepos(t *testing.T) {
+	bin, clone, wt := repoWithWorktree(t)
+	real, err := filepath.EvalSymlinks(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for dir, want := range map[string]string{
+		clone: filepath.Join(real, ".git"),
+		wt:    filepath.Join(real, ".git", "worktrees", "wt"),
+	} {
+		out, err := runGitCmdIn(t, bin, clone, dir, "rev-parse", "--absolute-git-dir")
+		if err != nil || strings.TrimSpace(out) != want {
+			t.Errorf("git dir for %s = %q %v, want %s", dir, out, err, want)
+		}
+	}
+}
+
+// TestWorktreeCloneRefusesOutsideRoot: a worktree whose clone lies outside root yields no clone to prune in.
+func TestWorktreeCloneRefusesOutsideRoot(t *testing.T) {
+	_, clone, wt := repoWithWorktree(t)
+	if got, err := WorktreeClone(t.TempDir(), wt); err == nil {
+		t.Errorf("WorktreeClone outside root = %q, want an error", got)
+	}
+	got, err := WorktreeClone(filepath.Dir(clone), wt)
+	real, _ := filepath.EvalSymlinks(clone)
+	if err != nil || got != real {
+		t.Errorf("WorktreeClone inside root = %q %v, want %s", got, err, real)
+	}
+	if got, err := WorktreeClone(filepath.Dir(clone), clone); got != "" || err != nil {
+		t.Errorf("WorktreeClone(plain clone) = %q %v, want \"\" nil", got, err)
+	}
+}
+
+// TestGitCmdPinsRepoAgainstLaterSwap: redirects written after validation still don't move the built command.
+func TestGitCmdPinsRepoAgainstLaterSwap(t *testing.T) {
+	bin, clone, wt := repoWithWorktree(t)
+	_, other := gitConfigFixture(t)
+	cmd, done, err := GitCmd(context.Background(), bin, clone, wt, []string{"rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	writeFile(t, filepath.Join(wt, ".git"), "gitdir: "+filepath.Join(other, ".git")+"\n")
+	writeFile(t, filepath.Join(clone, ".git", "worktrees", "wt", "commondir"), filepath.Join(other, ".git")+"\n")
+	out, err := cmd.Output()
+	real, _ := filepath.EvalSymlinks(clone)
+	want := filepath.Join(real, ".git", "worktrees", "wt") + "\n" + filepath.Join(real, ".git") + "\n"
+	if err != nil || string(out) != want {
+		t.Errorf("git dirs = %q %v, want %q", out, err, want)
 	}
 }

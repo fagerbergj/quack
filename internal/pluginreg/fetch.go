@@ -299,7 +299,7 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	cmd, done, err := workspace.GitCmd(ctx, "git", dir, args, gitEnv())
+	cmd, done, err := workspace.GitCmd(ctx, "git", dir, dir, args, gitEnv())
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -45,8 +46,8 @@ func TestSetupWorktreeCreatesDistinctDirsAndBranches(t *testing.T) {
 		t.Errorf("worktree 2 missing the parent clone's content: %v", err)
 	}
 
-	branch1 := strings.TrimSpace(runGitT(t, dir1, "rev-parse", "--abbrev-ref", "HEAD"))
-	branch2 := strings.TrimSpace(runGitT(t, dir2, "rev-parse", "--abbrev-ref", "HEAD"))
+	branch1 := strings.TrimSpace(runGitInT(t, parentDir, dir1, "rev-parse", "--abbrev-ref", "HEAD"))
+	branch2 := strings.TrimSpace(runGitInT(t, parentDir, dir2, "rev-parse", "--abbrev-ref", "HEAD"))
 	if branch1 == branch2 {
 		t.Fatalf("both worktrees checked out the SAME branch %q, want distinct (git would refuse this for real)", branch1)
 	}
@@ -126,13 +127,13 @@ func TestSetupWorktreeFollowsMovedParentHead(t *testing.T) {
 	if _, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil); err != nil {
 		t.Fatalf("second SetupWorktree: %v", err)
 	}
-	if got := strings.TrimSpace(runGitT(t, dir, "rev-parse", "HEAD")); got != want {
+	if got := strings.TrimSpace(runGitInT(t, parentDir, dir, "rev-parse", "HEAD")); got != want {
 		t.Errorf("worktree HEAD = %s, want the shared clone's new head %s", got, want)
 	}
 	if body, _ := os.ReadFile(filepath.Join(dir, "README.md")); string(body) != "pushed after the first review\n" {
 		t.Errorf("worktree README.md = %q, want the new head's content", body)
 	}
-	if st := runGitT(t, dir, "status", "--porcelain", "--untracked-files=no"); strings.TrimSpace(st) != "" {
+	if st := runGitInT(t, parentDir, dir, "status", "--porcelain", "--untracked-files=no"); strings.TrimSpace(st) != "" {
 		t.Errorf("worktree left dirty after sync:\n%s", st)
 	}
 }
@@ -236,5 +237,41 @@ func TestSetupWorktreeCheckSetupFailureWarnsAndProceeds(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Errorf("worktree missing after a failed check_setup: %v", err)
+	}
+}
+
+// TestPruneWorktreeStaysInsideRoot: a worktree registered to a clone outside root is never pruned from it; one
+// whose clone lies inside root is.
+func TestPruneWorktreeStaysInsideRoot(t *testing.T) {
+	requireGit(t)
+	newClone := func(parent string) (clone, wt string) {
+		clone, wt = filepath.Join(parent, "clone"), filepath.Join(t.TempDir(), "wt")
+		rawGit(t, parent, "init", "--quiet", "--initial-branch=main", clone)
+		rawGit(t, clone, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "--allow-empty", "-m", "init")
+		rawGit(t, clone, "worktree", "add", "--quiet", "--detach", wt)
+		return clone, wt
+	}
+	registered := func(clone, wt string) bool {
+		out, err := exec.Command("git", "-C", clone, "worktree", "list", "--porcelain").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Contains(string(out), filepath.Base(filepath.Dir(wt)))
+	}
+	root := t.TempDir()
+	inClone, inWT := newClone(root)
+	outClone, outWT := newClone(t.TempDir())
+
+	if err := PruneWorktree(context.Background(), root, outWT, workspace.DefaultCaps()); err == nil {
+		t.Error("PruneWorktree of a worktree owned by a clone outside root: want an error")
+	}
+	if !registered(outClone, outWT) {
+		t.Error("the outside clone's worktree bookkeeping was touched")
+	}
+	if err := PruneWorktree(context.Background(), root, inWT, workspace.DefaultCaps()); err != nil {
+		t.Fatalf("PruneWorktree inside root: %v", err)
+	}
+	if registered(inClone, inWT) {
+		t.Error("the inside clone still registers the pruned worktree")
 	}
 }

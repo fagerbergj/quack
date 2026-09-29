@@ -43,17 +43,13 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	return target, nil
 }
 
-// PruneWorktree detaches dir from the parent clone's bookkeeping before removal.
-func PruneWorktree(ctx context.Context, dir string, caps workspace.Caps) error {
-	common := workspace.WorktreeCommonGitDir(dir)
-	if common == "" {
-		return nil
+// PruneWorktree detaches dir from its owning clone's bookkeeping before removal; that clone must lie inside root.
+func PruneWorktree(ctx context.Context, root, dir string, caps workspace.Caps) error {
+	clone, err := workspace.WorktreeClone(root, dir)
+	if clone == "" || err != nil {
+		return err
 	}
-	parent := filepath.Dir(common)
-	if _, err := os.Stat(parent); err != nil {
-		return nil
-	}
-	_, _, err := runGit(ctx, parent, []string{"worktree", "remove", "--force", dir}, caps, nil)
+	_, _, err = runGit(ctx, clone, []string{"worktree", "remove", "--force", dir}, caps, nil)
 	return err
 }
 
@@ -64,7 +60,7 @@ func syncWorktree(ctx context.Context, target, parentDir string, caps workspace.
 	if err != nil {
 		return false
 	}
-	_, _, err = runGit(ctx, target, []string{"reset", "--quiet", "--hard", strings.TrimSpace(head)}, caps, nil)
+	_, _, err = runGitIn(ctx, parentDir, target, []string{"reset", "--quiet", "--hard", strings.TrimSpace(head)}, caps, nil)
 	return err == nil
 }
 
