@@ -735,7 +735,7 @@ func (g *gateRun) writerRecovery(question *genai.Content, answer string) (string
 	g.log.Warn("worker still empty after continuation; falling back to the tool-less writer", "rounds", maxContinueRounds)
 	answer, err := runWriterFresh(g.ctx, g.workerModel, buildFinalizeContent(question, g.ownActivity()), g.cfg.ChatID)
 	if err != nil {
-		g.log.Error("writer recovery failed", "err", err)
+		g.log.Log(g.ctx, errLevel(g.ctx), "writer recovery failed", "err", err)
 		return "", err
 	}
 	if strings.TrimSpace(stripLeadingEnvScaffold(answer)) == "" {
@@ -1081,7 +1081,7 @@ func (j *judgeRounds) checkTruncation(round int) bool {
 				j.outcome = &judgeRoundOutcome{err: lerr}
 				return false
 			}
-			j.log.Error("truncation continuation failed; judging the cut-off answer", "round", round, "continuation", n, "err", err)
+			j.log.Log(j.ctx, errLevel(j.ctx), "truncation continuation failed; judging the cut-off answer", "round", round, "continuation", n, "err", err)
 			j.truncated = true
 			return true
 		}

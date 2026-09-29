@@ -261,7 +261,7 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 		totals = map[string]int64{}
 	}
 
-	running, err := h.store.ChatsWithRunningNode(r.Context(), ids)
+	running, err := h.store.ChatsWithRunningNode(r.Context(), h.notLive(ids))
 	if err != nil {
 		slog.Warn("list chats: running-node lookup failed", "component", "rest", "err", err)
 	}
@@ -1627,8 +1627,7 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64, runningNode bool) s
 // chatStatus is the one status rule for the chat list and detail: running if the hub or a
 // latest-plan node row (runningNode) says so, else the stamp; a leftover ActiveTurnID means the run died unstamped.
 func (h *Handler) chatStatus(c store.Chat, runningNode bool) (schema.ChatStatus, *string) {
-	// HasRegisteredRun covers a run dispatched but not yet publishing (MarkRunActive already set).
-	if h.hub.Active(c.ID) || h.hub.HasRegisteredRun(c.ID) || runningNode {
+	if h.liveRun(c.ID) || runningNode {
 		return schema.ChatStatusRunning, nil
 	}
 	if c.ActiveTurnID != "" {
@@ -1645,8 +1644,28 @@ func (h *Handler) chatStatus(c store.Chat, runningNode bool) (schema.ChatStatus,
 	}
 }
 
+// liveRun is the hub's own running signal; HasRegisteredRun covers a run dispatched but not yet
+// publishing (MarkRunActive already set).
+func (h *Handler) liveRun(chatID string) bool {
+	return h.hub.Active(chatID) || h.hub.HasRegisteredRun(chatID)
+}
+
+// notLive drops the chats the hub already reports running: their node rows needn't be queried.
+func (h *Handler) notLive(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !h.liveRun(id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // chatHasRunningNode is ChatsWithRunningNode for one chat; a lookup error reads as not running.
 func (h *Handler) chatHasRunningNode(ctx context.Context, chatID string) bool {
+	if h.liveRun(chatID) {
+		return true // already running per the hub; skip the query
+	}
 	running, err := h.store.ChatsWithRunningNode(ctx, []string{chatID})
 	if err != nil {
 		slog.Warn("chat status: running-node lookup failed", "component", "rest", "chat", chatID, "err", err)

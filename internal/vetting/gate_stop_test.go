@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -44,19 +45,39 @@ func (c *stopCtrl) NoteDraft(d string) {
 	}
 }
 
+// abortCtrl is a stopCtrl whose stop also aborts the registered round, as a real node control's does.
+type abortCtrl struct {
+	stopCtrl
+	abort context.CancelFunc
+}
+
+func (c *abortCtrl) SetRoundAbort(f context.CancelFunc) { c.mu.Lock(); c.abort = f; c.mu.Unlock() }
+func (c *abortCtrl) ClearRoundAbort()                   { c.mu.Lock(); c.abort = nil; c.mu.Unlock() }
+func (c *abortCtrl) stopAndAbort() {
+	c.stop()
+	c.mu.Lock()
+	f := c.abort
+	c.mu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+
 // scriptStub: the worker answers from its script in order (repeating the last), the judge
 // verdicts likewise; onJudge runs as each judge call starts.
 type scriptStub struct {
-	mu       sync.Mutex
-	scores   []float64
-	texts    []string
-	onJudge  func()
-	requests []string
+	mu         sync.Mutex
+	scores     []float64
+	texts      []string
+	onJudge    func()
+	onWorker   func()
+	blockJudge bool // the judge waits for its ctx to end instead of answering
+	requests   []string
 }
 
 func (s *scriptStub) Name() string { return "script" }
 
-func (s *scriptStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (s *scriptStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		s.mu.Lock()
 		if stubHasTool(req, submitVerdictTool) {
@@ -69,6 +90,11 @@ func (s *scriptStub) GenerateContent(_ context.Context, req *model.LLMRequest, _
 			if hook != nil {
 				hook()
 			}
+			if s.blockJudge {
+				<-ctx.Done()
+				yield(nil, ctx.Err())
+				return
+			}
 			yield(stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "revise it"}), nil)
 			return
 		}
@@ -77,7 +103,11 @@ func (s *scriptStub) GenerateContent(_ context.Context, req *model.LLMRequest, _
 		if len(s.texts) > 1 {
 			s.texts = s.texts[1:]
 		}
+		hook := s.onWorker
 		s.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		yield(stubText(text), nil)
 	}
 }
@@ -169,5 +199,39 @@ func TestRunGatedRefine_WriterRecoverySeesOnlyOwnActivity(t *testing.T) {
 	}
 	if !sawWriter {
 		t.Fatal("the tool-less writer never ran")
+	}
+}
+
+// TestRunGatedRefine_StopAbortsTheJudgeCall: a per-node stop aborts a judge call that would
+// otherwise never return, and the node ends with its draft, undelivered.
+func TestRunGatedRefine_StopAbortsTheJudgeCall(t *testing.T) {
+	ctrl := &abortCtrl{}
+	stub := &scriptStub{texts: []string{"DRAFT"}, scores: []float64{0.95}, blockJudge: true, onJudge: ctrl.stopAndAbort}
+	done := make(chan string, 1)
+	go func() { done <- runGate(t, stub, ctrl, session.InMemoryService(), false) }()
+	select {
+	case got := <-done:
+		if got != "DRAFT" || ctrl.delivered {
+			t.Errorf("answer = %q delivered=%v, want the draft, undelivered", got, ctrl.delivered)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stop never aborted the judge call")
+	}
+}
+
+// TestRunGatedRefine_StoppedNodeMakesNoMoreCalls: a node stopped before it drafts makes no
+// model call; one stopped after an empty draft makes no continuation or writer call either.
+func TestRunGatedRefine_StoppedNodeMakesNoMoreCalls(t *testing.T) {
+	pre := &stopCtrl{cancelled: true}
+	stub := &scriptStub{texts: []string{""}, scores: []float64{0.95}}
+	runGate(t, stub, pre, session.InMemoryService(), true)
+	if n := len(stub.requests); n != 0 {
+		t.Errorf("pre-stopped node made %d model calls, want 0", n)
+	}
+	ctrl := &stopCtrl{}
+	stub = &scriptStub{texts: []string{""}, scores: []float64{0.95}, onWorker: ctrl.stop}
+	runGate(t, stub, ctrl, session.InMemoryService(), true)
+	if n := len(stub.requests); n != 1 {
+		t.Errorf("node stopped after its empty draft made %d model calls, want 1", n)
 	}
 }

@@ -285,3 +285,22 @@ func TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle(t *testing.T) {
 		t.Errorf("stamped RunStatus = %q, want idle", c.RunStatus)
 	}
 }
+
+// TestSeedOutputs_Classification: which re-run seeds carry the not-reviewed warning.
+func TestSeedOutputs_Classification(t *testing.T) {
+	seeded, unreviewed := SeedOutputs([]DagNode{
+		{NodeID: "passed", Status: "done", Output: "A", JudgeRounds: 1, JudgePassed: true},
+		{NodeID: "unjudged", Status: "done", Output: "B"},
+		{NodeID: "rejected", Status: "done", Output: "C", JudgeRounds: 2, JudgePassed: false},
+		{NodeID: "stopped", Status: "cancelled", Output: "D"},
+		{NodeID: "empty", Status: "done"},
+	})
+	for id, want := range map[string]bool{"passed": false, "unjudged": false, "rejected": true, "stopped": true} {
+		if seeded[id] == "" || unreviewed[id] != want {
+			t.Errorf("%s: seeded=%q unreviewed=%v, want seeded with unreviewed=%v", id, seeded[id], unreviewed[id], want)
+		}
+	}
+	if _, ok := seeded["empty"]; ok {
+		t.Error("a node with no output was seeded")
+	}
+}

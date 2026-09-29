@@ -279,3 +279,33 @@ func TestGroupSessionEvents_LatestDeliveryWinsOnTiedTimestamps(t *testing.T) {
 		}
 	}
 }
+
+// TestGetLastTurnWithContent_ReadsDeliveredAnswer: the last-turn loader takes the turn's
+// delivered answer (and its retry replacements) the same way the full loader does.
+func TestGetLastTurnWithContent_ReadsDeliveredAnswer(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "local", SessionID: c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveTurn(ctx, c.ID, "t1", "q"); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range spaced(userEvent("q"), deliveredFor("t1", "FIRST"), deliveredFor("t1", "RETRIED")) {
+		if err := st.Sessions.AppendEvent(ctx, sessResp.Session, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	last, err := st.GetLastTurnWithContent(ctx, chatAppName, "local", c.ID)
+	if err != nil || last == nil || last.Answer != "RETRIED" {
+		t.Fatalf("last turn = %+v err=%v, want answer RETRIED", last, err)
+	}
+}

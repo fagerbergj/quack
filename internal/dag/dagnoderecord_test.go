@@ -160,3 +160,25 @@ func TestUpdateDagNodeStatusAcceptsRetryRerun(t *testing.T) {
 		t.Fatalf("record = %+v err=%v, want done", rec, err)
 	}
 }
+
+// TestCancelUnstartedDagNodeRecords_LeavesLiveAndPaused: a stop's settle cancels only planned,
+// never-started records; paused, needs_input and running ones are left to their own lifecycle.
+func TestCancelUnstartedDagNodeRecords_LeavesLiveAndPaused(t *testing.T) {
+	SetAgentRoster([]AgentInfo{{Name: "code-implementer"}})
+	svc := artifact.InMemoryService()
+	want := map[string]NodeStatus{"q": StatusCancelled, "p": StatusPaused, "h": StatusNeedsInput, "r": StatusRunning, "d": StatusDone}
+	for id, st := range map[string]NodeStatus{"q": StatusQueued, "p": StatusPaused, "h": StatusNeedsInput, "r": StatusRunning, "d": StatusDone} {
+		seedDagNode(t, svc, DagNodeRecord{NodeID: id, Agent: "code-implementer", Status: st})
+	}
+	if err := CancelUnstartedDagNodeRecords(context.Background(), svc, "quack", "u1", "chat1"); err != nil {
+		t.Fatal(err)
+	}
+	c := recordstore.New(svc, "quack", "u1", "chat1")
+	for id, st := range want {
+		raw, _, _, _ := c.Latest(context.Background(), kindDagNode+":"+id)
+		var rec DagNodeRecord
+		if err := json.Unmarshal(raw, &rec); err != nil || rec.Status != st {
+			t.Errorf("%s = %q, want %q", id, rec.Status, st)
+		}
+	}
+}

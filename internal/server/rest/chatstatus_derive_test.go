@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/schema"
@@ -77,5 +78,21 @@ func TestChatStatus_ListAndDetailAgree(t *testing.T) {
 				t.Errorf("detail = %q, list = %q, want both %q", detail.Status, list.Data[0].Status, tc.want)
 			}
 		})
+	}
+}
+
+// TestChatStatus_LiveRunSkipsNodeQuery: a chat the hub already reports running needs no
+// running-node lookup, in the detail or the list.
+func TestChatStatus_LiveRunSkipsNodeQuery(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	h.hub.Publish(chatID, 1, stream.ResponseCreated("turn-1"))
+	h.store.EnableQueryRecording()
+	h.GetChat(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID, nil), chatID)
+	h.ListChats(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil), schema.ListChatsParams{})
+	for _, q := range h.store.RecordedQuerySQL() {
+		if strings.Contains(q, "JOIN dag_plans") && strings.Contains(q, "dag_nodes.status") {
+			t.Errorf("ran the running-node query for a live chat: %s", q)
+		}
 	}
 }
