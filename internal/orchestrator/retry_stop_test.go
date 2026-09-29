@@ -116,3 +116,24 @@ func TestFinalizeAnswer_StoppedTerminalIsNoAnswer(t *testing.T) {
 		t.Errorf("finalizeAnswer = %q, want no answer for a stopped terminal node", got)
 	}
 }
+
+// TestPersistAnswerMarksDeliveredAnswer: the delivered answer is marked so a reload can tell
+// it apart from the orchestrator's narration in the same turn.
+func TestPersistAnswerMarksDeliveredAnswer(t *testing.T) {
+	sessions := session.InMemoryService()
+	o := &Orchestrator{sessions: sessions}
+	if _, err := sessions.Create(context.Background(), &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	o.persistAnswer(context.Background(), "u", "c", "THE ANSWER")
+	resp, err := sessions.Get(context.Background(), &session.GetRequest{AppName: AppName, UserID: "u", SessionID: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ev := range resp.Session.Events().All() {
+		if marked, _ := ev.CustomMetadata[stream.DeliveredAnswerMeta].(bool); marked {
+			return
+		}
+	}
+	t.Fatal("the persisted answer event is not marked delivered")
+}

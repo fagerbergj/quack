@@ -840,3 +840,23 @@ func TestBuildTurnStoppedTerminalNode(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildTurnUsesDeliveredAnswer: a plan extended in a later turn keeps an older sink first;
+// the turn's bubble is what that turn delivered, not the plan terminal's older output.
+func TestBuildTurnUsesDeliveredAnswer(t *testing.T) {
+	planJSON := `{"nodes":[{"id":"synth","agent":"synthesizer","task":"t","depends_on":[]},{"id":"wr5","agent":"web-researcher","task":"t2","depends_on":[]}],"edges":[]}`
+	turn := buildTurn(store.TurnContent{
+		ID: "t3", CreatedAt: time.Now(), UserText: "follow up", AsstText: "narration. WR5 ANSWER", Answer: "WR5 ANSWER",
+		Plan:  &store.DagPlan{ID: "p1", TurnID: "t3", PlanJSON: planJSON},
+		Nodes: []store.DagNode{{NodeID: "synth", Status: "done", Output: "turn-1 table"}, {NodeID: "wr5", Status: "done", Output: "WR5 ANSWER"}},
+	})
+	for _, o := range turn.Output {
+		if m, err := o.AsMessageOutputItem(); err == nil && m.Type == "message" && len(m.Content) > 0 {
+			if tp, _ := m.Content[0].AsOutputTextPart(); tp.Text != "WR5 ANSWER" {
+				t.Errorf("bubble = %q, want the answer this turn delivered", tp.Text)
+			}
+			return
+		}
+	}
+	t.Fatal("no message item")
+}

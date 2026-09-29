@@ -1407,6 +1407,10 @@ func buildUsage(tc store.TurnContent) *schema.Usage {
 // answerBubble is the turn's answer text and reasoning: a DAG turn's terminal node output, else
 // the orchestrator's own reply. A stopped terminal node's draft stands alone, never mixed with the orchestrator's text.
 func answerBubble(tc store.TurnContent, planData stream.DagPlanData, planOK bool) (text, think string, stopped bool) {
+	// What this turn actually delivered wins: a plan extended across turns keeps an older sink first.
+	if tc.Answer != "" {
+		return tc.Answer, tc.AsstThink, false
+	}
 	if !planOK {
 		return tc.AsstText, tc.AsstThink, false
 	}

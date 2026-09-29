@@ -8,6 +8,8 @@ import (
 
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // TestGetLastTurnWithContent_MatchesTailOfGetTurnsWithContent pins perf audit #3's
@@ -161,4 +163,41 @@ func TestGetLastTurnWithContent_PartialRunInProgress(t *testing.T) {
 	if got.AsstText != "" {
 		t.Errorf("AsstText = %q, want empty (no model response yet)", got.AsstText)
 	}
+}
+
+// TestTurnContent_DeliveredAnswerSurvivesStorage: the orchestrator's delivered-answer message
+// is told apart from its narration after a round trip through the session store.
+func TestTurnContent_DeliveredAnswerSurvivesStorage(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "local", SessionID: c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveTurn(ctx, c.ID, "t1", "q"); err != nil {
+		t.Fatal(err)
+	}
+	// Built in append order: the store orders events by their creation timestamps.
+	for _, ev := range []*session.Event{userEvent("q"), asstEvent(&genai.Part{Text: "planning chatter. "}), deliveredEvent("THE DELIVERED ANSWER")} {
+		if err := st.Sessions.AppendEvent(ctx, sessResp.Session, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turns, err := st.GetTurnsWithContent(ctx, chatAppName, "local", c.ID)
+	if err != nil || len(turns) != 1 || turns[0].Answer != "THE DELIVERED ANSWER" {
+		t.Fatalf("turns = %+v err=%v, want the delivered answer apart from the narration", turns, err)
+	}
+}
+
+func deliveredEvent(text string) *session.Event {
+	ev := asstEvent(&genai.Part{Text: text})
+	ev.CustomMetadata = map[string]any{stream.DeliveredAnswerMeta: true}
+	return ev
 }

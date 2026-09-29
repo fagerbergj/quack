@@ -31,6 +31,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/pgdial"
 	"github.com/fagerbergj/quack/internal/sqlitedsn"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
@@ -219,6 +220,8 @@ type TurnContent struct {
 	UserText  string
 	AsstText  string
 	AsstThink string
+	// Answer is the turn's delivered DAG answer (stream.DeliveredAnswerMeta), "" when none.
+	Answer    string
 	ToolCalls []ToolCallRecord // orchestrator-level tool calls, in event order
 	Plan      *DagPlan
 	Nodes     []DagNode
@@ -258,7 +261,7 @@ const orchestratorAuthor = "orchestrator"
 // userText/asstText/asstThink are strings.Builder, not string: a turn assembled from
 // streamed events otherwise appends with += for every chunk, copying the whole accumulated text each time - O(n^2) in events per turn (perf audit #4: 197 MB for one 2,000-event turn; strings.Builder measured at 5.6 MB for 50x280).
 type turnGroup struct {
-	userText, asstText, asstThink                                              strings.Builder
+	userText, asstText, asstThink, answer                                      strings.Builder
 	toolCalls                                                                  []ToolCallRecord
 	promptTokens, completionTokens, reasoningTokens, cachedTokens, totalTokens int32
 }
@@ -290,8 +293,12 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 		if ev.UsageMetadata != nil {
 			addUsage(cur, ev.UsageMetadata)
 		}
+		delivered, _ := ev.CustomMetadata[stream.DeliveredAnswerMeta].(bool)
 		for _, p := range ev.Content.Parts {
 			recordAssistantPart(cur, p)
+			if delivered && p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
+				cur.answer.WriteString(p.Text)
+			}
 		}
 	}
 	return groups
@@ -1605,6 +1612,7 @@ func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[s
 		tc.UserText = g.userText.String()
 		tc.AsstText = g.asstText.String()
 		tc.AsstThink = g.asstThink.String()
+		tc.Answer = g.answer.String()
 		tc.ToolCalls = g.toolCalls
 		if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
 			tc.PromptTokens = g.promptTokens
