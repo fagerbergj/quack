@@ -626,12 +626,8 @@ func applyConfigKnobs(openaiReq *openai.ChatCompletionNewParams, cfg *genai.Gene
 		}
 	}
 
-	if len(cfg.Tools) > 0 {
-		tools, err := convertTools(cfg.Tools)
-		if err != nil {
-			return err
-		}
-		openaiReq.Tools = tools
+	if err := applyTools(openaiReq, cfg); err != nil {
+		return err
 	}
 
 	if cfg.Temperature != nil {
@@ -649,6 +645,23 @@ func applyConfigKnobs(openaiReq *openai.ChatCompletionNewParams, cfg *genai.Gene
 		}
 	}
 
+	return nil
+}
+
+// applyTools maps the tool declarations and, for a NONE calling mode, tool_choice "none" -
+// the tools stay declared so the prompt head (and the server's prefix cache) is unchanged.
+func applyTools(openaiReq *openai.ChatCompletionNewParams, cfg *genai.GenerateContentConfig) error {
+	if len(cfg.Tools) == 0 {
+		return nil
+	}
+	tools, err := convertTools(cfg.Tools)
+	if err != nil {
+		return err
+	}
+	openaiReq.Tools = tools
+	if tc := cfg.ToolConfig; tc != nil && tc.FunctionCallingConfig != nil && tc.FunctionCallingConfig.Mode == genai.FunctionCallingConfigModeNone {
+		openaiReq.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: openai.String(string(openai.ChatCompletionToolChoiceOptionAutoNone))}
+	}
 	return nil
 }
 

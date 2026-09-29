@@ -1215,11 +1215,23 @@ func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
 }
 
 // stutterJudge repeats the exact same tool call twice (the model stutter
-// #853 exists for), then - once forcedVerdictCallback has stripped its tools
+// #853 exists for), then - once forcedVerdictCallback has disabled its tools
 // for repeating itself - closes with the verdict as plain-text JSON instead of a tool call.
 type stutterJudge struct{ calls int32 }
 
 func (j *stutterJudge) Name() string { return "stutter-judge" }
+
+// forcedCloseErr: a forced-close turn keeps every tool declared (the prompt head, and so the
+// server's prefix cache, is unchanged) and disables calling them with tool_choice none.
+func forcedCloseErr(req *model.LLMRequest) error {
+	if req.Config == nil || len(req.Config.Tools) == 0 {
+		return errors.New("forced-close turn dropped the tool declarations")
+	}
+	if tc := req.Config.ToolConfig; tc == nil || tc.FunctionCallingConfig == nil || tc.FunctionCallingConfig.Mode != genai.FunctionCallingConfigModeNone {
+		return fmt.Errorf("forced-close turn tool config = %+v, want mode NONE", tc)
+	}
+	return nil
+}
 
 func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
@@ -1228,8 +1240,8 @@ func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest,
 			yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
 			return
 		}
-		if len(req.Tools) != 0 || (req.Config != nil && len(req.Config.Tools) != 0) {
-			yield(nil, fmt.Errorf("expected no tools on the forced closing turn, got %d req.Tools", len(req.Tools)))
+		if err := forcedCloseErr(req); err != nil {
+			yield(nil, err)
 			return
 		}
 		yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 3}}, "feedback": ""}`), nil)
@@ -1630,8 +1642,8 @@ func (j *forceClosedGarbledJudge) GenerateContent(_ context.Context, req *model.
 			yield(stubCall("read_file", map[string]any{"path": fmt.Sprintf("file%d.go", n)}), nil)
 			return
 		}
-		if len(req.Tools) != 0 || (req.Config != nil && len(req.Config.Tools) != 0) {
-			yield(nil, fmt.Errorf("expected no tools on the forced-close turn, got %d req.Tools", len(req.Tools)))
+		if err := forcedCloseErr(req); err != nil {
+			yield(nil, err)
 			return
 		}
 		yield(stubText(`{"score": "not-parseable-`), nil)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"iter"
 	"strings"
-	"sync"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
@@ -99,15 +98,16 @@ func TestSpecificsSupportedScore(t *testing.T) {
 	}
 }
 
-func TestStartVerify(t *testing.T) {
+func TestRunVerify(t *testing.T) {
 	u := "https://example.test/survey"
 	pages := fakeLoader{pageID(t, u): secondLookPage}
 	answer := "Users rose 25% in 2024 ([survey](" + u + ")). Churn fell to 4.2% ([survey](" + u + "))."
 	cfg := Config{RecordReader: pages, RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}}}
+	act := workerActivity{fetched: map[string]struct{}{u: {}}}
 
 	var prompts []string
 	cfg.JudgeModel = seqLLM{answers: []string{`{"items":[{"n":1,"state":"unsupported","quote":"users rose 30% in 2024"}]}`}, prompts: &prompts}
-	c, ok := startVerify(context.Background(), cfg, answer, workerActivity{})()
+	c, ok := specificsSupportedScore(runVerify(context.Background(), cfg, answer, act, nil))
 	if !ok || c.Score != 0 || !strings.Contains(c.Reason, `"25%"`) {
 		t.Errorf("contradicted figure on its cited page must fail the criterion: ok=%v %+v (prompts %d)", ok, c, len(prompts))
 	}
@@ -115,38 +115,74 @@ func TestStartVerify(t *testing.T) {
 	undeclared := cfg
 	undeclared.RubricSpecs = nil
 	prompts = nil
-	if _, ok := startVerify(context.Background(), undeclared, answer, workerActivity{})(); ok || len(prompts) != 0 {
-		t.Errorf("a rubric that does not declare specifics_supported must not run it: ok=%v calls=%d", ok, len(prompts))
+	if checks := runVerify(context.Background(), undeclared, answer, act, nil); checks != nil || len(prompts) != 0 {
+		t.Errorf("a rubric that does not declare specifics_supported must not run it: checks=%v calls=%d", checks, len(prompts))
 	}
 }
 
-// TestStartVerify_RacesTheJudgePath runs the verify goroutine while the judge
-// path reads the same act and det, as runJudge does; meaningful under -race.
-func TestStartVerify_RacesTheJudgePath(t *testing.T) {
+// TestRunVerify_SiblingPageNeverBacksACitation: the page store is chat-wide, so a page
+// only a sibling fetched is in it; this node never fetched it, so nothing is read from it.
+func TestRunVerify_SiblingPageNeverBacksACitation(t *testing.T) {
 	u := "https://example.test/survey"
 	var prompts []string
-	cfg := Config{RecordReader: fakeLoader{pageID(t, u): secondLookPage}, Threshold: 0.6,
+	cfg := Config{RecordReader: fakeLoader{pageID(t, u): secondLookPage},
 		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
 		JudgeModel:  seqLLM{answers: []string{`{"items":[{"n":1,"state":"supported","quote":"not 25% as first reported"}]}`}, prompts: &prompts}}
-	act := workerActivity{fetched: map[string]struct{}{u: {}}, seen: map[string]string{}, paths: map[string]bool{}, artifactsWritten: []string{"text:none"}}
-	det := map[string]criterionScore{"cites_sources": {Score: 1, Deterministic: true}}
-
-	wait := startVerify(context.Background(), cfg, "Users rose 25% in 2024 ([survey]("+u+")).", act)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { // the judge's own reads while the verify tier runs
-		defer wg.Done()
-		for range 50 {
-			changedFilesSection(cfg, act)
-			judgeKnownFailuresSection(det, cfg.Threshold)
-		}
-	}()
-	wg.Wait()
-	c, ok := wait()
-	if !ok || c.Score != 1 {
-		t.Fatalf("specifics_supported = %+v ok=%v, want a pass", c, ok)
+	checks := runVerify(context.Background(), cfg, "Users rose 25% in 2024 ([survey]("+u+")).", workerActivity{}, nil)
+	if len(checks) == 0 || checks[0].State != "no_stored_text" || len(prompts) != 0 {
+		t.Fatalf("checks = %+v after %d verifier calls, want no_stored_text and no call", checks, len(prompts))
 	}
-	det[specificsSupportedCriterion] = c
+	read := workerActivity{sourceReads: []string{pageID(t, u)}}
+	if checks := runVerify(context.Background(), cfg, "Users rose 25% in 2024 ([survey]("+u+")).", read, nil); checks[0].State != "located" {
+		t.Errorf("a page the node read itself must back its citation: %+v", checks[0])
+	}
+}
+
+// TestRunVerify_MemoSkipsUnchangedClaims: a later round re-reads only the claims whose
+// page, detail or evidence window changed; the rest reuse the earlier verdict.
+func TestRunVerify_MemoSkipsUnchangedClaims(t *testing.T) {
+	u := "https://example.test/survey"
+	var prompts []string
+	cfg := Config{RecordReader: fakeLoader{pageID(t, u): secondLookPage},
+		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
+		JudgeModel:  seqLLM{answers: []string{`{"items":[{"n":1,"state":"supported","quote":"users rose 30% in 2024"},{"n":2,"state":"supported","quote":"users rose 30% in 2024"}]}`}, prompts: &prompts}}
+	act := workerActivity{fetched: map[string]struct{}{u: {}}}
+	memo := map[string]Verdict{}
+	answer := "Users rose 30% in 2024 ([survey](" + u + "))."
+	for round := 1; round <= 2; round++ {
+		checks := runVerify(context.Background(), cfg, answer, act, memo)
+		if len(checks) != 2 || checks[0].Verdict.State != "supported" || checks[1].Verdict.State != "supported" {
+			t.Fatalf("round %d: %+v, want the figure supported", round, checks)
+		}
+	}
+	if len(prompts) != 1 {
+		t.Errorf("verifier called %d times over two rounds of an unchanged claim, want 1", len(prompts))
+	}
+	runVerify(context.Background(), cfg, "Users rose 25% in 2024 ([survey]("+u+")).", act, memo)
+	if len(prompts) != 2 {
+		t.Errorf("a changed detail must be read again: %d calls, want 2", len(prompts))
+	}
+}
+
+// TestJudgeEvidenceSection: every cited specific reaches the judge with its verifier
+// result and a bounded excerpt; uncited ones are specifics_cited's business, not listed.
+func TestJudgeEvidenceSection(t *testing.T) {
+	c := secondLookCheck()
+	c.Window = strings.Repeat("x", 2000) + "users rose 30% in 2024" + strings.Repeat("y", 2000)
+	c.Verdict = Verdict{State: "unsupported", Quote: "users rose 30% in 2024"}
+	uncited := UnitCheck{Unit: Unit{Text: "Churn was 4%."}, Specific: Specific{Value: "4%"}, State: "uncited"}
+	got := judgeEvidenceSection([]UnitCheck{c, uncited})
+	for _, want := range []string{"CITED EVIDENCE", `"25%"`, "https://p/1", `unsupported - page says "users rose 30% in 2024"`, "users rose 30% in 2024y"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("section missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Churn") || len(got) > len(judgeEvidenceHeader)+judgeExcerptChars+400 {
+		t.Errorf("section lists an uncited specific or an unbounded excerpt (%d chars):\n%s", len(got), got)
+	}
+	if judgeEvidenceSection([]UnitCheck{uncited}) != "" {
+		t.Error("no cited specific: the section must be absent")
+	}
 }
 
 func TestReplayRound_SpecificsSupported(t *testing.T) {
@@ -154,7 +190,7 @@ func TestReplayRound_SpecificsSupported(t *testing.T) {
 	unsupported := `{"items":[{"n":1,"state":"unsupported","quote":"users rose 30% in 2024"}]}`
 	run := func(specs map[string]criterionSpec) *ReplayCriterion {
 		var prompts []string
-		rc := ReplayCase{NodeID: "node-1", Task: "task", Answer: "Users rose 25% in 2024 ([survey](" + u + ")).",
+		rc := ReplayCase{NodeID: "node-1", Task: "task", Answer: "Users rose 25% in 2024 ([survey](" + u + ")).", WorkerTurns: []RawTurn{fetchTurn(u)},
 			Pages: fakeLoader{pageID(t, u): secondLookPage}, Verifier: &Verifier{LLM: seqLLM{answers: []string{unsupported}, prompts: &prompts}}}
 		res, err := ReplayRound(context.Background(), Config{Threshold: 0.5, RubricSpecs: specs}, nil, rc)
 		if err != nil {

@@ -47,8 +47,8 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
-	// judgeArtifactTools: one list_artifacts/read_artifact pair for the whole
-	// run, chat- not node-scoped (#1497), shared by every node's judge rounds.
+	// judgeArtifactTools: one list_artifacts/read_artifact pair over the chat, shared by
+	// every node's judge rounds; each round hides its node's ForeignNodes' artifacts.
 	var judgeArtifactTools []tool.Tool
 	if artifacts != nil {
 		// No WithLedger: these tools are read-only and never call Save*, so
@@ -164,6 +164,19 @@ func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string 
 	}
 }
 
+// foreignNodes: plan nodes other than id and its (transitive) dependencies - siblings
+// and descendants, whose fetches and artifacts must never back id's claims.
+func foreignNodes(plan Plan, id string) []string {
+	up := ancestors(plan.Nodes, id)
+	var out []string
+	for _, n := range plan.Nodes {
+		if n.ID != id && !up[n.ID] {
+			out = append(out, n.ID)
+		}
+	}
+	return out
+}
+
 // nodeGateConfig assembles one node's trust-gate config from the agent's base
 // config (cfgFor) plus the node's and plan's own facts. A planOnly plan
 // forces every node read-only with no delivery target here, in the one place
@@ -177,6 +190,7 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 	cfg.Checks = node.Checks
 	cfg.Workdir = node.Workdir
 	cfg.NodeID = workspaceNodeID(plan, node)
+	cfg.ForeignNodes = foreignNodes(plan, node.ID)
 	cfg.Agent = node.AgentName
 	cfg.AllowedDeliveryKinds = plan.AllowedDeliveryKinds
 	// code-reviewer nodes are always review-delivery nodes by construction.

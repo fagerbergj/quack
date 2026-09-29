@@ -33,6 +33,9 @@ type PageLoader interface {
 type WebPageEvidence struct {
 	Store    PageLoader
 	Snippets map[string]string // search result url -> snippet, from the round's activity
+	// Allowed: page ids the node fetched or read itself; nil allows any. The store is
+	// chat-wide, so without it a sibling's fetch would back this node's citation.
+	Allowed map[string]bool
 }
 
 const webPageKind = "web_page"
@@ -53,7 +56,7 @@ func (w WebPageEvidence) resolve(ctx context.Context, citation string) resolved 
 	if w.Store != nil {
 		for _, cand := range urlVariants(citation) {
 			id, err := recordstore.IdentityFor(webPageKind, "", cand)
-			if err != nil {
+			if err != nil || (w.Allowed != nil && !w.Allowed[id]) {
 				continue
 			}
 			if data, _, ok, err := w.Store.Latest(ctx, id); err == nil && ok && len(data) > 0 {

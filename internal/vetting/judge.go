@@ -34,6 +34,7 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -235,9 +236,9 @@ const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for th
 	`{"score": <0-3 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-3>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
 	" Score every criterion the rubric named, from what you have already verified."
 
-// forcedVerdictCallback strips all tools and appends judgeForceCloseInstruction on the round's last allowed turn, or the turn right after the judge repeats an identical tool call (model stutter that
+// forcedVerdictCallback disables tool calls (tool_choice none) and appends judgeForceCloseInstruction on the round's last allowed turn, or the turn right after the judge repeats an identical tool call (model stutter that
 // would otherwise burn the rest of the budget repeating itself, #853). forced (may be nil) is set true
-// the moment tools are stripped - the round's own signal that this turn is tool-less, so callers must not offer or demand a tool call afterward (#1235: nudging submit_verdict contradicted this instruction in the same request).
+// the moment tools are disabled - the round's own signal that this turn is tool-less, so callers must not offer or demand a tool call afterward (#1235: nudging submit_verdict contradicted this instruction in the same request).
 func forcedVerdictCallback(maxIters int, forced *bool, receivedIDs []string) llmagent.BeforeModelCallback {
 	turn := 0
 	instruction := judgeForceCloseInstruction
@@ -255,10 +256,11 @@ func forcedVerdictCallback(maxIters int, forced *bool, receivedIDs []string) llm
 		if forced != nil {
 			*forced = true
 		}
-		req.Tools = nil
-		if req.Config != nil {
-			req.Config.Tools = nil
+		// Declarations stay: dropping them rewrites the prompt head and loses the server's prefix cache.
+		if req.Config == nil {
+			req.Config = &genai.GenerateContentConfig{}
 		}
+		req.Config.ToolConfig = &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{Mode: genai.FunctionCallingConfigModeNone}}
 		req.Contents = append(req.Contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: instruction}}})
 		return nil, nil
 	}
@@ -645,7 +647,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	// Memories lead knownFailures inside this string, but buildJudgePrompt
 	// still places the whole `known` blob in its volatile trailing section,
 	// not the cacheable prefix - this ordering is readability only.
-	known := receivedMemoriesSection(received) + judgeKnownFailuresSection(det, cfg.Threshold)
+	known := joinSections(receivedMemoriesSection(received)+judgeKnownFailuresSection(det, cfg.Threshold), cfg.judgeEvidence)
 	fitted, fittedPrompt := fitJudgeAnswer(cfg, question, answer, changedFiles, known, act, 1.0)
 	defer func() {
 		if err == nil {
@@ -668,7 +670,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 
 	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
-		v, err = retryNoVerdict(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit)
+		v, err = retryNoVerdict(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, counters)
 		return
 	}
 
@@ -710,14 +712,15 @@ func judgeAttemptLoop(ctx context.Context, factory JudgeFactory, cfg Config, que
 	return
 }
 
-// retryNoVerdict: a round that ran but never reached a verdict (model stutter
-// exhausting the budget, #853) gets exactly one retry with a fresh session
-// before surfacing unvetted - shrinking the answer wouldn't fix a stutter.
-func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool) (verdict, error) {
+// retryNoVerdict: a round with no verdict (a stutter, #853) gets one fresh-session retry,
+// seeded with prior's reads; shrinking the answer wouldn't fix a stutter.
+func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, prior judgeReadCounters) (verdict, error) {
 	slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
 		"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID)
+	known = seedPriorReads(cfg, question, fitted, changedFiles, known, act, prior)
 	v, counters, err := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, "", act, received, emit)
 	if err == nil {
+		counters.carry(prior)
 		v = finishJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, received, emit, v, counters)
 	}
 	return v, err
@@ -729,32 +732,63 @@ func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, quest
 // for a genuine failure - see inconsistentJudgeFailures). No-op otherwise.
 func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict, counters judgeReadCounters) verdict {
 	v = dropUnscoredStrays(v, cfg.RubricSpecs)
+	feedback := reJudgeFeedback(cfg, act, v, counters)
+	if feedback == "" {
+		return v
+	}
+	known = seedPriorReads(cfg, question, fitted, changedFiles, joinSections(known, reJudgeNote(feedback)), act, counters)
+	return reJudgeOnce(ctx, factory, cfg, question, fitted, changedFiles, known, act, received, emit, v)
+}
+
+// seedPriorReads adds prior's reads to known, within what the judge's prompt budget has left.
+func seedPriorReads(cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, prior judgeReadCounters) string {
+	room := judgeCharBudget(cfg) - len(buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, cfg.UpstreamAnswers, question, fitted, changedFiles, act, known))
+	return joinSections(known, priorReadsSection(prior, min(room, judgePriorReadsChars)))
+}
+
+// reJudgeFeedback names why v cannot be trusted as it stands; "" when it can.
+func reJudgeFeedback(cfg Config, act workerActivity, v verdict, counters judgeReadCounters) string {
 	if names := unscoredCriteria(v); len(names) > 0 {
 		slog.Warn("judge left rubric criteria unscored; re-judging once",
 			"component", "vetting", "agent", cfg.Agent, "criteria", names)
-		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unscoredFeedback(names), changedFiles, known, act, received, emit, v)
+		return unscoredFeedback(names)
 	}
 	switch {
 	case unreadPass(counters.repo, v):
 		slog.Warn("judge passed without reading the repo; re-judging once",
 			"component", "vetting", "agent", cfg.Agent, "score", v.Score)
-		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unreadPassFeedback, changedFiles, known, act, received, emit, v)
+		return unreadPassFeedback
 	case unreadArtifactPass(counters.artifact, v, len(act.producedArtifacts()) > 0):
 		slog.Info("judge passed without reading an artifact the worker wrote; re-judging once",
 			"component", "vetting", "agent", cfg.Agent, "node", cfg.NodeID, "score", v.Score, "artifacts", act.producedArtifacts())
-		return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+unreadArtifactPassFeedback(act.producedArtifacts()), changedFiles, known, act, received, emit, v)
-	default:
-		if names := inconsistentJudgeFailures(v, cfg.Threshold, cfg.RubricSpecs); len(names) > 0 {
-			slog.Warn("judge scored below threshold with no fix given; re-judging once",
-				"component", "vetting", "agent", cfg.Agent, "criteria", names)
-			return reJudgeOnce(ctx, factory, cfg, question, fitted+"\n\n"+inconsistentFailureFeedback(names), changedFiles, known, act, received, emit, v)
-		}
-		return v
+		return unreadArtifactPassFeedback(act.producedArtifacts())
 	}
+	if names := inconsistentJudgeFailures(v, cfg.Threshold, cfg.RubricSpecs); len(names) > 0 {
+		slog.Warn("judge scored below threshold with no fix given; re-judging once",
+			"component", "vetting", "agent", cfg.Agent, "criteria", names)
+		return inconsistentFailureFeedback(names)
+	}
+	return ""
 }
 
-// reJudgeOnce re-runs the round with feedback appended to the answer, keeping
-// the original verdict v if the retry itself errors - one wasted round is the
+// reJudgeNote frames the gate's feedback as outside the answer being judged.
+func reJudgeNote(feedback string) string {
+	return "NOTE FROM THE GATE on your previous verdict for this same answer (not part of the answer):\n" + feedback
+}
+
+// joinSections joins the non-empty sections with a blank line.
+func joinSections(sections ...string) string {
+	var kept []string
+	for _, s := range sections {
+		if s = strings.TrimRight(s, "\n"); s != "" {
+			kept = append(kept, s)
+		}
+	}
+	return strings.Join(kept, "\n\n")
+}
+
+// reJudgeOnce re-runs the round with the gate's note in known, keeping the
+// original verdict v if the retry itself errors - one wasted round is the
 // ceiling, never an unbounded loop.
 func reJudgeOnce(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict) verdict {
 	v2, counters2, err2 := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, "", act, received, emit)
@@ -892,8 +926,10 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		return verdict{}, judgeReadCounters{}, fmt.Errorf("vetting: judge runner: %w", err)
 	}
 	st.jr = jr
-	// The judge's fs tools resolve the worker's node scope from this, not from its prompt's markers.
-	st.runCtx, st.cancel = context.WithCancel(WithAdvisorToken(ctx, cfg.AdvisorToken))
+	counters.reads = &st.reads
+	// The judge's fs tools resolve the worker's node scope from this, not from its prompt's markers;
+	// its artifact tools read their per-round visibility and source-read budget from it.
+	st.runCtx, st.cancel = context.WithCancel(withJudgeView(WithAdvisorToken(ctx, cfg.AdvisorToken), newJudgeView(cfg, act)))
 	defer st.cancel()
 	st.sessionID = judgeSessionID(cfg.ChatID, "verdict")
 
@@ -953,6 +989,32 @@ type judgeRoundState struct {
 	aborted       bool
 	// parseFrom: accum offset past the last truncated turn, whose text may hold only a draft verdict.
 	parseFrom int
+	calls     map[string]*genai.FunctionCall // by call id, to pair a read's args with its result
+	reads     []string
+}
+
+func (s *judgeRoundState) noteCall(fc *genai.FunctionCall) {
+	if s.calls == nil {
+		s.calls = map[string]*genai.FunctionCall{}
+	}
+	s.calls[fc.ID] = fc
+}
+
+// recordRead keeps one successful tool result for a retry's prompt, capped like a source read.
+func (s *judgeRoundState) recordRead(fr *genai.FunctionResponse) {
+	if _, failed := fr.Response["error"]; failed {
+		return
+	}
+	args := []byte("{}")
+	if fc := s.calls[fr.ID]; fc != nil {
+		args, _ = json.Marshal(fc.Args)
+	}
+	body, ok := fr.Response["result"].(string)
+	if !ok {
+		raw, _ := json.Marshal(fr.Response)
+		body = string(raw)
+	}
+	s.reads = append(s.reads, fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeSourceReadCap)))
 }
 
 // judgePromptContent builds the judge's user content: the (prebuilt or built) prompt
@@ -1043,10 +1105,12 @@ func (s *judgeRoundState) scanPart(p *genai.Part) error {
 			return context.Canceled
 		}
 	case p.FunctionCall != nil:
+		s.noteCall(p.FunctionCall)
 		if !s.emit(&genai.Part{FunctionCall: p.FunctionCall}) {
 			return context.Canceled
 		}
 	case p.FunctionResponse != nil:
+		s.recordRead(p.FunctionResponse)
 		if !s.emit(&genai.Part{FunctionResponse: p.FunctionResponse}) {
 			return context.Canceled
 		}
@@ -1137,6 +1201,9 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 		if !ok {
 			continue
 		}
+		if s < 1 && readStoredPage(target, act.sourceReads) {
+			s = 1 // the node read another node's stored copy of the page itself
+		}
 		details = append(details, citationDetail{url: target, score: s})
 		sum += s
 	}
@@ -1144,6 +1211,16 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 		return 0, nil, false
 	}
 	return sum / float64(len(details)), details, true
+}
+
+// readStoredPage: target's stored web_page is among the source artifacts the node read.
+func readStoredPage(target string, reads []string) bool {
+	for _, v := range urlVariants(target) {
+		if id, err := recordstore.IdentityFor(webPageKind, "", v); err == nil && slices.Contains(reads, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // linkBackingScore: one cited link's deterministic backing tier -
@@ -1331,10 +1408,9 @@ const reviseReplyRule = "Your reply replaces your previous answer as the one the
 	"If the deliverable lives in an artifact you edited, keep the reply to the summary your task asks for and do not restate the artifact's content: the judge and every later step read the artifact itself. " +
 	"Otherwise output only the corrected answer with no preamble or commentary.\n\n"
 
-// buildRevisionContent: re-invokes worker to address judge feedback. Every section bounded (boundExcerpt).
-// #941: the worker gets the structured verdict envelope (definition/bands/anchor per
-// failing criterion), not prose - this is what closes the gap where the worker previously had no rubric access at all. Rubric text itself isn't a parameter: applyRubricSpecs (node.go) already folds each failing criterion's parsed definition/bands into env before this runs.
-func buildRevisionContent(constitution string, question *genai.Content, answer string, env verdictEnvelope, act workerActivity, citationOnly bool, notes []JudgeNote) *genai.Content {
+// buildRevisionContent: the bounded revise prompt - the structured verdict envelope (#941, rubric specs already folded in by
+// applyRubricSpecs), notes, activity, and pages: the stored web_page ids the worker can re-read instead of re-fetching.
+func buildRevisionContent(constitution string, question *genai.Content, answer string, env verdictEnvelope, act workerActivity, citationOnly bool, notes []JudgeNote, pages []string) *genai.Content {
 	var sb strings.Builder
 	// Stable-first (finding 3): the original question, byte-identical to what the draft
 	// round sent (same boundExcerpt, no header), leads every round so the prefix cache
@@ -1351,7 +1427,7 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 	} else {
 		sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +
 			"Below is the structured verdict: each failing criterion's definition, scoring bands, and (where locatable) an anchor into your answer, plus a concrete fix. " +
-			"Address every failure - use your tools to fix the gaps: re-fetch and verify sources, correct or remove unsupported claims, add missing citations. " +
+			"Address every failure - use your tools to fix the gaps: verify claims against the pages you already fetched, correct or remove unsupported claims, add missing citations. " +
 			"If you wrote any artifact last round (list_artifacts shows your prior revision), read_artifact it and edit_artifact the specific parts this verdict flags - " +
 			"don't regenerate it from scratch. write_<kind> replaces a whole artifact in one reply, and a reply's output (reasoning included) is capped, so a full rewrite only fits a short artifact. " +
 			reviseReplyRule)
@@ -1375,6 +1451,10 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 	if section := buildActivitySection(act); section != "" {
 		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
 		sb.WriteString("\n\n")
+	}
+	if len(pages) > 0 {
+		sb.WriteString("The pages you fetched are stored as artifacts: " + strings.Join(pages, ", ") + ". " +
+			"Re-check a source with grep_artifacts (a pattern over these ids) or read_artifact (id with offset/lines) instead of calling web_fetch again; fetch only a source you have not fetched yet.\n\n")
 	}
 	sb.WriteString("Your previous answer:\n")
 	sb.WriteString(boundExcerpt(answer, maxPreviousAnswerChars))

@@ -74,6 +74,12 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	}
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
+	if declaresCodeOwned(cfg, specificsSupportedCriterion) { // as live: the verify tier runs first and feeds the judge
+		cfg.judgeEvidence = judgeEvidenceSection(res.Units)
+		if c, ok := specificsSupportedScore(res.Units); ok {
+			det[specificsSupportedCriterion] = c
+		}
+	}
 	// Environment-only failures here are the replay host's, not the round's; the
 	// live judge never saw them, so they must not reach the judge prompt either.
 	judgeDet := map[string]criterionScore{}
@@ -90,9 +96,6 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 		if err != nil {
 			return res, fmt.Errorf("vetting: replay judge round: %w", err)
 		}
-	}
-	if c, ok := specificsSupportedScore(res.Units); ok && declaresCodeOwned(cfg, specificsSupportedCriterion) {
-		det[specificsSupportedCriterion] = c // live computes it beside the judge, so it never reaches the judge prompt
 	}
 	v = mergeDeterministic(v, det, cfg)
 	v = applyRubricSpecs(v, cfg.RubricSpecs)

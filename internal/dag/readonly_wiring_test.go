@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"iter"
+	"strings"
 	"sync"
 	"testing"
 
@@ -147,5 +148,23 @@ func TestNonPlanRunAdvisorTaskIsWritable(t *testing.T) {
 	}
 	if stub.kinds != nil {
 		t.Errorf("AdvisorTask.AllowedDeliveryKinds = %#v, want nil (unrestricted)", stub.kinds)
+	}
+}
+
+// TestNodeGateConfigForeignNodes: a node's judge must not credit a sibling's or a
+// descendant's retrieval, but its transitive upstream is legitimate input.
+func TestNodeGateConfigForeignNodes(t *testing.T) {
+	plan := Plan{ID: "t-foreign", UserMessage: "x", Nodes: []Node{
+		{ID: "a", AgentName: "web-researcher"},
+		{ID: "b", AgentName: "web-researcher", DependsOn: []string{"a"}},
+		{ID: "c", AgentName: "web-researcher", DependsOn: []string{"a"}},
+		{ID: "d", AgentName: "synthesizer", DependsOn: []string{"b"}},
+	}}
+	cfgFor := func(context.Context, string) vetting.Config { return vetting.Config{} }
+	for node, want := range map[int]string{0: "b,c,d", 1: "c,d", 3: "c"} {
+		cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[node], nil, cfgFor, "chat1", "")
+		if got := strings.Join(cfg.ForeignNodes, ","); got != want {
+			t.Errorf("%s: ForeignNodes = %q, want %q", plan.Nodes[node].ID, got, want)
+		}
 	}
 }

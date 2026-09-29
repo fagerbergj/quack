@@ -2,6 +2,8 @@ package vetting
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -24,6 +26,15 @@ type Verdict struct {
 type Verifier struct {
 	LLM       model.LLM
 	MaxTokens int32
+	// Memo holds final verdicts across one node's rounds, keyed by verifyKey, so an
+	// unchanged claim is not read again; nil disables it. Not safe for concurrent use.
+	Memo map[string]Verdict
+}
+
+// verifyKey: the page, the detail and the exact evidence window the verdict was read from.
+func verifyKey(c UnitCheck) string {
+	sum := sha256.Sum256([]byte(c.Window))
+	return c.Citation + "\x00" + c.Specific.Kind + ":" + c.Specific.Norm + "\x00" + hex.EncodeToString(sum[:])
 }
 
 const verifyBatch = 20
@@ -37,22 +48,36 @@ func (v Verifier) VerifyChecks(ctx context.Context, checks []UnitCheck) []UnitCh
 		return checks
 	}
 	var idx []int
+	keys := map[int]string{}
 	for i, c := range checks {
-		if c.State == "located" || (c.State == "unlocated" && c.Window != "") {
-			idx = append(idx, i) // an unlocated figure with a key-term window gets its second look
+		if c.State != "located" && (c.State != "unlocated" || c.Window == "") {
+			continue // an unlocated figure with a key-term window still gets its second look
 		}
+		k := verifyKey(c)
+		if vd, ok := v.Memo[k]; ok {
+			checks[i].Verdict = vd
+			continue
+		}
+		keys[i] = k
+		idx = append(idx, i)
 	}
 	v.verifyByPage(ctx, checks, idx)
-	v.recheckUnsupported(ctx, checks)
+	v.recheckUnsupported(ctx, checks, idx)
+	for _, i := range idx {
+		if v.Memo != nil && checks[i].Verdict.State != "not_checked" {
+			v.Memo[keys[i]] = checks[i].Verdict
+		}
+	}
 	return checks
 }
 
-// recheckUnsupported reads every unsupported item once more in a window three times
-// wider: a false fail costs a revise, so an item stays unsupported only when both reads agree.
-func (v Verifier) recheckUnsupported(ctx context.Context, checks []UnitCheck) {
+// recheckUnsupported reads every unsupported item of among once more in a window three
+// times wider: a false fail costs a revise, so an item stays unsupported only when both reads agree.
+func (v Verifier) recheckUnsupported(ctx context.Context, checks []UnitCheck, among []int) {
 	first := map[int]Verdict{}
 	var idx []int
-	for i, c := range checks {
+	for _, i := range among {
+		c := checks[i]
 		if c.Verdict.State == "unsupported" && c.snippet {
 			// A snippet is a few hundred characters of a search index's copy, often stale on a live page.
 			checks[i].Verdict = Verdict{State: "cannot_tell", Quote: c.Verdict.Quote, Reason: "the evidence is a search snippet, which can back a specific but not contradict it"}

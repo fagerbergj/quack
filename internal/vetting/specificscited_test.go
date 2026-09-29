@@ -148,7 +148,7 @@ func TestOwnActivityExcludesSiblings(t *testing.T) {
 		ev.NodeInfo = &session.NodeInfo{Path: []string{"web-researcher-1@run1", "web-researcher-2@run2"}[i]}
 		i++
 	}
-	if got := strings.Join(scanSessionActivity(sess, "", "web-researcher-1", true).searches, ","); got != "mine" {
+	if got := strings.Join(scanSessionActivity(sess, "", "web-researcher-1", true, nil).searches, ","); got != "mine" {
 		t.Errorf("own searches = %q, want only this node's", got)
 	}
 	if got := activityFromSessionAt(sess, "", "web-researcher-1").searches; len(got) != 2 {
