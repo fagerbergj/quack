@@ -465,6 +465,14 @@ func reviewerNodeCount(plan Plan) int {
 }
 
 // markGateFailed: flags node with no answer for continue-but-warn.
+type unreviewedSeedsKey struct{}
+
+// WithUnreviewedSeeds flags seeded outputs that never passed review (a stopped draft, a failed
+// gate): a retry's fresh session has no gate state of its own, so their dependents learn it here.
+func WithUnreviewedSeeds(ctx context.Context, nodeIDs map[string]bool) context.Context {
+	return context.WithValue(ctx, unreviewedSeedsKey{}, nodeIDs)
+}
+
 func markGateFailed(ctx adkagent.Context, nodeID string) {
 	if st := ctx.State(); st != nil {
 		_ = st.Set(gateFailedKey+nodeID, true)
@@ -474,6 +482,12 @@ func markGateFailed(ctx adkagent.Context, nodeID string) {
 
 func readGateFailed(ctx adkagent.Context, dependsOn []string) map[string]bool {
 	out := map[string]bool{}
+	seeds, _ := ctx.Value(unreviewedSeedsKey{}).(map[string]bool)
+	for _, dep := range dependsOn {
+		if seeds[dep] {
+			out[dep] = true
+		}
+	}
 	st := ctx.State()
 	if st == nil {
 		return out

@@ -213,3 +213,19 @@ func failedDagNodeError(nodes []DagNode) (errText string, failed bool) {
 	}
 	return "", false
 }
+
+// SeedOutputs is a re-run's seed from a plan's node rows: every finished output, plus which
+// of them never passed review (stopped by the user, or rejected by the judge).
+func SeedOutputs(nodes []DagNode) (seeded map[string]string, unreviewed map[string]bool) {
+	seeded, unreviewed = make(map[string]string, len(nodes)), map[string]bool{}
+	for _, n := range nodes {
+		if n.Output == "" {
+			continue
+		}
+		seeded[n.NodeID] = n.Output
+		if n.Status == string(dag.StatusCancelled) || n.JudgeRounds > 0 && !n.JudgePassed {
+			unreviewed[n.NodeID] = true
+		}
+	}
+	return seeded, unreviewed
+}

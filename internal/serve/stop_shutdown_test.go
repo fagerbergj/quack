@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"iter"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,4 +312,52 @@ func TestSyncTerminalDagNodeRecords(t *testing.T) {
 	if got := f.record(t); got != dag.StatusFailed {
 		t.Errorf("dag_node record = %s, want failed like the row", got)
 	}
+}
+
+// TestDriveResume_StoppedSeedKeepsItsWarning: a resumed node depending on a stopped node's
+// draft is still told that input never passed review, though the retry's session has no gate state.
+func TestDriveResume_StoppedSeedKeepsItsWarning(t *testing.T) {
+	f := newStopFixture(t)
+	ctx := context.Background()
+	plan := dag.Plan{ID: f.plan.ID, UserMessage: "x", Nodes: []dag.Node{
+		{ID: "n0", AgentName: "blk", Task: "TASK-ZERO"},
+		{ID: "n1", AgentName: "blk", Task: "TASK-ONE", DependsOn: []string{"n0"}},
+	}}
+	planJSON, _ := json.Marshal(plan)
+	if err := f.st.SaveExecPlan(ctx, f.chatID, plan.ID, string(planJSON)); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []store.DagNode{
+		{PlanID: plan.ID, NodeID: "n0", Status: string(dag.StatusCancelled), Output: "STOPPED DRAFT"},
+		{PlanID: plan.ID, NodeID: "n1", Status: string(dag.StatusRunning)},
+	} {
+		if err := f.st.UpsertDagNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stub := &resumeStubLLM{}
+	sessions := session.InMemoryService()
+	ag, err := llmagent.New(llmagent.Config{Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	orch := orchestrator.New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
+	orch.SetPlanLoader(f.st.LoadExecPlan)
+	rep, err := f.st.ResumePausedDagNodes(ctx, nil)
+	if err != nil || len(rep.Start) != 1 {
+		t.Fatalf("boot = %+v err=%v, want n1 to resume", rep, err)
+	}
+	driveResume(ctx, f.chatID, rep.Start, orch, f.st, stream.NewHub(), runlog.NewEventLog(f.st))
+
+	for _, p := range stub.workerPrompts() {
+		if strings.Contains(p, "TASK-ONE") {
+			if !strings.Contains(p, "STOPPED DRAFT") || !strings.Contains(p, "FAILED independent quality vetting") {
+				t.Errorf("n1's prompt lacks the warning on the stopped seed:\n%s", p)
+			}
+			return
+		}
+	}
+	t.Fatal("n1 never reached its worker")
 }

@@ -192,7 +192,8 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 			continue
 		}
 		var resumeErr string
-		run := lastErrorOf(orch.RetryNode(runCtx, userID, chatID, plan.ID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), &resumeErr)
+		seeded, unreviewed := seededOutputs(runCtx, st, plan.ID)
+		run := lastErrorOf(orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), userID, chatID, plan.ID, seeded, n.NodeID, ""), &resumeErr)
 		res = runlog.Drive(plan.TurnID, st, pub, run, func(err error) {
 			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
 		})
@@ -241,18 +242,12 @@ func failIfNotResumed(ctx context.Context, st *store.Store, chatID, planID, node
 
 // seededOutputs collects the plan's stored node outputs so a subset re-run
 // reads finished siblings instead of re-running them.
-func seededOutputs(ctx context.Context, st *store.Store, planID string) map[string]string {
+func seededOutputs(ctx context.Context, st *store.Store, planID string) (map[string]string, map[string]bool) {
 	rows, err := st.GetDagNodes(ctx, planID)
 	if err != nil {
 		// An empty seed map would make the subset re-run every finished sibling.
 		slog.Warn("resume: reading node outputs failed; finished siblings may re-run",
 			"component", "startup", "plan", planID, "err", err)
 	}
-	seeded := make(map[string]string, len(rows))
-	for _, r := range rows {
-		if r.Output != "" {
-			seeded[r.NodeID] = r.Output
-		}
-	}
-	return seeded
+	return store.SeedOutputs(rows)
 }

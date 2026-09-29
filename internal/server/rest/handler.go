@@ -1208,12 +1208,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		return false
 	}
 	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
-	seeded := make(map[string]string, len(nodes))
-	for _, n := range nodes {
-		if n.Output != "" {
-			seeded[n.NodeID] = n.Output
-		}
-	}
+	seeded, unreviewed := store.SeedOutputs(nodes)
 	runCtx, cancelRun := h.armRun(chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
@@ -1224,7 +1219,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		publish := runlog.NewPublisher(runCtx, h.hub, h.eventLog, chatID).Publish
 		publish(stream.ResponseCreated(dp.TurnID))
 
-		for ev, err := range h.orch.RetryNode(runCtx, h.sessionUser(runCtx, chatID), chatID, dp.ID, seeded, nodeID, guidance) {
+		for ev, err := range h.orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), h.sessionUser(runCtx, chatID), chatID, dp.ID, seeded, nodeID, guidance) {
 			if err != nil {
 				publish(stream.Errorf(err.Error()))
 				break
