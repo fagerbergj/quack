@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -200,5 +201,38 @@ func TestWorktreeCommonGitDirRefusesOddPointers(t *testing.T) {
 				t.Errorf("WorktreeCommonGitDir = %q, want none", got)
 			}
 		})
+	}
+}
+
+// TestNewGitGrants: only a confined call gets grants; it creates its rw dirs and reads CA bundles and the askpass
+// binary.
+func TestNewGitGrants(t *testing.T) {
+	home := t.TempDir()
+	ConfineGit(SandboxNone)
+	if g, err := newGitGrants("git", home, nil, nil); g != nil || err != nil {
+		t.Errorf("unconfined call: grants %v, err %v", g, err)
+	}
+	ConfineGit(SandboxLandlock)
+	t.Cleanup(func() { gitConfined.Store(false) })
+	target := filepath.Join(t.TempDir(), "new", "clone")
+	g, err := newGitGrants("git", home, []string{"GIT_SSL_CAINFO=/ca.pem", "GIT_ASKPASS=/jail/.quack-askpass"}, []string{target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(target); err != nil || !fi.IsDir() {
+		t.Errorf("rw dir %s not created: %v", target, err)
+	}
+	if !slices.Contains(g.rw, target) || !slices.Contains(g.rw, home) || slices.Contains(g.ro, "/jail/.quack-askpass") ||
+		!slices.Contains(g.ro, "/ca.pem") || !slices.Contains(g.ro, self) {
+		t.Errorf("grants rw %v ro %v", g.rw, g.ro)
+	}
+	blocker := filepath.Join(t.TempDir(), "file")
+	writeFile(t, blocker, "")
+	if _, _, err := GitCmd(context.Background(), "git", "", "", []string{"version"}, nil, filepath.Join(blocker, "sub")); err == nil {
+		t.Error("rw dir under a file: want an error")
 	}
 }
