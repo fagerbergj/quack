@@ -180,9 +180,8 @@ func TestExecPlan_OneRowPerChat(t *testing.T) {
 	}
 }
 
-// TestFailUnresumable_LedgerEntryWaitsForWAL: boot's reconcile settles nodes before the WAL
-// is wired; their node.failed entries land once SetWALLedger runs.
-func TestFailUnresumable_LedgerEntryWaitsForWAL(t *testing.T) {
+// TestFailUnresumable_AppendsNodeFailed: a boot settle records node.failed in its turn.
+func TestFailUnresumable_AppendsNodeFailed(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	c, err := st.CreateChat(ctx, "")
@@ -192,9 +191,9 @@ func TestFailUnresumable_LedgerEntryWaitsForWAL(t *testing.T) {
 	if err := st.SaveDagPlan(ctx, c.ID, "p1", "turn-1", "{}"); err != nil {
 		t.Fatal(err)
 	}
-	st.FailUnresumable(ctx, c.ID, DagNode{PlanID: "p1", NodeID: "n1"}, "chat archived")
 	led := ledgertest.NewMemStore()
 	st.SetWALLedger(led)
+	st.FailUnresumable(ctx, c.ID, DagNode{PlanID: "p1", NodeID: "n1"}, "chat archived")
 	entries, _ := led.ReadEntries(ctx, c.ID, 0)
 	if len(entries) != 1 || entries[0].Kind != ledger.KindNodeFailed || entries[0].NodeID != "n1" || entries[0].TurnID != "turn-1" {
 		t.Fatalf("ledger = %+v, want one node.failed for n1 in turn-1", entries)

@@ -384,28 +384,12 @@ type Store struct {
 	// the direct-write projections P1-P4 left alone (chat/turn creation,
 	// plan); nil = no WAL, same as before P5 - CreateChat/SaveTurn/SaveDagPlan behave exactly as they did.
 	walLedger ledger.LedgerStore
-	// pendingFailed: nodes boot's reconcile settled before the WAL was wired; SetWALLedger appends them.
-	pendingFailed []pendingNodeFailed
-}
-
-const maxPendingFailed = 1024
-
-type pendingNodeFailed struct {
-	chatID string
-	node   DagNode
 }
 
 // SetWALLedger wires the WAL's fail-closed AppendIntent path into
 // CreateChat/SaveTurn/SaveDagPlan (#1144 P5). Callers must pass nil unless
 // store is a postgres-backed LedgerStore - same restriction as dag.Executor.SetWALLedger/recordstore.WithLedger.
-func (s *Store) SetWALLedger(store ledger.LedgerStore) {
-	s.walLedger = store
-	pending := s.pendingFailed
-	s.pendingFailed = nil
-	for _, p := range pending {
-		s.appendNodeFailed(context.Background(), p.chatID, p.node)
-	}
-}
+func (s *Store) SetWALLedger(store ledger.LedgerStore) { s.walLedger = store }
 
 // Checkpoint is chatID's last folded ledger state - ONE row, replaced every
 // turn end, not an entry in the WAL (#1144 P5 review: a checkpoint is
@@ -1499,17 +1483,10 @@ func (s *Store) FailUnresumable(ctx context.Context, chatID string, n DagNode, w
 	return UnresumableNode{PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
 }
 
-// appendNodeFailed records the settle in the ledger so a ledger-only replay agrees with the row.
-// Boot's reconcile runs before the WAL is wired, so its settles wait for SetWALLedger.
+// appendNodeFailed records the settle in the ledger so a ledger-only replay agrees with the row;
+// boot wires the WAL before its reconcile for exactly this.
 func (s *Store) appendNodeFailed(ctx context.Context, chatID string, n DagNode) {
-	if chatID == "" {
-		return
-	}
-	if s.walLedger == nil {
-		// Capped: with no WAL configured this queue is never drained.
-		if len(s.pendingFailed) < maxPendingFailed {
-			s.pendingFailed = append(s.pendingFailed, pendingNodeFailed{chatID, n})
-		}
+	if s.walLedger == nil || chatID == "" {
 		return
 	}
 	var p DagPlan
