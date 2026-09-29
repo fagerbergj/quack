@@ -126,7 +126,7 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 }
 
 // ScanOrphanedRuns reconciles chats a killed process left mid-run: paused if
-// a node is suspended, else ActiveTurnID stays set for the crash fallback.
+// a node is suspended, else stamped failed once (settleInterrupted).
 func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode []string, err error) {
 	var chats []Chat
 	if err := s.db.WithContext(ctx).
@@ -148,9 +148,21 @@ func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode [
 		}
 		if c.ActiveTurnID != "" {
 			noResumableNode = append(noResumableNode, c.ID)
+			s.settleInterrupted(ctx, c.ID)
 		}
 	}
 	return paused, noResumableNode, nil
+}
+
+// settleInterrupted stamps a crashed run with nothing to resume failed (clearing ActiveTurnID,
+// so the next boot doesn't report it again) and fails its still-open dag_node records.
+func (s *Store) settleInterrupted(ctx context.Context, chatID string) {
+	if err := s.stampRunStatusKeepingQuestion(ctx, chatID, RunStatusFailed); err != nil {
+		slog.Warn("scan orphaned runs: interrupted stamp failed", "component", "store", "chat", chatID, "err", err)
+	}
+	if err := dag.FailOpenDagNodeRecords(ctx, s.artifacts, chatAppName, s.SessionUserForChat(ctx, chatID), chatID); err != nil {
+		slog.Warn("scan orphaned runs: dag_node records not settled", "component", "store", "chat", chatID, "err", err)
+	}
 }
 
 // stampRunStatusKeepingQuestion is StampRunOutcome minus the pending_question

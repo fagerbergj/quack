@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -192,5 +193,72 @@ func TestPausedNodeWritesNoTerminalLedgerEntry(t *testing.T) {
 	}
 	if len(kinds) != 1 || kinds[0] != ledger.KindNodeStarted {
 		t.Fatalf("ledger kinds = %v, want only %s", kinds, ledger.KindNodeStarted)
+	}
+}
+
+// judgeBlockModel answers the worker's first call, then blocks every later (judge) call until cancelled.
+type judgeBlockModel struct {
+	calls   *atomic.Int32
+	judging chan struct{}
+}
+
+func (judgeBlockModel) Name() string { return "judge-block" }
+
+func (m judgeBlockModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if m.calls.Add(1) == 1 {
+			yield(&model.LLMResponse{Content: genai.NewContentFromText("THE ANSWER", genai.RoleModel), TurnComplete: true, FinishReason: genai.FinishReasonStop}, nil)
+			return
+		}
+		select {
+		case m.judging <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		yield(nil, ctx.Err())
+	}
+}
+
+// TestStopDuringJudge: a stop that lands mid-judge settles the node cancelled rather than
+// delivering its answer unvetted as done; a shutdown cut there leaves it for boot.
+func TestStopDuringJudge(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		shutdown bool
+		want     string
+	}{{"user stop", false, stream.EventNodeCancelled}, {"shutdown", true, ""}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := judgeBlockModel{calls: &atomic.Int32{}, judging: make(chan struct{}, 1)}
+			w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+				vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+			rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
+			ctx, stop := context.WithCancel(stream.WithYield(context.Background(), rec.record))
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _, _, _ = ex.RunPlanStep(ctx, chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+			}()
+			select {
+			case <-m.judging:
+			case <-time.After(10 * time.Second):
+				t.Fatal("judge never started")
+			}
+			if tc.shutdown {
+				ex.MarkShutdown("chat")
+			}
+			stop()
+			<-done
+			ev, ok := rec.of("n1")
+			if tc.want == "" && ok {
+				t.Errorf("n1 terminal = %s, want none (left for boot)", ev.Name)
+			}
+			if tc.want != "" && (!ok || ev.Name != tc.want) {
+				t.Errorf("n1 terminal = %q (ok=%v), want %s", ev.Name, ok, tc.want)
+			}
+		})
 	}
 }

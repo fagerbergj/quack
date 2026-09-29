@@ -59,6 +59,15 @@ func CanTransition(from, to NodeStatus) bool {
 	return transitions[from][to]
 }
 
+// CanPersist is CanTransition plus a retry's re-run: RetryNode starts a finished node straight
+// into running with no queued step, so the persisted row and dag_node record accept that too.
+func CanPersist(from, to NodeStatus) bool {
+	if to == StatusRunning && (from == StatusDone || from == StatusFailed || from == StatusCancelled) {
+		return true
+	}
+	return CanTransition(from, to)
+}
+
 // AllowedTargets returns sorted legal target statuses for 409 responses.
 func AllowedTargets(from NodeStatus) []NodeStatus {
 	if from == "" {

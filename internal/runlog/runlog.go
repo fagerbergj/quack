@@ -370,7 +370,7 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 	if prev, err := st.GetDagNode(ctx, planID, nodeID); err == nil && prev != nil {
 		from = dag.NodeStatus(prev.Status)
 	}
-	if !dag.CanTransition(from, to) {
+	if !dag.CanPersist(from, to) {
 		slog.Warn("persistNodeEvent: illegal node-status transition", "component", "dag",
 			"plan_id", planID, "node_id", nodeID, "from", from, "to", to)
 	}

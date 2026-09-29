@@ -127,7 +127,7 @@ func updateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 	if rec.Status == status {
 		return nil
 	}
-	if !force && !CanTransition(rec.Status, status) {
+	if !force && !CanPersist(rec.Status, status) {
 		return fmt.Errorf("dag_node %s: illegal status transition %s -> %s", nodeID, rec.Status, status)
 	}
 	rec.Status = status
@@ -141,6 +141,34 @@ func updateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 	}
 	_, _, err = save(ctx, kindDagNode, rec, nodeID, lineage)
 	return err
+}
+
+// FailOpenDagNodeRecords marks every chat's dag_node record not yet done/failed/cancelled
+// as failed - boot's settle for a run killed before it had any resumable state.
+func FailOpenDagNodeRecords(ctx context.Context, artifacts artifact.Service, appName, userID, chatID string) error {
+	if artifacts == nil {
+		return nil
+	}
+	c := recordstore.New(artifacts, appName, userID, chatID)
+	summaries, err := c.List(ctx, kindDagNode)
+	if err != nil {
+		return err
+	}
+	for _, s := range summaries {
+		raw, _, ok, err := c.Latest(ctx, s.ID)
+		var rec DagNodeRecord
+		if err != nil || !ok || json.Unmarshal(raw, &rec) != nil {
+			continue
+		}
+		switch rec.Status {
+		case StatusDone, StatusFailed, StatusCancelled:
+			continue
+		}
+		if err := SyncDagNodeStatus(ctx, artifacts, appName, userID, chatID, rec.NodeID, StatusFailed); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // UpdateDagNodeContext overwrites nodeID's persisted ContextID - the ACP

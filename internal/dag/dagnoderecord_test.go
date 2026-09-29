@@ -142,3 +142,21 @@ func TestDagNodeRecordResumable_NeverStarted(t *testing.T) {
 		}
 	}
 }
+
+// TestUpdateDagNodeStatusAcceptsRetryRerun: a retried cancelled node goes straight to
+// running (RetryNode emits no queued step), and its record must follow it through to done.
+func TestUpdateDagNodeStatusAcceptsRetryRerun(t *testing.T) {
+	SetAgentRoster([]AgentInfo{{Name: "code-implementer"}})
+	svc := artifact.InMemoryService()
+	c := seedDagNode(t, svc, DagNodeRecord{NodeID: "n1", Agent: "code-implementer", Status: StatusCancelled})
+	for _, to := range []NodeStatus{StatusRunning, StatusDone} {
+		if err := UpdateDagNodeStatus(context.Background(), svc, "quack", "u1", "chat1", "n1", to); err != nil {
+			t.Fatalf("-> %s: %v", to, err)
+		}
+	}
+	raw, _, _, _ := c.Latest(context.Background(), kindDagNode+":n1")
+	var rec DagNodeRecord
+	if err := json.Unmarshal(raw, &rec); err != nil || rec.Status != StatusDone {
+		t.Fatalf("record = %+v err=%v, want done", rec, err)
+	}
+}

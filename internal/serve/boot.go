@@ -77,7 +77,7 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 			"plan", f.PlanID, "node", f.NodeID, "reason", f.Reason)
 	}
 	for _, id := range interrupted {
-		slog.Warn("chat left mid-run with no resumable node; marked interrupted - resend the message to retry",
+		slog.Warn("chat left mid-run with no resumable node; marked failed - resend the message to retry",
 			"component", "startup", "chat", id)
 		removeStaleCloneDir(jail, id)
 	}

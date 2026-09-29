@@ -1225,8 +1225,14 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 }
 
 // applyJudgeFailure: judge call failed - answer goes out unvetted, fail-closed
-// score, span closed with the error, unavailability metric.
+// score, span closed with the error, unavailability metric (unless the run was cancelled).
 func (j *judgeRounds) applyJudgeFailure(round int, runID string, jspan *stageSpan, jerr error) {
+	if errors.Is(j.ctx.Err(), context.Canceled) {
+		// A stop or shutdown killed the judge, not a judge fault: end the round, don't deliver unvetted.
+		otelobs.End(jspan.span, jerr)
+		j.outcome = &judgeRoundOutcome{err: j.ctx.Err()}
+		return
+	}
 	// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
 	j.log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
 	status, feedback := judgeFailureFeedback(jerr)
