@@ -2,7 +2,10 @@
 
 package workspace
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // probeLandlock: Landlock is a Linux LSM - there is nothing to probe.
 func probeLandlock() error {
@@ -20,3 +23,11 @@ func SandboxExecMain(args []string) error {
 func ReapMain(args []string) error {
 	return fmt.Errorf("reap: subreaper mode is only supported on Linux")
 }
+
+// openNoFollow: unreachable in practice - ConfineGit's Landlock probe fails off Linux.
+func openNoFollow(p string, _ bool) (*os.File, error) {
+	return nil, fmt.Errorf("git: %s: no-symlink open is only supported on Linux", p)
+}
+
+// kernelLandlockABI: Landlock is Linux-only.
+func kernelLandlockABI() int { return 0 }

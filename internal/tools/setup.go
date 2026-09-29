@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -138,6 +139,11 @@ func unwipeableReason(ctx context.Context, b gitBinding, target, repoURL, baseRe
 	if hasRebaseOrMergeState(target) {
 		return "a rebase or merge is in progress"
 	}
+	// An unreadable object store makes status report every file as changed; say what actually failed.
+	if err := repoReadErr(ctx, target, b.caps); err != nil {
+		slog.Warn("git: cannot read a clone's repository", "component", "tools", "dir", target, "err", err)
+		return "git cannot read its repository: " + firstLine(err.Error())
+	}
 	out, _, err := runGit(ctx, target, cleanStatusArgv, b.caps, nil)
 	if err != nil {
 		return "its working tree state could not be checked"
@@ -153,6 +159,16 @@ func unwipeableReason(ctx context.Context, b gitBinding, target, repoURL, baseRe
 		return fmt.Sprintf("it has %d unpushed commit(s)", n)
 	}
 	return ""
+}
+
+// repoReadErr is why git cannot read target's refs and reachable objects; nil when it can, or target is absent or
+// fails the repository checks (warnDiscard reports those).
+func repoReadErr(ctx context.Context, target string, caps workspace.Caps) error {
+	if _, err := os.Stat(target); err != nil || workspace.RepoRedirect(target, target) != nil {
+		return nil
+	}
+	_, _, err := runGit(ctx, target, []string{"fsck", "--connectivity-only", "--no-dangling", "--no-progress"}, caps, nil)
+	return err
 }
 
 // canReuseClone reports whether target is already a healthy clone of repoURL
@@ -256,7 +272,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if err := validateRef(workBranch, "setup"); err != nil {
 		return "", err
 	}
-	target, err := b.resolve(dir)
+	target, err := b.resolveRepoDir(dir)
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve clone dir: %w", err)
 	}
@@ -280,6 +296,9 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	}
 	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
 	// error must never read as the repository being unreachable (#1213).
+	if err := repoReadErr(ctx, target, b.caps); err != nil {
+		slog.Warn("git: re-cloning a clone git cannot read", "component", "tools", "dir", target, "err", err)
+	}
 	warnDiscard(target, target)
 	if err := workspace.RemoveAllForce(target); err != nil {
 		return "", &cleanupError{path: target, cause: err}

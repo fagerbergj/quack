@@ -54,7 +54,11 @@ func fetch(ctx context.Context, root string, p Plugin, commit func(Plugin) error
 	if p.Source == SourceLocal {
 		return p, nil // no clone; Root() serves the path directly
 	}
-	dir := CloneDir(root, p.Name)
+	dir, err := realParentDir(CloneDir(root, p.Name))
+	if err != nil {
+		p.Error = err.Error()
+		return p, err
+	}
 	defer lockClone(dir)()
 	url := RemoteURL(p.Owner, p.Repo)
 	if err := fetchInto(ctx, dir, url); err != nil {
@@ -126,12 +130,26 @@ func fetchInto(ctx context.Context, dir, url string) error {
 			return err
 		}
 	}
-	// Absolute: clone runs from a throwaway HOME. Full, not blob-filtered: the pi-acp shim and skilltoolset read files.
+	// Full, not blob-filtered: the pi-acp shim and skilltoolset read files.
+	_, err := runGitRW(ctx, "", []string{dir}, "clone", "--quiet", url, dir)
+	return err
+}
+
+// realParentDir is dir under its parent's real path, the parent created: quack's git refuses a repo path through a
+// symlink, and the operator's plugins root may be one.
+func realParentDir(dir string) (string, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return gitRun(ctx, "", "clone", "--quiet", url, abs)
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "", err
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, filepath.Base(abs)), nil
 }
 
 // isGitRepo reports whether dir is itself a git repo, not merely inside one -
@@ -301,9 +319,14 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
+	return runGitRW(ctx, dir, nil, args...)
+}
+
+// runGitRW runs git in dir; rw as workspace.GitCmd's.
+func runGitRW(ctx context.Context, dir string, rw []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	cmd, done, err := workspace.GitCmd(ctx, "git", dir, dir, args, gitEnv())
+	cmd, done, err := workspace.GitCmd(ctx, "git", dir, dir, args, gitEnv(), rw...)
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}

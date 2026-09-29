@@ -154,6 +154,11 @@ func (b gitBinding) resolve(p string) (string, error) {
 	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
 }
 
+// resolveRepoDir: resolve for a dir quack clones or adds a worktree into (see workspace.Jail.ResolveRepoDir).
+func (b gitBinding) resolveRepoDir(p string) (string, error) {
+	return b.jail.ResolveRepoDir(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
+}
+
 func (b gitBinding) credentialFor(rawURL string) *GitCredential {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
@@ -192,9 +197,8 @@ func gitChildPath(caps workspace.Caps) string {
 func gitEnv(caps workspace.Caps, auth *gitAuth) []string {
 	env := []string{
 		"PATH=" + gitChildPath(caps),
-		// Git writes loose objects via a tmp file under TMPDIR then renames it
-		// into .git/objects - unset, that defaults to the real /tmp, which can
-		// be a different device than dir and turn the rename into EXDEV (#936).
+		// Only unconfined git's scratch files land here (objects are staged inside .git); confined git gets
+		// GitCmd's per-call HOME instead.
 		"TMPDIR=" + workspace.SandboxTmpDir(caps),
 	}
 	// workspace.env for hooks/filters to find the toolchain.
@@ -235,8 +239,8 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 	return runGitIn(ctx, dir, dir, argv, caps, auth)
 }
 
-// runGitIn runs in dir, which must be clone or a linked worktree of it (see workspace.GitCmd).
-func runGitIn(ctx context.Context, clone, dir string, argv []string, caps workspace.Caps, auth *gitAuth) (stdout, stderr string, err error) {
+// runGitIn runs in dir, which must be clone or a linked worktree of it; rw as workspace.GitCmd's.
+func runGitIn(ctx context.Context, clone, dir string, argv []string, caps workspace.Caps, auth *gitAuth, rw ...string) (stdout, stderr string, err error) {
 	bin, err := gitBinaryPath()
 	if err != nil {
 		return "", "", err
@@ -248,7 +252,7 @@ func runGitIn(ctx context.Context, clone, dir string, argv []string, caps worksp
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd, done, err := workspace.GitCmd(cctx, bin, clone, dir, argv, gitEnv(caps, auth))
+	cmd, done, err := workspace.GitCmd(cctx, bin, clone, dir, argv, gitEnv(caps, auth), rw...)
 	if err != nil {
 		return "", "", err
 	}
@@ -337,7 +341,7 @@ func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) 
 		return gitCloneResult{}, err
 	}
 	// Run from an empty dir: a repo enclosing relRoot must not lend clone its config.
-	if _, _, err := runGit(context.Background(), "", argv, b.caps, auth); err != nil {
+	if _, _, err := runGitIn(context.Background(), "", "", argv, b.caps, auth, target); err != nil {
 		return gitCloneResult{}, err
 	}
 

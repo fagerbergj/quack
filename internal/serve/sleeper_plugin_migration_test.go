@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/pluginreg"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // sleeperSeed is config/quack.yaml's shape of the sleeper entry, at a fixture tag.
@@ -32,6 +33,7 @@ func sleeperPluginRemote(t *testing.T) {
 	run(t, work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "sleeper plugin")
 	run(t, work, "tag", "sleeper/v9.9.9")
 	run(t, work, "push", "--quiet", bare, "main", "sleeper/v9.9.9")
+	confineWithFixture(t, bare)
 	prev := pluginreg.RemoteURL
 	pluginreg.RemoteURL = func(owner, repo string) string {
 		if owner == "fagerbergj" && repo == "quack-extensions" {
@@ -40,6 +42,13 @@ func sleeperPluginRemote(t *testing.T) {
 		return filepath.Join(t.TempDir(), "unreachable.git")
 	}
 	t.Cleanup(func() { pluginreg.RemoteURL = prev })
+}
+
+// confineWithFixture runs boot's git confined, as an earlier boot test in this binary leaves it, with bare granted.
+func confineWithFixture(t *testing.T, bare string) {
+	workspace.GitFixtureDirs = []string{bare}
+	workspace.ConfineGit(true)
+	t.Cleanup(func() { workspace.GitFixtureDirs = nil; workspace.ConfineGit(false) })
 }
 
 // Seeding owns local rows and rows it created: each follows a changed seed
@@ -162,6 +171,7 @@ func TestBootFetchFollowsSeedRefBump(t *testing.T) {
 		run(t, work, "tag", tag)
 	}
 	run(t, work, "push", "--quiet", bare, "main", "v1", "v2")
+	confineWithFixture(t, bare)
 	prev := pluginreg.RemoteURL
 	pluginreg.RemoteURL = func(string, string) string { return bare }
 	t.Cleanup(func() { pluginreg.RemoteURL = prev })

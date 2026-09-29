@@ -714,16 +714,20 @@ var selfExecDispatch atomic.Bool
 // withReaper runs argv under a __reap subreaper so no descendant outlives it (bwrap's PID namespace
 // already does). Unchanged off Linux or when neither the sidecar nor the dispatch is available.
 func withReaper(argv []string) []string {
-	self := landlockSelfExe()
-	if len(argv) == 0 || runtime.GOOS != "linux" || (!selfExecDispatch.Load() && filepath.Base(self) != sandboxSidecar) {
+	if len(argv) == 0 || !canSelfExec() {
 		return argv
 	}
-	out := append([]string{self, ReapArg, "--"}, argv...)
+	out := append([]string{landlockSelfExe(), ReapArg, "--"}, argv...)
 	// Resolve on the server's PATH like exec.Command would; the reaper only sees the child's PATH.
 	if p, err := exec.LookPath(argv[0]); err == nil {
 		out[3] = p
 	}
 	return out
+}
+
+// canSelfExec: on Linux, the sidecar or this binary's own dispatch answers __sandbox-exec/__reap.
+func canSelfExec() bool {
+	return runtime.GOOS == "linux" && (selfExecDispatch.Load() || filepath.Base(landlockSelfExe()) == sandboxSidecar)
 }
 
 // RunSandboxExecIfInvoked: argv[1] dispatch for the __sandbox-exec and __reap self-execs. Call at
@@ -931,12 +935,11 @@ func WorktreeCommonGitDir(dir string) string {
 
 // Own gitdir + shared common dir for a linked worktree. Both "" when not a linked worktree.
 func worktreeGitDirs(dir string) (gitdir, common string) {
-	data, err := os.ReadFile(filepath.Join(dir, ".git"))
+	line, err := readPointer(filepath.Join(dir, ".git"))
 	if err != nil {
 		return "", ""
 	}
 	const prefix = "gitdir: "
-	line := strings.TrimSpace(string(data))
 	if !strings.HasPrefix(line, prefix) {
 		return "", ""
 	}
@@ -944,11 +947,9 @@ func worktreeGitDirs(dir string) (gitdir, common string) {
 	if !filepath.IsAbs(gitdir) {
 		gitdir = filepath.Join(dir, gitdir)
 	}
-	commonBytes, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
-	if err != nil {
+	if common, err = readPointer(filepath.Join(gitdir, "commondir")); err != nil {
 		return "", ""
 	}
-	common = strings.TrimSpace(string(commonBytes))
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(gitdir, common)
 	}

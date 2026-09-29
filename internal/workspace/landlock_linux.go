@@ -3,11 +3,16 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
 	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
@@ -59,15 +64,26 @@ func SandboxExecMain(args []string) error {
 		return fmt.Errorf("sandbox-exec: %q not found: %w", target[0], err)
 	}
 
+	if err := claimGrantFDs(append(rw, ro...)); err != nil {
+		return err
+	}
+	rwDirs, rwFiles := splitFiles(rw)
+	roDirs, roFiles := splitFiles(ro)
 	var rules []landlock.Rule
-	if len(rw) > 0 {
+	if len(rwDirs) > 0 {
 		// WithRefer grants LANDLOCK_ACCESS_FS_REFER: without it, cross-directory
 		// link()/rename() within these RW dirs is denied and reported as EXDEV
 		// even on one filesystem - breaking git's object writes and `git clone --local`. Safe to request unconditionally: landlockABI is fixed at V3 (REFER needs only ABI>=2), so any kernel this ruleset applies on already supports it.
-		rules = append(rules, landlock.RWDirs(rw...).WithRefer().IgnoreIfMissing())
+		rules = append(rules, landlock.RWDirs(rwDirs...).WithRefer().IgnoreIfMissing())
 	}
-	if len(ro) > 0 {
-		rules = append(rules, landlock.RODirs(ro...).IgnoreIfMissing())
+	if len(roDirs) > 0 {
+		rules = append(rules, landlock.RODirs(roDirs...).IgnoreIfMissing())
+	}
+	if len(rwFiles) > 0 {
+		rules = append(rules, landlock.RWFiles(rwFiles...).IgnoreIfMissing())
+	}
+	if len(roFiles) > 0 {
+		rules = append(rules, landlock.ROFiles(roFiles...).IgnoreIfMissing())
 	}
 	if err := withSignalScope(landlockABI).Restrict(rules...); err != nil {
 		return fmt.Errorf("sandbox-exec: restrict: %w", err)
@@ -79,6 +95,63 @@ func SandboxExecMain(args []string) error {
 	env := append(os.Environ(), fmt.Sprintf("%s=landlock:abi%d:rw%d:ro%d",
 		SandboxEnvMarker, landlockABIVersion, len(rw), len(ro)))
 	return syscall.Exec(bin, execArgv, env)
+}
+
+// claimGrantFDs refuses a /proc/self/fd grant with no open handle behind it (IgnoreIfMissing would drop it
+// silently) and keeps each handle from reaching the target.
+func claimGrantFDs(paths []string) error {
+	for _, p := range paths {
+		n, ok := strings.CutPrefix(p, "/proc/self/fd/")
+		if !ok {
+			continue
+		}
+		fd, err := strconv.Atoi(n)
+		if _, serr := os.Stat(p); err != nil || serr != nil {
+			return fmt.Errorf("sandbox-exec: grant %s has no open handle: %w", p, errors.Join(err, serr))
+		}
+		syscall.CloseOnExec(fd)
+	}
+	return nil
+}
+
+// openNoFollow opens p as an O_PATH handle, refusing a symlink in any component; create makes missing dirs the
+// same way, so neither the grant nor the mkdir can be steered through a planted link.
+func openNoFollow(p string, create bool) (*os.File, error) {
+	how := &unix.OpenHow{Flags: unix.O_PATH | unix.O_CLOEXEC, Resolve: unix.RESOLVE_NO_SYMLINKS}
+	fd, err := unix.Openat2(unix.AT_FDCWD, p, how)
+	if errors.Is(err, unix.ENOENT) && create && filepath.Dir(p) != p {
+		parent, perr := openNoFollow(filepath.Dir(p), true)
+		if perr != nil {
+			return nil, perr
+		}
+		defer func() { _ = parent.Close() }()
+		if err = unix.Mkdirat(int(parent.Fd()), filepath.Base(p), 0o755); err == nil || errors.Is(err, unix.EEXIST) {
+			fd, err = unix.Openat2(int(parent.Fd()), filepath.Base(p), how)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), p), nil
+}
+
+// splitFiles separates non-directory grants: a directory right on a file rule is EINVAL. Missing paths stay with
+// dirs, where IgnoreIfMissing skips them.
+func splitFiles(paths []string) (dirs, files []string) {
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			files = append(files, p)
+		} else {
+			dirs = append(dirs, p)
+		}
+	}
+	return dirs, files
+}
+
+// kernelLandlockABI is the running kernel's Landlock ABI, 0 when unknown.
+func kernelLandlockABI() int {
+	v, _ := ll.LandlockGetABIVersion()
+	return v
 }
 
 // withSignalScope adds signal scoping where the kernel has it (ABI 6+, 6.12+): the child can't kill

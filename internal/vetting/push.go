@@ -127,9 +127,8 @@ func pushGitChildPath(caps workspace.Caps) string {
 func pushGitEnv(caps workspace.Caps, auth *gitAuth) []string {
 	env := []string{
 		"PATH=" + pushGitChildPath(caps),
-		// Git writes loose objects via a tmp file under TMPDIR then renames it
-		// into .git/objects - unset, that defaults to the real /tmp, which can
-		// be a different device than dir and turn the rename into EXDEV (#936).
+		// Only unconfined git's scratch files land here (objects are staged inside .git); confined git gets
+		// GitCmd's per-call HOME instead.
 		"TMPDIR=" + workspace.SandboxTmpDir(caps),
 	}
 	if auth != nil {

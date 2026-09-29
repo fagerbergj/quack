@@ -14,7 +14,12 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-func init() { workspace.GitProtocol = "file" } // fixtures are local bare repos
+// TestMain answers the __sandbox-exec self-exec a confined git call makes of this test binary.
+func TestMain(m *testing.M) {
+	workspace.RunSandboxExecIfInvoked()
+	workspace.GitProtocol = "file" // fixtures are local bare repos
+	os.Exit(m.Run())
+}
 
 // run/newFixtureRepo/commitAndPush wrap pluginregtest, the implementation
 // shared with internal/server/rest's plugin handler tests (#1430).
@@ -803,4 +808,39 @@ func TestGitEnvIsMinimalAndTokenIsGitHubScoped(t *testing.T) {
 			t.Errorf("%s header = %q, want none", url, got)
 		}
 	}
+}
+
+// TestConfinedFetchClonesFetchesAndReclones: the boot fetch's clone (under a symlinked plugins root), a later fetch
+// and the reclone of a broken clone all work with quack's git under Landlock.
+func TestConfinedFetchClonesFetchesAndReclones(t *testing.T) {
+	bare, work := pluginregtest.NewFixtureRepo(t)
+	withFixedRemote(t, bare)
+	workspace.GitFixtureDirs = []string{bare}
+	t.Cleanup(func() { workspace.GitFixtureDirs = nil; workspace.ConfineGit(false) })
+	if !workspace.ConfineGit(true) {
+		t.Skip("SKIPPING: landlock unavailable")
+	}
+	root := filepath.Join(t.TempDir(), "plugins")
+	if err := os.Symlink(t.TempDir(), root); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewFSRegistry(root)
+	e, _ := ParseEntry("github:acme/widgets")
+	fetchAt := func(step string) {
+		t.Helper()
+		got, err := reg.Fetch(context.Background(), FromEntry(e))
+		if err != nil || got.Error != "" {
+			t.Fatalf("%s: %v %s", step, err, got.Error)
+		}
+		if want := strings.TrimSpace(run(t, bare, "rev-parse", "main")); got.SHA != want {
+			t.Fatalf("%s: SHA = %q, want %q", step, got.SHA, want)
+		}
+	}
+	fetchAt("clone")
+	commitAndPush(t, work, "second")
+	fetchAt("fetch")
+	if err := os.RemoveAll(filepath.Join(root, "widgets", "repo", ".git")); err != nil {
+		t.Fatal(err)
+	}
+	fetchAt("reclone")
 }

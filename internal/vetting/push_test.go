@@ -76,6 +76,23 @@ func addBranchFixture(t *testing.T, bare, branch string) {
 // over from a prior run on the same issue must not fail delivery outright -
 // PushBranch fetches it, rebases local work on top, and retries once.
 func TestPushBranchRecoversFromSurvivingRemoteBranch(t *testing.T) {
+	checkPushRecovers(t, func(string) {})
+}
+
+// TestConfinedPushBranchRecovers: the gate's push, fetch and rebase retry run with quack's git under Landlock, the
+// local bare remote granted as a fixture.
+func TestConfinedPushBranchRecovers(t *testing.T) {
+	checkPushRecovers(t, func(bare string) {
+		workspace.GitFixtureDirs = []string{bare}
+		t.Cleanup(func() { workspace.GitFixtureDirs = nil; workspace.ConfineGit(false) })
+		if !workspace.ConfineGit(true) {
+			t.Skip("SKIPPING: landlock unavailable")
+		}
+	})
+}
+
+// checkPushRecovers runs the #714 recovery; confine runs once the fixtures exist, before PushBranch.
+func checkPushRecovers(t *testing.T, confine func(bare string)) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
 	addBranchFixture(t, bare, "quack/issue-66") // prior run's surviving branch (adds pr.txt)
@@ -93,6 +110,7 @@ func TestPushBranchRecoversFromSurvivingRemoteBranch(t *testing.T) {
 	runGitT(t, target, "add", "-A")
 	runGitT(t, target, "commit", "--quiet", "-m", "fix commit")
 
+	confine(bare)
 	if _, err := PushBranch(context.Background(), jailRoot, target, "file://"+bare, "quack/issue-66", GitCredential{}, workspace.DefaultCaps()); err != nil {
 		t.Fatalf("PushBranch: %v; want it to recover via fetch+rebase+retry", err)
 	}

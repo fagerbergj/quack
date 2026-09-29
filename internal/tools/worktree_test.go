@@ -3,6 +3,8 @@ package tools
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -258,7 +260,7 @@ func TestPruneWorktreeStaysInsideRoot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return strings.Contains(string(out), filepath.Base(filepath.Dir(wt)))
+		return strings.Contains(string(out), "worktree "+wt+"\n")
 	}
 	root := t.TempDir()
 	inClone, inWT := newClone(root)
@@ -375,5 +377,209 @@ func TestRedirectRecoveryWarns(t *testing.T) {
 	}
 	if fi, err := os.Lstat(filepath.Join(parent, ".git")); err != nil || !fi.IsDir() {
 		t.Errorf("shared clone not recloned: %v %v", fi, err)
+	}
+}
+
+// TestConfinedWorktreeOps: worktree add, the reuse sync and GC's prune still work with quack's git under Landlock.
+func TestConfinedWorktreeOps(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	b := newTestGitBinding(t)
+	parentDir, err := setupCloneAndBranch(ctx, b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+newBareRepoFixture(t), "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+	t.Cleanup(func() { workspace.ConfineGit(false) })
+	if !workspace.ConfineGit(true) {
+		t.Skip("SKIPPING: landlock unavailable")
+	}
+
+	nodeRel, branch := workspace.NodeDir("review1"), workspace.WorktreeBranch("review1")
+	dir, err := SetupWorktree(ctx, b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil)
+	if err != nil {
+		t.Fatalf("confined worktree add: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("moved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, parentDir, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "-am", "move")
+	if _, err := SetupWorktree(ctx, b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil); err != nil {
+		t.Fatalf("confined worktree sync: %v", err)
+	}
+	if body, _ := os.ReadFile(filepath.Join(dir, "README.md")); string(body) != "moved\n" {
+		t.Errorf("synced worktree README.md = %q, want the clone's new head", body)
+	}
+	if err := PruneWorktree(ctx, b.jail.Root(), dir, b.caps); err != nil {
+		t.Fatalf("confined worktree remove: %v", err)
+	}
+	if list := runGitT(t, parentDir, "worktree", "list", "--porcelain"); strings.Contains(list, dir) {
+		t.Errorf("pruned worktree still registered:\n%s", list)
+	}
+}
+
+// warnLog captures WARN and above for one test.
+func warnLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &logs
+}
+
+// snapshot names every file under dir with its size and mtime, to prove a tree untouched.
+func snapshot(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&b, "%s %d %d\n", p, fi.Size(), fi.ModTime().UnixNano())
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+func sharedClone(t *testing.T, b gitBinding, bare string) (string, error) {
+	t.Helper()
+	return setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope), "file://"+bare, "main", "quack/work", false)
+}
+
+// TestSymlinkedRepoDirsAreReplacedNotFollowed: a shared clone dir or worktree dir replaced by a symlink to a decoy
+// is removed with a WARN and recreated as a real dir; the decoy is never touched.
+func TestSymlinkedRepoDirsAreReplacedNotFollowed(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	parent, err := sharedClone(t, b, bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := b.resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A healthy clone of the same remote, which reuse would adopt if it followed the link.
+	decoy := filepath.Join(scope, "decoy")
+	rawGit(t, scope, "clone", "--quiet", bare, decoy)
+	wtDecoy := filepath.Join(scope, "wt-decoy")
+	if err := os.MkdirAll(wtDecoy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wtDecoy, "keep.txt"), []byte("decoy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	node := filepath.Join(scope, workspace.NodeDir("review1"))
+	if err := os.RemoveAll(parent); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{parent: decoy, node: wtDecoy} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, beforeWT := snapshot(t, decoy), snapshot(t, wtDecoy)
+	logs := warnLog(t)
+
+	if got, err := sharedClone(t, b, bare); err != nil || got != parent {
+		t.Fatalf("setup = %q %v, want a fresh clone at %s", got, err, parent)
+	}
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parent, workspace.NodeDir("review1"),
+		workspace.WorktreeBranch("review1"), b.caps, nil)
+	if err != nil || dir != node {
+		t.Fatalf("SetupWorktree = %q %v, want %s", dir, err, node)
+	}
+	for _, p := range []string{parent, node} {
+		if fi, err := os.Lstat(p); err != nil || !fi.IsDir() {
+			t.Errorf("%s is not a real dir: %v %v", p, fi, err)
+		}
+		if !strings.Contains(logs.String(), "link="+p) {
+			t.Errorf("no WARN naming the replaced link %s:\n%s", p, logs.String())
+		}
+	}
+	if snapshot(t, decoy) != before || snapshot(t, wtDecoy) != beforeWT {
+		t.Error("a decoy behind a replaced link was written")
+	}
+}
+
+// TestUnreadableCloneSaysSo: a reused clone whose objects git cannot read is recloned with a WARN saying so, or, when
+// its checkout fails too, moved aside with that reason, never as uncommitted changes.
+func TestUnreadableCloneSaysSo(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	t.Run("recloned", func(t *testing.T) {
+		b := newTestGitBinding(t)
+		parent, err := sharedClone(t, b, bare)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pack := filepath.Join(parent, ".git", "objects", "pack")
+		if err := os.Rename(pack, filepath.Join(t.TempDir(), "pack")); err != nil {
+			t.Fatal(err)
+		}
+		logs := warnLog(t)
+		if _, err := sharedClone(t, b, bare); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(logs.String(), "re-cloning a clone git cannot read") || !strings.Contains(logs.String(), "dir="+parent) {
+			t.Errorf("no WARN saying git cannot read the clone:\n%s", logs.String())
+		}
+	})
+	t.Run("moved aside", func(t *testing.T) {
+		b := newTestGitBinding(t)
+		parent, err := sharedClone(t, b, bare)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unpackObjects(t, parent)
+		blob := strings.TrimSpace(runGitT(t, parent, "rev-parse", "HEAD:README.md"))
+		if err := os.Remove(filepath.Join(parent, ".git", "objects", blob[:2], blob[2:])); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, parent, ".git/index.lock", "") // the reuse checkout fails too
+		logs := warnLog(t)
+		_, err = setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope), "file://"+bare, "main", "quack/other", false)
+		if err == nil || !strings.Contains(err.Error(), "git cannot read its repository") || strings.Contains(err.Error(), "uncommitted") {
+			t.Errorf("setup err = %v, want the tree moved aside because git cannot read it", err)
+		}
+		if !strings.Contains(logs.String(), "cannot read a clone's repository") {
+			t.Errorf("no WARN with the read error:\n%s", logs.String())
+		}
+	})
+}
+
+// unpackObjects turns dir's packs into loose objects, so one can be removed.
+func unpackObjects(t *testing.T, dir string) {
+	t.Helper()
+	packs, err := filepath.Glob(filepath.Join(dir, ".git", "objects", "pack", "*.pack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range packs {
+		moved := filepath.Join(t.TempDir(), "p.pack")
+		if err := os.Rename(p, moved); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Remove(strings.TrimSuffix(p, ".pack") + ".idx")
+		f, err := os.Open(moved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("git", "-C", dir, "unpack-objects", "-q")
+		cmd.Stdin = f
+		out, err := cmd.CombinedOutput()
+		_ = f.Close()
+		if err != nil {
+			t.Fatalf("unpack-objects: %v %s", err, out)
+		}
 	}
 }
