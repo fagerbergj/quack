@@ -339,7 +339,8 @@ func executeStep(tc agent.Context, c *recordstore.Client, rec *dag.DagPlanRecord
 func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, finalize FinalizeAnswerFunc, nodeID string, rec *dag.DagPlanRecord, plan *dag.Plan, results []assignmentResult, stepPaused, stepFailed bool) (executeResult, error) {
 	// Only deliver on a step whose own run succeeded - a failed or paused
 	// delivering node must not mark the plan done and finalize on garbage.
-	terminalStopped := stoppedTerminal(*plan, results)
+	// Only a delivering step has an answer to lose; a partial step just reports the cancelled node.
+	terminalStopped := rec.Delivery != nil && stoppedTerminal(*plan, results)
 	delivering := rec.Delivery != nil && !stepPaused && !stepFailed && !terminalStopped
 	rec.Status = "running"
 	if delivering {
@@ -353,11 +354,7 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 	emitPlanEvent(tc, plan, step)
 
 	if delivering && finalize != nil {
-		final := map[string]string{}
-		for _, a := range rec.Assignments {
-			final[a.NodeID] = a.Result
-		}
-		cache.SetDelivered(finalize(tc, *plan, final))
+		cache.SetDelivered(finalize(tc, *plan, DeliverableResults(rec.Assignments)))
 	}
 	if delivering || stepPaused || terminalStopped {
 		// End the llmagent turn: delivery fired (nothing more to plan) or a node
@@ -410,11 +407,11 @@ func ApplyAssignmentOutcome(a *dag.Assignment, output string, paused, stopped bo
 	case stopped:
 		// Ran and was stopped by the user: never re-dispatched, its draft kept for dependents.
 		a.TaskID = uuid.NewString()
-		a.Result = output
+		a.Result, a.Stopped = output, true
 		return "cancelled"
 	case strings.TrimSpace(output) != "":
 		a.TaskID = uuid.NewString()
-		a.Result = output
+		a.Result, a.Stopped = output, false
 		return "done"
 	case paused:
 		// Parked on a HITL question, not failed: leave task_id unset so
@@ -444,6 +441,20 @@ func previewText(s string) string {
 		return s
 	}
 	return s[:summaryPreviewLen] + "…"
+}
+
+// DeliverableResults maps each assignment to the result a delivery may use: a stopped one's
+// draft reads as empty, so it can never become the delivered answer in any turn.
+func DeliverableResults(assignments []dag.Assignment) map[string]string {
+	final := make(map[string]string, len(assignments))
+	for _, a := range assignments {
+		if a.Stopped {
+			final[a.NodeID] = ""
+			continue
+		}
+		final[a.NodeID] = a.Result
+	}
+	return final
 }
 
 // stoppedSummary tells the orchestrator model what a cancelled assignment means.

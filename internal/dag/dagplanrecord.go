@@ -42,6 +42,9 @@ type Assignment struct {
 	// ForkOf: reserved for a later slice (dynamic DAGs/session forking) -
 	// accepted and persisted, not yet written or interpreted by anything.
 	ForkOf string `json:"fork_of,omitempty"`
+	// Stopped: the user stopped this node, so Result is an unreviewed draft - never an answer,
+	// in any later turn either (the executor's own stop flag is per turn).
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // DagPlanRecord is the "dag_plan" kind's structured body. Assignment.NodeID
@@ -69,7 +72,7 @@ const dagPlanJSONSchema = `{
       "checks": {"type": "array", "items": {"type": "string"}},
       "workdir": {"type": "string"}, "rubric": {"type": "string"},
       "task_id": {"type": "string"}, "result": {"type": "string"}, "meta": {"type": "object"},
-      "fork_of": {"type": "string"}
+      "fork_of": {"type": "string"}, "stopped": {"type": "boolean"}
     }}},
     "setup": {"type": "object"},
     "delivery": {"type": "object"},

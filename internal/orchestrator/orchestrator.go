@@ -830,10 +830,7 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	}
 
 	if !anyFailed && rec.Delivery != nil {
-		final := map[string]string{}
-		for _, a := range rec.Assignments {
-			final[a.NodeID] = a.Result
-		}
+		final := tools.DeliverableResults(rec.Assignments)
 		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID))
 	}
 	yield(stream.Done(), nil)

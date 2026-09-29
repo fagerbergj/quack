@@ -70,3 +70,59 @@ func TestExecuteTool_StoppedTerminalEndsTurnWithoutAnswer(t *testing.T) {
 		t.Errorf("status = %v finalized=%v delivered=%q skip=%v, want stopped, undelivered, turn ended", out["status"], *finalized, cache.Delivered(), ctx.actions.SkipSummarization)
 	}
 }
+
+// TestExecuteTool_StoppedSinkInPartialStepContinues: with no delivery declared there is no
+// answer to lose, so stopping either of two independent sinks just reports it and the turn goes on.
+func TestExecuteTool_StoppedSinkInPartialStepContinues(t *testing.T) {
+	for _, stopped := range []string{"a-1", "b-1"} {
+		t.Run(stopped, func(t *testing.T) {
+			rec := dag.DagPlanRecord{PlanID: "p1", Assignments: []dag.Assignment{{NodeID: "a-1", Task: "a"}, {NodeID: "b-1", Task: "b"}}}
+			planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+			c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "a-1", Agent: "web-researcher"}, {NodeID: "b-1", Agent: "web-researcher"}})
+			step := &fakeRunStep{outputs: map[string]string{"a-1": "A", "b-1": "B"}}
+			tl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, step.run, nil, nil, "q", nil, nil, nil, "", nil, false, "orchestrator", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := newExecToolCtx()
+			ctx.Ctx = WithNodeStopped(context.Background(), func(id string) bool { return id == stopped })
+			out, err := tl.(runnableTool).Run(ctx, map[string]any{"plan_id": "p1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out["status"] != "running" || ctx.actions.SkipSummarization || resultFor(t, out, stopped)["status"] != "cancelled" {
+				t.Errorf("status = %v skip=%v, want a running step with %s cancelled", out["status"], ctx.actions.SkipSummarization, stopped)
+			}
+		})
+	}
+}
+
+// TestExecuteTool_StoppedDraftNeverDeliveredLater: a draft stopped in an earlier turn stays
+// out of delivery when a later step declares one, though the executor's stop flag is gone.
+func TestExecuteTool_StoppedDraftNeverDeliveredLater(t *testing.T) {
+	rec := dag.DagPlanRecord{
+		PlanID: "p1",
+		Assignments: []dag.Assignment{
+			{NodeID: "a-1", Task: "a", TaskID: "t-a", Result: "STOPPED DRAFT", Stopped: true},
+			{NodeID: "b-1", Task: "b"},
+		},
+		Delivery: &dag.Delivery{Kind: "comment"},
+	}
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "a-1", Agent: "web-researcher"}, {NodeID: "b-1", Agent: "web-researcher"}})
+	cache := NewPlanCache()
+	step := &fakeRunStep{outputs: map[string]string{"b-1": "B"}}
+	finalize := func(_ context.Context, plan dag.Plan, outputs map[string]string) string {
+		return TerminalOutput(plan, outputs)
+	}
+	tl, err := NewExecuteTool(planner, c, cache, nil, step.run, finalize, nil, "q", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.(runnableTool).Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := cache.Delivered(); got == "STOPPED DRAFT" {
+		t.Errorf("delivered the stopped draft %q from an earlier turn", got)
+	}
+}
