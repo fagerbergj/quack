@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"hash/maphash"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // GitProtocol is the only transport quack's own git calls may use; tests widen it to "file" for local fixtures.
@@ -47,16 +49,17 @@ func GitSafeArgs() []string {
 }
 
 // GitCmd builds a quack-internal git child that reads no agent-writable config: fresh empty HOME, no
-// system/global config, and for an in-repo call (dir != "") the repo config first stripped to gitConfigKeep -
-// the drivers/rewrites -c can't override. dir "" runs in that empty HOME. The returned func removes it.
-func GitCmd(ctx context.Context, bin, dir string, argv, env []string) (*exec.Cmd, func(), error) {
+// system/global config, and for an in-repo call (dir != "") the repo pinned by resolveRepo(clone, dir) with its
+// config first stripped to gitConfigKeep - the drivers/rewrites -c can't override. dir "" runs in that empty HOME.
+// The returned func removes it.
+func GitCmd(ctx context.Context, bin, clone, dir string, argv, env []string) (*exec.Cmd, func(), error) {
 	home, err := os.MkdirTemp("", "quack-git-home-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("git: create empty HOME: %w", err)
 	}
 	done := func() { _ = os.RemoveAll(home) }
 	env = append(env, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0")
-	if dir, env, err = pinRepo(ctx, bin, dir, home, env); err != nil {
+	if dir, env, err = pinRepo(ctx, bin, clone, dir, home, env); err != nil {
 		done()
 		return nil, nil, err
 	}
@@ -65,45 +68,164 @@ func GitCmd(ctx context.Context, bin, dir string, argv, env []string) (*exec.Cmd
 	return cmd, done, nil
 }
 
-// pinRepo stops repo discovery at the symlink-resolved dir (home for ""), so a missing .git can't aim the
-// strip at an enclosing repo's config; git compares ceilings against resolved paths.
-func pinRepo(ctx context.Context, bin, dir, home string, env []string) (string, []string, error) {
-	inRepo := dir != ""
-	if !inRepo {
-		dir = home
+// pinRepo hands git its repository explicitly (GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR also override any commondir
+// file) so nothing in the tree steers discovery. The no-repo call stops discovery at its resolved empty HOME.
+func pinRepo(ctx context.Context, bin, clone, dir, home string, env []string) (string, []string, error) {
+	if dir != "" {
+		work, gitDir, common, err := resolveRepo(clone, dir)
+		if err != nil {
+			return "", nil, err
+		}
+		env = append(env, "GIT_DIR="+gitDir, "GIT_WORK_TREE="+work, "GIT_COMMON_DIR="+common)
+		return work, env, sanitizeGitConfig(ctx, bin, work, filepath.Join(common, "config"), env)
 	}
-	abs, err := filepath.Abs(dir)
-	if err == nil {
-		abs, err = filepath.EvalSymlinks(abs)
-	}
+	abs, err := realPath(home)
 	if err != nil {
-		return "", nil, fmt.Errorf("git: resolve %s: %w", dir, err)
+		return "", nil, fmt.Errorf("git: resolve %s: %w", home, err)
 	}
 	parent := filepath.Dir(abs)
 	if strings.ContainsRune(parent, os.PathListSeparator) {
 		return "", nil, fmt.Errorf("git: %s contains %q, which would split GIT_CEILING_DIRECTORIES", parent, os.PathListSeparator)
 	}
-	env = append(env, "GIT_CEILING_DIRECTORIES="+parent)
-	if inRepo {
-		err = sanitizeGitConfig(ctx, bin, abs, env)
-	}
-	return abs, env, err
+	return abs, append(env, "GIT_CEILING_DIRECTORIES="+parent), nil
 }
 
-// sanitizeGitConfig unsets every key outside gitConfigKeep in dir's (common) repo config. Fails closed
-// when dir is not a repo or the config file is not regular.
-func sanitizeGitConfig(ctx context.Context, bin, dir string, env []string) error {
+// resolveRepo pins the only repository quack's git may touch for dir: clone's own real .git directory, with dir
+// either clone itself or a linked worktree whose gitdir is <clone>/.git/worktrees/<name> and whose commondir
+// leads back. Returned paths are symlink-resolved; anything else, or object alternates, fails closed.
+func resolveRepo(clone, dir string) (work, gitDir, common string, err error) {
+	if work, gitDir, common, err = checkRepo(clone, dir); err != nil {
+		return "", "", "", fmt.Errorf("git: %s is not a repository quack created at %s: %w", dir, clone, err)
+	}
+	return work, gitDir, common, nil
+}
+
+func checkRepo(clone, dir string) (work, gitDir, common string, err error) {
+	if clone == "" {
+		return "", "", "", fmt.Errorf("no trusted clone given")
+	}
+	root, err := realPath(clone)
+	if err != nil {
+		return "", "", "", err
+	}
+	common = filepath.Join(root, ".git")
+	if fi, err := os.Lstat(common); err != nil || !fi.IsDir() {
+		return "", "", "", fmt.Errorf("%s is not a directory", common)
+	}
+	if work, err = realPath(dir); err != nil {
+		return "", "", "", err
+	}
+	gitDir = common
+	if work != root {
+		if gitDir, err = worktreeGitDir(work, common); err != nil {
+			return "", "", "", err
+		}
+	}
+	// Quack never creates alternates, and a commondir in the main .git would reroute every ref and object.
+	for _, f := range []string{"commondir", "objects/info/alternates", "objects/info/http-alternates"} {
+		if _, err := os.Lstat(filepath.Join(common, f)); !os.IsNotExist(err) {
+			return "", "", "", fmt.Errorf("%s is present", filepath.Join(common, f))
+		}
+	}
+	return work, gitDir, common, nil
+}
+
+// worktreeGitDir: work's .git pointer must name <common>/worktrees/<name>, and that gitdir's commondir must
+// resolve back to common.
+func worktreeGitDir(work, common string) (string, error) {
+	gitDir, err := linkedGitDir(work)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Dir(gitDir) != filepath.Join(common, "worktrees") {
+		return "", fmt.Errorf("worktree gitdir %s is outside %s", gitDir, filepath.Join(common, "worktrees"))
+	}
+	back, err := readPointer(filepath.Join(gitDir, "commondir"))
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(back) {
+		back = filepath.Join(gitDir, back)
+	}
+	if real, err := realPath(back); err != nil || real != common {
+		return "", fmt.Errorf("worktree commondir %s does not lead back to %s", back, common)
+	}
+	return gitDir, nil
+}
+
+// linkedGitDir reads a linked worktree's .git pointer file, resolved.
+func linkedGitDir(work string) (string, error) {
+	p := filepath.Join(work, ".git")
+	line, err := readPointer(p)
+	if err != nil {
+		return "", err
+	}
+	gitDir, ok := strings.CutPrefix(line, "gitdir: ")
+	if !ok {
+		return "", fmt.Errorf("%s has no gitdir line", p)
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(work, gitDir)
+	}
+	return realPath(gitDir)
+}
+
+// WorktreeClone returns the clone that owns linked worktree dir once the pair passes GitCmd's repo checks,
+// refusing a clone outside root. "" when dir has no .git pointer file.
+func WorktreeClone(root, dir string) (string, error) {
+	if fi, err := os.Lstat(filepath.Join(dir, ".git")); err != nil || fi.IsDir() {
+		return "", nil
+	}
+	gitDir, err := linkedGitDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("git: worktree %s: %w", dir, err)
+	}
+	clone := filepath.Dir(filepath.Dir(filepath.Dir(gitDir)))
+	r, err := realPath(root)
+	if err != nil {
+		return "", fmt.Errorf("git: resolve %s: %w", root, err)
+	}
+	if rel, err := filepath.Rel(r, clone); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("git: worktree %s belongs to %s, outside %s", dir, clone, r)
+	}
+	if _, _, _, err := resolveRepo(clone, dir); err != nil {
+		return "", err
+	}
+	return clone, nil
+}
+
+// readPointer reads a small git pointer file; O_NONBLOCK plus the regular-file check keep a planted FIFO or
+// device from blocking quack, and O_NOFOLLOW refuses a symlink.
+func readPointer(p string) (string, error) {
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", p)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 4096))
+	return strings.TrimSpace(string(data)), err
+}
+
+func realPath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
+// sanitizeGitConfig unsets every key outside gitConfigKeep in the pinned repo's config cfg. Fails closed
+// when cfg is not a regular file.
+func sanitizeGitConfig(ctx context.Context, bin, dir, cfg string, env []string) error {
 	git := func(args ...string) (string, error) {
 		cmd := exec.CommandContext(ctx, bin, append(GitSafeArgs(), args...)...)
 		cmd.Dir, cmd.Env = dir, env
 		out, err := cmd.Output()
 		return string(out), err
 	}
-	common, err := git("rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return fmt.Errorf("git: locate repo config in %s: %w", dir, err)
-	}
-	cfg := filepath.Join(strings.TrimSpace(common), "config")
 	if fi, err := os.Lstat(cfg); err != nil || !fi.Mode().IsRegular() {
 		return fmt.Errorf("git: repo config %s is not a regular file", cfg)
 	}

@@ -151,7 +151,7 @@ func capPushOutput(s string, max int) string {
 	return s[:max] + "\n... (truncated)"
 }
 
-// runPushGit: executes git as a subprocess with scrubbed env and capped output.
+// runPushGit: executes git in dir, itself a quack-created clone, with scrubbed env and capped output.
 func runPushGit(ctx context.Context, dir string, argv []string, caps workspace.Caps, auth *gitAuth) (stdout, stderr string, err error) {
 	bin, err := gitBinaryPath()
 	if err != nil {
@@ -164,7 +164,7 @@ func runPushGit(ctx context.Context, dir string, argv []string, caps workspace.C
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd, done, err := workspace.GitCmd(cctx, bin, dir, argv, pushGitEnv(caps, auth))
+	cmd, done, err := workspace.GitCmd(cctx, bin, dir, dir, argv, pushGitEnv(caps, auth))
 	if err != nil {
 		return "", "", err
 	}

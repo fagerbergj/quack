@@ -230,7 +230,13 @@ func capOutput(s string, max int) string {
 	return s[:max] + "\n... (truncated)"
 }
 
+// runGit runs in dir as its own quack-created clone ("" for no repo).
 func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps, auth *gitAuth) (stdout, stderr string, err error) {
+	return runGitIn(ctx, dir, dir, argv, caps, auth)
+}
+
+// runGitIn runs in dir, which must be clone or a linked worktree of it (see workspace.GitCmd).
+func runGitIn(ctx context.Context, clone, dir string, argv []string, caps workspace.Caps, auth *gitAuth) (stdout, stderr string, err error) {
 	bin, err := gitBinaryPath()
 	if err != nil {
 		return "", "", err
@@ -242,7 +248,7 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd, done, err := workspace.GitCmd(cctx, bin, dir, argv, gitEnv(caps, auth))
+	cmd, done, err := workspace.GitCmd(cctx, bin, clone, dir, argv, gitEnv(caps, auth))
 	if err != nil {
 		return "", "", err
 	}
