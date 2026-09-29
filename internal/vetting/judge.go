@@ -946,22 +946,9 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	st.sessionID = judgeSessionID(cfg.ChatID, "verdict")
 
 	content := judgePromptContent(cfg, prebuilt, answer, changedFiles, knownFailures, act, question)
-	if err := st.runTurn(content); err != nil {
-		return verdict{}, counters, err
-	}
-	v, ok, err := st.verdictOrStrippedClose()
+	v, ok, err := st.firstVerdict(content, receivedIDs)
 	if err != nil {
 		return verdict{}, counters, err
-	}
-	// #1259: a verdict that reached submit_verdict or the text-JSON fallback but
-	// skipped the required memory votes gets the same one-shot nudge, naming the owed ids.
-	owedIDs := owedMemoryVoteIDs(receivedIDs, v)
-	if ok && len(owedIDs) > 0 {
-		if v2, ok2, nerr := st.nudgeMemories(owedIDs); nerr != nil {
-			return verdict{}, counters, nerr
-		} else if ok2 {
-			v, ok = v2, ok2
-		}
 	}
 	if ok {
 		return v, counters, nil
@@ -980,6 +967,30 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	slog.Warn("judge round ended without a verdict",
 		"component", "vetting", "agent", cfg.Agent, "finish_reason", string(st.lastFinish), "output_tokens", st.lastOutTokens)
 	return verdict{}, counters, ErrJudgeNoVerdict
+}
+
+// firstVerdict runs the round's opening turn and returns its verdict, if any. #1259: a verdict that
+// skipped the required memory votes gets a one-shot nudge naming the owed ids.
+func (s *judgeRoundState) firstVerdict(content *genai.Content, receivedIDs []string) (verdict, bool, error) {
+	if err := s.runTurn(content); err != nil {
+		return verdict{}, false, err
+	}
+	v, ok, err := s.verdictOrStrippedClose()
+	if err != nil || !ok {
+		return v, ok, err
+	}
+	owedIDs := owedMemoryVoteIDs(receivedIDs, v)
+	if len(owedIDs) == 0 {
+		return v, true, nil
+	}
+	v2, ok2, err := s.nudgeMemories(owedIDs)
+	if err != nil {
+		return verdict{}, false, err
+	}
+	if ok2 {
+		return v2, true, nil
+	}
+	return v, true, nil
 }
 
 // verdictOrStrippedClose is the round's verdict or, when a tool_choice-none close gave none (vLLM's
