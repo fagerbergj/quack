@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   activityFromTurn, isTurnInProgress, ChatStore,
-  sinkNodeIds, dagAnswer, dagTotalTokens, dagAnswerAttribution, turnUsageTotal, plainReplyAttribution, pendingNodeQuestion,
+  sinkNodeIds, dagAnswer, liveAnswerText, dagTotalTokens, dagAnswerAttribution, turnUsageTotal, plainReplyAttribution, pendingNodeQuestion,
   type DagTurnState,
 } from './chatStore'
 import { pendingChoice } from '../components/messageParts'
@@ -1140,7 +1140,7 @@ describe('answer-bubble attribution helpers', () => {
       nodeAnswer: { r2: 'TWO', r1: 'ONE' },
     }
     expect(dagAnswer(d)).toEqual({ text: '## r1\n\nONE\n\n## r2\n\nTWO', stopped: false })
-    expect(dagAnswerAttribution(d)).toEqual({ agent: 'web-researcher', model: 'm', tokens: 7, stopped: undefined })
+    expect(dagAnswerAttribution(d)).toEqual({ agent: '2 nodes (Web researcher)', model: 'm', tokens: 7, stopped: undefined })
   })
 
   it('dagAnswer masks a stopped sink behind a note, and shows the drafts badged when every sink stopped', () => {
@@ -1149,6 +1149,21 @@ describe('answer-bubble attribution helpers', () => {
     const both = { ...twoSinks({ r1: { status: 'cancelled' }, r2: { status: 'cancelled' } }), nodeAnswer: { r1: 'D1', r2: 'D2' } }
     expect(dagAnswer(both)).toEqual({ text: '## r1\n\nD1\n\n## r2\n\nD2', stopped: true })
     expect(dagAnswerAttribution(both)?.stopped).toBe(true)
+  })
+
+  it('dagAnswerAttribution on a reloaded turn credits the sinks its sectioned answer names, summing tokens', () => {
+    const reloaded = twoSinks({ r1: { status: 'done', totalTokens: 3, finishedAt: 1 }, r2: { status: 'done', totalTokens: 4, finishedAt: 2 } })
+    expect(dagAnswerAttribution(reloaded, '## r1\n\nONE\n\n## r2\n\nTWO')).toMatchObject({ agent: '2 nodes (Web researcher)', tokens: 7 })
+    // One unsectioned answer (a later step's lone sink): the sink that finished last.
+    expect(dagAnswerAttribution(reloaded, 'TWO')).toMatchObject({ agent: 'web-researcher', tokens: 4 })
+  })
+
+  it('liveAnswerText shows the persisted answer once the run ends - a retry replay streams only the re-run node', () => {
+    const retried = { ...twoSinks({ r1: { status: 'done' } }), nodeAnswer: { r1: 'NEW ONE' } }
+    const persisted = '## r1\n\nNEW ONE\n\n## r2\n\nTWO'
+    expect(liveAnswerText({ dag: retried, answer: persisted, streaming: false })).toBe(persisted)
+    expect(liveAnswerText({ dag: retried, answer: persisted, streaming: true })).toBe('NEW ONE')
+    expect(liveAnswerText({ dag: retried, streaming: false })).toBe('NEW ONE')
   })
 
   it("dagAnswer keeps a lone answering sink's text as is (an earlier turn's sink answered nothing here)", () => {
@@ -2034,5 +2049,61 @@ describe('ChatStore.attach', () => {
     store.seed('chat-r', [{ id: 't9', created_at: '2026-09-27T10:00:00Z', input: { role: 'user', content: 'go' }, output: [] }])
     store.attach('chat-r')
     expect(store.get('chat-r').live).toMatchObject({ id: 't9', createdAt: '2026-09-27T10:00:00Z' })
+  })
+})
+
+describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer', () => {
+  const sectioned = '## r1\n\nONE\n\n## r2\n\nTWO'
+  const retriedTurn: Turn = {
+    id: 't1', created_at: '', input: { role: 'user', content: 'two researchers' },
+    output: [
+      {
+        type: 'quack:dag', id: 'p', status: 'completed', plan_id: 'p',
+        nodes: [{ id: 'r1', agent: 'web-researcher', task: 'a', depends_on: [] }, { id: 'r2', agent: 'web-researcher', task: 'b', depends_on: [] }],
+        edges: [], node_states: { r1: { status: 'done' }, r2: { status: 'done' } },
+      },
+      { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: sectioned }] },
+    ],
+  }
+  // The durable log holds only the last run: a retry of r1.
+  const replayRetryOfR1 = (es: FakeEventSource) => {
+    es.emit('response_created', '{"response_id":"t1"}')
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"r1","agent":"web-researcher","task":"a","depends_on":[]},{"id":"r2","agent":"web-researcher","task":"b","depends_on":[]}],"edges":[]}')
+    es.emit('agent_token', '{"node_id":"r1","run_id":"worker-r0","text":"ONE"}')
+    es.emit('node_done', '{"node_id":"r1"}')
+    es.emit('done')
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+  })
+
+  it('a reload shows the persisted sections, not the replayed retry node alone', () => {
+    const store = new ChatStore()
+    store.seed('c', [retriedTurn])
+    store.attach('c')
+    replayRetryOfR1(FakeEventSource.last!)
+    expect(liveAnswerText(store.get('c').live!)).toBe(sectioned)
+  })
+
+  it('a live retry re-reads the persisted answer when its run ends', async () => {
+    const store = new ChatStore()
+    store.seed('c', [retriedTurn])
+    store.attach('c')
+    replayRetryOfR1(FakeEventSource.last!)
+    const updated = '## r1\n\nNEW ONE\n\n## r2\n\nTWO'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...retriedTurn, output: [retriedTurn.output[0], { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: updated }] }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    store.retryNode('c', 'r1')
+    await new Promise(r => setTimeout(r, 0))
+    const es = FakeEventSource.last!
+    es.emit('agent_token', '{"node_id":"r1","run_id":"worker-r0","text":"NEW ONE"}')
+    es.emit('node_done', '{"node_id":"r1"}')
+    es.emit('done')
+    await vi.waitFor(() => expect(liveAnswerText(store.get('c').live!)).toBe(updated))
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/chats/c/responses/t1')
   })
 })

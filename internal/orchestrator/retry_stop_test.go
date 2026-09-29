@@ -326,3 +326,41 @@ func TestRetryNode_SettlesStoppedAssignment(t *testing.T) {
 		t.Fatalf("record = %+v err=%v, want n1 unstopped with the retry's output", rec, err)
 	}
 }
+
+// TestRetryNode_ExtensionDeliversOnlyItsStep: turn 1 ran r1 and r2, turn 2 extended the plan with r3;
+// retrying r3 persists r3's fresh answer alone, not turn 1's sinks beside it.
+func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
+	m := answerModel{text: "FRESH R3"}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.InMemoryService()
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	orch := New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
+	svc := artifact.InMemoryService()
+	orch.SetArtifacts(svc)
+	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{
+		{ID: "r1", AgentName: "w", Task: "a"}, {ID: "r2", AgentName: "w", Task: "b"}, {ID: "r3", AgentName: "w", Task: "c"},
+	}}
+	planJSON, _ := json.Marshal(plan)
+	ctx := stream.WithTurnID(context.Background(), "turn-2")
+	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "chat",
+		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "chat", "", dag.DagPlanRecord{
+		PlanID: "p", Sinks: []string{"r3"}, Assignments: []dag.Assignment{
+			{NodeID: "r1", Task: "a", TaskID: "t1", Result: "R1"}, {NodeID: "r2", Task: "b", TaskID: "t2", Result: "R2"},
+			{NodeID: "r3", Task: "c", TaskID: "t3", Result: "OLD R3"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for range orch.RetryNode(ctx, "u", "chat", "p", map[string]string{"r1": "R1", "r2": "R2", "r3": "OLD R3"}, "r3", "") {
+	}
+	if got := orch.LatestAnswer(ctx, "u", "chat"); got != "FRESH R3" {
+		t.Errorf("retry delivered %q, want only this step's sink", got)
+	}
+}

@@ -11,6 +11,7 @@ import {
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem, MessageOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
 import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
+import { agentLabel } from '../components/messageParts'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
 // unchanged - the generated enum is now the one source of truth for node states.
@@ -87,6 +88,10 @@ interface LiveTurn {
   runs: AgentRun[]       // agent runs (thinking, tool calls) at the top level
   streaming: boolean
   error: string
+  // The turn's persisted answer: shown once the run ends, since a replayed or retried run streams
+  // only the nodes it re-ran. refetchAnswer: re-read it when this run (a retry or start) ends.
+  answer?: string
+  refetchAnswer?: boolean
 }
 
 // QueuedTurn is a follow-up message typed while the chat's run is still
@@ -150,7 +155,7 @@ function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
 // a previous `live` before sending a follow-up). DAG turns keep only the sinks' answer text - enough to render, not a full DagOutputItem.
 function turnFromLiveTurn(live: LiveTurn): Turn {
   const answer = live.dag && sinkNodeIds(live.dag.nodes).length > 0 ? dagAnswer(live.dag) : undefined
-  const text = answer ? answer.text : live.text
+  const text = answer ? liveAnswerText(live) : live.text
   const stopped = answer?.stopped || undefined
   return {
     id: live.id,
@@ -381,7 +386,7 @@ export class ChatStore {
       nodeAnswer[id] = ''
       nodeRuns[id] = []
     }
-    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
+    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', answer: undefined, refetchAnswer: true, dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
     const generation = this.bumpGeneration(chatId)
     fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/start`, {
       method: 'POST',
@@ -505,7 +510,7 @@ export class ChatStore {
       nodeAnswer[id] = ''
       nodeRuns[id] = []
     }
-    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
+    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', answer: undefined, refetchAnswer: true, dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
     const g = guidance?.trim()
     const generation = this.bumpGeneration(chatId)
     fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
@@ -590,6 +595,7 @@ export class ChatStore {
       text: last ? textFromTurn(last) : '',
       runs: last ? activityFromTurn(last) : [],
       dag: dagItem ? dagTurnStateFromItem(dagItem) : undefined,
+      answer: dagItem ? textFromTurn(last) : undefined,
     }
     this.write(chatId, { ...cur, turns: cur.turns.slice(0, -1), live })
 
@@ -996,7 +1002,18 @@ export class ChatStore {
     const s = this.states.get(chatId)
     if (!s?.live) return
     this.write(chatId, { ...s, live: { ...s.live, streaming: false } })
+    if (s.live.dag && s.live.refetchAnswer && s.live.id) void this.refetchAnswer(chatId, s.live.id)
     this.drainQueue(chatId)
+  }
+
+  // refetchAnswer re-reads a retried turn's persisted answer: its stream carried only the re-run nodes.
+  private async refetchAnswer(chatId: string, turnId: string): Promise<void> {
+    const res = await fetch(`/api/v1/chats/${chatId}/responses/${turnId}`).catch(() => undefined)
+    if (!res?.ok) return
+    const turn = (await res.json().catch(() => undefined)) as Turn | undefined
+    const s = this.states.get(chatId)
+    if (!turn || !s?.live || s.live.id !== turnId || s.live.streaming) return
+    this.write(chatId, { ...s, live: { ...s.live, answer: textFromTurn(turn), refetchAnswer: false } })
   }
 
   private bumpGeneration(chatId: string): number {
@@ -1174,17 +1191,38 @@ export function dagTotalTokens(dag: DagTurnState): number {
   return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
 }
 
-// dagAnswerAttribution is the answer bubble's header for a DAG turn: the answering sinks' agents
-// + their own model/tokens (not the DAG-wide total).
-export function dagAnswerAttribution(dag: DagTurnState): Attribution | undefined {
-  const ids = answeringSinks(dag)
+// liveAnswerText is a live DAG turn's answer: its persisted answer once the run ends, when known,
+// else the sinks' streamed answers.
+export function liveAnswerText(live: { dag?: DagTurnState; answer?: string; streaming: boolean }): string {
+  if (!live.streaming && live.answer) return live.answer
+  return live.dag ? dagAnswer(live.dag).text : ''
+}
+
+// attributedSinks are the sinks an answer came from: the "## id" sections of text when it has them,
+// else those that streamed, else (a reloaded turn) the one that finished last.
+function attributedSinks(dag: DagTurnState, text?: string): string[] {
+  const ids = sinkNodeIds(dag.nodes)
+  if (ids.length <= 1) return ids
+  const sectioned = text ? ids.filter(id => text.startsWith(`## ${id}\n`) || text.includes(`\n## ${id}\n`)) : []
+  if (sectioned.length > 1) return sectioned
+  const answering = answeringSinks(dag)
+  if (answering.length > 0) return answering
+  const last = ids.reduce((a, b) => ((dag.nodeStates[b]?.finishedAt ?? 0) > (dag.nodeStates[a]?.finishedAt ?? 0) ? b : a))
+  return [last]
+}
+
+// dagAnswerAttribution is the answer bubble's header for a DAG turn: the answering sinks - "2 nodes"
+// with their agents when several - and their own model/summed tokens (not the DAG-wide total).
+export function dagAnswerAttribution(dag: DagTurnState, text?: string): Attribution | undefined {
+  const ids = attributedSinks(dag, text)
   const nodes = ids.map(id => dag.nodes.find(n => n.id === id)).filter(n => n != null)
   if (nodes.length === 0) return undefined
   const states = ids.map(id => dag.nodeStates[id])
   const models = [...new Set(states.map(s => s?.model))]
   const tokens = states.some(s => s?.totalTokens != null) ? states.reduce((sum, s) => sum + (s?.totalTokens ?? 0), 0) : undefined
+  const agents = [...new Set(nodes.map(n => agentLabel(n.agent)))].join(', ')
   return {
-    agent: [...new Set(nodes.map(n => n.agent))].join(', '),
+    agent: nodes.length > 1 ? `${nodes.length} nodes (${agents})` : nodes[0].agent,
     model: models.length === 1 ? models[0] : undefined,
     tokens,
     stopped: dagAnswer(dag).stopped || undefined,

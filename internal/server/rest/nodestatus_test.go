@@ -634,6 +634,33 @@ func TestUpdateNodeStatus_RetryFailedNode(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
+// TestUpdateNodeStatus_RetryNodeAddedByExtension: a node edit_plan added in a later turn is in the
+// plan the retry endpoint reads, once that turn's dag_plan event re-saves the grown plan.
+func TestUpdateNodeStatus_RetryNodeAddedByExtension(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	chatID, planID := "c1", "p1"
+	seedPlan(t, h, chatID, planID, "r1")
+	if err := h.store.SaveTurn(ctx, chatID, "turn-2", "more"); err != nil {
+		t.Fatal(err)
+	}
+	grown := stream.DagPlanData{PlanID: planID, Nodes: []stream.DagNodeDef{{ID: "r1", Agent: "a", Task: "t"}, {ID: "r3", Agent: "a", Task: "u"}}}
+	planJSON, _ := json.Marshal(grown)
+	if err := h.store.SaveDagPlan(ctx, chatID, planID, "turn-2", string(planJSON)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpsertDagNode(ctx, store.DagNode{NodeID: "r3", PlanID: planID, Status: "done", Output: "R3"}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := putNodeStatus(t, h, chatID, "r3", schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued}); rec.Code != http.StatusOK {
+		t.Fatalf("retry of the extension's node: status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if dp, _ := h.store.GetLatestDagPlan(ctx, chatID); dp == nil || dp.TurnID != "turn-2" {
+		t.Errorf("plan row = %+v, want it on the extending turn, where the retry's answer belongs", dp)
+	}
+	time.Sleep(50 * time.Millisecond)
+}
+
 func TestUpdateNodeStatus_NoSuchNode404(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"

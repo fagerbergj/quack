@@ -8,7 +8,7 @@ import { Composer } from '../components/Composer'
 import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, dagFromTurn, dagAnswer, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
+import { activityFromTurn, dagFromTurn, dagAnswer, liveAnswerText, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
 import { UsageSummary, type UsageSummaryProps } from '../components/UsageSummary'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
@@ -194,7 +194,7 @@ function liveTurnDerived(live: NonNullable<ChatState['live']>, liveActive: boole
   // Which text is the user-facing answer: if a DAG ran, the terminal
   // node's answer IS the response (execute always delivers from the
   // node now - there's no orchestrator "synthesize" mode to prefer); liveTopText is the orchestrator's OWN narration (planning chatter, reasoning about the request) - never the answer when a DAG exists, falling back to it only masks a missing terminal answer. No DAG: the orchestrator answered directly, so its text IS the reply.
-  const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
+  const liveText = liveDag ? liveAnswerText(live) : liveTopText
   // The orchestrator's own activity (deciding to research, plan/execute calls).
   // get_user_choice is surfaced as its own QuestionBubble below, not a raw tool block.
   const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))
@@ -212,7 +212,7 @@ function liveTurnDerived(live: NonNullable<ChatState['live']>, liveActive: boole
   // whose own top-level run carries its model/usage once complete (item 1).
   const orchRun = liveTopRuns.find(r => r.runId === 'orchestrator')
   const answerAttribution = liveDag
-    ? dagAnswerAttribution(liveDag)
+    ? dagAnswerAttribution(liveDag, liveText)
     : { agent: 'orchestrator', model: orchRun?.model, tokens: orchRun?.totalTokens }
   // Skip the answer bubble when there's nothing in it yet.
   const hasAnswerBubble = showSpinner || (liveDag ? (!!liveText || !!answerAttribution?.stopped) : (orchActivity.length > 0 || !!liveTopText))

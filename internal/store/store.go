@@ -4,8 +4,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1201,8 +1203,8 @@ func (s *Store) ListTurns(ctx context.Context, chatID string) ([]ChatTurn, error
 	return turns, err
 }
 
-// SaveDagPlan persists a DAG plan linked to a turn. Skip-if-exists: a boot
-// resume re-yields the same stashed plan (same planID) through this path.
+// SaveDagPlan persists a DAG plan linked to a turn. A plan extended in a later turn moves to that turn
+// with its grown plan_json; a boot resume re-yielding the same plan changes nothing.
 func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSON string) error {
 	now := time.Now().UTC()
 	if s.walLedger != nil {
@@ -1218,7 +1220,7 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 		// skip-if-exists, so the WAL append must be too, or a resumed chat grows one plan.saved entry per resume forever.
 		_, err = s.walLedger.AppendIntent(ctx, ledger.Entry{
 			ChatID: chatID, TurnID: turnID, Kind: ledger.KindPlanSaved, Key: planID,
-			At: now, Payload: payload, IdempotencyKey: "plan.saved:" + planID,
+			At: now, Payload: payload, IdempotencyKey: "plan.saved:" + planID + ":" + contentKey(turnID, planJSON),
 		})
 		var dup *ledger.DuplicateIntentError
 		if err != nil && !errors.As(err, &dup) {
@@ -1226,7 +1228,16 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 		}
 	}
 	p := &DagPlan{ID: planID, ChatID: chatID, TurnID: turnID, PlanJSON: planJSON, CreatedAt: now}
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(p).Error
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"turn_id", "plan_json"}),
+	}).Create(p).Error
+}
+
+// contentKey is a short hash of a plan save's turn and body, so only a changed plan re-logs its intent.
+func contentKey(turnID, planJSON string) string {
+	sum := sha256.Sum256([]byte(turnID + "\x00" + planJSON))
+	return hex.EncodeToString(sum[:8])
 }
 
 // SaveExecPlan records chatID's latest full dag.Plan JSON, replacing any earlier plan's
