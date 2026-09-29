@@ -60,16 +60,19 @@ func newWebSearch(d Deps) (tool.Tool, error) {
 			if len(a.Queries) > maxBatchQueries {
 				return searchResponse{}, fmt.Errorf("web_search: %d queries exceeds the %d-query batch limit; split into smaller batches", len(a.Queries), maxBatchQueries)
 			}
-			return runSearches(tc, searcher, a.Queries), nil
+			return runSearches(tc, searcher, a.Queries)
 		},
 	)
 }
 
 // runSearches: runs every query in order, deduplicating hits across queries
-// by URL so a page shared between two queries' results shows up once.
-func runSearches(tc agent.Context, searcher WebSearcher, queries []string) searchResponse {
+// by URL so a page shared between two queries' results shows up once. It
+// errors when every query failed: empty result lists invite URL guessing.
+func runSearches(tc agent.Context, searcher WebSearcher, queries []string) (searchResponse, error) {
 	seen := make(map[string]bool)
 	out := make([]queryResult, 0, len(queries))
+	failed := 0
+	var lastErr error
 	for _, q := range queries {
 		q = strings.TrimSpace(q)
 		if q == "" {
@@ -77,12 +80,17 @@ func runSearches(tc agent.Context, searcher WebSearcher, queries []string) searc
 		}
 		results, note, err := searcher.Search(tc, q)
 		if err != nil {
+			failed, lastErr = failed+1, err
 			out = append(out, queryResult{Query: q, Note: err.Error()})
 			continue
 		}
 		out = append(out, queryResult{Query: q, Results: dedupByURL(results, seen), Note: note})
 	}
-	return searchResponse{Queries: out}
+	if failed > 0 && failed == len(out) {
+		return searchResponse{}, fmt.Errorf("web_search unavailable: every configured search backend failed (%v). "+
+			"Answer from what you already have, or say you cannot search; do not guess URLs", lastErr)
+	}
+	return searchResponse{Queries: out}, nil
 }
 
 // dedupByURL: drops results whose URL another query in this batch already

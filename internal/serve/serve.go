@@ -1442,7 +1442,7 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 			promptArt = art
 			promptArtMu.Unlock()
 			behaviour := agent.BehaviourLayer(strings.TrimSpace(art.Body), memGuidance)
-			return promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, true, behaviour, grading, wsBlock)
+			return promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, skillFms, true, behaviour, grading, wsBlock)
 		})
 	preambleArtifact := func(context.Context) artifactsrc.Artifact {
 		promptArtMu.Lock()
@@ -1586,9 +1586,12 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	}
 	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
-	builtins = append(builtins, extraTools...)
-	skillTS := tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped, scope)
-	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, []tool.Toolset{skillTS}, b.memGuidance, b.skillFms, b.grading, drain)
+	builtins = append(builtins, tools.SelectArtifactTools(extraTools, b.ac.Tools, b.bundle.Card.Artifact != "")...)
+	var toolsets []tool.Toolset
+	if len(b.ac.Skills) > 0 {
+		toolsets = []tool.Toolset{tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped, scope)}
+	}
+	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, toolsets, b.memGuidance, b.skillFms, b.grading, drain)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
@@ -2568,10 +2571,14 @@ func fmtErr(agentName, format string, args ...any) error {
 
 // resolveToolNames drops runtime-conditional builtins whose dependency is off, and
 // collapses recall_memory/load_memory (the same tool under two names) to whichever is listed first.
+// Artifact tool names are per-dispatch (SelectArtifactTools), never registry builds.
 func resolveToolNames(configured []string, taskMemAvailable bool) (names []string) {
 	names = make([]string, 0, len(configured))
 	sawMemoryRecall := false
 	for _, t := range configured {
+		if tools.IsNativeArtifactTool(t) {
+			continue
+		}
 		switch t {
 		case "stage_memory":
 			if !taskMemAvailable {

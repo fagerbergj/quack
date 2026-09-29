@@ -115,7 +115,7 @@ func TestNativeNode_SkillLoopTripsOwnNode(t *testing.T) {
 	}
 	provider := scriptedProvider(t, "load_skill", map[string]any{"name": "nope"}, "tool-call loop", nil)
 	defer provider.Close()
-	agent, jail := buildStubNodeAgent(t, provider.URL, nil, nil, artifact.InMemoryService(), stubNodeOpts{tripped: tripped})
+	agent, jail := buildStubNodeAgent(t, provider.URL, nil, nil, artifact.InMemoryService(), stubNodeOpts{tripped: tripped, skills: []string{"format-markdown"}})
 	runOwnNode(t, agent, jail)
 
 	mu.Lock()

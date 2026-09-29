@@ -702,9 +702,10 @@ func TestReadArtifactTool_WindowBypassesInlineLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An un-windowed read is capped like the judge's, never the 256 KB whole.
 	wholeResult, _ := whole["result"].(string)
-	if !strings.Contains(wholeResult, "too large") {
-		t.Fatalf("whole-content read of an oversized artifact = %q, want the too-large refusal", wholeResult)
+	if len(wholeResult) > fetchReturnMaxBytes+300 || !strings.Contains(wholeResult, "first line") || !strings.Contains(wholeResult, "pass offset/lines") {
+		t.Fatalf("whole-content read of an oversized artifact = %d bytes (%.80q...), want its first %d bytes plus a window hint", len(wholeResult), wholeResult, fetchReturnMaxBytes)
 	}
 
 	windowed, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id, "offset": 1, "lines": 1})

@@ -50,10 +50,10 @@ func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 		func(context.Context) string { return prompts.Get().VersionID },
 		func(context.Context) string {
 			// "" workspace: native bundles are never a coding agent (those run as external ACP subprocesses - see internal/serve's ACP branch),
-			// so there is no sandboxed clone/toolchain to state facts about. skills is nil here (not the caller's skills arg): every ADK-native
-			// agent's Toolsets already carries a SkillToolset, whose own ProcessRequest renders the roster - rendering it here too would duplicate it in every request (audit finding A4).
+			// so there is no sandboxed clone/toolchain to state facts about. Tools and skills are left out: each tool's declaration and the
+			// SkillToolset's own ProcessRequest already reach the model, so listing them here too would duplicate them in every request (audit finding A4).
 			layer := BehaviourLayer(strings.TrimSpace(prompts.Get().Body), memoryGuidance)
-			return promptbuilder.Agent(name, desc, tools, nil, false, layer, grading, "")
+			return promptbuilder.Agent(name, desc, nil, false, layer, grading, "")
 		})
 	cfg := llmagent.Config{
 		Name:        name,
@@ -67,6 +67,9 @@ func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 		Mode:     mode,
 	}
 	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
+	if collapse := collapseCallback(tools); collapse != nil {
+		cfg.BeforeModelCallbacks = append(cfg.BeforeModelCallbacks, collapse)
+	}
 	return llmagent.New(cfg)
 }
 

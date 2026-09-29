@@ -78,6 +78,10 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 	// Decorate ADK's own generate_content span while it's still open - see
 	// setRequestSpanAttrs's doc comment for why this can't move into the
 	// deferred emit below.
+	if req != nil {
+		// The recorded input must be what the adapter sends, which never carries past thoughts.
+		req.Contents = openaimodel.DropThoughts(req.Contents)
+	}
 	setRequestSpanAttrs(ctx, req)
 	inner := t.LLM.GenerateContent(ctx, req, stream)
 	callCoords := ledger.CoordsFromContext(ctx)

@@ -11,10 +11,10 @@ A run started from GitHub already holds the PR as chat artifacts, one JSON value
 - `grep_artifacts(pattern: '^ "(title|body)":', ids: ["bytes:pull"])` for the title and description.
 - `grep_artifacts(pattern: '"filename":', ids: ["bytes:files"])` lists each file with its line number; `read_artifact(id: "bytes:files", offset: <that line>, lines: 15)` reads that file's entry, `patch` included.
 
-Otherwise fetch it, always with `store: true` so the judge can read exactly what you read:
+Otherwise fetch it; every fetched page is stored, so the judge can read exactly what you read:
 
-1. `web_fetch(urls: ["https://api.github.com/repos/{owner}/{repo}/pulls/{N}"], pattern: '^  "(title|body|additions|deletions|changed_files)":', store: true)` for the title, description and size. If it errors (the API is rate-limited), carry on from the diff alone.
-2. `web_fetch(urls: ["https://github.com/{owner}/{repo}/pull/{N}.diff"], store: true)` for the diff. It often answers 503; then fetch `https://api.github.com/repos/{owner}/{repo}/pulls/{N}/files?per_page=100` with `store: true` instead, a normal path whose `patch` fields are the hunks.
+1. `web_fetch(urls: ["https://api.github.com/repos/{owner}/{repo}/pulls/{N}"], pattern: '^  "(title|body|additions|deletions|changed_files)":')` for the title, description and size. If it errors (the API is rate-limited), carry on from the diff alone.
+2. `web_fetch(urls: ["https://github.com/{owner}/{repo}/pull/{N}.diff"])` for the diff. It often answers 503; then fetch `https://api.github.com/repos/{owner}/{repo}/pulls/{N}/files?per_page=100` instead, a normal path whose `patch` fields are the hunks.
 3. A short diff comes back inline. A long one comes back as a stored page whose header carries its artifact id and first 120 lines: read the rest with `read_artifact(id, offset, lines)` window after window to the end, using `grep_artifacts` to jump to a file.
 
 Read every hunk your explanation or a quiz answer rests on. Fetching works for public repositories only; if the PR is neither in the chat's artifacts nor fetchable, say so in one sentence as your reply and render nothing.

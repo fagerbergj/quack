@@ -66,10 +66,12 @@ func scriptedProvider(t *testing.T, name string, args map[string]any, doneWhen s
 	}))
 }
 
-// stubNodeOpts are buildStubNodeAgent's optional wiring: a memory store and the repeat-guard trip hook.
+// stubNodeOpts are buildStubNodeAgent's optional wiring: a memory store, the repeat-guard
+// trip hook, and a skills scope (none means no load_skill tool at all).
 type stubNodeOpts struct {
 	taskStore *memory.Store
 	tripped   func(chatID, nodeID, msg string) bool
+	skills    []string
 }
 
 // buildStubNodeAgent builds the "tutor" native agent against a stub provider,
@@ -91,7 +93,7 @@ func buildStubNodeAgent(t *testing.T, providerURL string, toolNames []string, ex
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{"stub": {Kind: "openai", Endpoint: providerURL}},
 		Agents: map[string]config.AgentConfig{
-			"tutor": {Bundle: "../../agents/web-researcher", Provider: "stub", Model: "m", Tools: toolNames},
+			"tutor": {Bundle: "../../agents/web-researcher", Provider: "stub", Model: "m", Tools: toolNames, Skills: opts.skills},
 		},
 		Workspace: config.WorkspaceConfig{Sandbox: "none", MaxListEntries: 50},
 	}

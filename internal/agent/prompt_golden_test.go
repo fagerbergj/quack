@@ -92,7 +92,7 @@ func TestGoldenAgentPrompts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", bd.dir, err)
 		}
-		got := promptbuilder.Agent(b.Card.Name, b.Card.Description, nil, nil, false, BehaviourLayer(b.Prompt, mem), "", "")
+		got := promptbuilder.Agent(b.Card.Name, b.Card.Description, nil, false, BehaviourLayer(b.Prompt, mem), "", "")
 		checkGolden(t, bd.goldenName, got)
 	}
 	if len(bundles) == 0 {
@@ -116,7 +116,7 @@ func TestGoldenACPPreamble(t *testing.T) {
 		t.Fatal(err)
 	}
 	skills := []*skill.Frontmatter{{Name: "ponytail-review", Description: "Review for over-engineering."}}
-	got := promptbuilder.Agent(b.Card.Name, b.Card.Description, nil, skills, true,
+	got := promptbuilder.Agent(b.Card.Name, b.Card.Description, skills, true,
 		BehaviourLayer(b.Prompt, mem), promptbuilder.GradingFacts(0.7, 2, true, false),
 		"## Workspace\n\nThe repo is cloned at the cwd.")
 	checkGolden(t, "acp.preamble.code-reviewer.txt", got)
