@@ -277,6 +277,9 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 			yield(stream.Errorf("retry: "+err.Error()), nil)
 			return
 		}
+		// Lead with the plan snapshot so runlog.Drive-based callers (boot resume) persist the re-run nodes'
+		// state. Emitted before the guidance: persisted plans keep the original task, so it never piles up.
+		yield(tools.DagPlanEvent(ctx, plan), nil)
 		if guidance = strings.TrimSpace(guidance); guidance != "" {
 			for i := range plan.Nodes {
 				if plan.Nodes[i].ID == nodeID {
@@ -284,9 +287,6 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 				}
 			}
 		}
-		// Lead with the plan snapshot so runlog.Drive-based callers (boot
-		// resume) persist the re-run nodes' state; REST persists per-event.
-		yield(tools.DagPlanEvent(ctx, plan), nil)
 		nodeOutputs := make(map[string]string)
 		retryNode := workflow.NewDynamicNode[any, string]("__retry",
 			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {

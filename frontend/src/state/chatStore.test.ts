@@ -1156,6 +1156,9 @@ describe('answer-bubble attribution helpers', () => {
     expect(dagAnswerAttribution(reloaded, '## r1\n\nONE\n\n## r2\n\nTWO')).toMatchObject({ agent: '2 nodes (Web researcher)', tokens: 7 })
     // One unsectioned answer (a later step's lone sink): the sink that finished last.
     expect(dagAnswerAttribution(reloaded, 'TWO')).toMatchObject({ agent: 'web-researcher', tokens: 4 })
+    // Turn 1's card after turn 2 grew the plan: its answer opens with r1's preview.
+    const grown = twoSinks({ r1: { status: 'done', totalTokens: 3, finishedAt: 1, outputPreview: 'ONE…' }, r2: { status: 'done', totalTokens: 4, finishedAt: 2 } })
+    expect(dagAnswerAttribution(grown, 'ONE and more')).toMatchObject({ tokens: 3 })
   })
 
   it('liveAnswerText shows the persisted answer once the run ends - a retry replay streams only the re-run node', () => {

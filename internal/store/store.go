@@ -137,6 +137,16 @@ type DagPlan struct {
 	TurnID    string    `gorm:"index" json:"turn_id"`
 	PlanJSON  string    `json:"plan_json"`
 	CreatedAt time.Time `json:"created_at"`
+	// LastTurnID: the latest turn that ran a step of this plan - an extension's turn, which a retry answers.
+	LastTurnID string `json:"last_turn_id,omitempty"`
+}
+
+// RunTurnID is the turn a retry or resume of this plan runs under and delivers its answer to.
+func (p DagPlan) RunTurnID() string {
+	if p.LastTurnID != "" {
+		return p.LastTurnID
+	}
+	return p.TurnID
 }
 
 // DagExecPlan is a chat's latest full dag.Plan, one row per chat (only the latest plan is
@@ -1203,8 +1213,8 @@ func (s *Store) ListTurns(ctx context.Context, chatID string) ([]ChatTurn, error
 	return turns, err
 }
 
-// SaveDagPlan persists a DAG plan linked to a turn. A plan extended in a later turn moves to that turn
-// with its grown plan_json; a boot resume re-yielding the same plan changes nothing.
+// SaveDagPlan persists a DAG plan linked to the turn that created it. A later turn extending it updates
+// plan_json and LastTurnID; a boot resume re-yielding the same plan changes nothing.
 func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSON string) error {
 	now := time.Now().UTC()
 	if s.walLedger != nil {
@@ -1227,10 +1237,10 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 			return fmt.Errorf("store: plan.saved WAL append: %w", err)
 		}
 	}
-	p := &DagPlan{ID: planID, ChatID: chatID, TurnID: turnID, PlanJSON: planJSON, CreatedAt: now}
+	p := &DagPlan{ID: planID, ChatID: chatID, TurnID: turnID, LastTurnID: turnID, PlanJSON: planJSON, CreatedAt: now}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"turn_id", "plan_json"}),
+		DoUpdates: clause.AssignmentColumns([]string{"last_turn_id", "plan_json"}),
 	}).Create(p).Error
 }
 
@@ -1577,9 +1587,9 @@ func (s *Store) appendNodeFailed(ctx context.Context, chatID string, n DagNode) 
 	payload, _ := json.Marshal(struct {
 		NodeID string `json:"node_id"`
 		Turn   string `json:"turn"`
-	}{n.NodeID, p.TurnID})
+	}{n.NodeID, p.RunTurnID()})
 	if _, err := s.walLedger.AppendIntent(ctx, ledger.Entry{
-		ChatID: chatID, TurnID: p.TurnID, NodeID: n.NodeID, Kind: ledger.KindNodeFailed, Payload: payload,
+		ChatID: chatID, TurnID: p.RunTurnID(), NodeID: n.NodeID, Kind: ledger.KindNodeFailed, Payload: payload,
 	}); err != nil {
 		slog.Warn("resume paused dag nodes: node.failed append failed", "component", "store",
 			"chat", chatID, "node", n.NodeID, "err", err)
@@ -1761,7 +1771,11 @@ func (s *Store) GetLastTurnWithContent(ctx context.Context, appName, userID, cha
 	var plan *DagPlan
 	nodesByPlan := map[string][]DagNode{}
 	var p DagPlan
-	if err := s.db.WithContext(ctx).Where("chat_id = ? AND turn_id = ?", chatID, t.ID).First(&p).Error; err == nil {
+	err = s.db.WithContext(ctx).Where("chat_id = ? AND turn_id = ?", chatID, t.ID).First(&p).Error
+	if id := executedPlanID(gPtr); errors.Is(err, gorm.ErrRecordNotFound) && id != "" {
+		err = s.db.WithContext(ctx).Where("chat_id = ? AND id = ?", chatID, id).First(&p).Error
+	}
+	if err == nil {
 		plan = &p
 		var nodes []DagNode
 		if err := s.db.WithContext(ctx).Where("plan_id = ?", p.ID).Find(&nodes).Error; err != nil {
@@ -1778,6 +1792,32 @@ func (s *Store) GetLastTurnWithContent(ctx context.Context, appName, userID, cha
 	}
 	tc := buildTurnContent(t, gPtr, plan, nodesByPlan, answers)
 	return &tc, nil
+}
+
+// executedPlanID is the plan a turn ran a step of: the plan_id its execute call names, else the one its
+// create_plan/edit_plan returned. A turn extending an earlier turn's plan finds its card through it.
+func executedPlanID(g *turnGroup) string {
+	if g == nil {
+		return ""
+	}
+	id, executed := "", false
+	for _, c := range g.toolCalls {
+		switch c.Name {
+		case "execute":
+			executed = true
+			if pid, _ := c.Args["plan_id"].(string); pid != "" {
+				return pid
+			}
+		case "create_plan", "edit_plan":
+			if pid, _ := c.Result["plan_id"].(string); pid != "" {
+				id = pid
+			}
+		}
+	}
+	if !executed {
+		return ""
+	}
+	return id
 }
 
 // GetTurnsWithContent returns fully-joined turn data with DAG plan and nodes.
@@ -1798,9 +1838,11 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 	var plans []DagPlan
 	_ = s.db.WithContext(ctx).Where("chat_id = ?", chatID).Find(&plans).Error
 	planByTurn := make(map[string]*DagPlan, len(plans))
+	planByID := make(map[string]*DagPlan, len(plans))
 	planIDs := make([]string, len(plans))
 	for i := range plans {
 		planByTurn[plans[i].TurnID] = &plans[i]
+		planByID[plans[i].ID] = &plans[i]
 		planIDs[i] = plans[i].ID
 	}
 
@@ -1825,7 +1867,11 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 		if gi := i - offset; gi >= 0 && gi < len(groups) {
 			g = &groups[gi]
 		}
-		result[i] = buildTurnContent(t, g, planByTurn[t.ID], nodesByPlan, answers)
+		plan := planByTurn[t.ID]
+		if plan == nil {
+			plan = planByID[executedPlanID(g)]
+		}
+		result[i] = buildTurnContent(t, g, plan, nodesByPlan, answers)
 	}
 	return result, nil
 }

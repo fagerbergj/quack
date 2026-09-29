@@ -655,8 +655,8 @@ func TestUpdateNodeStatus_RetryNodeAddedByExtension(t *testing.T) {
 	if rec := putNodeStatus(t, h, chatID, "r3", schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued}); rec.Code != http.StatusOK {
 		t.Fatalf("retry of the extension's node: status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if dp, _ := h.store.GetLatestDagPlan(ctx, chatID); dp == nil || dp.TurnID != "turn-2" {
-		t.Errorf("plan row = %+v, want it on the extending turn, where the retry's answer belongs", dp)
+	if dp, _ := h.store.GetLatestDagPlan(ctx, chatID); dp == nil || dp.RunTurnID() != "turn-2" {
+		t.Errorf("plan row = %+v, want the extending turn as the one the retry answers", dp)
 	}
 	time.Sleep(50 * time.Millisecond)
 }

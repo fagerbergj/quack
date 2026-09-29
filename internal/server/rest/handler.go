@@ -1197,15 +1197,15 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
 		return false
 	}
-	runCtx, cancelRun := h.armRun(chatID, dp.TurnID)
+	runCtx, cancelRun := h.armRun(chatID, dp.RunTurnID())
 	go func() {
-		defer recoverRun(chatID, dp.TurnID)
+		defer recoverRun(chatID, dp.RunTurnID())
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, dp.TurnID, cancelRun)
+		defer h.eventLog.FinishRun(h.hub, chatID, dp.RunTurnID(), cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		publish := runlog.NewPublisher(runCtx, h.hub, h.eventLog, chatID).Publish
-		publish(stream.ResponseCreated(dp.TurnID))
+		publish(stream.ResponseCreated(dp.RunTurnID()))
 
 		userID := h.sessionUser(runCtx, chatID)
 		for ev, err := range iterFromStart(runCtx, h.orch, userID, chatID, dp.ID, nodeID, message) {
@@ -1250,15 +1250,15 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	}
 	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
 	seeded, unreviewed := store.SeedOutputs(nodes)
-	runCtx, cancelRun := h.armRun(chatID, dp.TurnID)
+	runCtx, cancelRun := h.armRun(chatID, dp.RunTurnID())
 	go func() {
-		defer recoverRun(chatID, dp.TurnID)
+		defer recoverRun(chatID, dp.RunTurnID())
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, dp.TurnID, cancelRun)
+		defer h.eventLog.FinishRun(h.hub, chatID, dp.RunTurnID(), cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		publish := runlog.NewPublisher(runCtx, h.hub, h.eventLog, chatID).Publish
-		publish(stream.ResponseCreated(dp.TurnID))
+		publish(stream.ResponseCreated(dp.RunTurnID()))
 
 		for ev, err := range h.orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), h.sessionUser(runCtx, chatID), chatID, dp.ID, seeded, nodeID, guidance) {
 			if err != nil {

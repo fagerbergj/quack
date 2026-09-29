@@ -146,9 +146,9 @@ func TestSaveDagPlan_ResumeIsWALIdempotent(t *testing.T) {
 	}
 }
 
-// TestSaveDagPlan_ExtensionMovesPlanToItsTurn: a plan grown by edit_plan in a later turn keeps one
-// row, now carrying the grown plan_json and that turn, so a node the extension added can be retried.
-func TestSaveDagPlan_ExtensionMovesPlanToItsTurn(t *testing.T) {
+// TestSaveDagPlan_ExtensionRecordsItsTurn: a plan grown by edit_plan in a later turn keeps one row on
+// its first turn, with the grown plan_json and the extending turn as the one a retry answers.
+func TestSaveDagPlan_ExtensionRecordsItsTurn(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
@@ -169,8 +169,8 @@ func TestSaveDagPlan_ExtensionMovesPlanToItsTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := st.GetLatestDagPlan(ctx, chat.ID)
-	if err != nil || p == nil || p.TurnID != "turn-2" || p.PlanJSON != `{"nodes":["r1","r3"]}` {
-		t.Fatalf("plan = %+v (err %v), want the grown plan on turn-2", p, err)
+	if err != nil || p == nil || p.TurnID != "turn-1" || p.RunTurnID() != "turn-2" || p.PlanJSON != `{"nodes":["r1","r3"]}` {
+		t.Fatalf("plan = %+v (err %v), want the grown plan, still turn-1's, run by turn-2", p, err)
 	}
 	entries, _ := ls.ReadEntries(ctx, chat.ID, 0)
 	saved := 0

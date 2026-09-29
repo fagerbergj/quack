@@ -1199,7 +1199,7 @@ export function liveAnswerText(live: { dag?: DagTurnState; answer?: string; stre
 }
 
 // attributedSinks are the sinks an answer came from: the "## id" sections of text when it has them,
-// else those that streamed, else (a reloaded turn) the one that finished last.
+// else those that streamed, else (a reloaded turn) the one whose preview opens text, or that finished last.
 function attributedSinks(dag: DagTurnState, text?: string): string[] {
   const ids = sinkNodeIds(dag.nodes)
   if (ids.length <= 1) return ids
@@ -1207,6 +1207,8 @@ function attributedSinks(dag: DagTurnState, text?: string): string[] {
   if (sectioned.length > 1) return sectioned
   const answering = answeringSinks(dag)
   if (answering.length > 0) return answering
+  const previewed = ids.find(id => !!text && !!dag.nodeStates[id]?.outputPreview && text.startsWith(dag.nodeStates[id]!.outputPreview!.replace(/…$/, '')))
+  if (previewed) return [previewed]
   const last = ids.reduce((a, b) => ((dag.nodeStates[b]?.finishedAt ?? 0) > (dag.nodeStates[a]?.finishedAt ?? 0) ? b : a))
   return [last]
 }

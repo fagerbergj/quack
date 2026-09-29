@@ -328,7 +328,7 @@ func TestRetryNode_SettlesStoppedAssignment(t *testing.T) {
 }
 
 // TestRetryNode_ExtensionDeliversOnlyItsStep: turn 1 ran r1 and r2, turn 2 extended the plan with r3;
-// retrying r3 persists r3's fresh answer alone, not turn 1's sinks beside it.
+// retrying r3 with guidance persists r3's fresh answer alone, not turn 1's sinks beside it.
 func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
 	m := answerModel{text: "FRESH R3"}
 	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
@@ -358,7 +358,11 @@ func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for range orch.RetryNode(ctx, "u", "chat", "p", map[string]string{"r1": "R1", "r2": "R2", "r3": "OLD R3"}, "r3", "") {
+	for ev := range orch.RetryNode(ctx, "u", "chat", "p", map[string]string{"r1": "R1", "r2": "R2", "r3": "OLD R3"}, "r3", "focus on X") {
+		// The persisted plan keeps r3's original task: guidance is this retry's alone.
+		if d, ok := ev.Data.(stream.DagPlanData); ok && (d.Nodes[2].Task != "c" || strings.Contains(string(d.ExecPlan), "focus on X")) {
+			t.Errorf("dag_plan event carries the retry guidance: task %q", d.Nodes[2].Task)
+		}
 	}
 	if got := orch.LatestAnswer(ctx, "u", "chat"); got != "FRESH R3" {
 		t.Errorf("retry delivered %q, want only this step's sink", got)

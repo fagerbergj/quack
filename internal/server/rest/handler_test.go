@@ -7,6 +7,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -913,6 +914,70 @@ func TestAnswerBubbleMultiSink(t *testing.T) {
 				t.Errorf("bubble = %q stopped=%v, want %q stopped=%v", bubble, stopped, tc.want, tc.wantStopped)
 			}
 		})
+	}
+}
+
+// TestGetChat_ExtendedPlanKeepsBothTurnsCards: turn 2 extends turn 1's plan with r3; on reload turn 1
+// keeps its DAG card and turn 2 gets one too, found through the plan its execute call ran.
+func TestGetChat_ExtendedPlanKeepsBothTurnsCards(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	chatID := mustCreateChat(t, h)
+	sess, err := h.store.Sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: h.sessionUser(ctx, chatID), SessionID: chatID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := func(author, role string, part *genai.Part) {
+		ev := session.NewEvent(ctx, "inv")
+		ev.Author, ev.Content = author, &genai.Content{Role: role, Parts: []*genai.Part{part}}
+		if err := h.store.Sessions.AppendEvent(ctx, sess.Session, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := func(ids ...string) string {
+		var d stream.DagPlanData
+		d.PlanID = "p1"
+		for _, id := range ids {
+			d.Nodes = append(d.Nodes, stream.DagNodeDef{ID: id, Agent: "web-researcher", Task: id})
+		}
+		b, _ := json.Marshal(d)
+		return string(b)
+	}
+	for i, step := range []struct{ turn, tool string }{{"turn-1", "create_plan"}, {"turn-2", "edit_plan"}} {
+		if err := h.store.SaveTurn(ctx, chatID, step.turn, "ask"); err != nil {
+			t.Fatal(err)
+		}
+		event("user", "user", &genai.Part{Text: "ask"})
+		event("orchestrator", "model", &genai.Part{FunctionCall: &genai.FunctionCall{ID: step.tool, Name: step.tool, Args: map[string]any{}}})
+		event("orchestrator", "user", &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: step.tool, Name: step.tool, Response: map[string]any{"plan_id": "p1"}}})
+		event("orchestrator", "model", &genai.Part{FunctionCall: &genai.FunctionCall{ID: "x" + step.turn, Name: "execute", Args: map[string]any{}}})
+		ids := []string{"r1", "r3"}[:i+1]
+		if err := h.store.SaveDagPlan(ctx, chatID, "p1", step.turn, plan(ids...)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rr := httptest.NewRecorder()
+	h.GetChat(rr, httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID, nil), chatID)
+	var detail schema.ChatDetail
+	if err := json.Unmarshal(rr.Body.Bytes(), &detail); err != nil || len(detail.Turns) != 2 {
+		t.Fatalf("GetChat: %d %s", rr.Code, rr.Body.String())
+	}
+	for i, turn := range detail.Turns {
+		var card *schema.DagOutputItem
+		for _, o := range turn.Output {
+			if d, err := o.AsDagOutputItem(); err == nil && string(d.Type) == "quack:dag" {
+				card = &d
+			}
+		}
+		if card == nil || len(card.Nodes) != 2 {
+			t.Errorf("turn %d card = %+v, want the grown plan's card on both turns", i+1, card)
+		}
+	}
+	// The newest turn alone goes through the tail-only loader.
+	rr = httptest.NewRecorder()
+	h.GetResponse(rr, httptest.NewRequest(http.MethodGet, "/", nil), chatID, "turn-2")
+	if !strings.Contains(rr.Body.String(), `"quack:dag"`) {
+		t.Errorf("GET turn-2 = %s, want its DAG card", rr.Body.String())
 	}
 }
 

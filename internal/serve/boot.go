@@ -170,17 +170,18 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 		return
 	}
 	userID := st.SessionUserForChat(ctx, chatID)
+	turnID := plan.RunTurnID()
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
-	runCtx = stream.WithTurnID(runCtx, plan.TurnID)
-	hub.RegisterRun(chatID, plan.TurnID, cancelRun)
-	_ = st.MarkRunActive(runCtx, chatID, plan.TurnID)
+	runCtx = stream.WithTurnID(runCtx, turnID)
+	hub.RegisterRun(chatID, turnID, cancelRun)
+	_ = st.MarkRunActive(runCtx, chatID, turnID)
 	// Reset already ran synchronously in startResumedNodes, before this
 	// goroutine was dispatched - not here, or a subscriber could race it.
 	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
-	defer eventLog.FinishRun(hub, chatID, plan.TurnID, cancelRun)
+	defer eventLog.FinishRun(hub, chatID, turnID, cancelRun)
 
 	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID)
-	pub.Publish(stream.ResponseCreated(plan.TurnID))
+	pub.Publish(stream.ResponseCreated(turnID))
 
 	var res runlog.DriveResult
 	for _, n := range nodes {
@@ -195,7 +196,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 		var resumeErr string
 		seeded, unreviewed := seededOutputs(runCtx, st, plan.ID)
 		run := lastErrorOf(orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), userID, chatID, plan.ID, seeded, n.NodeID, ""), &resumeErr)
-		res = runlog.Drive(plan.TurnID, st, pub, run, func(err error) {
+		res = runlog.Drive(turnID, st, pub, run, func(err error) {
 			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
 		})
 		failIfNotResumed(runCtx, st, chatID, n.PlanID, n.NodeID, resumeErr)
@@ -208,7 +209,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	// active_turn_id still set, showing as running forever.
 	tailCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), 10*time.Second)
 	defer cancel()
-	runlog.StampTurn(tailCtx, st, chatID, plan.TurnID, res)
+	runlog.StampTurn(tailCtx, st, chatID, turnID, res)
 	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(tailCtx, userID, chatID)
 	})
