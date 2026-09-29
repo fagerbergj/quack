@@ -408,3 +408,58 @@ func TestCancelledNodeDraftStaysForDependents(t *testing.T) {
 		t.Errorf("n1 terminal = %+v (ok=%v), want node_cancelled carrying the draft", ev, ok)
 	}
 }
+
+// phasedModel: phase 1 drafts then blocks in the judge; phase 2 blocks before drafting.
+type phasedModel struct {
+	phase   *atomic.Int32
+	waiting chan struct{}
+}
+
+func (phasedModel) Name() string { return "phased" }
+
+func (m phasedModel) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if m.phase.Load() == 1 && !gHasTool(req, "submit_verdict") {
+			yield(gText("RUN1 DRAFT"), nil)
+			return
+		}
+		m.waiting <- struct{}{}
+		<-ctx.Done()
+		yield(nil, ctx.Err())
+	}
+}
+
+// TestStoppedRunCarriesOnlyItsOwnDraft: a second run of the node, stopped before it drafted,
+// must not report the first run's draft as its own.
+func TestStoppedRunCarriesOnlyItsOwnDraft(t *testing.T) {
+	m := phasedModel{phase: &atomic.Int32{}, waiting: make(chan struct{}, 1)}
+	m.phase.Store(1)
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	run := func() stream.NodeCancelledData {
+		rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
+		ctx, stop := context.WithCancel(stream.WithYield(context.Background(), rec.record))
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _, _, _ = ex.RunPlanStep(ctx, chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+		}()
+		<-m.waiting
+		stop()
+		<-done
+		ev, _ := rec.of("n1")
+		d, _ := ev.Data.(stream.NodeCancelledData)
+		return d
+	}
+	if d := run(); d.Output != "RUN1 DRAFT" {
+		t.Fatalf("run 1 node_cancelled output = %q, want its draft", d.Output)
+	}
+	m.phase.Store(2)
+	if d := run(); d.Output != "" {
+		t.Errorf("run 2 node_cancelled output = %q, want none (it never drafted)", d.Output)
+	}
+}

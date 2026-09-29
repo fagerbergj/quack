@@ -507,6 +507,7 @@ func (r *runControls) markDelivered(chatID, nodeID string) {
 		r.delivered[chatID] = map[string]bool{}
 	}
 	r.delivered[chatID][nodeID] = true
+	delete(r.drafts[chatID], nodeID) // delivered: no stop will need it
 }
 
 // wasDelivered reports markDelivered's flag (survives unregister).
@@ -606,6 +607,7 @@ func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, boo
 	r.mu.Lock()
 	delete(r.cancelled[chatID], nodeID)
 	delete(r.delivered[chatID], nodeID)
+	delete(r.drafts[chatID], nodeID) // an earlier run's draft must not stand in for this run's
 	r.mu.Unlock()
 	return c, override, ok
 }
