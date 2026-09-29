@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 		workspace.RunCheckSetup(target, checkSetup, caps)
 		return target, nil
 	}
+	warnDiscard(parentDir, target)
 	if err := os.RemoveAll(target); err != nil {
 		return "", fmt.Errorf("setup: clear stale worktree dir: %w", err)
 	}
@@ -41,6 +43,13 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 	workspace.RunCheckSetup(target, checkSetup, caps)
 	return target, nil
+}
+
+// warnDiscard: recovery from a redirected clone or worktree is otherwise silent.
+func warnDiscard(clone, dir string) {
+	if err := workspace.RepoRedirect(clone, dir); err != nil {
+		slog.Warn("git: discarding a tree that failed quack's repository checks; recreating it", "component", "tools", "dir", dir, "err", err)
+	}
 }
 
 // PruneWorktree detaches dir from its owning clone's bookkeeping before removal; that clone must lie inside root.

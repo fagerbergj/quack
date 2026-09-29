@@ -280,6 +280,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	}
 	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
 	// error must never read as the repository being unreachable (#1213).
+	warnDiscard(target, target)
 	if err := workspace.RemoveAllForce(target); err != nil {
 		return "", &cleanupError{path: target, cause: err}
 	}

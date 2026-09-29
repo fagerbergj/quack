@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -317,5 +319,61 @@ func TestSetupWorktreeSyncIgnoresRetargetedHead(t *testing.T) {
 	}
 	if got := runGitInT(t, parentDir, dir, "rev-parse", "HEAD"); got != head {
 		t.Errorf("worktree at %s, want the clone's head %s", got, head)
+	}
+}
+
+// TestRedirectRecoveryWarns: a shared clone or worktree whose .git was aimed at another repo is still discarded and
+// recreated, but now with a WARN naming the dir and why; a first-time setup logs none.
+func TestRedirectRecoveryWarns(t *testing.T) {
+	requireGit(t)
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	bare, other := newBareRepoFixture(t), t.TempDir()
+	rawGit(t, other, "init", "--quiet")
+	b := newTestGitBinding(t)
+	setup := func() string {
+		dir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope), "file://"+bare, "main", "quack/work", false)
+		if err != nil {
+			t.Fatalf("setup the shared clone: %v", err)
+		}
+		return dir
+	}
+	worktree := func(parent string) string {
+		dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parent, workspace.NodeDir("review1"), workspace.WorktreeBranch("review1"), b.caps, nil)
+		if err != nil {
+			t.Fatalf("SetupWorktree: %v", err)
+		}
+		return dir
+	}
+	parent := setup()
+	wt := worktree(parent)
+	if logs.Len() != 0 {
+		t.Fatalf("first-time setup warned: %s", logs.String())
+	}
+
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+filepath.Join(other, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worktree(parent)
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "dir="+wt) || !strings.Contains(logs.String(), "not a repository quack created") {
+		t.Errorf("redirected worktree recovered without a WARN naming it:\n%s", logs.String())
+	}
+
+	logs.Reset()
+	if err := os.RemoveAll(filepath.Join(parent, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(other, ".git"), filepath.Join(parent, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	setup()
+	if !strings.Contains(logs.String(), "dir="+parent) || !strings.Contains(logs.String(), "not a repository quack created") {
+		t.Errorf("redirected shared clone recovered without a WARN naming it:\n%s", logs.String())
+	}
+	if fi, err := os.Lstat(filepath.Join(parent, ".git")); err != nil || !fi.IsDir() {
+		t.Errorf("shared clone not recloned: %v %v", fi, err)
 	}
 }

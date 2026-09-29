@@ -1,8 +1,10 @@
 package pluginreg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -491,6 +493,42 @@ func TestFetchReclonesUnstartedGitDir(t *testing.T) {
 	wantSHA := strings.TrimSpace(run(t, bare, "rev-parse", "main"))
 	if got.SHA != wantSHA {
 		t.Fatalf("SHA = %q, want %q", got.SHA, wantSHA)
+	}
+}
+
+// TestFetchWarnsAndReclonesRedirectedClone: a registry clone whose .git points at another repo is recloned with a
+// WARN naming it, and the other repo is left alone.
+func TestFetchWarnsAndReclonesRedirectedClone(t *testing.T) {
+	bare, other := newFixtureRepo(t), t.TempDir()
+	withFixedRemote(t, bare)
+	run(t, other, "init", "--quiet")
+	root := t.TempDir()
+	reg := NewFSRegistry(root)
+	e, _ := ParseEntry("github:acme/widgets")
+	dir := filepath.Join(root, "widgets", "repo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(other, ".git"), filepath.Join(dir, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	got, err := reg.Fetch(context.Background(), FromEntry(e))
+	if err != nil || got.Error != "" {
+		t.Fatalf("Fetch: %v %s", err, got.Error)
+	}
+	if !strings.Contains(logs.String(), "dir="+dir) || !strings.Contains(logs.String(), "not a repository quack created") {
+		t.Errorf("redirected clone recloned without a WARN naming it:\n%s", logs.String())
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, ".git")); err != nil || !fi.IsDir() {
+		t.Errorf("clone not recloned: %v %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(other, ".git", "refs", "remotes")); !os.IsNotExist(err) {
+		t.Errorf("the other repo was fetched into: %v", err)
 	}
 }
 

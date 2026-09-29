@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -118,6 +119,9 @@ func fetchInto(ctx context.Context, dir, url string) error {
 	if _, err := os.Stat(dir); err == nil {
 		// A dir with no working .git (e.g. a killed clone) - reclone once
 		// rather than wedge the plugin forever on a corrupt tree.
+		if rerr := workspace.RepoRedirect(dir, dir); rerr != nil {
+			slog.Warn("pluginreg: discarding a clone that failed quack's repository checks; recloning", "component", "pluginreg", "dir", dir, "err", rerr)
+		}
 		if err := os.RemoveAll(dir); err != nil {
 			return err
 		}

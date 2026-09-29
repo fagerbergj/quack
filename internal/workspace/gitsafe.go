@@ -5,9 +5,11 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/maphash"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,9 @@ import (
 	"sync"
 	"syscall"
 )
+
+// ErrNotQuackRepo marks a dir that fails GitCmd's repository checks.
+var ErrNotQuackRepo = errors.New("not a repository quack created")
 
 // GitProtocol is the only transport quack's own git calls may use; tests widen it to "file" for local fixtures.
 var GitProtocol = "https"
@@ -99,9 +104,17 @@ func pinRepo(ctx context.Context, bin, clone, dir, home string, env []string) (s
 // at <clone>/.git/worktrees/<name> whose commondir leads back. No alternates; paths are symlink-resolved.
 func resolveRepo(clone, dir string) (work, gitDir, common string, err error) {
 	if work, gitDir, common, err = checkRepo(clone, dir); err != nil {
-		return "", "", "", fmt.Errorf("git: %s is not a repository quack created at %s: %w", dir, clone, err)
+		return "", "", "", fmt.Errorf("git: %s is %w at %s: %w", dir, ErrNotQuackRepo, clone, err)
 	}
 	return work, gitDir, common, nil
+}
+
+// RepoRedirect says why dir fails GitCmd's checks against clone; nil when it passes or is simply absent.
+func RepoRedirect(clone, dir string) error {
+	if _, _, _, err := resolveRepo(clone, dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func checkRepo(clone, dir string) (work, gitDir, common string, err error) {
