@@ -296,6 +296,8 @@ func TestNodeStopDuringJudge(t *testing.T) {
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
 		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+	led := ledgertest.NewMemStore()
+	ex.SetWALLedger(led)
 	rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
 	done := make(chan struct{})
 	go func() {
@@ -316,6 +318,10 @@ func TestNodeStopDuringJudge(t *testing.T) {
 	ev, ok := rec.of("n1")
 	if !ok || ev.Name != stream.EventNodeCancelled || !ex.NodeStopped("chat", "n1") {
 		t.Errorf("n1 terminal = %q (ok=%v) stopped=%v, want cancelled and undelivered", ev.Name, ok, ex.NodeStopped("chat", "n1"))
+	}
+	entries, _ := led.ReadEntries(context.Background(), "chat", 0)
+	if n := len(entries); n == 0 || entries[n-1].Kind != ledger.KindNodeCancelled {
+		t.Errorf("ledger = %+v, want a trailing %s for a per-node stop", entries, ledger.KindNodeCancelled)
 	}
 }
 

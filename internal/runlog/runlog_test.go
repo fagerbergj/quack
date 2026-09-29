@@ -454,3 +454,27 @@ func TestPersistNodeEventKeepsStoppedDraft(t *testing.T) {
 		t.Fatalf("row = %+v err=%v, want cancelled with the draft", n, err)
 	}
 }
+
+// TestPersistNodeEventRepeatIsNoIllegalTransition: the REST stop already wrote cancelled, so the
+// node's own node_cancelled is a repeat - not logged as an illegal transition.
+func TestPersistNodeEventRepeatIsNoIllegalTransition(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveDagPlan(ctx, c.ID, "p1", "turn-1", `{"plan_id":"p1"}`); err != nil {
+		t.Fatal(err)
+	}
+	cancelled := stream.SSEEvent{Name: stream.EventNodeCancelled, Data: stream.NodeCancelledData{NodeID: "n1"}}
+	PersistNodeEvent(st, c.ID, "p1", cancelled)
+	var buf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+	PersistNodeEvent(st, c.ID, "p1", cancelled)
+	if strings.Contains(buf.String(), "illegal node-status transition") {
+		t.Errorf("a repeat cancelled logged an illegal transition: %s", buf.String())
+	}
+}

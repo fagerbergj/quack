@@ -829,6 +829,9 @@ func (g *gateRun) finish(span oteltrace.Span, res GateResult, err error) {
 // no terminal outcome yet; a stop or cancel is node.cancelled, not node.failed.
 func (g *gateRun) terminalKind(err error) string {
 	switch {
+	case g.cancelled() && !g.delivered:
+		// A per-node stop returns without an error, but the node was stopped, not done.
+		return ledger.KindNodeCancelled
 	case err == nil:
 		return ledger.KindNodeDone
 	case g.paused() || g.ctrl != nil && g.ctrl.ShuttingDown():
