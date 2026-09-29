@@ -387,16 +387,19 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 	}
 
 	slog.Info("execute: plan step ran", "component", "execute", "plan", plan.ID, "ran", len(results), "delivering", delivering, "paused", stepPaused, "failed", stepFailed)
-	status := "running"
+	return executeResult{Status: stepStatus(delivering, stepPaused, terminalStopped), Results: results}, nil
+}
+
+func stepStatus(delivering, paused, stopped bool) string {
 	switch {
 	case delivering:
-		status = "delivered"
-	case stepPaused:
-		status = "paused"
-	case terminalStopped:
-		status = "stopped"
+		return "delivered"
+	case paused:
+		return "paused"
+	case stopped:
+		return "stopped"
 	}
-	return executeResult{Status: status, Results: results}, nil
+	return "running"
 }
 
 // partitionAssignments splits a plan's assignments into this step's fresh
