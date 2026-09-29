@@ -182,3 +182,47 @@ func TestPlanTools_RefuseReusingStoppedNode(t *testing.T) {
 		t.Errorf("execute err=%v calls=%d, want a refusal before anything ran", err, step.calls)
 	}
 }
+
+// TestDeliverableResults_MasksStoppedDraft: a stopped assignment's draft is never a result a
+// delivery can use; every other result passes through.
+func TestDeliverableResults_MasksStoppedDraft(t *testing.T) {
+	got := DeliverableResults([]dag.Assignment{
+		{NodeID: "a", Result: "REVIEWED"},
+		{NodeID: "b", Result: "DRAFT", Stopped: true},
+	})
+	if got["a"] != "REVIEWED" || got["b"] != "" {
+		t.Errorf("DeliverableResults = %v, want a kept and b masked", got)
+	}
+	if _, ok := got["b"]; !ok {
+		t.Error("the stopped node is missing - TerminalOutput would fall back to another node's output")
+	}
+}
+
+// TestExecuteTool_StoppedSeedIsFlaggedUnreviewed: a later step seeding a dependent from a
+// stopped assignment's draft flags that seed as unreviewed for the step.
+func TestExecuteTool_StoppedSeedIsFlaggedUnreviewed(t *testing.T) {
+	rec := dag.DagPlanRecord{
+		PlanID: "p1",
+		Assignments: []dag.Assignment{
+			{NodeID: "a-1", Task: "a", TaskID: "t-a", Result: "STOPPED DRAFT", Stopped: true},
+			{NodeID: "b-1", Task: "b", DependsOn: []string{"a-1"}},
+		},
+	}
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "a-1", Agent: "web-researcher"}, {NodeID: "b-1", Agent: "web-researcher"}})
+	var flags map[string]bool
+	run := func(ctx context.Context, _ dag.Plan, _ map[string]string, run map[string]bool) (map[string]string, map[string]bool, map[string]bool, error) {
+		flags = dag.UnreviewedSeedsFrom(ctx)
+		return map[string]string{"b-1": "B"}, nil, run, nil
+	}
+	tl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, run, nil, nil, "q", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.(runnableTool).Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if !flags["a-1"] {
+		t.Errorf("seed flags = %v, want a-1 flagged unreviewed", flags)
+	}
+}

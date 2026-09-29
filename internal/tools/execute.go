@@ -70,12 +70,8 @@ type assignmentResult struct {
 	TaskID    string   `json:"task_id"`
 }
 
-// executeResult.Status: "running" while the plan may still grow (this step
-// declared no delivery yet - more nodes can follow via edit_plan),
-// "delivered" once a step's plan declares delivery and that step's
-// delivering node(s) succeeded, "paused" when a node in this step is
-// waiting on a question it asked the user - do not call execute/edit_plan
-// again until it's answered.
+// executeResult.Status: "running" (no delivery declared yet), "delivered", "paused" (a node awaits
+// the user's answer - no execute/edit_plan until then) or "stopped" (the delivering node was stopped).
 type executeResult struct {
 	Status  string             `json:"status"`
 	Results []assignmentResult `json:"results,omitempty"`
@@ -300,7 +296,7 @@ func executeStep(tc agent.Context, c *recordstore.Client, rec *dag.DagPlanRecord
 	var needsInput map[string]bool
 	var started map[string]bool
 	if runStep != nil {
-		outputs, needsInput, started, err = runStep(tc, *plan, seeded, run)
+		outputs, needsInput, started, err = runStep(dag.WithUnreviewedSeeds(tc, UnreviewedSeeds(rec.Assignments)), *plan, seeded, run)
 		if err != nil {
 			return nil, false, false, fmt.Errorf("run: %w", err)
 		}
@@ -448,6 +444,18 @@ func previewText(s string) string {
 		return s
 	}
 	return s[:summaryPreviewLen] + "…"
+}
+
+// UnreviewedSeeds flags the stopped assignments whose drafts seed later nodes, so those
+// nodes are told the input never passed review (as retry and boot-resume seeds are).
+func UnreviewedSeeds(assignments []dag.Assignment) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range assignments {
+		if a.Stopped && a.Result != "" {
+			out[a.NodeID] = true
+		}
+	}
+	return out
 }
 
 // DeliverableResults maps each assignment to the result a delivery may use: a stopped one's

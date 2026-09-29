@@ -9,10 +9,12 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
@@ -139,4 +141,72 @@ func TestPersistAnswerMarksDeliveredAnswer(t *testing.T) {
 		}
 	}
 	t.Fatal("the persisted answer event is not marked delivered")
+}
+
+// TestDeliverFromRecord_StoppedTerminalNeverDelivered: a resume in a later turn delivers from the
+// plan record; a terminal node stopped in an earlier turn has no stop flag left, only Stopped.
+func TestDeliverFromRecord_StoppedTerminalNeverDelivered(t *testing.T) {
+	sessions := session.InMemoryService()
+	o := &Orchestrator{sessions: sessions, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	if _, err := sessions.Create(context.Background(), &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "t", AgentName: "w"}, {ID: "h", AgentName: "w"}}}
+	for _, stopped := range []bool{true, false} {
+		o.deliverFromRecord(stream.WithTurnID(context.Background(), "t1"), "u", "c", plan, dag.DagPlanRecord{
+			PlanID: "p", Assignments: []dag.Assignment{{NodeID: "t", Result: "TERMINAL OUT", Stopped: stopped}, {NodeID: "h", Result: "RESUMED OUT"}},
+		})
+		got := o.LatestAnswer(context.Background(), "u", "c")
+		if stopped && got != "" {
+			t.Fatalf("delivered %q from a stopped terminal", got)
+		}
+		if !stopped && got != "TERMINAL OUT" {
+			t.Fatalf("delivered %q, want the reviewed terminal output", got)
+		}
+	}
+}
+
+// answerModel answers every call with its text.
+type answerModel struct{ text string }
+
+func (answerModel) Name() string { return "answer" }
+
+func (m answerModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{Content: genai.NewContentFromText(m.text, genai.RoleModel), TurnComplete: true}, nil)
+	}
+}
+
+// TestRetryNode_SettlesStoppedAssignment: an explicit retry of a stopped node that succeeds
+// clears the assignment's stop and records the fresh output, so later deliveries and seeds use it.
+func TestRetryNode_SettlesStoppedAssignment(t *testing.T) {
+	m := answerModel{text: "FRESH"}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.InMemoryService()
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	orch := New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
+	svc := artifact.InMemoryService()
+	orch.SetArtifacts(svc)
+	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "t"}}}
+	planJSON, _ := json.Marshal(plan)
+	ctx := context.Background()
+	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "chat",
+		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "chat", "", dag.DagPlanRecord{
+		PlanID: "p", Assignments: []dag.Assignment{{NodeID: "n1", Task: "t", TaskID: "t-1", Result: "OLD DRAFT", Stopped: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for range orch.RetryNode(ctx, "u", "chat", "p", nil, "n1", "") {
+	}
+	rec, _, _, err := dag.LoadDagPlanRecord(ctx, svc, artifactref.AppName, "u", "chat")
+	if err != nil || len(rec.Assignments) != 1 || rec.Assignments[0].Stopped || rec.Assignments[0].Result != "FRESH" {
+		t.Fatalf("record = %+v err=%v, want n1 unstopped with the retry's output", rec, err)
+	}
 }

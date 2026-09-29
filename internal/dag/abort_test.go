@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"iter"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -443,5 +444,43 @@ func TestStoppedRunCarriesOnlyItsOwnDraft(t *testing.T) {
 	m.phase.Store(2)
 	if d := run(); d.Output != "" {
 		t.Errorf("run 2 node_cancelled output = %q, want none (it never drafted)", d.Output)
+	}
+}
+
+// promptModel answers every worker call and records its prompt.
+type promptModel struct {
+	mu      sync.Mutex
+	prompts []string
+}
+
+func (*promptModel) Name() string { return "prompt" }
+
+func (m *promptModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		m.mu.Lock()
+		m.prompts = append(m.prompts, gUserText(req))
+		m.mu.Unlock()
+		yield(gText("B ANSWER"), nil)
+	}
+}
+
+// TestRunPlanStep_UnreviewedSeedCarriesWarning: a step seeding a dependent from a stopped
+// draft tells the dependent that input never passed review, like retry and boot seeds.
+func TestRunPlanStep_UnreviewedSeedCarriesWarning(t *testing.T) {
+	m := &promptModel{}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	ctx := WithUnreviewedSeeds(stream.WithYield(context.Background(), func(stream.SSEEvent) {}), map[string]bool{"n1": true})
+	if _, _, _, err := ex.RunPlanStep(ctx, chainPlan, "quack", "u", "chat", map[string]string{"n1": "STOPPED DRAFT"}, map[string]bool{"n2": true}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.prompts) == 0 || !strings.Contains(m.prompts[0], "STOPPED DRAFT") || !strings.Contains(m.prompts[0], "FAILED independent quality vetting") {
+		t.Errorf("n2's prompt lacks the warning on its stopped seed: %q", m.prompts)
 	}
 }

@@ -327,9 +327,38 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 			ds.Handle(ev)
 		}
 		ds.Finish()
+		o.settleRetried(ctx, userID, chatID, plan.ID, ds.Started(), nodeOutputs)
 		if answer := o.finalizeAnswer(ctx, plan, nodeOutputs, chatID); answer != "" {
 			o.persistAnswer(ctx, userID, chatID, answer)
 		}
+	}
+}
+
+// settleRetried records a retry's fresh outputs on the dag_plan record, clearing an earlier stop:
+// otherwise later deliveries mask, and later nodes seed from, the stale stopped draft.
+func (o *Orchestrator) settleRetried(ctx context.Context, userID, chatID, planID string, started map[string]bool, outputs map[string]string) {
+	if o.artifacts == nil {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	rec, _, ok, err := dag.LoadDagPlanRecord(ctx, o.artifacts, artifactref.AppName, userID, chatID)
+	if err != nil || !ok || rec.PlanID != planID {
+		return
+	}
+	changed := false
+	for i := range rec.Assignments {
+		a := &rec.Assignments[i]
+		out := outputs[a.NodeID]
+		if !started[a.NodeID] || strings.TrimSpace(out) == "" || o.executor.NodeStopped(chatID, a.NodeID) {
+			continue
+		}
+		a.Result, a.Stopped, changed = out, false, true
+	}
+	if !changed {
+		return
+	}
+	if _, _, err := dag.SaveDagPlanRecord(ctx, o.artifacts, artifactref.AppName, userID, chatID, "", rec); err != nil {
+		slog.Warn("retry: dag_plan update failed", "component", "orchestrator", "chat", chatID, "err", err)
 	}
 }
 
@@ -832,10 +861,15 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	}
 
 	if !anyFailed && rec.Delivery != nil {
-		final := tools.DeliverableResults(rec.Assignments)
-		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID))
+		o.deliverFromRecord(ctx, userID, sessionID, plan, rec)
 	}
 	yield(stream.Done(), nil)
+}
+
+// deliverFromRecord finalizes a resumed plan from its record; a stopped assignment's draft is masked
+// there because the executor's own stop flag is gone once the turn that stopped it ended.
+func (o *Orchestrator) deliverFromRecord(ctx context.Context, userID, sessionID string, plan dag.Plan, rec dag.DagPlanRecord) {
+	o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, tools.DeliverableResults(rec.Assignments), sessionID))
 }
 
 // loadResumePlan: the plan and its record for an incremental resume.
@@ -876,7 +910,7 @@ func (o *Orchestrator) driveUnblocked(ctx context.Context, plan dag.Plan, rec da
 		if len(next) == 0 {
 			break
 		}
-		roundOutputs, roundNeedsInput, roundStarted, rerr := o.executor.RunPlanStep(ctx, plan, AppName, userID, sessionID, seededFrom(rec), next)
+		roundOutputs, roundNeedsInput, roundStarted, rerr := o.executor.RunPlanStep(dag.WithUnreviewedSeeds(ctx, tools.UnreviewedSeeds(rec.Assignments)), plan, AppName, userID, sessionID, seededFrom(rec), next)
 		if rerr != nil {
 			safeYield(stream.Errorf("resume: "+rerr.Error()), nil)
 			turnEnded = true
