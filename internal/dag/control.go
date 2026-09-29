@@ -506,6 +506,15 @@ func (r *runControls) wasDelivered(chatID, nodeID string) bool {
 	return r.delivered[chatID][nodeID]
 }
 
+// keptAnswer drops the draft of a node cancelled before delivering, so no caller (execute's
+// delivery, a retry or resume) can present that unreviewed text as the node's answer.
+func (r *runControls) keptAnswer(chatID, nodeID, answer string) string {
+	if r != nil && r.wasCancelled(chatID, nodeID) && !r.wasDelivered(chatID, nodeID) {
+		return ""
+	}
+	return answer
+}
+
 // resetCancelled clears flags and overrides for a new turn.
 func (r *runControls) resetCancelled(chatID string) {
 	r.mu.Lock()

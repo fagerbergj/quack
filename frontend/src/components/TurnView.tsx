@@ -68,7 +68,7 @@ function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity:
 function TurnAnswerBubble({ dagState, activity, text, attribution }: { dagState: DagTurnState | undefined; activity: Activity[]; text: string | undefined; attribution: ReturnType<typeof dagAnswerAttribution> | undefined }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} />
+      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={attribution?.stopped} />
       {!dagState && activity.length > 0 && <ActivityList activity={activity} />}
       {text && <AssistantText text={text} />}
     </div>

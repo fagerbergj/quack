@@ -262,3 +262,26 @@ func TestStopDuringJudge(t *testing.T) {
 		})
 	}
 }
+
+// TestCancelledNodeDraftIsNotAnOutput: a node cancelled after its draft but before
+// review returns that draft; it must not land in the outputs execute delivers from.
+func TestCancelledNodeDraftIsNotAnOutput(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+	go func() {
+		<-stub.started
+		ex.CancelNode("chat", "n1")
+		close(stub.unblock)
+	}()
+	rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
+	outputs, _, _, err := ex.RunPlanStep(stream.WithYield(context.Background(), rec.record), plan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := outputs["n1"]; out != "" {
+		t.Errorf("outputs[n1] = %q, want no output for a cancelled node", out)
+	}
+	if ev, ok := rec.of("n1"); !ok || ev.Name != stream.EventNodeCancelled {
+		t.Errorf("n1 terminal = %q (ok=%v), want %s", ev.Name, ok, stream.EventNodeCancelled)
+	}
+}

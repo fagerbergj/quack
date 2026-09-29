@@ -307,7 +307,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// real work), so their gen_ai metrics attribution rides on worker itself.
 			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
-			return finishGatedNode(ctx, node.ID, token, res, recordGate, answer, err, &paused)
+			return finishGatedNode(ctx, node.ID, token, res, recordGate, controls.keptAnswer(chatID, node.ID, answer), err, &paused)
 		},
 		workflow.NodeConfig{})
 }

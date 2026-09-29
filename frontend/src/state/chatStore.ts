@@ -1128,6 +1128,8 @@ export interface Attribution {
   agent: string
   model?: string
   tokens?: number
+  // The answering node was stopped, so its text is an unreviewed draft.
+  stopped?: boolean
 }
 
 // terminalNodeId returns the DAG's terminal node - the one with no successor,
@@ -1153,7 +1155,7 @@ export function dagAnswerAttribution(dag: DagTurnState): Attribution | undefined
   const node = dag.nodes.find(n => n.id === id)
   if (!node) return undefined
   const state = dag.nodeStates[id]
-  return { agent: node.agent, model: state?.model, tokens: state?.totalTokens }
+  return { agent: node.agent, model: state?.model, tokens: state?.totalTokens, stopped: state?.status === 'cancelled' || undefined }
 }
 
 // turnUsageTotal sums a persisted Turn's usage (input + output tokens), or

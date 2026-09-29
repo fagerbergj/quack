@@ -286,7 +286,7 @@ function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveAct
   liveTopText: string
   liveActive: boolean
   orchActivity: ReturnType<typeof visibleActivity>
-  answerAttribution: { agent?: string; model?: string; tokens?: number } | undefined
+  answerAttribution: { agent?: string; model?: string; tokens?: number; stopped?: boolean } | undefined
 }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
@@ -295,7 +295,7 @@ function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveAct
       ) : liveDag ? (
         liveText && (
           <>
-            <BubbleHeader agent={answerAttribution?.agent ?? 'orchestrator'} model={answerAttribution?.model} tokens={answerAttribution?.tokens} />
+            <BubbleHeader agent={answerAttribution?.agent ?? 'orchestrator'} model={answerAttribution?.model} tokens={answerAttribution?.tokens} stopped={answerAttribution?.stopped} />
             <AssistantText text={liveText} streaming={liveActive} />
           </>
         )

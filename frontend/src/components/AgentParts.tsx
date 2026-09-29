@@ -142,11 +142,19 @@ export function AssistantText({ text, streaming = false }: { text: string; strea
 // Compact author line atop an assistant bubble: real usage only, no
 // estimate - model/tokens omitted when not (yet) known. `status` is optional (#416):
 // only the live orchestrator card shows a StatusDot by the name (matching DagNode's header) - completed turns and DAG-terminal attribution have no live status.
-export function BubbleHeader({ agent, model, tokens, status }: { agent: string; model?: string; tokens?: number; status?: DotStatus }) {
+export function BubbleHeader({ agent, model, tokens, status, stopped }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: boolean }) {
   return (
     <div className="flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
       {status && <StatusDot status={status} />}
       <span className="font-semibold text-gray-500 dark:text-gray-400">{agentLabel(agent)}</span>
+      {stopped && (
+        <span
+          className="inline-flex items-center gap-0.5 font-medium text-amber-600 dark:text-amber-400"
+          title="This agent was stopped before it finished, so this draft never passed the quality check"
+        >
+          <Icon name="warning" className="w-3 h-3" /> Stopped - not reviewed
+        </span>
+      )}
       {model && (
         <span className="font-mono truncate max-w-[160px]" title={model}>{model}</span>
       )}
