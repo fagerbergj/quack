@@ -18,6 +18,14 @@ describe('live-turn TriggerMessage chatId wiring (#1252)', () => {
   })
 })
 
+// A run going active that this page isn't streaming always re-seeds and reattaches - a bare attach()
+// lifted the chat's finished last turn into live and streamed the foreign run into it.
+describe('foreign run on an open chat', () => {
+  it('reattaches from a fresh GET whether or not the page has a live turn', () => {
+    expect(chatSrc).toMatch(/if \(s !== 'running' \|\| store\.isStreaming\(activeChatId\)\) return\s+void api\.getChat\(activeChatId\)\.then\(detail => store\.reattach\(activeChatId, detail\.turns\)\)/)
+  })
+})
+
 // dag builds a minimal single-node DagTurnState (that node is the terminal node).
 function dag(nodeAnswer: Record<string, string>): DagTurnState {
   return {

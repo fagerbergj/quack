@@ -84,15 +84,23 @@ type Node struct {
 
 // TerminalIDs are the plan's sinks - nodes nothing depends on - in plan order; each one's output is delivered.
 func TerminalIDs(nodes []Node) []string {
+	return SinksAmong(nodes, func(string) bool { return true })
+}
+
+// SinksAmong are the nodes in the set that no other node in it depends on, in plan order.
+func SinksAmong(nodes []Node, in func(string) bool) []string {
 	hasSuccessor := map[string]bool{}
 	for _, n := range nodes {
+		if !in(n.ID) {
+			continue
+		}
 		for _, dep := range n.DependsOn {
 			hasSuccessor[dep] = true
 		}
 	}
 	var out []string
 	for _, n := range nodes {
-		if !hasSuccessor[n.ID] {
+		if in(n.ID) && !hasSuccessor[n.ID] {
 			out = append(out, n.ID)
 		}
 	}

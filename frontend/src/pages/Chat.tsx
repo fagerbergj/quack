@@ -782,20 +782,14 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     }
   }, [loadChats])
 
-  // #463: when a run goes active on an already-open chat (e.g. GitHub webhook
-  // dispatched while the user views this chat), re-fire attach so the SSE
-  // subscribe stream opens and live events start flowing. Without it, only ChatList's Running badge lights up - the /stream subscription never started for this client. attach no-ops if this client already streams (it posted the run) or has an existing EventSource.
+  // #463: a run going active on an open chat that this page isn't streaming (a webhook, a CLI retry)
+  // re-seeds from the server and attaches, so the run's own turn goes live - never a finished one.
   useEffect(() => {
     if (!activeChatId || !activeChat?.status || activeChat.archived) return
     if (seededChatId !== activeChatId) return // wait for the getChat effect's own attach - see seededChatId above
     const s = activeChat.status
-    if (s !== 'running') return
-    const live = store.get(activeChatId).live
-    if (live && !live.streaming) {
-      void api.getChat(activeChatId).then(detail => store.reattach(activeChatId, detail.turns)).catch(() => {})
-    } else {
-      store.attach(activeChatId)
-    }
+    if (s !== 'running' || store.isStreaming(activeChatId)) return
+    void api.getChat(activeChatId).then(detail => store.reattach(activeChatId, detail.turns)).catch(() => {})
   }, [activeChatId, activeChat?.status, activeChat?.archived, seededChatId])
 
   function activateChat(id: string) {

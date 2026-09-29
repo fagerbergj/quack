@@ -328,10 +328,11 @@ func TestRetryNode_SettlesStoppedAssignment(t *testing.T) {
 	}
 }
 
-// TestRetryNode_ExtensionDeliversOnlyItsStep: turn 1 ran r1 and r2, turn 2 extended the plan with r3;
-// retrying r3 with guidance persists r3's fresh answer alone, not turn 1's sinks beside it.
-func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
-	m := answerModel{text: "FRESH R3"}
+// retryExtension retries c in plan a, b, c (c after b) whose record says sinks, returning the persisted
+// answer; check sees every event the retry yields.
+func retryExtension(t *testing.T, sinks []string, guidance string, check func(stream.SSEEvent)) string {
+	t.Helper()
+	m := answerModel{text: "FRESH C"}
 	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
 	if err != nil {
 		t.Fatal(err)
@@ -339,12 +340,12 @@ func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
 	sessions := session.InMemoryService()
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
 		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
-	// The orchestrator's model would reword a formatted answer; a retry delivers r3's output verbatim.
+	// The orchestrator's model would reword a formatted answer; a retry delivers c's output verbatim.
 	orch := New(sessions, answerModel{text: "REFORMATTED"}, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
 	svc := artifact.InMemoryService()
 	orch.SetArtifacts(svc)
 	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{
-		{ID: "r1", AgentName: "w", Task: "a"}, {ID: "r2", AgentName: "w", Task: "b"}, {ID: "r3", AgentName: "w", Task: "c"},
+		{ID: "a", AgentName: "w", Task: "ta"}, {ID: "b", AgentName: "w", Task: "tb"}, {ID: "c", AgentName: "w", Task: "tc", DependsOn: []string{"b"}},
 	}}
 	planJSON, _ := json.Marshal(plan)
 	ctx := stream.WithTurnID(context.Background(), "turn-2")
@@ -353,20 +354,98 @@ func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "chat", "", dag.DagPlanRecord{
-		PlanID: "p", Sinks: []string{"r3"}, Assignments: []dag.Assignment{
-			{NodeID: "r1", Task: "a", TaskID: "t1", Result: "R1"}, {NodeID: "r2", Task: "b", TaskID: "t2", Result: "R2"},
-			{NodeID: "r3", Task: "c", TaskID: "t3", Result: "OLD R3"},
+		PlanID: "p", Sinks: sinks, Assignments: []dag.Assignment{
+			{NodeID: "a", Task: "ta", TaskID: "t1", Result: "A"}, {NodeID: "b", Task: "tb", TaskID: "t2", Result: "B"},
+			{NodeID: "c", Task: "tc", DependsOn: []string{"b"}},
 		},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for ev := range orch.RetryNode(ctx, "u", "chat", "p", map[string]string{"r1": "R1", "r2": "R2", "r3": "OLD R3"}, "r3", "focus on X") {
-		// The persisted plan keeps r3's original task: guidance is this retry's alone.
-		if d, ok := ev.Data.(stream.DagPlanData); ok && (d.Nodes[2].Task != "c" || strings.Contains(string(d.ExecPlan), "focus on X")) {
+	for ev := range orch.RetryNode(ctx, "u", "chat", "p", map[string]string{"a": "A", "b": "B"}, "c", guidance) {
+		check(ev)
+	}
+	return orch.LatestAnswer(ctx, "u", "chat")
+}
+
+// TestRetryNode_ExtensionDeliversOnlyItsStep: turn 1 ran a and b, turn 2 extended the plan with c;
+// retrying c with guidance persists c's fresh answer alone, not turn 1's sinks beside it.
+func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
+	got := retryExtension(t, []string{"c"}, "focus on X", func(ev stream.SSEEvent) {
+		// The persisted plan keeps c's original task: guidance is this retry's alone.
+		if d, ok := ev.Data.(stream.DagPlanData); ok && (d.Nodes[2].Task != "tc" || strings.Contains(string(d.ExecPlan), "focus on X")) {
 			t.Errorf("dag_plan event carries the retry guidance: task %q", d.Nodes[2].Task)
 		}
-	}
-	if got := orch.LatestAnswer(ctx, "u", "chat"); got != "FRESH R3" {
+	})
+	if got != "FRESH C" {
 		t.Errorf("retry delivered %q, want only this step's sink", got)
+	}
+}
+
+// TestRetryNode_StaleRecordSinks: a restart while turn 2's c ran left the record with turn 1's sinks
+// [a b]; the boot resume (a retry of c) delivers c alone, recomputed from what it ran.
+func TestRetryNode_StaleRecordSinks(t *testing.T) {
+	if got := retryExtension(t, []string{"a", "b"}, "", func(stream.SSEEvent) {}); got != "FRESH C" {
+		t.Errorf("resume delivered %q, want c's output", got)
+	}
+}
+
+// TestWithRecordedSinks_RetryOfEarlierSinkKeepsRecord: retrying turn 1's a after turn 2's c settled is
+// no stale record - the answer stays the latest step's, c.
+func TestWithRecordedSinks_RetryOfEarlierSinkKeepsRecord(t *testing.T) {
+	sessions := session.InMemoryService()
+	svc := artifact.InMemoryService()
+	o := &Orchestrator{sessions: sessions, artifacts: svc, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	ctx := context.Background()
+	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "c", "", dag.DagPlanRecord{
+		PlanID: "p", Sinks: []string{"c"},
+		Assignments: []dag.Assignment{{NodeID: "a", Task: "ta", TaskID: "t1", Result: "A"}, {NodeID: "b", Task: "tb", TaskID: "t2", Result: "B"}, {NodeID: "c", Task: "tc", TaskID: "t3", Result: "C", DependsOn: []string{"b"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "a"}, {ID: "b"}, {ID: "c", DependsOn: []string{"b"}}}}
+	outputs, recStopped := o.withRecordedSinks(ctx, "u", "c", plan, map[string]string{"a": "NEW A", "b": "B", "c": "C"}, func(id string) bool { return id == "a" })
+	if got, _ := o.sinkAnswer(plan, outputs, "c", recStopped); got != "C" {
+		t.Errorf("retry of a delivered %q, want the latest step's c", got)
+	}
+}
+
+// TestWithRecordedSinks_ResumeKeepsItsStepSiblings: a step recorded [c d] and paused on c; resuming c
+// alone still delivers d beside it.
+func TestWithRecordedSinks_ResumeKeepsItsStepSiblings(t *testing.T) {
+	sessions := session.InMemoryService()
+	svc := artifact.InMemoryService()
+	o := &Orchestrator{sessions: sessions, artifacts: svc, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	ctx := context.Background()
+	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "c", "", dag.DagPlanRecord{
+		PlanID: "p", Sinks: []string{"c", "d"},
+		Assignments: []dag.Assignment{{NodeID: "c", Task: "tc"}, {NodeID: "d", Task: "td", TaskID: "t4", Result: "D"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "c"}, {ID: "d"}}}
+	outputs, recStopped := o.withRecordedSinks(ctx, "u", "c", plan, map[string]string{"c": "C"}, func(id string) bool { return id == "c" })
+	if got, _ := o.sinkAnswer(plan, outputs, "c", recStopped); got != "## c\n\nC\n\n## d\n\nD" {
+		t.Errorf("resume of c delivered %q, want its step's c and d", got)
+	}
+}
+
+// TestWithRecordedSinks_StaleRecordGraphResume: the same stale record on the graph resume path, where
+// what ran is what the run produced.
+func TestWithRecordedSinks_StaleRecordGraphResume(t *testing.T) {
+	sessions := session.InMemoryService()
+	svc := artifact.InMemoryService()
+	o := &Orchestrator{sessions: sessions, artifacts: svc, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	ctx := context.Background()
+	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "c", "", dag.DagPlanRecord{
+		PlanID: "p", Sinks: []string{"a", "b"},
+		Assignments: []dag.Assignment{{NodeID: "a", Task: "ta", Result: "A"}, {NodeID: "b", Task: "tb", Result: "B"}, {NodeID: "c", Task: "tc", DependsOn: []string{"b"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "a"}, {ID: "b"}, {ID: "c", DependsOn: []string{"b"}}}}
+	resumed := map[string]string{"c": "C"}
+	outputs, recStopped := o.withRecordedSinks(ctx, "u", "c", plan, resumed, func(id string) bool { _, ok := resumed[id]; return ok })
+	if got, _ := o.sinkAnswer(plan, outputs, "c", recStopped); got != "C" {
+		t.Errorf("graph resume delivered %q, want c alone", got)
 	}
 }

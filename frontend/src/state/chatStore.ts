@@ -602,11 +602,11 @@ export class ChatStore {
     this.subscribeToStream(chatId, generation)
   }
 
-  // reattach watches a run started elsewhere (a CLI retry, a webhook) on a chat whose last run already
-  // finished here: re-seeded from the server, attach lifts that run's own turn, not the one before it.
+  // reattach watches a run started elsewhere (a CLI retry, a webhook) on an open chat: re-seeded from the
+  // server, attach lifts that run's own turn, never a finished one. No-op while this page streams.
   reattach(chatId: string, turns: Turn[]): void {
-    const cur = this.states.get(chatId)
-    if (!cur?.live || cur.live.streaming || this.eventSources.has(chatId)) return
+    const cur = this.get(chatId)
+    if (cur.live?.streaming || this.eventSources.has(chatId)) return
     this.write(chatId, { ...cur, turns, live: undefined })
     this.attach(chatId)
   }
@@ -1175,12 +1175,13 @@ export function sinkNodeIds(nodes: DagNodeDef[]): string[] {
   return nodes.filter(n => !hasSuccessor.has(n.id)).map(n => n.id)
 }
 
-// answeringSinks are the sinks the answer is built from: with several, only those that answered
-// or were stopped - a plan extended across turns keeps earlier turns' sinks with nothing here.
+// answeringSinks are the sinks the answer is built from: with several, those that answered, were stopped,
+// or ran to done here with no output (the server's "_No output._") - not earlier turns' sinks.
 function answeringSinks(dag: DagTurnState): string[] {
   const ids = sinkNodeIds(dag.nodes)
   if (ids.length <= 1) return ids
-  return ids.filter(id => !!dag.nodeAnswer[id] || dag.nodeStates[id]?.status === 'cancelled')
+  const ranEmpty = (id: string) => dag.nodeStates[id]?.status === 'done' && (dag.nodeRuns[id]?.length ?? 0) > 0
+  return ids.filter(id => !!dag.nodeAnswer[id] || dag.nodeStates[id]?.status === 'cancelled' || ranEmpty(id))
 }
 
 // Mirrors stream.StoppedSinkNote: a stopped sink's draft never passed review.

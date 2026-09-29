@@ -293,3 +293,32 @@ func TestExecuteTool_NoSinkRanIsNotDelivered(t *testing.T) {
 		t.Errorf("status = %v err=%v, want no delivery with no sink run", out["status"], err)
 	}
 }
+
+// TestExecuteTool_StoppedSeedIsFlaggedUnreviewed: a later step seeding a dependent from a
+// stopped assignment's draft flags that seed as unreviewed for the step.
+func TestExecuteTool_StoppedSeedIsFlaggedUnreviewed(t *testing.T) {
+	rec := dag.DagPlanRecord{
+		PlanID: "p1",
+		Assignments: []dag.Assignment{
+			{NodeID: "a-1", Task: "a", TaskID: "t-a", Result: "STOPPED DRAFT", Stopped: true},
+			{NodeID: "b-1", Task: "b", DependsOn: []string{"a-1"}},
+		},
+	}
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
+	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "a-1", Agent: "web-researcher"}, {NodeID: "b-1", Agent: "web-researcher"}})
+	var flags map[string]bool
+	run := func(ctx context.Context, _ dag.Plan, _ map[string]string, run map[string]bool) (map[string]string, map[string]bool, map[string]bool, error) {
+		flags = dag.UnreviewedSeedsFrom(ctx)
+		return map[string]string{"b-1": "B"}, nil, run, nil
+	}
+	tl, err := NewExecuteTool(planner, c, NewPlanCache(), nil, run, nil, nil, "q", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.(runnableTool).Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if !flags["a-1"] {
+		t.Errorf("seed flags = %v, want a-1 flagged unreviewed", flags)
+	}
+}

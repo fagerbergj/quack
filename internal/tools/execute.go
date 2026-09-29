@@ -532,21 +532,7 @@ func stepSinks(plan dag.Plan, results []assignmentResult, withQueued bool) []str
 			ran[r.NodeID] = true
 		}
 	}
-	ranSuccessor := map[string]bool{}
-	for _, n := range plan.Nodes {
-		for _, dep := range n.DependsOn {
-			if ran[n.ID] {
-				ranSuccessor[dep] = true
-			}
-		}
-	}
-	var sinks []string
-	for _, n := range plan.Nodes {
-		if ran[n.ID] && !ranSuccessor[n.ID] {
-			sinks = append(sinks, n.ID)
-		}
-	}
-	return sinks
+	return dag.SinksAmong(plan.Nodes, func(id string) bool { return ran[id] })
 }
 
 // DeliveredAnswer is what the plan's sinks in outputs deliver: one sink's output as is, or each as its own

@@ -901,6 +901,10 @@ func (o *Orchestrator) withRecordedSinks(ctx context.Context, userID, chatID str
 	sinks := terminals
 	if hasRec && len(rec.Sinks) > 0 {
 		sinks = rec.Sinks
+		// A ran node the record never settled means its sinks predate this run's step (a restart mid-extension).
+		if ranSinks := dag.SinksAmong(plan.Nodes, ran); len(ranSinks) > 0 && !slices.ContainsFunc(sinks, ran) && ranUnsettled(rec, ran) {
+			sinks = ranSinks
+		}
 	}
 	if len(sinks) < 2 && slices.Equal(sinks, terminals) {
 		return outputs, nil
@@ -920,6 +924,10 @@ func (o *Orchestrator) withRecordedSinks(ctx context.Context, userID, chatID str
 		}
 	}
 	return own, recStopped
+}
+
+func ranUnsettled(rec dag.DagPlanRecord, ran func(string) bool) bool {
+	return slices.ContainsFunc(rec.Assignments, func(a dag.Assignment) bool { return a.TaskID == "" && ran(a.NodeID) })
 }
 
 // planRecord is the chat's dag_plan record when it records planID.

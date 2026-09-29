@@ -1169,6 +1169,11 @@ describe('answer-bubble attribution helpers', () => {
     expect(liveAnswerText({ dag: retried, streaming: false })).toBe('NEW ONE')
   })
 
+  it('dagAnswer gives a sink that ran to done with no output its "_No output._" section, as the server does', () => {
+    const d = { ...twoSinks({ r1: { status: 'done' }, r2: { status: 'done' } }), nodeAnswer: { r1: 'ONE' }, nodeRuns: { r2: [{ runId: 'worker-r0', agent: 'web-researcher', stage: 'worker' as const, activity: [], done: true }] } }
+    expect(dagAnswer(d).text).toBe('## r1\n\nONE\n\n## r2\n\n_No output._')
+  })
+
   it("dagAnswer keeps a lone answering sink's text as is (an earlier turn's sink answered nothing here)", () => {
     const d = { ...twoSinks({ r2: { status: 'done' } }), nodeAnswer: { r2: 'TWO' } }
     expect(dagAnswer(d)).toEqual({ text: 'TWO', stopped: false })
@@ -2105,6 +2110,26 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
     replayRetryOfR1(es)
     await vi.waitFor(() => expect(liveAnswerText(store.get('c').live!)).toBe(updated))
     expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/chats/c/responses/t1')
+  })
+
+  it('a foreign run on a plain-reply chat with no live turn goes live as its own turn; the reply stays', () => {
+    const store = new ChatStore()
+    const reply: Turn = { id: 't0', created_at: '', input: { role: 'user', content: 'hi' }, output: [{ type: 'message', id: 't0:msg', status: 'completed', content: [{ type: 'output_text', text: 'hello' }] }] }
+    store.seed('c', [reply])
+    const webhook: Turn = { id: 't1', created_at: '', input: { role: 'user', content: 'from github' }, output: [] }
+    store.reattach('c', [reply, webhook])
+    expect(store.get('c').live?.id).toBe('t1')
+    expect(store.get('c').turns).toEqual([reply])
+  })
+
+  it('reattach leaves a run this page is streaming alone', () => {
+    const store = new ChatStore()
+    store.seed('c', [retriedTurn])
+    store.attach('c')
+    const es = FakeEventSource.last
+    store.reattach('c', [])
+    expect(FakeEventSource.last).toBe(es)
+    expect(store.get('c').live?.id).toBe('t1')
   })
 
   it('a live retry re-reads the persisted answer when its run ends', async () => {
