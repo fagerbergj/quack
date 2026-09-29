@@ -1264,6 +1264,12 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	if err := st.WriteCheckpoint(checkpointCtx, chatID); err != nil {
 		slog.Warn("extension run: checkpoint write failed", "component", "ext."+name, "chat", chatID, "err", err)
 	}
+	if cancelled {
+		// Same as REST's settleStoppedPlan: a stop before execute leaves planned records queued forever.
+		if err := dag.CancelUnstartedDagNodeRecords(checkpointCtx, st.Artifacts(), artifactref.AppName, userID, chatID); err != nil {
+			slog.Warn("extension run: planned dag_node records not settled", "component", "ext."+name, "chat", chatID, "err", err)
+		}
+	}
 	checkpointCancel()
 	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
 	if p := extHolder.Load(); p != nil {

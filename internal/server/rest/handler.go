@@ -1662,6 +1662,17 @@ func (h *Handler) terminalStatus(ctx context.Context, chatID string, turns []sto
 	return schema.ChatStatus(status), nil
 }
 
+// settleStoppedPlan cancels the records of nodes a user-stopped run planned but never dispatched
+// (a stop between create_plan and execute): no row or run will ever settle them otherwise.
+func (h *Handler) settleStoppedPlan(ctx, runCtx context.Context, chatID string) {
+	if !errors.Is(runCtx.Err(), context.Canceled) {
+		return
+	}
+	if err := dag.CancelUnstartedDagNodeRecords(ctx, h.store.Artifacts(), artifactref.AppName, h.sessionUser(ctx, chatID), chatID); err != nil {
+		slog.Warn("stopped run: planned dag_node records not settled", "component", "rest", "chat", chatID, "err", err)
+	}
+}
+
 // stampRunOutcome persists a finished run's terminal status on the chat row so ListChats can
 // read it directly (#738). Call at every run-end path (defer, so it fires on error too) -
 // only a hard process crash skips it, and ActiveTurnID (MarkRunActive) covers that case. Detached from parent so a mid-run cancel can't also cancel the stamp write.
@@ -1682,6 +1693,7 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 		}
 		return
 	}
+	h.settleStoppedPlan(ctx, parent, chatID)
 	// terminalStatus's DeriveTerminalStatus only ever reads the last turn, so load just that
 	// one instead of decoding the whole chat's ADK session on every run end (perf audit #3).
 	last, err := h.store.GetLastTurnWithContent(ctx, orchestrator.AppName, h.sessionUser(ctx, chatID), chatID)

@@ -221,3 +221,80 @@ func TestStoppedStartNodeEmitsNoError(t *testing.T) {
 		}
 	}
 }
+
+// planThenBlockModel is an orchestrator that calls create_plan, then blocks its next turn until cancelled.
+type planThenBlockModel struct{ blocked chan struct{} }
+
+func (planThenBlockModel) Name() string { return "plan-then-block" }
+
+func (m planThenBlockModel) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		for _, c := range req.Contents {
+			for _, p := range c.Parts {
+				if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == "create_plan" {
+					select {
+					case m.blocked <- struct{}{}:
+					default:
+					}
+					<-ctx.Done()
+					yield(nil, ctx.Err())
+					return
+				}
+			}
+		}
+		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{
+			ID: "c1", Name: "create_plan", Args: map[string]any{"assignments": []any{map[string]any{"agent": "w", "task": "research it"}}},
+		}}}}, TurnComplete: true}, nil)
+	}
+}
+
+// TestStopBeforeExecuteSettlesPlannedNodes: a stop after create_plan but before execute leaves
+// the chat idle (not failed) and the planned node's record cancelled, not stuck queued.
+func TestStopBeforeExecuteSettlesPlannedNodes(t *testing.T) {
+	m := planThenBlockModel{blocked: make(chan struct{}, 1)}
+	h := newTestHandlerWithModel(t, m)
+	worker, err := llmagent.New(llmagent.Config{Name: "w", Model: stubModel{}, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := dag.NewExecutor(h.store.Sessions, map[string]adkagent.Agent{"w": worker}, map[string]model.LLM{"w": stubModel{}},
+		vetting.NewJudgeFactory(stubModel{}, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	h.orch = orchestrator.New(h.store.Sessions, m, func(context.Context) string { return "" }, dag.NewPlanner([]dag.AgentInfo{{Name: "w"}}, nil, nil), ex, nil, nil, nil)
+	h.orch.SetArtifacts(h.store.Artifacts())
+	t.Cleanup(func() { dag.SetAgentRoster(nil) })
+	chatID := mustCreateChat(t, h)
+	srv := runServer(t, h, chatID)
+	resp, err := http.Post(srv.URL+"/api/v1/chats/c1/responses", "application/json", strings.NewReader(`{"content":"research it"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	responseID := readResponseID(t, resp)
+	select {
+	case <-m.blocked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("orchestrator never reached its post-plan turn")
+	}
+	h.hub.CancelResponse(chatID, responseID)
+	deadline := time.Now().Add(10 * time.Second)
+	for h.hub.HasRegisteredRun(chatID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	rr := httptest.NewRecorder()
+	h.GetChat(rr, httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID, nil), chatID)
+	var detail schema.ChatDetail
+	if err := json.Unmarshal(rr.Body.Bytes(), &detail); err != nil || detail.Status != schema.ChatStatusIdle {
+		t.Errorf("chat status = %q (err %v), want idle", detail.Status, err)
+	}
+	rc := recordstore.New(h.store.Artifacts(), artifactref.AppName, h.store.SessionUserForChat(context.Background(), chatID), chatID)
+	sums, err := rc.List(context.Background(), "dag_node")
+	if err != nil || len(sums) != 1 {
+		t.Fatalf("dag_node records = %v (err %v), want the one planned node", sums, err)
+	}
+	raw, _, _, _ := rc.Latest(context.Background(), sums[0].ID)
+	var rec dag.DagNodeRecord
+	if json.Unmarshal(raw, &rec) != nil || rec.Status != dag.StatusCancelled {
+		t.Errorf("planned node record = %+v, want cancelled", rec)
+	}
+}
