@@ -20,7 +20,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve worktree dir: %w", err)
 	}
-	if worktreeValid(target, parentDir) && syncWorktree(ctx, target, parentDir, caps) {
+	if worktreeValid(target, parentDir) && syncWorktree(ctx, target, parentDir, branch, caps) {
 		workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 		workspace.RunCheckSetup(target, checkSetup, caps)
 		return target, nil
@@ -53,14 +53,14 @@ func PruneWorktree(ctx context.Context, root, dir string, caps workspace.Caps) e
 	return err
 }
 
-// syncWorktree moves a reused worktree to the shared clone's current HEAD: only read-only
-// nodes get one, so nothing of theirs lives in it, and a re-review after a push must read the new head.
-func syncWorktree(ctx context.Context, target, parentDir string, caps workspace.Caps) bool {
+// syncWorktree moves a reused (read-only node's) worktree to the shared clone's HEAD on its own named branch;
+// a plain reset would follow the agent-writable worktree HEAD, which can name a shared branch.
+func syncWorktree(ctx context.Context, target, parentDir, branch string, caps workspace.Caps) bool {
 	head, _, err := runGit(ctx, parentDir, []string{"rev-parse", "HEAD"}, caps, nil)
 	if err != nil {
 		return false
 	}
-	_, _, err = runGitIn(ctx, parentDir, target, []string{"reset", "--quiet", "--hard", strings.TrimSpace(head)}, caps, nil)
+	_, _, err = runGitIn(ctx, parentDir, target, []string{"checkout", "--quiet", "--force", "-B", branch, strings.TrimSpace(head)}, caps, nil)
 	return err == nil
 }
 

@@ -222,6 +222,16 @@ func TestGitCmdRefusesRepoRedirects(t *testing.T) {
 			}
 			return wt
 		},
+		"worktree pointer is a symlink": func(t *testing.T, _, wt, _ string) string {
+			ptr := filepath.Join(t.TempDir(), "pointer")
+			if err := os.Rename(filepath.Join(wt, ".git"), ptr); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(ptr, filepath.Join(wt, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			return wt
+		},
 		"clone commondir": func(t *testing.T, clone, _, other string) string {
 			writeFile(t, filepath.Join(clone, ".git", "commondir"), filepath.Join(other, ".git")+"\n")
 			return clone
