@@ -8,8 +8,12 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/fagerbergj/quack/internal/stream"
 	"google.golang.org/adk/v2/session"
+
+	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 func withRunTracer(t *testing.T) *tracetest.InMemoryExporter {
@@ -59,5 +63,45 @@ func TestStartNodeRunDoesNotDoubleSpanInsideRun(t *testing.T) {
 
 	if n := len(runSpans(exp)); n != 1 {
 		t.Fatalf("quack.run spans = %d, want 1 (only the outer one)", n)
+	}
+}
+
+// TestRetryAndStartNodeStampRunCoords: retry and node-start runs file their root span (and
+// every record) under the chat and user, as Run does, though they enter without Run's stamp.
+func TestRetryAndStartNodeStampRunCoords(t *testing.T) {
+	for name, run := range map[string]func(o *Orchestrator){
+		"retry": func(o *Orchestrator) {
+			for range o.RetryNode(context.Background(), "u-7", "c", "", nil, "n1", "") {
+			}
+		},
+		"start": func(o *Orchestrator) {
+			o.StartNode(context.Background(), "u-7", "c", "", "n1", "", func(stream.SSEEvent, error) bool { return true })
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			exp := withRunTracer(t)
+			sessions := session.InMemoryService()
+			run(&Orchestrator{sessions: sessions, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)})
+			spans := runSpans(exp)
+			if len(spans) != 1 {
+				t.Fatalf("quack.run spans = %d, want 1", len(spans))
+			}
+			var user string
+			for _, kv := range spans[0].Attributes() {
+				if string(kv.Key) == otelobs.UserID {
+					user = kv.Value.AsString()
+				}
+			}
+			if user != "u-7" {
+				t.Errorf("run span user = %q, want u-7", user)
+			}
+		})
+	}
+	c := ledger.CoordsFromContext(runCoords(ledger.WithCoords(context.Background(), ledger.Coords{Source: "github"}), "c", "u"))
+	if c.ChatID != "c" || c.User != "u" || c.Source != "github" {
+		t.Errorf("runCoords = %+v, want chat/user filled and the caller's source kept", c)
+	}
+	if c := ledger.CoordsFromContext(runCoords(context.Background(), "c", "u")); c.Source != SourceApp {
+		t.Errorf("runCoords source = %q, want %q", c.Source, SourceApp)
 	}
 }

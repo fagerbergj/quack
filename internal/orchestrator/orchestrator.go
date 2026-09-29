@@ -621,13 +621,10 @@ func turnProduced(ev *session.Event) bool {
 	return false
 }
 
-// runCoords stamps the chat and user a run's ledger records file under, as Run does, unless
-// ctx already carries them - retry, resume and node starts enter without Run's stamp.
+// runCoords stamps the chat, user and source a run's ledger records and root span file under, as
+// Run does - retry, resume and node starts enter without Run's stamp. ctx wins per field.
 func runCoords(ctx context.Context, chatID, userID string) context.Context {
-	if ledger.CoordsFromContext(ctx).ChatID != "" {
-		return ctx
-	}
-	return ledger.WithCoords(ctx, ledger.Coords{ChatID: chatID, User: userID})
+	return ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), ledger.Coords{ChatID: chatID, User: userID, Source: SourceApp}))
 }
 
 // SetPlanLoader wires the store's copy of each plan's full dag.Plan (store.LoadExecPlan).
