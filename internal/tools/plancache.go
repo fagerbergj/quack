@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/fagerbergj/quack/internal/dag"
@@ -16,7 +18,12 @@ type PlanCache struct {
 	selected        string
 	rejectionCount  int
 	rejectionReason string
+	rejectedShapes  map[string]bool
+	loopTripped     bool
 }
+
+// MaxPlanRejections caps plan-judge rejections per turn before the user is asked instead.
+const MaxPlanRejections = 3
 
 func NewPlanCache() *PlanCache {
 	return &PlanCache{plans: make(map[string]dag.Plan)}
@@ -64,14 +71,50 @@ func (c *PlanCache) Get(id string) (dag.Plan, bool) {
 	return p, ok
 }
 
-// RecordRejection notes that the plan judge declined a proposed plan this turn.
-// A single rejection is normal iteration (the model may pivot to a direct
-// answer, #760); repeated rejections exhaust the rejection budget (#693) - the Rejections count is how a caller tells the two apart, never the model's answer text.
-func (c *PlanCache) RecordRejection(reason string) {
+// RecordRejection notes a plan-judge rejection this turn (one is normal iteration, #760; more exhaust the budget, #693).
+// tripped: shape (PlanShape) was already rejected this turn, or the cap is reached - re-planning is looping.
+func (c *PlanCache) RecordRejection(reason, shape string) (tripped bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.rejectionCount++
 	c.rejectionReason = reason
+	if c.rejectedShapes == nil {
+		c.rejectedShapes = map[string]bool{}
+	}
+	c.loopTripped = c.loopTripped || c.rejectedShapes[shape] || c.rejectionCount >= MaxPlanRejections
+	c.rejectedShapes[shape] = true
+	return c.loopTripped
+}
+
+// LoopGuard reports the plan loop guard tripped this turn, with the judge's latest reason.
+func (c *PlanCache) LoopGuard() (reason string, tripped bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.rejectionReason, c.loopTripped
+}
+
+// PlanShape fingerprints a plan by structure alone - each node's agent and its dependencies' agents,
+// plus the delivery kind - so a re-plan that only renames ids or rewords tasks matches.
+func PlanShape(nodes []dag.RawNode, delivery *dag.Delivery) string {
+	agentOf := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		agentOf[n.ID] = n.Agent
+	}
+	lines := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		deps := make([]string, 0, len(n.DependsOn))
+		for _, d := range n.DependsOn {
+			deps = append(deps, agentOf[d])
+		}
+		slices.Sort(deps)
+		lines = append(lines, n.Agent+"<"+strings.Join(deps, ","))
+	}
+	slices.Sort(lines)
+	kind := ""
+	if delivery != nil {
+		kind = delivery.Kind
+	}
+	return kind + "|" + strings.Join(lines, ";")
 }
 
 // Rejections returns how many times the plan judge rejected a proposed plan

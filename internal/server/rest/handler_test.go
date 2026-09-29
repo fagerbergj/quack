@@ -889,6 +889,33 @@ func TestBuildTurnStopVersusDeliveredAnswer(t *testing.T) {
 	}
 }
 
+// TestAnswerBubbleMultiSink: a turn whose plan has two sinks and no synthesizer shows both as
+// labelled sections; a stopped one is only a note, and with both stopped their drafts stand, badged.
+func TestAnswerBubbleMultiSink(t *testing.T) {
+	plan := mustPlanData(t, `{"nodes":[{"id":"r1","agent":"web-researcher","task":"a","depends_on":[]},{"id":"r2","agent":"web-researcher","task":"b","depends_on":[]}],"edges":[]}`)
+	node := func(id, status, out string) store.DagNode {
+		return store.DagNode{NodeID: id, Status: status, Output: out}
+	}
+	for _, tc := range []struct {
+		name        string
+		nodes       []store.DagNode
+		want        string
+		wantStopped bool
+	}{
+		{"both done", []store.DagNode{node("r1", "done", "ONE"), node("r2", "done", "TWO")}, "## r1\n\nONE\n\n## r2\n\nTWO", false},
+		{"one stopped", []store.DagNode{node("r1", "done", "ONE"), node("r2", "cancelled", "DRAFT")}, "## r1\n\nONE\n\n## r2\n\n" + stream.StoppedSinkNote, false},
+		{"both stopped", []store.DagNode{node("r1", "cancelled", "D1"), node("r2", "cancelled", "D2")}, "## r1\n\nD1\n\n## r2\n\nD2", true},
+		{"only this turn's sink", []store.DagNode{node("r2", "done", "TWO")}, "TWO", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bubble, _, stopped := answerBubble(store.TurnContent{AsstText: "narration", Nodes: tc.nodes}, plan, true)
+			if bubble != tc.want || stopped != tc.wantStopped {
+				t.Errorf("bubble = %q stopped=%v, want %q stopped=%v", bubble, stopped, tc.want, tc.wantStopped)
+			}
+		})
+	}
+}
+
 func mustPlanData(t *testing.T, planJSON string) stream.DagPlanData {
 	t.Helper()
 	var d stream.DagPlanData

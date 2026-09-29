@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"maps"
 	"regexp"
 	"runtime/debug"
 	"slices"
@@ -328,7 +329,9 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		}
 		ds.Finish()
 		o.settleRetried(ctx, userID, chatID, plan.ID, ds.Started(), nodeOutputs)
-		if answer := o.finalizeAnswer(ctx, plan, nodeOutputs, chatID); answer != "" {
+		started := ds.Started()
+		outputs, recStopped := o.withRecordedSinks(ctx, userID, chatID, plan, nodeOutputs, func(id string) bool { return started[id] })
+		if answer := o.finalizeAnswer(ctx, plan, outputs, chatID, recStopped); answer != "" {
 			o.persistAnswer(ctx, userID, chatID, answer)
 		}
 	}
@@ -440,7 +443,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		// it regardless of which path the resuming dispatch takes. Only after RunPlanAsGraph: its own runner is what auto-creates the session - nothing exists to stash into before that.
 		o.stashPlanForResume(ctx, userID, sessionID, plan)
 		if !paused {
-			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID)
+			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID, nil)
 			o.persistAnswer(ctx, userID, sessionID, answer)
 		}
 		safeYield(stream.Done(), nil)
@@ -545,6 +548,10 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			return
 		}
 		s.history = buildHistory(prior)
+		if waivesPlanJudge(pending, hasPending, message) {
+			slog.Info("plan judge waived: the user chose to run the rejected plan as is", "component", "orchestrator", "chat", sessionID)
+			s.ctx = dag.WithPlanJudgeWaived(s.ctx)
+		}
 		var githubSetup *dag.Setup
 		if ghs, ok := tools.GitHubSetupFromContext(ctx); ok {
 			githubSetup = &ghs
@@ -869,7 +876,33 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 // deliverFromRecord finalizes a resumed plan from its record; a stopped assignment's draft is masked
 // there because the executor's own stop flag is gone once the turn that stopped it ended.
 func (o *Orchestrator) deliverFromRecord(ctx context.Context, userID, sessionID string, plan dag.Plan, rec dag.DagPlanRecord) {
-	o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, tools.DeliverableResults(rec.Assignments), sessionID))
+	final, stopped := tools.DeliverableResults(rec.Assignments)
+	o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, final, sessionID, stopped))
+}
+
+// withRecordedSinks takes, for a multi-sink plan, the dag_plan record's result for each sink this run did
+// not run: a retry or resume of one sink persists the turn's whole answer, and a sibling's stopped draft stays masked.
+func (o *Orchestrator) withRecordedSinks(ctx context.Context, userID, chatID string, plan dag.Plan, outputs map[string]string, ran func(string) bool) (map[string]string, map[string]bool) {
+	sinks := dag.TerminalIDs(plan.Nodes)
+	if len(sinks) < 2 || o.artifacts == nil {
+		return outputs, nil
+	}
+	rec, _, ok, err := dag.LoadDagPlanRecord(context.WithoutCancel(ctx), o.artifacts, artifactref.AppName, userID, chatID)
+	if err != nil || !ok || rec.PlanID != plan.ID {
+		return outputs, nil
+	}
+	final, stopped := tools.DeliverableResults(rec.Assignments)
+	merged := maps.Clone(outputs)
+	recStopped := map[string]bool{}
+	for _, id := range sinks {
+		if ran(id) {
+			continue
+		}
+		if out, ok := final[id]; ok {
+			merged[id], recStopped[id] = out, stopped[id]
+		}
+	}
+	return merged, recStopped
 }
 
 // loadResumePlan: the plan and its record for an incremental resume.
@@ -1018,8 +1051,11 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, plan
 		return
 	}
 	if !paused {
-		answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID)
-		o.persistAnswer(ctx, userID, sessionID, answer)
+		outputs, recStopped := o.withRecordedSinks(ctx, userID, sessionID, plan, nodeOutputs, func(id string) bool {
+			_, ran := nodeOutputs[id]
+			return ran
+		})
+		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, outputs, sessionID, recStopped))
 	}
 	yield(stream.Done(), nil)
 }

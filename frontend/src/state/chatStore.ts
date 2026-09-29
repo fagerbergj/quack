@@ -147,11 +147,11 @@ function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
 
 // Synthesizes a persisted-shaped Turn from a finished LiveTurn, for when a
 // refetch races the server's own persistence of that turn (submit() archiving
-// a previous `live` before sending a follow-up). DAG turns keep only the terminal node's answer text - enough to render, not a full DagOutputItem.
+// a previous `live` before sending a follow-up). DAG turns keep only the sinks' answer text - enough to render, not a full DagOutputItem.
 function turnFromLiveTurn(live: LiveTurn): Turn {
-  const finalId = live.dag ? terminalNodeId(live.dag.nodes) : undefined
-  const text = live.dag ? (finalId != null ? (live.dag.nodeAnswer[finalId] ?? '') : live.text) : live.text
-  const stopped = live.dag && finalId != null && live.dag.nodeStates[finalId]?.status === 'cancelled' ? true : undefined
+  const answer = live.dag && sinkNodeIds(live.dag.nodes).length > 0 ? dagAnswer(live.dag) : undefined
+  const text = answer ? answer.text : live.text
+  const stopped = answer?.stopped || undefined
   return {
     id: live.id,
     created_at: live.createdAt ?? new Date().toISOString(),
@@ -1138,13 +1138,34 @@ export interface Attribution {
   stopped?: boolean
 }
 
-// terminalNodeId returns the DAG's terminal node - the one with no successor,
-// whose answer IS the turn's response. Shared by DagView's topology rendering
-// and the answer-bubble attribution (which node actually produced this answer).
-export function terminalNodeId(nodes: DagNodeDef[]): string | undefined {
+// sinkNodeIds returns the DAG's sinks - nodes with no successor - in plan order; their answers ARE
+// the turn's response. Shared by DagView's topology rendering and the answer bubble.
+export function sinkNodeIds(nodes: DagNodeDef[]): string[] {
   const hasSuccessor = new Set<string>()
   for (const n of nodes) for (const dep of n.depends_on ?? []) hasSuccessor.add(dep)
-  return nodes.find(n => !hasSuccessor.has(n.id))?.id
+  return nodes.filter(n => !hasSuccessor.has(n.id)).map(n => n.id)
+}
+
+// answeringSinks are the sinks the answer is built from: with several, only those that answered
+// or were stopped - a plan extended across turns keeps earlier turns' sinks with nothing here.
+function answeringSinks(dag: DagTurnState): string[] {
+  const ids = sinkNodeIds(dag.nodes)
+  if (ids.length <= 1) return ids
+  return ids.filter(id => !!dag.nodeAnswer[id] || dag.nodeStates[id]?.status === 'cancelled')
+}
+
+// Mirrors stream.StoppedSinkNote: a stopped sink's draft never passed review.
+const STOPPED_SINK_NOTE = '_Stopped, not reviewed._'
+
+// dagAnswer is a DAG turn's answer as the server delivers it (stream.JoinSinkAnswers): one sink's
+// text as is, else a "## id" section per sink, a stopped one masked unless every one stopped.
+export function dagAnswer(dag: DagTurnState): { text: string; stopped: boolean } {
+  const ids = answeringSinks(dag)
+  const isStopped = (id: string) => dag.nodeStates[id]?.status === 'cancelled'
+  const allStopped = ids.length > 0 && ids.every(isStopped)
+  if (ids.length <= 1) return { text: ids.length ? (dag.nodeAnswer[ids[0]] ?? '') : '', stopped: allStopped }
+  const body = (id: string) => (!allStopped && isStopped(id)) ? STOPPED_SINK_NOTE : ((dag.nodeAnswer[id] ?? '').trim() || '_No output._')
+  return { text: ids.map(id => `## ${id}\n\n${body(id)}`).join('\n\n'), stopped: allStopped }
 }
 
 // dagTotalTokens sums total_tokens across every node in a DAG - the DAG bubble
@@ -1153,15 +1174,21 @@ export function dagTotalTokens(dag: DagTurnState): number {
   return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
 }
 
-// dagAnswerAttribution is the answer bubble's header for a DAG turn: the
-// terminal node's agent + that node's own model/tokens (not the DAG-wide total).
+// dagAnswerAttribution is the answer bubble's header for a DAG turn: the answering sinks' agents
+// + their own model/tokens (not the DAG-wide total).
 export function dagAnswerAttribution(dag: DagTurnState): Attribution | undefined {
-  const id = terminalNodeId(dag.nodes)
-  if (id == null) return undefined
-  const node = dag.nodes.find(n => n.id === id)
-  if (!node) return undefined
-  const state = dag.nodeStates[id]
-  return { agent: node.agent, model: state?.model, tokens: state?.totalTokens, stopped: state?.status === 'cancelled' || undefined }
+  const ids = answeringSinks(dag)
+  const nodes = ids.map(id => dag.nodes.find(n => n.id === id)).filter(n => n != null)
+  if (nodes.length === 0) return undefined
+  const states = ids.map(id => dag.nodeStates[id])
+  const models = [...new Set(states.map(s => s?.model))]
+  const tokens = states.some(s => s?.totalTokens != null) ? states.reduce((sum, s) => sum + (s?.totalTokens ?? 0), 0) : undefined
+  return {
+    agent: [...new Set(nodes.map(n => n.agent))].join(', '),
+    model: models.length === 1 ? models[0] : undefined,
+    tokens,
+    stopped: dagAnswer(dag).stopped || undefined,
+  }
 }
 
 // turnUsageTotal sums a persisted Turn's usage (input + output tokens), or

@@ -30,6 +30,56 @@ func rejectAlwaysJudge(reason string) vetting.PlanJudge {
 	}
 }
 
+// planCallWidened is planCall with a second researcher: a genuinely different plan, which the
+// plan loop guard must not mistake for re-proposing the rejected one.
+func planCallWidened() *model.LLMResponse {
+	return stubCall("create_plan", map[string]any{
+		"assignments": []any{
+			map[string]any{"agent": "web-researcher", "task": "research the thing"},
+			map[string]any{"agent": "web-researcher", "task": "research the other thing"},
+		},
+		"delivery": map[string]any{"kind": "comment"},
+	})
+}
+
+// TestOrchestrator_PlanLoopAsksUser: the judge rejecting the same plan twice (only reworded) ends
+// the turn with a get_user_choice carrying its reason, not a third plan or a failure; answering
+// "run it as is" next turn runs the plan past the judge.
+func TestOrchestrator_PlanLoopAsksUser(t *testing.T) {
+	const reason = "the user asked for no synthesizer"
+	stub := &orchStub{replies: []*model.LLMResponse{planCall(), planCall(), planCall()}}
+	o := newTestOrchWithJudge(t, stub, rejectAlwaysJudge(reason))
+
+	evs := runTurn(t, o, "exactly two researchers, no synthesizer")
+	if hasEvent(evs, stream.EventError) || stub.invocations() != 2 {
+		t.Fatalf("orchestrator calls = %d events=%v, want two plans and no error", stub.invocations(), evs)
+	}
+	q, ok := o.PendingQuestion(context.Background(), "u", "chat")
+	if !ok || !strings.Contains(q, reason) {
+		t.Fatalf("pending question = %q %v, want the choice naming the judge's reason", q, ok)
+	}
+	if !hasToolCall(evs, "get_user_choice") {
+		t.Errorf("the live stream never showed the choice; events=%v", evs)
+	}
+
+	evs = runTurn(t, o, planLoopRunAsIs)
+	if hasEvent(evs, stream.EventError) || !hasEvent(evs, stream.EventNodeDone) {
+		t.Fatalf("running the plan as is: events=%v, want it to run past the judge", evs)
+	}
+	if _, pending := o.PendingQuestion(context.Background(), "u", "chat"); pending {
+		t.Error("the choice is still pending after the user answered it")
+	}
+}
+
+func hasToolCall(evs []stream.SSEEvent, name string) bool {
+	for _, ev := range evs {
+		if d, ok := ev.Data.(stream.AgentToolCallData); ok && d.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // newTestOrchWithJudge is newTestOrch (continue_test.go) with a plan judge wired in.
 func newTestOrchWithJudge(t *testing.T, stub *orchStub, judge vetting.PlanJudge) *Orchestrator {
 	t.Helper()
@@ -60,8 +110,8 @@ func TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason(t *testing.T)
 
 	const judgeReason = "The plan lacks a terminal node that delivers the requested artifact."
 	stub := &orchStub{replies: []*model.LLMResponse{
-		planCall(), // rejected
-		planCall(), // rejected again
+		planCall(),        // rejected
+		planCallWidened(), // a different plan, rejected again
 		// gives up and narrates the rejection reason as if it were an answer -
 		// exactly what must NOT reach the user.
 		stubText("I looked into this: " + judgeReason),
@@ -112,8 +162,8 @@ func TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered(t *testing.T) 
 func TestOrchestrator_RejectionDoesNotLeakAcrossTurns(t *testing.T) {
 	const turnTwoAnswer = "Turn two: a plain answer, no plan involved."
 	stub := &orchStub{replies: []*model.LLMResponse{
-		planCall(), // turn 1: rejected
-		planCall(), // turn 1: rejected again -> exhausted
+		planCall(),        // turn 1: rejected
+		planCallWidened(), // turn 1: a different plan rejected again -> exhausted
 		stubText("turn 1 give-up narration"),
 		stubText(turnTwoAnswer), // turn 2: direct answer, plan tool never called
 	}}

@@ -3,7 +3,9 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
+	"maps"
 	"testing"
 	"time"
 
@@ -114,7 +116,7 @@ func TestFinalizeAnswer_StoppedTerminalIsNoAnswer(t *testing.T) {
 		ex.CancelNode("chat", "n1")
 	}()
 	_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), func(stream.SSEEvent) {}), plan, AppName, "u", "chat", nil, map[string]bool{"n1": true})
-	if got := orch.finalizeAnswer(context.Background(), plan, map[string]string{"n1": "DRAFT"}, "chat"); got != "" {
+	if got := orch.finalizeAnswer(context.Background(), plan, map[string]string{"n1": "DRAFT"}, "chat", nil); got != "" {
 		t.Errorf("finalizeAnswer = %q, want no answer for a stopped terminal node", got)
 	}
 }
@@ -151,7 +153,7 @@ func TestDeliverFromRecord_StoppedTerminalNeverDelivered(t *testing.T) {
 	if _, err := sessions.Create(context.Background(), &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "t", AgentName: "w"}, {ID: "h", AgentName: "w"}}}
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "t", AgentName: "w", DependsOn: []string{"h"}}, {ID: "h", AgentName: "w"}}}
 	for _, stopped := range []bool{true, false} {
 		o.deliverFromRecord(stream.WithTurnID(context.Background(), "t1"), "u", "c", plan, dag.DagPlanRecord{
 			PlanID: "p", Assignments: []dag.Assignment{{NodeID: "t", Result: "TERMINAL OUT", Stopped: stopped}, {NodeID: "h", Result: "RESUMED OUT"}},
@@ -163,6 +165,60 @@ func TestDeliverFromRecord_StoppedTerminalNeverDelivered(t *testing.T) {
 		if !stopped && got != "TERMINAL OUT" {
 			t.Fatalf("delivered %q, want the reviewed terminal output", got)
 		}
+	}
+}
+
+// TestDeliverFromRecord_MultiSink: every sink ships as its own section; one stopped in an earlier
+// turn ships only a note, and with every sink stopped nothing is delivered.
+func TestDeliverFromRecord_MultiSink(t *testing.T) {
+	sessions := session.InMemoryService()
+	o := &Orchestrator{sessions: sessions, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "r1", AgentName: "w"}, {ID: "r2", AgentName: "w"}}}
+	cases := []struct {
+		stopped [2]bool
+		want    string
+	}{
+		{[2]bool{false, false}, "## r1\n\nONE\n\n## r2\n\nTWO"},
+		{[2]bool{false, true}, "## r1\n\nONE\n\n## r2\n\n" + stream.StoppedSinkNote},
+		{[2]bool{true, true}, ""},
+	}
+	for i, tc := range cases {
+		chat := fmt.Sprintf("c%d", i)
+		if _, err := sessions.Create(context.Background(), &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: chat}); err != nil {
+			t.Fatal(err)
+		}
+		o.deliverFromRecord(stream.WithTurnID(context.Background(), "t1"), "u", chat, plan, dag.DagPlanRecord{
+			PlanID: "p", Assignments: []dag.Assignment{{NodeID: "r1", Result: "ONE", Stopped: tc.stopped[0]}, {NodeID: "r2", Result: "TWO", Stopped: tc.stopped[1]}},
+		})
+		if got := o.LatestAnswer(context.Background(), "u", chat); got != tc.want {
+			t.Errorf("stopped=%v: delivered %q, want %q", tc.stopped, got, tc.want)
+		}
+	}
+}
+
+// TestWithRecordedSinks_RetryKeepsSiblingSinks: retrying one sink of two delivers both - the
+// sibling from the plan record, its stopped draft masked - while a single-sink plan is untouched.
+func TestWithRecordedSinks_RetryKeepsSiblingSinks(t *testing.T) {
+	sessions := session.InMemoryService()
+	svc := artifact.InMemoryService()
+	o := &Orchestrator{sessions: sessions, artifacts: svc, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	ctx := context.Background()
+	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "c", "", dag.DagPlanRecord{
+		PlanID: "p", Assignments: []dag.Assignment{{NodeID: "a", Task: "a", Result: "OLD A"}, {NodeID: "b", Task: "b", Result: "B DRAFT", Stopped: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "a"}, {ID: "b"}}}
+	// The retry's seeds carry b's raw draft; only a actually ran.
+	retried := map[string]string{"a": "NEW A", "b": "B DRAFT"}
+	outputs, recStopped := o.withRecordedSinks(ctx, "u", "c", plan, retried, func(id string) bool { return id == "a" })
+	want := "## a\n\nNEW A\n\n## b\n\n" + stream.StoppedSinkNote
+	if got := o.finalizeAnswer(ctx, plan, outputs, "c", recStopped); got != want {
+		t.Errorf("finalizeAnswer = %q, want %q", got, want)
+	}
+	single := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "a"}, {ID: "b", DependsOn: []string{"a"}}}}
+	if got, _ := o.withRecordedSinks(ctx, "u", "c", single, retried, func(string) bool { return false }); !maps.Equal(got, retried) {
+		t.Errorf("single-sink outputs = %v, want them unchanged", got)
 	}
 }
 

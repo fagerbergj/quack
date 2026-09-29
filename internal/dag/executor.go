@@ -992,24 +992,15 @@ func siblingIDs(plan Plan, self string) string {
 	return strings.Join(ids, ", ")
 }
 
-// ensureTerminal: seeds terminal node from fallback when capture missed it.
+// ensureTerminal: seeds a single-sink plan's sink from fallback when capture missed it; with several
+// sinks, fallback may be another sink's output.
 func ensureTerminal(plan Plan, nodeOutputs map[string]string, fallback string) {
-	if fallback == "" {
+	sinks := TerminalIDs(plan.Nodes)
+	if fallback == "" || len(sinks) != 1 {
 		return
 	}
-	hasSucc := map[string]bool{}
-	for _, n := range plan.Nodes {
-		for _, d := range n.DependsOn {
-			hasSucc[d] = true
-		}
-	}
-	for _, n := range plan.Nodes {
-		if !hasSucc[n.ID] {
-			if _, ok := nodeOutputs[n.ID]; !ok {
-				nodeOutputs[n.ID] = fallback
-			}
-			return
-		}
+	if _, ok := nodeOutputs[sinks[0]]; !ok {
+		nodeOutputs[sinks[0]] = fallback
 	}
 }
 

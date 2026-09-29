@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // Outcome statuses for a non-interactive turn - the vocabulary shared by `-p`,
@@ -41,12 +43,14 @@ type streamState struct {
 	orch      strings.Builder // orchestrator's own streamed answer (node_id == "")
 	nodeOut   map[string]string
 	successor map[string]bool // node_id that some other node depends on
+	order     []string        // the plan's node ids, in plan order
+	cancelled map[string]bool // node_id the user stopped
 	lastNode  string          // last node to finish (terminal completes last)
 	question  string          // set once a pause is observed
 }
 
 func newStreamState() *streamState {
-	return &streamState{nodeOut: map[string]string{}, successor: map[string]bool{}}
+	return &streamState{nodeOut: map[string]string{}, successor: map[string]bool{}, cancelled: map[string]bool{}}
 }
 
 // handle folds one SSE event into the accumulated state. events, when non-nil,
@@ -61,14 +65,9 @@ func (s *streamState) handle(ev SSEEvent, events io.Writer) {
 	}
 	switch ev.Name {
 	case "dag_plan":
-		var d struct {
-			Edges []struct{ From, To string } `json:"edges"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil {
-			for _, e := range d.Edges {
-				s.successor[e.From] = true
-			}
-		}
+		s.onDagPlan(ev.Data)
+	case "node_cancelled":
+		s.onNodeCancelled(ev.Data)
 	case "agent_token":
 		var d struct {
 			NodeID string `json:"node_id"`
@@ -78,19 +77,7 @@ func (s *streamState) handle(ev SSEEvent, events io.Writer) {
 			s.orch.WriteString(d.Text)
 		}
 	case "node_done":
-		var d struct {
-			NodeID        string `json:"node_id"`
-			Output        string `json:"output"`
-			OutputPreview string `json:"output_preview"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" {
-			o := d.Output
-			if o == "" {
-				o = d.OutputPreview
-			}
-			s.nodeOut[d.NodeID] = o
-			s.lastNode = d.NodeID
-		}
+		s.onNodeDone(ev.Data)
 	case "node_needs_input":
 		var d struct {
 			Message string `json:"message"`
@@ -99,30 +86,75 @@ func (s *streamState) handle(ev SSEEvent, events io.Writer) {
 			s.question = d.Message
 		}
 	case "agent_tool_call":
-		var d struct {
-			NodeID string         `json:"node_id"`
-			Name   string         `json:"name"`
-			Args   map[string]any `json:"args"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil {
-			if d.NodeID == "" {
-				// A tool call means everything the orchestrator narrated so far was
-				// pre-action throat-clearing, not its answer - same reset
-				// internal/acp/translate.go performs backend-side (#358), applied here so the CLI's final printed answer (Report, below) never includes preamble ahead of a plan/dispatch call (#387).
-				s.orch.Reset()
-			}
-			if d.Name == getUserChoiceTool {
-				if q, ok := d.Args["question"].(string); ok && q != "" {
-					s.question = q
-				}
-			}
-		}
+		s.onToolCall(ev.Data)
 	case "error":
 		var d struct {
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(ev.Data, &d)
 		s.err = fmt.Errorf("server error: %s", d.Error)
+	}
+}
+
+func (s *streamState) onDagPlan(data json.RawMessage) {
+	var d struct {
+		Nodes []struct{ ID string }       `json:"nodes"`
+		Edges []struct{ From, To string } `json:"edges"`
+	}
+	if json.Unmarshal(data, &d) != nil {
+		return
+	}
+	s.order = s.order[:0]
+	for _, n := range d.Nodes {
+		s.order = append(s.order, n.ID)
+	}
+	for _, e := range d.Edges {
+		s.successor[e.From] = true
+	}
+}
+
+func (s *streamState) onNodeCancelled(data json.RawMessage) {
+	var d struct {
+		NodeID string `json:"node_id"`
+	}
+	if json.Unmarshal(data, &d) == nil {
+		s.cancelled[d.NodeID] = true
+	}
+}
+
+func (s *streamState) onNodeDone(data json.RawMessage) {
+	var d struct {
+		NodeID        string `json:"node_id"`
+		Output        string `json:"output"`
+		OutputPreview string `json:"output_preview"`
+	}
+	if json.Unmarshal(data, &d) != nil || d.NodeID == "" {
+		return
+	}
+	o := d.Output
+	if o == "" {
+		o = d.OutputPreview
+	}
+	s.nodeOut[d.NodeID] = o
+	s.lastNode = d.NodeID
+}
+
+func (s *streamState) onToolCall(data json.RawMessage) {
+	var d struct {
+		NodeID string         `json:"node_id"`
+		Name   string         `json:"name"`
+		Args   map[string]any `json:"args"`
+	}
+	if json.Unmarshal(data, &d) != nil {
+		return
+	}
+	if d.NodeID == "" {
+		// Narration before an orchestrator tool call is preamble, not its answer (#358, #387): the
+		// CLI's final printed answer (Report) must never include it.
+		s.orch.Reset()
+	}
+	if q, ok := d.Args["question"].(string); ok && q != "" && d.Name == getUserChoiceTool {
+		s.question = q
 	}
 }
 
@@ -136,7 +168,10 @@ func (s *streamState) result(chatID string) SendResult {
 	if s.question != "" {
 		return SendResult{ChatID: chatID, Status: StatusNeedsInput, Question: s.question}
 	}
-	answer := strings.TrimSpace(s.nodeOut[s.lastNode])
+	answer := s.sinkSections()
+	if answer == "" {
+		answer = strings.TrimSpace(s.nodeOut[s.lastNode])
+	}
 	if answer == "" {
 		for id, o := range s.nodeOut {
 			if !s.successor[id] && strings.TrimSpace(o) != "" {
@@ -149,6 +184,25 @@ func (s *streamState) result(chatID string) SendResult {
 		answer = strings.TrimSpace(s.orch.String())
 	}
 	return SendResult{ChatID: chatID, Status: StatusCompleted, Answer: answer}
+}
+
+// sinkSections is a multi-sink plan's answer as the server delivers it: each sink that finished or was
+// stopped as its own section, a stopped one's draft masked; "" for one sink or when every one stopped.
+func (s *streamState) sinkSections() string {
+	var sinks []stream.SinkAnswer
+	anyLive := false
+	for _, id := range s.order {
+		out, done := s.nodeOut[id]
+		if s.successor[id] || !done && !s.cancelled[id] {
+			continue
+		}
+		anyLive = anyLive || !s.cancelled[id]
+		sinks = append(sinks, stream.SinkAnswer{Label: id, Text: out, Stopped: s.cancelled[id]})
+	}
+	if len(sinks) < 2 || !anyLive {
+		return ""
+	}
+	return stream.JoinSinkAnswers(sinks)
 }
 
 // send drives one non-interactive turn against an existing chatID and

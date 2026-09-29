@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   activityFromTurn, isTurnInProgress, ChatStore,
-  terminalNodeId, dagTotalTokens, dagAnswerAttribution, turnUsageTotal, plainReplyAttribution, pendingNodeQuestion,
+  sinkNodeIds, dagAnswer, dagTotalTokens, dagAnswerAttribution, turnUsageTotal, plainReplyAttribution, pendingNodeQuestion,
   type DagTurnState,
 } from './chatStore'
 import { pendingChoice } from '../components/messageParts'
@@ -1110,13 +1110,50 @@ function dag(nodeStates: DagTurnState['nodeStates']): DagTurnState {
   }
 }
 
+// twoSinks: two independent researchers, no synthesizer - both are sinks.
+function twoSinks(nodeStates: DagTurnState['nodeStates']): DagTurnState {
+  return {
+    planId: 'p',
+    nodes: [
+      { id: 'r1', agent: 'web-researcher', task: 'a', depends_on: [] },
+      { id: 'r2', agent: 'web-researcher', task: 'b', depends_on: [] },
+    ],
+    edges: [],
+    nodeStates,
+    nodeRuns: {},
+    nodeAnswer: {},
+  }
+}
+
 describe('answer-bubble attribution helpers', () => {
-  it('terminalNodeId finds the node with no successor', () => {
-    expect(terminalNodeId(dag({}).nodes)).toBe('b')
+  it('sinkNodeIds finds the node with no successor', () => {
+    expect(sinkNodeIds(dag({}).nodes)).toEqual(['b'])
   })
 
-  it('terminalNodeId returns undefined for an empty DAG', () => {
-    expect(terminalNodeId([])).toBeUndefined()
+  it('sinkNodeIds is empty for an empty DAG', () => {
+    expect(sinkNodeIds([])).toEqual([])
+  })
+
+  it('dagAnswer: two sinks and no synthesizer answer as one labelled section each, in plan order', () => {
+    const d: DagTurnState = {
+      ...twoSinks({ r1: { status: 'done', model: 'm', totalTokens: 3 }, r2: { status: 'done', model: 'm', totalTokens: 4 } }),
+      nodeAnswer: { r2: 'TWO', r1: 'ONE' },
+    }
+    expect(dagAnswer(d)).toEqual({ text: '## r1\n\nONE\n\n## r2\n\nTWO', stopped: false })
+    expect(dagAnswerAttribution(d)).toEqual({ agent: 'web-researcher', model: 'm', tokens: 7, stopped: undefined })
+  })
+
+  it('dagAnswer masks a stopped sink behind a note, and shows the drafts badged when every sink stopped', () => {
+    const one = { ...twoSinks({ r1: { status: 'done' }, r2: { status: 'cancelled' } }), nodeAnswer: { r1: 'ONE', r2: 'DRAFT' } }
+    expect(dagAnswer(one)).toEqual({ text: '## r1\n\nONE\n\n## r2\n\n_Stopped, not reviewed._', stopped: false })
+    const both = { ...twoSinks({ r1: { status: 'cancelled' }, r2: { status: 'cancelled' } }), nodeAnswer: { r1: 'D1', r2: 'D2' } }
+    expect(dagAnswer(both)).toEqual({ text: '## r1\n\nD1\n\n## r2\n\nD2', stopped: true })
+    expect(dagAnswerAttribution(both)?.stopped).toBe(true)
+  })
+
+  it("dagAnswer keeps a lone answering sink's text as is (an earlier turn's sink answered nothing here)", () => {
+    const d = { ...twoSinks({ r2: { status: 'done' } }), nodeAnswer: { r2: 'TWO' } }
+    expect(dagAnswer(d)).toEqual({ text: 'TWO', stopped: false })
   })
 
   it('dagTotalTokens sums total_tokens across every node', () => {

@@ -20,17 +20,16 @@ import (
 // planWrapperName: top agent wrapping the plan graph; must not collide with node IDs.
 const planWrapperName = "quack-plan-graph"
 
+// sinkJoinName: the fan-in after a multi-sink plan's sinks; never a plan node, so dagStream ignores it.
+const sinkJoinName = "join-" + planWrapperName
+
 // buildPlanGraph: wires gated nodes as a native ADK graph.
 func buildPlanGraph(plan Plan, nodesByID map[string]workflow.Node) ([]workflow.Edge, error) {
 	eb := workflow.NewEdgeBuilder()
-	hasSuccessor := map[string]bool{}
 	for _, n := range plan.Nodes {
 		node, ok := nodesByID[n.ID]
 		if !ok {
 			return nil, fmt.Errorf("dag: plan graph: no built node for %q", n.ID)
-		}
-		for _, d := range n.DependsOn {
-			hasSuccessor[d] = true
 		}
 		switch len(n.DependsOn) {
 		case 0:
@@ -53,15 +52,12 @@ func buildPlanGraph(plan Plan, nodesByID map[string]workflow.Node) ([]workflow.E
 			eb.Add(join, node)
 		}
 	}
-	// ADK allows one terminal node; synthesizer hardening guarantees this for multi-node plans.
-	terminals := 0
-	for _, n := range plan.Nodes {
-		if !hasSuccessor[n.ID] {
-			terminals++
+	// ADK fails a run where more than one terminal node yields output, so several sinks share one fan-in join.
+	if sinks := TerminalIDs(plan.Nodes); len(sinks) > 1 {
+		join := workflow.NewJoinNode(sinkJoinName)
+		for _, id := range sinks {
+			eb.Add(nodesByID[id], join)
 		}
-	}
-	if terminals > 1 {
-		return nil, fmt.Errorf("dag: plan graph: %d terminal nodes (want 1) - plan lacks a synthesizer fan-in", terminals)
 	}
 	return eb.Build(), nil
 }

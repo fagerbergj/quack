@@ -93,8 +93,11 @@ func TestRunPlanAsGraph_ResumeDoesNotResetReviewFanout(t *testing.T) {
 		{ID: "r-paused", AgentName: reviewerAgent},
 	}}
 
-	// Resume: resumeNodes is non-empty (only r-paused re-runs; r-done durably skips).
-	_, _ = ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "chat", nil, noopYield, map[string]string{}, []string{"r-paused"})
+	// Resume: resumeNodes is non-empty (only r-paused re-runs; r-done durably skips). Cancelled so the
+	// graph stops after its gate-node build, before r-paused could deliver and retire the fan-in itself.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = ex.RunPlanAsGraph(ctx, plan, "quack", "u", "chat", nil, noopYield, map[string]string{}, []string{"r-paused"})
 
 	got := vetting.GetReviewFanout(planID, 2)
 	if got != fanout {

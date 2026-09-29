@@ -8,7 +8,7 @@ import { Composer } from '../components/Composer'
 import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, dagFromTurn, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
+import { activityFromTurn, dagFromTurn, dagAnswer, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
 import { UsageSummary, type UsageSummaryProps } from '../components/UsageSummary'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
@@ -24,12 +24,11 @@ import { useTurnArtifacts } from '../hooks/useTurnArtifacts'
 import type { SurfaceRef } from '../lib/a2ui'
 import { TurnSurfaces } from '../components/A2uiArtifact'
 
-// liveDagFinalText extracts the answer from the terminal node's accumulated answer.
+// liveDagFinalText extracts the answer from the sinks' accumulated answers.
 // This IS the DAG turn's answer - never mix in the orchestrator's own top-level
 // text (that's planning/narration chatter, not the reply; see liveText below).
 export function liveDagFinalText(dag: DagTurnState): string {
-  const finalId = terminalNodeId(dag.nodes)
-  return finalId != null ? (dag.nodeAnswer[finalId] ?? '') : ''
+  return dagAnswer(dag).text
 }
 
 // shouldQueueSubmit is the Composer send decision: queue while a run is

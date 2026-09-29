@@ -3,15 +3,18 @@ package orchestrator
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
 	"google.golang.org/adk/v2/artifact"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/loadartifactstool"
 	"google.golang.org/adk/v2/workflow"
@@ -86,7 +89,7 @@ func (s *orchRun) buildDagTools(githubSetup *dag.Setup) string {
 		return s.o.executor.RunPlanStep(stepCtx, plan, AppName, s.userID, s.sessionID, seeded, run)
 	}
 	finalizeStep := func(stepCtx context.Context, plan dag.Plan, outputs map[string]string) string {
-		return s.o.finalizeAnswer(stepCtx, plan, outputs, s.sessionID)
+		return s.o.finalizeAnswer(stepCtx, plan, outputs, s.sessionID, nil)
 	}
 	execTool, err := tools.NewExecuteTool(s.o.planner, planRC, s.planCache, s.o.executor.Provision, runStep, finalizeStep, s.history, s.message, s.attachments,
 		githubSetup, allowedKinds,
@@ -260,6 +263,9 @@ func (s *orchRun) invoke(content *genai.Content) (produced, stop bool) {
 	if _, pending := s.planCache.Pending(); pending {
 		produced = false
 	}
+	if _, tripped := s.planCache.LoopGuard(); tripped {
+		produced = true // the turn hands the user a choice; no continuation nudge
+	}
 	return produced, false
 }
 
@@ -292,6 +298,44 @@ func (s *orchRun) handlePlanExhaustion() bool {
 	return false
 }
 
+// Plan loop choice: the options offered once the plan judge keeps rejecting the same plan.
+const (
+	planLoopChoicePrefix = "plan-loop-"
+	planLoopRunAsIs      = "Run the plan as is"
+	planLoopRephrase     = "Let me rephrase"
+)
+
+// askAfterPlanLoop asks the user, through a get_user_choice call of the orchestrator's own, whether to
+// run the plan the judge keeps rejecting; the answer arrives next turn like any pending choice.
+func (s *orchRun) askAfterPlanLoop(reason string) {
+	ctx := context.WithoutCancel(s.ctx)
+	ev := session.NewEvent(ctx, "")
+	ev.Author = orchestratorName
+	ev.Content = &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{
+		ID: planLoopChoicePrefix + uuid.NewString(), Name: tools.ChoiceToolName,
+		Args: map[string]any{
+			"question": "The plan reviewer keeps rejecting this plan: " + reason + "\n\nRun it anyway, or rephrase the request?",
+			"options":  []any{planLoopRunAsIs, planLoopRephrase},
+		},
+	}}}}
+	if resp, err := s.o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: s.userID, SessionID: s.sessionID}); err == nil && resp != nil {
+		if err := s.o.sessions.AppendEvent(ctx, resp.Session, ev); err != nil {
+			slog.Warn("plan loop choice not persisted", "component", "orchestrator", "chat", s.sessionID, "err", err)
+		}
+	}
+	for _, se := range s.translator.Event(ev) {
+		s.safeYield(stream.ScopeToRun(se, orchRunID), nil)
+	}
+	s.emitAgentComplete()
+	s.safeYield(stream.Done(), nil)
+}
+
+// waivesPlanJudge: this turn answers the plan loop choice with "run it as is".
+func waivesPlanJudge(pending PendingQuestion, hasPending bool, message string) bool {
+	return hasPending && strings.HasPrefix(pending.choiceCallID, planLoopChoicePrefix) &&
+		strings.EqualFold(strings.TrimSpace(message), planLoopRunAsIs)
+}
+
 // finishLoop: every terminal outcome after the first invoke - continue-retry,
 // repeat-guard hard stop, usage, give-up, plan exhaustion. Returns the attempt count and whether the turn ended.
 func (s *orchRun) finishLoop(produced, stop bool) (int, bool) {
@@ -312,6 +356,10 @@ func (s *orchRun) finishLoop(produced, stop bool) (int, bool) {
 			"component", "orchestrator", "chat", s.sessionID, "attempts", attempts)
 		s.safeYield(stream.Errorf("The orchestrator got stuck repeating the same malformed tool call and stopped. "+
 			"Please try again or rephrase your request."), nil)
+		return attempts, true
+	}
+	if reason, tripped := s.planCache.LoopGuard(); tripped {
+		s.askAfterPlanLoop(reason)
 		return attempts, true
 	}
 	s.emitAgentComplete()

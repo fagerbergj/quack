@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -71,7 +72,8 @@ type assignmentResult struct {
 }
 
 // executeResult.Status: "running" (no delivery declared yet), "delivered", "paused" (a node awaits
-// the user's answer - no execute/edit_plan until then) or "stopped" (the delivering node was stopped).
+// the user's answer - no execute/edit_plan until then), "stopped" (every delivering node was stopped)
+// or "needs_user" (the plan judge keeps rejecting the same plan; the user decides).
 type executeResult struct {
 	Status  string             `json:"status"`
 	Results []assignmentResult `json:"results,omitempty"`
@@ -147,7 +149,9 @@ func NewExecuteTool(planner *dag.Planner, c *recordstore.Client, cache *PlanCach
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
 			plan, err := planner.Build(planCtx, rawNodes, setup, rec.Delivery, history, message, attachments, allowedKinds)
 			if err != nil {
-				recordPlanRejection(tc, c, nodeID, cache, err)
+				if recordPlanRejection(tc, c, nodeID, cache, err, PlanShape(rawNodes, rec.Delivery)) {
+					return planLoopResult(tc, rec.PlanID), nil
+				}
 				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
 			// assemble() mints its own fresh plan.ID - overwrite it with the
@@ -243,18 +247,28 @@ func resolveRawNodes(tc agent.Context, rec dag.DagPlanRecord, c *recordstore.Cli
 }
 
 // recordPlanRejection records a rejected plan's reason (cache, metric, judge
-// round) - the judge_round save is best-effort and only logged.
-func recordPlanRejection(tc agent.Context, c *recordstore.Client, nodeID string, cache *PlanCache, err error) {
+// round) - the judge_round save is best-effort and only logged. tripped: the plan loop guard tripped.
+func recordPlanRejection(tc agent.Context, c *recordstore.Client, nodeID string, cache *PlanCache, err error, shape string) (tripped bool) {
 	reason := err.Error()
 	var rejected *dag.PlanRejectedError
 	if errors.As(err, &rejected) {
 		reason = rejected.Reason
-		cache.RecordRejection(reason)
+		tripped = cache.RecordRejection(reason, shape)
 		if _, _, jerr := vetting.SavePlanRejectionJudgeRound(tc, c, nodeID, tc.InvocationID(), reason); jerr != nil {
 			slog.Warn("plan rejection judge_round save failed", "component", "execute", "err", jerr)
 		}
 	}
 	inference.RecordPlanRejection(tc.SessionID(), reason)
+	return tripped
+}
+
+// planLoopResult ends the turn once re-planning loops; the orchestrator then asks the user whether
+// to run the plan as is, whatever model is planning.
+func planLoopResult(tc agent.Context, planID string) executeResult {
+	slog.Info("plan loop guard tripped: asking the user instead of re-planning", "component", "execute", "plan", planID, "chat", tc.SessionID())
+	tc.Actions().SkipSummarization = true
+	return executeResult{Status: "needs_user", Message: fmt.Sprintf("the plan judge keeps rejecting essentially the same plan %s - stop re-planning. "+
+		"The user is asked whether to run it as is or rephrase; output nothing further this turn.", planID)}
 }
 
 // provisionAndPersist provisions setup, persists the assembled plan to session
@@ -341,8 +355,8 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 	// Only deliver on a step whose own run succeeded - a failed or paused
 	// delivering node must not mark the plan done and finalize on garbage.
 	// Only a delivering step has an answer to lose; a partial step just reports the cancelled node.
-	sink := stepSink(*plan, results)
-	terminalStopped := rec.Delivery != nil && stoppedResult(results, sink)
+	sinks := stepSinks(*plan, results)
+	terminalStopped := rec.Delivery != nil && allStopped(results, sinks)
 	delivering := rec.Delivery != nil && !stepPaused && !stepFailed && !terminalStopped
 	rec.Status = "running"
 	if delivering {
@@ -356,8 +370,7 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 	emitPlanEvent(tc, plan, step)
 
 	if delivering && finalize != nil {
-		// Only the step's own sink: finalize would otherwise pick the plan's first sink.
-		cache.SetDelivered(finalize(tc, *plan, map[string]string{sink: DeliverableResults(rec.Assignments)[sink]}))
+		cache.SetDelivered(finalize(tc, *plan, ownSinkResults(rec.Assignments, sinks)))
 	}
 	if delivering || stepPaused || terminalStopped {
 		// End the llmagent turn: delivery fired (nothing more to plan) or a node
@@ -459,36 +472,51 @@ func UnreviewedSeeds(assignments []dag.Assignment) map[string]bool {
 }
 
 // DeliverableResults maps each assignment to the result a delivery may use: a stopped one's
-// draft reads as empty, so it can never become the delivered answer in any turn.
-func DeliverableResults(assignments []dag.Assignment) map[string]string {
-	final := make(map[string]string, len(assignments))
+// draft reads as empty, so it can never become the delivered answer in any turn; stopped flags those.
+func DeliverableResults(assignments []dag.Assignment) (final map[string]string, stopped map[string]bool) {
+	final = make(map[string]string, len(assignments))
+	stopped = map[string]bool{}
 	for _, a := range assignments {
 		if a.Stopped {
-			final[a.NodeID] = ""
+			final[a.NodeID], stopped[a.NodeID] = "", true
 			continue
 		}
 		final[a.NodeID] = a.Result
 	}
-	return final
+	return final, stopped
 }
 
 // stoppedSummary tells the orchestrator model what a cancelled assignment means.
 const stoppedSummary = "stopped by the user before it finished - do not re-run or re-plan this work, " +
 	"and do not relay or restate its unreviewed draft as your answer"
 
-// stoppedResult reports this step stopped nodeID, so it has no answer to deliver.
-func stoppedResult(results []assignmentResult, nodeID string) bool {
+// allStopped reports this step stopped every one of sinks, so it has no answer to deliver.
+func allStopped(results []assignmentResult, sinks []string) bool {
+	cancelled := map[string]bool{}
 	for _, r := range results {
-		if r.NodeID == nodeID && r.Status == "cancelled" {
-			return true
+		cancelled[r.NodeID] = r.Status == "cancelled"
+	}
+	for _, id := range sinks {
+		if !cancelled[id] {
+			return false
 		}
 	}
-	return false
+	return len(sinks) > 0
 }
 
-// stepSink is the node a delivering step answers with: the first node this step ran that no
-// other node it ran depends on - in an extended plan, not an earlier turn's (re-wired) sink.
-func stepSink(plan dag.Plan, results []assignmentResult) string {
+// ownSinkResults are only the step's own sinks' results: finalize would otherwise also deliver an earlier turn's sinks.
+func ownSinkResults(assignments []dag.Assignment, sinks []string) map[string]string {
+	final, _ := DeliverableResults(assignments)
+	own := make(map[string]string, len(sinks))
+	for _, id := range sinks {
+		own[id] = final[id]
+	}
+	return own
+}
+
+// stepSinks are the nodes a delivering step answers with: every node this step ran that no other
+// node it ran depends on - in an extended plan, not an earlier turn's (re-wired) sink.
+func stepSinks(plan dag.Plan, results []assignmentResult) []string {
 	ran := make(map[string]bool, len(results))
 	for _, r := range results {
 		if r.Status != "queued" {
@@ -503,44 +531,69 @@ func stepSink(plan dag.Plan, results []assignmentResult) string {
 			}
 		}
 	}
+	var sinks []string
 	for _, n := range plan.Nodes {
 		if ran[n.ID] && !ranSuccessor[n.ID] {
-			return n.ID
+			sinks = append(sinks, n.ID)
 		}
 	}
-	return TerminalNodeID(plan)
+	return sinks
 }
 
-func successors(plan dag.Plan) map[string]bool {
-	has := make(map[string]bool, len(plan.Nodes))
+// DeliveredAnswer is what the plan's sinks in outputs deliver: one sink's output as is, or each as its own
+// labelled section in plan order (sectioned). A stopped sink's draft never ships.
+func DeliveredAnswer(plan dag.Plan, outputs map[string]string, stopped func(string) bool) (answer string, sectioned bool) {
+	terminals := dag.TerminalIDs(plan.Nodes)
+	sinks := presentLeaves(plan, outputs, terminals)
+	if len(sinks) == 0 {
+		// A step's own sinks can sit upstream of an earlier turn's re-wired synthesizer.
+		if slices.ContainsFunc(terminals, stopped) {
+			return "", false
+		}
+		sinks = presentLeaves(plan, outputs, nil)
+	}
+	switch len(sinks) {
+	case 0:
+		return "", false
+	case 1:
+		if stopped(sinks[0]) {
+			return "", false
+		}
+		return stream.StripThinking(outputs[sinks[0]]), false
+	}
+	return sinkSections(sinks, outputs, stopped), true
+}
+
+// presentLeaves are the nodes of among (all of plan's when nil) that have an output and no successor that has one.
+func presentLeaves(plan dag.Plan, outputs map[string]string, among []string) []string {
+	succeeded := map[string]bool{}
 	for _, n := range plan.Nodes {
-		for _, dep := range n.DependsOn {
-			has[dep] = true
+		if _, ok := outputs[n.ID]; ok {
+			for _, dep := range n.DependsOn {
+				succeeded[dep] = true
+			}
 		}
 	}
-	return has
-}
-
-// TerminalNodeID is the plan's terminal node: the first with no successor.
-func TerminalNodeID(plan dag.Plan) string {
-	hasSuccessor := successors(plan)
+	var leaves []string
 	for _, n := range plan.Nodes {
-		if !hasSuccessor[n.ID] {
-			return n.ID
+		if _, ok := outputs[n.ID]; ok && !succeeded[n.ID] && (among == nil || slices.Contains(among, n.ID)) {
+			leaves = append(leaves, n.ID)
 		}
 	}
-	return ""
+	return leaves
 }
 
-// TerminalOutput: returns the output of the terminal node (no successors). Exported for resume path.
-func TerminalOutput(plan dag.Plan, outputs map[string]string) string {
-	if out, ok := outputs[TerminalNodeID(plan)]; ok {
-		return stream.StripThinking(out)
+// sinkSections labels each sink by node id - unique, unlike the agent names the UI titles nodes with.
+func sinkSections(sinks []string, outputs map[string]string, stopped func(string) bool) string {
+	parts := make([]stream.SinkAnswer, 0, len(sinks))
+	anyLive := false
+	for _, id := range sinks {
+		st := stopped(id)
+		anyLive = anyLive || !st
+		parts = append(parts, stream.SinkAnswer{Label: id, Text: stream.StripThinking(outputs[id]), Stopped: st})
 	}
-	for i := len(plan.Nodes) - 1; i >= 0; i-- {
-		if out, ok := outputs[plan.Nodes[i].ID]; ok {
-			return stream.StripThinking(out)
-		}
+	if !anyLive {
+		return ""
 	}
-	return ""
+	return stream.JoinSinkAnswers(parts)
 }

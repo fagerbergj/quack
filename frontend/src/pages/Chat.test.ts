@@ -53,6 +53,14 @@ describe('liveDagFinalText - no mid-stream flip to orchestrator narration', () =
     const d = dag({ a: 'the real answer' })
     expect(liveDagFinalText(d)).toBe('the real answer')
   })
+
+  it('streams every sink of a no-synthesizer plan as its own section, not the first sink alone', () => {
+    const d: DagTurnState = {
+      ...dag({ a: 'A', b: 'B' }),
+      nodes: [{ id: 'a', agent: 'researcher', task: 't', depends_on: [] }, { id: 'b', agent: 'researcher', task: 'u', depends_on: [] }],
+    }
+    expect(liveDagFinalText(d)).toBe('## a\n\nA\n\n## b\n\nB')
+  })
 })
 
 // This mirrors the `liveText` selection in Chat.tsx: for a DAG turn it must be

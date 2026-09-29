@@ -215,8 +215,20 @@ func (p *Planner) infosFor(ctx context.Context) []AgentInfo {
 	return p.agents
 }
 
+type judgeWaivedKey struct{}
+
+// WithPlanJudgeWaived skips the plan judge for plans built under ctx: the user chose to run a plan
+// the judge kept rejecting.
+func WithPlanJudgeWaived(ctx context.Context) context.Context {
+	return context.WithValue(ctx, judgeWaivedKey{}, true)
+}
+
 func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) error {
 	if p.judge == nil {
+		return nil
+	}
+	if waived, _ := ctx.Value(judgeWaivedKey{}).(bool); waived {
+		slog.Info("plan judge waived by the user's choice", "component", "planner", "plan", plan.ID)
 		return nil
 	}
 	ctx, span := otelobs.Start(ctx, "plan.judge")
@@ -400,7 +412,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	}
 
 	// Harden: synthesizer fan-in.
-	plan.Nodes = hardenSynthesizer(plan.Nodes, known)
+	plan.Nodes = hardenSynthesizer(plan.Nodes)
 
 	if _, topoErr := topoLayers(*plan); topoErr != nil {
 		return nil, topoErr
@@ -594,19 +606,8 @@ func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, id
 	}, nil
 }
 
-// hardenSynthesizer: the synthesizer depends on every non-synthesizer node NOT downstream of it; an
-// omitted synthesizer is appended as a fan-in when multi-terminal would fail.
-func hardenSynthesizer(nodes []Node, known map[string]AgentInfo) []Node {
-	if len(nodes) < 2 {
-		return nodes
-	}
-	hasSynth := false
-	for _, n := range nodes {
-		if n.AgentName == synthesizerAgent {
-			hasSynth = true
-			break
-		}
-	}
+// hardenSynthesizer: the synthesizer depends on every non-synthesizer node NOT downstream of it.
+func hardenSynthesizer(nodes []Node) []Node {
 	for i, n := range nodes {
 		if n.AgentName != synthesizerAgent {
 			continue
@@ -620,22 +621,6 @@ func hardenSynthesizer(nodes []Node, known map[string]AgentInfo) []Node {
 			deps = append(deps, m.ID)
 		}
 		nodes[i].DependsOn = deps
-	}
-	// Append a synthesizer fan-in when the orchestrator omits it and multi-terminal would fail.
-	synthInfo, hasSynthAgent := known[synthesizerAgent]
-	if !hasSynth && hasSynthAgent && len(terminalIDs(nodes)) > 1 {
-		// Appended fan-in is safe: nothing depends on it, no descendants to cycle into.
-		var all []string
-		for _, n := range nodes {
-			all = append(all, n.ID)
-		}
-		nodes = append(nodes, Node{
-			ID:            "synthesize",
-			AgentName:     synthesizerAgent,
-			Task:          "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
-			DependsOn:     all,
-			ContextWindow: synthInfo.ContextWindow,
-		})
 	}
 	return nodes
 }

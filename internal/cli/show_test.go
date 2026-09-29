@@ -343,3 +343,54 @@ func TestRunChatShowFollowDiscardsPreamble(t *testing.T) {
 		t.Errorf("follow output missing the final answer:\n%s", s)
 	}
 }
+
+// TestRunChatShowMultiSinkAnswer: a two-sink turn's answer prints every labelled section, not the first sink.
+func TestRunChatShowMultiSinkAnswer(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	const detail = `{
+  "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
+  "system_prompt":"","title":"Two researchers","status":"completed",
+  "turns":[{"id":"t1","created_at":"2026-01-01T00:00:00Z","input":{"role":"user","content":"two researchers, no synthesizer"},
+    "output":[
+      {"type":"quack:dag","id":"d1","status":"completed","plan_id":"p1",
+       "nodes":[{"id":"r1","agent":"web-researcher","task":"a","depends_on":[]},{"id":"r2","agent":"web-researcher","task":"b","depends_on":[]}],
+       "edges":[],"node_states":{"r1":{"status":"done"},"r2":{"status":"done"}}},
+      {"type":"message","id":"m1","status":"completed","content":[{"type":"output_text","text":"## r1\n\nONE\n\n## r2\n\nTWO"}]}
+    ]}]
+}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, detail) }))
+	defer srv.Close()
+	var out, errOut bytes.Buffer
+	if code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", false, false); code != 0 {
+		t.Fatalf("exit code = %d; stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "## r1\n\nONE\n\n## r2\n\nTWO") {
+		t.Errorf("chat show output lacks both sections:\n%s", out.String())
+	}
+}
+
+// TestStreamStateMultiSinkAnswer: `chat send` answers a two-sink plan with both sections, a stopped
+// sink masked, and falls back to the last sink's output when every other sink produced nothing.
+func TestStreamStateMultiSinkAnswer(t *testing.T) {
+	run := func(events ...SSEEvent) string {
+		s := newStreamState()
+		s.handle(SSEEvent{Name: "dag_plan", Data: json.RawMessage(`{"nodes":[{"id":"r1"},{"id":"r2"}],"edges":[]}`)}, nil)
+		for _, ev := range events {
+			s.handle(ev, nil)
+		}
+		return s.result("c1").Answer
+	}
+	done := func(id, out string) SSEEvent {
+		return SSEEvent{Name: "node_done", Data: json.RawMessage(`{"node_id":"` + id + `","output":"` + out + `"}`)}
+	}
+	cancelled := SSEEvent{Name: "node_cancelled", Data: json.RawMessage(`{"node_id":"r1"}`)}
+	if got := run(done("r2", "TWO"), done("r1", "ONE")); got != "## r1\n\nONE\n\n## r2\n\nTWO" {
+		t.Errorf("both done: %q", got)
+	}
+	if got, want := run(cancelled, done("r2", "TWO")), "## r1\n\n_Stopped, not reviewed._\n\n## r2\n\nTWO"; got != want {
+		t.Errorf("one stopped: %q, want %q", got, want)
+	}
+	if got := run(done("r2", "TWO")); got != "TWO" {
+		t.Errorf("one sink: %q", got)
+	}
+}

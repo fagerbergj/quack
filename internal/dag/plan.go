@@ -82,7 +82,8 @@ type Node struct {
 	Result string
 }
 
-func terminalIDs(nodes []Node) []string {
+// TerminalIDs are the plan's sinks - nodes nothing depends on - in plan order; each one's output is delivered.
+func TerminalIDs(nodes []Node) []string {
 	hasSuccessor := map[string]bool{}
 	for _, n := range nodes {
 		for _, dep := range n.DependsOn {
