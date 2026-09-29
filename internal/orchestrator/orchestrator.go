@@ -327,7 +327,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 			ds.Handle(ev)
 		}
 		ds.Finish()
-		o.settleRetried(ctx, userID, chatID, plan.ID, ds.Started(), nodeOutputs)
+		o.settleRetried(ctx, userID, chatID, plan, ds.Started(), nodeOutputs)
 		started := ds.Started()
 		outputs, recStopped := o.withRecordedSinks(ctx, userID, chatID, plan, nodeOutputs, func(id string) bool { return started[id] })
 		if answer, _ := o.sinkAnswer(plan, outputs, chatID, recStopped); answer != "" {
@@ -338,23 +338,33 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 
 // settleRetried records a retry's fresh outputs on the dag_plan record, clearing an earlier stop:
 // otherwise later deliveries mask, and later nodes seed from, the stale stopped draft.
-func (o *Orchestrator) settleRetried(ctx context.Context, userID, chatID, planID string, started map[string]bool, outputs map[string]string) {
+func (o *Orchestrator) settleRetried(ctx context.Context, userID, chatID string, plan dag.Plan, started map[string]bool, outputs map[string]string) {
 	if o.artifacts == nil {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
 	rec, _, ok, err := dag.LoadDagPlanRecord(ctx, o.artifacts, artifactref.AppName, userID, chatID)
-	if err != nil || !ok || rec.PlanID != planID {
+	if err != nil || !ok || rec.PlanID != plan.ID {
 		return
 	}
-	changed := false
+	ran := func(id string) bool { return started[id] }
+	// A restart mid-step left the record on the step before: this run completes that step, so it records it.
+	sinks, stale := staleSinks(rec, plan, ran)
+	changed := stale
+	if stale {
+		rec.Sinks = sinks
+	}
 	for i := range rec.Assignments {
 		a := &rec.Assignments[i]
-		out := outputs[a.NodeID]
-		if !started[a.NodeID] || strings.TrimSpace(out) == "" || o.executor.NodeStopped(chatID, a.NodeID) {
-			continue
+		out, stopped := outputs[a.NodeID], o.executor.NodeStopped(chatID, a.NodeID)
+		switch {
+		case !started[a.NodeID]:
+		case a.TaskID == "":
+			tools.ApplyAssignmentOutcome(a, out, false, stopped)
+			changed = true
+		case strings.TrimSpace(out) != "" && !stopped:
+			a.Result, a.Stopped, changed = out, false, true
 		}
-		a.Result, a.Stopped, changed = out, false, true
 	}
 	if !changed {
 		return
@@ -901,8 +911,7 @@ func (o *Orchestrator) withRecordedSinks(ctx context.Context, userID, chatID str
 	sinks := terminals
 	if hasRec && len(rec.Sinks) > 0 {
 		sinks = rec.Sinks
-		// A ran node the record never settled means its sinks predate this run's step (a restart mid-extension).
-		if ranSinks := dag.SinksAmong(plan.Nodes, ran); len(ranSinks) > 0 && !slices.ContainsFunc(sinks, ran) && ranUnsettled(rec, ran) {
+		if ranSinks, stale := staleSinks(rec, plan, ran); stale {
 			sinks = ranSinks
 		}
 	}
@@ -926,8 +935,12 @@ func (o *Orchestrator) withRecordedSinks(ctx context.Context, userID, chatID str
 	return own, recStopped
 }
 
-func ranUnsettled(rec dag.DagPlanRecord, ran func(string) bool) bool {
-	return slices.ContainsFunc(rec.Assignments, func(a dag.Assignment) bool { return a.TaskID == "" && ran(a.NodeID) })
+// staleSinks recomputes the step sinks from what ran when the record's predate this run's step (a restart
+// mid-extension): none of them ran here and a node that did was never settled.
+func staleSinks(rec dag.DagPlanRecord, plan dag.Plan, ran func(string) bool) ([]string, bool) {
+	ranSinks := dag.SinksAmong(plan.Nodes, ran)
+	unsettled := slices.ContainsFunc(rec.Assignments, func(a dag.Assignment) bool { return a.TaskID == "" && ran(a.NodeID) })
+	return ranSinks, len(rec.Sinks) > 0 && len(ranSinks) > 0 && !slices.ContainsFunc(rec.Sinks, ran) && unsettled
 }
 
 // planRecord is the chat's dag_plan record when it records planID.
