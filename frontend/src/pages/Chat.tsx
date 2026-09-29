@@ -8,7 +8,7 @@ import { Composer } from '../components/Composer'
 import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, dagFromTurn, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
+import { activityFromTurn, dagFromTurn, dagAnswer, liveAnswerText, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
 import { UsageSummary, type UsageSummaryProps } from '../components/UsageSummary'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
@@ -24,12 +24,11 @@ import { useTurnArtifacts } from '../hooks/useTurnArtifacts'
 import type { SurfaceRef } from '../lib/a2ui'
 import { TurnSurfaces } from '../components/A2uiArtifact'
 
-// liveDagFinalText extracts the answer from the terminal node's accumulated answer.
+// liveDagFinalText extracts the answer from the sinks' accumulated answers.
 // This IS the DAG turn's answer - never mix in the orchestrator's own top-level
 // text (that's planning/narration chatter, not the reply; see liveText below).
 export function liveDagFinalText(dag: DagTurnState): string {
-  const finalId = terminalNodeId(dag.nodes)
-  return finalId != null ? (dag.nodeAnswer[finalId] ?? '') : ''
+  return dagAnswer(dag).text
 }
 
 // shouldQueueSubmit is the Composer send decision: queue while a run is
@@ -195,7 +194,7 @@ function liveTurnDerived(live: NonNullable<ChatState['live']>, liveActive: boole
   // Which text is the user-facing answer: if a DAG ran, the terminal
   // node's answer IS the response (execute always delivers from the
   // node now - there's no orchestrator "synthesize" mode to prefer); liveTopText is the orchestrator's OWN narration (planning chatter, reasoning about the request) - never the answer when a DAG exists, falling back to it only masks a missing terminal answer. No DAG: the orchestrator answered directly, so its text IS the reply.
-  const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
+  const liveText = liveDag ? liveAnswerText(live) : liveTopText
   // The orchestrator's own activity (deciding to research, plan/execute calls).
   // get_user_choice is surfaced as its own QuestionBubble below, not a raw tool block.
   const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))
@@ -213,7 +212,7 @@ function liveTurnDerived(live: NonNullable<ChatState['live']>, liveActive: boole
   // whose own top-level run carries its model/usage once complete (item 1).
   const orchRun = liveTopRuns.find(r => r.runId === 'orchestrator')
   const answerAttribution = liveDag
-    ? dagAnswerAttribution(liveDag)
+    ? dagAnswerAttribution(liveDag, liveText)
     : { agent: 'orchestrator', model: orchRun?.model, tokens: orchRun?.totalTokens }
   // Skip the answer bubble when there's nothing in it yet.
   const hasAnswerBubble = showSpinner || (liveDag ? (!!liveText || !!answerAttribution?.stopped) : (orchActivity.length > 0 || !!liveTopText))
@@ -783,16 +782,14 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     }
   }, [loadChats])
 
-  // #463: when a run goes active on an already-open chat (e.g. GitHub webhook
-  // dispatched while the user views this chat), re-fire attach so the SSE
-  // subscribe stream opens and live events start flowing. Without it, only ChatList's Running badge lights up - the /stream subscription never started for this client. attach no-ops if this client already streams (it posted the run) or has an existing EventSource.
+  // #463: a run going active on an open chat that this page isn't streaming (a webhook, a CLI retry)
+  // re-seeds from the server and attaches, so the run's own turn goes live - never a finished one.
   useEffect(() => {
     if (!activeChatId || !activeChat?.status || activeChat.archived) return
     if (seededChatId !== activeChatId) return // wait for the getChat effect's own attach - see seededChatId above
     const s = activeChat.status
-    if (s === 'running') {
-      store.attach(activeChatId)
-    }
+    if (s !== 'running' || store.isStreaming(activeChatId)) return
+    void api.getChat(activeChatId).then(detail => store.reattach(activeChatId, detail.turns)).catch(() => {})
   }, [activeChatId, activeChat?.status, activeChat?.archived, seededChatId])
 
   function activateChat(id: string) {

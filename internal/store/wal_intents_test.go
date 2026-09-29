@@ -146,6 +146,44 @@ func TestSaveDagPlan_ResumeIsWALIdempotent(t *testing.T) {
 	}
 }
 
+// TestSaveDagPlan_ExtensionRecordsItsTurn: a plan grown by edit_plan in a later turn keeps one row on
+// its first turn, with the grown plan_json and the extending turn as the one a retry answers.
+func TestSaveDagPlan_ExtensionRecordsItsTurn(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	ls := ledgertest.NewMemStore()
+	st.SetWALLedger(ls)
+	chat, err := st.CreateChat(ctx, "sys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, turn := range []string{"turn-1", "turn-2"} {
+		if err := st.SaveTurn(ctx, chat.ID, turn, "hi"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SaveDagPlan(ctx, chat.ID, "plan-1", "turn-1", `{"nodes":["r1"]}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveDagPlan(ctx, chat.ID, "plan-1", "turn-2", `{"nodes":["r1","r3"]}`); err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.GetLatestDagPlan(ctx, chat.ID)
+	if err != nil || p == nil || p.TurnID != "turn-1" || p.RunTurnID() != "turn-2" || p.PlanJSON != `{"nodes":["r1","r3"]}` {
+		t.Fatalf("plan = %+v (err %v), want the grown plan, still turn-1's, run by turn-2", p, err)
+	}
+	entries, _ := ls.ReadEntries(ctx, chat.ID, 0)
+	saved := 0
+	for _, e := range entries {
+		if e.Kind == ledger.KindPlanSaved {
+			saved++
+		}
+	}
+	if saved != 2 {
+		t.Errorf("plan.saved entries = %d, want one per distinct save", saved)
+	}
+}
+
 // TestWriteCheckpoint_UpsertsOneRowAndSeedsNextFold is #1144 P5 review's
 // design change made concrete: the checkpoint is ONE row (chat_id primary
 // key), replaced in place, not an entry appended to the ledger every turn - and a second WriteCheckpoint call must actually consume the first row as its fold seed (this exact bug - passing the seed's own LastSeq as fold.ApplySeeded's `from` - silently skipped seeding and would have shipped un-caught without this test).

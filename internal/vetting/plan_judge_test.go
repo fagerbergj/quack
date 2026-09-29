@@ -418,7 +418,7 @@ func TestPlanJudgeRejectsExplorationTerminalForImplementRequest(t *testing.T) {
 
 // TestPlanRubricStatesTerminalOutputIsTheAnswer pins the architectural fact the
 // judge twice confabulated away: it accepted a lone code-explorer plan because the findings "will be used to write the plan in the final response". No such
-// step exists - buildPlanGraph enforces one terminal node and its output is delivered verbatim - so the rubric has to say so.
+// step exists - every terminal node's output is delivered verbatim - so the rubric has to say so.
 // TestPlanRubricStatesProgressFramingForPartialPlans pins #slice3: a plan
 // with no delivery declared is a legitimate partial step, not a defect - the
 // judge must ask whether THIS step makes progress given what already ran,

@@ -64,11 +64,9 @@ func TestBuildStampsAgentContextWindow(t *testing.T) {
 		{Name: "web-researcher", ContextWindow: 131072},
 		{Name: "synthesizer", ContextWindow: 65536},
 	}, nil, nil)
-	// Two independent (multi-terminal) nodes trigger the auto-appended
-	// synthesizer fan-in - see assemble()'s terminalIDs check.
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "n1", Agent: "web-researcher", Task: "a"},
-		{ID: "n2", Agent: "web-researcher", Task: "b"},
+		{ID: "s", Agent: "synthesizer", Task: "combine"},
 	}, nil, nil, nil, "do it", nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -80,10 +78,8 @@ func TestBuildStampsAgentContextWindow(t *testing.T) {
 	if got := byID["n1"].ContextWindow; got != 131072 {
 		t.Errorf("n1.ContextWindow = %d, want 131072", got)
 	}
-	// The auto-appended synthesizer fan-in gets its limit too, not just
-	// explicitly-authored nodes.
-	if got := byID["synthesize"].ContextWindow; got != 65536 {
-		t.Errorf("synthesize.ContextWindow = %d, want 65536", got)
+	if got := byID["s"].ContextWindow; got != 65536 {
+		t.Errorf("s.ContextWindow = %d, want 65536", got)
 	}
 }
 
@@ -183,10 +179,9 @@ func TestBuildBoundStillValidatesStructure(t *testing.T) {
 	}
 }
 
-// TestBuildAppendsMissingSynthesizer: a multi-terminal plan with no
-// synthesizer (the model forgot the fan-in) gets one appended depending on
-// every node - otherwise the native graph build rejects the plan outright ("2 terminal nodes (want 1)") and the whole run fails.
-func TestBuildAppendsMissingSynthesizer(t *testing.T) {
+// TestBuildKeepsIndependentSinks: "two researchers, no synthesizer" stays exactly that - every
+// sink is delivered as its own section, so nothing is appended for the plan judge to reject.
+func TestBuildKeepsIndependentSinks(t *testing.T) {
 	p := testPlanner()
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "a", Agent: "web-researcher", Task: "research A"},
@@ -195,15 +190,34 @@ func TestBuildAppendsMissingSynthesizer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Nodes) != 3 {
-		t.Fatalf("nodes = %d, want 3 (auto-appended synthesizer)", len(plan.Nodes))
+	if got := TerminalIDs(plan.Nodes); len(plan.Nodes) != 2 || !slices.Equal(got, []string{"a", "b"}) {
+		t.Errorf("nodes = %d, sinks = %v, want the two researchers as sinks and nothing appended", len(plan.Nodes), got)
 	}
-	synth := plan.Nodes[2]
-	if synth.AgentName != "synthesizer" || !slices.Equal(synth.DependsOn, []string{"a", "b"}) {
-		t.Errorf("appended node = %+v, want synthesizer depending on [a b]", synth)
+}
+
+// TestBuildAppendsSynthesizerForReviewFanout: 2+ reviewers and no synthesizer still get the fan-in,
+// which stages the single overall verdict review automation waits on.
+func TestBuildAppendsSynthesizerForReviewFanout(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}, {Name: "synthesizer", ContextWindow: 65536}}, nil, nil)
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "r1", Agent: "code-reviewer", Task: "review A"}, {ID: "r2", Agent: "code-reviewer", Task: "review B"},
+	}, nil, nil, nil, "review", nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := terminalIDs(plan.Nodes); len(got) != 1 {
-		t.Errorf("terminals = %v, want exactly one", got)
+	last := plan.Nodes[len(plan.Nodes)-1]
+	if len(plan.Nodes) != 3 || last.AgentName != "synthesizer" || !slices.Equal(last.DependsOn, []string{"r1", "r2"}) || last.ContextWindow != 65536 {
+		t.Errorf("nodes = %+v, want a synthesizer fan-in over both reviewers", plan.Nodes)
+	}
+}
+
+// TestBuildBoundRejectsMultipleSinks: a bound run has no plan record to fill a retried sink's siblings from.
+func TestBuildBoundRejectsMultipleSinks(t *testing.T) {
+	p := testPlanner()
+	if _, err := p.BuildBound(context.Background(), []RawNode{
+		{ID: "a", Agent: "web-researcher", Task: "A"}, {ID: "b", Agent: "web-researcher", Task: "B"},
+	}, nil, nil, "m", nil, nil); err == nil || !strings.Contains(err.Error(), "2 terminal nodes") {
+		t.Errorf("BuildBound err = %v, want the multi-sink refusal", err)
 	}
 }
 
@@ -460,6 +474,19 @@ func TestJudgeRoutingRejectionErrorTypeCarriesReason(t *testing.T) {
 	}
 	if rejected.Reason != reason {
 		t.Errorf("PlanRejectedError.Reason = %q, want %q", rejected.Reason, reason)
+	}
+}
+
+// TestJudgeRoutingWaived: a plan the user chose to run as is skips the judge that kept rejecting it.
+func TestJudgeRoutingWaived(t *testing.T) {
+	judge, calls, _, _ := fakePlanJudge(false, "no", nil)
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}}, nil, judge)
+	nodes := []RawNode{{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."}}
+	if _, err := p.Build(WithPlanJudgeWaived(context.Background()), nodes, nil, nil, nil, "m", nil, nil); err != nil || *calls != 0 {
+		t.Fatalf("waived Build err=%v judge calls=%d, want accepted without a judge call", err, *calls)
+	}
+	if _, err := p.Build(context.Background(), nodes, nil, nil, nil, "m", nil, nil); err == nil {
+		t.Fatal("un-waived Build accepted a plan the judge rejects")
 	}
 }
 

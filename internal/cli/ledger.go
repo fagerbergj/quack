@@ -55,7 +55,7 @@ type LedgerRebuildReport struct {
 	NodeStatesChanged        int      `json:"node_states_changed"`
 	// NodeStateSkippedMultiPlan is true when node_state was left untouched
 	// because chatID has more than one plan: res.Nodes folds the whole chat
-	// lifetime by bare node ID, and a node ID legitimately recurs across plans/turns (e.g. the auto-appended "synthesize" node) with no persisted plan<->invocation mapping to attribute a terminal event back to the plan it belongs to - attributing it to "the latest plan" would silently fabricate or stomp state for a plan that never ran that node.
+	// lifetime by bare node ID, and a node ID legitimately recurs across plans/turns (e.g. the "synthesize" node a review fan-out gets) with no persisted plan<->invocation mapping to attribute a terminal event back to the plan it belongs to - attributing it to "the latest plan" would silently fabricate or stomp state for a plan that never ran that node.
 	NodeStateSkippedMultiPlan bool `json:"node_state_skipped_multi_plan,omitempty"`
 }
 

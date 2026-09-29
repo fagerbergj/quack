@@ -354,38 +354,76 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 	writeJSON(w, http.StatusOK, detail)
 }
 
-// terminalNodeID returns the plan's terminal node - the one no other node
-// depends on. Its output IS the turn's answer, mirroring the frontend's
-// terminalNodeId/liveDagFinalText.
-func terminalNodeID(plan stream.DagPlanData) string {
+// sinkNodeIDs are the plan's sinks - nodes no other node depends on - in plan order. Their outputs ARE
+// the turn's answer, mirroring the frontend's sinkNodeIds/liveDagFinalText.
+func sinkNodeIDs(plan stream.DagPlanData) []string {
 	hasSuccessor := make(map[string]bool, len(plan.Edges))
 	for _, e := range plan.Edges {
 		hasSuccessor[e.From] = true
 	}
+	var ids []string
 	for _, n := range plan.Nodes {
 		if !hasSuccessor[n.ID] {
-			return n.ID
+			ids = append(ids, n.ID)
 		}
 	}
-	return ""
+	return ids
 }
 
-// terminalNodeOutput returns the terminal node's full output (or "" when it has none yet);
-// stopped reports the user stopped it (so that output is a draft) and at when.
-func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool, at time.Time) {
-	id := terminalNodeID(plan)
-	if id == "" {
-		return "", false, time.Time{}
-	}
+// sinksOutput returns the sinks' full output (or "" when none has any yet): one sink's as is,
+// several as labelled sections. stopped reports the user stopped every one (so it is a draft), at when.
+func sinksOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool, at time.Time) {
+	byID := make(map[string]store.DagNode, len(nodes))
 	for _, n := range nodes {
-		if n.NodeID == id {
-			if n.FinishedAt != nil {
-				at = *n.FinishedAt
-			}
-			return strings.TrimSpace(n.Output), n.Status == string(dag.StatusCancelled), at
+		byID[n.NodeID] = n
+	}
+	ids := sinkNodeIDs(plan)
+	var sinks []store.DagNode
+	for _, id := range ids {
+		// A multi-sink plan extended across turns has earlier turns' sinks with no content in this one.
+		if n, ok := byID[id]; ok && (len(ids) == 1 || sinkHasContent(n)) {
+			sinks = append(sinks, n)
 		}
 	}
-	return "", false, time.Time{}
+	switch len(sinks) {
+	case 0:
+		return "", false, time.Time{}
+	case 1:
+		return sinkOutput(sinks[0])
+	}
+	return sinkSectionsOutput(sinks)
+}
+
+func sinkHasContent(n store.DagNode) bool {
+	return strings.TrimSpace(n.Output) != "" || n.Status == string(dag.StatusCancelled)
+}
+
+func sinkOutput(n store.DagNode) (out string, stopped bool, at time.Time) {
+	if n.FinishedAt != nil {
+		at = *n.FinishedAt
+	}
+	return strings.TrimSpace(n.Output), n.Status == string(dag.StatusCancelled), at
+}
+
+// sinkSectionsOutput masks a stopped sink's draft behind a note, unless every sink stopped: then
+// the drafts stand, badged, as a single stopped sink's does.
+func sinkSectionsOutput(sinks []store.DagNode) (out string, stopped bool, at time.Time) {
+	parts := make([]stream.SinkAnswer, 0, len(sinks))
+	stopped = true
+	for _, n := range sinks {
+		text, st, finished := sinkOutput(n)
+		stopped = stopped && st
+		if finished.After(at) {
+			at = finished
+		}
+		parts = append(parts, stream.SinkAnswer{Label: n.NodeID, Text: text, Stopped: st})
+	}
+	if stopped {
+		for i := range parts {
+			parts[i].Stopped = false
+		}
+	}
+	return stream.JoinSinkAnswers(parts), stopped, at
 }
 
 // usageAggregateToSchema always populates every field (unlike Turn.usage,
@@ -1159,15 +1197,15 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
 		return false
 	}
-	runCtx, cancelRun := h.armRun(chatID, dp.TurnID)
+	runCtx, cancelRun := h.armRun(chatID, dp.RunTurnID())
 	go func() {
-		defer recoverRun(chatID, dp.TurnID)
+		defer recoverRun(chatID, dp.RunTurnID())
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, dp.TurnID, cancelRun)
+		defer h.eventLog.FinishRun(h.hub, chatID, dp.RunTurnID(), cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		publish := runlog.NewPublisher(runCtx, h.hub, h.eventLog, chatID).Publish
-		publish(stream.ResponseCreated(dp.TurnID))
+		publish(stream.ResponseCreated(dp.RunTurnID()))
 
 		userID := h.sessionUser(runCtx, chatID)
 		for ev, err := range iterFromStart(runCtx, h.orch, userID, chatID, dp.ID, nodeID, message) {
@@ -1212,15 +1250,15 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	}
 	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
 	seeded, unreviewed := store.SeedOutputs(nodes)
-	runCtx, cancelRun := h.armRun(chatID, dp.TurnID)
+	runCtx, cancelRun := h.armRun(chatID, dp.RunTurnID())
 	go func() {
-		defer recoverRun(chatID, dp.TurnID)
+		defer recoverRun(chatID, dp.RunTurnID())
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, dp.TurnID, cancelRun)
+		defer h.eventLog.FinishRun(h.hub, chatID, dp.RunTurnID(), cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		publish := runlog.NewPublisher(runCtx, h.hub, h.eventLog, chatID).Publish
-		publish(stream.ResponseCreated(dp.TurnID))
+		publish(stream.ResponseCreated(dp.RunTurnID()))
 
 		for ev, err := range h.orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), h.sessionUser(runCtx, chatID), chatID, dp.ID, seeded, nodeID, guidance) {
 			if err != nil {
@@ -1407,17 +1445,17 @@ func buildUsage(tc store.TurnContent) *schema.Usage {
 	return usage
 }
 
-// answerBubble is the turn's answer and reasoning: a stopped terminal's draft, the answer the turn
-// delivered, the terminal node's output, or else the orchestrator's own reply, in that order.
+// answerBubble is the turn's answer and reasoning: stopped sinks' drafts, the answer the turn
+// delivered, the sinks' output, or else the orchestrator's own reply, in that order.
 func answerBubble(tc store.TurnContent, planData stream.DagPlanData, planOK bool) (text, think string, stopped bool) {
 	var out string
 	var stoppedAt time.Time
 	if planOK {
-		out, stopped, stoppedAt = terminalNodeOutput(planData, tc.Nodes)
+		out, stopped, stoppedAt = sinksOutput(planData, tc.Nodes)
 	}
 	switch {
 	case stopped && (tc.Answer == "" || stoppedAt.After(tc.AnswerAt)):
-		// A stopped terminal's draft stands alone, badged, unless the turn delivered after the stop.
+		// Stopped sinks' drafts stand alone, badged, unless the turn delivered after the stop.
 		return out, "", true
 	case tc.Answer != "":
 		// What this turn delivered wins: a plan extended across turns keeps an older sink first.

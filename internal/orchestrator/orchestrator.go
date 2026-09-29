@@ -277,6 +277,9 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 			yield(stream.Errorf("retry: "+err.Error()), nil)
 			return
 		}
+		// Lead with the plan snapshot so runlog.Drive-based callers (boot resume) persist the re-run nodes'
+		// state. Emitted before the guidance: persisted plans keep the original task, so it never piles up.
+		yield(tools.DagPlanEvent(ctx, plan), nil)
 		if guidance = strings.TrimSpace(guidance); guidance != "" {
 			for i := range plan.Nodes {
 				if plan.Nodes[i].ID == nodeID {
@@ -284,9 +287,6 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 				}
 			}
 		}
-		// Lead with the plan snapshot so runlog.Drive-based callers (boot
-		// resume) persist the re-run nodes' state; REST persists per-event.
-		yield(tools.DagPlanEvent(ctx, plan), nil)
 		nodeOutputs := make(map[string]string)
 		retryNode := workflow.NewDynamicNode[any, string]("__retry",
 			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
@@ -328,7 +328,9 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		}
 		ds.Finish()
 		o.settleRetried(ctx, userID, chatID, plan.ID, ds.Started(), nodeOutputs)
-		if answer := o.finalizeAnswer(ctx, plan, nodeOutputs, chatID); answer != "" {
+		started := ds.Started()
+		outputs, recStopped := o.withRecordedSinks(ctx, userID, chatID, plan, nodeOutputs, func(id string) bool { return started[id] })
+		if answer, _ := o.sinkAnswer(plan, outputs, chatID, recStopped); answer != "" {
 			o.persistAnswer(ctx, userID, chatID, answer)
 		}
 	}
@@ -440,7 +442,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		// it regardless of which path the resuming dispatch takes. Only after RunPlanAsGraph: its own runner is what auto-creates the session - nothing exists to stash into before that.
 		o.stashPlanForResume(ctx, userID, sessionID, plan)
 		if !paused {
-			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID)
+			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID, nil)
 			o.persistAnswer(ctx, userID, sessionID, answer)
 		}
 		safeYield(stream.Done(), nil)
@@ -545,6 +547,10 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			return
 		}
 		s.history = buildHistory(prior)
+		if key := waivedPlanShape(pending, hasPending, message); key != "" {
+			slog.Info("plan judge waived for the rejected plan: the user chose to run it as is", "component", "orchestrator", "chat", sessionID, "shape", key)
+			s.ctx = tools.WithWaivedPlanShape(s.ctx, key)
+		}
 		var githubSetup *dag.Setup
 		if ghs, ok := tools.GitHubSetupFromContext(ctx); ok {
 			githubSetup = &ghs
@@ -869,7 +875,68 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 // deliverFromRecord finalizes a resumed plan from its record; a stopped assignment's draft is masked
 // there because the executor's own stop flag is gone once the turn that stopped it ended.
 func (o *Orchestrator) deliverFromRecord(ctx context.Context, userID, sessionID string, plan dag.Plan, rec dag.DagPlanRecord) {
-	o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, tools.DeliverableResults(rec.Assignments), sessionID))
+	final, stopped := tools.DeliverableResults(rec.Assignments)
+	answer, _ := o.sinkAnswer(plan, onlySinks(final, rec.Sinks), sessionID, stopped)
+	o.persistAnswer(ctx, userID, sessionID, answer)
+}
+
+// onlySinks keeps just the recorded step's sinks, so an extended plan's earlier turns' sinks stay out
+// of this turn's answer; a record without them keeps every output.
+func onlySinks(outputs map[string]string, sinks []string) map[string]string {
+	if len(sinks) == 0 {
+		return outputs
+	}
+	own := make(map[string]string, len(sinks))
+	for _, id := range sinks {
+		own[id] = outputs[id]
+	}
+	return own
+}
+
+// withRecordedSinks narrows a retry or resume to the sinks the plan's latest step delivers, taking the
+// record's result for each one this run did not run; a stopped sibling's draft stays masked.
+func (o *Orchestrator) withRecordedSinks(ctx context.Context, userID, chatID string, plan dag.Plan, outputs map[string]string, ran func(string) bool) (map[string]string, map[string]bool) {
+	terminals := dag.TerminalIDs(plan.Nodes)
+	rec, hasRec := o.planRecord(ctx, userID, chatID, plan.ID)
+	sinks := terminals
+	if hasRec && len(rec.Sinks) > 0 {
+		sinks = rec.Sinks
+		// A ran node the record never settled means its sinks predate this run's step (a restart mid-extension).
+		if ranSinks := dag.SinksAmong(plan.Nodes, ran); len(ranSinks) > 0 && !slices.ContainsFunc(sinks, ran) && ranUnsettled(rec, ran) {
+			sinks = ranSinks
+		}
+	}
+	if len(sinks) < 2 && slices.Equal(sinks, terminals) {
+		return outputs, nil
+	}
+	final, stopped := tools.DeliverableResults(rec.Assignments)
+	// No record (an older plan's retry): the seeds' unreviewed flags are the only stop marks left.
+	unreviewed := dag.UnreviewedSeedsFrom(ctx)
+	own, recStopped := make(map[string]string, len(sinks)), map[string]bool{}
+	for _, id := range sinks {
+		switch out, seeded := outputs[id]; {
+		case ran(id):
+			own[id] = out
+		case hasRec:
+			own[id], recStopped[id] = final[id], stopped[id]
+		case seeded:
+			own[id], recStopped[id] = out, unreviewed[id]
+		}
+	}
+	return own, recStopped
+}
+
+func ranUnsettled(rec dag.DagPlanRecord, ran func(string) bool) bool {
+	return slices.ContainsFunc(rec.Assignments, func(a dag.Assignment) bool { return a.TaskID == "" && ran(a.NodeID) })
+}
+
+// planRecord is the chat's dag_plan record when it records planID.
+func (o *Orchestrator) planRecord(ctx context.Context, userID, chatID, planID string) (dag.DagPlanRecord, bool) {
+	if o.artifacts == nil {
+		return dag.DagPlanRecord{}, false
+	}
+	rec, _, ok, err := dag.LoadDagPlanRecord(context.WithoutCancel(ctx), o.artifacts, artifactref.AppName, userID, chatID)
+	return rec, err == nil && ok && rec.PlanID == planID
 }
 
 // loadResumePlan: the plan and its record for an incremental resume.
@@ -1018,7 +1085,11 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, plan
 		return
 	}
 	if !paused {
-		answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID)
+		outputs, recStopped := o.withRecordedSinks(ctx, userID, sessionID, plan, nodeOutputs, func(id string) bool {
+			_, ran := nodeOutputs[id]
+			return ran
+		})
+		answer, _ := o.sinkAnswer(plan, outputs, sessionID, recStopped)
 		o.persistAnswer(ctx, userID, sessionID, answer)
 	}
 	yield(stream.Done(), nil)

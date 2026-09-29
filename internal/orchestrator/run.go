@@ -2,16 +2,20 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
 	"google.golang.org/adk/v2/artifact"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/loadartifactstool"
 	"google.golang.org/adk/v2/workflow"
@@ -86,7 +90,7 @@ func (s *orchRun) buildDagTools(githubSetup *dag.Setup) string {
 		return s.o.executor.RunPlanStep(stepCtx, plan, AppName, s.userID, s.sessionID, seeded, run)
 	}
 	finalizeStep := func(stepCtx context.Context, plan dag.Plan, outputs map[string]string) string {
-		return s.o.finalizeAnswer(stepCtx, plan, outputs, s.sessionID)
+		return s.o.finalizeAnswer(stepCtx, plan, outputs, s.sessionID, nil)
 	}
 	execTool, err := tools.NewExecuteTool(s.o.planner, planRC, s.planCache, s.o.executor.Provision, runStep, finalizeStep, s.history, s.message, s.attachments,
 		githubSetup, allowedKinds,
@@ -260,6 +264,9 @@ func (s *orchRun) invoke(content *genai.Content) (produced, stop bool) {
 	if _, pending := s.planCache.Pending(); pending {
 		produced = false
 	}
+	if _, _, tripped := s.planCache.LoopGuard(); tripped {
+		produced = true // the turn hands the user a choice; no continuation nudge
+	}
 	return produced, false
 }
 
@@ -292,6 +299,61 @@ func (s *orchRun) handlePlanExhaustion() bool {
 	return false
 }
 
+// Plan loop choice: the options offered once the plan judge keeps rejecting the same plan.
+const (
+	planLoopChoicePrefix = "plan-loop-"
+	planLoopRunAsIs      = "Run the plan as is"
+	planLoopRephrase     = "Let me rephrase"
+	planLoopReasonMax    = 300
+)
+
+// askAfterPlanLoop asks the user, through a get_user_choice call of the orchestrator's own, whether to
+// run the plan the judge keeps rejecting; its id carries that plan's ShapeKey for the answer's turn.
+func (s *orchRun) askAfterPlanLoop(reason, shapeKey string) {
+	ctx := context.WithoutCancel(s.ctx)
+	ev := session.NewEvent(ctx, "")
+	ev.Author = orchestratorName
+	ev.Content = &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{
+		ID: planLoopChoicePrefix + shapeKey + "-" + uuid.NewString(), Name: tools.ChoiceToolName,
+		Args: map[string]any{"question": planLoopQuestion(s.source, reason), "options": []any{planLoopRunAsIs, planLoopRephrase}},
+	}}}}
+	if resp, err := s.o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: s.userID, SessionID: s.sessionID}); err == nil && resp != nil {
+		if err := s.o.sessions.AppendEvent(ctx, resp.Session, ev); err != nil {
+			slog.Warn("plan loop choice not persisted", "component", "orchestrator", "chat", s.sessionID, "err", err)
+		}
+	}
+	for _, se := range s.translator.Event(ev) {
+		s.safeYield(stream.ScopeToRun(se, orchRunID), nil)
+	}
+	s.emitAgentComplete()
+	s.safeYield(stream.Done(), nil)
+}
+
+// planLoopQuestion names the options in its text (a GitHub comment shows only the question). Only the app
+// shows the judge's reason, one line and truncated: it can quote recalled memory, never for GitHub/extensions (#693).
+func planLoopQuestion(source, reason string) string {
+	reply := fmt.Sprintf("Reply %q to run it anyway, or %q.", planLoopRunAsIs, planLoopRephrase)
+	if source != SourceApp {
+		return "The plan reviewer rejected this plan repeatedly. " + reply
+	}
+	line := []rune(strings.Join(strings.Fields(reason), " "))
+	if len(line) > planLoopReasonMax {
+		line = append(line[:planLoopReasonMax], '…')
+	}
+	return "The plan reviewer rejected this plan repeatedly: " + string(line) + "\n\n" + reply
+}
+
+// waivedPlanShape is the ShapeKey this turn's answer to the plan loop choice waives the judge for, or
+// "". Contains, not equals: a GitHub reply arrives wrapped in its envelope.
+func waivedPlanShape(pending PendingQuestion, hasPending bool, message string) string {
+	rest, ok := strings.CutPrefix(pending.choiceCallID, planLoopChoicePrefix)
+	if !hasPending || !ok || !strings.Contains(strings.ToLower(message), strings.ToLower(planLoopRunAsIs)) {
+		return ""
+	}
+	key, _, _ := strings.Cut(rest, "-")
+	return key
+}
+
 // finishLoop: every terminal outcome after the first invoke - continue-retry,
 // repeat-guard hard stop, usage, give-up, plan exhaustion. Returns the attempt count and whether the turn ended.
 func (s *orchRun) finishLoop(produced, stop bool) (int, bool) {
@@ -312,6 +374,10 @@ func (s *orchRun) finishLoop(produced, stop bool) (int, bool) {
 			"component", "orchestrator", "chat", s.sessionID, "attempts", attempts)
 		s.safeYield(stream.Errorf("The orchestrator got stuck repeating the same malformed tool call and stopped. "+
 			"Please try again or rephrase your request."), nil)
+		return attempts, true
+	}
+	if reason, key, tripped := s.planCache.LoopGuard(); tripped {
+		s.askAfterPlanLoop(reason, key)
 		return attempts, true
 	}
 	s.emitAgentComplete()

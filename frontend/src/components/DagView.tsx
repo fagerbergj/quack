@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { DagNode } from './DagNode'
-import { terminalNodeId, dagTotalTokens, type DagTurnState, type NodeState } from '../state/chatStore'
+import { sinkNodeIds, dagTotalTokens, type DagTurnState, type NodeState } from '../state/chatStore'
 import type { AgentRun } from './messageParts'
 import { LiveTimer } from '../utils/timer'
 
@@ -77,7 +77,7 @@ export function DagView({
 
   const nodeIds = dag.nodes.map(n => n.id)
   const layers = topoLayers(nodeIds, dependsOnMap)
-  const finalId = terminalNodeId(dag.nodes)
+  const sinkIds = new Set(sinkNodeIds(dag.nodes))
 
   const getState = (id: string): NodeState =>
     dag.nodeStates[id] ?? { status: 'queued' }
@@ -113,7 +113,7 @@ export function DagView({
                   state={getState(id)}
                   runs={getRuns(id)}
                   answer={getAnswer(id)}
-                  isFinal={id === finalId}
+                  isFinal={sinkIds.has(id)}
                   chatId={chatId}
                   onCancel={onCancelNode}
                   onPause={onPauseNode}

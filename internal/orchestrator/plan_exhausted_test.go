@@ -30,6 +30,68 @@ func rejectAlwaysJudge(reason string) vetting.PlanJudge {
 	}
 }
 
+// planCallWidened is planCall with a second researcher: a genuinely different plan, which the
+// plan loop guard must not mistake for re-proposing the rejected one.
+func planCallWidened() *model.LLMResponse {
+	return stubCall("create_plan", map[string]any{
+		"assignments": []any{
+			map[string]any{"agent": "web-researcher", "task": "research the thing"},
+			map[string]any{"agent": "web-researcher", "task": "research the other thing"},
+		},
+		"delivery": map[string]any{"kind": "comment"},
+	})
+}
+
+// TestOrchestrator_PlanLoopAsksUser: the judge rejecting the same plan twice (only reworded) ends
+// the turn with a get_user_choice, not a third plan or a failure; answering "run it as is" - even
+// wrapped, as a GitHub reply is - runs that plan past the judge next turn.
+//
+// #693 keeps the judge's text out of replies. This in-app question is the one exception: it shows the
+// reason on one line, truncated to planLoopReasonMax, so the user can decide.
+func TestOrchestrator_PlanLoopAsksUser(t *testing.T) {
+	reason := "the user asked for no synthesizer\n" + strings.Repeat("x", 400)
+	stub := &orchStub{replies: []*model.LLMResponse{planCall(), planCall(), planCall()}}
+	o := newTestOrchWithJudge(t, stub, rejectAlwaysJudge(reason))
+
+	evs := runTurn(t, o, "exactly two researchers, no synthesizer")
+	if hasEvent(evs, stream.EventError) || stub.invocations() != 2 {
+		t.Fatalf("orchestrator calls = %d events=%v, want two plans and no error", stub.invocations(), evs)
+	}
+	q, ok := o.PendingQuestion(context.Background(), "u", "chat")
+	if !ok || !strings.Contains(q, "the user asked for no synthesizer "+strings.Repeat("x", 266)+"…") || strings.Contains(q, strings.Repeat("x", 267)) {
+		t.Fatalf("pending question = %q %v, want the reason on one line, truncated", q, ok)
+	}
+	if !strings.Contains(q, planLoopRunAsIs) || !hasToolCall(evs, "get_user_choice") {
+		t.Errorf("question %q / events %v, want the options named and the choice streamed", q, evs)
+	}
+
+	evs = runTurn(t, o, "<reply>"+strings.ToLower(planLoopRunAsIs)+", please</reply>")
+	if hasEvent(evs, stream.EventError) || !hasEvent(evs, stream.EventNodeDone) {
+		t.Fatalf("running the plan as is: events=%v, want it to run past the judge", evs)
+	}
+	if _, pending := o.PendingQuestion(context.Background(), "u", "chat"); pending {
+		t.Error("the choice is still pending after the user answered it")
+	}
+}
+
+// TestPlanLoopQuestion_NonAppSourceHidesReason: GitHub and extension runs get fixed text naming the
+// options - never the judge's reason (#693), which can quote recalled memory.
+func TestPlanLoopQuestion_NonAppSourceHidesReason(t *testing.T) {
+	q := planLoopQuestion("github", "SECRET MEMORY")
+	if strings.Contains(q, "SECRET") || !strings.Contains(q, planLoopRunAsIs) || !strings.Contains(q, planLoopRephrase) {
+		t.Errorf("question = %q, want fixed text naming both options", q)
+	}
+}
+
+func hasToolCall(evs []stream.SSEEvent, name string) bool {
+	for _, ev := range evs {
+		if d, ok := ev.Data.(stream.AgentToolCallData); ok && d.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // newTestOrchWithJudge is newTestOrch (continue_test.go) with a plan judge wired in.
 func newTestOrchWithJudge(t *testing.T, stub *orchStub, judge vetting.PlanJudge) *Orchestrator {
 	t.Helper()
@@ -60,8 +122,8 @@ func TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason(t *testing.T)
 
 	const judgeReason = "The plan lacks a terminal node that delivers the requested artifact."
 	stub := &orchStub{replies: []*model.LLMResponse{
-		planCall(), // rejected
-		planCall(), // rejected again
+		planCall(),        // rejected
+		planCallWidened(), // a different plan, rejected again
 		// gives up and narrates the rejection reason as if it were an answer -
 		// exactly what must NOT reach the user.
 		stubText("I looked into this: " + judgeReason),
@@ -112,8 +174,8 @@ func TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered(t *testing.T) 
 func TestOrchestrator_RejectionDoesNotLeakAcrossTurns(t *testing.T) {
 	const turnTwoAnswer = "Turn two: a plain answer, no plan involved."
 	stub := &orchStub{replies: []*model.LLMResponse{
-		planCall(), // turn 1: rejected
-		planCall(), // turn 1: rejected again -> exhausted
+		planCall(),        // turn 1: rejected
+		planCallWidened(), // turn 1: a different plan rejected again -> exhausted
 		stubText("turn 1 give-up narration"),
 		stubText(turnTwoAnswer), // turn 2: direct answer, plan tool never called
 	}}

@@ -200,6 +200,11 @@ func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup,
 	if err != nil {
 		return nil, err
 	}
+	// ponytail: one sink only - a bound run has no dag_plan record to fill a retried sink's siblings
+	// from; allow several once retry/resume can seed them from the completed nodes' outputs.
+	if sinks := TerminalIDs(plan.Nodes); len(sinks) > 1 {
+		return nil, fmt.Errorf("bound workflow has %d terminal nodes (%s); a bound shape must end in one node", len(sinks), strings.Join(sinks, ", "))
+	}
 	span.SetAttributes(attribute.String(otelobs.GenAIWorkflowName, plan.ID), attribute.Int("node_count", len(plan.Nodes)))
 	plan.UserMessage = message
 	plan.Attachments = attachments
@@ -215,8 +220,20 @@ func (p *Planner) infosFor(ctx context.Context) []AgentInfo {
 	return p.agents
 }
 
+type judgeWaivedKey struct{}
+
+// WithPlanJudgeWaived skips the plan judge for plans built under ctx: the user chose to run a plan
+// the judge kept rejecting.
+func WithPlanJudgeWaived(ctx context.Context) context.Context {
+	return context.WithValue(ctx, judgeWaivedKey{}, true)
+}
+
 func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) error {
 	if p.judge == nil {
+		return nil
+	}
+	if waived, _ := ctx.Value(judgeWaivedKey{}).(bool); waived {
+		slog.Info("plan judge waived by the user's choice", "component", "planner", "plan", plan.ID)
 		return nil
 	}
 	ctx, span := otelobs.Start(ctx, "plan.judge")
@@ -594,48 +611,43 @@ func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, id
 	}, nil
 }
 
-// hardenSynthesizer: the synthesizer depends on every non-synthesizer node NOT downstream of it; an
-// omitted synthesizer is appended as a fan-in when multi-terminal would fail.
+// hardenSynthesizer: the synthesizer depends on every non-synthesizer node NOT downstream of it. Only a
+// review fan-out (2+ reviewers) without one gets a synthesizer appended: it stages the overall verdict.
 func hardenSynthesizer(nodes []Node, known map[string]AgentInfo) []Node {
-	if len(nodes) < 2 {
+	reviewers, hasSynth := 0, false
+	for i, n := range nodes {
+		switch n.AgentName {
+		case reviewerAgent:
+			reviewers++
+		case synthesizerAgent:
+			hasSynth = true
+			nodes[i].DependsOn = synthDeps(nodes, n.ID)
+		}
+	}
+	synthInfo, hasSynthAgent := known[synthesizerAgent]
+	if hasSynth || reviewers < 2 || !hasSynthAgent {
 		return nodes
 	}
-	hasSynth := false
+	all := make([]string, 0, len(nodes))
 	for _, n := range nodes {
-		if n.AgentName == synthesizerAgent {
-			hasSynth = true
-			break
-		}
+		all = append(all, n.ID)
 	}
-	for i, n := range nodes {
-		if n.AgentName != synthesizerAgent {
-			continue
-		}
-		down := descendants(nodes, n.ID)
-		var deps []string
-		for _, m := range nodes {
-			if m.ID == n.ID || m.AgentName == synthesizerAgent || down[m.ID] {
-				continue
-			}
+	return append(nodes, Node{
+		ID:            "synthesize",
+		AgentName:     synthesizerAgent,
+		Task:          "Combine the reviewers' findings into one review and stage its single overall verdict.",
+		DependsOn:     all,
+		ContextWindow: synthInfo.ContextWindow,
+	})
+}
+
+func synthDeps(nodes []Node, synthID string) []string {
+	down := descendants(nodes, synthID)
+	var deps []string
+	for _, m := range nodes {
+		if m.ID != synthID && m.AgentName != synthesizerAgent && !down[m.ID] {
 			deps = append(deps, m.ID)
 		}
-		nodes[i].DependsOn = deps
 	}
-	// Append a synthesizer fan-in when the orchestrator omits it and multi-terminal would fail.
-	synthInfo, hasSynthAgent := known[synthesizerAgent]
-	if !hasSynth && hasSynthAgent && len(terminalIDs(nodes)) > 1 {
-		// Appended fan-in is safe: nothing depends on it, no descendants to cycle into.
-		var all []string
-		for _, n := range nodes {
-			all = append(all, n.ID)
-		}
-		nodes = append(nodes, Node{
-			ID:            "synthesize",
-			AgentName:     synthesizerAgent,
-			Task:          "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
-			DependsOn:     all,
-			ContextWindow: synthInfo.ContextWindow,
-		})
-	}
-	return nodes
+	return deps
 }

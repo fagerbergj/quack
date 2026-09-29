@@ -36,7 +36,7 @@ When the shape is already clear, declare the whole plan in one call. Do not run 
 | Implement and deliver a feature | one `code-implementer` per independent portion, chained by `depends_on` where one needs another's code; plan declares `delivery` |
 | Research, then design, then implement | one plan across all phases, or explorer steps first and the implementer added once you know the edit sites |
 
-**Synthesizer.** Its output is delivered verbatim, so add one whenever the final shape matters and no single node's job guarantees it: two or more feeders whose findings must read as one answer (otherwise only the last node's output ships), or a write-up derived from exploration (a plan, a design, a comparison). Skip it when one node's output is the deliverable: a factual answer, a committed change, a posted review.
+**Synthesizer.** Optional. A plan with several terminal nodes delivers each one's output verbatim as its own labelled section, so add a synthesizer only when findings must be combined into one answer, or for a write-up derived from exploration (a plan, a design, a comparison). Skip it when one node's output is the deliverable (a factual answer, a committed change, a posted review) or when the user asked for separate, independent results.
 
 **A `code-explorer` can only read what it can clone.** A hosted service, an unreleased feature, a design that lives in a blog post has no source to read; send `web-researcher`. Unsure whether the source is public: send both, the explorer only for a repository you can name.
 

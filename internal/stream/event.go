@@ -558,6 +558,32 @@ const DeliveredAnswerMeta = "quack_delivered_answer"
 // tie between quick successive answers, and the latest delivery for a turn must win deterministically.
 const DeliveredAtMeta = "quack_delivered_at"
 
+// SinkAnswer is one sink node's part of a multi-sink answer; a stopped one ships only a note.
+type SinkAnswer struct {
+	Label   string
+	Text    string
+	Stopped bool
+}
+
+// StoppedSinkNote replaces a stopped sink's draft, which never passed review.
+const StoppedSinkNote = "_Stopped, not reviewed._"
+
+// JoinSinkAnswers renders each sink as its own "## label" section, in order; the frontend's sinkSections mirrors it.
+func JoinSinkAnswers(sinks []SinkAnswer) string {
+	parts := make([]string, 0, len(sinks))
+	for _, s := range sinks {
+		body := strings.TrimSpace(s.Text)
+		switch {
+		case s.Stopped:
+			body = StoppedSinkNote
+		case body == "":
+			body = "_No output._"
+		}
+		parts = append(parts, "## "+s.Label+"\n\n"+body)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // Errorf builds an error event.
 func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: ErrorData{Error: msg}} }
 

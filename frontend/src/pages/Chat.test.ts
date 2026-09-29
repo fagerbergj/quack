@@ -18,6 +18,14 @@ describe('live-turn TriggerMessage chatId wiring (#1252)', () => {
   })
 })
 
+// A run going active that this page isn't streaming always re-seeds and reattaches - a bare attach()
+// lifted the chat's finished last turn into live and streamed the foreign run into it.
+describe('foreign run on an open chat', () => {
+  it('reattaches from a fresh GET whether or not the page has a live turn', () => {
+    expect(chatSrc).toMatch(/if \(s !== 'running' \|\| store\.isStreaming\(activeChatId\)\) return\s+void api\.getChat\(activeChatId\)\.then\(detail => store\.reattach\(activeChatId, detail\.turns\)\)/)
+  })
+})
+
 // dag builds a minimal single-node DagTurnState (that node is the terminal node).
 function dag(nodeAnswer: Record<string, string>): DagTurnState {
   return {
@@ -52,6 +60,14 @@ describe('liveDagFinalText - no mid-stream flip to orchestrator narration', () =
   it("renders the terminal node's answer once set", () => {
     const d = dag({ a: 'the real answer' })
     expect(liveDagFinalText(d)).toBe('the real answer')
+  })
+
+  it('streams every sink of a no-synthesizer plan as its own section, not the first sink alone', () => {
+    const d: DagTurnState = {
+      ...dag({ a: 'A', b: 'B' }),
+      nodes: [{ id: 'a', agent: 'researcher', task: 't', depends_on: [] }, { id: 'b', agent: 'researcher', task: 'u', depends_on: [] }],
+    }
+    expect(liveDagFinalText(d)).toBe('## a\n\nA\n\n## b\n\nB')
   })
 })
 

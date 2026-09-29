@@ -169,29 +169,37 @@ func TestPlanCacheDelivered(t *testing.T) {
 	}
 }
 
-func TestTerminalOutput(t *testing.T) {
-	// Single node - returns its output.
-	single := dag.Plan{
-		Nodes: []dag.Node{{ID: "n1"}},
+func TestDeliveredAnswer(t *testing.T) {
+	never := func(string) bool { return false }
+	answer := func(plan dag.Plan, outputs map[string]string, stopped func(string) bool) string {
+		a, _ := DeliveredAnswer(plan, outputs, stopped)
+		return a
 	}
-	if got := TerminalOutput(single, map[string]string{"n1": "answer"}); got != "answer" {
-		t.Errorf("single node: got %q, want %q", got, "answer")
+	// One sink: its output verbatim, never sectioned.
+	single := dag.Plan{Nodes: []dag.Node{{ID: "n1"}}}
+	if got, sectioned := DeliveredAnswer(single, map[string]string{"n1": "answer"}, never); got != "answer" || sectioned {
+		t.Errorf("single node: got %q sectioned=%v, want %q", got, sectioned, "answer")
 	}
-
-	// Two nodes in sequence: n2 depends on n1, so n1 has a successor and n2 is terminal.
-	seq := dag.Plan{
-		Nodes: []dag.Node{
-			{ID: "n1"},
-			{ID: "n2", DependsOn: []string{"n1"}},
-		},
-	}
-	if got := TerminalOutput(seq, map[string]string{"n1": "intermediate", "n2": "final"}); got != "final" {
+	seq := dag.Plan{Nodes: []dag.Node{{ID: "n1"}, {ID: "n2", DependsOn: []string{"n1"}}}}
+	if got := answer(seq, map[string]string{"n1": "intermediate", "n2": "final"}, never); got != "final" {
 		t.Errorf("sequential: got %q, want %q", got, "final")
 	}
-
-	// Empty outputs - returns empty string (callers check for this).
-	if got := TerminalOutput(single, map[string]string{}); got != "" {
+	if got := answer(single, map[string]string{}, never); got != "" {
 		t.Errorf("empty outputs: got %q, want empty", got)
+	}
+	if got := answer(single, map[string]string{"n1": "draft"}, func(string) bool { return true }); got != "" {
+		t.Errorf("stopped sink: got %q, want no answer", got)
+	}
+	// Two sinks: each its own section, in plan order, not map order or the first sink alone.
+	two := dag.Plan{Nodes: []dag.Node{{ID: "b"}, {ID: "a"}}}
+	if got, sectioned := DeliveredAnswer(two, map[string]string{"a": "A", "b": "B"}, never); got != "## b\n\nB\n\n## a\n\nA" || !sectioned {
+		t.Errorf("two sinks: got %q sectioned=%v", got, sectioned)
+	}
+	if got := answer(two, map[string]string{"a": "", "b": "B"}, never); got != "## b\n\nB\n\n## a\n\n_No output._" {
+		t.Errorf("a sink with no output: got %q, want its section marked", got)
+	}
+	if got := answer(two, map[string]string{"a": "A", "b": "B"}, func(string) bool { return true }); got != "" {
+		t.Errorf("every sink stopped: got %q, want no answer", got)
 	}
 }
 

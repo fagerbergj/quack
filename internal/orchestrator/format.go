@@ -53,16 +53,11 @@ func needsFormatPass(plan dag.Plan, answer string) bool {
 	return true
 }
 
-// terminalNode returns the terminal node (nil if empty). Replicates dag.terminalIDs' walk for AgentName.
+// terminalNode returns the plan's first sink (nil if empty).
 func terminalNode(nodes []dag.Node) *dag.Node {
-	hasSuccessor := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		for _, dep := range n.DependsOn {
-			hasSuccessor[dep] = true
-		}
-	}
+	ids := dag.TerminalIDs(nodes)
 	for i := range nodes {
-		if !hasSuccessor[nodes[i].ID] {
+		if len(ids) > 0 && nodes[i].ID == ids[0] {
 			return &nodes[i]
 		}
 	}
@@ -130,15 +125,20 @@ func formatAnswer(ctx context.Context, m model.LLM, message, answer, chatID stri
 	return answer
 }
 
-// finalizeAnswer: single place every delivery path formats node outputs for the user.
-func (o *Orchestrator) finalizeAnswer(ctx context.Context, plan dag.Plan, nodeOutputs map[string]string, chatID string) string {
-	// A terminal node the user stopped left only an unreviewed draft; that is never the answer.
-	if o.executor.NodeStopped(chatID, tools.TerminalNodeID(plan)) {
-		return ""
-	}
-	answer := tools.TerminalOutput(plan, nodeOutputs)
-	if !needsFormatPass(plan, answer) {
+// finalizeAnswer: the answer a step or bound run first delivers, formatted if needed. recStopped flags
+// sinks a record says were stopped in an earlier turn, when the executor's own flag is gone.
+func (o *Orchestrator) finalizeAnswer(ctx context.Context, plan dag.Plan, nodeOutputs map[string]string, chatID string, recStopped map[string]bool) string {
+	answer, sectioned := o.sinkAnswer(plan, nodeOutputs, chatID, recStopped)
+	// Sections are already structured, and a format pass could merge them into the synthesis the plan left out.
+	if sectioned || !needsFormatPass(plan, answer) {
 		return answer
 	}
 	return formatAnswer(ctx, o.model, plan.UserMessage, answer, chatID)
+}
+
+// sinkAnswer is the sinks' answer verbatim - what a retry or resume delivers: the node's own output, never
+// re-worded against the turn's message.
+func (o *Orchestrator) sinkAnswer(plan dag.Plan, nodeOutputs map[string]string, chatID string, recStopped map[string]bool) (string, bool) {
+	stopped := func(id string) bool { return recStopped[id] || o.executor.NodeStopped(chatID, id) }
+	return tools.DeliveredAnswer(plan, nodeOutputs, stopped)
 }

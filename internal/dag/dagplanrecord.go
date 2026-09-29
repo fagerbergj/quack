@@ -59,6 +59,8 @@ type DagPlanRecord struct {
 	Setup       *Setup       `json:"setup,omitempty"`
 	Delivery    *Delivery    `json:"delivery,omitempty"`
 	Status      string       `json:"status,omitempty"`
+	// Sinks: the latest step's sinks, whose outputs are its turn's answer; a retry or resume delivers exactly these.
+	Sinks []string `json:"sinks,omitempty"`
 }
 
 const dagPlanJSONSchema = `{
@@ -76,7 +78,8 @@ const dagPlanJSONSchema = `{
     }}},
     "setup": {"type": "object"},
     "delivery": {"type": "object"},
-    "status": {"type": "string"}
+    "status": {"type": "string"},
+    "sinks": {"type": "array", "items": {"type": "string"}}
   }
 }`
 
