@@ -266,6 +266,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		// A retry/resume is its own run, not a continuation of whatever
 		// finished run left this node retryable - it needs its own trace so
 		// a stale trace_id from the earlier run is never mistaken for this one.
+		ctx = runCoords(ctx, chatID, userID)
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, chatID))
 		defer otelobs.End(span, nil)
@@ -620,6 +621,15 @@ func turnProduced(ev *session.Event) bool {
 	return false
 }
 
+// runCoords stamps the chat and user a run's ledger records file under, as Run does, unless
+// ctx already carries them - retry, resume and node starts enter without Run's stamp.
+func runCoords(ctx context.Context, chatID, userID string) context.Context {
+	if ledger.CoordsFromContext(ctx).ChatID != "" {
+		return ctx
+	}
+	return ledger.WithCoords(ctx, ledger.Coords{ChatID: chatID, User: userID})
+}
+
 // SetPlanLoader wires the store's copy of each plan's full dag.Plan (store.LoadExecPlan).
 func (o *Orchestrator) SetPlanLoader(load func(ctx context.Context, planID string) (dag.Plan, bool)) {
 	o.planLoader = load
@@ -740,6 +750,7 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, planID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
 	ctx, done := o.executor.Pin(ctx)
 	defer done()
+	ctx = runCoords(ctx, sessionID, userID)
 	o.executor.StartNode(sessionID, nodeID)
 	if p, ok := latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, sessionID)); ok && p.nodeID == nodeID {
 		o.startNodeRun(ctx, userID, sessionID, planID, message, &p, nodeID, yield)

@@ -402,8 +402,8 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	// artifacts is filled in below, AFTER steerHooks - Preamble's build (called
 	// from steerHooks) is what stashes PreambleArtifact's value for this round.
 	var artifacts []ledger.ArtifactRef
-	// Same fill as recordUsage: a resumed/retried round's ctx carries no coords, only the stamp does.
-	invokeCtx := ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords))
+	// This round's own node ids, not the shared agent's last stamp: concurrent nodes share one Agent.
+	invokeCtx := ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), ledger.Coords{ChatID: steerChatID, Node: steerNodeID, Agent: a.name}))
 	defer func() { emitInvokeAgent(invokeCtx, a.name, h.sent, h.received, err, plugins, artifacts) }()
 
 	if !fromPinned {
