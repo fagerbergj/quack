@@ -63,3 +63,14 @@ func TestDropThoughts_CopiesOnlyWhatChanges(t *testing.T) {
 		t.Error("DropThoughts mutated the caller's content")
 	}
 }
+
+// TestReasoningToolCalls_UniqueIDs: a recovered call's id must not repeat across
+// turns, or a later result is mistaken for an earlier one keyed on the same id.
+func TestReasoningToolCalls_UniqueIDs(t *testing.T) {
+	leaked := `<tool_call>{"name":"web_fetch","arguments":{"urls":["u"]}}</tool_call>`
+	a, _ := reasoningToolCalls(leaked)
+	b, _ := reasoningToolCalls(leaked)
+	if len(a) != 1 || len(b) != 1 || a[0].ID == b[0].ID {
+		t.Fatalf("recovered ids %v and %v, want one call each with distinct ids", a, b)
+	}
+}

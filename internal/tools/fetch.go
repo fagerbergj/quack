@@ -87,6 +87,8 @@ type fetchArgs struct {
 	URLs    []string `json:"urls"`
 	Pattern string   `json:"pattern,omitempty"`
 	Offset  int      `json:"offset,omitempty"`
+	// Store is accepted and ignored so a resumed chat whose model still sends it does not fail.
+	Store bool `json:"store,omitempty" jsonschema:"ignored: every page is already stored"`
 }
 
 // FetchResult: one URL's outcome in a batched call - Text is the shaped page
@@ -193,7 +195,7 @@ func (s *fetchSeen) lookup(sessionID, url string) (FetchResult, bool) {
 		return FetchResult{}, false
 	}
 	r.Text = fmt.Sprintf("[already fetched earlier in this session - not repeated. Its full text is artifact %s (%d lines): "+
-		"read_artifact(id, offset, lines) or grep_artifacts(pattern, ids) reads it; web_fetch with pattern/offset reshapes it.]", r.Artifact, r.Lines)
+		"read_artifact(id, offset, lines) or grep_artifacts(pattern, ids) reads it; web_fetch with a pattern or offset returns just those lines.]", r.Artifact, r.Lines)
 	return r, true
 }
 

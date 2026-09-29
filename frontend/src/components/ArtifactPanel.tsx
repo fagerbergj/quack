@@ -121,10 +121,10 @@ function belongsToNode(s: ArtifactSummary, nodeId: string): boolean {
   return (s.kind === A2UI_SURFACE_KIND || s.kind === QUIZ_KEY_KIND) && s.revisions.some(r => r.lineage?.node_id === nodeId)
 }
 
-// Run bookkeeping, never a deliverable: dag_node is rewritten by the system
-// at node start/end; a bytes:* blob is dispatch input staging. Not dag_plan - the per-node lineage filter already scopes that to the orchestrator.
+// Run bookkeeping, never a deliverable: dag_node is rewritten by the system at node start/end; a bytes:* blob is
+// dispatch input staging; web_page is every page a worker fetched. Not dag_plan - lineage already scopes that.
 export function isBookkeeping(a: { kind?: string; name: string }): boolean {
-  return a.kind === 'dag_node' || a.name.startsWith('bytes:')
+  return a.kind === 'dag_node' || a.kind === 'web_page' || a.name.startsWith('bytes:') || a.name.startsWith('web_page:')
 }
 
 // kindRank tiers a candidate: review, then the node's declared kind, then a

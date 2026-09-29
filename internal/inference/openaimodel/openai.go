@@ -7,6 +7,7 @@ package openaimodel
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -1151,7 +1152,7 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 			continue
 		}
 		calls = append(calls, &genai.FunctionCall{
-			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), tc.Name),
+			ID:   recoveredCallID(len(calls), tc.Name),
 			Name: tc.Name,
 			Args: tc.Arguments,
 		})
@@ -1163,7 +1164,7 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 			continue
 		}
 		calls = append(calls, &genai.FunctionCall{
-			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), name),
+			ID:   recoveredCallID(len(calls), name),
 			Name: name,
 			Args: parseXMLParams(m[2]),
 		})
@@ -1184,7 +1185,7 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 			return block
 		}
 		calls = append(calls, &genai.FunctionCall{
-			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), name),
+			ID:   recoveredCallID(len(calls), name),
 			Name: name,
 			Args: parseXMLParams(body),
 		})
@@ -1195,4 +1196,10 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 		return nil, reasoning
 	}
 	return calls, cleaned
+}
+
+// recoveredCallID: unique per call - an id reused across turns makes a later result look
+// like an earlier one to anything keyed on it (history collapse, response pairing).
+func recoveredCallID(n int, name string) string {
+	return fmt.Sprintf("rtc_%d_%s_%s", n, name, rand.Text()[:10])
 }

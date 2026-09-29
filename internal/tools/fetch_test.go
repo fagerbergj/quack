@@ -647,3 +647,15 @@ func TestFetchBatch_ConcurrencyBoundedByMaxConcurrentFetches(t *testing.T) {
 		t.Errorf("peak concurrent fetches = %d, want exactly %d (the bound should be reached with %d urls, not just respected)", peak, maxConcurrentFetches, n)
 	}
 }
+
+// TestWebFetchTool_AcceptsStrayStore: a resumed chat's model may still send the
+// removed store flag; the call must not fail on it.
+func TestWebFetchTool_AcceptsStrayStore(t *testing.T) {
+	tl, err := newFetch(Deps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.(runnableTool).Run(newFakeCtx(), map[string]any{"urls": []any{"not a url"}, "store": true}); err != nil {
+		t.Fatalf("web_fetch with store: true = %v, want the call to run", err)
+	}
+}

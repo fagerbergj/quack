@@ -37,6 +37,9 @@ type Compaction struct {
 	// Prompts resolves the summarizer prompt when the config is built (once
 	// per node build, not per compaction pass); nil resolves the shipped files.
 	Prompts *artifactsrc.Resolver
+	// Meter, when Build wired it on an agent with read_artifact, lets a compaction try
+	// collapsing stale fetch/read results before it pays for a summary (collapse.go).
+	Meter *PromptMeter
 }
 
 // ResolveSummarizer prefers the active worker model for compaction (swap-free), falling back to the configured one.

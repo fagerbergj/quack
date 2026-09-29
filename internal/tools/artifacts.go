@@ -258,15 +258,15 @@ type readArtifactArgs struct {
 
 // NewReadArtifactTool: the native equivalent of the MCP-only read_artifact
 // tool (#1012 wired it into ACP's loopback MCP only) - same recordstore
-// Client reads; un-windowed text is cut at fetchReturnMaxBytes, like the judge's read.
+// Client reads; an un-windowed web_page/bytes read is cut at fetchReturnMaxBytes, like the judge's.
 func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 	return functiontool.New[readArtifactArgs, string](
 		functiontool.Config{
 			Name: "read_artifact",
-			Description: fmt.Sprintf("Read an artifact by id (from list_artifacts). Text content is returned inline, "+
-				"up to its first %d bytes; binary content is base64-encoded. Omit revision for the latest. Pass offset "+
-				"(a 1-based line number) and/or lines (window size) to read a window of a large text artifact instead.",
-				fetchReturnMaxBytes),
+			Description: fmt.Sprintf("Read an artifact by id (from list_artifacts). Text content is returned inline "+
+				"(a web_page or bytes artifact up to its first %d bytes); binary content is base64-encoded. Omit revision "+
+				"for the latest. Pass offset (a 1-based line number) and/or lines (window size) to read a window of a large "+
+				"text artifact instead.", fetchReturnMaxBytes),
 		},
 		func(ctx agent.Context, a readArtifactArgs) (string, error) {
 			var data []byte
@@ -310,7 +310,7 @@ func shapeReadArtifact(data []byte, mime string, a readArtifactArgs) string {
 		}
 		return windowLines(strings.Split(string(data), "\n"), start, a.Lines, strings.Count(string(data), "\n")+1)
 	}
-	if isText && len(data) > fetchReturnMaxBytes {
+	if isText && sourceKind(a.ID) && len(data) > fetchReturnMaxBytes {
 		return fmt.Sprintf("%s\n[…first %d of %d bytes (%d lines); pass offset/lines to read a window, or grep_artifacts to search]",
 			strings.ToValidUTF8(string(data[:fetchReturnMaxBytes]), ""), fetchReturnMaxBytes, len(data), strings.Count(string(data), "\n")+1)
 	}
@@ -476,4 +476,11 @@ func SelectArtifactTools(all []tool.Tool, configured []string, artifactKind bool
 		}
 	}
 	return out
+}
+
+// sourceKind: fetched pages and dispatch inputs, read for reference - capped when read whole.
+// Structured and card artifacts are read to be rewritten, so they keep the full inline limit.
+func sourceKind(id string) bool {
+	k := recordstore.KindOf(id)
+	return k == kindWebPage || k == "bytes"
 }

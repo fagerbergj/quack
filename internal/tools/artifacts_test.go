@@ -777,3 +777,17 @@ func TestGrepArtifactsTool_ProvenanceHeaderOncePerID(t *testing.T) {
 		t.Fatalf("result = %q, want both hits with their exact line numbers", result)
 	}
 }
+
+// TestShapeReadArtifact_CapsOnlySourceKinds: a fetched page is capped when read
+// whole, but a structured artifact read to be rewritten keeps its tail.
+func TestShapeReadArtifact_CapsOnlySourceKinds(t *testing.T) {
+	big := []byte(`{"notes":"` + strings.Repeat("n", fetchReturnMaxBytes+5_000) + `"}`)
+	if got := shapeReadArtifact(big, "application/json", readArtifactArgs{ID: "season_notes:abc"}); !strings.HasSuffix(got, `"}`) {
+		t.Errorf("structured artifact read = %d bytes ending %q, want it whole", len(got), got[len(got)-20:])
+	}
+	for _, id := range []string{"web_page:abc", "bytes:files"} {
+		if got := shapeReadArtifact(big, "text/markdown", readArtifactArgs{ID: id}); len(got) > fetchReturnMaxBytes+300 {
+			t.Errorf("%s read = %d bytes, want it cut at %d", id, len(got), fetchReturnMaxBytes)
+		}
+	}
+}

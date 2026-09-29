@@ -19,15 +19,15 @@ import (
 // Build turns a loaded bundle into a runnable ADK llmagent, given its model, selected built-in tools, and optional ADK toolsets (context compaction is
 // wired separately at the runner, see a2a.go's Serve). memoryGuidance (the bundle's memory.md, M6) is appended to the behaviour layer only for
 // memory-participating agents; skills is the agent's declared skill scope (promptbuilder.Agent); grading is the pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when ungated or judge-less.
-func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string) (adkagent.Agent, error) {
-	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, "", drain)
+func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string, meter *PromptMeter) (adkagent.Agent, error) {
+	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, "", drain, meter)
 }
 
 // BuildChat is Build with the delegation mode PINNED to ModeChat, for agents
 // running as a runner's ROOT over a multi-turn session (e.g. the advisor). Pinning matters: runner.Run force-sets an unset mode to ModeChat with an
 // unsynchronized check-then-write on the shared agent - a data race under concurrent consults; a pre-set mode turns that write into a pure read. Workers keep Build's unset mode (single-turn task mode, what the gate wants).
 func BuildChat(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
-	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil)
+	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil, nil)
 }
 
 // BehaviourLayer is the behaviour layer of an assembled system prompt: the
@@ -39,7 +39,7 @@ func BehaviourLayer(prompt, memoryGuidance string) string {
 	return prompt
 }
 
-func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
+func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string, meter *PromptMeter) (adkagent.Agent, error) {
 	name, desc := b.Card.Name, b.Card.Description
 	if prompts == nil {
 		prompts = b.PinPrompt(nil)
@@ -67,8 +67,8 @@ func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 		Mode:     mode,
 	}
 	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
-	if collapse := collapseCallback(tools); collapse != nil {
-		cfg.BeforeModelCallbacks = append(cfg.BeforeModelCallbacks, collapse)
+	if meter != nil {
+		meter.wire(&cfg)
 	}
 	return llmagent.New(cfg)
 }

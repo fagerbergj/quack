@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"iter"
 	"strings"
+	"sync"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/session/compaction"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
@@ -21,19 +23,6 @@ import (
 var pageBody = strings.Repeat("research text line\n", 420)
 
 func artifactFor(i int) string { return fmt.Sprintf("web_page:%012d", i) }
-
-// fetchTurn: one model web_fetch call and its (stored) result.
-func fetchTurn(i int) []*genai.Content {
-	id := fmt.Sprintf("call-%d", i)
-	return []*genai.Content{
-		{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: id, Name: toolWebFetch,
-			Args: map[string]any{"urls": []any{fmt.Sprintf("https://ex.com/%d", i)}}}}}},
-		{Role: genai.RoleUser, Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: id, Name: toolWebFetch,
-			Response: map[string]any{"results": []any{map[string]any{
-				"url": fmt.Sprintf("https://ex.com/%d", i), "artifact": artifactFor(i), "lines": float64(421), "text": pageBody,
-			}}}}}}},
-	}
-}
 
 func fakeTools(names ...string) []tool.Tool {
 	out := make([]tool.Tool, 0, len(names))
@@ -48,170 +37,256 @@ func fakeTools(names ...string) []tool.Tool {
 	return out
 }
 
-func serialize(cs []*genai.Content) string {
-	var b strings.Builder
-	for _, c := range cs {
-		j, _ := json.Marshal(c)
-		b.Write(j)
+func ev(author string, parts ...*genai.Part) *session.Event {
+	e := &session.Event{Author: author}
+	e.Content = &genai.Content{Role: author, Parts: parts}
+	return e
+}
+
+func call(id, name string, args map[string]any) *genai.Part {
+	return &genai.Part{FunctionCall: &genai.FunctionCall{ID: id, Name: name, Args: args}}
+}
+
+func result(id, name string, resp map[string]any) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: id, Name: name, Response: resp}}
+}
+
+func fetched(i int) map[string]any {
+	return map[string]any{"results": []any{map[string]any{"url": fmt.Sprintf("https://ex.com/%d", i), "artifact": artifactFor(i), "lines": float64(421), "text": pageBody}}}
+}
+
+// TestCollapseTranscript_StubsStoredResults: stored fetch/read results become
+// artifact stubs carrying the slice they read; everything else stays verbatim.
+func TestCollapseTranscript_StubsStoredResults(t *testing.T) {
+	events := []*session.Event{
+		ev("user", &genai.Part{Text: "research the thing"}),
+		ev("model", &genai.Part{Text: "private reasoning", Thought: true}, call("c1", toolWebFetch, map[string]any{"urls": []any{"https://ex.com/1"}, "pattern": "needle"})),
+		ev("user", result("c1", toolWebFetch, fetched(1))),
+		ev("model", call("c2", toolReadArtifact, map[string]any{"id": "web_page:abc", "offset": float64(40), "lines": float64(30)})),
+		ev("user", result("c2", toolReadArtifact, map[string]any{"result": strings.Repeat("window line\n", 300)})),
+		ev("model", call("c3", "web_search", map[string]any{"queries": []any{"q"}})),
+		ev("user", result("c3", "web_search", map[string]any{"queries": []any{map[string]any{"query": "q", "results": []any{}}}})),
+		ev("model", &genai.Part{Text: "found it"}),
 	}
-	return b.String()
+	text, before, stubbed := collapseTranscript(events)
+	for _, want := range []string{"User: research the thing", artifactFor(1), `pattern \"needle\"`, "web_page:abc, 301 lines read (offset 40, lines 30)", `web_search returned {"queries"`, "You: found it"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("transcript missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "research text line") || strings.Contains(text, "window line") || strings.Contains(text, "private reasoning") {
+		t.Errorf("transcript kept a stored page body or a thought:\n%.400s", text)
+	}
+	if stubbed != 2 || len(text)/charsPerToken >= before/4 {
+		t.Errorf("stubbed=%d, ~%d tokens from ~%d; want both stored results stubbed and the window far smaller", stubbed, len(text)/charsPerToken, before)
+	}
 }
 
-// responseText: the web_fetch entry text of contents[i]'s response.
-func responseText(c *genai.Content) string {
-	r := c.Parts[0].FunctionResponse.Response["results"].([]any)[0].(map[string]any)
-	return r["text"].(string)
+// TestCollapseTranscript_ReusedCallIDs: recovered calls once reused one id every
+// turn; each result must still be stubbed with its own call's artifact.
+func TestCollapseTranscript_ReusedCallIDs(t *testing.T) {
+	var events []*session.Event
+	for _, id := range []string{"web_page:first", "web_page:second"} {
+		events = append(events,
+			ev("model", call("rtc_0_read_artifact", toolReadArtifact, map[string]any{"id": id})),
+			ev("user", result("rtc_0_read_artifact", toolReadArtifact, map[string]any{"result": strings.Repeat(id+" text\n", 200)})))
+	}
+	text, _, _ := collapseTranscript(events)
+	first, second := strings.Index(text, "[web_page:first,"), strings.Index(text, "[web_page:second,")
+	if first < 0 || second < first {
+		t.Fatalf("stubs must pair with their own call, in order:\n%s", text)
+	}
 }
 
-// TestCollapse_StaleFetchesStubbedInBatches drives the callback the way ADK
-// does - a fresh request per call, rebuilt from the untouched session - over 40 fetch turns.
-func TestCollapse_StaleFetchesStubbedInBatches(t *testing.T) {
-	cb := collapseCallback(fakeTools(toolWebFetch, toolReadArtifact))
-	sys := &genai.Content{Parts: []*genai.Part{{Text: strings.Repeat("system prompt ", 1700)}}} // ~6k tokens
-	session := []*genai.Content{{Role: genai.RoleUser, Parts: []*genai.Part{{Text: "research the thing"}}}}
+// countingSummarizer is the model summarizer a collapse should make unnecessary.
+type countingSummarizer struct{ calls int }
 
-	const n = 40
-	var prev string
-	var sizes []int
-	events := 0
-	stubbed := 0
-	var last *model.LLMRequest
-	for i := 1; i <= n; i++ {
-		session = append(session, fetchTurn(i)...)
-		req := &model.LLMRequest{Contents: append([]*genai.Content(nil), session...), Config: &genai.GenerateContentConfig{SystemInstruction: sys}}
-		if _, err := cb(nil, req); err != nil {
+func (c *countingSummarizer) SummarizeEvents(context.Context, []*session.Event) (compaction.SummarizeResult, error) {
+	c.calls++
+	return compaction.SummarizeResult{Content: genai.NewContentFromText("MODEL SUMMARY", genai.RoleModel)}, nil
+}
+
+// TestCollapsingSummarizer_FallsBackWhenStubsDoNotFit: only a collapse that
+// brings the prompt back under the threshold replaces the model summary.
+func TestCollapsingSummarizer_FallsBackWhenStubsDoNotFit(t *testing.T) {
+	window := []*session.Event{
+		ev("model", call("c1", toolWebFetch, map[string]any{"urls": []any{"u"}})),
+		ev("user", result("c1", toolWebFetch, fetched(1))),
+	}
+	for _, c := range []struct {
+		prompt    int
+		wantModel bool
+	}{{prompt: 10_000, wantModel: false}, {prompt: 40_000, wantModel: true}} {
+		inner := &countingSummarizer{}
+		s := collapsingSummarizer{inner: inner, meter: &PromptMeter{tokens: c.prompt}, threshold: 9_000}
+		got, err := s.SummarizeEvents(context.Background(), window)
+		if err != nil {
 			t.Fatal(err)
 		}
-		cur := serialize(req.Contents)
-		nowStubbed := strings.Count(cur, "collapsed from history")
-		if nowStubbed != stubbed {
-			events++
-		} else if prev != "" && !strings.HasPrefix(cur, prev) {
-			t.Fatalf("call %d: prompt prefix changed without a collapse batch - the vLLM prefix cache would miss every call", i)
+		if (inner.calls == 1) != c.wantModel || !strings.Contains(got.Content.Parts[0].Text, map[bool]string{true: "MODEL SUMMARY", false: artifactFor(1)}[c.wantModel]) {
+			t.Errorf("prompt ~%d tokens vs threshold 9000: summarizer calls=%d, content %.80q", c.prompt, inner.calls, got.Content.Parts[0].Text)
 		}
-		stubbed, prev, last = nowStubbed, cur, req
-		sizes = append(sizes, estimateTokens(req))
-		for k := len(req.Contents) - 2*keepRecentToolTurns + 1; k < len(req.Contents); k += 2 {
-			if k > 0 && responseText(req.Contents[k]) != pageBody {
-				t.Fatalf("call %d: a result among the latest %d was collapsed", i, keepRecentToolTurns)
-			}
-		}
-	}
-
-	// Plateau: raw history reaches ~86k tokens; the sent prompt stays near the line.
-	for i, s := range sizes[n/2:] {
-		if s > collapseAtTokens+3_000 {
-			t.Errorf("call %d: prompt ~%d tokens, want it held near %d", n/2+i+1, s, collapseAtTokens)
-		}
-	}
-	if raw := estimateTokens(&model.LLMRequest{Contents: session, Config: &genai.GenerateContentConfig{SystemInstruction: sys}}); raw < 3*collapseAtTokens {
-		t.Fatalf("test setup: raw history only ~%d tokens", raw)
-	}
-	t.Logf("collapse batches=%d; per-call prompt tokens: %v", events, sizes)
-	if events == 0 || events > n/3 {
-		t.Errorf("collapse batches = %d over %d calls, want a few batches, not one per call", events, n)
-	}
-
-	if text := responseText(last.Contents[2]); !strings.Contains(text, artifactFor(1)) {
-		t.Errorf("oldest result = %q, want a stub naming %s", text, artifactFor(1))
-	}
-	if got := last.Contents[0].Parts[0].Text; got != "research the thing" {
-		t.Errorf("user message changed to %q", got)
-	}
-	if responseText(session[2]) != pageBody {
-		t.Error("the session's own result was mutated; only the outgoing request may change")
 	}
 }
 
-// TestCollapse_ReadArtifactStubNamesItsArtifact: a read_artifact result has
-// no id of its own, so the stub takes it from the matching call.
-func TestCollapse_ReadArtifactStubNamesItsArtifact(t *testing.T) {
-	cb := collapseCallback(fakeTools(toolReadArtifact))
-	contents := []*genai.Content{
-		{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "r1", Name: toolReadArtifact, Args: map[string]any{"id": "web_page:abc", "offset": float64(40)}}}}},
-		{Role: genai.RoleUser, Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: "r1", Name: toolReadArtifact, Response: map[string]any{"result": strings.Repeat("window line\n", 3_000)}}}}},
+// TestPromptMeter_SkipsThoughtsAndCalibrates: thoughts are dropped before
+// sending, and the observed prompt count rescales the estimate.
+func TestPromptMeter_SkipsThoughtsAndCalibrates(t *testing.T) {
+	m := NewPromptMeter()
+	req := &model.LLMRequest{Contents: []*genai.Content{
+		{Role: genai.RoleUser, Parts: []*genai.Part{{Text: strings.Repeat("x", 4_000)}}},
+		{Role: genai.RoleModel, Parts: []*genai.Part{{Text: strings.Repeat("t", 400_000), Thought: true}}},
+	}}
+	_, _ = m.beforeModel(nil, req)
+	if m.tokens != 1_000 {
+		t.Fatalf("estimate = %d, want 1000 (thought parts are never sent)", m.tokens)
 	}
-	for i := 1; i <= keepRecentToolTurns+5; i++ {
-		contents = append(contents, fetchTurn(i)...)
-	}
-	req := &model.LLMRequest{Contents: contents}
-	if _, err := cb(nil, req); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := req.Contents[1].Parts[0].FunctionResponse.Response["result"].(string)
-	if !strings.Contains(got, "web_page:abc") || !strings.Contains(got, "collapsed") {
-		t.Fatalf("read_artifact stub = %q, want it collapsed and naming web_page:abc", got)
+	_, _ = m.afterModel(nil, &model.LLMResponse{UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 2_000}}, nil)
+	if m.fitsAfter(0, 2_000) || !m.fitsAfter(0, 2_300) {
+		t.Errorf("scale = %v: a 1000-token estimate observed as 2000 must be judged in observed units", m.scale)
 	}
 }
 
-// TestCollapse_OffWithoutReadArtifact: a stub the agent cannot resolve would
-// lose the text for good, so no read_artifact means no collapse.
-func TestCollapse_OffWithoutReadArtifact(t *testing.T) {
-	if collapseCallback(fakeTools(toolWebFetch)) != nil {
-		t.Fatal("collapse must stay off for an agent without read_artifact")
-	}
-}
-
-// growthModel calls web_fetch n times, recording each request's estimated
-// size, then answers.
+// growthModel calls web_fetch n times, recording each request's estimated size, then answers.
 type growthModel struct {
+	mu    sync.Mutex
 	n     int
 	sizes []int
+	sent  []string // each request's contents, serialized, to check the prefix between compactions
 }
 
 func (m *growthModel) Name() string { return "growth" }
 
 func (m *growthModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
+		m.mu.Lock()
 		m.sizes = append(m.sizes, estimateTokens(req))
+		j, _ := json.Marshal(req.Contents)
+		m.sent = append(m.sent, strings.TrimSuffix(string(j), "]"))
+		k := len(m.sizes)
+		m.mu.Unlock()
 		part := &genai.Part{Text: "done"}
-		if len(m.sizes) <= m.n {
-			part = &genai.Part{FunctionCall: &genai.FunctionCall{ID: fmt.Sprintf("f%d", len(m.sizes)), Name: toolWebFetch,
-				Args: map[string]any{"n": len(m.sizes)}}}
+		if k <= m.n {
+			part = call(fmt.Sprintf("f%d", k), toolWebFetch, map[string]any{"n": k})
 		}
 		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{part}}, TurnComplete: true}, nil)
 	}
 }
 
-// TestBuild_TokenGrowthPlateaus: a real llmagent built by Build, fetching 30
-// pages in one round, sends a prompt that stops growing once collapse engages.
-func TestBuild_TokenGrowthPlateaus(t *testing.T) {
+// summaryModel stands in for the compaction model and counts its calls.
+type summaryModel struct{ calls int }
+
+func (s *summaryModel) Name() string { return "summary" }
+func (s *summaryModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		s.calls++
+		yield(&model.LLMResponse{Content: genai.NewContentFromText("MODEL SUMMARY", genai.RoleModel), TurnComplete: true}, nil)
+	}
+}
+
+// runGrowth runs one 30-fetch round under tail-retention compaction at threshold,
+// returning the per-call prompt sizes and how often the compaction model ran.
+func runGrowth(t *testing.T, threshold int, stored bool) ([]int, []string, int) {
+	t.Helper()
 	type fetchArgs struct {
 		N int `json:"n"`
 	}
 	fetch, err := functiontool.New[fetchArgs, map[string]any](functiontool.Config{Name: toolWebFetch, Description: "fetch"},
 		func(_ adkagent.Context, a fetchArgs) (map[string]any, error) {
-			return map[string]any{"results": []any{map[string]any{"url": "https://ex.com", "artifact": artifactFor(a.N), "lines": 421, "text": pageBody}}}, nil
+			r := fetched(a.N)
+			if !stored {
+				delete(r["results"].([]any)[0].(map[string]any), "artifact")
+			}
+			return r, nil
 		})
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &growthModel{n: 30}
+	m, summ, meter := &growthModel{n: 30}, &summaryModel{}, NewPromptMeter()
 	b := &Bundle{Card: Card{Name: "tester", Description: "a test agent"}, Prompt: "Research."}
-	ag, err := Build(b, nil, m, append([]tool.Tool{fetch}, fakeTools(toolReadArtifact)...), nil, "", nil, "", nil)
+	ag, err := Build(b, nil, m, append([]tool.Tool{fetch}, fakeTools(toolReadArtifact)...), nil, "", nil, "", nil, meter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := runner.New(runner.Config{AppName: "test", Agent: ag, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	comp, err := NativeCompactionConfig(Compaction{Enabled: true, Summarizer: summ, TokenThreshold: threshold, EventRetentionSize: 6, Meter: meter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runner.New(runner.Config{AppName: "test", Agent: ag, SessionService: session.InMemoryService(), AutoCreateSession: true, Compaction: comp})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, err := range r.Run(context.Background(), "u", "s", genai.NewContentFromText("go", genai.RoleUser), adkagent.RunConfig{}) {
-		if err != nil {
+		if err != nil && !strings.Contains(err.Error(), "compaction") {
 			t.Fatal(err)
 		}
 	}
-	t.Logf("per-call prompt tokens: %v", m.sizes)
-	if len(m.sizes) != m.n+1 {
-		t.Fatalf("model calls = %d, want %d", len(m.sizes), m.n+1)
+	return m.sizes, m.sent, summ.calls
+}
+
+// TestCompaction_CollapsesBeforeSummarizing: the prompt grows to the compaction
+// threshold, then drops via stubs with no summarizer call, and stays bounded.
+func TestCompaction_CollapsesBeforeSummarizing(t *testing.T) {
+	const threshold = 16_000
+	sizes, sent, summaries := runGrowth(t, threshold, true)
+	t.Logf("per-call prompt tokens: %v", sizes)
+	if summaries != 0 {
+		t.Errorf("compaction model ran %d times; stubs alone should bring the prompt back under", summaries)
 	}
-	growth := m.sizes[1] - m.sizes[0]
-	for i, s := range m.sizes {
-		if s > collapseAtTokens+2*growth {
-			t.Fatalf("call %d sent ~%d tokens (per-call growth ~%d): the prompt kept growing past %d; sizes=%v", i+1, s, growth, collapseAtTokens, m.sizes)
+	drops := 0
+	for i := 1; i < len(sizes); i++ {
+		if sizes[i] > threshold+3_000 {
+			t.Fatalf("call %d sent ~%d tokens, past threshold %d: %v", i+1, sizes[i], threshold, sizes)
+		}
+		if sizes[i] < sizes[i-1] {
+			drops++
+			if sizes[i-1] < threshold*8/10 {
+				t.Errorf("call %d: prompt dropped at ~%d tokens, before reaching the threshold - a collapse off the compaction trigger", i+1, sizes[i-1])
+			}
+		} else if !strings.HasPrefix(sent[i], sent[i-1]) {
+			t.Errorf("call %d: the prompt prefix changed without a compaction - the prefix cache would miss", i+1)
 		}
 	}
-	if uncollapsed := m.sizes[0] + m.n*growth; uncollapsed < 2*collapseAtTokens {
-		t.Fatalf("test setup: %d calls only reach ~%d tokens uncollapsed", m.n, uncollapsed)
+	if drops == 0 || sizes[len(sizes)-1] >= 30*2_000 {
+		t.Fatalf("prompt never dropped: %v", sizes)
+	}
+}
+
+// TestCompaction_SummarizesWhenNothingStored: with no artifacts to point at,
+// compaction falls through to the model summarizer as before.
+func TestCompaction_SummarizesWhenNothingStored(t *testing.T) {
+	_, _, summaries := runGrowth(t, 16_000, false)
+	if summaries == 0 {
+		t.Fatal("unstored results cannot be stubbed, so the compaction model must summarize")
+	}
+}
+
+// TestCompaction_OffWithoutReadArtifactOrCompaction: without read_artifact a stub
+// could never be followed back; without compaction nothing collapses at all.
+func TestCompaction_OffWithoutReadArtifactOrCompaction(t *testing.T) {
+	meter := NewPromptMeter()
+	if _, err := Build(&Bundle{Card: Card{Name: "t"}}, nil, &growthModel{}, fakeTools(toolWebFetch), nil, "", nil, "", nil, meter); err != nil {
+		t.Fatal(err)
+	}
+	comp, err := NativeCompactionConfig(Compaction{Enabled: true, Summarizer: &summaryModel{}, TokenThreshold: 1_000, EventRetentionSize: 2, Meter: meter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, wrapped := comp.Summarizer.(collapsingSummarizer); wrapped {
+		t.Error("an agent without read_artifact must never get the collapsing summarizer")
+	}
+	if off, _ := NativeCompactionConfig(Compaction{Meter: meter}); off != nil {
+		t.Error("compaction disabled must mean no compaction and so no collapse")
+	}
+}
+
+// TestCollapseTranscript_CarriesEarlierSummary: a rolled-up earlier summary is
+// carried forward once, unlabelled, not re-attributed to the user.
+func TestCollapseTranscript_CarriesEarlierSummary(t *testing.T) {
+	prior := &session.Event{Author: "user", Actions: session.EventActions{Compaction: &session.EventCompaction{
+		CompactedContent: genai.NewContentFromText(collapseHeader+"You: earlier finding", genai.RoleModel)}}}
+	text, _, _ := collapseTranscript([]*session.Event{prior, ev("model", &genai.Part{Text: "next"})})
+	if strings.Count(text, collapseHeader) != 1 || !strings.Contains(text, "\nYou: earlier finding\n") || strings.Contains(text, "User:") {
+		t.Fatalf("transcript = %q, want the earlier summary once, unlabelled", text)
 	}
 }
