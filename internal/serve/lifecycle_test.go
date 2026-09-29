@@ -23,6 +23,8 @@ type storePauser struct {
 
 func (p *storePauser) ActiveNodes(chatID string) []string { return p.active[chatID] }
 
+func (p *storePauser) MarkShutdown(string) {}
+
 func (p *storePauser) PauseNode(chatID, nodeID string, reason dag.PauseReason) bool {
 	return p.st.SetNodeStatusForChat(context.Background(), chatID, nodeID,
 		string(dag.StatusPaused), string(reason), "") == nil

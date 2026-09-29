@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -28,6 +29,9 @@ func (e *Exporter) Export(ctx context.Context, records []sdklog.Record) error {
 	if e == nil || e.store == nil {
 		return nil
 	}
+	// Detached: a stopped run's last llm.call/agent.invoke records arrive on its cancelled ctx.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
 	for _, r := range records {
 		entry, ok := EntryFromRecord(r)
 		if !ok {

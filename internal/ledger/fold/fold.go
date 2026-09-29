@@ -100,7 +100,7 @@ type NodeState struct {
 	NodeID, TurnID string
 	StartedSeq     int64     // 0 = no node.started entry seen
 	StartedAt      time.Time // the source ledger entry's own At, not fold/rebuild wall-clock
-	TerminalStatus string    // "" | "done" | "failed" - "" whenever a start supersedes it
+	TerminalStatus string    // "" | "done" | "failed" | "cancelled" - "" whenever a start supersedes it
 	TerminalSeq    int64
 	TerminalAt     time.Time
 	Round          int
@@ -283,7 +283,7 @@ func applyLoop(res *Result, live map[revKey]ArtifactRevision, entries []ledger.E
 		switch e.Kind {
 		case ledger.KindArtifactRevision, ledger.KindArtifactRevisionAborted:
 			applyArtifactEntry(live, e)
-		case ledger.KindNodeStarted, ledger.KindNodeDone, ledger.KindNodeFailed:
+		case ledger.KindNodeStarted, ledger.KindNodeDone, ledger.KindNodeFailed, ledger.KindNodeCancelled:
 			applyNodeEntry(res, e)
 		case ledger.KindMemoryRecall:
 			applyMemoryRecall(res, e)
@@ -339,6 +339,8 @@ func applyNodeEntry(res *Result, e ledger.Entry) {
 		n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "done", e.Seq, e.At
 	case ledger.KindNodeFailed:
 		n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "failed", e.Seq, e.At
+	case ledger.KindNodeCancelled:
+		n.TerminalStatus, n.TerminalSeq, n.TerminalAt = "cancelled", e.Seq, e.At
 	}
 }
 
@@ -435,7 +437,7 @@ func ApplyEntries(entries []ledger.Entry) *Result {
 // larger agent.invoke/llm.call/otel payloads.
 var RequiredKinds = []string{
 	ledger.KindArtifactRevision, ledger.KindArtifactRevisionAborted,
-	ledger.KindNodeStarted, ledger.KindNodeDone, ledger.KindNodeFailed,
+	ledger.KindNodeStarted, ledger.KindNodeDone, ledger.KindNodeFailed, ledger.KindNodeCancelled,
 	ledger.KindMemoryRecall, ledger.KindMemoryVote,
 }
 

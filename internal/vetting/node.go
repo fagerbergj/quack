@@ -93,6 +93,8 @@ type NodeControl interface {
 	// is reported as a real failure, not the user-cancel path's silent
 	// empty continue-but-warn.
 	RepeatFailure() (string, bool)
+	// ShuttingDown reports that the shutdown drain cut this node's run; boot resumes it.
+	ShuttingDown() bool
 }
 
 const AskToolName = "ask_user"
@@ -259,6 +261,9 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 	if err != nil {
 		return
 	}
+	// Detached: a stopped run's terminal node event is written after its ctx is cancelled.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
 	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
 		ChatID: cfg.ChatID, TurnID: turnID, NodeID: nodeID, Kind: kind, At: time.Now().UTC(), Payload: payload,
 	}); err != nil {
@@ -789,7 +794,7 @@ func (g *gateRun) commitFinal(answer string, res GateResult, episodicRoundsWritt
 }
 
 // finish: the node span close-out - verdict attributes, EndNode, and the
-// node.done/node.failed ledger event (node.started at entry used the same id).
+// node's terminal ledger event (node.started at entry used the same id).
 func (g *gateRun) finish(span oteltrace.Span, res GateResult, err error) {
 	span.SetAttributes(
 		attribute.Bool("verdict_passed", res.Passed),
@@ -797,11 +802,23 @@ func (g *gateRun) finish(span oteltrace.Span, res GateResult, err error) {
 		attribute.Int("gate_rounds", res.Rounds),
 	)
 	otelobs.EndNode(span, err)
-	doneKind := ledger.KindNodeDone
-	if err != nil {
-		doneKind = ledger.KindNodeFailed
+	if kind := g.terminalKind(err); kind != "" {
+		appendNodeEvent(g.nodeCtx, g.cfg, g.nodeID, g.turnID, kind, res.Rounds)
 	}
-	appendNodeEvent(g.nodeCtx, g.cfg, g.nodeID, g.turnID, doneKind, res.Rounds)
+}
+
+// terminalKind: "" for a paused or shutdown-cut node, which resumes later and so has
+// no terminal outcome yet; a stop or cancel is node.cancelled, not node.failed.
+func (g *gateRun) terminalKind(err error) string {
+	switch {
+	case err == nil:
+		return ledger.KindNodeDone
+	case g.paused() || g.ctrl != nil && g.ctrl.ShuttingDown():
+		return ""
+	case g.cancelled() || errors.Is(g.nodeCtx.Err(), context.Canceled):
+		return ledger.KindNodeCancelled
+	}
+	return ledger.KindNodeFailed
 }
 
 // resolveAborted: register a never-delivered reviewer as a failed fan-out
@@ -1208,8 +1225,14 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 }
 
 // applyJudgeFailure: judge call failed - answer goes out unvetted, fail-closed
-// score, span closed with the error, unavailability metric.
+// score, span closed with the error, unavailability metric (unless the run was cancelled).
 func (j *judgeRounds) applyJudgeFailure(round int, runID string, jspan *stageSpan, jerr error) {
+	if errors.Is(j.ctx.Err(), context.Canceled) {
+		// A stop or shutdown killed the judge, not a judge fault: end the round, don't deliver unvetted.
+		otelobs.End(jspan.span, jerr)
+		j.outcome = &judgeRoundOutcome{err: j.ctx.Err()}
+		return
+	}
 	// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
 	j.log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
 	status, feedback := judgeFailureFeedback(jerr)

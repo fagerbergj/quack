@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"iter"
 	"log/slog"
 	"time"
 
@@ -76,11 +77,22 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 			"plan", f.PlanID, "node", f.NodeID, "reason", f.Reason)
 	}
 	for _, id := range interrupted {
-		slog.Warn("chat left mid-run with no resumable node; marked interrupted - resend the message to retry",
+		slog.Warn("chat left mid-run with no resumable node; marked failed - resend the message to retry",
 			"component", "startup", "chat", id)
 		removeStaleCloneDir(jail, id)
 	}
 	return rep.Start
+}
+
+// syncFinishedNodeRecords repairs recent finished nodes' dag_node records off the boot path;
+// older plans are left alone, as boot never resumes them either.
+func syncFinishedNodeRecords(ctx context.Context, st *store.Store) {
+	n, err := st.SyncTerminalDagNodeRecords(ctx, time.Now().Add(-staleResumePlanCeiling))
+	if err != nil {
+		slog.Warn("sync finished nodes' dag_node records", "component", "startup", "err", err)
+		return
+	}
+	slog.Info("checked finished nodes' dag_node records against their rows", "component", "startup", "nodes", n)
 }
 
 // removeStaleCloneDir clears an interrupted chat's shared-repo clone (#1213) so the retry's setup
@@ -166,7 +178,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
 	defer eventLog.FinishRun(hub, chatID, plan.TurnID, cancelRun)
 
-	pub := runlog.NewPublisher(hub, eventLog, chatID)
+	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(plan.TurnID))
 
 	var res runlog.DriveResult
@@ -176,11 +188,15 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 			// re-entering would silently run zero nodes, forever.
 			slog.Warn("resume: node belongs to a non-latest plan, skipping", "component", "startup",
 				"chat", chatID, "node", n.NodeID, "plan", n.PlanID, "latest", plan.ID)
+			failIfNotResumed(runCtx, st, chatID, n.PlanID, n.NodeID, "its plan was superseded")
 			continue
 		}
-		res = runlog.Drive(plan.TurnID, st, pub, orch.RetryNode(runCtx, userID, chatID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), func(err error) {
+		var resumeErr string
+		run := lastErrorOf(orch.RetryNode(runCtx, userID, chatID, plan.ID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), &resumeErr)
+		res = runlog.Drive(plan.TurnID, st, pub, run, func(err error) {
 			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
 		})
+		failIfNotResumed(runCtx, st, chatID, n.PlanID, n.NodeID, resumeErr)
 	}
 	pub.Publish(stream.Done())
 	// A shutdown force-cancel or a user cancel lands on runCtx too, and this
@@ -194,6 +210,33 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(tailCtx, userID, chatID)
 	})
+}
+
+// lastErrorOf passes run through, keeping the text of its last error event in msg.
+func lastErrorOf(run iter.Seq2[stream.SSEEvent, error], msg *string) iter.Seq2[stream.SSEEvent, error] {
+	return func(yield func(stream.SSEEvent, error) bool) {
+		for ev, err := range run {
+			if d, ok := ev.Data.(stream.ErrorData); ok {
+				*msg = d.Error
+			}
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+// failIfNotResumed settles a node the resume errored out on before it moved (e.g. no
+// plan in session): left paused/shutdown, every later boot would retry it again.
+func failIfNotResumed(ctx context.Context, st *store.Store, chatID, planID, nodeID, why string) {
+	if why == "" || ctx.Err() != nil {
+		return
+	}
+	n, err := st.GetDagNode(ctx, planID, nodeID)
+	if err != nil || n == nil || n.Status != string(dag.StatusPaused) || n.PauseReason != string(dag.PauseShutdown) {
+		return
+	}
+	st.FailUnresumable(ctx, chatID, *n, why)
 }
 
 // seededOutputs collects the plan's stored node outputs so a subset re-run

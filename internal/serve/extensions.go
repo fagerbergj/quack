@@ -1228,7 +1228,7 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
 	defer eventLog.FinishRun(hub, chatID, turnID, cancelRun)
 
-	pub := runlog.NewPublisher(hub, eventLog, chatID)
+	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(turnID))
 
 	res := runlog.Drive(turnID, st, pub, run(runCtx), func(err error) {

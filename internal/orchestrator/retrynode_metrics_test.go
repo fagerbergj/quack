@@ -112,7 +112,7 @@ func TestRetryNode_CountsTowardRunsActiveGauge(t *testing.T) {
 	}
 	doneCh := make(chan struct{})
 	go func() {
-		for ev, err := range o.RetryNode(context.Background(), userID, chatID, nil, "n1", "") {
+		for ev, err := range o.RetryNode(context.Background(), userID, chatID, "", nil, "n1", "") {
 			_ = ev
 			if err != nil {
 				t.Errorf("retry: %v", err)

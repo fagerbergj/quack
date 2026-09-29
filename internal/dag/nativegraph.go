@@ -215,6 +215,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	}
 	for ev, rerr := range r.Run(ctx, userID, chatID, content, adkagent.RunConfig{}) {
 		if rerr != nil {
+			ds.Abort(rerr)
 			return ds.Paused(), rerr
 		}
 		if ev == nil {

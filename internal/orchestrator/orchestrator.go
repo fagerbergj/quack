@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"regexp"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +55,7 @@ const SourceApp = "app"
 
 // Orchestrator: ADK llmagent that selects direct answer or plan + execute.
 type Orchestrator struct {
+	planLoader  func(ctx context.Context, planID string) (dag.Plan, bool)
 	sessions    session.Service
 	model       model.LLM
 	sysPrompt   func(context.Context) string
@@ -255,8 +257,9 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 }
 
 // RetryNode re-runs a finished node and its descendants with optional
-// guidance; node-level dag.Admission still gates the work.
-func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+// guidance; node-level dag.Admission still gates the work. A non-empty planID
+// names the node's own plan (see planFor), so a stale stash never runs another plan's task.
+func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		ctx, done := o.executor.Pin(ctx)
 		defer done()
@@ -268,9 +271,9 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		defer otelobs.End(span, nil)
 		otelobs.RunStarted()
 		defer otelobs.RunFinished()
-		plan, ok := o.stashedPlan(ctx, userID, chatID)
-		if !ok {
-			yield(stream.Errorf("retry: no plan in session to retry"), nil)
+		plan, err := o.planFor(ctx, userID, chatID, planID, nodeID)
+		if err != nil {
+			yield(stream.Errorf("retry: "+err.Error()), nil)
 			return
 		}
 		if guidance = strings.TrimSpace(guidance); guidance != "" {
@@ -313,6 +316,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry " + nodeID}}}
 		for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
 			if rerr != nil {
+				ds.Abort(rerr)
 				safeYield(stream.Errorf(rerr.Error()), nil)
 				return
 			}
@@ -615,6 +619,32 @@ func turnProduced(ev *session.Event) bool {
 	return false
 }
 
+// SetPlanLoader wires the store's copy of each plan's full dag.Plan (store.LoadExecPlan).
+func (o *Orchestrator) SetPlanLoader(load func(ctx context.Context, planID string) (dag.Plan, bool)) {
+	o.planLoader = load
+}
+
+// planFor returns plan planID holding nodeID. The store's copy wins: every step of a growing
+// plan shares its id, and the stash commits only with execute's tool response, so it can lag.
+// An empty planID takes whatever the stash holds.
+func (o *Orchestrator) planFor(ctx context.Context, userID, chatID, planID, nodeID string) (dag.Plan, error) {
+	plan, ok := dag.Plan{}, false
+	if planID != "" && o.planLoader != nil {
+		plan, ok = o.planLoader(ctx, planID)
+	}
+	if !ok {
+		plan, ok = o.stashedPlan(ctx, userID, chatID)
+		ok = ok && (planID == "" || plan.ID == planID)
+	}
+	if !ok {
+		return plan, fmt.Errorf("no plan %s to run", planID)
+	}
+	if !slices.ContainsFunc(plan.Nodes, func(n dag.Node) bool { return n.ID == nodeID }) {
+		return plan, fmt.Errorf("plan %s has no node %s", plan.ID, nodeID)
+	}
+	return plan, nil
+}
+
 // stashedPlan loads the dag.Plan the execute tool stored in session state.
 func (o *Orchestrator) stashedPlan(ctx context.Context, userID, chatID string) (dag.Plan, bool) {
 	var plan dag.Plan
@@ -697,7 +727,7 @@ func (o *Orchestrator) persistAnswer(ctx context.Context, userID, sessionID, ans
 
 // resumeNodeRun delivers a paused node's answer and streams the resumed graph.
 func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, message string, pend pendingInterrupt, yield func(stream.SSEEvent, error) bool) {
-	o.startNodeRun(ctx, userID, sessionID, message, &pend, pend.nodeID, yield)
+	o.startNodeRun(ctx, userID, sessionID, "", message, &pend, pend.nodeID, yield)
 }
 
 // StartNode is the "start a paused node" transition: it re-enters the
@@ -706,19 +736,19 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 // A node paused mid-incremental-step (dag.PlanStepSessionID, not the chat
 // session - see startIncrementalNodeRun) is checked separately, since that
 // resume re-enters a structurally different wrapper than the whole-plan graph.
-func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
+func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, planID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
 	ctx, done := o.executor.Pin(ctx)
 	defer done()
 	o.executor.StartNode(sessionID, nodeID)
 	if p, ok := latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, sessionID)); ok && p.nodeID == nodeID {
-		o.startNodeRun(ctx, userID, sessionID, message, &p, nodeID, yield)
+		o.startNodeRun(ctx, userID, sessionID, planID, message, &p, nodeID, yield)
 		return
 	}
 	if p, ok := o.pendingStepInterrupt(ctx, userID, sessionID); ok && p.nodeID == nodeID {
 		o.startIncrementalNodeRun(ctx, userID, sessionID, message, p, yield)
 		return
 	}
-	o.startNodeRun(ctx, userID, sessionID, message, nil, nodeID, yield)
+	o.startNodeRun(ctx, userID, sessionID, planID, message, nil, nodeID, yield)
 }
 
 // pendingStepInterrupt checks a plan's own dedicated incremental-step
@@ -737,7 +767,7 @@ func (o *Orchestrator) pendingStepInterrupt(ctx context.Context, userID, session
 // means THIS assignment is done - the plan may still be partial, so the
 // answer is only finalized when the plan's own declared delivery covers it.
 func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sessionID, message string, pend pendingInterrupt, yield func(stream.SSEEvent, error) bool) {
-	plan, rec, recordSvc, errMsg := o.loadResumePlan(ctx, userID, sessionID)
+	plan, rec, recordSvc, errMsg := o.loadResumePlan(ctx, userID, sessionID, pend.nodeID)
 	if errMsg != "" {
 		yield(stream.Errorf(errMsg), nil)
 		return
@@ -799,11 +829,7 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 
 // loadResumePlan: the plan and its record for an incremental resume.
 // Returns the message to yield on failure, "" on success.
-func (o *Orchestrator) loadResumePlan(ctx context.Context, userID, sessionID string) (plan dag.Plan, rec dag.DagPlanRecord, recordSvc artifact.Service, errMsg string) {
-	plan, ok := o.stashedPlan(ctx, userID, sessionID)
-	if !ok {
-		return plan, rec, recordSvc, "resume: no plan in session to resume"
-	}
+func (o *Orchestrator) loadResumePlan(ctx context.Context, userID, sessionID, nodeID string) (plan dag.Plan, rec dag.DagPlanRecord, recordSvc artifact.Service, errMsg string) {
 	recordSvc = o.artifacts
 	if recordSvc == nil {
 		recordSvc = artifact.InMemoryService()
@@ -811,6 +837,10 @@ func (o *Orchestrator) loadResumePlan(ctx context.Context, userID, sessionID str
 	rec, _, ok, err := dag.LoadDagPlanRecord(ctx, recordSvc, artifactref.AppName, userID, sessionID)
 	if err != nil || !ok {
 		return plan, rec, recordSvc, "resume: no plan record to resume"
+	}
+	plan, err = o.planFor(ctx, userID, sessionID, rec.PlanID, nodeID)
+	if err != nil {
+		return plan, rec, recordSvc, "resume: " + err.Error()
 	}
 	return plan, rec, recordSvc, ""
 }
@@ -901,7 +931,7 @@ func unblockedByDeps(assignments []dag.Assignment) map[string]bool {
 	return next
 }
 
-func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {
+func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, planID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {
 	// Single choke point for both StartNode (fresh dispatch, bare ctx, needs a
 	// real span) and Run's resumeNodeRun (already inside Run's "run" span) -
 	// skip opening a redundant child so resumed-node traces don't show run-under-run.
@@ -914,9 +944,9 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, mess
 			otelobs.End(span, nil)
 		}
 	}()
-	plan, ok := o.stashedPlan(ctx, userID, sessionID)
-	if !ok {
-		yield(stream.Errorf("resume: no plan in session to resume"), nil)
+	plan, err := o.planFor(ctx, userID, sessionID, planID, nodeID)
+	if err != nil {
+		yield(stream.Errorf("resume: "+err.Error()), nil)
 		return
 	}
 	safeYield := newSafeYield(yield)

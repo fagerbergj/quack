@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -500,5 +501,14 @@ func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 	ert := execTl.(runnableTool)
 	if _, err := ert.Run(newExecToolCtx(), map[string]any{"plan_id": planID}); err == nil {
 		t.Fatal("execute accepted, want the review-needs-real-head rejection")
+	}
+}
+
+// TestDagPlanEventCarriesExecPlan: the event carries the full plan for the store's resume copy.
+func TestDagPlanEventCarriesExecPlan(t *testing.T) {
+	ev := DagPlanEvent(context.Background(), dag.Plan{ID: "p1", UserMessage: "full", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "t"}}})
+	var got dag.Plan
+	if err := json.Unmarshal(ev.Data.(stream.DagPlanData).ExecPlan, &got); err != nil || got.ID != "p1" || got.UserMessage != "full" {
+		t.Fatalf("ExecPlan = %+v err=%v, want the full plan", got, err)
 	}
 }

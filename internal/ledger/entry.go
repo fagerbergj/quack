@@ -20,6 +20,7 @@ const (
 	KindNodeStarted    = "node.started"
 	KindNodeDone       = "node.done"
 	KindNodeFailed     = "node.failed"
+	KindNodeCancelled  = "node.cancelled"
 
 	// KindMemoryRecall/KindMemoryVote (epic #1255 P1): best-effort like node.* -
 	// memory recall/voting must never fail a node. The ledger is the source of truth;

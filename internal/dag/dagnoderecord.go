@@ -102,6 +102,16 @@ func validateDagNode(raw json.RawMessage) error {
 // cancel/done pair can't leave this record's mirror on a stale non-terminal
 // status forever (list_nodes/nodeIsRunning both read this record, not the store row).
 func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus) error {
+	return updateDagNodeStatus(ctx, artifacts, appName, userID, chatID, nodeID, status, false)
+}
+
+// SyncDagNodeStatus is UpdateDagNodeStatus for boot's reconcile: no transition check (the row
+// write it mirrors, e.g. paused -> failed, is unconditional) and no agent check (no roster yet).
+func SyncDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus) error {
+	return updateDagNodeStatus(ctx, artifacts, appName, userID, chatID, nodeID, status, true)
+}
+
+func updateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus, force bool) error {
 	if artifacts == nil || chatID == "" || nodeID == "" {
 		return nil
 	}
@@ -117,7 +127,7 @@ func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 	if rec.Status == status {
 		return nil
 	}
-	if !CanTransition(rec.Status, status) {
+	if !force && !CanPersist(rec.Status, status) {
 		return fmt.Errorf("dag_node %s: illegal status transition %s -> %s", nodeID, rec.Status, status)
 	}
 	rec.Status = status
@@ -125,8 +135,40 @@ func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 		rec.Started = true
 	}
 	lineage := recordstore.Lineage{NodeID: nodeID, Author: "system", SavedAt: time.Now().UTC()}
-	_, _, err = c.SaveStructured(ctx, kindDagNode, rec, nodeID, lineage)
+	save := c.SaveStructured
+	if force {
+		save = c.ResaveStructured
+	}
+	_, _, err = save(ctx, kindDagNode, rec, nodeID, lineage)
 	return err
+}
+
+// FailOpenDagNodeRecords marks every chat's dag_node record not yet done/failed/cancelled
+// as failed - boot's settle for a run killed before it had any resumable state.
+func FailOpenDagNodeRecords(ctx context.Context, artifacts artifact.Service, appName, userID, chatID string) error {
+	if artifacts == nil {
+		return nil
+	}
+	c := recordstore.New(artifacts, appName, userID, chatID)
+	summaries, err := c.List(ctx, kindDagNode)
+	if err != nil {
+		return err
+	}
+	for _, s := range summaries {
+		raw, _, ok, err := c.Latest(ctx, s.ID)
+		var rec DagNodeRecord
+		if err != nil || !ok || json.Unmarshal(raw, &rec) != nil {
+			continue
+		}
+		switch rec.Status {
+		case StatusDone, StatusFailed, StatusCancelled:
+			continue
+		}
+		if err := SyncDagNodeStatus(ctx, artifacts, appName, userID, chatID, rec.NodeID, StatusFailed); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // UpdateDagNodeContext overwrites nodeID's persisted ContextID - the ACP

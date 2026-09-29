@@ -2,6 +2,7 @@ package dag
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -87,6 +88,7 @@ type DagStream struct {
 	agentByID map[string]string
 	yield     func(stream.SSEEvent, error) bool
 	only      map[string]bool
+	shutdown  func() bool
 }
 
 // ScopeToRetry: restricts terminal sweep to retried node and descendants.
@@ -133,7 +135,8 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	})
 	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
 	ds.resumedFromByID = resumedFromByID
-	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds}
+	shutdown := func() bool { _, ok := e.controls.shutdown.Load(cancelKey); return ok }
+	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds, shutdown: shutdown}
 }
 
 // Handle: routes gate-node events → SSE (true) or orchestrator events → caller (false).
@@ -148,7 +151,7 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 	return true
 }
 
-// Finish: flushes last run and emits node_done for remaining nodes. Call after runner loop.
+// Paused reports whether any node in this stream parked on a HITL question.
 func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
 
 // NeedsInput reports which nodes this stream saw pause on a HITL question -
@@ -161,9 +164,28 @@ func (s *DagStream) NeedsInput() map[string]bool { return s.ds.needsInput }
 // never dispatched, and the caller must not treat that as "ran and failed".
 func (s *DagStream) Started() map[string]bool { return s.ds.started }
 
-func (s *DagStream) Finish() {
+// Finish flushes the last run and emits a terminal event for every unsettled
+// in-scope node. Call after the runner loop ends cleanly.
+func (s *DagStream) Finish() { s.settle(false, nil) }
+
+// Abort is Finish for a runner that ended on err, so no started node stays "running".
+// A shutdown cut emits nothing: boot re-stamps a still-running row paused/shutdown and resumes it.
+func (s *DagStream) Abort(err error) {
+	if s.shutdown != nil && s.shutdown() {
+		return
+	}
+	if errors.Is(s.ctx.Err(), context.Canceled) {
+		s.settle(true, nil)
+		return
+	}
+	s.settle(false, err)
+}
+
+// settle: stopped (a user stop) cancels every unsettled in-scope node; runErr
+// (any other runner failure) fails only started ones, per Started's contract.
+func (s *DagStream) settle(stopped bool, runErr error) {
 	s.ds.flush()
-	if len(s.ds.needsInput) == 0 {
+	if !stopped && runErr == nil && len(s.ds.needsInput) == 0 {
 		ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
 	}
 	for _, n := range s.plan.Nodes {
@@ -176,28 +198,28 @@ func (s *DagStream) Finish() {
 		if s.ds.needsInput[n.ID] {
 			continue
 		}
-		if len(s.ds.needsInput) > 0 && !s.ds.started[n.ID] {
+		if !s.ds.started[n.ID] && (runErr != nil || len(s.ds.needsInput) > 0) {
 			continue
 		}
-		s.emitFinishTerminal(n)
+		s.emitFinishTerminal(n, stopped, runErr)
 	}
 }
 
-// emitFinishTerminal: Finish's terminal event for one settled node - the
-// delivered/paused/cancelled checks in that priority order, then done.
-func (s *DagStream) emitFinishTerminal(n Node) {
+// emitFinishTerminal: settle's terminal event for one node - the
+// delivered/paused/cancelled checks in that priority order, then failed or done.
+func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 	delivered := s.ds.deliveredOf != nil && s.ds.deliveredOf(n.ID)
 	if !delivered && s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
 		s.yield(stream.NodePaused(n.ID), nil)
 		return
 	}
-	if !delivered && s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
+	empty := strings.TrimSpace(s.ds.outputs[n.ID]) == ""
+	if !delivered && (stopped && empty || s.ds.cancelled != nil && s.ds.cancelled(n.ID)) {
 		s.yield(stream.WithContextID(stream.NodeCancelled(n.ID), s.ds.contextOf(n.ID)), nil)
 		return
 	}
-	if !delivered && strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
-		ev := stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID]))
-		s.yield(stream.WithContextID(ev, s.ds.contextOf(n.ID)), nil)
+	if !delivered && empty {
+		s.yield(stream.WithContextID(stream.NodeFailed(n.ID, s.failMessage(n.ID, runErr)), s.ds.contextOf(n.ID)), nil)
 		return
 	}
 	s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
@@ -313,6 +335,20 @@ func emptyNodeError(chatID, nodeID, agent string) string {
 		return fmt.Sprintf("%s on %d consecutive attempts over %s", class, streak, dur.Round(time.Second))
 	}
 	return SilentGapError
+}
+
+// failMessage prefers the node's recorded gateway failure, then the runner's own
+// error, sanitized because DagNode.Error reaches RunOutcome text.
+func (s *DagStream) failMessage(nodeID string, runErr error) string {
+	msg := emptyNodeError(s.ds.chatID, s.ds.scope(nodeID), s.ds.agentByID[nodeID])
+	switch {
+	case runErr == nil || msg != SilentGapError:
+		return msg
+	case errors.Is(s.ctx.Err(), context.DeadlineExceeded):
+		return "plan run timed out"
+	}
+	class, _ := inference.SanitizeGatewayError(runErr)
+	return "plan run failed: " + class
 }
 
 func gateResultKey(chatID, nodeID string) string { return chatID + "\x00" + nodeID }

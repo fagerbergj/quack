@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 func newRunStatusTestStore(t *testing.T) *Store {
@@ -23,32 +25,44 @@ func newRunStatusTestStore(t *testing.T) *Store {
 	return st
 }
 
-// TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback pins that a
-// process-killed chat with no resumable node keeps ActiveTurnID set.
-func TestScanOrphanedRuns_LeavesStuckActiveTurnIDForCrashFallback(t *testing.T) {
+// TestScanOrphanedRuns_SettlesInterruptedOnce: a process-killed chat with no resumable
+// node is stamped failed with its open dag_node records failed, so the next boot is silent.
+func TestScanOrphanedRuns_SettlesInterruptedOnce(t *testing.T) {
 	st := newRunStatusTestStore(t)
 	ctx := context.Background()
+	artifacts, err := st.RowArtifactService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetArtifactService(artifacts)
 	if err := st.SetChatOrigin(ctx, "chat-crashed", "u1", ""); err != nil {
 		t.Fatalf("SetChatOrigin: %v", err)
 	}
 	if err := st.MarkRunActive(ctx, "chat-crashed", "turn-1"); err != nil {
 		t.Fatalf("MarkRunActive: %v", err)
 	}
+	dag.SetAgentRoster([]dag.AgentInfo{{Name: "w"}})
+	rc := recordstore.New(artifacts, chatAppName, st.SessionUserForChat(ctx, "chat-crashed"), "chat-crashed")
+	if _, _, err := rc.SaveStructured(ctx, "dag_node", dag.DagNodeRecord{NodeID: "w-1", Agent: "w", Status: dag.StatusQueued}, "w-1", recordstore.Lineage{}); err != nil {
+		t.Fatal(err)
+	}
+	dag.SetAgentRoster(nil) // boot runs before any roster exists
 
 	_, ids, err := st.ScanOrphanedRuns(ctx)
-	if err != nil {
-		t.Fatalf("ScanOrphanedRuns: %v", err)
+	if err != nil || len(ids) != 1 || ids[0] != "chat-crashed" {
+		t.Fatalf("first boot ids = %v err=%v, want [chat-crashed]", ids, err)
 	}
-	if len(ids) != 1 || ids[0] != "chat-crashed" {
-		t.Fatalf("ids = %v, want [chat-crashed]", ids)
-	}
-
 	c, err := st.GetChat(ctx, "chat-crashed")
-	if err != nil || c == nil {
-		t.Fatalf("GetChat: %v, %v", c, err)
+	if err != nil || c == nil || c.ActiveTurnID != "" || c.RunStatus != RunStatusFailed {
+		t.Fatalf("chat = %+v err=%v, want failed with ActiveTurnID cleared", c, err)
 	}
-	if c.ActiveTurnID != "turn-1" {
-		t.Errorf("ActiveTurnID = %q, want left as turn-1 for the crash fallback to read", c.ActiveTurnID)
+	raw, _, _, _ := rc.Latest(ctx, "dag_node:w-1")
+	var rec dag.DagNodeRecord
+	if json.Unmarshal(raw, &rec) != nil || rec.Status != dag.StatusFailed {
+		t.Errorf("dag_node record = %+v, want failed", rec)
+	}
+	if _, ids, err = st.ScanOrphanedRuns(ctx); err != nil || len(ids) != 0 {
+		t.Errorf("second boot ids = %v err=%v, want none", ids, err)
 	}
 }
 

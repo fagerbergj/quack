@@ -78,7 +78,7 @@ func waitForBody(t *testing.T, rec *syncRecorder, want string) {
 func TestSubscribeLiveTail(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
-	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
+	pub := runlog.NewPublisher(context.Background(), h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1"))
 	pub.Publish(stream.NodeStart("n1", "researcher"))
 
@@ -124,7 +124,7 @@ func TestSubscribeLiveTail(t *testing.T) {
 func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
-	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
+	pub := runlog.NewPublisher(context.Background(), h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1"))
 	pub.Publish(stream.NodeStart("n1", "researcher"))
 	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
@@ -158,7 +158,7 @@ func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
-	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
+	pub := runlog.NewPublisher(context.Background(), h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1")) // seq 1
 	pub.Publish(stream.NodeStart("n1", "rs")) // seq 2
 
@@ -203,7 +203,7 @@ func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 func TestSubscribeCloseRacesActiveRead(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
-	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
+	pub := runlog.NewPublisher(context.Background(), h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1"))
 	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
 	pub.Publish(stream.Done())

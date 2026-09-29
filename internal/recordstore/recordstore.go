@@ -485,6 +485,16 @@ func (c *Client) saveRow(ctx context.Context, id, kind string, class Class, mime
 // its id via the kind's Identity func (hint feeds identity for kinds whose
 // instance comes from outside the content, e.g. a subject id; ignored by a content-hashed kind like finding), and saves it as a new JSON revision, returning the derived id and the new revision.
 func (c *Client) SaveStructured(ctx context.Context, kind string, doc any, hint string, lineage Lineage) (string, int, error) {
+	return c.saveStructured(ctx, kind, doc, hint, lineage, true)
+}
+
+// ResaveStructured is SaveStructured minus the kind's validator. System rewrites only, of a
+// record the validator already accepted whose rules depend on live state (dag_node's roster).
+func (c *Client) ResaveStructured(ctx context.Context, kind string, doc any, hint string, lineage Lineage) (string, int, error) {
+	return c.saveStructured(ctx, kind, doc, hint, lineage, false)
+}
+
+func (c *Client) saveStructured(ctx context.Context, kind string, doc any, hint string, lineage Lineage, validate bool) (string, int, error) {
 	spec, err := lookupKind(kind)
 	if err != nil {
 		return "", 0, err
@@ -496,7 +506,7 @@ func (c *Client) SaveStructured(ctx context.Context, kind string, doc any, hint 
 	if err != nil {
 		return "", 0, fmt.Errorf("recordstore: marshal %s: %w", kind, err)
 	}
-	if spec.Validate != nil {
+	if validate && spec.Validate != nil {
 		if err := spec.Validate(raw); err != nil {
 			return "", 0, fmt.Errorf("recordstore: %s failed validation: %w", kind, err)
 		}

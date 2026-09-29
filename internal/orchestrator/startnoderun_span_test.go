@@ -40,7 +40,7 @@ func runSpans(exp *tracetest.InMemoryExporter) []sdktrace.ReadOnlySpan {
 func TestStartNodeRunSpansOnBareCtx(t *testing.T) {
 	exp := withRunTracer(t)
 	o := &Orchestrator{sessions: session.InMemoryService()}
-	o.startNodeRun(context.Background(), "u", "c", "", nil, "n1", func(stream.SSEEvent, error) bool { return true })
+	o.startNodeRun(context.Background(), "u", "c", "", "", nil, "n1", func(stream.SSEEvent, error) bool { return true })
 
 	if n := len(runSpans(exp)); n != 1 {
 		t.Fatalf("quack.run spans = %d, want 1 for a bare-ctx call", n)
@@ -54,7 +54,7 @@ func TestStartNodeRunDoesNotDoubleSpanInsideRun(t *testing.T) {
 	o := &Orchestrator{sessions: session.InMemoryService()}
 
 	ctx, span := otel.Tracer("test").Start(context.Background(), "quack.run")
-	o.startNodeRun(ctx, "u", "c", "", nil, "n1", func(stream.SSEEvent, error) bool { return true })
+	o.startNodeRun(ctx, "u", "c", "", "", nil, "n1", func(stream.SSEEvent, error) bool { return true })
 	span.End()
 
 	if n := len(runSpans(exp)); n != 1 {

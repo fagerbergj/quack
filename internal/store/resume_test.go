@@ -149,3 +149,31 @@ func TestScanOrphanedRuns_KeepsPendingQuestion(t *testing.T) {
 		t.Errorf("RunStatus = %q, want %q - never interrupted for a chat the server resumes itself", c.RunStatus, RunStatusPaused)
 	}
 }
+
+// TestExecPlan_OneRowPerChat: a chat keeps only its latest plan's copy (the only one ever
+// resumed), and deleting the chat drops it.
+func TestExecPlan_OneRowPerChat(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"p1", "p2"} {
+		if err := st.SaveExecPlan(ctx, c.ID, id, `{"id":"`+id+`"}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok := st.LoadExecPlan(ctx, "p1"); ok {
+		t.Error("superseded plan p1 still loads")
+	}
+	if p, ok := st.LoadExecPlan(ctx, "p2"); !ok || p.ID != "p2" {
+		t.Errorf("LoadExecPlan(p2) = %+v, %v; want p2", p, ok)
+	}
+	if err := st.DeleteChat(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.LoadExecPlan(ctx, "p2"); ok {
+		t.Error("exec plan survived DeleteChat")
+	}
+}

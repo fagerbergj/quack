@@ -231,6 +231,9 @@ type DagPlanData struct {
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 	// TraceID cross-references the OTel trace for this run; "" when otel is disabled.
 	TraceID string `json:"trace_id,omitempty"`
+	// ExecPlan is the full dag.Plan JSON, persisted server-side so a resume can run
+	// the node's own plan (see store.DagExecPlan); never sent to clients.
+	ExecPlan json.RawMessage `json:"-"`
 }
 
 // `node_queued` event payload.

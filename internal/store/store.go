@@ -136,6 +136,17 @@ type DagPlan struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// DagExecPlan is a chat's latest full dag.Plan, one row per chat (only the latest plan is
+// ever resumed). Unlike the session stash it is written as the plan starts, so a run cut
+// mid-execute can still resume; its own table keeps the blob off every dag_plans read.
+type DagExecPlan struct {
+	ChatID string `gorm:"primaryKey"`
+	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	Chat     Chat `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE"`
+	PlanID   string
+	PlanJSON string
+}
+
 // ChatEvent backs the hub's durable replay after restart. Cleared on new run per chat.
 type ChatEvent struct {
 	ChatID string `gorm:"primaryKey;column:chat_id" json:"chat_id"`
@@ -473,7 +484,7 @@ func (s *Store) Artifacts() artifact.Service { return s.artifacts }
 
 // chatFKTables are the tables gaining the chats(id) ON DELETE CASCADE FK
 // (#1296), in the same order New() migrates them.
-var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints"}
+var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints", "dag_exec_plans"}
 
 // chatFKModels maps each of chatFKTables to the struct sweepOrphanChatRows checks
 // HasConstraint against - every one carries a field named "Chat" for exactly this FK.
@@ -483,6 +494,7 @@ var chatFKModels = map[string]any{
 	"chat_events":           &ChatEvent{},
 	"projection_watermarks": &ProjectionWatermark{},
 	"ledger_checkpoints":    &Checkpoint{},
+	"dag_exec_plans":        &DagExecPlan{},
 }
 
 // sweepOrphanChatRows deletes rows whose chat_id has no matching chats row,
@@ -526,7 +538,7 @@ func New(kind, url string) (*Store, error) {
 	if err := sweepOrphanChatRows(db); err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}, &DagExecPlan{}); err != nil {
 		return nil, err
 	}
 	// database.NewSessionService below calls gorm.Open again against the SAME
@@ -826,6 +838,9 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 			}
 		}
 		if err := tx.Where("chat_id = ?", id).Delete(&DagPlan{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("chat_id = ?", id).Delete(&DagExecPlan{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("chat_id = ?", id).Delete(&ChatTurn{}).Error; err != nil {
@@ -1142,6 +1157,29 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(p).Error
 }
 
+// SaveExecPlan records chatID's latest full dag.Plan JSON, replacing any earlier plan's
+// (and an earlier step of the same growing plan's).
+func (s *Store) SaveExecPlan(ctx context.Context, chatID, planID, execJSON string) error {
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"plan_id", "plan_json"}),
+	}).Create(&DagExecPlan{ChatID: chatID, PlanID: planID, PlanJSON: execJSON}).Error
+}
+
+// LoadExecPlan returns planID's full dag.Plan as SaveExecPlan stored it; false when there
+// is none (superseded by a later plan, or run before this table existed).
+func (s *Store) LoadExecPlan(ctx context.Context, planID string) (dag.Plan, bool) {
+	var row DagExecPlan
+	if err := s.db.WithContext(ctx).Where("plan_id = ?", planID).First(&row).Error; err != nil {
+		return dag.Plan{}, false
+	}
+	var plan dag.Plan
+	if err := json.Unmarshal([]byte(row.PlanJSON), &plan); err != nil || plan.ID != planID {
+		return dag.Plan{}, false
+	}
+	return plan, true
+}
+
 // UpsertDagNode creates or updates a DAG node's execution state.
 func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
 	// One Omit call: gorm's Omit REPLACES the list rather than appending, so
@@ -1382,7 +1420,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 			chatOf[n.PlanID] = chatID
 		}
 		if chatID == "" {
-			rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, "plan row is gone"))
+			rep.Failed = append(rep.Failed, s.FailUnresumable(ctx, "", n, "plan row is gone"))
 			continue
 		}
 		// A raw SQL delete of the chats row bypasses DeleteChat's cascade and
@@ -1400,25 +1438,27 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 		if !live {
 			slog.Warn("resume paused dag nodes: chat row is gone; skipping", "component", "store",
 				"chat", chatID, "plan", n.PlanID, "node", n.NodeID)
-			rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, "chat row is gone"))
+			rep.Failed = append(rep.Failed, s.FailUnresumable(ctx, chatID, n, "chat row is gone"))
 			continue
 		}
 		if resumable != nil {
 			if ok, why := resumable(chatID, n.PauseReason); !ok {
-				rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, why))
+				rep.Failed = append(rep.Failed, s.FailUnresumable(ctx, chatID, n, why))
 				continue
 			}
 		}
 		reason := dag.PauseReason(n.PauseReason)
-		if n.Status == string(dag.StatusRunning) {
+		status := dag.NodeStatus(n.Status)
+		if status == dag.StatusRunning {
 			// Hard kill: no shutdown ran, so nothing stamped the pause. Do it now.
-			reason = dag.PauseShutdown
+			reason, status = dag.PauseShutdown, dag.StatusPaused
 			if e := s.SetNodeStatus(ctx, n.PlanID, n.NodeID, dag.StatusPaused, reason, n.PendingQuestion); e != nil {
 				slog.Warn("resume paused dag nodes: hard-kill re-stamp failed", "component", "store",
 					"plan", n.PlanID, "node", n.NodeID, "err", e)
 				continue
 			}
 		}
+		s.syncDagNodeRecord(ctx, chatID, n.PlanID, n.NodeID, status)
 		rn := ResumableNode{ChatID: chatID, PlanID: n.PlanID, NodeID: n.NodeID, Reason: reason}
 		if reason == dag.PauseAwaitingInput || n.Status == string(dag.StatusNeedsInput) {
 			rep.AwaitingInput = append(rep.AwaitingInput, rn)
@@ -1429,16 +1469,85 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 	return rep, nil
 }
 
-// failUnresumable marks one node failed with why in `error` - the only
-// remaining path to `failed` at boot.
-func (s *Store) failUnresumable(ctx context.Context, n DagNode, why string) UnresumableNode {
+// FailUnresumable marks one node failed with why in `error`, on both the row and
+// the dag_node record, so no later boot tries to resume it again.
+func (s *Store) FailUnresumable(ctx context.Context, chatID string, n DagNode, why string) UnresumableNode {
 	if err := s.db.WithContext(ctx).Model(&DagNode{}).
 		Where("plan_id = ? AND node_id = ?", n.PlanID, n.NodeID).
 		Updates(map[string]any{"status": string(dag.StatusFailed), "error": "cannot resume: " + why}).Error; err != nil {
 		slog.Warn("resume paused dag nodes: fail stamp failed", "component", "store",
 			"plan", n.PlanID, "node", n.NodeID, "err", err)
 	}
+	s.syncDagNodeRecord(ctx, chatID, n.PlanID, n.NodeID, dag.StatusFailed)
+	s.appendNodeFailed(ctx, chatID, n)
 	return UnresumableNode{PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
+}
+
+// appendNodeFailed records the settle in the ledger so a ledger-only replay agrees with the row.
+// No-op before the WAL is wired, which is the case during boot's reconcile.
+func (s *Store) appendNodeFailed(ctx context.Context, chatID string, n DagNode) {
+	if s.walLedger == nil || chatID == "" {
+		return
+	}
+	var p DagPlan
+	_ = s.db.WithContext(ctx).Where("id = ?", n.PlanID).First(&p).Error
+	payload, _ := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+		Turn   string `json:"turn"`
+	}{n.NodeID, p.TurnID})
+	if _, err := s.walLedger.AppendIntent(ctx, ledger.Entry{
+		ChatID: chatID, TurnID: p.TurnID, NodeID: n.NodeID, Kind: ledger.KindNodeFailed, Payload: payload,
+	}); err != nil {
+		slog.Warn("resume paused dag nodes: node.failed append failed", "component", "store",
+			"chat", chatID, "node", n.NodeID, "err", err)
+	}
+}
+
+// SyncTerminalDagNodeRecords points every finished node of each chat's latest plan created
+// since then at its row's status, repairing records an earlier process left behind; returns how many it checked.
+func (s *Store) SyncTerminalDagNodeRecords(ctx context.Context, since time.Time) (int, error) {
+	var rows []struct {
+		ChatID, PlanID, NodeID, Status string
+	}
+	err := s.db.WithContext(ctx).Table("dag_nodes").
+		Select("dag_plans.chat_id, dag_nodes.plan_id, dag_nodes.node_id, dag_nodes.status").
+		Joins("JOIN dag_plans ON dag_plans.id = dag_nodes.plan_id").
+		Where("dag_nodes.status IN ?", []string{string(dag.StatusDone), string(dag.StatusFailed), string(dag.StatusCancelled)}).
+		Where("dag_plans.created_at >= ?", since).
+		Where("dag_plans.created_at = (SELECT MAX(p2.created_at) FROM dag_plans p2 WHERE p2.chat_id = dag_plans.chat_id)").
+		Scan(&rows).Error
+	if err != nil {
+		return 0, err
+	}
+	users := map[string]string{}
+	for _, r := range rows {
+		if _, ok := users[r.ChatID]; !ok {
+			users[r.ChatID] = s.SessionUserForChat(ctx, r.ChatID)
+		}
+		s.syncRecord(ctx, r.ChatID, users[r.ChatID], r.NodeID, dag.NodeStatus(r.Status))
+	}
+	return len(rows), nil
+}
+
+// syncDagNodeRecord mirrors a boot reconcile's row status onto the dag_node record
+// (list_nodes and the artifact panel read it); best-effort like every record write.
+func (s *Store) syncDagNodeRecord(ctx context.Context, chatID, planID, nodeID string, status dag.NodeStatus) {
+	if chatID == "" {
+		return
+	}
+	// Node ids recur across plans (reuse), so only the latest plan's node owns the record.
+	if p, err := s.GetLatestDagPlan(ctx, chatID); err != nil || p == nil || p.ID != planID {
+		return
+	}
+	s.syncRecord(ctx, chatID, s.SessionUserForChat(ctx, chatID), nodeID, status)
+}
+
+// syncRecord is syncDagNodeRecord for a caller that already knows planID is the latest.
+func (s *Store) syncRecord(ctx context.Context, chatID, userID, nodeID string, status dag.NodeStatus) {
+	if err := dag.SyncDagNodeStatus(ctx, s.artifacts, chatAppName, userID, chatID, nodeID, status); err != nil {
+		slog.Warn("boot reconcile: dag_node record sync failed", "component", "store",
+			"chat", chatID, "node", nodeID, "err", err)
+	}
 }
 
 func (s *Store) GetDagNodes(ctx context.Context, planID string) ([]DagNode, error) {

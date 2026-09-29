@@ -583,16 +583,17 @@ func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("store open failed: %w", err)
 	}
-	resumeNodes, err := bootReconcile(reconcile, b.cfg, st, jail)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	artifactSvc, err := BuildArtifactService(b.cfg)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("artifact service init failed: %w", err)
 	}
 	artifacts := store.NewTurnAwareService(artifactSvc)
 	st.SetArtifactService(artifacts)
+	// After SetArtifactService: the reconcile mirrors each node's row status onto its dag_node record.
+	resumeNodes, err := bootReconcile(reconcile, b.cfg, st, jail)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	warnIfEpisodicRecordsWontSurvive(b.cfg)
 	return st, resumeNodes, artifacts, nil
 }
@@ -852,6 +853,7 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 	// Re-enter each resumed node's graph only after the orchestrator exists:
 	// a crash here leaves them paused; the next boot picks them up (reconcile already ran).
 	startResumedNodes(ctx, resumeNodes, orch, st, runHub, bootEventLog, bootResumeConcurrency)
+	go syncFinishedNodeRecords(ctx, st)
 	for _, start := range startSweeps {
 		start()
 	}
@@ -2059,6 +2061,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	// depend on load_artifacts in orchestrator.tools (a prod config dropped plans, #1122).
 	orch.SetArtifacts(artifacts)
 	orch.SetNodeSessionReaper(st.ReapNodeSessions)
+	orch.SetPlanLoader(st.LoadExecPlan)
 	orch.SetAssignmentFreshnessCheck(assignmentFreshness)
 	orch.SetAssignmentMetaHook(assignmentMeta)
 	// Same source of truth as buildAgents' per-node compactionFor (cfg.Session.Compaction),

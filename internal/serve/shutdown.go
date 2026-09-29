@@ -20,6 +20,7 @@ const drainPollInterval = 200 * time.Millisecond
 type nodePauser interface {
 	ActiveNodes(chatID string) []string
 	PauseNode(chatID, nodeID string, reason dag.PauseReason) bool
+	MarkShutdown(chatID string)
 }
 
 // DrainActiveRuns is SIGTERM's counterpart to store.ScanOrphanedRuns: reject
@@ -49,8 +50,9 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 		}
 	}
 	if len(ids) > 0 {
-		slog.Info("paused running nodes for shutdown", "component", "serve",
-			"nodes", paused, "chats", chats, "grace", grace)
+		// nodes counts live gate controls only; a node still in admission or setup has none yet.
+		slog.Info("paused live nodes for shutdown; runs with none are cancelled after the grace", "component", "serve",
+			"nodes", paused, "chats", chats, "runs", len(ids), "grace", grace)
 	}
 
 	// Re-reads hub.ActiveChatIDs() on every poll rather than iterating the snapshot above: a
@@ -61,6 +63,10 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	remaining := hub.ActiveChatIDs()
 	for _, chatID := range remaining {
 		hub.MarkInterrupted(chatID) // per-chat cut marker: only force-cancelled runs skip their RunEnded tail
+		if ex != nil {
+			// A node that registered after the sweep above is unpaused; this keeps its abort from settling it cancelled.
+			ex.MarkShutdown(chatID)
+		}
 		hub.CancelRun(chatID)
 	}
 	if len(remaining) == 0 {
