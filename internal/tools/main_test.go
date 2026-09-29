@@ -1,6 +1,15 @@
 package tools
 
-import "github.com/fagerbergj/quack/internal/workspace"
+import (
+	"os"
+	"testing"
 
-// Fixtures are local bare repos, so git tests reach them over file:// instead of https.
-func init() { workspace.GitProtocol = "file" }
+	"github.com/fagerbergj/quack/internal/workspace"
+)
+
+// TestMain answers the __sandbox-exec self-exec a confined git call makes of this test binary.
+func TestMain(m *testing.M) {
+	workspace.RunSandboxExecIfInvoked()
+	workspace.GitProtocol = "file" // fixtures are local bare repos
+	os.Exit(m.Run())
+}

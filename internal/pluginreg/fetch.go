@@ -131,7 +131,8 @@ func fetchInto(ctx context.Context, dir, url string) error {
 	if err != nil {
 		return err
 	}
-	return gitRun(ctx, "", "clone", "--quiet", url, abs)
+	_, err = runGitRW(ctx, "", []string{abs}, "clone", "--quiet", url, abs)
+	return err
 }
 
 // isGitRepo reports whether dir is itself a git repo, not merely inside one -
@@ -301,9 +302,14 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
+	return runGitRW(ctx, dir, nil, args...)
+}
+
+// runGitRW runs git in dir; rw as workspace.GitCmd's.
+func runGitRW(ctx context.Context, dir string, rw []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	cmd, done, err := workspace.GitCmd(ctx, "git", dir, dir, args, gitEnv())
+	cmd, done, err := workspace.GitCmd(ctx, "git", dir, dir, args, gitEnv(), rw...)
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}

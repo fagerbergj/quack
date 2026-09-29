@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,5 +128,63 @@ func TestGitAskpassIsHidden(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "git-askpass") {
 		t.Error("git-askpass appears in help output; it must stay hidden")
+	}
+}
+
+// TestGitAskpassUnderConfinedGit: git confined by Landlock still execs the askpass link, and the token reaches
+// only a server whose host the askpass expects.
+func TestGitAskpassUnderConfinedGit(t *testing.T) {
+	bin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	if _, err := workspace.ResolveSandbox(workspace.SandboxLandlock); err != nil {
+		t.Skipf("SKIPPING: landlock unavailable: %v", err)
+	}
+	creds := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, pass, ok := r.BasicAuth(); ok {
+			creds <- user + ":" + pass
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Basic realm="q"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), tools.GitAskpassLinkName)
+	if err := os.Symlink(self, link); err != nil {
+		t.Fatal(err)
+	}
+	prev := workspace.GitProtocol
+	workspace.GitProtocol = "http"
+	workspace.ConfineGit(workspace.SandboxLandlock)
+	t.Cleanup(func() { workspace.GitProtocol = prev; workspace.ConfineGit(workspace.SandboxNone) })
+
+	lsRemote := func(host string) string {
+		env := []string{"PATH=/usr/bin:/bin", "GIT_ASKPASS=" + link, tools.GitAskpassUserEnv + "=x-access-token",
+			tools.GitAskpassTokenEnv + "=sekret-token", tools.GitAskpassHostEnv + "=" + host}
+		cmd, done, err := workspace.GitCmd(context.Background(), bin, "", "", []string{"ls-remote", srv.URL + "/r.git"}, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer done()
+		_ = cmd.Run() // the server 404s even an authenticated request
+		select {
+		case c := <-creds:
+			return c
+		default:
+			return ""
+		}
+	}
+	if got := lsRemote(strings.TrimPrefix(srv.URL, "http://")); got != "x-access-token:sekret-token" {
+		t.Errorf("confined git sent credentials %q, want the askpass answer", got)
+	}
+	if got := lsRemote("github.com"); strings.Contains(got, "sekret-token") {
+		t.Errorf("token reached a host askpass does not expect: %q", got)
 	}
 }

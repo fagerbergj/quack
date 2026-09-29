@@ -377,3 +377,42 @@ func TestRedirectRecoveryWarns(t *testing.T) {
 		t.Errorf("shared clone not recloned: %v %v", fi, err)
 	}
 }
+
+// TestConfinedWorktreeOps: worktree add, the reuse sync and GC's prune still work with quack's git under Landlock.
+func TestConfinedWorktreeOps(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	b := newTestGitBinding(t)
+	parentDir, err := setupCloneAndBranch(ctx, b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+newBareRepoFixture(t), "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+	if _, err := workspace.ResolveSandbox(workspace.SandboxLandlock); err != nil {
+		t.Skipf("SKIPPING: landlock unavailable: %v", err)
+	}
+	workspace.ConfineGit(workspace.SandboxLandlock)
+	t.Cleanup(func() { workspace.ConfineGit(workspace.SandboxNone) })
+
+	nodeRel, branch := workspace.NodeDir("review1"), workspace.WorktreeBranch("review1")
+	dir, err := SetupWorktree(ctx, b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil)
+	if err != nil {
+		t.Fatalf("confined worktree add: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentDir, "README.md"), []byte("moved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, parentDir, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "-am", "move")
+	if _, err := SetupWorktree(ctx, b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil); err != nil {
+		t.Fatalf("confined worktree sync: %v", err)
+	}
+	if body, _ := os.ReadFile(filepath.Join(dir, "README.md")); string(body) != "moved\n" {
+		t.Errorf("synced worktree README.md = %q, want the clone's new head", body)
+	}
+	if err := PruneWorktree(ctx, b.jail.Root(), dir, b.caps); err != nil {
+		t.Fatalf("confined worktree remove: %v", err)
+	}
+	if list := runGitT(t, parentDir, "worktree", "list", "--porcelain"); strings.Contains(list, dir) {
+		t.Errorf("pruned worktree still registered:\n%s", list)
+	}
+}

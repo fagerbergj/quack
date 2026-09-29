@@ -35,7 +35,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	}
 	// Best-effort: prune orphaned worktree metadata from a crashed run.
 	_, _, _ = runGit(ctx, parentDir, []string{"worktree", "prune"}, caps, nil)
-	if _, _, err := runGit(ctx, parentDir, []string{"worktree", "add", "--quiet", "-B", branch, target, "HEAD"}, caps, nil); err != nil {
+	if _, _, err := runGitIn(ctx, parentDir, parentDir, []string{"worktree", "add", "--quiet", "-B", branch, target, "HEAD"}, caps, nil, target); err != nil {
 		return "", fmt.Errorf("setup: worktree add %q: %w", branch, err)
 	}
 	// Before any sandboxed (possibly read-only) worker starts in target - see
@@ -52,13 +52,17 @@ func warnDiscard(clone, dir string) {
 	}
 }
 
-// PruneWorktree detaches dir from its owning clone's bookkeeping before removal; that clone must lie inside root.
+// PruneWorktree removes linked worktree dir and drops it from its owning clone's bookkeeping; that clone must lie
+// inside root. quack removes dir itself so confined git needs no write grant on dir's parent.
 func PruneWorktree(ctx context.Context, root, dir string, caps workspace.Caps) error {
 	clone, err := workspace.WorktreeClone(root, dir)
 	if clone == "" || err != nil {
 		return err
 	}
-	_, _, err = runGit(ctx, clone, []string{"worktree", "remove", "--force", dir}, caps, nil)
+	if err := workspace.RemoveAllForce(dir); err != nil {
+		return err
+	}
+	_, _, err = runGit(ctx, clone, []string{"worktree", "prune"}, caps, nil)
 	return err
 }
 

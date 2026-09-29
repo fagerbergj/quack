@@ -1,7 +1,7 @@
 package workspace
 
-// Ceiling of GitCmd's repo pinning: symlinks inside a validated .git, alternates added after the check, and
-// GC's jail-wide prune root stay open.
+// Ceiling of GitCmd's repo pinning: under landlock mode Landlock denies symlinks and alternates leading outside the
+// clone; elsewhere they stay open. GC's jail-wide prune root stays open in every mode.
 
 import (
 	"context"
@@ -10,12 +10,14 @@ import (
 	"hash/maphash"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -60,34 +62,112 @@ func GitSafeArgs() []string {
 	)
 }
 
+// gitConfined: GitCmd runs git under Landlock (see ConfineGit).
+var (
+	gitConfined        atomic.Bool
+	gitUnconfinedNoted sync.Once
+)
+
+// ConfineGit sets whether quack's own git runs under Landlock: only in landlock mode, which ResolveSandbox has
+// proved works here. Call once at boot with the resolved mode.
+func ConfineGit(mode SandboxMode) {
+	gitConfined.Store(mode == SandboxLandlock)
+	if mode != SandboxLandlock {
+		gitUnconfinedNoted.Do(func() {
+			slog.Info("quack's own git runs unconfined: symlinks or alternates in an agent-writable .git can reach "+
+				"other repositories; workspace.sandbox: landlock confines it", "component", "workspace", "sandbox", mode)
+		})
+	}
+}
+
 // GitCmd builds quack's own git child: empty per-call HOME (removed by the returned func), no system/global
-// config, and for dir != "" the repo resolveRepo(clone, dir) pins, its config stripped to gitConfigKeep.
-func GitCmd(ctx context.Context, bin, clone, dir string, argv, env []string) (*exec.Cmd, func(), error) {
+// config, and for dir != "" the repo resolveRepo(clone, dir) pins, its config stripped to gitConfigKeep. rw names
+// dirs the call writes outside that repo (a clone target, a new worktree); under ConfineGit they are created.
+func GitCmd(ctx context.Context, bin, clone, dir string, argv, env []string, rw ...string) (*exec.Cmd, func(), error) {
 	home, err := os.MkdirTemp("", "quack-git-home-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("git: create empty HOME: %w", err)
 	}
 	done := func() { _ = os.RemoveAll(home) }
 	env = append(env, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0")
-	if dir, env, err = pinRepo(ctx, bin, clone, dir, home, env); err != nil {
+	g, err := newGitGrants(bin, home, env, rw)
+	if g != nil {
+		env = append(env, "TMPDIR="+home)
+	}
+	if err == nil {
+		dir, env, err = pinRepo(ctx, g, bin, clone, dir, home, env)
+	}
+	if err != nil {
 		done()
 		return nil, nil, err
 	}
-	cmd := exec.CommandContext(ctx, bin, append(GitSafeArgs(), argv...)...)
+	return gitCommand(ctx, g, bin, dir, argv, env), done, nil
+}
+
+// gitGrants is one confined git call's Landlock rule set; nil runs git unconfined.
+type gitGrants struct {
+	bin    string
+	rw, ro []string
+}
+
+// newGitGrants: RW on HOME and rw only (pinRepo adds the repo), so a symlink or alternate leading anywhere else
+// under the jail is denied. /dev/null is RW because git's run-command opens it O_RDWR; the resolv.conf file rule
+// follows a systemd host's symlink into /run.
+func newGitGrants(bin, home string, env, rw []string) (*gitGrants, error) {
+	if !gitConfined.Load() {
+		return nil, nil
+	}
+	for _, p := range rw {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			return nil, fmt.Errorf("git: create %s: %w", p, err)
+		}
+	}
+	if p, err := exec.LookPath(bin); err == nil {
+		bin = p
+	}
+	g := &gitGrants{bin: bin, rw: append([]string{home, "/dev/null"}, rw...), ro: append(landlockSystemDirs(), "/dev", "/etc/resolv.conf", bin)}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		switch k {
+		case "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "SSL_CERT_FILE", "SSL_CERT_DIR":
+			g.ro = append(g.ro, v)
+		case "GIT_ASKPASS":
+			// The askpass link targets the quack binary; grant that, not whatever the link names.
+			self, err := os.Executable()
+			if err != nil {
+				return nil, fmt.Errorf("git: resolve askpass binary: %w", err)
+			}
+			g.ro = append(g.ro, self)
+		}
+	}
+	return g, nil
+}
+
+// gitCommand runs bin with GitSafeArgs then argv in dir, through the __sandbox-exec shim when g is set.
+func gitCommand(ctx context.Context, g *gitGrants, bin, dir string, argv, env []string) *exec.Cmd {
+	full := append(append([]string{bin}, GitSafeArgs()...), argv...)
+	if g != nil {
+		full[0] = g.bin
+		full = assembleSandboxExec(g.rw, g.ro, full)
+	}
+	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir, cmd.Env = dir, env
-	return cmd, done, nil
+	return cmd
 }
 
 // pinRepo hands git its repository explicitly (GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR also override any commondir
 // file) so nothing in the tree steers discovery. The no-repo call stops discovery at its resolved empty HOME.
-func pinRepo(ctx context.Context, bin, clone, dir, home string, env []string) (string, []string, error) {
+func pinRepo(ctx context.Context, g *gitGrants, bin, clone, dir, home string, env []string) (string, []string, error) {
 	if dir != "" {
 		work, gitDir, common, err := resolveRepo(clone, dir)
 		if err != nil {
 			return "", nil, err
 		}
+		if g != nil {
+			g.rw = append(g.rw, filepath.Dir(common), work)
+		}
 		env = append(env, "GIT_DIR="+gitDir, "GIT_WORK_TREE="+work, "GIT_COMMON_DIR="+common)
-		return work, env, sanitizeGitConfig(ctx, bin, work, filepath.Join(common, "config"), env)
+		return work, env, sanitizeGitConfig(ctx, g, bin, work, filepath.Join(common, "config"), env)
 	}
 	abs, err := realPath(home)
 	if err != nil {
@@ -236,11 +316,9 @@ func realPath(p string) (string, error) {
 
 // sanitizeGitConfig unsets every key outside gitConfigKeep in the pinned repo's config cfg. Fails closed
 // when cfg is not a regular file.
-func sanitizeGitConfig(ctx context.Context, bin, dir, cfg string, env []string) error {
+func sanitizeGitConfig(ctx context.Context, g *gitGrants, bin, dir, cfg string, env []string) error {
 	git := func(args ...string) (string, error) {
-		cmd := exec.CommandContext(ctx, bin, append(GitSafeArgs(), args...)...)
-		cmd.Dir, cmd.Env = dir, env
-		out, err := cmd.Output()
+		out, err := gitCommand(ctx, g, bin, dir, args, env).Output()
 		return string(out), err
 	}
 	if fi, err := os.Lstat(cfg); err != nil || !fi.Mode().IsRegular() {

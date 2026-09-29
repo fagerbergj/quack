@@ -931,12 +931,11 @@ func WorktreeCommonGitDir(dir string) string {
 
 // Own gitdir + shared common dir for a linked worktree. Both "" when not a linked worktree.
 func worktreeGitDirs(dir string) (gitdir, common string) {
-	data, err := os.ReadFile(filepath.Join(dir, ".git"))
+	line, err := readPointer(filepath.Join(dir, ".git"))
 	if err != nil {
 		return "", ""
 	}
 	const prefix = "gitdir: "
-	line := strings.TrimSpace(string(data))
 	if !strings.HasPrefix(line, prefix) {
 		return "", ""
 	}
@@ -944,11 +943,9 @@ func worktreeGitDirs(dir string) (gitdir, common string) {
 	if !filepath.IsAbs(gitdir) {
 		gitdir = filepath.Join(dir, gitdir)
 	}
-	commonBytes, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
-	if err != nil {
+	if common, err = readPointer(filepath.Join(gitdir, "commondir")); err != nil {
 		return "", ""
 	}
-	common = strings.TrimSpace(string(commonBytes))
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(gitdir, common)
 	}

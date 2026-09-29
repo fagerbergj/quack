@@ -59,15 +59,23 @@ func SandboxExecMain(args []string) error {
 		return fmt.Errorf("sandbox-exec: %q not found: %w", target[0], err)
 	}
 
+	rwDirs, rwFiles := splitFiles(rw)
+	roDirs, roFiles := splitFiles(ro)
 	var rules []landlock.Rule
-	if len(rw) > 0 {
+	if len(rwDirs) > 0 {
 		// WithRefer grants LANDLOCK_ACCESS_FS_REFER: without it, cross-directory
 		// link()/rename() within these RW dirs is denied and reported as EXDEV
 		// even on one filesystem - breaking git's object writes and `git clone --local`. Safe to request unconditionally: landlockABI is fixed at V3 (REFER needs only ABI>=2), so any kernel this ruleset applies on already supports it.
-		rules = append(rules, landlock.RWDirs(rw...).WithRefer().IgnoreIfMissing())
+		rules = append(rules, landlock.RWDirs(rwDirs...).WithRefer().IgnoreIfMissing())
 	}
-	if len(ro) > 0 {
-		rules = append(rules, landlock.RODirs(ro...).IgnoreIfMissing())
+	if len(roDirs) > 0 {
+		rules = append(rules, landlock.RODirs(roDirs...).IgnoreIfMissing())
+	}
+	if len(rwFiles) > 0 {
+		rules = append(rules, landlock.RWFiles(rwFiles...).IgnoreIfMissing())
+	}
+	if len(roFiles) > 0 {
+		rules = append(rules, landlock.ROFiles(roFiles...).IgnoreIfMissing())
 	}
 	if err := withSignalScope(landlockABI).Restrict(rules...); err != nil {
 		return fmt.Errorf("sandbox-exec: restrict: %w", err)
@@ -79,6 +87,19 @@ func SandboxExecMain(args []string) error {
 	env := append(os.Environ(), fmt.Sprintf("%s=landlock:abi%d:rw%d:ro%d",
 		SandboxEnvMarker, landlockABIVersion, len(rw), len(ro)))
 	return syscall.Exec(bin, execArgv, env)
+}
+
+// splitFiles separates non-directory grants: a directory right on a file rule is EINVAL. Missing paths stay with
+// dirs, where IgnoreIfMissing skips them.
+func splitFiles(paths []string) (dirs, files []string) {
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			files = append(files, p)
+		} else {
+			dirs = append(dirs, p)
+		}
+	}
+	return dirs, files
 }
 
 // withSignalScope adds signal scoping where the kernel has it (ABI 6+, 6.12+): the child can't kill

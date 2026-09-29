@@ -235,8 +235,8 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 	return runGitIn(ctx, dir, dir, argv, caps, auth)
 }
 
-// runGitIn runs in dir, which must be clone or a linked worktree of it (see workspace.GitCmd).
-func runGitIn(ctx context.Context, clone, dir string, argv []string, caps workspace.Caps, auth *gitAuth) (stdout, stderr string, err error) {
+// runGitIn runs in dir, which must be clone or a linked worktree of it; rw as workspace.GitCmd's.
+func runGitIn(ctx context.Context, clone, dir string, argv []string, caps workspace.Caps, auth *gitAuth, rw ...string) (stdout, stderr string, err error) {
 	bin, err := gitBinaryPath()
 	if err != nil {
 		return "", "", err
@@ -248,7 +248,7 @@ func runGitIn(ctx context.Context, clone, dir string, argv []string, caps worksp
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd, done, err := workspace.GitCmd(cctx, bin, clone, dir, argv, gitEnv(caps, auth))
+	cmd, done, err := workspace.GitCmd(cctx, bin, clone, dir, argv, gitEnv(caps, auth), rw...)
 	if err != nil {
 		return "", "", err
 	}
@@ -337,7 +337,7 @@ func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) 
 		return gitCloneResult{}, err
 	}
 	// Run from an empty dir: a repo enclosing relRoot must not lend clone its config.
-	if _, _, err := runGit(context.Background(), "", argv, b.caps, auth); err != nil {
+	if _, _, err := runGitIn(context.Background(), "", "", argv, b.caps, auth, target); err != nil {
 		return gitCloneResult{}, err
 	}
 
