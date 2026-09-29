@@ -220,8 +220,10 @@ type TurnContent struct {
 	UserText  string
 	AsstText  string
 	AsstThink string
-	// Answer is the turn's delivered DAG answer (stream.DeliveredAnswerMeta), "" when none.
+	// Answer is the turn's delivered DAG answer (stream.DeliveredAnswerMeta), "" when none;
+	// AnswerAt is when it was delivered.
 	Answer    string
+	AnswerAt  time.Time
 	ToolCalls []ToolCallRecord // orchestrator-level tool calls, in event order
 	Plan      *DagPlan
 	Nodes     []DagNode
@@ -261,9 +263,16 @@ const orchestratorAuthor = "orchestrator"
 // userText/asstText/asstThink are strings.Builder, not string: a turn assembled from
 // streamed events otherwise appends with += for every chunk, copying the whole accumulated text each time - O(n^2) in events per turn (perf audit #4: 197 MB for one 2,000-event turn; strings.Builder measured at 5.6 MB for 50x280).
 type turnGroup struct {
-	userText, asstText, asstThink, answer                                      strings.Builder
+	userText, asstText, asstThink                                              strings.Builder
 	toolCalls                                                                  []ToolCallRecord
 	promptTokens, completionTokens, reasoningTokens, cachedTokens, totalTokens int32
+	// answers: delivered answers seen in this group, by the turn id their marker names ("" = this group's).
+	answers map[string]markedAnswer
+}
+
+type markedAnswer struct {
+	text string
+	at   time.Time
 }
 
 // groupSessionEvents buckets session events into per-turn groups, split on user events.
@@ -293,15 +302,53 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 		if ev.UsageMetadata != nil {
 			addUsage(cur, ev.UsageMetadata)
 		}
-		delivered, _ := ev.CustomMetadata[stream.DeliveredAnswerMeta].(bool)
+		if turnID, ok := deliveredTurn(ev); ok {
+			// Not narration: a retry's answer belongs to its plan's turn, and the last one wins.
+			if cur.answers == nil {
+				cur.answers = map[string]markedAnswer{}
+			}
+			cur.answers[turnID] = markedAnswer{text: plainText(ev.Content), at: ev.Timestamp}
+			continue
+		}
 		for _, p := range ev.Content.Parts {
 			recordAssistantPart(cur, p)
-			if delivered && p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
-				cur.answer.WriteString(p.Text)
-			}
 		}
 	}
 	return groups
+}
+
+// deliveredTurn reads a delivered-answer marker: the turn id it names, "" for the event's own turn.
+func deliveredTurn(ev *session.Event) (string, bool) {
+	switch v := ev.CustomMetadata[stream.DeliveredAnswerMeta].(type) {
+	case string:
+		return v, true
+	case bool:
+		return "", v
+	}
+	return "", false
+}
+
+func plainText(c *genai.Content) string {
+	var sb strings.Builder
+	for _, p := range c.Parts {
+		if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
+			sb.WriteString(p.Text)
+		}
+	}
+	return sb.String()
+}
+
+// keyedAnswers merges every group's turn-keyed delivered answers; a later marker wins.
+func keyedAnswers(groups []turnGroup) map[string]markedAnswer {
+	out := map[string]markedAnswer{}
+	for _, g := range groups {
+		for turnID, a := range g.answers {
+			if turnID != "" {
+				out[turnID] = a
+			}
+		}
+	}
+	return out
 }
 
 // appendUserPart: one user-message part into cur.userText - plain text, or the
@@ -1599,7 +1646,7 @@ func (s *Store) CountDagPlans(ctx context.Context, chatID string) (int64, error)
 
 // buildTurnContent joins one ChatTurn row with its session-derived group
 // (nil if the turn has none - e.g. it fell outside the alignment window, or ResetHistory wiped the session outright, #1226), its DAG plan, and that plan's nodes. Shared by GetTurnsWithContent and GetLastTurnWithContent so the two loaders can't drift on how a turn's content is assembled.
-func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[string][]DagNode) TurnContent {
+func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[string][]DagNode, answers map[string]markedAnswer) TurnContent {
 	tc := TurnContent{
 		ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model,
 		// Stamped by SetTurnUsage at run end - the SQL-summable source of
@@ -1612,7 +1659,9 @@ func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[s
 		tc.UserText = g.userText.String()
 		tc.AsstText = g.asstText.String()
 		tc.AsstThink = g.asstThink.String()
-		tc.Answer = g.answer.String()
+		if a, ok := g.answers[""]; ok {
+			tc.Answer, tc.AnswerAt = a.text, a.at
+		}
 		tc.ToolCalls = g.toolCalls
 		if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
 			tc.PromptTokens = g.promptTokens
@@ -1626,6 +1675,9 @@ func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[s
 	// the turn row at SaveTurn.
 	if tc.UserText == "" {
 		tc.UserText = t.UserText
+	}
+	if a, ok := answers[t.ID]; ok {
+		tc.Answer, tc.AnswerAt = a.text, a.at
 	}
 	if plan != nil {
 		tc.Plan = plan
@@ -1691,7 +1743,11 @@ func (s *Store) GetLastTurnWithContent(ctx context.Context, appName, userID, cha
 		return nil, err
 	}
 
-	tc := buildTurnContent(t, gPtr, plan, nodesByPlan)
+	var answers map[string]markedAnswer
+	if gPtr != nil {
+		answers = keyedAnswers([]turnGroup{*gPtr})
+	}
+	tc := buildTurnContent(t, gPtr, plan, nodesByPlan, answers)
 	return &tc, nil
 }
 
@@ -1733,13 +1789,14 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 	// groups can be shorter than turns - a ResetHistory dispatch (#1195) wipes
 	// older session events while every ChatTurn row survives forever, and only ever removes OLDER events, never reorders what's left. So the surviving groups always line up with the MOST RECENT len(groups) turns, never the first: align from the end, not the front, or a reset silently shifts every later turn's content onto the wrong (earlier) turn.
 	offset := len(turns) - len(groups)
+	answers := keyedAnswers(groups)
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {
 		var g *turnGroup
 		if gi := i - offset; gi >= 0 && gi < len(groups) {
 			g = &groups[gi]
 		}
-		result[i] = buildTurnContent(t, g, planByTurn[t.ID], nodesByPlan)
+		result[i] = buildTurnContent(t, g, planByTurn[t.ID], nodesByPlan, answers)
 	}
 	return result, nil
 }

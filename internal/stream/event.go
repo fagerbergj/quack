@@ -550,8 +550,8 @@ func ChatTitle(title string) SSEEvent {
 	return SSEEvent{Name: EventChatTitle, Data: ChatTitleData{Title: title}}
 }
 
-// DeliveredAnswerMeta marks (in session event CustomMetadata) the orchestrator message that
-// carries a turn's delivered answer, so a reload shows exactly that, not a plan node's older output.
+// DeliveredAnswerMeta marks (in session event CustomMetadata) the orchestrator message carrying a
+// turn's delivered answer; its value is that turn's id ("" = the turn the event falls in).
 const DeliveredAnswerMeta = "quack_delivered_answer"
 
 // Errorf builds an error event.

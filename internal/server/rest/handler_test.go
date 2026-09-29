@@ -860,3 +860,40 @@ func TestBuildTurnUsesDeliveredAnswer(t *testing.T) {
 	}
 	t.Fatal("no message item")
 }
+
+// TestBuildTurnStopVersusDeliveredAnswer: whichever happened last shows - a retry stopped after
+// the turn's answer shows the stopped draft; a delivery after a stop shows the answer.
+func TestBuildTurnStopVersusDeliveredAnswer(t *testing.T) {
+	planJSON := `{"nodes":[{"id":"r","agent":"web-researcher","task":"t","depends_on":[]}],"edges":[]}`
+	t0 := time.Now()
+	t1 := t0.Add(time.Minute)
+	for _, tc := range []struct {
+		name              string
+		answerAt, stopped time.Time
+		wantStopped       bool
+		want              string
+	}{
+		{"retry stopped after the answer", t0, t1, true, "RETRY DRAFT"},
+		{"delivered after a stop", t1, t0, false, "ANSWER"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stoppedAt := tc.stopped
+			bubble, _, stopped := answerBubble(store.TurnContent{
+				Answer: "ANSWER", AnswerAt: tc.answerAt,
+				Nodes: []store.DagNode{{NodeID: "r", Status: "cancelled", Output: "RETRY DRAFT", FinishedAt: &stoppedAt}},
+			}, mustPlanData(t, planJSON), true)
+			if bubble != tc.want || stopped != tc.wantStopped {
+				t.Errorf("bubble = %q stopped=%v, want %q stopped=%v", bubble, stopped, tc.want, tc.wantStopped)
+			}
+		})
+	}
+}
+
+func mustPlanData(t *testing.T, planJSON string) stream.DagPlanData {
+	t.Helper()
+	var d stream.DagPlanData
+	if err := json.Unmarshal([]byte(planJSON), &d); err != nil {
+		t.Fatal(err)
+	}
+	return d
+}

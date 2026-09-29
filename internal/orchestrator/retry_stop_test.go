@@ -117,21 +117,21 @@ func TestFinalizeAnswer_StoppedTerminalIsNoAnswer(t *testing.T) {
 	}
 }
 
-// TestPersistAnswerMarksDeliveredAnswer: the delivered answer is marked so a reload can tell
-// it apart from the orchestrator's narration in the same turn.
+// TestPersistAnswerMarksDeliveredAnswer: the delivered answer is marked with its turn, so a
+// reload attaches it there even when a retry appends it after later turns.
 func TestPersistAnswerMarksDeliveredAnswer(t *testing.T) {
 	sessions := session.InMemoryService()
 	o := &Orchestrator{sessions: sessions}
 	if _, err := sessions.Create(context.Background(), &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	o.persistAnswer(context.Background(), "u", "c", "THE ANSWER")
+	o.persistAnswer(stream.WithTurnID(context.Background(), "t1"), "u", "c", "THE ANSWER")
 	resp, err := sessions.Get(context.Background(), &session.GetRequest{AppName: AppName, UserID: "u", SessionID: "c"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for ev := range resp.Session.Events().All() {
-		if marked, _ := ev.CustomMetadata[stream.DeliveredAnswerMeta].(bool); marked {
+		if turn, _ := ev.CustomMetadata[stream.DeliveredAnswerMeta].(string); turn == "t1" {
 			return
 		}
 	}

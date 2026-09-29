@@ -196,8 +196,53 @@ func TestTurnContent_DeliveredAnswerSurvivesStorage(t *testing.T) {
 	}
 }
 
-func deliveredEvent(text string) *session.Event {
+func deliveredEvent(text string) *session.Event { return deliveredFor("", text) }
+
+func deliveredFor(turnID, text string) *session.Event {
 	ev := asstEvent(&genai.Part{Text: text})
-	ev.CustomMetadata = map[string]any{stream.DeliveredAnswerMeta: true}
+	ev.CustomMetadata = map[string]any{stream.DeliveredAnswerMeta: turnID}
 	return ev
+}
+
+// TestTurnContent_DeliveredAnswersAttachToTheirTurn: a retry or boot resume appends its answer
+// with no user event of its own; it attaches to its plan's turn, replacing (not joining) the
+// earlier answer, and never lands in a later chat-only turn.
+func TestTurnContent_DeliveredAnswersAttachToTheirTurn(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "local", SessionID: c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"t1", "t2"} {
+		if err := st.SaveTurn(ctx, c.ID, id, "q"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, ev := range []*session.Event{
+		userEvent("plan it"), deliveredFor("t1", "ANSWER-1"),
+		userEvent("just chat"), asstEvent(&genai.Part{Text: "T2 REPLY"}),
+		deliveredFor("t1", "RETRY-A"), deliveredFor("t1", "RETRY-B"), // a retry, then a resume of a second sibling
+	} {
+		if err := st.Sessions.AppendEvent(ctx, sessResp.Session, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turns, err := st.GetTurnsWithContent(ctx, chatAppName, "local", c.ID)
+	if err != nil || len(turns) != 2 {
+		t.Fatalf("turns = %+v err=%v", turns, err)
+	}
+	if turns[0].Answer != "RETRY-B" {
+		t.Errorf("t1 answer = %q, want the latest delivery RETRY-B alone", turns[0].Answer)
+	}
+	if turns[1].Answer != "" || turns[1].AsstText != "T2 REPLY" {
+		t.Errorf("t2 = answer %q, text %q; want only its own reply", turns[1].Answer, turns[1].AsstText)
+	}
 }

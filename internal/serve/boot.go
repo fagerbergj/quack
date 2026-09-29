@@ -171,6 +171,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	}
 	userID := st.SessionUserForChat(ctx, chatID)
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
+	runCtx = stream.WithTurnID(runCtx, plan.TurnID)
 	hub.RegisterRun(chatID, plan.TurnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, plan.TurnID)
 	// Reset already ran synchronously in startResumedNodes, before this

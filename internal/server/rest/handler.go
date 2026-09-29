@@ -370,19 +370,22 @@ func terminalNodeID(plan stream.DagPlanData) string {
 	return ""
 }
 
-// terminalNodeOutput returns the terminal node's full output, or "" when the plan has no terminal
-// node with output yet; stopped reports the user stopped it, so that output is only a draft.
-func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool) {
+// terminalNodeOutput returns the terminal node's full output (or "" when it has none yet);
+// stopped reports the user stopped it (so that output is a draft) and at when.
+func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool, at time.Time) {
 	id := terminalNodeID(plan)
 	if id == "" {
-		return "", false
+		return "", false, time.Time{}
 	}
 	for _, n := range nodes {
 		if n.NodeID == id {
-			return strings.TrimSpace(n.Output), n.Status == string(dag.StatusCancelled)
+			if n.FinishedAt != nil {
+				at = *n.FinishedAt
+			}
+			return strings.TrimSpace(n.Output), n.Status == string(dag.StatusCancelled), at
 		}
 	}
-	return "", false
+	return "", false, time.Time{}
 }
 
 // usageAggregateToSchema always populates every field (unlike Turn.usage,
@@ -1197,7 +1200,7 @@ func (h *Handler) armRun(chatID, turnID string) (context.Context, context.Cancel
 	h.eventLog.Reset(runCtx, chatID)
 	h.hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
-	return runCtx, cancelRun
+	return stream.WithTurnID(runCtx, turnID), cancelRun
 }
 
 // retryNodeAsync re-runs nodeID and descendants in background, reusing the
@@ -1404,20 +1407,21 @@ func buildUsage(tc store.TurnContent) *schema.Usage {
 	return usage
 }
 
-// answerBubble is the turn's answer text and reasoning: a DAG turn's terminal node output, else
-// the orchestrator's own reply. A stopped terminal node's draft stands alone, never mixed with the orchestrator's text.
+// answerBubble is the turn's answer and reasoning: a stopped terminal's draft, the answer the turn
+// delivered, the terminal node's output, or else the orchestrator's own reply, in that order.
 func answerBubble(tc store.TurnContent, planData stream.DagPlanData, planOK bool) (text, think string, stopped bool) {
-	// What this turn actually delivered wins: a plan extended across turns keeps an older sink first.
-	if tc.Answer != "" {
-		return tc.Answer, tc.AsstThink, false
+	var out string
+	var stoppedAt time.Time
+	if planOK {
+		out, stopped, stoppedAt = terminalNodeOutput(planData, tc.Nodes)
 	}
-	if !planOK {
-		return tc.AsstText, tc.AsstThink, false
-	}
-	out, stopped := terminalNodeOutput(planData, tc.Nodes)
 	switch {
-	case stopped:
+	case stopped && (tc.Answer == "" || stoppedAt.After(tc.AnswerAt)):
+		// A stopped terminal's draft stands alone, badged, unless the turn delivered after the stop.
 		return out, "", true
+	case tc.Answer != "":
+		// What this turn delivered wins: a plan extended across turns keeps an older sink first.
+		return tc.Answer, tc.AsstThink, false
 	case out != "":
 		return out, tc.AsstThink, false
 	}
