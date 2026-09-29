@@ -135,3 +135,23 @@ func TestCitesSourcesGradesThePointedArtifact(t *testing.T) {
 		t.Fatalf("cites_sources = %+v ok=%v, want the artifact's fetched link graded 1", c, ok)
 	}
 }
+
+// TestOwnActivityExcludesSiblings: the writer-recovery prompt's activity is this node's own; a
+// sibling's search must not be offered to it as its own finding (the session-wide scan keeps it).
+func TestOwnActivityExcludesSiblings(t *testing.T) {
+	sess := newTestSession(t,
+		fnCall("1", "web_search", map[string]any{"query": "mine"}),
+		fnCall("2", "web_search", map[string]any{"query": "theirs"}),
+	)
+	i := 0
+	for ev := range sess.Events().All() {
+		ev.NodeInfo = &session.NodeInfo{Path: []string{"web-researcher-1@run1", "web-researcher-2@run2"}[i]}
+		i++
+	}
+	if got := strings.Join(scanSessionActivity(sess, "", "web-researcher-1", true).searches, ","); got != "mine" {
+		t.Errorf("own searches = %q, want only this node's", got)
+	}
+	if got := activityFromSessionAt(sess, "", "web-researcher-1").searches; len(got) != 2 {
+		t.Errorf("session-wide searches = %v, want both", got)
+	}
+}

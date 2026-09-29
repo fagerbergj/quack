@@ -95,6 +95,8 @@ type NodeControl interface {
 	RepeatFailure() (string, bool)
 	// ShuttingDown reports that the shutdown drain cut this node's run; boot resumes it.
 	ShuttingDown() bool
+	// NoteDraft records the latest draft, so a stop that never reaches delivery still keeps it.
+	NoteDraft(draft string)
 }
 
 const AskToolName = "ask_user"
@@ -578,8 +580,12 @@ func (g *gateRun) runWorkerOnce(input any, runID, stage, termMsg, failMsg string
 	if g.cancelled() {
 		return "", &gateExit{"", GateResult{}, nil} // round aborted mid-flight by CancelNode, not a real failure
 	}
-	// Log before returning (ADK swallows node errors into silent empty completion).
-	g.log.Error(failMsg, append(append([]any{}, extra...), "err", err)...)
+	// Log before returning (ADK swallows node errors into silent empty completion); a whole-run stop is no error.
+	level := slog.LevelError
+	if errors.Is(g.ctx.Err(), context.Canceled) {
+		level = slog.LevelInfo
+	}
+	g.log.Log(g.ctx, level, failMsg, append(append([]any{}, extra...), "err", err)...)
 	return "", &gateExit{"", GateResult{}, err}
 }
 
@@ -673,6 +679,11 @@ func (g *gateRun) continueWorker(sfx, answer string) (string, *gateExit) {
 		attribute.String(otelobs.ChatIDKey, g.cfg.ChatID), attribute.String("node_id", g.nodeID))
 	contAttempts := 0
 	for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, g.cfg.Task, g.actFor(answer), g.cfg.ReadOnly, hasDeliverTarget, g.cfg.IsReviewer, g.cfg.ExistingPR); attempt++ {
+		// A stopped node's aborted rounds come back empty without an error; don't keep calling.
+		if g.cancelled() {
+			contSpan.End()
+			return answer, nil
+		}
 		contAttempts = attempt
 		act := g.actFor(answer)
 		g.log.Warn("work not finished; continuing the worker with its tools",
@@ -708,14 +719,20 @@ func (g *gateRun) continueWorker(sfx, answer string) (string, *gateExit) {
 	return answer, nil
 }
 
+// ownActivity is this node's own session activity: the writer-recovery prompt must not offer a
+// sibling's searches as this node's findings (citation checks keep the session-wide scan).
+func (g *gateRun) ownActivity() workerActivity {
+	return scanSessionActivity(g.ctx.Session(), g.nodeDir, g.nodeID, true)
+}
+
 // writerRecovery: last-resort tool-less writer when the worker came up empty
 // after the continuation budget.
 func (g *gateRun) writerRecovery(question *genai.Content, answer string) (string, error) {
-	if strings.TrimSpace(answer) != "" {
+	if strings.TrimSpace(answer) != "" || g.cancelled() {
 		return answer, nil
 	}
 	g.log.Warn("worker still empty after continuation; falling back to the tool-less writer", "rounds", maxContinueRounds)
-	answer, err := runWriterFresh(g.ctx, g.workerModel, buildFinalizeContent(question, g.activity()), g.cfg.ChatID)
+	answer, err := runWriterFresh(g.ctx, g.workerModel, buildFinalizeContent(question, g.ownActivity()), g.cfg.ChatID)
 	if err != nil {
 		g.log.Error("writer recovery failed", "err", err)
 		return "", err
@@ -868,6 +885,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		if err != nil {
 			return "", GateResult{}, err
 		}
+		if g.ctrl != nil {
+			g.ctrl.NoteDraft(answer)
+		}
 		if action, q := g.boundaryCheck(); action != boundaryProceed {
 			if action == boundaryPaused {
 				return answer, GateResult{}, ErrNodePaused
@@ -979,6 +999,7 @@ func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (ou
 			break
 		}
 	}
+	j.stopIfCancelled()
 	if o := j.outcome; o != nil {
 		if o.err != nil {
 			return judgeRoundOutcome{answer: j.answer, res: j.res, err: o.err}
@@ -992,6 +1013,13 @@ func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (ou
 		return judgeRoundOutcome{answer: j.answer, res: j.res, exit: true}
 	}
 	return judgeRoundOutcome{answer: j.answer, res: j.res, checksSkipReason: j.checksSkipReason, episodicRoundsWritten: j.episodicRoundsWritten}
+}
+
+// stopIfCancelled: a stop that landed while the judge ran (even one that passed) is never delivered.
+func (j *judgeRounds) stopIfCancelled() {
+	if j.outcome == nil && j.ctrl != nil && j.ctrl.Cancelled() {
+		j.outcome = &judgeRoundOutcome{exit: true}
+	}
 }
 
 // roundGate: cooperative cancel/pause/queue before the round, the empty-answer
@@ -1209,7 +1237,9 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 		}
 	}
 	waitVerify := startVerify(ledgerCtx, j.cfg, j.answer, act)
-	v, jerr := runJudgeAgent(ledgerCtx, j.judge, j.cfg, attachScreenshots(j.question, shots), j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
+	abortCtx, endAbort := abortableRound(ledgerCtx, j.ctrl)
+	v, jerr := runJudgeAgent(abortCtx, j.judge, j.cfg, attachScreenshots(j.question, shots), j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
+	endAbort()
 	if jerr == nil { // a failed judge round fails closed without reading det; the verify goroutine ends on its own
 		if c, ok := waitVerify(); ok {
 			det[specificsSupportedCriterion] = c
@@ -1224,6 +1254,24 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 	return v, det, jerr
 }
 
+// abortableRound registers the judge call's cancel on ctrl as a worker round does, so a
+// per-node stop aborts the judge too instead of waiting it out.
+func abortableRound(ctx context.Context, ctrl NodeControl) (context.Context, func()) {
+	ra, ok := ctrl.(interface {
+		SetRoundAbort(context.CancelFunc)
+		ClearRoundAbort()
+	})
+	if !ok {
+		return ctx, func() {}
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	ra.SetRoundAbort(cancel)
+	return cctx, func() {
+		ra.ClearRoundAbort()
+		cancel()
+	}
+}
+
 // applyJudgeFailure: judge call failed - answer goes out unvetted, fail-closed
 // score, span closed with the error, unavailability metric (unless the run was cancelled).
 func (j *judgeRounds) applyJudgeFailure(round int, runID string, jspan *stageSpan, jerr error) {
@@ -1231,6 +1279,12 @@ func (j *judgeRounds) applyJudgeFailure(round int, runID string, jspan *stageSpa
 		// A stop or shutdown killed the judge, not a judge fault: end the round, don't deliver unvetted.
 		otelobs.End(jspan.span, jerr)
 		j.outcome = &judgeRoundOutcome{err: j.ctx.Err()}
+		return
+	}
+	if j.ctrl != nil && j.ctrl.Cancelled() {
+		// A per-node stop aborted the judge: the node stops here, undelivered, like a boundary stop.
+		otelobs.End(jspan.span, jerr)
+		j.outcome = &judgeRoundOutcome{exit: true}
 		return
 	}
 	// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
@@ -1359,6 +1413,9 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 		return true, nil
 	}
 	j.answer = revised
+	if j.ctrl != nil {
+		j.ctrl.NoteDraft(revised)
+	}
 	j.lastAnswerRunID = reviseRunID
 	return true, nil
 }
@@ -2494,7 +2551,13 @@ func writtenRel(nodeDir, cwd, p string) string {
 
 // activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.
 func activityFromSessionAt(sess session.Session, nodeDir, nodeID string) workerActivity {
+	return scanSessionActivity(sess, nodeDir, nodeID, false)
+}
+
+// scanSessionActivity: ownOnly skips every event another node produced.
+func scanSessionActivity(sess session.Session, nodeDir, nodeID string, ownOnly bool) workerActivity {
 	s := &activityScanner{
+		ownOnly:          ownOnly,
 		act:              workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
 		nodeDir:          nodeDir,
 		nodeID:           nodeID,
@@ -2522,6 +2585,9 @@ func (s *activityScanner) scanEvent(ev *session.Event) {
 		return
 	}
 	s.otherNode = s.nodeID != "" && ev.NodeInfo != nil && !pathHasNode(ev, s.nodeID)
+	if s.ownOnly && s.otherNode {
+		return
+	}
 	for _, p := range ev.Content.Parts {
 		if p == nil {
 			continue
@@ -2621,6 +2687,7 @@ type activityScanner struct {
 	nodeDir       string
 	nodeID        string          // artifact writes are credited to this node only; "" = any
 	otherNode     bool            // the event being scanned belongs to another node
+	ownOnly       bool            // skip other nodes' events entirely (see gateRun.ownActivity)
 	curCwd        string          // node-relative cwd ("" = node root)
 	writtenSeen   map[string]bool // dedup for written
 	artifactSeen  map[string]bool // dedup for artifactsWritten

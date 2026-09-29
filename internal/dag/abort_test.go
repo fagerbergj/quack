@@ -259,7 +259,129 @@ func TestStopDuringJudge(t *testing.T) {
 			if tc.want != "" && (!ok || ev.Name != tc.want) {
 				t.Errorf("n1 terminal = %q (ok=%v), want %s", ev.Name, ok, tc.want)
 			}
+			if d, isCancel := ev.Data.(stream.NodeCancelledData); isCancel && d.Output != "THE ANSWER" {
+				t.Errorf("node_cancelled output = %q, want the worker's draft carried", d.Output)
+			}
 		})
+	}
+}
+
+// passJudgeModel answers the worker, then makes the judge wait for release (ignoring ctx) and pass.
+type passJudgeModel struct {
+	judging, release chan struct{}
+	ignoreCtx        bool
+}
+
+func (passJudgeModel) Name() string { return "pass-judge" }
+
+func (m passJudgeModel) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if !gHasTool(req, "submit_verdict") {
+			yield(gText("THE ANSWER"), nil)
+			return
+		}
+		select {
+		case m.judging <- struct{}{}:
+		default:
+		}
+		if m.ignoreCtx {
+			<-m.release
+		} else {
+			select {
+			case <-m.release:
+			case <-ctx.Done():
+				yield(nil, ctx.Err())
+				return
+			}
+		}
+		yield(gCall("submit_verdict", map[string]any{"score": 0.95, "feedback": "good"}), nil)
+	}
+}
+
+// TestNodeStopDuringJudge: a per-node stop while the judge runs aborts the judge's call, and
+// even a judge that finishes anyway and passes delivers nothing - the node ends cancelled.
+func TestNodeStopDuringJudge(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ignoreCtx bool
+	}{{"judge aborted", false}, {"judge passes anyway", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := passJudgeModel{judging: make(chan struct{}, 1), release: make(chan struct{}), ignoreCtx: tc.ignoreCtx}
+			w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+				vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+			rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), rec.record), chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+			}()
+			select {
+			case <-m.judging:
+			case <-time.After(10 * time.Second):
+				t.Fatal("judge never started")
+			}
+			ex.CancelNode("chat", "n1")
+			if tc.ignoreCtx {
+				close(m.release)
+			} else {
+				defer close(m.release) // only an aborted judge call lets the node finish
+			}
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the stop never aborted the judge's call")
+			}
+			ev, ok := rec.of("n1")
+			if !ok || ev.Name != stream.EventNodeCancelled || !ex.NodeStopped("chat", "n1") {
+				t.Errorf("n1 terminal = %q (ok=%v) stopped=%v, want cancelled and undelivered", ev.Name, ok, ex.NodeStopped("chat", "n1"))
+			}
+		})
+	}
+}
+
+// emptyWorkerModel returns an empty answer every call; the first call waits for release.
+type emptyWorkerModel struct {
+	calls            *atomic.Int32
+	started, release chan struct{}
+}
+
+func (emptyWorkerModel) Name() string { return "empty" }
+
+func (m emptyWorkerModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if m.calls.Add(1) == 1 {
+			m.started <- struct{}{}
+			<-m.release
+		}
+		yield(gText(""), nil)
+	}
+}
+
+// TestStoppedNodeMakesNoMoreCalls: a node stopped before it had a draft neither runs its
+// continuation rounds nor the tool-less writer - no model call after the stop.
+func TestStoppedNodeMakesNoMoreCalls(t *testing.T) {
+	m := emptyWorkerModel{calls: &atomic.Int32{}, started: make(chan struct{}, 1), release: make(chan struct{})}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), func(stream.SSEEvent) {}), chainPlan, "quack", "u", "chat", nil, map[string]bool{"n1": true})
+	}()
+	<-m.started
+	ex.CancelNode("chat", "n1")
+	close(m.release)
+	<-done
+	if n := m.calls.Load(); n != 1 {
+		t.Errorf("model calls = %d, want 1 (none after the stop)", n)
 	}
 }
 

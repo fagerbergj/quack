@@ -134,6 +134,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		return e.NodeQueueGuidance(cancelKey, nodeID, gen)
 	})
 	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
+	ds.draftOf = func(nodeID string) string { return e.controls.draftOf(cancelKey, nodeID) }
 	ds.resumedFromByID = resumedFromByID
 	shutdown := func() bool { _, ok := e.controls.shutdown.Load(cancelKey); return ok }
 	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds, shutdown: shutdown}
@@ -421,6 +422,8 @@ type dagStream struct {
 	// every test, which is safe (handle's switch guards it) and keeps every
 	// existing newDagStream(...) test call site unchanged.
 	deliveredOf func(string) bool
+	// draftOf: the gate's latest draft for a node (NoteDraft); nil in tests.
+	draftOf func(string) string
 	// resumedFromByID: per-node dag.Node.ResumedFrom, keyed the same way as
 	// agentByID. Same "set post-construction" reason as deliveredOf; a nil
 	// map reads as "" everywhere, the fresh-node default.
@@ -800,6 +803,9 @@ func (s *dagStream) cancelledEvent(node string) stream.SSEEvent {
 	ev := stream.NodeCancelled(node)
 	d := ev.Data.(stream.NodeCancelledData)
 	d.Output = s.outputs[node]
+	if d.Output == "" && s.draftOf != nil {
+		d.Output = s.draftOf(node)
+	}
 	d.OutputPreview = preview(d.Output)
 	ev.Data = d
 	return stream.WithContextID(ev, s.contextOf(node))

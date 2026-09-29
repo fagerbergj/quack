@@ -123,6 +123,14 @@ func (c *nodeControl) MarkDelivered() {
 	}
 }
 
+// NoteDraft keeps the gate's latest draft past unregister: a whole-run stop mid-judge never
+// emits the node's Output event, so node_cancelled reads its draft from here.
+func (c *nodeControl) NoteDraft(draft string) {
+	if c.owner != nil && draft != "" {
+		c.owner.noteDraft(c.chatID, c.nodeID, draft)
+	}
+}
+
 // setLiveSteer/clearLiveSteer: the live round's forward hook, registered for
 // the round's duration only - see acp.Agent.round.
 func (c *nodeControl) setLiveSteer(f func(text string) bool) {
@@ -442,6 +450,7 @@ type runControls struct {
 	// (the race #1340 only closed for PauseShutdown; a live pause/cancel
 	// arriving in the same window still needs this, not the out!="" guess).
 	delivered map[string]map[string]bool
+	drafts    map[string]map[string]string // chatID -> nodeID -> latest worker draft, for a stop's node_cancelled
 	overrides map[string]map[string]string // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveNode.Task)
 	store     NodeStateStore
 	shutdown  sync.Map // chatID -> struct{}, see Executor.MarkShutdown
@@ -453,6 +462,7 @@ func newRunControls() *runControls {
 		cancelled: map[string]map[string]bool{},
 		paused:    map[string]map[string]PauseReason{},
 		delivered: map[string]map[string]bool{},
+		drafts:    map[string]map[string]string{},
 		overrides: map[string]map[string]string{},
 	}
 }
@@ -513,7 +523,23 @@ func (r *runControls) resetCancelled(chatID string) {
 	delete(r.cancelled, chatID)
 	delete(r.paused, chatID)
 	delete(r.delivered, chatID)
+	delete(r.drafts, chatID)
 	delete(r.overrides, chatID)
+}
+
+func (r *runControls) noteDraft(chatID, nodeID, draft string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.drafts[chatID] == nil {
+		r.drafts[chatID] = map[string]string{}
+	}
+	r.drafts[chatID][nodeID] = draft
+}
+
+func (r *runControls) draftOf(chatID, nodeID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.drafts[chatID][nodeID]
 }
 
 // registerAndTakeOverride registers the node and reads+deletes any pending task override atomically.
