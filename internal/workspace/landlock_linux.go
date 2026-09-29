@@ -107,7 +107,7 @@ func claimGrantFDs(paths []string) error {
 		}
 		fd, err := strconv.Atoi(n)
 		if _, serr := os.Stat(p); err != nil || serr != nil {
-			return fmt.Errorf("sandbox-exec: grant %s has no open handle: %v", p, errors.Join(err, serr))
+			return fmt.Errorf("sandbox-exec: grant %s has no open handle: %w", p, errors.Join(err, serr))
 		}
 		syscall.CloseOnExec(fd)
 	}
