@@ -118,6 +118,23 @@ func stampAssignmentMeta(tc agent.Context, planID string, nodeAgent map[string]s
 	}
 }
 
+// errStoppedNode is what the model gets for re-running a node the user stopped: the stop is
+// the user's decision for this turn, so only an explicit user retry may undo it.
+func errStoppedNode(nodeID string) error {
+	return fmt.Errorf("node %q was stopped by the user this turn - do not re-run, reassign or restate it; leave it stopped and carry on with other work, or ask the user", nodeID)
+}
+
+// refuseStopped rejects reusing a node the user stopped this turn.
+func refuseStopped(ctx context.Context, inputs []assignmentInput) error {
+	stopped := NodeStoppedFromContext(ctx)
+	for _, in := range inputs {
+		if in.NodeID != "" && stopped(in.NodeID) {
+			return errStoppedNode(in.NodeID)
+		}
+	}
+	return nil
+}
+
 // assignmentInput is one entry of create_plan/edit_plan's `assignments`
 // array: either NodeID (reuse an existing node - the caller never invents
 // one) or Agent (hire a new one), plus the work itself.

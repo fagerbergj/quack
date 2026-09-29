@@ -90,6 +90,9 @@ func newPlanRecord(tc agent.Context, c *recordstore.Client, nodeID string, githu
 	if err != nil {
 		return planUpsertResult{}, err
 	}
+	if err := refuseStopped(tc, inputs); err != nil {
+		return planUpsertResult{}, err
+	}
 	assignments, minted, err := upsertNodes(inputs, existing, nodeIsRunning, tc.SessionID(), allowedKinds, agents)
 	if err != nil {
 		return planUpsertResult{}, err

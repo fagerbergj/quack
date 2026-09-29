@@ -291,6 +291,11 @@ func provisionAndPersist(tc agent.Context, plan *dag.Plan, provision ProvisionFu
 func executeStep(tc agent.Context, c *recordstore.Client, rec *dag.DagPlanRecord, plan *dag.Plan, runStep RunStepFunc) (results []assignmentResult, stepPaused, stepFailed bool, err error) {
 	run, seeded := partitionAssignments(rec.Assignments)
 	stopped := NodeStoppedFromContext(tc)
+	for nid := range run {
+		if stopped(nid) {
+			return nil, false, false, errStoppedNode(nid)
+		}
+	}
 	var outputs map[string]string
 	var needsInput map[string]bool
 	var started map[string]bool
@@ -340,7 +345,8 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 	// Only deliver on a step whose own run succeeded - a failed or paused
 	// delivering node must not mark the plan done and finalize on garbage.
 	// Only a delivering step has an answer to lose; a partial step just reports the cancelled node.
-	terminalStopped := rec.Delivery != nil && stoppedTerminal(*plan, results)
+	sink := stepSink(*plan, results)
+	terminalStopped := rec.Delivery != nil && stoppedResult(results, sink)
 	delivering := rec.Delivery != nil && !stepPaused && !stepFailed && !terminalStopped
 	rec.Status = "running"
 	if delivering {
@@ -354,7 +360,8 @@ func finishExecStep(tc agent.Context, c *recordstore.Client, cache *PlanCache, f
 	emitPlanEvent(tc, plan, step)
 
 	if delivering && finalize != nil {
-		cache.SetDelivered(finalize(tc, *plan, DeliverableResults(rec.Assignments)))
+		// Only the step's own sink: finalize would otherwise pick the plan's first sink.
+		cache.SetDelivered(finalize(tc, *plan, map[string]string{sink: DeliverableResults(rec.Assignments)[sink]}))
 	}
 	if delivering || stepPaused || terminalStopped {
 		// End the llmagent turn: delivery fired (nothing more to plan) or a node
@@ -458,27 +465,57 @@ func DeliverableResults(assignments []dag.Assignment) map[string]string {
 }
 
 // stoppedSummary tells the orchestrator model what a cancelled assignment means.
-const stoppedSummary = "stopped by the user before it finished - do not re-run or re-plan this work"
+const stoppedSummary = "stopped by the user before it finished - do not re-run or re-plan this work, " +
+	"and do not relay or restate its unreviewed draft as your answer"
 
-// stoppedTerminal reports this step stopped the plan's terminal node, so there is no answer to deliver.
-func stoppedTerminal(plan dag.Plan, results []assignmentResult) bool {
-	id := TerminalNodeID(plan)
+// stoppedResult reports this step stopped nodeID, so it has no answer to deliver.
+func stoppedResult(results []assignmentResult, nodeID string) bool {
 	for _, r := range results {
-		if r.NodeID == id && r.Status == "cancelled" {
+		if r.NodeID == nodeID && r.Status == "cancelled" {
 			return true
 		}
 	}
 	return false
 }
 
-// TerminalNodeID is the plan's terminal node: the first with no successor.
-func TerminalNodeID(plan dag.Plan) string {
-	hasSuccessor := make(map[string]bool, len(plan.Nodes))
-	for _, n := range plan.Nodes {
-		for _, dep := range n.DependsOn {
-			hasSuccessor[dep] = true
+// stepSink is the node a delivering step answers with: the first node this step ran that no
+// other node it ran depends on - in an extended plan, not an earlier turn's (re-wired) sink.
+func stepSink(plan dag.Plan, results []assignmentResult) string {
+	ran := make(map[string]bool, len(results))
+	for _, r := range results {
+		if r.Status != "queued" {
+			ran[r.NodeID] = true
 		}
 	}
+	ranSuccessor := map[string]bool{}
+	for _, n := range plan.Nodes {
+		for _, dep := range n.DependsOn {
+			if ran[n.ID] {
+				ranSuccessor[dep] = true
+			}
+		}
+	}
+	for _, n := range plan.Nodes {
+		if ran[n.ID] && !ranSuccessor[n.ID] {
+			return n.ID
+		}
+	}
+	return TerminalNodeID(plan)
+}
+
+func successors(plan dag.Plan) map[string]bool {
+	has := make(map[string]bool, len(plan.Nodes))
+	for _, n := range plan.Nodes {
+		for _, dep := range n.DependsOn {
+			has[dep] = true
+		}
+	}
+	return has
+}
+
+// TerminalNodeID is the plan's terminal node: the first with no successor.
+func TerminalNodeID(plan dag.Plan) string {
+	hasSuccessor := successors(plan)
 	for _, n := range plan.Nodes {
 		if !hasSuccessor[n.ID] {
 			return n.ID
