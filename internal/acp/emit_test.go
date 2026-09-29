@@ -9,8 +9,11 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 func TestTeeBufferLinesSkipsBlankAndInvalidJSON(t *testing.T) {
@@ -162,3 +165,31 @@ func (c *captureExporter) Export(_ context.Context, records []sdklog.Record) err
 }
 func (c *captureExporter) Shutdown(context.Context) error   { return nil }
 func (c *captureExporter) ForceFlush(context.Context) error { return nil }
+
+// TestRound_InvokeAgentRecordedWithoutCtxCoords: a resumed or retried round runs on a ctx
+// with no ledger coords; its agent.invoke must still land under the stamped chat.
+func TestRound_InvokeAgentRecordedWithoutCtxCoords(t *testing.T) {
+	store := ledgertest.NewMemStore()
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	a := testAgent(t, "happy")
+	a.SetLedgerCoords(ledger.Coords{ChatID: "chat-resumed", Node: "n1", Agent: "code-implementer"})
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	entries, err := store.ReadEntries(context.Background(), "chat-resumed", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invokes int
+	for _, e := range entries {
+		if e.Kind == ledger.KindAgentInvoke && e.NodeID == "n1" {
+			invokes++
+		}
+	}
+	if invokes != 1 {
+		t.Fatalf("agent.invoke entries for n1 = %d (ledger %+v), want 1", invokes, entries)
+	}
+}
