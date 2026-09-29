@@ -789,7 +789,11 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     if (!activeChatId || !activeChat?.status || activeChat.archived) return
     if (seededChatId !== activeChatId) return // wait for the getChat effect's own attach - see seededChatId above
     const s = activeChat.status
-    if (s === 'running') {
+    if (s !== 'running') return
+    const live = store.get(activeChatId).live
+    if (live && !live.streaming) {
+      void api.getChat(activeChatId).then(detail => store.reattach(activeChatId, detail.turns)).catch(() => {})
+    } else {
       store.attach(activeChatId)
     }
   }, [activeChatId, activeChat?.status, activeChat?.archived, seededChatId])

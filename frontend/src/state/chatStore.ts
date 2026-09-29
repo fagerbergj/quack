@@ -88,10 +88,9 @@ interface LiveTurn {
   runs: AgentRun[]       // agent runs (thinking, tool calls) at the top level
   streaming: boolean
   error: string
-  // The turn's persisted answer: shown once the run ends, since a replayed or retried run streams
-  // only the nodes it re-ran. refetchAnswer: re-read it when this run (a retry or start) ends.
+  // The turn's persisted answer: shown once the run ends, since a replayed or retried run streams only the
+  // nodes it re-ran. Set (even '') for an existing turn's run, which re-reads it at done.
   answer?: string
-  refetchAnswer?: boolean
 }
 
 // QueuedTurn is a follow-up message typed while the chat's run is still
@@ -386,7 +385,7 @@ export class ChatStore {
       nodeAnswer[id] = ''
       nodeRuns[id] = []
     }
-    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', answer: undefined, refetchAnswer: true, dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
+    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', answer: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
     const generation = this.bumpGeneration(chatId)
     fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/start`, {
       method: 'POST',
@@ -510,7 +509,7 @@ export class ChatStore {
       nodeAnswer[id] = ''
       nodeRuns[id] = []
     }
-    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', answer: undefined, refetchAnswer: true, dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
+    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', answer: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
     const g = guidance?.trim()
     const generation = this.bumpGeneration(chatId)
     fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
@@ -601,6 +600,15 @@ export class ChatStore {
 
     const generation = this.bumpGeneration(chatId)
     this.subscribeToStream(chatId, generation)
+  }
+
+  // reattach watches a run started elsewhere (a CLI retry, a webhook) on a chat whose last run already
+  // finished here: re-seeded from the server, attach lifts that run's own turn, not the one before it.
+  reattach(chatId: string, turns: Turn[]): void {
+    const cur = this.states.get(chatId)
+    if (!cur?.live || cur.live.streaming || this.eventSources.has(chatId)) return
+    this.write(chatId, { ...cur, turns, live: undefined })
+    this.attach(chatId)
   }
 
   // Opens the GET .../stream EventSource through the same handlers the POST
@@ -1002,18 +1010,22 @@ export class ChatStore {
     const s = this.states.get(chatId)
     if (!s?.live) return
     this.write(chatId, { ...s, live: { ...s.live, streaming: false } })
-    if (s.live.dag && s.live.refetchAnswer && s.live.id) void this.refetchAnswer(chatId, s.live.id)
+    if (s.live.dag && s.live.answer !== undefined && s.live.id) void this.refetchAnswer(chatId, s.live.id)
     this.drainQueue(chatId)
   }
 
-  // refetchAnswer re-reads a retried turn's persisted answer: its stream carried only the re-run nodes.
+  // refetchAnswer re-reads a re-run turn's persisted answer: its stream carried only the re-run nodes.
   private async refetchAnswer(chatId: string, turnId: string): Promise<void> {
-    const res = await fetch(`/api/v1/chats/${chatId}/responses/${turnId}`).catch(() => undefined)
-    if (!res?.ok) return
-    const turn = (await res.json().catch(() => undefined)) as Turn | undefined
+    let turn: Turn | undefined
+    try {
+      const res = await fetch(`/api/v1/chats/${chatId}/responses/${turnId}`)
+      turn = res?.ok ? ((await res.json()) as Turn) : undefined
+    } catch {
+      return
+    }
     const s = this.states.get(chatId)
     if (!turn || !s?.live || s.live.id !== turnId || s.live.streaming) return
-    this.write(chatId, { ...s, live: { ...s.live, answer: textFromTurn(turn), refetchAnswer: false } })
+    this.write(chatId, { ...s, live: { ...s.live, answer: textFromTurn(turn) } })
   }
 
   private bumpGeneration(chatId: string): number {

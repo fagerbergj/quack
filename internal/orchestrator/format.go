@@ -125,14 +125,20 @@ func formatAnswer(ctx context.Context, m model.LLM, message, answer, chatID stri
 	return answer
 }
 
-// finalizeAnswer: single place every delivery path formats node outputs for the user. recStopped flags
+// finalizeAnswer: the answer a step or bound run first delivers, formatted if needed. recStopped flags
 // sinks a record says were stopped in an earlier turn, when the executor's own flag is gone.
 func (o *Orchestrator) finalizeAnswer(ctx context.Context, plan dag.Plan, nodeOutputs map[string]string, chatID string, recStopped map[string]bool) string {
-	stopped := func(id string) bool { return recStopped[id] || o.executor.NodeStopped(chatID, id) }
-	answer, sectioned := tools.DeliveredAnswer(plan, nodeOutputs, stopped)
+	answer, sectioned := o.sinkAnswer(plan, nodeOutputs, chatID, recStopped)
 	// Sections are already structured, and a format pass could merge them into the synthesis the plan left out.
 	if sectioned || !needsFormatPass(plan, answer) {
 		return answer
 	}
 	return formatAnswer(ctx, o.model, plan.UserMessage, answer, chatID)
+}
+
+// sinkAnswer is the sinks' answer verbatim - what a retry or resume delivers: the node's own output, never
+// re-worded against the turn's message.
+func (o *Orchestrator) sinkAnswer(plan dag.Plan, nodeOutputs map[string]string, chatID string, recStopped map[string]bool) (string, bool) {
+	stopped := func(id string) bool { return recStopped[id] || o.executor.NodeStopped(chatID, id) }
+	return tools.DeliveredAnswer(plan, nodeOutputs, stopped)
 }

@@ -330,7 +330,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		o.settleRetried(ctx, userID, chatID, plan.ID, ds.Started(), nodeOutputs)
 		started := ds.Started()
 		outputs, recStopped := o.withRecordedSinks(ctx, userID, chatID, plan, nodeOutputs, func(id string) bool { return started[id] })
-		if answer := o.finalizeAnswer(ctx, plan, outputs, chatID, recStopped); answer != "" {
+		if answer, _ := o.sinkAnswer(plan, outputs, chatID, recStopped); answer != "" {
 			o.persistAnswer(ctx, userID, chatID, answer)
 		}
 	}
@@ -876,7 +876,8 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 // there because the executor's own stop flag is gone once the turn that stopped it ended.
 func (o *Orchestrator) deliverFromRecord(ctx context.Context, userID, sessionID string, plan dag.Plan, rec dag.DagPlanRecord) {
 	final, stopped := tools.DeliverableResults(rec.Assignments)
-	o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, onlySinks(final, rec.Sinks), sessionID, stopped))
+	answer, _ := o.sinkAnswer(plan, onlySinks(final, rec.Sinks), sessionID, stopped)
+	o.persistAnswer(ctx, userID, sessionID, answer)
 }
 
 // onlySinks keeps just the recorded step's sinks, so an extended plan's earlier turns' sinks stay out
@@ -1080,7 +1081,8 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, plan
 			_, ran := nodeOutputs[id]
 			return ran
 		})
-		o.persistAnswer(ctx, userID, sessionID, o.finalizeAnswer(ctx, plan, outputs, sessionID, recStopped))
+		answer, _ := o.sinkAnswer(plan, outputs, sessionID, recStopped)
+		o.persistAnswer(ctx, userID, sessionID, answer)
 	}
 	yield(stream.Done(), nil)
 }

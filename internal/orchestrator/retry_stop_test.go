@@ -242,7 +242,8 @@ func TestWithRecordedSinks_NoRecordMasksUnreviewedSeed(t *testing.T) {
 func TestWithRecordedSinks_ExtendedPlanKeepsItsStepSinks(t *testing.T) {
 	sessions := session.InMemoryService()
 	svc := artifact.InMemoryService()
-	o := &Orchestrator{sessions: sessions, artifacts: svc, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	// A model that would reword: retry and resume deliver the node's own output, never a format pass.
+	o := &Orchestrator{sessions: sessions, artifacts: svc, model: answerModel{text: "REFORMATTED"}, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
 	ctx := context.Background()
 	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "c", "", dag.DagPlanRecord{
 		PlanID: "p", Sinks: []string{"r3"},
@@ -252,7 +253,7 @@ func TestWithRecordedSinks_ExtendedPlanKeepsItsStepSinks(t *testing.T) {
 	}
 	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "r1"}, {ID: "r2"}, {ID: "r3"}}}
 	outputs, recStopped := o.withRecordedSinks(ctx, "u", "c", plan, map[string]string{"r1": "R1", "r2": "R2", "r3": "NEW R3"}, func(id string) bool { return id == "r3" })
-	if got := o.finalizeAnswer(ctx, plan, outputs, "c", recStopped); got != "NEW R3" {
+	if got, _ := o.sinkAnswer(plan, outputs, "c", recStopped); got != "NEW R3" {
 		t.Errorf("finalizeAnswer = %q, want only this step's sink", got)
 	}
 	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "c"}); err != nil {
@@ -338,7 +339,8 @@ func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
 	sessions := session.InMemoryService()
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
 		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
-	orch := New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
+	// The orchestrator's model would reword a formatted answer; a retry delivers r3's output verbatim.
+	orch := New(sessions, answerModel{text: "REFORMATTED"}, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
 	svc := artifact.InMemoryService()
 	orch.SetArtifacts(svc)
 	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{

@@ -2090,6 +2090,23 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
     expect(liveAnswerText(store.get('c').live!)).toBe(sectioned)
   })
 
+  it('a retry started elsewhere (the CLI) on an open page re-reads the persisted answer at done', async () => {
+    const store = new ChatStore()
+    store.seed('c', [retriedTurn])
+    store.attach('c')
+    replayRetryOfR1(FakeEventSource.last!)
+    const updated = '## r1\n\nCLI ONE\n\n## r2\n\nTWO'
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...retriedTurn, output: [retriedTurn.output[0], { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: updated }] }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    // The poll sees the chat running again; the page re-seeds from GET /chats/{id} and watches.
+    store.reattach('c', [retriedTurn])
+    const es = FakeEventSource.last!
+    expect(store.get('c').live?.id).toBe('t1')
+    replayRetryOfR1(es)
+    await vi.waitFor(() => expect(liveAnswerText(store.get('c').live!)).toBe(updated))
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/chats/c/responses/t1')
+  })
+
   it('a live retry re-reads the persisted answer when its run ends', async () => {
     const store = new ChatStore()
     store.seed('c', [retriedTurn])
