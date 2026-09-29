@@ -150,7 +150,7 @@ func TestOrchestrator_NodePausedMidStep_StartNodeResumesAndFinishes(t *testing.T
 		}
 		return true
 	}
-	o.StartNode(context.Background(), "u", "chat", "asker-1", "north", collect)
+	o.StartNode(context.Background(), "u", "chat", "", "asker-1", "north", collect)
 
 	if hasEvent(resumeEvs, stream.EventError) {
 		t.Fatalf("StartNode resume surfaced an error; events=%v", resumeEvs)
@@ -219,7 +219,7 @@ func TestOrchestrator_ResumedNodeFails_ReportsFailedAndDoesNotFinalize(t *testin
 		}
 		return true
 	}
-	o.StartNode(context.Background(), "u", "chat", "asker-1", "north", collect)
+	o.StartNode(context.Background(), "u", "chat", "", "asker-1", "north", collect)
 
 	if hasEvent(resumeEvs, stream.EventError) {
 		t.Fatalf("StartNode resume surfaced an error; events=%v", resumeEvs)
@@ -381,7 +381,7 @@ func TestOrchestrator_ResumeDrivesUnblockedDependent_BThenCDelivers(t *testing.T
 		}
 		return true
 	}
-	o.StartNode(context.Background(), "u", "chat", "asker-1", "north", collect)
+	o.StartNode(context.Background(), "u", "chat", "", "asker-1", "north", collect)
 
 	if hasEvent(resumeEvs, stream.EventError) {
 		t.Fatalf("StartNode resume surfaced an error; events=%v", resumeEvs)

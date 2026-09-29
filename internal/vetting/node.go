@@ -93,6 +93,8 @@ type NodeControl interface {
 	// is reported as a real failure, not the user-cancel path's silent
 	// empty continue-but-warn.
 	RepeatFailure() (string, bool)
+	// ShuttingDown reports that the shutdown drain cut this node's run; boot resumes it.
+	ShuttingDown() bool
 }
 
 const AskToolName = "ask_user"
@@ -805,13 +807,13 @@ func (g *gateRun) finish(span oteltrace.Span, res GateResult, err error) {
 	}
 }
 
-// terminalKind: "" for a paused node (user or shutdown), which resumes later and
-// so has no terminal outcome yet; a stop or cancel is node.cancelled, not node.failed.
+// terminalKind: "" for a paused or shutdown-cut node, which resumes later and so has
+// no terminal outcome yet; a stop or cancel is node.cancelled, not node.failed.
 func (g *gateRun) terminalKind(err error) string {
 	switch {
 	case err == nil:
 		return ledger.KindNodeDone
-	case g.paused():
+	case g.paused() || g.ctrl != nil && g.ctrl.ShuttingDown():
 		return ""
 	case g.cancelled() || errors.Is(g.nodeCtx.Err(), context.Canceled):
 		return ledger.KindNodeCancelled

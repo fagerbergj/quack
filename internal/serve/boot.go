@@ -59,11 +59,6 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 		slog.Error("resume paused dag nodes", "component", "store", "err", err)
 		return nil
 	}
-	if n, err := st.SyncTerminalDagNodeRecords(ctx); err != nil {
-		slog.Warn("sync finished nodes' dag_node records", "component", "store", "err", err)
-	} else {
-		slog.Debug("checked finished nodes' dag_node records against their rows", "component", "startup", "nodes", n)
-	}
 	// After the reconcile: a hard-kill orphan is `paused` by now, so the chat
 	// scan sees it and stamps the chat paused instead of interrupted.
 	pausedChats, interrupted, err := st.ScanOrphanedRuns(ctx)
@@ -87,6 +82,17 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 		removeStaleCloneDir(jail, id)
 	}
 	return rep.Start
+}
+
+// syncFinishedNodeRecords repairs recent finished nodes' dag_node records off the boot path;
+// older plans are left alone, as boot never resumes them either.
+func syncFinishedNodeRecords(ctx context.Context, st *store.Store) {
+	n, err := st.SyncTerminalDagNodeRecords(ctx, time.Now().Add(-staleResumePlanCeiling))
+	if err != nil {
+		slog.Warn("sync finished nodes' dag_node records", "component", "startup", "err", err)
+		return
+	}
+	slog.Info("checked finished nodes' dag_node records against their rows", "component", "startup", "nodes", n)
 }
 
 // removeStaleCloneDir clears an interrupted chat's shared-repo clone (#1213) so the retry's setup

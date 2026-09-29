@@ -35,6 +35,7 @@ func (c *basePromptCtrl) Paused() bool                  { return false }
 func (c *basePromptCtrl) PauseForInput(string)          {}
 func (c *basePromptCtrl) MarkDelivered()                {}
 func (c *basePromptCtrl) RepeatFailure() (string, bool) { return "", false }
+func (c *basePromptCtrl) ShuttingDown() bool            { return false }
 func (c *basePromptCtrl) TakeQueued() string {
 	if c.taken {
 		return ""

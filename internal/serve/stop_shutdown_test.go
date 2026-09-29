@@ -170,6 +170,7 @@ func TestDriveResume_UnresumableSettlesNode(t *testing.T) {
 	}{
 		{"no plan in session", nil},
 		{"session holds the previous plan", &dag.Plan{ID: "p0", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "old"}}}},
+		{"plan lacks the node", &dag.Plan{ID: "p1", Nodes: []dag.Node{{ID: "n0", AgentName: "w", Task: "step one"}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStopFixture(t)
@@ -234,20 +235,43 @@ func TestFailUnresumable_KeepsReusedNodeRecord(t *testing.T) {
 }
 
 // TestDriveResume_LoadsNodePlanFromStore: a run cut mid-execute never committed the
-// session stash, so resume runs the node's own plan from the store's copy.
+// session stash, so resume runs the node's own plan from the store's copy - including
+// when the stash holds an earlier step of the same growing plan (same id, no n1 yet).
 func TestDriveResume_LoadsNodePlanFromStore(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stash *dag.Plan
+	}{
+		{"no stash", nil},
+		{"stash holds step one", &dag.Plan{ID: "p1", Nodes: []dag.Node{{ID: "n0", AgentName: "blk", Task: "TASK-ZERO"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { resumeFromStoreCopy(t, tc.stash) })
+	}
+}
+
+func resumeFromStoreCopy(t *testing.T, stash *dag.Plan) {
 	f := newStopFixture(t)
 	ctx := context.Background()
-	plan := dag.Plan{ID: f.plan.ID, UserMessage: "x", Nodes: []dag.Node{{ID: "n1", AgentName: "blk", Task: "TASK-ONE"}}}
+	plan := dag.Plan{ID: f.plan.ID, UserMessage: "x", Nodes: []dag.Node{{ID: "n0", AgentName: "blk", Task: "TASK-ZERO"}, {ID: "n1", AgentName: "blk", Task: "TASK-ONE"}}}
 	planJSON, _ := json.Marshal(plan)
-	if err := f.st.SaveExecPlan(ctx, plan.ID, string(planJSON)); err != nil {
+	if err := f.st.SaveExecPlan(ctx, f.chatID, plan.ID, string(planJSON)); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.st.UpsertDagNode(ctx, store.DagNode{PlanID: plan.ID, NodeID: "n1", Status: string(dag.StatusRunning)}); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.st.UpsertDagNode(ctx, store.DagNode{PlanID: plan.ID, NodeID: "n0", Status: string(dag.StatusDone), Output: "ZERO-OUT"}); err != nil {
+		t.Fatal(err)
+	}
 	stub := &resumeStubLLM{}
-	sessions := session.InMemoryService() // no stash: execute's tool response never landed
+	sessions := session.InMemoryService()
+	if stash != nil {
+		stashJSON, _ := json.Marshal(stash)
+		if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: f.userID, SessionID: f.chatID,
+			State: map[string]any{tools.ExecPlanKey: string(stashJSON)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ag, err := llmagent.New(llmagent.Config{Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer."})
 	if err != nil {
 		t.Fatal(err)
@@ -267,6 +291,9 @@ func TestDriveResume_LoadsNodePlanFromStore(t *testing.T) {
 	if n := f.row(t); n.Status != string(dag.StatusDone) {
 		t.Errorf("row = %s (error %q), want done", n.Status, n.Error)
 	}
+	if got, ok := f.st.LoadExecPlan(ctx, plan.ID); !ok || len(got.Nodes) != 2 {
+		t.Errorf("stored plan = %+v, want the two-node copy kept", got)
+	}
 }
 
 // TestSyncTerminalDagNodeRecords: a finished row whose record an earlier process left
@@ -278,7 +305,7 @@ func TestSyncTerminalDagNodeRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	dag.SetAgentRoster(nil)
-	if n, err := f.st.SyncTerminalDagNodeRecords(ctx); err != nil || n != 1 {
+	if n, err := f.st.SyncTerminalDagNodeRecords(ctx, time.Now().Add(-time.Hour)); err != nil || n != 1 {
 		t.Fatalf("SyncTerminalDagNodeRecords = %d, %v; want 1 node checked", n, err)
 	}
 	if got := f.record(t); got != dag.StatusFailed {

@@ -1163,7 +1163,7 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 		publish(stream.ResponseCreated(dp.TurnID))
 
 		userID := h.sessionUser(runCtx, chatID)
-		for ev, err := range iterFromStart(runCtx, h.orch, userID, chatID, nodeID, message) {
+		for ev, err := range iterFromStart(runCtx, h.orch, userID, chatID, dp.ID, nodeID, message) {
 			if err != nil {
 				publish(stream.Errorf(err.Error()))
 				break
@@ -1178,9 +1178,9 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 
 // iterFromStart adapts Orchestrator.StartNode's yield-callback shape to the
 // iter.Seq2 the other node-run helpers range over.
-func iterFromStart(ctx context.Context, o *orchestrator.Orchestrator, userID, chatID, nodeID, message string) iter.Seq2[stream.SSEEvent, error] {
+func iterFromStart(ctx context.Context, o *orchestrator.Orchestrator, userID, chatID, planID, nodeID, message string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		o.StartNode(ctx, userID, chatID, nodeID, message, yield)
+		o.StartNode(ctx, userID, chatID, planID, nodeID, message, yield)
 	}
 }
 

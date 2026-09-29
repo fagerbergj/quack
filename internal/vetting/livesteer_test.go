@@ -51,6 +51,7 @@ func (c *steerCtrl) TakeQueued() string {
 func (c *steerCtrl) PauseForInput(string)          {}
 func (c *steerCtrl) MarkDelivered()                {}
 func (c *steerCtrl) RepeatFailure() (string, bool) { return "", false }
+func (c *steerCtrl) ShuttingDown() bool            { return false }
 
 // steerStub drives one worker round with TWO model calls: call 1 asks for a
 // tool, call 2 answers. The steer is queued between them.

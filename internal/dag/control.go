@@ -192,6 +192,14 @@ func (c *nodeControl) RepeatFailure() (string, bool) {
 	return msg, msg != ""
 }
 
+func (c *nodeControl) ShuttingDown() bool {
+	if c.owner == nil {
+		return false
+	}
+	_, ok := c.owner.shutdown.Load(c.chatID)
+	return ok
+}
+
 func (c *nodeControl) Cancelled() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -436,6 +444,7 @@ type runControls struct {
 	delivered map[string]map[string]bool
 	overrides map[string]map[string]string // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveNode.Task)
 	store     NodeStateStore
+	shutdown  sync.Map // chatID -> struct{}, see Executor.MarkShutdown
 }
 
 func newRunControls() *runControls {

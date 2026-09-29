@@ -488,8 +488,8 @@ func (c *Client) SaveStructured(ctx context.Context, kind string, doc any, hint 
 	return c.saveStructured(ctx, kind, doc, hint, lineage, true)
 }
 
-// ResaveStructured is SaveStructured minus the kind's validator, for a system rewrite of
-// a record it already accepted whose rules depend on live state (dag_node's agent roster).
+// ResaveStructured is SaveStructured minus the kind's validator. System rewrites only, of a
+// record the validator already accepted whose rules depend on live state (dag_node's roster).
 func (c *Client) ResaveStructured(ctx context.Context, kind string, doc any, hint string, lineage Lineage) (string, int, error) {
 	return c.saveStructured(ctx, kind, doc, hint, lineage, false)
 }

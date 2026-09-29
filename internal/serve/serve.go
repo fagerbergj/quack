@@ -853,6 +853,7 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 	// Re-enter each resumed node's graph only after the orchestrator exists:
 	// a crash here leaves them paused; the next boot picks them up (reconcile already ran).
 	startResumedNodes(ctx, resumeNodes, orch, st, runHub, bootEventLog, bootResumeConcurrency)
+	go syncFinishedNodeRecords(ctx, st)
 	for _, start := range startSweeps {
 		start()
 	}

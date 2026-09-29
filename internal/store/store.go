@@ -134,9 +134,17 @@ type DagPlan struct {
 	TurnID    string    `gorm:"index" json:"turn_id"`
 	PlanJSON  string    `json:"plan_json"`
 	CreatedAt time.Time `json:"created_at"`
-	// ExecPlanJSON is the latest full dag.Plan run under this id; unlike the session
-	// stash it is written as the plan starts, so a run cut mid-execute can still resume.
-	ExecPlanJSON string `json:"-"`
+}
+
+// DagExecPlan is a chat's latest full dag.Plan, one row per chat (only the latest plan is
+// ever resumed). Unlike the session stash it is written as the plan starts, so a run cut
+// mid-execute can still resume; its own table keeps the blob off every dag_plans read.
+type DagExecPlan struct {
+	ChatID string `gorm:"primaryKey"`
+	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	Chat     Chat `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE"`
+	PlanID   string
+	PlanJSON string
 }
 
 // ChatEvent backs the hub's durable replay after restart. Cleared on new run per chat.
@@ -476,7 +484,7 @@ func (s *Store) Artifacts() artifact.Service { return s.artifacts }
 
 // chatFKTables are the tables gaining the chats(id) ON DELETE CASCADE FK
 // (#1296), in the same order New() migrates them.
-var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints"}
+var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints", "dag_exec_plans"}
 
 // chatFKModels maps each of chatFKTables to the struct sweepOrphanChatRows checks
 // HasConstraint against - every one carries a field named "Chat" for exactly this FK.
@@ -486,6 +494,7 @@ var chatFKModels = map[string]any{
 	"chat_events":           &ChatEvent{},
 	"projection_watermarks": &ProjectionWatermark{},
 	"ledger_checkpoints":    &Checkpoint{},
+	"dag_exec_plans":        &DagExecPlan{},
 }
 
 // sweepOrphanChatRows deletes rows whose chat_id has no matching chats row,
@@ -529,7 +538,7 @@ func New(kind, url string) (*Store, error) {
 	if err := sweepOrphanChatRows(db); err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}, &DagExecPlan{}); err != nil {
 		return nil, err
 	}
 	// database.NewSessionService below calls gorm.Open again against the SAME
@@ -829,6 +838,9 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 			}
 		}
 		if err := tx.Where("chat_id = ?", id).Delete(&DagPlan{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("chat_id = ?", id).Delete(&DagExecPlan{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("chat_id = ?", id).Delete(&ChatTurn{}).Error; err != nil {
@@ -1145,20 +1157,24 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(p).Error
 }
 
-// SaveExecPlan records planID's full dag.Plan JSON; later steps of the same plan overwrite it.
-func (s *Store) SaveExecPlan(ctx context.Context, planID, execJSON string) error {
-	return s.db.WithContext(ctx).Model(&DagPlan{}).Where("id = ?", planID).Update("exec_plan_json", execJSON).Error
+// SaveExecPlan records chatID's latest full dag.Plan JSON, replacing any earlier plan's
+// (and an earlier step of the same growing plan's).
+func (s *Store) SaveExecPlan(ctx context.Context, chatID, planID, execJSON string) error {
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"plan_id", "plan_json"}),
+	}).Create(&DagExecPlan{ChatID: chatID, PlanID: planID, PlanJSON: execJSON}).Error
 }
 
-// LoadExecPlan returns planID's full dag.Plan as SaveExecPlan stored it; false when
-// there is none (a plan saved before this column existed, or never executed).
+// LoadExecPlan returns planID's full dag.Plan as SaveExecPlan stored it; false when there
+// is none (superseded by a later plan, or run before this table existed).
 func (s *Store) LoadExecPlan(ctx context.Context, planID string) (dag.Plan, bool) {
-	var p DagPlan
-	if err := s.db.WithContext(ctx).Where("id = ?", planID).First(&p).Error; err != nil || p.ExecPlanJSON == "" {
+	var row DagExecPlan
+	if err := s.db.WithContext(ctx).Where("plan_id = ?", planID).First(&row).Error; err != nil {
 		return dag.Plan{}, false
 	}
 	var plan dag.Plan
-	if err := json.Unmarshal([]byte(p.ExecPlanJSON), &plan); err != nil || plan.ID != planID {
+	if err := json.Unmarshal([]byte(row.PlanJSON), &plan); err != nil || plan.ID != planID {
 		return dag.Plan{}, false
 	}
 	return plan, true
@@ -1487,9 +1503,9 @@ func (s *Store) appendNodeFailed(ctx context.Context, chatID string, n DagNode) 
 	}
 }
 
-// SyncTerminalDagNodeRecords points every finished node of each chat's latest plan at its
-// row's status, repairing records an earlier process left behind; returns how many it scanned.
-func (s *Store) SyncTerminalDagNodeRecords(ctx context.Context) (int, error) {
+// SyncTerminalDagNodeRecords points every finished node of each chat's latest plan created
+// since then at its row's status, repairing records an earlier process left behind; returns how many it checked.
+func (s *Store) SyncTerminalDagNodeRecords(ctx context.Context, since time.Time) (int, error) {
 	var rows []struct {
 		ChatID, PlanID, NodeID, Status string
 	}
@@ -1497,13 +1513,18 @@ func (s *Store) SyncTerminalDagNodeRecords(ctx context.Context) (int, error) {
 		Select("dag_plans.chat_id, dag_nodes.plan_id, dag_nodes.node_id, dag_nodes.status").
 		Joins("JOIN dag_plans ON dag_plans.id = dag_nodes.plan_id").
 		Where("dag_nodes.status IN ?", []string{string(dag.StatusDone), string(dag.StatusFailed), string(dag.StatusCancelled)}).
+		Where("dag_plans.created_at >= ?", since).
 		Where("dag_plans.created_at = (SELECT MAX(p2.created_at) FROM dag_plans p2 WHERE p2.chat_id = dag_plans.chat_id)").
 		Scan(&rows).Error
 	if err != nil {
 		return 0, err
 	}
+	users := map[string]string{}
 	for _, r := range rows {
-		s.syncDagNodeRecord(ctx, r.ChatID, r.PlanID, r.NodeID, dag.NodeStatus(r.Status))
+		if _, ok := users[r.ChatID]; !ok {
+			users[r.ChatID] = s.SessionUserForChat(ctx, r.ChatID)
+		}
+		s.syncRecord(ctx, r.ChatID, users[r.ChatID], r.NodeID, dag.NodeStatus(r.Status))
 	}
 	return len(rows), nil
 }
@@ -1518,8 +1539,13 @@ func (s *Store) syncDagNodeRecord(ctx context.Context, chatID, planID, nodeID st
 	if p, err := s.GetLatestDagPlan(ctx, chatID); err != nil || p == nil || p.ID != planID {
 		return
 	}
-	if err := dag.SyncDagNodeStatus(ctx, s.artifacts, chatAppName, s.SessionUserForChat(ctx, chatID), chatID, nodeID, status); err != nil {
-		slog.Warn("resume paused dag nodes: dag_node record sync failed", "component", "store",
+	s.syncRecord(ctx, chatID, s.SessionUserForChat(ctx, chatID), nodeID, status)
+}
+
+// syncRecord is syncDagNodeRecord for a caller that already knows planID is the latest.
+func (s *Store) syncRecord(ctx context.Context, chatID, userID, nodeID string, status dag.NodeStatus) {
+	if err := dag.SyncDagNodeStatus(ctx, s.artifacts, chatAppName, userID, chatID, nodeID, status); err != nil {
+		slog.Warn("boot reconcile: dag_node record sync failed", "component", "store",
 			"chat", chatID, "node", nodeID, "err", err)
 	}
 }

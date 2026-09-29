@@ -409,7 +409,7 @@ func SaveDagPlan(st *store.Store, chatID, turnID string, d stream.DagPlanData) {
 		if len(d.ExecPlan) == 0 {
 			return
 		}
-		if err := st.SaveExecPlan(context.Background(), d.PlanID, string(d.ExecPlan)); err != nil {
+		if err := st.SaveExecPlan(context.Background(), chatID, d.PlanID, string(d.ExecPlan)); err != nil {
 			slog.Warn("runlog: save exec plan failed", "component", "dag", "chat", chatID, "plan_id", d.PlanID, "err", err)
 		}
 	}()

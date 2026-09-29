@@ -141,10 +141,12 @@ func TestRunPlanStep_TimeoutFailsStartedOnly(t *testing.T) {
 	}
 }
 
-// TestAbort_ShutdownLeavesNodesForBoot: a shutdown cut emits no terminal event, so the
-// row stays running and boot re-stamps it paused/shutdown and resumes it.
+// TestAbort_ShutdownLeavesNodesForBoot: a shutdown cut of an unpaused node emits no terminal
+// event and writes no terminal ledger entry, so boot re-stamps it paused/shutdown and resumes it.
 func TestAbort_ShutdownLeavesNodesForBoot(t *testing.T) {
 	ex, m := blockingExecutor(t)
+	led := ledgertest.NewMemStore()
+	ex.SetWALLedger(led)
 	rec := &terminalRecorder{got: map[string]stream.SSEEvent{}}
 	ctx, stop := context.WithCancel(stream.WithYield(context.Background(), rec.record))
 	done := make(chan error, 1)
@@ -158,6 +160,10 @@ func TestAbort_ShutdownLeavesNodesForBoot(t *testing.T) {
 	<-done
 	if ev, ok := rec.of("n1"); ok {
 		t.Errorf("n1 got terminal %s on a shutdown cut, want none", ev.Name)
+	}
+	entries, _ := led.ReadEntries(context.Background(), "chat", 0)
+	if len(entries) != 1 || entries[0].Kind != ledger.KindNodeStarted {
+		t.Errorf("ledger = %+v, want only %s", entries, ledger.KindNodeStarted)
 	}
 }
 

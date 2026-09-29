@@ -48,7 +48,6 @@ type Executor struct {
 	judgeSpec AdmissionSpec
 
 	gateResults sync.Map
-	shutdown    sync.Map // chatID -> struct{}, see MarkShutdown
 }
 
 // SetAdmission wires the #1007 capacity ledger and the judge's own spec (nil
@@ -136,7 +135,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	})
 	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
 	ds.resumedFromByID = resumedFromByID
-	shutdown := func() bool { _, ok := e.shutdown.Load(cancelKey); return ok }
+	shutdown := func() bool { _, ok := e.controls.shutdown.Load(cancelKey); return ok }
 	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds, shutdown: shutdown}
 }
 
@@ -224,20 +223,6 @@ func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 		return
 	}
 	s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
-}
-
-// failMessage prefers the node's recorded gateway failure, then the runner's own
-// error, sanitized because DagNode.Error reaches RunOutcome text.
-func (s *DagStream) failMessage(nodeID string, runErr error) string {
-	msg := emptyNodeError(s.ds.chatID, s.ds.scope(nodeID), s.ds.agentByID[nodeID])
-	switch {
-	case runErr == nil || msg != SilentGapError:
-		return msg
-	case errors.Is(s.ctx.Err(), context.DeadlineExceeded):
-		return "plan run timed out"
-	}
-	class, _ := inference.SanitizeGatewayError(runErr)
-	return "plan run failed: " + class
 }
 
 // RetryPlanInNode: re-runs target node + descendants with seeded outputs.
@@ -350,6 +335,20 @@ func emptyNodeError(chatID, nodeID, agent string) string {
 		return fmt.Sprintf("%s on %d consecutive attempts over %s", class, streak, dur.Round(time.Second))
 	}
 	return SilentGapError
+}
+
+// failMessage prefers the node's recorded gateway failure, then the runner's own
+// error, sanitized because DagNode.Error reaches RunOutcome text.
+func (s *DagStream) failMessage(nodeID string, runErr error) string {
+	msg := emptyNodeError(s.ds.chatID, s.ds.scope(nodeID), s.ds.agentByID[nodeID])
+	switch {
+	case runErr == nil || msg != SilentGapError:
+		return msg
+	case errors.Is(s.ctx.Err(), context.DeadlineExceeded):
+		return "plan run timed out"
+	}
+	class, _ := inference.SanitizeGatewayError(runErr)
+	return "plan run failed: " + class
 }
 
 func gateResultKey(chatID, nodeID string) string { return chatID + "\x00" + nodeID }
