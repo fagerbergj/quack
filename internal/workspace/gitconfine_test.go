@@ -208,17 +208,16 @@ func TestWorktreeCommonGitDirRefusesOddPointers(t *testing.T) {
 // binary.
 func TestNewGitGrants(t *testing.T) {
 	home := t.TempDir()
-	ConfineGit(SandboxNone)
 	if g, err := newGitGrants("git", home, nil, nil); g != nil || err != nil {
 		t.Errorf("unconfined call: grants %v, err %v", g, err)
 	}
-	ConfineGit(SandboxLandlock)
-	t.Cleanup(func() { gitConfined.Store(false) })
+	confineGit(t)
 	target := filepath.Join(t.TempDir(), "new", "clone")
 	g, err := newGitGrants("git", home, []string{"GIT_SSL_CAINFO=/ca.pem", "GIT_ASKPASS=/jail/.quack-askpass"}, []string{target})
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer g.close()
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -226,13 +225,93 @@ func TestNewGitGrants(t *testing.T) {
 	if fi, err := os.Stat(target); err != nil || !fi.IsDir() {
 		t.Errorf("rw dir %s not created: %v", target, err)
 	}
-	if !slices.Contains(g.rw, target) || !slices.Contains(g.rw, home) || slices.Contains(g.ro, "/jail/.quack-askpass") ||
+	var rw []string
+	for _, f := range g.rw {
+		rw = append(rw, f.Name())
+	}
+	if !slices.Contains(rw, target) || !slices.Contains(rw, home) || slices.Contains(g.ro, "/jail/.quack-askpass") ||
 		!slices.Contains(g.ro, "/ca.pem") || !slices.Contains(g.ro, self) {
-		t.Errorf("grants rw %v ro %v", g.rw, g.ro)
+		t.Errorf("grants rw %v ro %v", rw, g.ro)
 	}
 	blocker := filepath.Join(t.TempDir(), "file")
 	writeFile(t, blocker, "")
 	if _, _, err := GitCmd(context.Background(), "git", "", "", []string{"version"}, nil, filepath.Join(blocker, "sub")); err == nil {
 		t.Error("rw dir under a file: want an error")
+	}
+}
+
+// TestConfinedGitRefusesSymlinkedTarget: a clone target that is, or sits under, a symlink to another dir is
+// refused before git runs, and nothing is created or written at the link's destination.
+func TestConfinedGitRefusesSymlinkedTarget(t *testing.T) {
+	for name, plant := range map[string]func(node, victim string) string{
+		"target is a link":        func(node, victim string) string { return filepath.Join(node, "repo") },
+		"target under a link":     func(node, victim string) string { return filepath.Join(node, "repo", "sub") },
+		"dangling link to create": func(node, victim string) string { return filepath.Join(node, "repo") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bin, src := gitConfigFixture(t)
+			node, victim := t.TempDir(), filepath.Join(t.TempDir(), "victim")
+			if name != "dangling link to create" {
+				rawGit(t, bin, src, "init", "--quiet", victim)
+			}
+			symlinkOver(t, victim, filepath.Join(node, "repo"))
+			before, _ := os.ReadDir(victim)
+			_, statErr := os.Stat(victim)
+			confineGit(t)
+			target := plant(node, victim)
+			if _, _, err := GitCmd(context.Background(), bin, "", "", []string{"clone", "--quiet", src, target}, nil, target); err == nil {
+				t.Fatal("GitCmd granted a clone target reached through a symlink")
+			}
+			after, _ := os.ReadDir(victim)
+			if _, err := os.Stat(victim); len(after) != len(before) || os.IsNotExist(err) != os.IsNotExist(statErr) {
+				t.Errorf("victim dir changed: %v -> %v (%v)", before, after, err)
+			}
+		})
+	}
+}
+
+// TestConfinedGitGrantIsFdBound: swapping the clone for a symlink to another repo after GitCmd resolved it does
+// not move the grant; git's writes through the new path are denied.
+func TestConfinedGitGrantIsFdBound(t *testing.T) {
+	bin, victim, clone, _ := victimAndClone(t)
+	confineGit(t)
+	cmd, done, err := GitCmd(context.Background(), bin, clone, clone, []string{"hash-object", "-w", "--stdin"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	if err := os.Rename(clone, clone+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOver(t, victim, clone)
+	before := treeListing(t, filepath.Join(victim, ".git"))
+	cmd.Stdin = strings.NewReader("swapped\n")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Errorf("git wrote through a clone path swapped after the grant: %s", out)
+	}
+	if after := treeListing(t, filepath.Join(victim, ".git")); after != before {
+		t.Error("the swapped-in repo was written")
+	}
+}
+
+// TestConfinedGitReadsSymlinkedResolvConf: on a host whose /etc/resolv.conf links out of /etc (systemd-resolved),
+// git's grants still let a confined child read it.
+func TestConfinedGitReadsSymlinkedResolvConf(t *testing.T) {
+	real, err := filepath.EvalSymlinks("/etc/resolv.conf")
+	if err != nil || strings.HasPrefix(real, "/etc/") {
+		t.Skipf("SKIPPING: /etc/resolv.conf does not link out of /etc here (%q, %v)", real, err)
+	}
+	confineGit(t)
+	g, err := newGitGrants("git", t.TempDir(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.close()
+	var args []string
+	for _, p := range g.ro {
+		args = append(args, "--ro", p)
+	}
+	if out, code := runSandboxExec(t, append(args, "--", "cat", "/etc/resolv.conf")...); code != 0 {
+		t.Errorf("confined read of /etc/resolv.conf failed: exit=%d %s", code, out)
 	}
 }

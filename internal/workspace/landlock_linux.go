@@ -3,11 +3,16 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
 	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
@@ -80,6 +85,7 @@ func SandboxExecMain(args []string) error {
 	if err := withSignalScope(landlockABI).Restrict(rules...); err != nil {
 		return fmt.Errorf("sandbox-exec: restrict: %w", err)
 	}
+	closeGrantFDs(append(rw, ro...))
 	execArgv := append([]string{bin}, target[1:]...)
 	// Stamp the ruleset into the environment we exec into. syscall.Exec
 	// replaces this process image, so a confined child is
@@ -87,6 +93,38 @@ func SandboxExecMain(args []string) error {
 	env := append(os.Environ(), fmt.Sprintf("%s=landlock:abi%d:rw%d:ro%d",
 		SandboxEnvMarker, landlockABIVersion, len(rw), len(ro)))
 	return syscall.Exec(bin, execArgv, env)
+}
+
+// closeGrantFDs keeps the handles behind /proc/self/fd grants from reaching the target.
+func closeGrantFDs(paths []string) {
+	for _, p := range paths {
+		if n, ok := strings.CutPrefix(p, "/proc/self/fd/"); ok {
+			if fd, err := strconv.Atoi(n); err == nil {
+				syscall.CloseOnExec(fd)
+			}
+		}
+	}
+}
+
+// openNoFollow opens p as an O_PATH handle, refusing a symlink in any component; create makes missing dirs the
+// same way, so neither the grant nor the mkdir can be steered through a planted link.
+func openNoFollow(p string, create bool) (*os.File, error) {
+	how := &unix.OpenHow{Flags: unix.O_PATH | unix.O_CLOEXEC, Resolve: unix.RESOLVE_NO_SYMLINKS}
+	fd, err := unix.Openat2(unix.AT_FDCWD, p, how)
+	if errors.Is(err, unix.ENOENT) && create && filepath.Dir(p) != p {
+		parent, perr := openNoFollow(filepath.Dir(p), true)
+		if perr != nil {
+			return nil, perr
+		}
+		defer func() { _ = parent.Close() }()
+		if err = unix.Mkdirat(int(parent.Fd()), filepath.Base(p), 0o755); err == nil || errors.Is(err, unix.EEXIST) {
+			fd, err = unix.Openat2(int(parent.Fd()), filepath.Base(p), how)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), p), nil
 }
 
 // splitFiles separates non-directory grants: a directory right on a file rule is EINVAL. Missing paths stay with

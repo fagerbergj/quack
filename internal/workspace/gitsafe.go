@@ -1,7 +1,7 @@
 package workspace
 
-// Ceiling of GitCmd's repo pinning: under landlock mode Landlock denies symlinks and alternates leading outside the
-// clone; elsewhere they stay open. GC's jail-wide prune root stays open in every mode.
+// Ceiling of GitCmd's repo pinning: where the kernel has Landlock it denies symlinks and alternates leading outside
+// the clone; without it they stay open. GC's jail-wide prune root stays open either way.
 
 import (
 	"context"
@@ -62,35 +62,48 @@ func GitSafeArgs() []string {
 	)
 }
 
-// gitConfined: GitCmd runs git under Landlock (see ConfineGit).
+// GitFixtureDirs are extra read-write grants for confined git: tests add their local file:// remotes, quack none.
+var GitFixtureDirs []string
+
 var (
 	gitConfined        atomic.Bool
 	gitUnconfinedNoted sync.Once
 )
 
-// ConfineGit sets whether quack's own git runs under Landlock: only in landlock mode, which ResolveSandbox has
-// proved works here. Call once at boot with the resolved mode.
-func ConfineGit(mode SandboxMode) {
-	gitConfined.Store(mode == SandboxLandlock)
-	if mode != SandboxLandlock {
+// ConfineGit(true) puts quack's own git under Landlock whenever the kernel supports it, whatever the agents'
+// sandbox mode (it is a self-restriction); false turns it off. Returns whether git is now confined.
+func ConfineGit(want bool) bool {
+	if !want {
+		gitConfined.Store(false)
+		return false
+	}
+	err := errors.New("no __sandbox-exec target to re-exec")
+	if canSelfExec() {
+		err = probeLandlockHook()
+	}
+	gitConfined.Store(err == nil)
+	if err != nil {
 		gitUnconfinedNoted.Do(func() {
-			slog.Info("quack's own git runs unconfined: symlinks or alternates in an agent-writable .git can reach "+
-				"other repositories; workspace.sandbox: landlock confines it", "component", "workspace", "sandbox", mode)
+			slog.Warn("quack's own git runs unconfined: without Landlock, symlinks or alternates in an agent-writable "+
+				".git can reach other repositories", "component", "workspace", "err", err)
 		})
 	}
+	return err == nil
 }
 
-// GitCmd builds quack's own git child: empty per-call HOME (removed by the returned func), no system/global
-// config, and for dir != "" the repo resolveRepo(clone, dir) pins, its config stripped to gitConfigKeep. rw names
-// dirs the call writes outside that repo (a clone target, a new worktree); under ConfineGit they are created.
+// GitCmd builds quack's own git child with an empty per-call HOME and no system/global config, pinned for dir != ""
+// to the repo resolveRepo(clone, dir) checks. rw: dirs it writes outside that repo, created when confined.
 func GitCmd(ctx context.Context, bin, clone, dir string, argv, env []string, rw ...string) (*exec.Cmd, func(), error) {
 	home, err := os.MkdirTemp("", "quack-git-home-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("git: create empty HOME: %w", err)
 	}
-	done := func() { _ = os.RemoveAll(home) }
+	if real, rerr := realPath(home); rerr == nil {
+		home = real // a symlinked TMPDIR would fail the no-symlink grant
+	}
 	env = append(env, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0")
 	g, err := newGitGrants(bin, home, env, rw)
+	done := func() { g.close(); _ = os.RemoveAll(home) }
 	if g != nil {
 		env = append(env, "TMPDIR="+home)
 	}
@@ -104,28 +117,49 @@ func GitCmd(ctx context.Context, bin, clone, dir string, argv, env []string, rw 
 	return gitCommand(ctx, g, bin, dir, argv, env), done, nil
 }
 
-// gitGrants is one confined git call's Landlock rule set; nil runs git unconfined.
+// gitGrants is one confined git call's Landlock rule set: rw bound to handles quack opened, ro by path.
 type gitGrants struct {
-	bin    string
-	rw, ro []string
+	bin string
+	rw  []*os.File
+	ro  []string
 }
 
-// newGitGrants: RW on HOME and rw only (pinRepo adds the repo), so a symlink or alternate leading anywhere else
-// under the jail is denied. /dev/null is RW because git's run-command opens it O_RDWR; the resolv.conf file rule
-// follows a systemd host's symlink into /run.
+// grantRW opens p with no symlink in any component, so the grant binds to that inode, not to what p names later.
+func (g *gitGrants) grantRW(p string, create bool) error {
+	f, err := openNoFollow(p, create)
+	if err != nil {
+		return fmt.Errorf("git: refusing grant %s: %w", p, err)
+	}
+	g.rw = append(g.rw, f)
+	return nil
+}
+
+func (g *gitGrants) close() {
+	if g == nil {
+		return
+	}
+	for _, f := range g.rw {
+		_ = f.Close()
+	}
+}
+
+// newGitGrants: RW on HOME, /dev/null (run-command opens it O_RDWR) and rw; pinRepo adds the repo. The resolv.conf
+// file rule follows a systemd host's symlink into /run.
 func newGitGrants(bin, home string, env, rw []string) (*gitGrants, error) {
 	if !gitConfined.Load() {
 		return nil, nil
 	}
-	for _, p := range rw {
-		if err := os.MkdirAll(p, 0o755); err != nil {
-			return nil, fmt.Errorf("git: create %s: %w", p, err)
-		}
-	}
 	if p, err := exec.LookPath(bin); err == nil {
 		bin = p
 	}
-	g := &gitGrants{bin: bin, rw: append([]string{home, "/dev/null"}, rw...), ro: append(landlockSystemDirs(), "/dev", "/etc/resolv.conf", bin)}
+	g := &gitGrants{bin: bin, ro: []string{"/usr", "/bin", "/lib", "/lib64", "/sbin", "/etc", "/etc/resolv.conf", "/dev/urandom", bin}}
+	err := g.grantRW(home, false)
+	for _, p := range append([]string{"/dev/null"}, GitFixtureDirs...) {
+		err = errors.Join(err, g.grantRW(p, false))
+	}
+	for _, p := range rw {
+		err = errors.Join(err, g.grantRW(p, true))
+	}
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
 		switch k {
@@ -133,12 +167,13 @@ func newGitGrants(bin, home string, env, rw []string) (*gitGrants, error) {
 			g.ro = append(g.ro, v)
 		case "GIT_ASKPASS":
 			// The askpass link targets the quack binary; grant that, not whatever the link names.
-			self, err := os.Executable()
-			if err != nil {
-				return nil, fmt.Errorf("git: resolve askpass binary: %w", err)
-			}
-			g.ro = append(g.ro, self)
+			self, serr := os.Executable()
+			g.ro, err = append(g.ro, self), errors.Join(err, serr)
 		}
+	}
+	if err != nil {
+		g.close()
+		return nil, err
 	}
 	return g, nil
 }
@@ -147,11 +182,18 @@ func newGitGrants(bin, home string, env, rw []string) (*gitGrants, error) {
 func gitCommand(ctx context.Context, g *gitGrants, bin, dir string, argv, env []string) *exec.Cmd {
 	full := append(append([]string{bin}, GitSafeArgs()...), argv...)
 	if g != nil {
+		rw := make([]string, len(g.rw))
+		for i := range g.rw {
+			rw[i] = fmt.Sprintf("/proc/self/fd/%d", 3+i) // ExtraFiles start at fd 3
+		}
 		full[0] = g.bin
-		full = assembleSandboxExec(g.rw, g.ro, full)
+		full = assembleSandboxExec(rw, g.ro, full)
 	}
 	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir, cmd.Env = dir, env
+	if g != nil {
+		cmd.ExtraFiles = g.rw
+	}
 	return cmd
 }
 
@@ -164,7 +206,9 @@ func pinRepo(ctx context.Context, g *gitGrants, bin, clone, dir, home string, en
 			return "", nil, err
 		}
 		if g != nil {
-			g.rw = append(g.rw, filepath.Dir(common), work)
+			if err := errors.Join(g.grantRW(filepath.Dir(common), false), g.grantRW(work, false)); err != nil {
+				return "", nil, err
+			}
 		}
 		env = append(env, "GIT_DIR="+gitDir, "GIT_WORK_TREE="+work, "GIT_COMMON_DIR="+common)
 		return work, env, sanitizeGitConfig(ctx, g, bin, work, filepath.Join(common, "config"), env)

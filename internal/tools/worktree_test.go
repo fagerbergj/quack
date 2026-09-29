@@ -258,7 +258,7 @@ func TestPruneWorktreeStaysInsideRoot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return strings.Contains(string(out), filepath.Base(filepath.Dir(wt)))
+		return strings.Contains(string(out), "worktree "+wt+"\n")
 	}
 	root := t.TempDir()
 	inClone, inWT := newClone(root)
@@ -388,11 +388,10 @@ func TestConfinedWorktreeOps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup the shared clone: %v", err)
 	}
-	if _, err := workspace.ResolveSandbox(workspace.SandboxLandlock); err != nil {
-		t.Skipf("SKIPPING: landlock unavailable: %v", err)
+	t.Cleanup(func() { workspace.ConfineGit(false) })
+	if !workspace.ConfineGit(true) {
+		t.Skip("SKIPPING: landlock unavailable")
 	}
-	workspace.ConfineGit(workspace.SandboxLandlock)
-	t.Cleanup(func() { workspace.ConfineGit(workspace.SandboxNone) })
 
 	nodeRel, branch := workspace.NodeDir("review1"), workspace.WorktreeBranch("review1")
 	dir, err := SetupWorktree(ctx, b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil)

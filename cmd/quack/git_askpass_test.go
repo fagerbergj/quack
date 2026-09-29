@@ -138,8 +138,9 @@ func TestGitAskpassUnderConfinedGit(t *testing.T) {
 	if err != nil {
 		t.Skip("git not on PATH")
 	}
-	if _, err := workspace.ResolveSandbox(workspace.SandboxLandlock); err != nil {
-		t.Skipf("SKIPPING: landlock unavailable: %v", err)
+	t.Cleanup(func() { workspace.ConfineGit(false) })
+	if !workspace.ConfineGit(true) {
+		t.Skip("SKIPPING: landlock unavailable")
 	}
 	creds := make(chan string, 8)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -162,8 +163,7 @@ func TestGitAskpassUnderConfinedGit(t *testing.T) {
 	}
 	prev := workspace.GitProtocol
 	workspace.GitProtocol = "http"
-	workspace.ConfineGit(workspace.SandboxLandlock)
-	t.Cleanup(func() { workspace.GitProtocol = prev; workspace.ConfineGit(workspace.SandboxNone) })
+	t.Cleanup(func() { workspace.GitProtocol = prev })
 
 	lsRemote := func(host string) string {
 		env := []string{"PATH=/usr/bin:/bin", "GIT_ASKPASS=" + link, tools.GitAskpassUserEnv + "=x-access-token",
