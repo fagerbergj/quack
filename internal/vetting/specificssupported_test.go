@@ -215,24 +215,27 @@ func TestVerifyChecks_FailedSecondLookNotMemoized(t *testing.T) {
 	}
 }
 
-// TestJudgeEvidenceSection: every cited specific reaches the judge with its verifier
-// result and a bounded excerpt; uncited ones are specifics_cited's business, not listed.
+// TestJudgeEvidenceSection: only an unconfirmed specific reaches the judge, with its verifier
+// result and a bounded excerpt; matched ones are only counted, uncited ones not listed.
 func TestJudgeEvidenceSection(t *testing.T) {
 	c := secondLookCheck()
 	c.Window = strings.Repeat("x", 2000) + "users rose 30% in 2024" + strings.Repeat("y", 2000)
 	c.Verdict = Verdict{State: "unsupported", Quote: "users rose 30% in 2024"}
 	uncited := UnitCheck{Unit: Unit{Text: "Churn was 4%."}, Specific: Specific{Value: "4%"}, State: "uncited"}
-	got := judgeEvidenceSection([]UnitCheck{c, uncited})
-	for _, want := range []string{"CITED EVIDENCE", `"25%"`, "https://p/1", `unsupported - page says "users rose 30% in 2024"`, "users rose 30% in 2024y"} {
+	matched := secondLookCheck()
+	matched.Specific, matched.Unit.Text = Specific{Kind: "number", Value: "2024", Norm: "2024"}, "Revenue doubled in 2024."
+	matched.Verdict = Verdict{State: "supported", Quote: "in 2024"}
+	got := judgeEvidenceSection([]UnitCheck{c, uncited, matched})
+	for _, want := range []string{"CITED EVIDENCE", "1 matched", `"25%"`, "https://p/1", `unsupported - page says "users rose 30% in 2024"`, "users rose 30% in 2024y"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("section missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "Churn") || len(got) > len(judgeEvidenceHeader)+judgeExcerptChars+400 {
-		t.Errorf("section lists an uncited specific or an unbounded excerpt (%d chars):\n%s", len(got), got)
+	if strings.Contains(got, "Churn") || strings.Contains(got, "Revenue") || len(got) > len(judgeEvidenceHeader)+judgeExcerptChars+400 {
+		t.Errorf("section lists an uncited or matched specific, or an unbounded excerpt (%d chars):\n%s", len(got), got)
 	}
-	if judgeEvidenceSection([]UnitCheck{uncited}) != "" {
-		t.Error("no cited specific: the section must be absent")
+	if judgeEvidenceSection([]UnitCheck{uncited, matched}) != "" {
+		t.Error("every cited specific matched: the section must be absent")
 	}
 	unread := UnitCheck{Unit: Unit{Text: "Churn was 4%.", Citations: []string{"https://q/2"}}, Specific: Specific{Value: "4%"}, State: "no_stored_text"}
 	if got := evidenceEntry(unread); strings.Contains(got, `("")`) || strings.Contains(got, "()") || !strings.Contains(got, "(https://q/2)") {
@@ -382,5 +385,33 @@ func TestVerifierWorkers(t *testing.T) {
 		} else {
 			release()
 		}
+	}
+}
+
+// TestVerifyPrompt_StablePagePrefix: the page and its windows lead every verifier prompt over that
+// page byte for byte, whatever claims follow, so a reworded claim's re-read reuses the cached prefix.
+func TestVerifyPrompt_StablePagePrefix(t *testing.T) {
+	u := "https://example.test/stats"
+	page := strings.Repeat("filler words. ", 80) + "users rose 30% in 2024." + strings.Repeat(" more filler.", 80) + " churn fell to 4.2% last year."
+	var prompts []string
+	cfg := Config{RecordReader: fakeLoader{pageID(t, u): page},
+		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
+		JudgeModel: seqLLM{answers: []string{`{"items":[{"n":1,"state":"supported","quote":"users rose 30% in 2024"},` +
+			`{"n":2,"state":"supported","quote":"users rose 30% in 2024"},{"n":3,"state":"supported","quote":"churn fell to 4.2% last year"}]}`}, prompts: &prompts}}
+	act := workerActivity{fetched: map[string]struct{}{u: {}}}
+	memo := map[string]Verdict{}
+	for _, lead := range []string{"Users rose 30% in 2024", "Active users rose 30% in 2024"} {
+		runVerify(context.Background(), cfg, lead+" ([s]("+u+")). Churn fell to 4.2% ([s]("+u+")).", act, memo)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("verifier calls = %d, want one per round", len(prompts))
+	}
+	p1, _, ok1 := strings.Cut(prompts[0], "Items:")
+	p2, items2, ok2 := strings.Cut(prompts[1], "Items:")
+	if strings.Contains(items2, "Churn") {
+		t.Fatalf("round 2 re-asked the unchanged claim: %s", items2)
+	}
+	if !ok1 || !ok2 || p1 != p2 || !strings.Contains(p1, "<Window 2>") || strings.Contains(p1, "Users rose") {
+		t.Errorf("prompt prefixes differ or carry a claim:\n%q\n%q", p1, p2)
 	}
 }

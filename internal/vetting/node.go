@@ -1250,7 +1250,7 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 	if c, ok := specificsSupportedScore(checks); ok {
 		det[specificsSupportedCriterion] = c
 	}
-	j.cfg.judgeEvidence = judgeEvidenceSection(checks)
+	j.cfg.judgeEvidence, j.cfg.judgePagesChecked = judgeEvidenceSection(checks), pagesChecked(checks)
 	v, jerr := runJudgeAgent(abortCtx, j.judge, j.cfg, attachScreenshots(j.question, shots), j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
 	if j.cfg.ReleaseJudge != nil && j.cfg.AdmitWorker != nil {
 		j.cfg.ReleaseJudge()

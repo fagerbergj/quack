@@ -175,8 +175,10 @@ type Config struct {
 	// ForeignNodes: plan nodes that are neither this node nor its upstream. Their
 	// session activity and artifacts never count as this node's evidence.
 	ForeignNodes []string
-	// judgeEvidence: the round's CITED EVIDENCE section, set by runJudge from the verify tier.
-	judgeEvidence string
+	// judgeEvidence: the round's CITED EVIDENCE section, set by runJudge from the verify tier;
+	// judgePagesChecked: that tier read cited pages this round, so the judge's page reads are budgeted.
+	judgeEvidence     string
+	judgePagesChecked bool
 }
 
 // HasWorkspaceClone reports whether this node's worker actually has a repo

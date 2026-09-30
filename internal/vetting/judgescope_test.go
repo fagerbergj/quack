@@ -146,7 +146,7 @@ func TestJudgeArtifactTools_ScopeAndBudget(t *testing.T) {
 	}
 	list, read := tools[0].(runnableTool), tools[1].(runnableTool)
 	act := workerActivity{fetched: map[string]struct{}{pageURL: {}}}
-	view := newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}, judgeEvidence: "CITED EVIDENCE"}, act)
+	view := newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}, judgePagesChecked: true}, act)
 	ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), view))}
 
 	out, err := list.Run(ctx, map[string]any{})
@@ -186,7 +186,7 @@ func TestJudgeArtifactTools_UnbudgetedJudges(t *testing.T) {
 		t.Fatal(err)
 	}
 	act := workerActivity{fetched: map[string]struct{}{pageURL: {}}}
-	for name, cfg := range map[string]Config{"no evidence": {}, "evidence": {judgeEvidence: "CITED EVIDENCE"}} {
+	for name, cfg := range map[string]Config{"no evidence": {}, "evidence": {judgePagesChecked: true}} {
 		ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), newJudgeView(cfg, act)))}
 		ids := []string{bytesID}
 		if name == "no evidence" {
@@ -242,30 +242,65 @@ func TestRunJudgeRound_ScopesArtifactToolsToNode(t *testing.T) {
 	}
 }
 
-// TestRunGatedRefine_JudgePromptCarriesCitedEvidence: with specifics_supported declared,
-// the verify tier runs before the judge and its per-claim section reaches the judge prompt.
+// fetchingWorker fetches url once, then answers.
+type fetchingWorker struct{ url, answer string }
+
+func (fetchingWorker) Name() string { return "fetching-worker" }
+
+func (m fetchingWorker) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		for _, c := range req.Contents {
+			for _, p := range c.Parts {
+				if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_fetch" {
+					yield(stubText(m.answer), nil)
+					return
+				}
+			}
+		}
+		yield(stubCall("web_fetch", map[string]any{"urls": []any{m.url}}), nil)
+	}
+}
+
+type stubFetchArgs struct {
+	URLs []string `json:"urls"`
+}
+
+type stubFetchResult struct {
+	Results []map[string]string `json:"results"`
+}
+
+// TestRunGatedRefine_JudgePromptCarriesCitedEvidence: with specifics_supported declared, the
+// verify tier runs before the judge and a specific its page contradicts reaches the judge prompt.
 func TestRunGatedRefine_JudgePromptCarriesCitedEvidence(t *testing.T) {
-	judgeStub := &judgePromptCapturingModel{}
-	answer := "Users rose 25% in 2024 ([survey](https://example.test/survey))."
+	u := "https://example.test/survey"
+	fetch, err := functiontool.New[stubFetchArgs, stubFetchResult](functiontool.Config{Name: "web_fetch", Description: "Fetch pages."},
+		func(_ adkagent.Context, a stubFetchArgs) (stubFetchResult, error) {
+			return stubFetchResult{Results: []map[string]string{{"url": u, "text": "stored"}}}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsupported := `{"items":[{"n":1,"state":"unsupported","quote":"users rose 30% in 2024"},{"n":2,"state":"supported","quote":"users rose 30% in 2024"}]}`
 	var verifierCalls []string
-	cfg := Config{JudgeRounds: 1, Threshold: 0.5, Rubric: "score the answer 0-10", RecordReader: fakeLoader{},
+	cfg := Config{JudgeRounds: 1, Threshold: 0.5, Rubric: "score the answer 0-10", RecordReader: fakeLoader{pageID(t, u): secondLookPage},
 		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
-		JudgeModel:  seqLLM{answers: []string{`{"items":[]}`}, prompts: &verifierCalls}}
-	runGatedStub(t, answer, NewJudgeFactory(judgeStub, nil, nil), cfg)
+		JudgeModel:  seqLLM{answers: []string{unsupported}, prompts: &verifierCalls}}
+	judgeStub := &judgePromptCapturingModel{}
+	runGatedStub(t, fetchingWorker{url: u, answer: "Users rose 25% in 2024 ([survey](" + u + "))."}, []tool.Tool{fetch}, NewJudgeFactory(judgeStub, nil, nil), cfg)
 	if len(judgeStub.prompts) == 0 {
 		t.Fatal("judge was never called")
 	}
 	first := judgeStub.prompts[0]
 	ev, ans := strings.Index(first, "CITED EVIDENCE"), strings.Index(first, "Answer to judge:")
-	if ev < 0 || ans < ev || !strings.Contains(first[ev:ans], `"25%"`) || !strings.Contains(first[ev:ans], "no stored text") {
-		t.Errorf("judge prompt lacks the cited-evidence section ahead of the answer:\n%s", first)
+	if ev < 0 || ans < ev || !strings.Contains(first[ev:ans], `"25%"`) || !strings.Contains(first[ev:ans], "1 matched") || strings.Contains(first[ev:ans], `"2024"`) {
+		t.Errorf("judge prompt lacks the unconfirmed specific (and only it) ahead of the answer:\n%s", first)
 	}
 }
 
-// runGatedStub runs one gated node whose worker always answers answer.
-func runGatedStub(t *testing.T, answer string, judge JudgeFactory, cfg Config) GateResult {
+// runGatedStub runs one gated node whose worker is workerModel with tools.
+func runGatedStub(t *testing.T, workerModel model.LLM, tools []tool.Tool, judge JudgeFactory, cfg Config) GateResult {
 	t.Helper()
-	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Model: stubFixedAnswerModel{text: answer}, Description: "researcher", Instruction: "Answer."})
+	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Model: workerModel, Tools: tools, Description: "researcher", Instruction: "Answer."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +550,7 @@ func TestReJudge_SeedsWholeDeliverableRead(t *testing.T) {
 
 // TestBoundJudgeArtifactRead_ReplayBudget: replay's REST read tool shares the live budget.
 func TestBoundJudgeArtifactRead_ReplayBudget(t *testing.T) {
-	ctx := withJudgeView(context.Background(), newJudgeView(Config{judgeEvidence: "CITED EVIDENCE"}, workerActivity{}))
+	ctx := withJudgeView(context.Background(), newJudgeView(Config{judgePagesChecked: true}, workerActivity{}))
 	body := []byte(strings.Repeat("x", 20_000))
 	for i := 1; i <= judgeSourceReadBudget; i++ {
 		if got := BoundJudgeArtifactRead(ctx, "web_page:p", body, "", 0, 0); len(got) > judgeSourceReadCap {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ const verifyBatch = 20
 // sessions Admission grants without waiting, so parallelism only uses free capacity.
 const verifyConcurrency = 4
 
-const verifyInstruction = `You check whether a passage of evidence supports a specific detail in a claim. For EVERY numbered item answer one object {"n": <number>, "state": "supported" | "unsupported" | "cannot_tell", "quote": <verbatim text copied from that item's <Evidence>>}. "supported" means the evidence states the same detail (the same figure, date or wording, allowing rounding words like "about"); "unsupported" means the evidence gives a different value or contradicts it; "cannot_tell" means the evidence does not settle it. The quote must be copied exactly from the item's own <Evidence> and, for supported or unsupported, must contain the value you relied on; a quote that is not in the evidence is rejected. Respond with exactly one JSON object {"items": [...]}, nothing else.`
+const verifyInstruction = `You check whether a passage of evidence supports a specific detail in a claim. The message gives a page's numbered Windows of text, then numbered items; each item's <Evidence> names the one Window that is its evidence. For EVERY numbered item answer one object {"n": <number>, "state": "supported" | "unsupported" | "cannot_tell", "quote": <verbatim text copied from that item's Window>}. "supported" means the evidence states the same detail (the same figure, date or wording, allowing rounding words like "about"); "unsupported" means the evidence gives a different value or contradicts it; "cannot_tell" means the evidence does not settle it. The quote must be copied exactly from the item's own Window and, for supported or unsupported, must contain the value you relied on; a quote that is not in that Window is rejected. Respond with exactly one JSON object {"items": [...]}, nothing else.`
 
 // VerifyChecks runs the verify tier over every check that has a window (located, or
 // unlocated with a second-look window), batched per cited page; a failed call leaves its items not_checked.
@@ -123,21 +124,21 @@ func (v Verifier) verifyByPage(ctx context.Context, checks []UnitCheck, idx []in
 		pages = append(pages, p)
 	}
 	sort.Strings(pages)
-	var batches [][]int
+	var batches []verifyJob
 	for _, p := range pages {
-		idx := byPage[p]
+		idx, windows := byPage[p], pageWindows(checks, p)
 		for start := 0; start < len(idx); start += verifyBatch {
-			batches = append(batches, idx[start:min(len(idx), start+verifyBatch)])
+			batches = append(batches, verifyJob{idx: idx[start:min(len(idx), start+verifyBatch)], page: p, windows: windows})
 		}
 	}
 	workers, release := v.workers(len(batches))
 	defer release()
-	jobs := make(chan []int)
+	jobs := make(chan verifyJob)
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Go(func() { // each batch writes only its own checks[i]
-			for batch := range jobs {
-				v.verifyBatch(ctx, checks, batch)
+			for job := range jobs {
+				v.verifyBatch(ctx, checks, job)
 			}
 		})
 	}
@@ -146,6 +147,42 @@ func (v Verifier) verifyByPage(ctx context.Context, checks []UnitCheck, idx []in
 	}
 	close(jobs)
 	wg.Wait()
+}
+
+// verifyJob is one batch of items on page, with every evidence window read on that page.
+type verifyJob struct {
+	idx     []int
+	page    string
+	windows []string
+}
+
+// pageWindows: the distinct evidence windows of every check on page (not only those being asked
+// about), sorted, so the same page gives the same prompt prefix across batches and rounds.
+func pageWindows(checks []UnitCheck, page string) []string {
+	var out []string
+	for _, c := range checks {
+		if c.Citation == page && c.Window != "" && !slices.Contains(out, c.Window) {
+			out = append(out, c.Window)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// verifyPrompt: the page and its windows lead and the items naming them trail, so vLLM's
+// prefix cache carries the windows across every batch and round over that page.
+func verifyPrompt(checks []UnitCheck, job verifyJob) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Page: %s\n\n", job.page)
+	for n, w := range job.windows {
+		fmt.Fprintf(&b, "<Window %d>\n%s\n</Window %d>\n\n", n+1, w, n+1)
+	}
+	b.WriteString("Items:\n")
+	for n, i := range job.idx {
+		c := checks[i]
+		fmt.Fprintf(&b, "%d. <Claim>%s</Claim>\n   <Detail>%s</Detail>\n   <Evidence>Window %d</Evidence>\n\n", n+1, c.Unit.Text, c.Specific.Value, slices.Index(job.windows, c.Window)+1)
+	}
+	return b.String()
 }
 
 // workers: the held judge session plus each extra one Admission grants now, up to
@@ -170,13 +207,9 @@ func (v Verifier) workers(batches int) (int, func()) {
 	}
 }
 
-func (v Verifier) verifyBatch(ctx context.Context, checks []UnitCheck, idx []int) {
-	var b strings.Builder
-	for n, i := range idx {
-		c := checks[i]
-		fmt.Fprintf(&b, "%d. <Claim>%s</Claim>\n   <Detail>%s</Detail>\n   <Evidence>%s</Evidence>\n\n", n+1, c.Unit.Text, c.Specific.Value, c.Window)
-	}
-	raw, err := v.ask(ctx, b.String())
+func (v Verifier) verifyBatch(ctx context.Context, checks []UnitCheck, job verifyJob) {
+	idx := job.idx
+	raw, err := v.ask(ctx, verifyPrompt(checks, job))
 	answers := parseVerifyAnswers(raw)
 	for n, i := range idx {
 		a, ok := answers[n+1]

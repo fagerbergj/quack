@@ -23,14 +23,14 @@ import (
 // artifact can't blow the judge's own prompt budget.
 const judgeArtifactReadCap = 24_000
 
-// judgeSourceReadBudget/judgeSourceReadCap bound one judge round's web_page reads when
-// its prompt carries CITED EVIDENCE: that section already holds each cited claim's excerpt.
+// judgeSourceReadBudget/judgeSourceReadCap bound one judge round's web_page reads once the verify tier
+// has read the cited pages: code already checked every cited specific, so more reads only re-check.
 const (
 	judgeSourceReadBudget = 4
 	judgeSourceReadCap    = 8_000
 )
 
-var judgeBudgetSpent = fmt.Sprintf("[read budget spent: %d web_page reads per round. Score from the CITED EVIDENCE excerpts and the reads you already made.]", judgeSourceReadBudget)
+var judgeBudgetSpent = fmt.Sprintf("[read budget spent: %d web_page reads per round. Code already checked each cited specific against its page; score from what you have read.]", judgeSourceReadBudget)
 
 // judgeView is one judge round's view of the chat: a foreign node's artifacts are hidden
 // unless this node wrote, fetched or read them, or its own lineage wrote a revision.
@@ -44,7 +44,7 @@ type judgeView struct {
 }
 
 func newJudgeView(cfg Config, act workerActivity) *judgeView {
-	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs(), budgeted: cfg.judgeEvidence != "", history: map[string]bool{}}
+	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs(), budgeted: cfg.judgePagesChecked, history: map[string]bool{}}
 	for _, n := range cfg.ForeignNodes {
 		v.foreign[n] = true
 	}

@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -67,38 +68,57 @@ const (
 	judgeExcerptChars  = 500
 )
 
-const judgeEvidenceHeader = "CITED EVIDENCE - each cited specific in the deliverable, the code verifier's reading of it, and an excerpt of the cited page (or the search snippet) around it. " +
-	"Excerpts are lower-cased; around a figure, number words appear as digits without thousands separators, and around a quote, curly punctuation and markup are normalized. " +
-	"Check citation wording and quotes against these excerpts; read a source page with read_artifact only when an excerpt cannot settle a finding - source reads are capped at " +
-	"%d per round, %d characters each. A specific marked unsupported already fails the code-owned specifics_supported; do not re-score it.\n"
+const judgeEvidenceHeader = "CITED EVIDENCE - code read the cited specifics against their fetched pages: %d matched. " +
+	"The ones below did not, or could not be confirmed; each shows the verifier's reading and an excerpt of the page (or search snippet) around it, " +
+	"lower-cased; around a figure, number words appear as digits without thousands separators, and around a quote, curly punctuation and markup are normalized. " +
+	"A specific marked unsupported already fails the code-owned specifics_supported; do not re-score it.\n"
 
-// judgeEvidenceSection renders runVerify's checks for the judge prompt; "" when none is cited.
+// unconfirmed: the verifier read the specific and could not confirm it - the only ones the
+// judge is shown, since a matched specific's excerpt only invites re-checking settled wording.
+func unconfirmed(c UnitCheck) bool {
+	switch c.Verdict.State {
+	case "unsupported", "cannot_tell", "not_checked":
+		return true
+	}
+	return false
+}
+
+// judgeEvidenceSection renders runVerify's unconfirmed checks for the judge prompt; "" when
+// every cited specific matched (or none was read), so a clean answer's prompt is unchanged.
 func judgeEvidenceSection(checks []UnitCheck) string {
-	cited := 0
+	matched, problems := 0, 0
 	for _, c := range checks {
-		if c.State != "uncited" {
-			cited++
+		switch {
+		case c.Verdict.State == "supported":
+			matched++
+		case unconfirmed(c):
+			problems++
 		}
 	}
-	if cited == 0 {
+	if problems == 0 {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, judgeEvidenceHeader, judgeSourceReadBudget, judgeSourceReadCap)
+	fmt.Fprintf(&b, judgeEvidenceHeader, matched)
 	shown := 0
 	for _, c := range checks {
-		if c.State == "uncited" {
+		if !unconfirmed(c) {
 			continue
 		}
 		entry := evidenceEntry(c)
 		if b.Len()+len(entry) > judgeEvidenceChars {
-			fmt.Fprintf(&b, "(%d more cited specifics not shown)\n", cited-shown)
+			fmt.Fprintf(&b, "(%d more not shown)\n", problems-shown)
 			break
 		}
 		b.WriteString(entry)
 		shown++
 	}
 	return b.String()
+}
+
+// pagesChecked: the verify tier read at least one cited specific against a stored page.
+func pagesChecked(checks []UnitCheck) bool {
+	return slices.ContainsFunc(checks, func(c UnitCheck) bool { return c.Verdict.State != "" })
 }
 
 // evidenceEntry: one cited specific, its verifier result and its excerpt.

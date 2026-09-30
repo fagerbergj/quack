@@ -65,9 +65,8 @@ criteria:
       block.
     - For each, check the outlet named in the text matches the host of the linked URL.
     - >-
-      For each quoted passage, check the words appear in that source's excerpt in the CITED EVIDENCE
-      section, reading the page itself only when the excerpt cannot settle it; if neither shows text for
-      that source, it is not a finding. A cited page that was never fetched
+      For each quoted passage, check the words appear in that source's text as shown in the session; if
+      the session shows no text for that source, it is not a finding. A cited page that was never fetched
       is scored by code under `cites_sources` and is not a finding here. A weak or tangential source is
       a note, not a finding.
     bands:
