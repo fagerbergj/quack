@@ -585,3 +585,57 @@ func TestJudgeView_FailedHistoryLookupNotCached(t *testing.T) {
 		t.Errorf("after the store recovered, list_artifacts = %q, want %s", out["result"], upID)
 	}
 }
+
+// cappedJudge spends every reply on reasoning (MAX_TOKENS, no verdict) unless the request asks for
+// low thinking; levels records each call's thinking level ("" when none was sent).
+type cappedJudge struct{ levels []string }
+
+func (*cappedJudge) Name() string { return "capped-judge" }
+
+func (j *cappedJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	level := ""
+	if req.Config != nil && req.Config.ThinkingConfig != nil {
+		level = string(req.Config.ThinkingConfig.ThinkingLevel)
+	}
+	j.levels = append(j.levels, level)
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if level == string(genai.ThinkingLevelLow) {
+			yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "ok", "score": 3}}, "feedback": ""}`), nil)
+			return
+		}
+		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "Let me weigh"}}}, FinishReason: genai.FinishReasonMaxTokens, TurnComplete: true}, nil)
+	}
+}
+
+// TestRetryNoVerdict_CappedRetriesWithLowThinking: a round whose reasoning ate the output cap is
+// not nudged on the same settings, and its retry drops a configured medium/high effort to low;
+// an unset level is never forced on (some endpoints reject reasoning_effort).
+func TestRetryNoVerdict_CappedRetriesWithLowThinking(t *testing.T) {
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Research X"}}}
+	for _, tc := range []struct {
+		level  string
+		want   string
+		passes bool
+	}{{"medium", "MEDIUM,LOW", true}, {"", ",", false}} {
+		judge := &cappedJudge{}
+		cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, JudgeThinkingLevel: tc.level}
+		v, err := runJudgeAgent(t.Context(), NewJudgeFactory(judge, nil, nil), cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+		if got := strings.Join(judge.levels, ","); got != tc.want || (err == nil) != tc.passes || (tc.passes && v.Score != 1.0) {
+			t.Errorf("level %q: calls %q, err %v, score %v; want calls %q", tc.level, got, err, v.Score, tc.want)
+		}
+		if !tc.passes && !errors.Is(err, ErrJudgeOutputCapped) {
+			t.Errorf("level %q: err = %v, want ErrJudgeOutputCapped", tc.level, err)
+		}
+	}
+}
+
+// TestVerifier_SendsJudgeThinkingLevel: the verifier runs on the judge's model with its effort.
+func TestVerifier_SendsJudgeThinkingLevel(t *testing.T) {
+	judge := &cappedJudge{}
+	c := secondLookCheck()
+	Verifier{LLM: judge, ThinkingLevel: "low"}.VerifyChecks(context.Background(), []UnitCheck{c})
+	Verifier{LLM: judge}.VerifyChecks(context.Background(), []UnitCheck{c})
+	if got := strings.Join(judge.levels, ","); got != "LOW," {
+		t.Errorf("verifier thinking levels = %q, want LOW then none", got)
+	}
+}

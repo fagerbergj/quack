@@ -33,6 +33,9 @@ type Verifier struct {
 	Memo map[string]Verdict
 	// TryAdmit takes one more model session for a parallel batch (Config.TryAdmitVerify).
 	TryAdmit func() (release func(), ok bool)
+	// ThinkingLevel: gates.judge.thinking_level, since the verifier runs on the judge's model;
+	// "" sends none. Unset, reasoning can spend the whole MaxTokens before any verdict.
+	ThinkingLevel string
 }
 
 // verifyKey: the claim, its detail, the page and the exact evidence window the verdict was read from.
@@ -281,6 +284,7 @@ func (v Verifier) ask(ctx context.Context, prompt string) (string, error) {
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: verifyInstruction}}},
 			MaxOutputTokens:   maxTokens,
+			ThinkingConfig:    judgeThinkingConfig(v.ThinkingLevel),
 		},
 	}
 	var out strings.Builder

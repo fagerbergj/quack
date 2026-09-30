@@ -679,7 +679,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 
 	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
-		v, err = retryNoVerdict(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, counters)
+		v, err = retryNoVerdict(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, counters, errors.Is(err, ErrJudgeOutputCapped))
 		return
 	}
 
@@ -723,9 +723,12 @@ func judgeAttemptLoop(ctx context.Context, factory JudgeFactory, cfg Config, que
 
 // retryNoVerdict: a round with no verdict (a stutter, #853) gets one fresh-session retry,
 // seeded with prior's reads; shrinking the answer wouldn't fix a stutter.
-func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, prior judgeReadCounters) (verdict, error) {
+func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, prior judgeReadCounters, capped bool) (verdict, error) {
 	slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
-		"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID)
+		"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID, "output_capped", capped)
+	if capped && (cfg.JudgeThinkingLevel == "medium" || cfg.JudgeThinkingLevel == "high") {
+		cfg.JudgeThinkingLevel = "low" // reasoning ate the cap: the same effort would again; unset stays unset (opt-in, #1235)
+	}
 	known = seedPriorReads(cfg, question, fitted, changedFiles, known, act, prior)
 	v, counters, err := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, "", act, received, emit)
 	if err == nil {
@@ -956,7 +959,8 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 
 	// One in-session nudge before giving up: a text turn that didn't parse as a
 	// verdict is often analysis-complete/submission-wrong (#1235) - one direct ask.
-	if st.nudgeAllowed() && strings.TrimSpace(st.accum.String()) != "" {
+	capped := st.lastFinish == genai.FinishReasonMaxTokens // a nudge on the same settings is cut again
+	if st.nudgeAllowed() && !capped && strings.TrimSpace(st.accum.String()) != "" {
 		if v, ok, nerr := st.submitNudge(); nerr != nil {
 			return verdict{}, counters, nerr
 		} else if ok {
@@ -966,6 +970,9 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 
 	slog.Warn("judge round ended without a verdict",
 		"component", "vetting", "agent", cfg.Agent, "finish_reason", string(st.lastFinish), "output_tokens", st.lastOutTokens)
+	if capped {
+		return verdict{}, counters, ErrJudgeOutputCapped
+	}
 	return verdict{}, counters, ErrJudgeNoVerdict
 }
 
@@ -1228,6 +1235,10 @@ const judgeSubmitNudge = "You did not call submit_verdict. Call submit_verdict n
 // budget - and never called submit_verdict. Distinct from a transport/model
 // failure (the judge was never reachable at all) so the caller can tell the reader which one happened instead of calling both "unavailable" (#779).
 var ErrJudgeNoVerdict = errors.New("vetting: judge ended without a verdict")
+
+// ErrJudgeOutputCapped: no verdict because the reply hit the output-token cap - usually its
+// reasoning spent the whole budget. errors.Is(err, ErrJudgeNoVerdict) holds for it too.
+var ErrJudgeOutputCapped = fmt.Errorf("%w: the reply hit the output-token cap", ErrJudgeNoVerdict)
 
 // markdownLinkRe extracts inline Markdown link targets - web URLs and local
 // paths alike; only http(s) targets are scored (see citationScore).

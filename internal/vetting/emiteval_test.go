@@ -2,11 +2,15 @@ package vetting
 
 import (
 	"context"
+	"iter"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
@@ -88,5 +92,42 @@ func TestEmitEvaluationResults_AgentAttribute(t *testing.T) {
 	})
 	if got != "reviewer" {
 		t.Errorf("gen_ai.agent.name = %q, want %q", got, "reviewer")
+	}
+}
+
+// usageLLM answers every verifier call with a reply whose usage reports a cached prefix.
+type usageLLM struct{}
+
+func (usageLLM) Name() string { return "usage-llm" }
+
+func (usageLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"items":[]}`}}}, TurnComplete: true,
+			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 1000, CachedContentTokenCount: 816, CandidatesTokenCount: 20}}, nil)
+	}
+}
+
+// TestVerifierCallRecordsCachedTokens: the verifier's calls go through the judge model's traced
+// wrapper, so its llm.call entries carry the same cached/input split as every other call.
+func TestVerifierCallRecordsCachedTokens(t *testing.T) {
+	capExp := &captureEvalExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+	Verifier{LLM: inference.TracedModelForTesting(usageLLM{}, "judge")}.VerifyChecks(context.Background(), []UnitCheck{secondLookCheck()})
+	var cached, input int64
+	for _, r := range capExp.records {
+		r.WalkAttributes(func(kv attribute.KeyValue) bool {
+			switch string(kv.Key) {
+			case otelobs.GenAIUsageCachedTokens:
+				cached = kv.Value.AsInt64()
+			case otelobs.GenAIUsageInputTokens:
+				input = kv.Value.AsInt64()
+			}
+			return true
+		})
+	}
+	if cached != 816 || input != 184 {
+		t.Errorf("verifier llm.call cached=%d input=%d, want 816 and 184", cached, input)
 	}
 }

@@ -59,7 +59,7 @@ func runVerify(ctx context.Context, cfg Config, answer string, act workerActivit
 	if !declaresCodeOwned(cfg, specificsSupportedCriterion) || load == nil || cfg.JudgeModel == nil {
 		return nil
 	}
-	return verifiedChecks(ctx, answer, act, load, Verifier{LLM: cfg.JudgeModel, Memo: memo, TryAdmit: cfg.TryAdmitVerify})
+	return verifiedChecks(ctx, answer, act, load, Verifier{LLM: cfg.JudgeModel, Memo: memo, TryAdmit: cfg.TryAdmitVerify, ThinkingLevel: cfg.JudgeThinkingLevel})
 }
 
 // judgeEvidenceChars bounds the CITED EVIDENCE section; judgeExcerptChars one claim's excerpt.
