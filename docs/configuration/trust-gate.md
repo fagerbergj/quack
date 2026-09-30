@@ -1,13 +1,13 @@
 # Trust gate
 
-Limited local models bluff, so nothing a node's worker produces is trusted by default. Every gated agent's output passes through `vetting.RunGatedRefine` (`internal/vetting/node.go`) before it flows downstream. The gate runs cheapest-first, each stage bounded by its own round budget - a stage with `max_rounds: 0` is skipped entirely:
+Limited local models bluff, so nothing a node's worker produces is trusted by default. Every gated agent's output passes through `vetting.RunGatedRefine` (`internal/vetting/node.go`) before it flows downstream. The gate runs cheapest-first, and a stage with `max_rounds: 0` is skipped entirely:
 
 ```yaml
 gates:
   constitution_path: config/constitution.md   # global principles, used by the judge
   rubric_path: config/rubric.md               # default scoring guide (an agent's own rubric.yaml wins)
   deterministic_checks:
-    max_rounds: 4   # free citation/length checks; up to 4 cheap worker revise cycles
+    max_rounds: 4   # > 0 keeps the gate on; the checks run inside judge rounds; not a revise cap
   judge:
     provider: default
     model: ${QUACK_JUDGE_MODEL}   # empty ⇒ judge disabled
@@ -23,7 +23,7 @@ If both `deterministic_checks.max_rounds` and the judge are off, the gate is dis
 
 ## 1. Deterministic checks
 
-Free, mechanical checks that drive cheap targeted revisions before anything expensive runs: citation backing, length, and - for a code-implementer node - the repo's own build/vet/test commands. `deterministic_checks.max_rounds` caps how many revise cycles these checks alone can trigger.
+Free, mechanical checks that run before anything expensive: citation backing, length, and - for a code-implementer node - the repo's own build/vet/test commands. Their scores fold into the judge's verdict, so revise cycles are bounded by `judge.max_rounds`; the checks run only inside a judge round. Any `deterministic_checks.max_rounds` above 0 keeps the gate wrapping every agent (`GatesConfig.Enabled`) even with the judge off, but such a node is never scored; the value is not a round cap.
 
 `artifact_valid` is one of these checks, and only applies to a node whose declared artifact kind has a schema registered by an SDK extension (`sdk.ArtifactSchemas`, see [agent-plugins.md](../agent-plugins.md)). It passes only when the node's artifact for this run exists and satisfies that schema; on failure the criterion's feedback carries the same violation list a schema-refused write would show the worker, so the revise round has something concrete to fix. A node whose kind has no registered schema never gets this criterion at all.
 
@@ -33,7 +33,7 @@ The check commands themselves come from `workspace.check_commands` - an allowlis
 
 A separate, independently-configured model scores the answer G-Eval style against the rubric. `provider`/`model` are set here, deliberately apart from any worker's model - see [models.md](models.md#the-judge-is-a-separate-model) for why that independence matters. Empty `model` (or `max_rounds: 0`) disables the judge; the cheaper deterministic stage still runs on its own.
 
-Every judge round also gets `list_artifacts`/`read_artifact`, scoped to the node's chat, alongside any jail-scoped repo read tools - so an answer that points at an artifact instead of restating it (`read_artifact to see it`, a revision number) can actually be checked. A PASS that never read the repo, or never read an artifact the worker wrote or edited that round, is discarded and the round is re-judged once. Each of those two discard rules can fire at most once per round, so one `max_rounds` round costs at most 3 transient-fault attempts, an image-strip retry, a no-verdict retry, and one re-judge - bounded, never an unbounded loop.
+Every judge round also gets `list_artifacts`/`read_artifact`, alongside any jail-scoped repo read tools - so an answer that points at an artifact instead of restating it (`read_artifact to see it`, a revision number) can actually be checked. They reach the node's own artifacts, its upstream nodes', and the chat's inputs; a sibling's or descendant's artifact is hidden unless this node fetched or read it itself, or the node or an upstream node wrote one of its revisions (a fan-in's input a sibling edited last stays visible). The same line holds for the evidence code checks: a sibling's `web_fetch` never backs this node's citation, in `cites_sources` or in the page lookup behind `specifics_supported`. When the verify tier has read a round's cited pages (a rubric that declares `specifics_supported`, see [agents.md](agents.md)), that judge is not shown the pages the verifier read - they are left out of `list_artifacts` and `read_artifact` refuses them - since code has already checked every cited specific against them and any it could not confirm arrives as CITED EVIDENCE; every other judge, and every other artifact kind, reads as before. A PASS that never read the repo, or never read an artifact the worker wrote or edited that round, is discarded and the round is re-judged once. Each of those two discard rules can fire at most once per round, so one `max_rounds` round costs at most 3 transient-fault attempts, an image-strip retry, a no-verdict retry, and one re-judge - bounded, never an unbounded loop. The no-verdict retry and the re-judge each start a fresh judge session seeded with the previous attempt's reads (the deliverable's read at the full 24,000-character cap, others at 8,000; a cut read may be read again), and the re-judge's reason arrives as a note from the gate, never inside the answer being judged. A round's last allowed turn is closed with its tool declarations kept and `tool_choice: none`, so the serving engine's prefix cache survives it; a close with no verdict in it (vLLM's tool parser drops a refused call and returns nothing) gets one more close with the tools stripped unless it was cut at the token cap, and a stuttering judge's close strips them from the start.
 
 The judge prompt also carries a bounded "tool results the worker received this round" section - the call/args/result of every non-workspace, non-evidence, non-artifact, non-memory tool the worker called (a data-agent extension tool such as Sleeper's `sleeper_matchup`), capped per entry and in total, newest calls kept first.
 
@@ -50,6 +50,8 @@ A worker round that ends with `finish_reason: MAX_TOKENS` is never judged as-is 
 ## Judge replay
 
 `quack judge replay <chat-id-or-bundle.zip>` re-grades a recorded chat's already-judged rounds under the working-copy rubric, without re-running the agent or the original judge call - the fast loop for proving a rubric or gate-code change against real traffic (see [`docs/design/judging.md`](../design/judging.md)). It loads the recording the same way `quack eval`/`quack ledger export` do, then calls the gate's own `computeDeterministicCriteria`/`mergeDeterministic`/`applyRubricSpecs` and (unless `--deterministic-only`) the judge model - never a reimplementation of judging.
+
+Replay feeds the judge the same CITED EVIDENCE section and hides the `web_page` artifacts the verifier read, as live does, but it knows neither the plan nor artifact lineage: sibling artifacts stay visible to the replayed judge, and the recorded worker turns decide which fetched pages count as the node's own, so a replay of a fan-out node can credit a citation live refuses.
 
 Pass/fail is decided by `gates.judge.threshold` from the local `quack.yaml` - the same bar `buildEnvelope` gates on live - for both the recorded and the replayed score. Each criterion's own `scale.pass` from the rubric is printed alongside as `rubric_mark`, informational only: the live gate does not read it. Beyond a plain pass/fail change on a criterion both sides have, two more flip classes:
 

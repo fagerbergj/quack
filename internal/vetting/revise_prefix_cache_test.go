@@ -56,8 +56,8 @@ func TestRevisePromptSharedPrefixAcrossRounds(t *testing.T) {
 	env2 := verdictEnvelope{Passed: false, Score: 0.66, Threshold: 0.66, Scoring: "lowest_criterion", Round: 2,
 		JudgeFailures: []failureEntry{{Criterion: criterionSpec{Name: "grounding"}, Score: 0.66, Threshold: 0.66, Shortfall: "still missing the deadlock case at line 412", Fix: "read the file"}}}
 
-	r1 := contentPlainText(buildRevisionContent("", question, answer, env1, act, false, nil))
-	r2 := contentPlainText(buildRevisionContent("", question, answer, env2, act, false, nil))
+	r1 := contentPlainText(buildRevisionContent("", question, answer, env1, act, false, nil, nil))
+	r2 := contentPlainText(buildRevisionContent("", question, answer, env2, act, false, nil, nil))
 
 	shared := commonPrefixLen(r1, r2)
 	frac := float64(shared) / float64(len(r2))
@@ -87,7 +87,7 @@ func TestBuildRevisionContentSectionsPresent(t *testing.T) {
 	env := verdictEnvelope{Passed: false, Score: 0.3, Threshold: 0.7, Round: 1,
 		JudgeFailures: []failureEntry{{Criterion: criterionSpec{Name: "grounding"}, Shortfall: "the shortfall text", Fix: "the fix text"}}}
 
-	got := contentPlainText(buildRevisionContent("the principles", question, "the previous answer text", env, workerActivity{}, false, nil))
+	got := contentPlainText(buildRevisionContent("the principles", question, "the previous answer text", env, workerActivity{}, false, nil, nil))
 
 	sections := []string{"the original question text", "An independent reviewer evaluated", "the principles", "Verdict:", "the shortfall text", "the previous answer text"}
 	last := -1
@@ -109,7 +109,7 @@ func TestBuildRevisionContentAsksForTheAnswerNotAChangeNote(t *testing.T) {
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Set my lineup."}}}
 	env := verdictEnvelope{Threshold: 0.6, Round: 1}
 	for _, citationOnly := range []bool{false, true} {
-		got := contentPlainText(buildRevisionContent("", question, "the lineup summary", env, workerActivity{}, citationOnly, nil))
+		got := contentPlainText(buildRevisionContent("", question, "the lineup summary", env, workerActivity{}, citationOnly, nil, nil))
 		if !strings.Contains(got, "never a note about this revision") || strings.Contains(got, "note of what changed") {
 			t.Errorf("citationOnly=%v: revise prompt must ask for the user-facing answer, not a change note:\n%s", citationOnly, got)
 		}

@@ -154,7 +154,7 @@ func TestLoadReplayRubric_BundleDirWithNoRubric(t *testing.T) {
 
 func TestCountingJudgeFactory_CountsInvocations(t *testing.T) {
 	calls := 0
-	base := JudgeFactory(func(judgePrompt, *verdict, *bool, int, int, string, []string, []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
+	base := JudgeFactory(func(judgePrompt, *verdict, *forceClose, int, int, string, []string, []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
 		return nil, judgeReadCounters{}, nil
 	})
 	wrapped := CountingJudgeFactory(base, &calls)
@@ -219,9 +219,14 @@ func TestReplayRound_EnvironmentOnlyFailureNeverReachesJudge(t *testing.T) {
 	}
 }
 
+// fetchTurn records a web_fetch of u, so a replayed node owns u's stored page.
+func fetchTurn(u string) RawTurn {
+	return RawTurn{Output: `{"role":"user","parts":[{"functionResponse":{"id":"f1","name":"web_fetch","response":{"results":[{"url":"` + u + `","text":"stored"}]}}}]}`}
+}
+
 // With stored pages supplied, a replay carries the shadow tier's rows; without them it stays silent.
 func TestReplayRound_ShadowUnitsOnlyWithPages(t *testing.T) {
-	rc := ReplayCase{NodeID: "n1", Task: "t", Answer: "Users rose 30% ([r](https://x.example/p)).\n\nUncited 5% claim."}
+	rc := ReplayCase{NodeID: "n1", Task: "t", Answer: "Users rose 30% ([r](https://x.example/p)).\n\nUncited 5% claim.", WorkerTurns: []RawTurn{fetchTurn("https://x.example/p")}}
 	res, err := ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
 	if err != nil || len(res.Units) != 0 {
 		t.Fatalf("without pages: units=%d err=%v, want none", len(res.Units), err)

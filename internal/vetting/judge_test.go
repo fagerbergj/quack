@@ -1215,11 +1215,32 @@ func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
 }
 
 // stutterJudge repeats the exact same tool call twice (the model stutter
-// #853 exists for), then - once forcedVerdictCallback has stripped its tools
+// #853 exists for), then - once forcedVerdictCallback has disabled its tools
 // for repeating itself - closes with the verdict as plain-text JSON instead of a tool call.
 type stutterJudge struct{ calls int32 }
 
 func (j *stutterJudge) Name() string { return "stutter-judge" }
+
+// forcedCloseErr: a forced-close turn keeps every tool declared (the prompt head, and so the
+// server's prefix cache, is unchanged) and disables calling them with tool_choice none.
+func forcedCloseErr(req *model.LLMRequest) error {
+	if req.Config == nil || len(req.Config.Tools) == 0 {
+		return errors.New("forced-close turn dropped the tool declarations")
+	}
+	if tc := req.Config.ToolConfig; tc == nil || tc.FunctionCallingConfig == nil || tc.FunctionCallingConfig.Mode != genai.FunctionCallingConfigModeNone {
+		return fmt.Errorf("forced-close turn tool config = %+v, want mode NONE", tc)
+	}
+	return nil
+}
+
+// strippedCloseErr: a stutter's close (and the fallback after an empty tool_choice-none
+// close) carries no tools at all, so a parser has nothing to drop.
+func strippedCloseErr(req *model.LLMRequest) error {
+	if len(req.Tools) != 0 || (req.Config != nil && len(req.Config.Tools) != 0) {
+		return fmt.Errorf("expected no tools on a stripped close, got %d req.Tools", len(req.Tools))
+	}
+	return nil
+}
 
 func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
@@ -1228,8 +1249,8 @@ func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest,
 			yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
 			return
 		}
-		if len(req.Tools) != 0 || (req.Config != nil && len(req.Config.Tools) != 0) {
-			yield(nil, fmt.Errorf("expected no tools on the forced closing turn, got %d req.Tools", len(req.Tools)))
+		if err := strippedCloseErr(req); err != nil {
+			yield(nil, err)
 			return
 		}
 		yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 3}}, "feedback": ""}`), nil)
@@ -1630,11 +1651,99 @@ func (j *forceClosedGarbledJudge) GenerateContent(_ context.Context, req *model.
 			yield(stubCall("read_file", map[string]any{"path": fmt.Sprintf("file%d.go", n)}), nil)
 			return
 		}
-		if len(req.Tools) != 0 || (req.Config != nil && len(req.Config.Tools) != 0) {
-			yield(nil, fmt.Errorf("expected no tools on the forced-close turn, got %d req.Tools", len(req.Tools)))
+		check := forcedCloseErr // the first close keeps tools; its unparseable result earns one stripped close
+		if n > 3 {
+			check = strippedCloseErr
+		}
+		if err := check(req); err != nil {
+			yield(nil, err)
 			return
 		}
 		yield(stubText(`{"score": "not-parseable-`), nil)
+	}
+}
+
+// noneCloseJudge reads twice, then answers its last-turn tool_choice-none close with reply
+// (a verdict, or nothing as vLLM gives for a dropped call); a stripped close always gets a verdict.
+type noneCloseJudge struct {
+	calls     int32
+	reply     string
+	maxTokens bool // the none close is cut at the token cap
+}
+
+func (*noneCloseJudge) Name() string { return "none-close-judge" }
+
+func (j *noneCloseJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		switch {
+		case n < 3:
+			yield(stubCall("read_file", map[string]any{"path": fmt.Sprintf("f%d.go", n)}), nil)
+		case strippedCloseErr(req) == nil:
+			yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "ok", "score": 3}}, "feedback": ""}`), nil)
+		case forcedCloseErr(req) != nil:
+			yield(nil, forcedCloseErr(req))
+		case j.maxTokens:
+			yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"score": 3, "crit`}}}, FinishReason: genai.FinishReasonMaxTokens, TurnComplete: true}, nil)
+		default:
+			yield(stubText(j.reply), nil)
+		}
+	}
+}
+
+// nudgeCloseJudge answers its first turn with prose, so the submit nudge lands on the last
+// allowed turn: that close is tool_choice none, comes back empty, and only a stripped close answers.
+type nudgeCloseJudge struct{ calls int32 }
+
+func (*nudgeCloseJudge) Name() string { return "nudge-close-judge" }
+
+func (j *nudgeCloseJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		switch {
+		case atomic.AddInt32(&j.calls, 1) == 1:
+			yield(stubText("Let me think about the answer."), nil)
+		case strippedCloseErr(req) == nil:
+			yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "ok", "score": 3}}, "feedback": ""}`), nil)
+		default:
+			yield(stubText(""), nil)
+		}
+	}
+}
+
+// TestForcedClose_NudgeTakesStrippedFallback: a submit nudge that is itself the forced close gets
+// the same stripped fallback; a close cut at the token cap gets none (stripping would not shorten it).
+func TestForcedClose_NudgeTakesStrippedFallback(t *testing.T) {
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	nudged := &nudgeCloseJudge{}
+	v, _, err := runJudgeRound(t.Context(), NewJudgeFactory(nudged, []tool.Tool{newSpyReadTool(t, "x", new(int32))}, nil), Config{Rubric: "score 0-10", JudgeMaxIterations: 2}, q, "done.", "", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil || v.Score != 1.0 || atomic.LoadInt32(&nudged.calls) != 3 {
+		t.Errorf("nudge close: score %v err %v after %d calls, want a verdict after 3", v.Score, err, nudged.calls)
+	}
+	capped := &noneCloseJudge{maxTokens: true}
+	_, _, err = runJudgeRound(t.Context(), NewJudgeFactory(capped, []tool.Tool{newSpyReadTool(t, "x", new(int32))}, nil), Config{Rubric: "score 0-10", JudgeMaxIterations: 3}, q, "done.", "", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) || atomic.LoadInt32(&capped.calls) != 3 {
+		t.Errorf("token-capped close: err %v after %d calls, want no verdict after 3", err, capped.calls)
+	}
+}
+
+// TestForcedClose_NoneThenStripped: a tool_choice-none close that parses is the verdict (cache
+// kept, no extra call); one that comes back empty gets exactly one more close with tools stripped.
+func TestForcedClose_NoneThenStripped(t *testing.T) {
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 3}
+	readTool := newSpyReadTool(t, "package x\n", new(int32))
+	for _, tc := range []struct {
+		reply string
+		calls int32
+	}{
+		{`{"score": 3, "criteria": {"accuracy": {"reason": "ok", "score": 3}}, "feedback": ""}`, 3},
+		{"", 4},
+	} {
+		judge := &noneCloseJudge{reply: tc.reply}
+		v, _, err := runJudgeRound(t.Context(), NewJudgeFactory(judge, []tool.Tool{readTool}, nil), cfg, q, "done.", "", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
+		if err != nil || v.Score != 1.0 || atomic.LoadInt32(&judge.calls) != tc.calls {
+			t.Errorf("reply %q: score %v err %v after %d calls, want a verdict after %d", tc.reply, v.Score, err, judge.calls, tc.calls)
+		}
 	}
 }
 
@@ -1651,8 +1760,8 @@ func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
-	if got := atomic.LoadInt32(&judge.calls); got != 3 {
-		t.Errorf("judge model called %d times, want exactly 3 (2 reads + the forced-close turn) - no nudge call should follow a forced close", got)
+	if got := atomic.LoadInt32(&judge.calls); got != 4 {
+		t.Errorf("judge model called %d times, want exactly 4 (2 reads + the tool_choice-none close + one stripped close) - no nudge call should follow a forced close", got)
 	}
 }
 

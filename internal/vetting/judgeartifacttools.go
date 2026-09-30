@@ -1,11 +1,13 @@
-// judgeartifacttools.go: judge's own list_artifacts/read_artifact, scoped to
-// the node's chat via the same recordstore.Client the worker's tools use.
+// judgeartifacttools.go: judge's own list_artifacts/read_artifact over the chat's
+// recordstore.Client, narrowed per round to this node's lineage by judgeView.
 package vetting
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"google.golang.org/adk/v2/agent"
@@ -19,6 +21,82 @@ import (
 // judgeArtifactReadCap bounds one read_artifact reply so a large stored
 // artifact can't blow the judge's own prompt budget.
 const judgeArtifactReadCap = 24_000
+
+// judgeSeededReadCap bounds one prior read seeded into a retry's prompt (the deliverable keeps judgeArtifactReadCap).
+const judgeSeededReadCap = 8_000
+
+// judgeView is one judge round's view of the chat: a foreign node's artifacts are hidden
+// unless this node wrote, fetched or read them, or its own lineage wrote a revision.
+// checked: web_pages the verify tier already read this round, so the judge is not shown them.
+type judgeView struct {
+	foreign map[string]bool
+	own     map[string]bool
+	checked map[string]bool
+	mu      sync.Mutex
+	history map[string]bool // per id: some revision was written outside the foreign nodes
+}
+
+func newJudgeView(cfg Config, act workerActivity) *judgeView {
+	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs(), checked: cfg.judgeCheckedPages, history: map[string]bool{}}
+	for _, n := range cfg.ForeignNodes {
+		v.foreign[n] = true
+	}
+	return v
+}
+
+type judgeViewKey struct{}
+
+func withJudgeView(ctx context.Context, s *judgeView) context.Context {
+	return context.WithValue(ctx, judgeViewKey{}, s)
+}
+
+// judgeViewFrom is nil outside a judge round: a direct tool call sees everything.
+func judgeViewFrom(ctx context.Context) *judgeView {
+	s, _ := ctx.Value(judgeViewKey{}).(*judgeView)
+	return s
+}
+
+// hidesPage: a web_page the verify tier has already read for this round.
+func (s *judgeView) hidesPage(id string) bool {
+	return s != nil && s.checked[id]
+}
+
+func (s *judgeView) visible(ctx context.Context, c *recordstore.Client, id, author string) bool {
+	if s.hidesPage(id) {
+		return false
+	}
+	if s == nil || s.own[id] || !s.foreign[author] {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seen, ok := s.history[id]; ok {
+		return seen
+	}
+	seen, err := s.writtenInScope(ctx, c, id)
+	if err == nil { // a failed lookup hides it for this call only
+		s.history[id] = seen
+	}
+	return seen
+}
+
+// writtenInScope: an upstream (or own) revision of id exists, e.g. a fan-in's input a sibling edited last.
+func (s *judgeView) writtenInScope(ctx context.Context, c *recordstore.Client, id string) (bool, error) {
+	versions, err := c.Versions(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	for _, v := range versions {
+		_, lin, ok, err := c.LoadVersionWithMeta(ctx, id, v)
+		if err != nil {
+			return false, err
+		}
+		if ok && !s.foreign[lin.NodeID] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // judgeHiddenKinds: gate-owned records excluded from list_artifacts - a judge
 // reading its own prior verdict/delivery decisions as "evidence" is circular.
@@ -53,9 +131,10 @@ func newJudgeListArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 			if err != nil {
 				return "", fmt.Errorf("list_artifacts: %w", err)
 			}
+			view := judgeViewFrom(ctx)
 			var b strings.Builder
 			for _, it := range items {
-				if judgeHiddenKinds[it.Kind] {
+				if judgeHiddenKinds[it.Kind] || !view.visible(ctx, c, it.ID, it.NodeID) {
 					continue
 				}
 				fmt.Fprintf(&b, "%s\trevision=%d\tkind=%s\tnode=%s\n", it.ID, it.Revision, it.Kind, it.NodeID)
@@ -88,24 +167,35 @@ func newJudgeReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 				"large text artifact instead of the whole thing.",
 		},
 		func(ctx agent.Context, a judgeReadArtifactArgs) (string, error) {
-			var data []byte
-			var mime string
-			var ok bool
-			var err error
-			if a.Revision > 0 {
-				data, ok, err = c.LoadVersion(ctx, a.ID, a.Revision)
-			} else {
-				data, mime, _, _, ok, err = c.LatestWithMeta(ctx, a.ID)
+			view := judgeViewFrom(ctx)
+			if view.hidesPage(a.ID) {
+				return "", errPageChecked(a.ID)
 			}
+			data, mime, author, ok, err := loadJudgeArtifact(ctx, c, a)
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
-			if !ok {
+			if !ok || !view.visible(ctx, c, a.ID, author) {
 				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
 			}
-			return shapeJudgeReadArtifact(data, mime, a), nil
+			return shapeJudgeReadArtifact(data, mime, a, judgeArtifactReadCap), nil
 		},
 	)
+}
+
+func errPageChecked(id string) error {
+	return fmt.Errorf("read_artifact: %s: this fetched page is not available to you this round - code already checked every cited specific against it, and any it could not confirm is in CITED EVIDENCE", id)
+}
+
+// loadJudgeArtifact loads the latest or a named revision, with its authoring node.
+func loadJudgeArtifact(ctx context.Context, c *recordstore.Client, a judgeReadArtifactArgs) (data []byte, mime, author string, ok bool, err error) {
+	var lineage recordstore.Lineage
+	if a.Revision > 0 {
+		data, lineage, ok, err = c.LoadVersionWithMeta(ctx, a.ID, a.Revision)
+	} else {
+		data, mime, lineage, _, ok, err = c.LatestWithMeta(ctx, a.ID)
+	}
+	return data, mime, lineage.NodeID, ok, err
 }
 
 // judgeArtifactWindowLines caps a windowed read_artifact reply, mirroring
@@ -115,7 +205,7 @@ const judgeArtifactWindowLines = 500
 // shapeJudgeReadArtifact: windowed or bounded text, or base64 for binary data
 // (mirrors tools.shapeReadArtifact - a judge round hits the same large/binary
 // artifacts a worker's own read_artifact call does).
-func shapeJudgeReadArtifact(data []byte, mime string, a judgeReadArtifactArgs) string {
+func shapeJudgeReadArtifact(data []byte, mime string, a judgeReadArtifactArgs, limit int) string {
 	isText := (mime != "" && (strings.HasPrefix(mime, "text/") || mime == "application/json")) ||
 		(mime == "" && utf8.Valid(data))
 	if !isText {
@@ -126,14 +216,14 @@ func shapeJudgeReadArtifact(data []byte, mime string, a judgeReadArtifactArgs) s
 	}
 	if a.Offset > 0 || a.Lines > 0 {
 		lines := strings.Split(string(data), "\n")
-		return judgeWindowLines(lines, a.Offset, a.Lines, len(lines))
+		return judgeWindowLines(lines, a.Offset, a.Lines, len(lines), limit)
 	}
-	return boundExcerpt(string(data), judgeArtifactReadCap)
+	return boundExcerpt(string(data), limit)
 }
 
-// judgeWindowLines returns lines[start-1:end] (1-based, capped at total and
-// at judgeArtifactWindowLines) plus a navigation footer.
-func judgeWindowLines(lines []string, offset, want, total int) string {
+// judgeWindowLines returns lines[start-1:end] (1-based, capped at total, at
+// judgeArtifactWindowLines and at limit chars) plus a navigation footer.
+func judgeWindowLines(lines []string, offset, want, total, limit int) string {
 	start := offset
 	if start < 1 {
 		start = 1
@@ -144,19 +234,29 @@ func judgeWindowLines(lines []string, offset, want, total int) string {
 	if want <= 0 || want > judgeArtifactWindowLines {
 		want = judgeArtifactWindowLines
 	}
-	end := start + want - 1
-	if end > total {
-		end = total
+	last := min(start+want-1, total)
+	end, size := start, len(lines[start-1])
+	for end < last && size+1+len(lines[end]) <= limit {
+		size += 1 + len(lines[end])
+		end++
 	}
-	body := strings.Join(lines[start-1:end], "\n")
+	body := boundExcerpt(strings.Join(lines[start-1:end], "\n"), limit) // one over-long line still fits
 	if end < total {
 		return fmt.Sprintf("%s\n\n[lines %d-%d of %d. offset=%d to read further.]", body, start, end, total, end+1)
 	}
 	return fmt.Sprintf("%s\n\n[lines %d-%d of %d (end).]", body, start, end, total)
 }
 
-// BoundJudgeArtifactRead shapes an artifact body for a judge exactly as the live
-// read_artifact tool does (24KB text cap, 500-line windows, base64 for binary).
-func BoundJudgeArtifactRead(data []byte, mime string, offset, lines int) string {
-	return shapeJudgeReadArtifact(data, mime, judgeReadArtifactArgs{Offset: offset, Lines: lines})
+// JudgeHidesArtifact: the judge round in ctx is not shown id (a web_page the verify tier read).
+func JudgeHidesArtifact(ctx context.Context, id string) bool {
+	return judgeViewFrom(ctx).hidesPage(id)
+}
+
+// BoundJudgeArtifactRead shapes artifact id's body for a judge exactly as the live read_artifact
+// tool does, refusing a page the round's verify tier already read.
+func BoundJudgeArtifactRead(ctx context.Context, id string, data []byte, mime string, offset, lines int) (string, error) {
+	if JudgeHidesArtifact(ctx, id) {
+		return "", errPageChecked(id)
+	}
+	return shapeJudgeReadArtifact(data, mime, judgeReadArtifactArgs{Offset: offset, Lines: lines}, judgeArtifactReadCap), nil
 }

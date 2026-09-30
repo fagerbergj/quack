@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -493,7 +494,7 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 		if ownOnly {
 			id = nodeID // event paths carry the plan node id; cfg.NodeID can be a shared workspace scope
 		}
-		act := scanSessionActivity(ctx.Session(), nodeDir, id, ownOnly)
+		act := scanSessionActivity(ctx.Session(), nodeDir, id, ownOnly, cfg.ForeignNodes)
 		augmentFromRepo(probeCtx, &act, cfg)
 		return act
 	}
@@ -967,11 +968,13 @@ type judgeRounds struct {
 	// truncated: this round's answer is still cut off (MAX_TOKENS) after the
 	// continuation budget - runJudge folds it into complete_output=0.
 	truncated bool
+	// verifyMemo: runVerify's verdicts across this loop's rounds, kept even when a judge call fails.
+	verifyMemo map[string]Verdict
 }
 
 // runJudgeRounds: the judge/revise loop - judge, fold deterministic criteria, revise on fail.
 func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (outcome judgeRoundOutcome) {
-	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, advisorToken: g.advisorToken, turnID: g.turnID, startedAt: g.startedAt, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log, lastAnswerRunID: g.lastRunID}
+	j := &judgeRounds{ctx: g.ctx, nodeCtx: g.nodeCtx, emit: g.emit, cfg: g.cfg, judge: g.judge, question: question, answer: answer, advisorToken: g.advisorToken, turnID: g.turnID, startedAt: g.startedAt, sfx: sfx, receivedMemories: g.receivedMemories, sink: g.sink, promptEmit: g.promptEmit, workerNode: g.workerNode, workerModel: g.workerModel, actFor: g.actFor, repeatFailed: g.repeatFailed, ctrl: g.ctrl, nodeID: g.nodeID, log: g.log, lastAnswerRunID: g.lastRunID, verifyMemo: map[string]Verdict{}}
 	// receivedMemories rides every return path so commitFinal resumes counting from here.
 	defer func() { outcome.receivedMemories = j.receivedMemories }()
 	// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
@@ -1243,13 +1246,12 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 			return verdict{}, det, nil
 		}
 	}
-	waitVerify := startVerify(abortCtx, j.cfg, j.answer, act)
-	v, jerr := runJudgeAgent(abortCtx, j.judge, j.cfg, attachScreenshots(j.question, shots), j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
-	if jerr == nil { // a failed judge round fails closed without reading det; the verify goroutine ends on its own
-		if c, ok := waitVerify(); ok {
-			det[specificsSupportedCriterion] = c
-		}
+	checks := runVerify(abortCtx, j.cfg, j.answer, act, j.verifyMemo)
+	if c, ok := specificsSupportedScore(checks); ok {
+		det[specificsSupportedCriterion] = c
 	}
+	j.cfg.judgeEvidence, j.cfg.judgeCheckedPages = judgeEvidenceSection(checks), checkedPages(checks)
+	v, jerr := runJudgeAgent(abortCtx, j.judge, j.cfg, attachScreenshots(j.question, shots), j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
 	if j.cfg.ReleaseJudge != nil && j.cfg.AdmitWorker != nil {
 		j.cfg.ReleaseJudge()
 		if !j.cfg.AdmitWorker(j.ctx) {
@@ -1395,7 +1397,7 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 	// #762: undo this round's commits before another try, only if commit_h hygiene
 	// says it swept in off-task work - an ordinary wrong round keeps its commits.
 	resetCloneToNodeBase(j.cfg, v)
-	revisePrompt := contentPlainText(buildRevisionContent(j.cfg.Constitution, j.question, j.answer, env, act, citationOnlyFailure(v, j.cfg.Threshold), jr.Notes))
+	revisePrompt := contentPlainText(buildRevisionContent(j.cfg.Constitution, j.question, j.answer, env, act, citationOnlyFailure(v, j.cfg.Threshold), jr.Notes, storedPageIDs(j.nodeCtx, j.cfg, act)))
 	reviseRunID := fmt.Sprintf("worker-r%d%s", round, j.sfx)
 	// gate.revise spans the round through gate.judge's choke point; sink is nil -
 	// the SSE for this run already comes from dagStream off the worker session.
@@ -2318,6 +2320,25 @@ func recordReader(cfg Config) PageLoader {
 	return nil
 }
 
+// storedPageIDs: the web_page ids stored for the URLs act fetched, in URL order.
+func storedPageIDs(ctx context.Context, cfg Config, act workerActivity) []string {
+	c := recordClient(cfg)
+	if c == nil {
+		return nil
+	}
+	var ids []string
+	for _, u := range slices.Sorted(maps.Keys(act.fetched)) {
+		id, err := recordstore.IdentityFor(webPageKind, "", u)
+		if err != nil {
+			continue
+		}
+		if vs, err := c.Versions(ctx, id); err == nil && len(vs) > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // setIfApplicable adds c under name only when ok, as a call rather than an
 // inline if - keeps computeDeterministicCriteria's own branch count down.
 func setIfApplicable(det map[string]criterionScore, name string, c criterionScore, ok bool) {
@@ -2564,13 +2585,15 @@ func writtenRel(nodeDir, cwd, p string) string {
 
 // activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.
 func activityFromSessionAt(sess session.Session, nodeDir, nodeID string) workerActivity {
-	return scanSessionActivity(sess, nodeDir, nodeID, false)
+	return scanSessionActivity(sess, nodeDir, nodeID, false, nil)
 }
 
-// scanSessionActivity: ownOnly skips every event another node produced.
-func scanSessionActivity(sess session.Session, nodeDir, nodeID string, ownOnly bool) workerActivity {
+// scanSessionActivity: ownOnly skips every event another node produced; foreign skips
+// only those plan nodes' events, keeping upstream and orchestrator activity.
+func scanSessionActivity(sess session.Session, nodeDir, nodeID string, ownOnly bool, foreign []string) workerActivity {
 	s := &activityScanner{
 		ownOnly:          ownOnly,
+		foreign:          foreign,
 		act:              workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
 		nodeDir:          nodeDir,
 		nodeID:           nodeID,
@@ -2598,7 +2621,7 @@ func (s *activityScanner) scanEvent(ev *session.Event) {
 		return
 	}
 	s.otherNode = s.nodeID != "" && ev.NodeInfo != nil && !pathHasNode(ev, s.nodeID)
-	if s.ownOnly && s.otherNode {
+	if (s.ownOnly && s.otherNode) || slices.ContainsFunc(s.foreign, func(n string) bool { return pathHasNode(ev, n) }) {
 		return
 	}
 	for _, p := range ev.Content.Parts {
@@ -2701,6 +2724,7 @@ type activityScanner struct {
 	nodeID        string          // artifact writes are credited to this node only; "" = any
 	otherNode     bool            // the event being scanned belongs to another node
 	ownOnly       bool            // skip other nodes' events entirely (see gateRun.ownActivity)
+	foreign       []string        // skip these plan nodes' events (Config.ForeignNodes)
 	curCwd        string          // node-relative cwd ("" = node root)
 	writtenSeen   map[string]bool // dedup for written
 	artifactSeen  map[string]bool // dedup for artifactsWritten

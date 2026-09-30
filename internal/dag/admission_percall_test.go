@@ -117,3 +117,32 @@ func TestPerCallNoOpHooksSurviveWiring(t *testing.T) {
 	}
 	cfg.ReleaseWorker()
 }
+
+// TestTryAdmitVerifyTakesOnlyFreeJudgeSessions: the verifier's extra sessions come from the
+// judge model's pool, one per grant, and stop at its cap instead of waiting.
+func TestTryAdmitVerifyTakesOnlyFreeJudgeSessions(t *testing.T) {
+	admission := NewAdmission(map[string]int{"j": 2}, nil, nil, 0)
+	cfg := &vetting.Config{}
+	free, err := setupAdmission(context.Background(), "n1", cfg, admission, AdmissionSpec{}, AdmissionSpec{Model: "j"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer free()
+	if !cfg.AdmitJudge(context.Background()) {
+		t.Fatal("AdmitJudge = false")
+	}
+	release, ok := cfg.TryAdmitVerify()
+	if !ok {
+		t.Fatal("TryAdmitVerify with one free judge session = false")
+	}
+	if _, ok := cfg.TryAdmitVerify(); ok {
+		t.Error("TryAdmitVerify past the judge model's session cap = true")
+	}
+	release()
+	if release, ok := cfg.TryAdmitVerify(); !ok {
+		t.Error("TryAdmitVerify after a release = false")
+	} else {
+		release()
+	}
+	cfg.ReleaseJudge()
+}

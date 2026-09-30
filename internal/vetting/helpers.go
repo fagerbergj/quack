@@ -20,6 +20,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -39,7 +40,7 @@ type Config struct {
 	// one clone, so diffing from the reflog's oldest entry shows every sibling's
 	// work too and the change-shape criteria fail on commits this node never made (#710). Empty ⇒ fall back to the reflog base (single-node plans, no clone).
 	NodeBaseSHA          string
-	DeterministicRounds  int     // cheap citation/length check + revise cycles
+	DeterministicRounds  int     // > 0 turns the gate on without a judge; logged only, never a round cap
 	JudgeRounds          int     // model-judge/revise rounds
 	Threshold            float64 // pass score in (0,1]
 	JudgeMaxIterations   int     // cap on judge model turns per round
@@ -165,10 +166,19 @@ type Config struct {
 	ReleaseJudge  func()
 	AdmitWorker   func(ctx context.Context) bool
 	ReleaseWorker func()
-	// JudgeArtifactTools: this node's list_artifacts/read_artifact, scoped to
-	// the chat and set by the dag when it builds the gated node - nil only
-	// when no artifact service is configured for the run at all.
+	// TryAdmitVerify reserves one more judge-model session without waiting, for a parallel
+	// verifier batch; nil means no admission ledger, so batches run in parallel unmetered.
+	TryAdmitVerify func() (release func(), ok bool)
+	// JudgeArtifactTools: list_artifacts/read_artifact over the chat, narrowed per
+	// judge round by ForeignNodes; nil only when the run has no artifact service.
 	JudgeArtifactTools []tool.Tool
+	// ForeignNodes: plan nodes that are neither this node nor its upstream. Their
+	// session activity and artifacts never count as this node's evidence.
+	ForeignNodes []string
+	// judgeEvidence: the round's CITED EVIDENCE section, set by runJudge from the verify tier;
+	// judgeCheckedPages: the web_pages that tier read this round, which the judge is not shown.
+	judgeEvidence     string
+	judgeCheckedPages map[string]bool
 }
 
 // HasWorkspaceClone reports whether this node's worker actually has a repo
@@ -339,6 +349,25 @@ func (a workerActivity) readSource() bool {
 		}
 	}
 	return false
+}
+
+// ownArtifactIDs: artifacts this node wrote, rendered, read, or fetched as a page -
+// visible to its judge and evidence whichever node's lineage they carry.
+func (a workerActivity) ownArtifactIDs() map[string]bool {
+	own := map[string]bool{}
+	for _, ids := range [][]string{a.artifactsWritten, a.rendered, a.sourceReads} {
+		for _, id := range ids {
+			own[id] = true
+		}
+	}
+	for u := range a.fetched {
+		for _, v := range urlVariants(u) {
+			if id, err := recordstore.IdentityFor(webPageKind, "", v); err == nil {
+				own[id] = true
+			}
+		}
+	}
+	return own
 }
 
 // producedArtifacts: every artifact this round's judge must read before passing it.

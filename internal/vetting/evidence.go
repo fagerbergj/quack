@@ -18,6 +18,7 @@ type UnitCheck struct {
 	State    string  // "located", "unlocated", "uncited", "no_stored_text"
 	Window   string  // evidence around the match; for an unlocated figure, around the claim's key terms (second look)
 	page     string  // the cited page's text, for the second look's wider window
+	pageID   string  // the stored web_page the window came from; "" for a snippet
 	snippet  bool    // the evidence is a search snippet: it can back a specific, never contradict one
 	Verdict  Verdict // the verify tier's answer, zero until it runs
 }
@@ -33,6 +34,9 @@ type PageLoader interface {
 type WebPageEvidence struct {
 	Store    PageLoader
 	Snippets map[string]string // search result url -> snippet, from the round's activity
+	// Allowed: page ids the node fetched or read itself; nil allows any. The store is
+	// chat-wide, so without it a sibling's fetch would back this node's citation.
+	Allowed map[string]bool
 }
 
 const webPageKind = "web_page"
@@ -45,7 +49,7 @@ func (w WebPageEvidence) Resolve(ctx context.Context, citation string) (string, 
 }
 
 type resolved struct {
-	text        string
+	text, id    string // id: the stored web_page, "" for a snippet
 	snippet, ok bool
 }
 
@@ -53,11 +57,11 @@ func (w WebPageEvidence) resolve(ctx context.Context, citation string) resolved 
 	if w.Store != nil {
 		for _, cand := range urlVariants(citation) {
 			id, err := recordstore.IdentityFor(webPageKind, "", cand)
-			if err != nil {
+			if err != nil || (w.Allowed != nil && !w.Allowed[id]) {
 				continue
 			}
 			if data, _, ok, err := w.Store.Latest(ctx, id); err == nil && ok && len(data) > 0 {
-				return resolved{text: string(data), ok: true}
+				return resolved{text: string(data), id: id, ok: true}
 			}
 		}
 	}
@@ -242,12 +246,12 @@ func locateAcross(ctx context.Context, c UnitCheck, citations []string, res WebP
 			c.State, c.Citation = "unlocated", cit
 		}
 		if w, found := LocateSpecific(text, c.Specific); found {
-			c.State, c.Citation, c.Window, c.page, c.snippet = "located", cit, w, text, r.snippet
+			c.State, c.Citation, c.Window, c.page, c.snippet, c.pageID = "located", cit, w, text, r.snippet, r.id
 			return c
 		}
 		if c.Window == "" || (c.snippet && !r.snippet) { // a fetched page's window beats a snippet's
 			if w := keyTermWindow(text, withoutLinks(c.Unit.Text), locateWindow); w != "" { // second look: where the claim's own terms sit
-				c.Window, c.Citation, c.page, c.snippet = w, cit, text, r.snippet // the row is reported under the page its window came from
+				c.Window, c.Citation, c.page, c.snippet, c.pageID = w, cit, text, r.snippet, r.id // the row is reported under the page its window came from
 			}
 		}
 	}

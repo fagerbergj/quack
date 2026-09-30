@@ -282,17 +282,18 @@ tools:
     store: default_vector
     collection: user_memory
 
-# The trust gate wraps every agent and runs cheapest-first, each stage with its
-# own round budget (a stage with max_rounds:0 is skipped):
-#   1. deterministic_checks - free code checks (citation backing + length) that
-#      drive cheap targeted revisions to drop fabricated citations up front.
-#   2. judge - an independent model scores the answer; the worker revises on fail.
+# The trust gate wraps every agent and runs cheapest-first (max_rounds:0 skips a stage):
+#   1. deterministic_checks - free code checks (citation backing + length), run
+#      inside each judge round; max_rounds > 0 keeps the gate on even with the
+#      judge off, but then nothing is scored.
+#   2. judge - an independent model scores the answer; the worker revises on fail,
+#      up to judge.max_rounds times.
 # Deterministic citation/length scores are always folded into the judge's verdict.
 gates:
   constitution_path: config/constitution.md   # global principles, used by the judge
   rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.yaml in their bundle)
   deterministic_checks:
-    max_rounds: 4   # free citation/length checks; up to 4 cheap worker revise cycles
+    max_rounds: 4   # > 0 keeps the gate on; the checks run inside judge rounds; not a revise cap
   judge:
     provider: default
     model: ${QUACK_JUDGE_MODEL}   # empty ⇒ judge disabled

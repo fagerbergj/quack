@@ -74,6 +74,12 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	}
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
+	if declaresCodeOwned(cfg, specificsSupportedCriterion) { // as live: the verify tier runs first and feeds the judge
+		cfg.judgeEvidence, cfg.judgeCheckedPages = judgeEvidenceSection(res.Units), checkedPages(res.Units)
+		if c, ok := specificsSupportedScore(res.Units); ok {
+			det[specificsSupportedCriterion] = c
+		}
+	}
 	// Environment-only failures here are the replay host's, not the round's; the
 	// live judge never saw them, so they must not reach the judge prompt either.
 	judgeDet := map[string]criterionScore{}
@@ -90,9 +96,6 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 		if err != nil {
 			return res, fmt.Errorf("vetting: replay judge round: %w", err)
 		}
-	}
-	if c, ok := specificsSupportedScore(res.Units); ok && declaresCodeOwned(cfg, specificsSupportedCriterion) {
-		det[specificsSupportedCriterion] = c // live computes it beside the judge, so it never reaches the judge prompt
 	}
 	v = mergeDeterministic(v, det, cfg)
 	v = applyRubricSpecs(v, cfg.RubricSpecs)
@@ -197,7 +200,7 @@ func decodeContent(raw string) *genai.Content {
 // CountingJudgeFactory wraps factory, incrementing *calls on invocation -
 // lets a caller outside this package prove a judge factory was never reached.
 func CountingJudgeFactory(factory JudgeFactory, calls *int) JudgeFactory {
-	return func(prompt judgePrompt, sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
+	return func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
 		*calls++
 		return factory(prompt, sink, forced, maxIters, maxOutputTokens, thinkingLevel, receivedIDs, artifactTools)
 	}

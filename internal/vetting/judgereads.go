@@ -3,6 +3,7 @@
 package vetting
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 
@@ -84,6 +85,44 @@ const unreadPassFeedback = "Your previous verdict passed this answer without ope
 type judgeReadCounters struct {
 	repo     *readCounter
 	artifact *readCounter
+	// reads: the round's tool results as "name(args) -> result", seeded into a retry's prompt.
+	reads *[]string
+}
+
+// carry credits prior's reads to c: a retry seeded with them need not repeat them to pass.
+func (c judgeReadCounters) carry(prior judgeReadCounters) {
+	for _, p := range [][2]*readCounter{{c.repo, prior.repo}, {c.artifact, prior.artifact}} {
+		if p[0] != nil && p[1] != nil {
+			p[0].n.Add(p[1].count())
+		}
+	}
+}
+
+// judgePriorReadsChars bounds the prior-attempt reads seeded into a retry's prompt.
+const judgePriorReadsChars = 32_000
+
+// priorReadsSection renders c's reads for a retry of the same answer within limit chars;
+// "" when there are none or no room.
+func priorReadsSection(c judgeReadCounters, limit int) string {
+	const header = "READS FROM YOUR PREVIOUS ATTEMPT on this same answer - reuse them instead of repeating them; a read marked \"excerpt truncated\" may be read again for the part it cut:\n"
+	if c.reads == nil || len(*c.reads) == 0 || limit < len(header)+200 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(header)
+	skipped := 0
+	for _, r := range *c.reads {
+		if b.Len()+len(r)+60 > limit { // 60: room for the skipped-reads note
+			skipped++
+			continue
+		}
+		b.WriteString(r)
+		b.WriteString("\n")
+	}
+	if skipped > 0 {
+		fmt.Fprintf(&b, "(%d reads not shown: no room)\n", skipped)
+	}
+	return b.String()
 }
 
 // unreadArtifactPass: the worker wrote/edited an artifact this round, the

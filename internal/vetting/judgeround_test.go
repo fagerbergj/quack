@@ -225,7 +225,7 @@ func TestRevisePromptCarriesNoteRefs(t *testing.T) {
 	}}
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review this PR"}}}
 	env := verdictEnvelope{Passed: false, Score: 0.3, Threshold: 0.7, Round: 1}
-	got := contentPlainText(buildRevisionContent("", question, "the answer", env, workerActivity{}, false, notes))
+	got := contentPlainText(buildRevisionContent("", question, "the answer", env, workerActivity{}, false, notes, nil))
 
 	for _, want := range []string{`"code_review:pr:42"`, `"revision": 5`, "the bug is right here"} {
 		if !strings.Contains(got, want) {

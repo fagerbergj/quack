@@ -117,6 +117,36 @@ func TestAdmitFitsSessionsDimension(t *testing.T) {
 	mustAdmit(t, a, spec) // capacity returned
 }
 
+// TestTryAdmit: an opportunistic reservation takes only free capacity and never waits.
+func TestTryAdmit(t *testing.T) {
+	a := NewAdmission(map[string]int{"m": 2}, nil, nil, time.Hour)
+	spec := AdmissionSpec{Model: "m"}
+	if !a.TryAdmit(spec) {
+		t.Fatal("TryAdmit on free capacity = false")
+	}
+	mustAdmit(t, a, spec)
+	if a.TryAdmit(spec) {
+		t.Fatal("TryAdmit past the session cap = true")
+	}
+	a.Release(spec)
+	if !a.TryAdmit(spec) {
+		t.Error("TryAdmit after a release = false")
+	}
+}
+
+// TestTryAdmit_YieldsToQueuedNode: capacity freed while a node waits goes to the node.
+func TestTryAdmit_YieldsToQueuedNode(t *testing.T) {
+	a := NewAdmission(map[string]int{"m": 1}, map[string]int{"m": 10}, nil, time.Hour)
+	mustAdmit(t, a, AdmissionSpec{Model: "m"})
+	big := AdmissionSpec{Model: "m", KVTokens: 20} // never fits: stays queued
+	cancel := mustBlock(t, a, big)
+	defer cancel()
+	a.Release(AdmissionSpec{Model: "m"})
+	if a.TryAdmit(AdmissionSpec{Model: "m"}) {
+		t.Error("TryAdmit jumped a queued node")
+	}
+}
+
 func TestAdmitFitsKVTokensDimension(t *testing.T) {
 	a := NewAdmission(nil, map[string]int{"m": 100}, nil, time.Hour)
 	big := AdmissionSpec{Model: "m", KVTokens: 100}
