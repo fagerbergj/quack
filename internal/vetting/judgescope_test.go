@@ -136,9 +136,9 @@ func seedScopedChatOn(t *testing.T, svc artifact.Service) (rc *recordstore.Clien
 	return rc, sibID, upID, pageURL
 }
 
-// TestJudgeArtifactTools_ScopeAndBudget: within a judge round the tools hide a sibling's
-// artifacts, keep upstream and self-fetched ones, and cap web_page reads when budgeted.
-func TestJudgeArtifactTools_ScopeAndBudget(t *testing.T) {
+// TestJudgeArtifactTools_ScopeAndCheckedPages: within a judge round the tools hide a sibling's
+// artifacts and keep upstream ones; once the verify tier read the pages, they are hidden too.
+func TestJudgeArtifactTools_ScopeAndCheckedPages(t *testing.T) {
 	rc, sibID, upID, pageURL := seedScopedChat(t)
 	tools, err := NewJudgeArtifactTools(rc)
 	if err != nil {
@@ -146,36 +146,31 @@ func TestJudgeArtifactTools_ScopeAndBudget(t *testing.T) {
 	}
 	list, read := tools[0].(runnableTool), tools[1].(runnableTool)
 	act := workerActivity{fetched: map[string]struct{}{pageURL: {}}}
-	view := newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}, judgePagesChecked: true}, act)
-	ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), view))}
-
-	out, err := list.Run(ctx, map[string]any{})
-	listing, _ := out["result"].(string)
-	if err != nil || strings.Contains(listing, sibID) || !strings.Contains(listing, upID) || !strings.Contains(listing, pageID(t, pageURL)) {
-		t.Errorf("list_artifacts = %q (err %v), want the upstream document a sibling edited last and the self-fetched page, not %s", listing, err, sibID)
-	}
-	if _, err := read.Run(ctx, map[string]any{"id": sibID}); err == nil || !strings.Contains(err.Error(), "not found") {
-		t.Errorf("read of a sibling artifact: err = %v, want not found", err)
-	}
-	for i := 1; i <= judgeSourceReadBudget; i++ {
-		out, err := read.Run(ctx, map[string]any{"id": pageID(t, pageURL), "offset": float64(1)})
-		if body, _ := out["result"].(string); err != nil || len(body) > judgeSourceReadCap+100 || strings.Contains(body, "budget spent") {
-			t.Fatalf("source read %d: %d chars, err %v, want a read within %d chars plus its footer", i, len(body), err, judgeSourceReadCap)
+	for _, checked := range []bool{false, true} {
+		view := newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}, judgePagesChecked: checked}, act)
+		ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), view))}
+		out, err := list.Run(ctx, map[string]any{})
+		listing, _ := out["result"].(string)
+		if err != nil || strings.Contains(listing, sibID) || !strings.Contains(listing, upID) || strings.Contains(listing, pageID(t, pageURL)) != !checked {
+			t.Errorf("checked=%v: list_artifacts = %q (err %v), want the upstream document a sibling edited last, the self-fetched page only when unchecked, never %s", checked, listing, err, sibID)
 		}
-	}
-	out, _ = read.Run(ctx, map[string]any{"id": pageID(t, pageURL)})
-	if body, _ := out["result"].(string); !strings.Contains(body, "read budget spent") {
-		t.Errorf("read %d of a source page = %.80q, want the budget refusal", judgeSourceReadBudget+1, body)
-	}
-	if out, err := read.Run(ctx, map[string]any{"id": upID}); err != nil || out["result"] != "upstream notes" {
-		t.Errorf("a non-page read after the budget = %v, %v, want it unaffected", out["result"], err)
+		if _, err := read.Run(ctx, map[string]any{"id": sibID}); err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Errorf("checked=%v: read of a sibling artifact: err = %v, want not found", checked, err)
+		}
+		out, err = read.Run(ctx, map[string]any{"id": pageID(t, pageURL)})
+		if body, _ := out["result"].(string); checked != (err != nil && strings.Contains(err.Error(), "code already checked")) || (!checked && len(body) < 16_000) {
+			t.Errorf("checked=%v: page read = %d chars, err %v", checked, len(body), err)
+		}
+		if out, err := read.Run(ctx, map[string]any{"id": upID}); err != nil || out["result"] != "upstream notes" {
+			t.Errorf("checked=%v: upstream read = %v, %v, want it unaffected", checked, out["result"], err)
+		}
 	}
 }
 
-// TestJudgeArtifactTools_UnbudgetedJudges: a judge with no CITED EVIDENCE (pr-tutor opening
-// diff hunks, code-reviewer reading bytes inputs) and bytes reads anywhere keep the full reads.
-func TestJudgeArtifactTools_UnbudgetedJudges(t *testing.T) {
-	rc, _, _, pageURL := seedScopedChat(t)
+// TestJudgeArtifactTools_InputsStayReadable: bytes inputs (pr-tutor's diff hunks, code-reviewer's
+// PR files) read whole and repeatedly whether or not the round's pages were checked.
+func TestJudgeArtifactTools_InputsStayReadable(t *testing.T) {
+	rc, _, _, _ := seedScopedChat(t)
 	tools, err := NewJudgeArtifactTools(rc)
 	if err != nil {
 		t.Fatal(err)
@@ -185,19 +180,12 @@ func TestJudgeArtifactTools_UnbudgetedJudges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	act := workerActivity{fetched: map[string]struct{}{pageURL: {}}}
-	for name, cfg := range map[string]Config{"no evidence": {}, "evidence": {judgePagesChecked: true}} {
-		ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), newJudgeView(cfg, act)))}
-		ids := []string{bytesID}
-		if name == "no evidence" {
-			ids = append(ids, pageID(t, pageURL))
-		}
-		for _, id := range ids {
-			for i := 1; i <= judgeSourceReadBudget+3; i++ {
-				out, err := read.Run(ctx, map[string]any{"id": id})
-				if body, _ := out["result"].(string); err != nil || len(body) < judgeSourceReadCap*2 {
-					t.Fatalf("%s: read %d of %s = %d chars, err %v, want the whole ~20KB body", name, i, id, len(body), err)
-				}
+	for _, checked := range []bool{false, true} {
+		ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), newJudgeView(Config{judgePagesChecked: checked}, workerActivity{})))}
+		for i := 1; i <= 6; i++ {
+			out, err := read.Run(ctx, map[string]any{"id": bytesID})
+			if body, _ := out["result"].(string); err != nil || len(body) < 16_000 {
+				t.Fatalf("checked=%v: read %d = %d chars, err %v, want the whole ~20KB body", checked, i, len(body), err)
 			}
 		}
 	}
@@ -548,20 +536,19 @@ func TestReJudge_SeedsWholeDeliverableRead(t *testing.T) {
 	}
 }
 
-// TestBoundJudgeArtifactRead_ReplayBudget: replay's REST read tool shares the live budget.
-func TestBoundJudgeArtifactRead_ReplayBudget(t *testing.T) {
+// TestBoundJudgeArtifactRead_ReplayHidesCheckedPages: replay's REST tools hide the pages the
+// round's verify tier read, as live does, and leave everything else alone.
+func TestBoundJudgeArtifactRead_ReplayHidesCheckedPages(t *testing.T) {
 	ctx := withJudgeView(context.Background(), newJudgeView(Config{judgePagesChecked: true}, workerActivity{}))
 	body := []byte(strings.Repeat("x", 20_000))
-	for i := 1; i <= judgeSourceReadBudget; i++ {
-		if got := BoundJudgeArtifactRead(ctx, "web_page:p", body, "", 0, 0); len(got) > judgeSourceReadCap {
-			t.Fatalf("page read %d = %d chars, want at most %d", i, len(got), judgeSourceReadCap)
-		}
+	if _, err := BoundJudgeArtifactRead(ctx, "web_page:p", body, "", 0, 0); err == nil || !JudgeHidesArtifact(ctx, "web_page:p") {
+		t.Errorf("checked page read err = %v, want the refusal", err)
 	}
-	if got := BoundJudgeArtifactRead(ctx, "web_page:p", body, "", 0, 0); got != judgeBudgetSpent {
-		t.Errorf("page read past the budget = %.60q, want the refusal", got)
+	if got, err := BoundJudgeArtifactRead(ctx, "bytes:files", body, "", 0, 0); err != nil || len(got) != len(body) || JudgeHidesArtifact(ctx, "bytes:files") {
+		t.Errorf("bytes read = %d chars, err %v, want the whole body", len(got), err)
 	}
-	if got := BoundJudgeArtifactRead(ctx, "bytes:files", body, "", 0, 0); len(got) != len(body) {
-		t.Errorf("bytes read = %d chars, want the whole body", len(got))
+	if got, err := BoundJudgeArtifactRead(context.Background(), "web_page:p", body, "", 0, 0); err != nil || len(got) > judgeArtifactReadCap {
+		t.Errorf("outside a judge round: %d chars, err %v", len(got), err)
 	}
 }
 

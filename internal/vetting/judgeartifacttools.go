@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"unicode/utf8"
 
 	"google.golang.org/adk/v2/agent"
@@ -23,28 +22,22 @@ import (
 // artifact can't blow the judge's own prompt budget.
 const judgeArtifactReadCap = 24_000
 
-// judgeSourceReadBudget/judgeSourceReadCap bound one judge round's web_page reads once the verify tier
-// has read the cited pages: code already checked every cited specific, so more reads only re-check.
-const (
-	judgeSourceReadBudget = 4
-	judgeSourceReadCap    = 8_000
-)
-
-var judgeBudgetSpent = fmt.Sprintf("[read budget spent: %d web_page reads per round. Code already checked each cited specific against its page; score from what you have read.]", judgeSourceReadBudget)
+// judgeSeededReadCap bounds one prior read seeded into a retry's prompt (the deliverable keeps judgeArtifactReadCap).
+const judgeSeededReadCap = 8_000
 
 // judgeView is one judge round's view of the chat: a foreign node's artifacts are hidden
 // unless this node wrote, fetched or read them, or its own lineage wrote a revision.
+// hidePages: the verify tier already read the cited pages, so the judge is not shown them.
 type judgeView struct {
 	foreign   map[string]bool
 	own       map[string]bool
-	budgeted  bool
-	pageReads atomic.Int32
+	hidePages bool
 	mu        sync.Mutex
 	history   map[string]bool // per id: some revision was written outside the foreign nodes
 }
 
 func newJudgeView(cfg Config, act workerActivity) *judgeView {
-	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs(), budgeted: cfg.judgePagesChecked, history: map[string]bool{}}
+	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs(), hidePages: cfg.judgePagesChecked, history: map[string]bool{}}
 	for _, n := range cfg.ForeignNodes {
 		v.foreign[n] = true
 	}
@@ -57,13 +50,21 @@ func withJudgeView(ctx context.Context, s *judgeView) context.Context {
 	return context.WithValue(ctx, judgeViewKey{}, s)
 }
 
-// judgeViewFrom is nil outside a judge round: a direct tool call sees everything, unbudgeted.
+// judgeViewFrom is nil outside a judge round: a direct tool call sees everything.
 func judgeViewFrom(ctx context.Context) *judgeView {
 	s, _ := ctx.Value(judgeViewKey{}).(*judgeView)
 	return s
 }
 
+// hidesPage: a web_page the verify tier has already read for this round.
+func (s *judgeView) hidesPage(id string) bool {
+	return s != nil && s.hidePages && recordstore.KindOf(id) == webPageKind
+}
+
 func (s *judgeView) visible(ctx context.Context, c *recordstore.Client, id, author string) bool {
+	if s.hidesPage(id) {
+		return false
+	}
 	if s == nil || s.own[id] || !s.foreign[author] {
 		return true
 	}
@@ -95,14 +96,6 @@ func (s *judgeView) writtenInScope(ctx context.Context, c *recordstore.Client, i
 		}
 	}
 	return false, nil
-}
-
-// readCap charges a web_page read against a budgeted round; ok=false once it is spent.
-func (s *judgeView) readCap(id string) (int, bool) {
-	if s == nil || !s.budgeted || recordstore.KindOf(id) != webPageKind {
-		return judgeArtifactReadCap, true
-	}
-	return judgeSourceReadCap, s.pageReads.Add(1) <= judgeSourceReadBudget
 }
 
 // judgeHiddenKinds: gate-owned records excluded from list_artifacts - a judge
@@ -174,21 +167,24 @@ func newJudgeReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 				"large text artifact instead of the whole thing.",
 		},
 		func(ctx agent.Context, a judgeReadArtifactArgs) (string, error) {
+			view := judgeViewFrom(ctx)
+			if view.hidesPage(a.ID) {
+				return "", errPageChecked(a.ID)
+			}
 			data, mime, author, ok, err := loadJudgeArtifact(ctx, c, a)
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
-			view := judgeViewFrom(ctx)
 			if !ok || !view.visible(ctx, c, a.ID, author) {
 				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
 			}
-			limit, ok := view.readCap(a.ID)
-			if !ok {
-				return judgeBudgetSpent, nil
-			}
-			return shapeJudgeReadArtifact(data, mime, a, limit), nil
+			return shapeJudgeReadArtifact(data, mime, a, judgeArtifactReadCap), nil
 		},
 	)
+}
+
+func errPageChecked(id string) error {
+	return fmt.Errorf("read_artifact: %s: fetched pages are not available to you this round - code already checked every cited specific against them, and any it could not confirm is in CITED EVIDENCE", id)
 }
 
 // loadJudgeArtifact loads the latest or a named revision, with its authoring node.
@@ -251,12 +247,16 @@ func judgeWindowLines(lines []string, offset, want, total, limit int) string {
 	return fmt.Sprintf("%s\n\n[lines %d-%d of %d (end).]", body, start, end, total)
 }
 
+// JudgeHidesArtifact: the judge round in ctx is not shown id (a web_page the verify tier read).
+func JudgeHidesArtifact(ctx context.Context, id string) bool {
+	return judgeViewFrom(ctx).hidesPage(id)
+}
+
 // BoundJudgeArtifactRead shapes artifact id's body for a judge exactly as the live read_artifact
-// tool does, including the round's web_page budget when ctx is a judge round's.
-func BoundJudgeArtifactRead(ctx context.Context, id string, data []byte, mime string, offset, lines int) string {
-	limit, ok := judgeViewFrom(ctx).readCap(id)
-	if !ok {
-		return judgeBudgetSpent
+// tool does, refusing a page the round's verify tier already read.
+func BoundJudgeArtifactRead(ctx context.Context, id string, data []byte, mime string, offset, lines int) (string, error) {
+	if JudgeHidesArtifact(ctx, id) {
+		return "", errPageChecked(id)
 	}
-	return shapeJudgeReadArtifact(data, mime, judgeReadArtifactArgs{Offset: offset, Lines: lines}, limit)
+	return shapeJudgeReadArtifact(data, mime, judgeReadArtifactArgs{Offset: offset, Lines: lines}, judgeArtifactReadCap), nil
 }

@@ -176,7 +176,7 @@ type Config struct {
 	// session activity and artifacts never count as this node's evidence.
 	ForeignNodes []string
 	// judgeEvidence: the round's CITED EVIDENCE section, set by runJudge from the verify tier;
-	// judgePagesChecked: that tier read cited pages this round, so the judge's page reads are budgeted.
+	// judgePagesChecked: that tier read cited pages this round, so the judge is not shown them.
 	judgeEvidence     string
 	judgePagesChecked bool
 }

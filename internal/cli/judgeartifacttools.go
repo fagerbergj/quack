@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/fagerbergj/quack/internal/vetting"
+	"slices"
 	"strings"
 
 	"google.golang.org/adk/v2/agent"
@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // RESTArtifactTools builds list_artifacts/read_artifact over c's REST API,
@@ -27,7 +28,8 @@ func RESTArtifactTools(c *Client, chatID string) ([]tool.Tool, error) {
 			if err != nil {
 				return "", fmt.Errorf("list_artifacts: %w", err)
 			}
-			return formatArtifactSummaries(items, a.Kind), nil
+			shown := slices.DeleteFunc(items, func(it schema.ArtifactSummary) bool { return vetting.JudgeHidesArtifact(ctx, it.Name) })
+			return formatArtifactSummaries(shown, a.Kind), nil
 		},
 	)
 	if err != nil {
@@ -46,7 +48,7 @@ func RESTArtifactTools(c *Client, chatID string) ([]tool.Tool, error) {
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
-			return vetting.BoundJudgeArtifactRead(ctx, a.ID, body, "", a.Offset, a.Lines), nil
+			return vetting.BoundJudgeArtifactRead(ctx, a.ID, body, "", a.Offset, a.Lines)
 		},
 	)
 	if err != nil {

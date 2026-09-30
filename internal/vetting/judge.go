@@ -1063,7 +1063,7 @@ func (s *judgeRoundState) recordRead(fr *genai.FunctionResponse) {
 		body = string(raw)
 	}
 	if fr.Name != "read_artifact" || !s.produced[id] {
-		s.others = append(s.others, fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeSourceReadCap)))
+		s.others = append(s.others, fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeSeededReadCap)))
 	} else if entry := fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeArtifactReadCap)); !slices.Contains(s.delivIDs, id) {
 		s.delivIDs, s.delivered = append(s.delivIDs, id), append(s.delivered, entry)
 	} else {
