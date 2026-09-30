@@ -30,6 +30,8 @@ type Verifier struct {
 	// Memo holds final verdicts across one node's rounds, keyed by verifyKey, so an
 	// unchanged claim is not read again; nil disables it. Not safe for concurrent use.
 	Memo map[string]Verdict
+	// TryAdmit takes one more model session for a parallel batch (Config.TryAdmitVerify).
+	TryAdmit func() (release func(), ok bool)
 }
 
 // verifyKey: the claim, its detail, the page and the exact evidence window the verdict was read from.
@@ -40,8 +42,8 @@ func verifyKey(c UnitCheck) string {
 
 const verifyBatch = 20
 
-// verifyConcurrency bounds parallel verifier calls; they run inside the judge's admission
-// slot, whose KV reservation (the judge's whole window) covers a few small batches.
+// verifyConcurrency bounds parallel verifier calls: the held judge session plus extra
+// sessions Admission grants without waiting, so parallelism only uses free capacity.
 const verifyConcurrency = 4
 
 const verifyInstruction = `You check whether a passage of evidence supports a specific detail in a claim. For EVERY numbered item answer one object {"n": <number>, "state": "supported" | "unsupported" | "cannot_tell", "quote": <verbatim text copied from that item's <Evidence>>}. "supported" means the evidence states the same detail (the same figure, date or wording, allowing rounding words like "about"); "unsupported" means the evidence gives a different value or contradicts it; "cannot_tell" means the evidence does not settle it. The quote must be copied exactly from the item's own <Evidence> and, for supported or unsupported, must contain the value you relied on; a quote that is not in the evidence is rejected. Respond with exactly one JSON object {"items": [...]}, nothing else.`
@@ -121,20 +123,51 @@ func (v Verifier) verifyByPage(ctx context.Context, checks []UnitCheck, idx []in
 		pages = append(pages, p)
 	}
 	sort.Strings(pages)
-	sem := make(chan struct{}, verifyConcurrency)
-	var wg sync.WaitGroup
+	var batches [][]int
 	for _, p := range pages {
 		idx := byPage[p]
 		for start := 0; start < len(idx); start += verifyBatch {
-			batch := idx[start:min(len(idx), start+verifyBatch)]
-			sem <- struct{}{}
-			wg.Go(func() { // each batch writes only its own checks[i]
-				defer func() { <-sem }()
-				v.verifyBatch(ctx, checks, batch)
-			})
+			batches = append(batches, idx[start:min(len(idx), start+verifyBatch)])
 		}
 	}
+	workers, release := v.workers(len(batches))
+	defer release()
+	jobs := make(chan []int)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() { // each batch writes only its own checks[i]
+			for batch := range jobs {
+				v.verifyBatch(ctx, checks, batch)
+			}
+		})
+	}
+	for _, b := range batches {
+		jobs <- b
+	}
+	close(jobs)
 	wg.Wait()
+}
+
+// workers: the held judge session plus each extra one Admission grants now, up to
+// verifyConcurrency; with no ledger (TryAdmit nil) the bound alone applies.
+func (v Verifier) workers(batches int) (int, func()) {
+	want := min(batches, verifyConcurrency)
+	if v.TryAdmit == nil {
+		return max(want, 1), func() {}
+	}
+	n, releases := 1, []func(){}
+	for ; n < want; n++ {
+		rel, ok := v.TryAdmit()
+		if !ok {
+			break
+		}
+		releases = append(releases, rel)
+	}
+	return n, func() {
+		for _, r := range releases {
+			r()
+		}
+	}
 }
 
 func (v Verifier) verifyBatch(ctx context.Context, checks []UnitCheck, idx []int) {

@@ -1666,8 +1666,9 @@ func (j *forceClosedGarbledJudge) GenerateContent(_ context.Context, req *model.
 // noneCloseJudge reads twice, then answers its last-turn tool_choice-none close with reply
 // (a verdict, or nothing as vLLM gives for a dropped call); a stripped close always gets a verdict.
 type noneCloseJudge struct {
-	calls int32
-	reply string
+	calls     int32
+	reply     string
+	maxTokens bool // the none close is cut at the token cap
 }
 
 func (*noneCloseJudge) Name() string { return "none-close-judge" }
@@ -1682,9 +1683,46 @@ func (j *noneCloseJudge) GenerateContent(_ context.Context, req *model.LLMReques
 			yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "ok", "score": 3}}, "feedback": ""}`), nil)
 		case forcedCloseErr(req) != nil:
 			yield(nil, forcedCloseErr(req))
+		case j.maxTokens:
+			yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"score": 3, "crit`}}}, FinishReason: genai.FinishReasonMaxTokens, TurnComplete: true}, nil)
 		default:
 			yield(stubText(j.reply), nil)
 		}
+	}
+}
+
+// nudgeCloseJudge answers its first turn with prose, so the submit nudge lands on the last
+// allowed turn: that close is tool_choice none, comes back empty, and only a stripped close answers.
+type nudgeCloseJudge struct{ calls int32 }
+
+func (*nudgeCloseJudge) Name() string { return "nudge-close-judge" }
+
+func (j *nudgeCloseJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		switch {
+		case atomic.AddInt32(&j.calls, 1) == 1:
+			yield(stubText("Let me think about the answer."), nil)
+		case strippedCloseErr(req) == nil:
+			yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "ok", "score": 3}}, "feedback": ""}`), nil)
+		default:
+			yield(stubText(""), nil)
+		}
+	}
+}
+
+// TestForcedClose_NudgeTakesStrippedFallback: a submit nudge that is itself the forced close gets
+// the same stripped fallback; a close cut at the token cap gets none (stripping would not shorten it).
+func TestForcedClose_NudgeTakesStrippedFallback(t *testing.T) {
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	nudged := &nudgeCloseJudge{}
+	v, _, err := runJudgeRound(t.Context(), NewJudgeFactory(nudged, []tool.Tool{newSpyReadTool(t, "x", new(int32))}, nil), Config{Rubric: "score 0-10", JudgeMaxIterations: 2}, q, "done.", "", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil || v.Score != 1.0 || atomic.LoadInt32(&nudged.calls) != 3 {
+		t.Errorf("nudge close: score %v err %v after %d calls, want a verdict after 3", v.Score, err, nudged.calls)
+	}
+	capped := &noneCloseJudge{maxTokens: true}
+	_, _, err = runJudgeRound(t.Context(), NewJudgeFactory(capped, []tool.Tool{newSpyReadTool(t, "x", new(int32))}, nil), Config{Rubric: "score 0-10", JudgeMaxIterations: 3}, q, "done.", "", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) || atomic.LoadInt32(&capped.calls) != 3 {
+		t.Errorf("token-capped close: err %v after %d calls, want no verdict after 3", err, capped.calls)
 	}
 }
 

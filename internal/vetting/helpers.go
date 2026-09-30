@@ -166,6 +166,9 @@ type Config struct {
 	ReleaseJudge  func()
 	AdmitWorker   func(ctx context.Context) bool
 	ReleaseWorker func()
+	// TryAdmitVerify reserves one more judge-model session without waiting, for a parallel
+	// verifier batch; nil means no admission ledger, so batches run in parallel unmetered.
+	TryAdmitVerify func() (release func(), ok bool)
 	// JudgeArtifactTools: list_artifacts/read_artifact over the chat, narrowed per
 	// judge round by ForeignNodes; nil only when the run has no artifact service.
 	JudgeArtifactTools []tool.Tool

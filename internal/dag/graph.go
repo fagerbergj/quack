@@ -373,6 +373,15 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 		return true
 	}
 	cfg.ReleaseJudge = func() { admission.Release(judgeSpec); held = AdmissionSpec{} }
+	// A parallel verifier batch takes one more judge-model session; its KV rides the held
+	// judge reservation, whose whole window sits idle while the verify tier runs.
+	extra := AdmissionSpec{Model: judgeSpec.Model}
+	cfg.TryAdmitVerify = func() (func(), bool) {
+		if !admission.TryAdmit(extra) {
+			return nil, false
+		}
+		return func() { admission.Release(extra) }, true
+	}
 	return func() { admission.Release(held) }, nil
 }
 

@@ -994,10 +994,11 @@ func (s *judgeRoundState) firstVerdict(content *genai.Content, receivedIDs []str
 }
 
 // verdictOrStrippedClose is the round's verdict or, when a tool_choice-none close gave none (vLLM's
-// parser drops the refused call), one more close with the tools stripped, as before that close existed.
+// parser drops the refused call), one more close with the tools stripped. A close cut at the token cap
+// is not retried: stripping tools does not shorten it.
 func (s *judgeRoundState) verdictOrStrippedClose() (verdict, bool, error) {
 	v, ok := s.verdictFrom()
-	if ok || !s.closed.forced || s.closed.stripped || s.aborted || s.ctx.Err() != nil {
+	if ok || !s.closed.forced || s.closed.stripped || s.aborted || s.lastFinish == genai.FinishReasonMaxTokens || s.ctx.Err() != nil {
 		return v, ok, nil
 	}
 	s.maxIters++ // the extra close is not a runaway turn
@@ -1031,8 +1032,11 @@ type judgeRoundState struct {
 	// parseFrom: accum offset past the last truncated turn, whose text may hold only a draft verdict.
 	parseFrom int
 	calls     map[string]*genai.FunctionCall // by call id, to pair a read's args with its result
-	reads     []string
-	produced  map[string]bool // the ids the worker wrote this round: the deliverable reads
+	reads     []string                       // latest deliverable read per id first, then every other read in order
+	produced  map[string]bool                // the ids the worker wrote this round: the deliverable reads
+	delivered []string                       // per produced id read, its newest entry (ids in first-read order)
+	delivIDs  []string
+	others    []string
 }
 
 func (s *judgeRoundState) noteCall(fc *genai.FunctionCall) {
@@ -1048,22 +1052,24 @@ func (s *judgeRoundState) recordRead(fr *genai.FunctionResponse) {
 	if _, failed := fr.Response["error"]; failed {
 		return
 	}
-	args, deliverable := []byte("{}"), false
+	args, id := []byte("{}"), ""
 	if fc := s.calls[fr.ID]; fc != nil {
 		args, _ = json.Marshal(fc.Args)
-		id, _ := fc.Args["id"].(string)
-		deliverable = fr.Name == "read_artifact" && s.produced[id]
+		id, _ = fc.Args["id"].(string)
 	}
 	body, ok := fr.Response["result"].(string)
 	if !ok {
 		raw, _ := json.Marshal(fr.Response)
 		body = string(raw)
 	}
-	if deliverable {
-		s.reads = slices.Insert(s.reads, 0, fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeArtifactReadCap)))
-		return
+	if fr.Name != "read_artifact" || !s.produced[id] {
+		s.others = append(s.others, fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeSourceReadCap)))
+	} else if entry := fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeArtifactReadCap)); !slices.Contains(s.delivIDs, id) {
+		s.delivIDs, s.delivered = append(s.delivIDs, id), append(s.delivered, entry)
+	} else {
+		s.delivered[slices.Index(s.delivIDs, id)] = entry // a later window replaces the earlier one
 	}
-	s.reads = append(s.reads, fmt.Sprintf("%s(%s) ->\n%s", fr.Name, args, boundExcerpt(body, judgeSourceReadCap)))
+	s.reads = append(slices.Clone(s.delivered), s.others...)
 }
 
 // judgePromptContent builds the judge's user content: the (prebuilt or built) prompt
@@ -1201,8 +1207,7 @@ func (s *judgeRoundState) nudgeMemories(owedIDs []string) (verdict, bool, error)
 	if err := s.runTurn(nudge); err != nil {
 		return verdict{}, false, err
 	}
-	nv, nok := s.verdictFrom()
-	return nv, nok, nil
+	return s.verdictOrStrippedClose()
 }
 
 // submitNudge asks once, directly, for the missing submit_verdict call (#1235).
@@ -1211,8 +1216,7 @@ func (s *judgeRoundState) submitNudge() (verdict, bool, error) {
 	if err := s.runTurn(nudge); err != nil {
 		return verdict{}, false, err
 	}
-	nv, nok := s.verdictFrom()
-	return nv, nok, nil
+	return s.verdictOrStrippedClose()
 }
 
 // judgeSubmitNudge: one-shot in-session continuation when a turn ends with

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -283,33 +284,71 @@ func TestVerifyChecks_SnippetNeverContradicts(t *testing.T) {
 	}
 }
 
-// inflightLLM records the most verifier calls it saw at once.
-type inflightLLM struct{ now, peak *atomic.Int32 }
+// gateLLM announces each verifier call on started, then holds it until gate closes.
+type gateLLM struct {
+	now, peak *atomic.Int32
+	started   chan struct{}
+	gate      chan struct{}
+}
 
-func (inflightLLM) Name() string { return "inflight-llm" }
+func (gateLLM) Name() string { return "gate-llm" }
 
-func (m inflightLLM) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (m gateLLM) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		n := m.now.Add(1)
 		for p := m.peak.Load(); n > p && !m.peak.CompareAndSwap(p, n); p = m.peak.Load() {
 		}
-		time.Sleep(20 * time.Millisecond)
+		m.started <- struct{}{}
+		<-m.gate
 		m.now.Add(-1)
 		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"items":[]}`}}}}, nil)
 	}
 }
 
-// TestVerifyChecks_PagesInParallel: page batches run concurrently, never more than verifyConcurrency.
-func TestVerifyChecks_PagesInParallel(t *testing.T) {
+// TestVerifyChecks_ParallelOnlyOnGrantedSessions: batches run on the held session plus each
+// session Admission grants now - all four when free, two on one grant, one when none is free.
+func TestVerifyChecks_ParallelOnlyOnGrantedSessions(t *testing.T) {
 	var checks []UnitCheck
 	for i := range 10 {
 		c := secondLookCheck()
 		c.Citation = fmt.Sprintf("https://p/%d", i)
 		checks = append(checks, c)
 	}
-	var now, peak atomic.Int32
-	Verifier{LLM: inflightLLM{now: &now, peak: &peak}}.VerifyChecks(context.Background(), checks)
-	if p := peak.Load(); p < 2 || p > verifyConcurrency {
-		t.Errorf("peak concurrent verifier calls = %d, want 2..%d", p, verifyConcurrency)
+	grantN := func(n int, outstanding *atomic.Int32) func() (func(), bool) {
+		return func() (func(), bool) {
+			if n == 0 {
+				return nil, false
+			}
+			n--
+			outstanding.Add(1)
+			return func() { outstanding.Add(-1) }, true
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		grants int
+		unmet  bool // no admission ledger at all
+		want   int32
+	}{{"no ledger", 0, true, verifyConcurrency}, {"one free session", 1, false, 2}, {"none free", 0, false, 1}} {
+		var now, peak, outstanding atomic.Int32
+		llm := gateLLM{now: &now, peak: &peak, started: make(chan struct{}, len(checks)), gate: make(chan struct{})}
+		v := Verifier{LLM: llm, TryAdmit: grantN(tc.grants, &outstanding)}
+		if tc.unmet {
+			v.TryAdmit = nil
+		}
+		done := make(chan struct{})
+		go func() { v.VerifyChecks(context.Background(), slices.Clone(checks)); close(done) }()
+		for range tc.want { // wait for the expected parallel calls before letting any finish
+			select {
+			case <-llm.started:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("%s: only some of %d parallel verifier calls started", tc.name, tc.want)
+			}
+		}
+		close(llm.gate)
+		<-done
+		if peak.Load() != tc.want || outstanding.Load() != 0 {
+			t.Errorf("%s: peak %d concurrent calls, %d sessions unreleased; want %d and 0", tc.name, peak.Load(), outstanding.Load(), tc.want)
+		}
 	}
 }

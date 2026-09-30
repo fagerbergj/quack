@@ -110,13 +110,17 @@ func priorReadsSection(c judgeReadCounters, limit int) string {
 	}
 	var b strings.Builder
 	b.WriteString(header)
-	for i, r := range *c.reads {
-		if b.Len()+len(r) > limit {
-			fmt.Fprintf(&b, "(%d later reads not shown)\n", len(*c.reads)-i)
-			break
+	skipped := 0
+	for _, r := range *c.reads {
+		if b.Len()+len(r)+60 > limit { // 60: room for the skipped-reads note
+			skipped++
+			continue
 		}
 		b.WriteString(r)
 		b.WriteString("\n")
+	}
+	if skipped > 0 {
+		fmt.Fprintf(&b, "(%d reads not shown: no room)\n", skipped)
 	}
 	return b.String()
 }

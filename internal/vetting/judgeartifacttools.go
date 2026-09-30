@@ -69,30 +69,32 @@ func (s *judgeView) visible(ctx context.Context, c *recordstore.Client, id, auth
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	seen, ok := s.history[id]
-	if !ok {
-		seen = s.writtenInScope(ctx, c, id)
+	if seen, ok := s.history[id]; ok {
+		return seen
+	}
+	seen, err := s.writtenInScope(ctx, c, id)
+	if err == nil { // a failed lookup hides it for this call only
 		s.history[id] = seen
 	}
 	return seen
 }
 
-// writtenInScope: an upstream (or own) revision of id exists, e.g. a fan-in's input a sibling
-// edited last. A web_page is skipped: fetching it, not authoring it, is what makes it the node's.
-func (s *judgeView) writtenInScope(ctx context.Context, c *recordstore.Client, id string) bool {
-	if recordstore.KindOf(id) == webPageKind {
-		return false
-	}
+// writtenInScope: an upstream (or own) revision of id exists, e.g. a fan-in's input a sibling edited last.
+func (s *judgeView) writtenInScope(ctx context.Context, c *recordstore.Client, id string) (bool, error) {
 	versions, err := c.Versions(ctx, id)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, v := range versions {
-		if _, lin, ok, err := c.LoadVersionWithMeta(ctx, id, v); err == nil && ok && !s.foreign[lin.NodeID] {
-			return true
+		_, lin, ok, err := c.LoadVersionWithMeta(ctx, id, v)
+		if err != nil {
+			return false, err
+		}
+		if ok && !s.foreign[lin.NodeID] {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // readCap charges a web_page read against a budgeted round; ok=false once it is spent.

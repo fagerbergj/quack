@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -106,9 +107,13 @@ func (m *revisionMetaStore) LoadWithMeta(ctx context.Context, req *artifact.Load
 // seedScopedChat stores a sibling's artifact, an upstream artifact a sibling edited last, a
 // web page a sibling fetched first but this node fetched too, and a bytes input.
 func seedScopedChat(t *testing.T) (rc *recordstore.Client, sibID, upID, pageURL string) {
+	return seedScopedChatOn(t, &revisionMetaStore{Service: artifact.InMemoryService(), meta: map[string][]byte{}})
+}
+
+func seedScopedChatOn(t *testing.T, svc artifact.Service) (rc *recordstore.Client, sibID, upID, pageURL string) {
 	t.Helper()
 	ctx := context.Background()
-	rc = recordstore.New(&revisionMetaStore{Service: artifact.InMemoryService(), meta: map[string][]byte{}}, artifactref.AppName, "u1", "chat1")
+	rc = recordstore.New(svc, artifactref.AppName, "u1", "chat1")
 	var err error
 	if sibID, _, err = rc.SaveBlob(ctx, "text", []byte("sibling notes"), "text/plain", "sib", recordstore.Lineage{NodeID: "web-researcher-2"}); err != nil {
 		t.Fatal(err)
@@ -384,14 +389,29 @@ func TestJudgePromptBoundedWithManyPages(t *testing.T) {
 
 // TestPriorReadsSectionFitsRoom: seeded reads never push a retry past the room its prompt has left.
 func TestPriorReadsSectionFitsRoom(t *testing.T) {
-	reads := []string{strings.Repeat("a", 3000), strings.Repeat("b", 3000)}
+	reads := []string{strings.Repeat("a", 3000), strings.Repeat("b", 3000), "cc"}
 	c := judgeReadCounters{reads: &reads}
 	if got := priorReadsSection(c, 100); got != "" {
 		t.Errorf("no room: section = %.60q, want none", got)
 	}
 	got := priorReadsSection(c, 4000)
-	if len(got) > 4100 || !strings.Contains(got, "(1 later reads not shown)") {
-		t.Errorf("section = %d chars, want the first read and a note for the second", len(got))
+	if len(got) > 4000 || strings.Contains(got, "bbb") || !strings.Contains(got, "\ncc\n") || !strings.Contains(got, "(1 reads not shown: no room)") {
+		t.Errorf("section = %d chars, want the first and last reads and a note for the one that did not fit", len(got))
+	}
+}
+
+// TestRecordRead_NewestDeliverableWindowFirst: a later window of the deliverable replaces the
+// earlier one and stays ahead of every other read.
+func TestRecordRead_NewestDeliverableWindowFirst(t *testing.T) {
+	s := &judgeRoundState{produced: map[string]bool{"text:report": true}}
+	for i, c := range []struct{ id, body string }{{"text:report", "window one"}, {"web_page:p", "page"}, {"text:report", "window two"}} {
+		call := fmt.Sprintf("c%d", i)
+		s.noteCall(&genai.FunctionCall{ID: call, Name: "read_artifact", Args: map[string]any{"id": c.id, "offset": float64(i)}})
+		s.recordRead(&genai.FunctionResponse{ID: call, Name: "read_artifact", Response: map[string]any{"result": c.body}})
+	}
+	got := strings.Join(s.reads, "|")
+	if len(s.reads) != 2 || !strings.HasPrefix(s.reads[0], `read_artifact({"id":"text:report","offset":2})`) || strings.Contains(got, "window one") {
+		t.Errorf("reads = %q, want the newest deliverable window first and the page read kept", got)
 	}
 }
 
@@ -507,5 +527,39 @@ func TestBoundJudgeArtifactRead_ReplayBudget(t *testing.T) {
 	}
 	if got := BoundJudgeArtifactRead(ctx, "bytes:files", body, "", 0, 0); len(got) != len(body) {
 		t.Errorf("bytes read = %d chars, want the whole body", len(got))
+	}
+}
+
+// versionsFailingStore fails every revision listing while fail is set.
+type versionsFailingStore struct {
+	*revisionMetaStore
+	fail atomic.Bool
+}
+
+func (s *versionsFailingStore) Versions(ctx context.Context, req *artifact.VersionsRequest) (*artifact.VersionsResponse, error) {
+	if s.fail.Load() {
+		return nil, errors.New("store unavailable")
+	}
+	return s.revisionMetaStore.Versions(ctx, req)
+}
+
+// TestJudgeView_FailedHistoryLookupNotCached: a transient store error hides an upstream
+// document for that call only; the next list sees it.
+func TestJudgeView_FailedHistoryLookupNotCached(t *testing.T) {
+	svc := &versionsFailingStore{revisionMetaStore: &revisionMetaStore{Service: artifact.InMemoryService(), meta: map[string][]byte{}}}
+	rc, _, upID, _ := seedScopedChatOn(t, svc)
+	tools, err := NewJudgeArtifactTools(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := tools[0].(runnableTool)
+	ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}}, workerActivity{})))}
+	svc.fail.Store(true)
+	if out, _ := list.Run(ctx, map[string]any{}); strings.Contains(out["result"].(string), upID) {
+		t.Fatal("test setup: the upstream document was visible without its history")
+	}
+	svc.fail.Store(false)
+	if out, _ := list.Run(ctx, map[string]any{}); !strings.Contains(out["result"].(string), upID) {
+		t.Errorf("after the store recovered, list_artifacts = %q, want %s", out["result"], upID)
 	}
 }

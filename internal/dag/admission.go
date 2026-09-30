@@ -160,6 +160,18 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	}
 }
 
+// TryAdmit reserves spec only if it fits now and nobody is queued for the same capacity:
+// opportunistic extra work must never jump ahead of a blocked node.
+func (a *Admission) TryAdmit(spec AdmissionSpec) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.oldestContendingSeqLocked(spec) != 0 || !a.fits(spec) {
+		return false
+	}
+	a.reserve(spec)
+	return true
+}
+
 // fireUnlocked calls fn with a.mu released (fn is arbitrary consumer code -
 // a stream yield - so it must never run under the lock). Its own defer
 // relocks even if fn panics, so Admit's deferred Unlock never double-unlocks.
