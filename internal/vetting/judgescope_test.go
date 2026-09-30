@@ -639,3 +639,34 @@ func TestVerifier_SendsJudgeThinkingLevel(t *testing.T) {
 		t.Errorf("verifier thinking levels = %q, want LOW then none", got)
 	}
 }
+
+// TestRunGatedRefine_JudgeNotShownCheckedPages: once runJudge's verify tier read the cited page,
+// the judge's own list_artifacts no longer offers it.
+func TestRunGatedRefine_JudgeNotShownCheckedPages(t *testing.T) {
+	u := "https://example.test/survey"
+	rc := recordstore.New(&revisionMetaStore{Service: artifact.InMemoryService(), meta: map[string][]byte{}}, artifactref.AppName, "u1", "chat1")
+	pageID(t, u)
+	if _, _, err := rc.SaveBlob(context.Background(), webPageKind, []byte(secondLookPage), "text/markdown", u, recordstore.Lineage{SourceURL: u}); err != nil {
+		t.Fatal(err)
+	}
+	tools, err := NewJudgeArtifactTools(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetch, err := functiontool.New[stubFetchArgs, stubFetchResult](functiontool.Config{Name: "web_fetch", Description: "Fetch pages."},
+		func(_ adkagent.Context, a stubFetchArgs) (stubFetchResult, error) {
+			return stubFetchResult{Results: []map[string]string{{"url": u, "text": "stored"}}}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prompts []string
+	cfg := Config{JudgeRounds: 1, Threshold: 0.5, Rubric: "score 0-10", RecordReader: rc, JudgeArtifactTools: tools,
+		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
+		JudgeModel:  seqLLM{answers: []string{`{"items":[{"n":1,"state":"supported","quote":"users rose 30% in 2024"},{"n":2,"state":"supported","quote":"users rose 30% in 2024"}]}`}, prompts: &prompts}}
+	listing := "(not called)"
+	runGatedStub(t, fetchingWorker{url: u, answer: "Users rose 30% in 2024 ([survey](" + u + "))."}, []tool.Tool{fetch}, NewJudgeFactory(listingJudge{listing: &listing}, nil, nil), cfg)
+	if len(prompts) == 0 || listing == "(not called)" || strings.Contains(listing, pageID(t, u)) {
+		t.Errorf("verifier calls %d; judge list_artifacts = %q, want the checked page left out", len(prompts), listing)
+	}
+}
