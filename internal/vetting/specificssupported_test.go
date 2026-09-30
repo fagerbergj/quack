@@ -352,3 +352,35 @@ func TestVerifyChecks_ParallelOnlyOnGrantedSessions(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifierWorkers: one worker per session held or granted now, bounded by the batches and verifyConcurrency.
+func TestVerifierWorkers(t *testing.T) {
+	grants := func(n int) func() (func(), bool) {
+		return func() (func(), bool) {
+			if n == 0 {
+				return nil, false
+			}
+			n--
+			return func() {}, true
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		v       Verifier
+		batches int
+		want    int
+	}{
+		{"no ledger", Verifier{}, 10, verifyConcurrency},
+		{"no ledger, one batch", Verifier{}, 1, 1},
+		{"none free", Verifier{TryAdmit: grants(0)}, 10, 1},
+		{"one free", Verifier{TryAdmit: grants(1)}, 10, 2},
+		{"all free", Verifier{TryAdmit: grants(99)}, 10, verifyConcurrency},
+		{"two batches", Verifier{TryAdmit: grants(99)}, 2, 2},
+	} {
+		if got, release := tc.v.workers(tc.batches); got != tc.want {
+			t.Errorf("%s: %d workers, want %d", tc.name, got, tc.want)
+		} else {
+			release()
+		}
+	}
+}
