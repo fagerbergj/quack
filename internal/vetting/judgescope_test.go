@@ -147,7 +147,7 @@ func TestJudgeArtifactTools_ScopeAndCheckedPages(t *testing.T) {
 	list, read := tools[0].(runnableTool), tools[1].(runnableTool)
 	act := workerActivity{fetched: map[string]struct{}{pageURL: {}}}
 	for _, checked := range []bool{false, true} {
-		view := newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}, judgePagesChecked: checked}, act)
+		view := newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}, judgeCheckedPages: map[string]bool{pageID(t, pageURL): checked}}, act)
 		ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), view))}
 		out, err := list.Run(ctx, map[string]any{})
 		listing, _ := out["result"].(string)
@@ -181,7 +181,7 @@ func TestJudgeArtifactTools_InputsStayReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, checked := range []bool{false, true} {
-		ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), newJudgeView(Config{judgePagesChecked: checked}, workerActivity{})))}
+		ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), newJudgeView(Config{judgeCheckedPages: map[string]bool{"web_page:p": checked}}, workerActivity{})))}
 		for i := 1; i <= 6; i++ {
 			out, err := read.Run(ctx, map[string]any{"id": bytesID})
 			if body, _ := out["result"].(string); err != nil || len(body) < 16_000 {
@@ -539,10 +539,13 @@ func TestReJudge_SeedsWholeDeliverableRead(t *testing.T) {
 // TestBoundJudgeArtifactRead_ReplayHidesCheckedPages: replay's REST tools hide the pages the
 // round's verify tier read, as live does, and leave everything else alone.
 func TestBoundJudgeArtifactRead_ReplayHidesCheckedPages(t *testing.T) {
-	ctx := withJudgeView(context.Background(), newJudgeView(Config{judgePagesChecked: true}, workerActivity{}))
+	ctx := withJudgeView(context.Background(), newJudgeView(Config{judgeCheckedPages: map[string]bool{"web_page:p": true}}, workerActivity{}))
 	body := []byte(strings.Repeat("x", 20_000))
 	if _, err := BoundJudgeArtifactRead(ctx, "web_page:p", body, "", 0, 0); err == nil || !JudgeHidesArtifact(ctx, "web_page:p") {
 		t.Errorf("checked page read err = %v, want the refusal", err)
+	}
+	if got, err := BoundJudgeArtifactRead(ctx, "web_page:q", body, "", 0, 0); err != nil || JudgeHidesArtifact(ctx, "web_page:q") || len(got) < 16_000 {
+		t.Errorf("a page the verifier never read = %d chars, err %v, want it readable", len(got), err)
 	}
 	if got, err := BoundJudgeArtifactRead(ctx, "bytes:files", body, "", 0, 0); err != nil || len(got) != len(body) || JudgeHidesArtifact(ctx, "bytes:files") {
 		t.Errorf("bytes read = %d chars, err %v, want the whole body", len(got), err)

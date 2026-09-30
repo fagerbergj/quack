@@ -237,9 +237,48 @@ func TestJudgeEvidenceSection(t *testing.T) {
 	if judgeEvidenceSection([]UnitCheck{uncited, matched}) != "" {
 		t.Error("every cited specific matched: the section must be absent")
 	}
+	// A citation with no stored page never reached the verifier: cites_sources scores it, not this section.
 	unread := UnitCheck{Unit: Unit{Text: "Churn was 4%.", Citations: []string{"https://q/2"}}, Specific: Specific{Value: "4%"}, State: "no_stored_text"}
-	if got := evidenceEntry(unread); strings.Contains(got, `("")`) || strings.Contains(got, "()") || !strings.Contains(got, "(https://q/2)") {
-		t.Errorf("entry for an unread page = %q, want the claim's own citation named", got)
+	if got := judgeEvidenceSection([]UnitCheck{unread, matched}); got != "" {
+		t.Errorf("section for an unread citation = %q, want none", got)
+	}
+}
+
+// TestCheckedPages: only stored pages the verifier read are hidden from the judge - a verdict
+// read from a search snippet leaves the page (if any) visible.
+func TestCheckedPages(t *testing.T) {
+	page := secondLookCheck()
+	page.pageID, page.Verdict = "web_page:read", Verdict{State: "supported"}
+	snippet := secondLookCheck()
+	snippet.snippet, snippet.Verdict = true, Verdict{State: "cannot_tell"}
+	unread := secondLookCheck()
+	unread.pageID = "web_page:unread" // located, never verified (the verifier was not reached)
+	got := checkedPages([]UnitCheck{page, snippet, unread})
+	if len(got) != 1 || !got["web_page:read"] {
+		t.Errorf("checkedPages = %v, want only the stored page the verifier read", got)
+	}
+}
+
+// TestRunVerify_SnippetVerdictNotReusedForPage: a claim read from a search snippet in one round
+// is read again once the page itself is fetched, even when the two windows are byte-identical.
+func TestRunVerify_SnippetVerdictNotReusedForPage(t *testing.T) {
+	u := "https://example.test/survey"
+	unsupported := `{"items":[{"n":1,"state":"unsupported","quote":"users rose 30% in 2024"},{"n":2,"state":"supported","quote":"users rose 30% in 2024"}]}`
+	var prompts []string
+	cfg := Config{RecordReader: fakeLoader{pageID(t, u): secondLookPage},
+		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
+		JudgeModel:  seqLLM{answers: []string{unsupported}, prompts: &prompts}}
+	memo := map[string]Verdict{}
+	answer := "Users rose 25% in 2024 ([survey](" + u + "))."
+	snippetOnly := workerActivity{seen: map[string]string{u: secondLookPage}}
+	if c := runVerify(context.Background(), cfg, answer, snippetOnly, memo); c[0].Verdict.State != "cannot_tell" || !c[0].snippet {
+		t.Fatalf("round 1 (snippet) = %+v, want cannot_tell from the snippet", c[0])
+	}
+	calls := len(prompts)
+	fetched := workerActivity{fetched: map[string]struct{}{u: {}}, seen: snippetOnly.seen}
+	c := runVerify(context.Background(), cfg, answer, fetched, memo)
+	if len(prompts) == calls || c[0].Verdict.State != "unsupported" {
+		t.Errorf("round 2 (fetched page) = %s after %d new calls, want the page read and the contradiction kept", c[0].Verdict.State, len(prompts)-calls)
 	}
 }
 

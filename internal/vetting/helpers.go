@@ -176,9 +176,9 @@ type Config struct {
 	// session activity and artifacts never count as this node's evidence.
 	ForeignNodes []string
 	// judgeEvidence: the round's CITED EVIDENCE section, set by runJudge from the verify tier;
-	// judgePagesChecked: that tier read cited pages this round, so the judge is not shown them.
+	// judgeCheckedPages: the web_pages that tier read this round, which the judge is not shown.
 	judgeEvidence     string
-	judgePagesChecked bool
+	judgeCheckedPages map[string]bool
 }
 
 // HasWorkspaceClone reports whether this node's worker actually has a repo

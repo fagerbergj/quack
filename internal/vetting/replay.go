@@ -75,7 +75,7 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
 	if declaresCodeOwned(cfg, specificsSupportedCriterion) { // as live: the verify tier runs first and feeds the judge
-		cfg.judgeEvidence, cfg.judgePagesChecked = judgeEvidenceSection(res.Units), pagesChecked(res.Units)
+		cfg.judgeEvidence, cfg.judgeCheckedPages = judgeEvidenceSection(res.Units), checkedPages(res.Units)
 		if c, ok := specificsSupportedScore(res.Units); ok {
 			det[specificsSupportedCriterion] = c
 		}

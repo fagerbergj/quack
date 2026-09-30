@@ -3,7 +3,6 @@ package vetting
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -116,33 +115,27 @@ func judgeEvidenceSection(checks []UnitCheck) string {
 	return b.String()
 }
 
-// pagesChecked: the verify tier read at least one cited specific against a stored page.
-func pagesChecked(checks []UnitCheck) bool {
-	return slices.ContainsFunc(checks, func(c UnitCheck) bool { return c.Verdict.State != "" })
+// checkedPages: the stored web_pages the verify tier read a cited specific against (snippets excluded).
+func checkedPages(checks []UnitCheck) map[string]bool {
+	pages := map[string]bool{}
+	for _, c := range checks {
+		if c.Verdict.State != "" && c.pageID != "" {
+			pages[c.pageID] = true
+		}
+	}
+	return pages
 }
 
 // evidenceEntry: one cited specific, its verifier result and its excerpt.
 func evidenceEntry(c UnitCheck) string {
 	result := c.Verdict.State
 	switch {
-	case c.State == "no_stored_text":
-		result = "not read: no stored text for this source"
-	case result == "":
-		result = "not read"
 	case c.Verdict.Quote != "":
 		result += fmt.Sprintf(" - page says %q", clipRunes(c.Verdict.Quote, 160))
 	case c.Verdict.Reason != "":
 		result += " - " + c.Verdict.Reason
 	}
-	source := c.Citation
-	if source == "" { // no page resolved: name what the claim cites
-		source = strings.Join(c.Unit.Citations, ", ")
-	}
-	out := fmt.Sprintf("- %q in %q", c.Specific.Value, clipRunes(c.Unit.Text, 160))
-	if source != "" {
-		out += " (" + source + ")"
-	}
-	out += "\n  verifier: " + result + "\n"
+	out := fmt.Sprintf("- %q in %q (%s)\n  verifier: %s\n", c.Specific.Value, clipRunes(c.Unit.Text, 160), c.Citation, result)
 	if c.Window != "" {
 		out += fmt.Sprintf("  excerpt: %q\n", centerClip(c.Window, judgeExcerptChars))
 	}

@@ -3,7 +3,6 @@ package vetting
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -38,10 +37,11 @@ type Verifier struct {
 	ThinkingLevel string
 }
 
-// verifyKey: the claim, its detail, the page and the exact evidence window the verdict was read from.
+// verifyKey: the claim, its detail, the page, the exact evidence window and whether that window came
+// from a search snippet - a snippet verdict (never a contradiction) must not stand in for the fetched page.
 func verifyKey(c UnitCheck) string {
 	sum := sha256.Sum256([]byte(withoutLinks(c.Unit.Text) + "\x00" + c.Window))
-	return c.Citation + "\x00" + c.Specific.Kind + ":" + c.Specific.Norm + "\x00" + hex.EncodeToString(sum[:])
+	return fmt.Sprintf("%s\x00%s:%s\x00%t\x00%x", c.Citation, c.Specific.Kind, c.Specific.Norm, c.snippet, sum)
 }
 
 const verifyBatch = 20

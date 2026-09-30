@@ -27,17 +27,17 @@ const judgeSeededReadCap = 8_000
 
 // judgeView is one judge round's view of the chat: a foreign node's artifacts are hidden
 // unless this node wrote, fetched or read them, or its own lineage wrote a revision.
-// hidePages: the verify tier already read the cited pages, so the judge is not shown them.
+// checked: web_pages the verify tier already read this round, so the judge is not shown them.
 type judgeView struct {
-	foreign   map[string]bool
-	own       map[string]bool
-	hidePages bool
-	mu        sync.Mutex
-	history   map[string]bool // per id: some revision was written outside the foreign nodes
+	foreign map[string]bool
+	own     map[string]bool
+	checked map[string]bool
+	mu      sync.Mutex
+	history map[string]bool // per id: some revision was written outside the foreign nodes
 }
 
 func newJudgeView(cfg Config, act workerActivity) *judgeView {
-	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs(), hidePages: cfg.judgePagesChecked, history: map[string]bool{}}
+	v := &judgeView{foreign: map[string]bool{}, own: act.ownArtifactIDs(), checked: cfg.judgeCheckedPages, history: map[string]bool{}}
 	for _, n := range cfg.ForeignNodes {
 		v.foreign[n] = true
 	}
@@ -58,7 +58,7 @@ func judgeViewFrom(ctx context.Context) *judgeView {
 
 // hidesPage: a web_page the verify tier has already read for this round.
 func (s *judgeView) hidesPage(id string) bool {
-	return s != nil && s.hidePages && recordstore.KindOf(id) == webPageKind
+	return s != nil && s.checked[id]
 }
 
 func (s *judgeView) visible(ctx context.Context, c *recordstore.Client, id, author string) bool {
@@ -184,7 +184,7 @@ func newJudgeReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 }
 
 func errPageChecked(id string) error {
-	return fmt.Errorf("read_artifact: %s: fetched pages are not available to you this round - code already checked every cited specific against them, and any it could not confirm is in CITED EVIDENCE", id)
+	return fmt.Errorf("read_artifact: %s: this fetched page is not available to you this round - code already checked every cited specific against it, and any it could not confirm is in CITED EVIDENCE", id)
 }
 
 // loadJudgeArtifact loads the latest or a named revision, with its authoring node.
