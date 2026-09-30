@@ -389,7 +389,7 @@ func TestVerifierWorkers(t *testing.T) {
 }
 
 // TestVerifyPrompt_StablePagePrefix: the page and its windows lead every verifier prompt over that
-// page byte for byte, whatever claims follow, so a reworded claim's re-read reuses the cached prefix.
+// page byte for byte, whatever claims follow or their order, so a re-read reuses the cached prefix.
 func TestVerifyPrompt_StablePagePrefix(t *testing.T) {
 	u := "https://example.test/stats"
 	page := strings.Repeat("filler words. ", 80) + "users rose 30% in 2024." + strings.Repeat(" more filler.", 80) + " churn fell to 4.2% last year."
@@ -400,8 +400,12 @@ func TestVerifyPrompt_StablePagePrefix(t *testing.T) {
 			`{"n":2,"state":"supported","quote":"users rose 30% in 2024"},{"n":3,"state":"supported","quote":"churn fell to 4.2% last year"}]}`}, prompts: &prompts}}
 	act := workerActivity{fetched: map[string]struct{}{u: {}}}
 	memo := map[string]Verdict{}
-	for _, lead := range []string{"Users rose 30% in 2024", "Active users rose 30% in 2024"} {
-		runVerify(context.Background(), cfg, lead+" ([s]("+u+")). Churn fell to 4.2% ([s]("+u+")).", act, memo)
+	churn := "Churn fell to 4.2% ([s](" + u + "))."
+	for _, answer := range []string{ // round 2 rewords the first claim and moves it last
+		"Users rose 30% in 2024 ([s](" + u + ")). " + churn,
+		churn + " Active users rose 30% in 2024 ([s](" + u + ")).",
+	} {
+		runVerify(context.Background(), cfg, answer, act, memo)
 	}
 	if len(prompts) != 2 {
 		t.Fatalf("verifier calls = %d, want one per round", len(prompts))
