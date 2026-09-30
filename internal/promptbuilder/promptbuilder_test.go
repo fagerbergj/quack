@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
@@ -228,5 +231,18 @@ func TestOrchestratorNoSkills(t *testing.T) {
 	out := promptbuilder.Orchestrator("", nil, "do stuff")
 	if strings.Contains(out, "### Skills") {
 		t.Error("Orchestrator() should not emit a Skills section when no skills provided")
+	}
+}
+
+// TestJudgeNoToolListing: the judge's tools reach the model as declarations, so the
+// system prompt must not list them a second time.
+func TestJudgeNoToolListing(t *testing.T) {
+	tl, err := functiontool.New[map[string]any, map[string]any](functiontool.Config{Name: "submit_verdict", Description: "UNIQUE-TOOL-DESC"},
+		func(adkagent.Context, map[string]any) (map[string]any, error) { return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := promptbuilder.Judge([]tool.Tool{tl}, "## Steps"); strings.Contains(out, "UNIQUE-TOOL-DESC") || strings.Contains(out, "## Tools") {
+		t.Errorf("judge prompt lists its tools again:\n%s", out)
 	}
 }

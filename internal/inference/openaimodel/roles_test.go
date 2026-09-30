@@ -74,3 +74,28 @@ func TestReasoningToolCalls_UniqueIDs(t *testing.T) {
 		t.Fatalf("recovered ids %v and %v, want one call each with distinct ids", a, b)
 	}
 }
+
+// TestToOpenAI_ToolMessageFollowsItsCall: dropping a thought must never orphan a tool
+// message - it has to follow the assistant message carrying its tool_call.
+func TestToOpenAI_ToolMessageFollowsItsCall(t *testing.T) {
+	req := &model.LLMRequest{Contents: []*genai.Content{
+		{Role: genai.RoleUser, Parts: []*genai.Part{{Text: "q"}}},
+		{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "thinking", Thought: true},
+			{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "web_search", Args: map[string]any{"q": "x"}}}}},
+		{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "web_search", Response: map[string]any{"r": 1}}}}},
+	}}
+	got, err := toOpenAIChatCompletionRequest(req, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Messages) != 3 {
+		t.Fatalf("messages = %d, want 3 (thought dropped, FR becomes the tool message)", len(got.Messages))
+	}
+	assistant := got.Messages[1].OfAssistant
+	if assistant == nil || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].OfFunction.ID != "c1" {
+		t.Fatalf("message 1 = %+v, want the assistant carrying the c1 tool_call", got.Messages[1])
+	}
+	if got.Messages[2].OfTool == nil || got.Messages[2].OfTool.ToolCallID != "c1" {
+		t.Fatalf("message 2 = %+v, want the c1 tool message directly after its call", got.Messages[2])
+	}
+}

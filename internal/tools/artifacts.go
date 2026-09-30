@@ -311,8 +311,7 @@ func shapeReadArtifact(data []byte, mime string, a readArtifactArgs) string {
 		return windowLines(strings.Split(string(data), "\n"), start, a.Lines, strings.Count(string(data), "\n")+1)
 	}
 	if isText && sourceKind(a.ID) && len(data) > fetchReturnMaxBytes {
-		return fmt.Sprintf("%s\n[…first %d of %d bytes (%d lines); pass offset/lines to read a window, or grep_artifacts to search]",
-			strings.ToValidUTF8(string(data[:fetchReturnMaxBytes]), ""), fetchReturnMaxBytes, len(data), strings.Count(string(data), "\n")+1)
+		return capAtLine(string(data))
 	}
 	if len(data) > artifactref.InlineMaxBytes {
 		return fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; pass offset/lines to read a window.",
@@ -483,4 +482,19 @@ func SelectArtifactTools(all []tool.Tool, configured []string, artifactKind bool
 func sourceKind(id string) bool {
 	k := recordstore.KindOf(id)
 	return k == kindWebPage || k == "bytes"
+}
+
+// capAtLine returns text's first fetchReturnMaxBytes cut back to a line boundary, so the offset it
+// names to resume from is exact; a line longer than half the cap is cut mid-line instead.
+func capAtLine(text string) string {
+	head := strings.ToValidUTF8(text[:fetchReturnMaxBytes], "")
+	note := ""
+	if i := strings.LastIndexByte(head, '\n'); i > fetchReturnMaxBytes/2 {
+		head = head[:i]
+	} else {
+		note = ", the last one cut"
+	}
+	shown := strings.Count(head, "\n") + 1
+	return fmt.Sprintf("%s\n[…lines 1-%d of %d%s (%d of %d bytes); offset=%d to read further, or grep_artifacts to search]",
+		head, shown, strings.Count(text, "\n")+1, note, len(head), len(text), shown+1)
 }

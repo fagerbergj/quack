@@ -659,3 +659,33 @@ func TestWebFetchTool_AcceptsStrayStore(t *testing.T) {
 		t.Fatalf("web_fetch with store: true = %v, want the call to run", err)
 	}
 }
+
+// TestFetchBatch_RepeatAfterTTLRefetchesChangedPage: past the cache TTL a seen URL is
+// fetched again, and changed text lands as a new revision of the SAME artifact, so
+// every earlier stub naming that id still resolves - to the current text.
+func TestFetchBatch_RepeatAfterTTLRefetchesChangedPage(t *testing.T) {
+	const url = "https://ex.com/a"
+	f := newFakeFetcher(map[string]fakeFetchResult{url: {body: "first version"}})
+	rc := testRecordStore()
+	d := Deps{RecordStore: rc, NodeID: "n1"}
+	seen, ctx := newFetchSeen(), newFakeCtx()
+	first := fetchBatch(ctx, d, f, seen, []string{url}, "", 0)[0]
+
+	f.stubs[url] = fakeFetchResult{body: "second version"}
+	key := seenKey(ctx.SessionID(), url)
+	page := seen.m[key]
+	page.at = time.Now().Add(-cacheTTL - time.Second)
+	seen.m[key] = page
+
+	again := fetchBatch(ctx, d, f, seen, []string{url}, "", 0)[0]
+	if again.Text != "second version" || again.Artifact != first.Artifact {
+		t.Fatalf("refetch past the TTL = %+v, want the new text under the same artifact %s", again, first.Artifact)
+	}
+	revs, err := rc.Versions(context.Background(), first.Artifact)
+	if err != nil || len(revs) != 2 {
+		t.Fatalf("revisions = %v (err %v), want 2", revs, err)
+	}
+	if raw, _, _, _ := rc.Latest(context.Background(), first.Artifact); string(raw) != "second version" {
+		t.Errorf("latest = %q, want the changed page", raw)
+	}
+}

@@ -158,6 +158,10 @@ func renderPart(b *strings.Builder, author string, p *genai.Part, args map[strin
 		fmt.Fprintf(b, "%s: [%s attachment]\n", speaker(author), p.InlineData.MIMEType)
 	case p.FileData != nil:
 		fmt.Fprintf(b, "%s: [%s attachment]\n", speaker(author), p.FileData.MIMEType)
+	case p.ExecutableCode != nil:
+		fmt.Fprintf(b, "%s: [executable code]\n", speaker(author))
+	case p.CodeExecutionResult != nil:
+		fmt.Fprintf(b, "%s: [code execution result]\n", speaker(author))
 	case p.Text != "" && author == "":
 		fmt.Fprintf(b, "%s\n", strings.TrimSuffix(strings.TrimPrefix(p.Text, collapseHeader), "\n"))
 	case p.Text != "":

@@ -113,12 +113,13 @@ func TestCollapsingSummarizer_FallsBackWhenStubsDoNotFit(t *testing.T) {
 		ev("model", call("c1", toolWebFetch, map[string]any{"urls": []any{"u"}})),
 		ev("user", result("c1", toolWebFetch, fetched(1))),
 	}
+	// lastEst 0: a reused/resumed node's first compaction, before any measurement.
 	for _, c := range []struct {
-		prompt    int
-		wantModel bool
-	}{{prompt: 10_000, wantModel: false}, {prompt: 40_000, wantModel: true}} {
+		prompt, lastEst int
+		wantModel       bool
+	}{{10_000, 10_000, false}, {40_000, 40_000, true}, {10_000, 0, true}} {
 		inner := &countingSummarizer{}
-		s := collapsingSummarizer{inner: inner, meter: &PromptMeter{tokens: c.prompt, lastEst: c.prompt}, threshold: 9_000}
+		s := collapsingSummarizer{inner: inner, meter: &PromptMeter{tokens: c.prompt, lastEst: c.lastEst}, threshold: 9_000}
 		got, err := s.SummarizeEvents(context.Background(), window)
 		if err != nil {
 			t.Fatal(err)
@@ -307,8 +308,13 @@ func TestCollapseTranscript_CarriesEarlierSummary(t *testing.T) {
 
 // TestCollapseTranscript_AttachmentPlaceholder: media is named, never inlined or dropped silently.
 func TestCollapseTranscript_AttachmentPlaceholder(t *testing.T) {
-	text, _, _ := collapseTranscript([]*session.Event{ev("user", &genai.Part{InlineData: &genai.Blob{MIMEType: "image/png", Data: []byte("png")}})})
-	if !strings.Contains(text, "User: [image/png attachment]") {
-		t.Fatalf("transcript = %q, want an attachment placeholder", text)
+	text, _, _ := collapseTranscript([]*session.Event{
+		ev("user", &genai.Part{InlineData: &genai.Blob{MIMEType: "image/png", Data: []byte("png")}}),
+		ev("model", &genai.Part{ExecutableCode: &genai.ExecutableCode{Code: "print(1)"}}, &genai.Part{CodeExecutionResult: &genai.CodeExecutionResult{Output: "1"}}),
+	})
+	for _, want := range []string{"User: [image/png attachment]", "You: [executable code]", "You: [code execution result]"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("transcript = %q, want placeholder %q", text, want)
+		}
 	}
 }

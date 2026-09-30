@@ -152,8 +152,8 @@ func newFetch(d Deps) (tool.Tool, error) {
 	desc += fmt.Sprintf("Every page is stored as an artifact (its id is the entry's `artifact`). A short page's "+
 		"full text comes back inline; a page at or above %d bytes comes back as a short header (title, url, "+
 		"artifact id, line/byte count, a small head), and the call's combined text is capped at %d bytes - "+
-		"grep_artifacts and read_artifact(id, offset, lines) read the rest without re-fetching. A URL already "+
-		"fetched earlier in this session returns only its artifact id. `pattern` (a regex, applied to "+
+		"grep_artifacts and read_artifact(id, offset, lines) read the rest without re-fetching. A URL "+
+		"fetched again within 10 minutes in this session returns only its artifact id. `pattern` (a regex, applied to "+
 		"every URL in this call) or `offset` (a line number) shapes the full page directly as a shortcut.",
 		fetchArtifactThreshold, maxBatchInlineBytes)
 
@@ -175,14 +175,19 @@ func newFetch(d Deps) (tool.Tool, error) {
 	)
 }
 
-// fetchSeen remembers, per session, which URLs already came back whole or as
-// a header - a repeat returns the artifact id instead of re-inlining the text.
+// fetchSeen remembers, per session, which URLs already came back whole or as a header - a
+// repeat within cacheTTL returns the artifact id; after it the page is fetched fresh.
 type fetchSeen struct {
 	mu sync.Mutex
-	m  map[string]FetchResult
+	m  map[string]seenPage
 }
 
-func newFetchSeen() *fetchSeen { return &fetchSeen{m: map[string]FetchResult{}} }
+type seenPage struct {
+	r  FetchResult
+	at time.Time
+}
+
+func newFetchSeen() *fetchSeen { return &fetchSeen{m: map[string]seenPage{}} }
 
 func seenKey(sessionID, url string) string { return sessionID + "\x00" + url }
 
@@ -190,10 +195,11 @@ func seenKey(sessionID, url string) string { return sessionID + "\x00" + url }
 func (s *fetchSeen) lookup(sessionID, url string) (FetchResult, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok := s.m[seenKey(sessionID, url)]
-	if !ok {
+	page, ok := s.m[seenKey(sessionID, url)]
+	if !ok || time.Since(page.at) > cacheTTL {
 		return FetchResult{}, false
 	}
+	r := page.r
 	r.Text = fmt.Sprintf("[already fetched earlier in this session - not repeated. Its full text is artifact %s (%d lines): "+
 		"read_artifact(id, offset, lines) or grep_artifacts(pattern, ids) reads it; web_fetch with a pattern or offset returns just those lines.]", r.Artifact, r.Lines)
 	return r, true
@@ -204,7 +210,7 @@ func (s *fetchSeen) record(sessionID, url string, r FetchResult) {
 		return
 	}
 	s.mu.Lock()
-	s.m[seenKey(sessionID, url)] = FetchResult{URL: r.URL, Artifact: r.Artifact, Lines: r.Lines}
+	s.m[seenKey(sessionID, url)] = seenPage{r: FetchResult{URL: r.URL, Artifact: r.Artifact, Lines: r.Lines}, at: time.Now()}
 	s.mu.Unlock()
 }
 
