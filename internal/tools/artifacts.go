@@ -258,15 +258,15 @@ type readArtifactArgs struct {
 
 // NewReadArtifactTool: the native equivalent of the MCP-only read_artifact
 // tool (#1012 wired it into ACP's loopback MCP only) - same recordstore
-// Client reads, same InlineMaxBytes cap as memorymcp.go's registerReadArtifactTool.
+// Client reads; an un-windowed web_page/bytes read is cut at fetchReturnMaxBytes, like the judge's.
 func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 	return functiontool.New[readArtifactArgs, string](
 		functiontool.Config{
 			Name: "read_artifact",
-			Description: "Read an artifact by id (from list_artifacts). Text content is returned inline; " +
-				"binary content is base64-encoded. Omit revision for the latest. Pass offset (a 1-based line " +
-				"number) and/or lines (window size) to read a window of a large text artifact instead of the " +
-				"whole thing - a window is returned even past the inline size limit that would otherwise refuse it.",
+			Description: fmt.Sprintf("Read an artifact by id (from list_artifacts). Text content is returned inline "+
+				"(a web_page or bytes artifact up to its first %d bytes); binary content is base64-encoded. Omit revision "+
+				"for the latest. Pass offset (a 1-based line number) and/or lines (window size) to read a window of a large "+
+				"text artifact instead.", fetchReturnMaxBytes),
 		},
 		func(ctx agent.Context, a readArtifactArgs) (string, error) {
 			var data []byte
@@ -309,6 +309,9 @@ func shapeReadArtifact(data []byte, mime string, a readArtifactArgs) string {
 			start = 1
 		}
 		return windowLines(strings.Split(string(data), "\n"), start, a.Lines, strings.Count(string(data), "\n")+1)
+	}
+	if isText && sourceKind(a.ID) && len(data) > fetchReturnMaxBytes {
+		return capAtLine(string(data))
 	}
 	if len(data) > artifactref.InlineMaxBytes {
 		return fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; pass offset/lines to read a window.",
@@ -440,4 +443,58 @@ func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *Roun
 	}
 	out := []tool.Tool{listTool, readTool, editTool, writeTool}
 	return append(out, kindTools...), nil
+}
+
+// IsNativeArtifactTool reports whether name is built by BuildNativeArtifactTools
+// rather than the registry, so a tools: entry naming it only opts the agent in.
+func IsNativeArtifactTool(name string) bool {
+	switch name {
+	case "list_artifacts", "read_artifact", "edit_artifact", "write_artifact":
+		return true
+	}
+	kind, ok := strings.CutPrefix(name, "write_")
+	if !ok {
+		return false
+	}
+	spec, ok := recordstore.SpecFor(kind)
+	return ok && spec.AgentWritable
+}
+
+// SelectArtifactTools keeps the read tools every native node gets (web_fetch
+// stubs point at them) plus each write tool configured names; a card artifact
+// kind implies write_artifact/edit_artifact, its only delivery path.
+func SelectArtifactTools(all []tool.Tool, configured []string, artifactKind bool) []tool.Tool {
+	want := map[string]bool{"list_artifacts": true, "read_artifact": true, "write_artifact": artifactKind, "edit_artifact": artifactKind}
+	for _, n := range configured {
+		want[n] = true
+	}
+	out := make([]tool.Tool, 0, len(all))
+	for _, t := range all {
+		if want[t.Name()] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// sourceKind: fetched pages and dispatch inputs, read for reference - capped when read whole.
+// Structured and card artifacts are read to be rewritten, so they keep the full inline limit.
+func sourceKind(id string) bool {
+	k := recordstore.KindOf(id)
+	return k == kindWebPage || k == "bytes"
+}
+
+// capAtLine returns text's first fetchReturnMaxBytes cut back to a line boundary, so the offset it
+// names to resume from is exact; a line longer than half the cap is cut mid-line instead.
+func capAtLine(text string) string {
+	head := strings.ToValidUTF8(text[:fetchReturnMaxBytes], "")
+	note := ""
+	if i := strings.LastIndexByte(head, '\n'); i > fetchReturnMaxBytes/2 {
+		head = head[:i]
+	} else {
+		note = ", the last one cut"
+	}
+	shown := strings.Count(head, "\n") + 1
+	return fmt.Sprintf("%s\n[…lines 1-%d of %d%s (%d of %d bytes); offset=%d to read further, or grep_artifacts to search]",
+		head, shown, strings.Count(text, "\n")+1, note, len(head), len(text), shown+1)
 }

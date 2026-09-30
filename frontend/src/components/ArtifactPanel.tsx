@@ -121,10 +121,10 @@ function belongsToNode(s: ArtifactSummary, nodeId: string): boolean {
   return (s.kind === A2UI_SURFACE_KIND || s.kind === QUIZ_KEY_KIND) && s.revisions.some(r => r.lineage?.node_id === nodeId)
 }
 
-// Run bookkeeping, never a deliverable: dag_node is rewritten by the system
-// at node start/end; a bytes:* blob is dispatch input staging. Not dag_plan - the per-node lineage filter already scopes that to the orchestrator.
+// Run bookkeeping, never a deliverable: dag_node is rewritten by the system at node start/end; a bytes:* blob is
+// dispatch input staging; web_page is every page a worker fetched. Not dag_plan - lineage already scopes that.
 export function isBookkeeping(a: { kind?: string; name: string }): boolean {
-  return a.kind === 'dag_node' || a.name.startsWith('bytes:')
+  return a.kind === 'dag_node' || a.kind === 'web_page' || a.name.startsWith('bytes:') || a.name.startsWith('web_page:')
 }
 
 // kindRank tiers a candidate: review, then the node's declared kind, then a
@@ -348,7 +348,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
   // only carries that revision's lineage - see toArtifactSummary in
   // internal/server/rest/artifacts.go), not "any revision this node wrote": if a later node revises an artifact (e.g. a judge writes revision 2 of a worker's `finding`) it moves to the reviser's panel and disappears from the original author's - a real gap against a "everything this node wrote is an output" reading of design V4, open as a question on #1094's review pending a spec answer. Fixing it needs per-revision lineage (GET .../revisions) up front for every artifact in the chat, which doesn't scale to "one click opens a panel" - documented here rather than silently wrong.
-  // isBookkeeping excludes dag_node/bytes:* entirely - they belong to the run, never to this node's own panel.
+  // isBookkeeping excludes dag_node, bytes:* and web_page entirely - run plumbing, never this node's own output.
   const nodeArtifacts = useMemo(
     () => summaries.filter(s => belongsToNode(s, nodeId) && !isBookkeeping(s)),
     [summaries, nodeId],

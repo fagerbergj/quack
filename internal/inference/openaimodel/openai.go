@@ -7,6 +7,7 @@ package openaimodel
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -565,7 +567,7 @@ func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.P
 
 func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionNewParams, error) {
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Contents))
-	for _, content := range req.Contents {
+	for _, content := range DropThoughts(req.Contents) {
 		msgs, err := toOpenAIChatCompletionMessage(content)
 		if err != nil {
 			return openai.ChatCompletionNewParams{}, err
@@ -683,17 +685,16 @@ func roleMessage(role, text string) openai.ChatCompletionMessageParamUnion {
 	return openai.UserMessage(text)
 }
 
-// convertParts: content parts into (text, user content parts, tool calls); errors on
+// convertParts: content parts into (joined text, user content parts, tool calls); errors on
 // unsupported audio/video and on PDF page rendering.
 func convertParts(parts []*genai.Part) (string, []openai.ChatCompletionContentPartUnionParam, []openai.ChatCompletionMessageToolCallUnionParam, error) {
-	var textContent string
+	var texts []string
 	var userParts []openai.ChatCompletionContentPartUnionParam
 	var toolCalls []openai.ChatCompletionMessageToolCallUnionParam
 	for _, part := range parts {
 		if part.Text != "" {
-			if len(parts) == 1 {
-				textContent = part.Text
-			} else {
+			texts = append(texts, part.Text)
+			if len(parts) > 1 {
 				userParts = append(userParts, openai.TextContentPart(part.Text))
 			}
 		}
@@ -740,8 +741,34 @@ func convertParts(parts []*genai.Part) (string, []openai.ChatCompletionContentPa
 		}
 		// FileData: OpenAI doesn't support file references directly; skip for now.
 	}
-	return textContent, userParts, toolCalls, nil
+	return strings.Join(texts, "\n"), userParts, toolCalls, nil
 }
+
+// DropThoughts returns contents without thought parts, copying only the
+// contents it changes: past reasoning is never re-sent, and the ledger records what is.
+func DropThoughts(contents []*genai.Content) []*genai.Content {
+	var out []*genai.Content
+	for i, c := range contents {
+		if c == nil || !slices.ContainsFunc(c.Parts, isThought) {
+			if out != nil {
+				out = append(out, c)
+			}
+			continue
+		}
+		if out == nil {
+			out = append(make([]*genai.Content, 0, len(contents)), contents[:i]...)
+		}
+		if kept := slices.DeleteFunc(slices.Clone(c.Parts), isThought); len(kept) > 0 {
+			out = append(out, &genai.Content{Role: c.Role, Parts: kept})
+		}
+	}
+	if out == nil {
+		return contents
+	}
+	return out
+}
+
+func isThought(p *genai.Part) bool { return p != nil && p.Thought }
 
 func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatCompletionMessageParamUnion, error) {
 	toolRespMessages, skipIdx, err := leadingToolResponses(content)
@@ -762,8 +789,8 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 		return nil, err
 	}
 	role := convertRoleToOpenAI(content.Role)
-	if len(toolCalls) > 0 {
-		// Assistant message carrying tool calls (and optional text).
+	if len(toolCalls) > 0 || role == "assistant" {
+		// Model-authored text stays assistant-role even when split across parts.
 		var assistant openai.ChatCompletionAssistantMessageParam
 		if textContent != "" {
 			assistant.Content.OfString = openai.String(textContent)
@@ -1125,7 +1152,7 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 			continue
 		}
 		calls = append(calls, &genai.FunctionCall{
-			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), tc.Name),
+			ID:   recoveredCallID(len(calls), tc.Name),
 			Name: tc.Name,
 			Args: tc.Arguments,
 		})
@@ -1137,7 +1164,7 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 			continue
 		}
 		calls = append(calls, &genai.FunctionCall{
-			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), name),
+			ID:   recoveredCallID(len(calls), name),
 			Name: name,
 			Args: parseXMLParams(m[2]),
 		})
@@ -1158,7 +1185,7 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 			return block
 		}
 		calls = append(calls, &genai.FunctionCall{
-			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), name),
+			ID:   recoveredCallID(len(calls), name),
 			Name: name,
 			Args: parseXMLParams(body),
 		})
@@ -1169,4 +1196,10 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 		return nil, reasoning
 	}
 	return calls, cleaned
+}
+
+// recoveredCallID: unique per call - an id reused across turns makes a later result look
+// like an earlier one to anything keyed on it (history collapse, response pairing).
+func recoveredCallID(n int, name string) string {
+	return fmt.Sprintf("rtc_%d_%s_%s", n, name, rand.Text()[:10])
 }

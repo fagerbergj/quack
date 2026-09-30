@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -702,9 +704,10 @@ func TestReadArtifactTool_WindowBypassesInlineLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An un-windowed read is capped like the judge's, never the 256 KB whole.
 	wholeResult, _ := whole["result"].(string)
-	if !strings.Contains(wholeResult, "too large") {
-		t.Fatalf("whole-content read of an oversized artifact = %q, want the too-large refusal", wholeResult)
+	if len(wholeResult) > fetchReturnMaxBytes+300 || !strings.Contains(wholeResult, "first line") || !strings.Contains(wholeResult, "the last one cut") {
+		t.Fatalf("whole-content read of an oversized artifact = %d bytes (%.80q...), want its first %d bytes plus a window hint", len(wholeResult), wholeResult, fetchReturnMaxBytes)
 	}
 
 	windowed, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id, "offset": 1, "lines": 1})
@@ -774,5 +777,43 @@ func TestGrepArtifactsTool_ProvenanceHeaderOncePerID(t *testing.T) {
 	}
 	if !strings.Contains(result, id+":1: needle one") || !strings.Contains(result, id+":3: needle two") {
 		t.Fatalf("result = %q, want both hits with their exact line numbers", result)
+	}
+}
+
+// TestShapeReadArtifact_CapsOnlySourceKinds: a fetched page is capped when read
+// whole, but a structured artifact read to be rewritten keeps its tail.
+func TestShapeReadArtifact_CapsOnlySourceKinds(t *testing.T) {
+	big := []byte(`{"notes":"` + strings.Repeat("n", fetchReturnMaxBytes+5_000) + `"}`)
+	if got := shapeReadArtifact(big, "application/json", readArtifactArgs{ID: "season_notes:abc"}); !strings.HasSuffix(got, `"}`) {
+		t.Errorf("structured artifact read = %d bytes ending %q, want it whole", len(got), got[len(got)-20:])
+	}
+	for _, id := range []string{"web_page:abc", "bytes:files"} {
+		if got := shapeReadArtifact(big, "text/markdown", readArtifactArgs{ID: id}); len(got) > fetchReturnMaxBytes+300 {
+			t.Errorf("%s read = %d bytes, want it cut at %d", id, len(got), fetchReturnMaxBytes)
+		}
+	}
+}
+
+// TestShapeReadArtifact_CapNamesExactResumeOffset: the cut lands on a line boundary
+// and the offset it names reads the very next line - nothing skipped, nothing repeated.
+func TestShapeReadArtifact_CapNamesExactResumeOffset(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 2_000; i++ {
+		lines = append(lines, fmt.Sprintf("line %04d of the page", i))
+	}
+	data := []byte(strings.Join(lines, "\n"))
+	got := shapeReadArtifact(data, "text/markdown", readArtifactArgs{ID: "web_page:abc"})
+	m := regexp.MustCompile(`offset=(\d+) to read further`).FindStringSubmatch(got)
+	if m == nil {
+		t.Fatalf("capped read names no resume offset: %q", got[len(got)-120:])
+	}
+	next, _ := strconv.Atoi(m[1])
+	body := got[:strings.LastIndex(got, "\n[…")]
+	if last := body[strings.LastIndex(body, "\n")+1:]; last != lines[next-2] {
+		t.Fatalf("cut mid-line or off by one: last shown %q, want %q", last, lines[next-2])
+	}
+	window := shapeReadArtifact(data, "text/markdown", readArtifactArgs{ID: "web_page:abc", Offset: next, Lines: 1})
+	if !strings.HasPrefix(window, lines[next-1]+"\n") {
+		t.Fatalf("offset=%d reads %.40q, want the next unseen line %q", next, window, lines[next-1])
 	}
 }

@@ -36,7 +36,9 @@ agents:
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
 ```
 
-`tools:` is explicit and independent of the card's `skills` — a skill can come from the model, the prompt, or a tool, so listing tools here is a separate, honest declaration of what the agent can actually reach. `skills:` (a different list — built-in skill names, not the card's A2A skills) names which of quack's own skill library entries this agent may `load_skill`.
+`tools:` is explicit and independent of the card's `skills` — a skill can come from the model, the prompt, or a tool, so listing tools here is a separate, honest declaration of what the agent can actually reach. `skills:` (a different list — built-in skill names, not the card's A2A skills) names which of quack's own skill library entries this agent may `load_skill`; an agent with no `skills:` gets no `load_skill` tools at all.
+
+Every native node gets `list_artifacts` and `read_artifact`. The artifact write tools are opt-in: list `write_artifact`, `edit_artifact` or a `write_<kind>` (`write_code_review`, `write_finding`, ...) in `tools:` to offer it. A card that names an `artifact` kind (see [Output contract](#output-contract-for-an-artifact-kind)) gets `write_artifact` and `edit_artifact` without listing them.
 
 `memory.bucket` buckets the agent into shared memory (`coding` or `research`, empty/absent means no bucket) — memory is shared by subject, not siloed per agent, so what the code-explorer learns about a repo reaches the code-implementer and the code-reviewer too.
 

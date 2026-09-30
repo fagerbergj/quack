@@ -33,7 +33,7 @@ func TestUserZoneClock(t *testing.T) {
 		t.Errorf("Now() = %q, want %q", got, want)
 	}
 	line := "Today is Sunday, 2026-09-27 in the user's time zone (CDT, UTC-05:00)."
-	if out := Agent("a", "d", nil, nil, false, "", "", ""); !strings.Contains(out, line) {
+	if out := Agent("a", "d", nil, false, "", "", ""); !strings.Contains(out, line) {
 		t.Errorf("Agent() missing %q:\n%s", line, out)
 	}
 

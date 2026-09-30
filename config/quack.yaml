@@ -227,7 +227,8 @@ agents:
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 131072      # 6-node synthesis measured 47,341 prompt tokens (~7.9k/upstream node); 65536 was too tight for a 10-node plan
     judge_rounds: 1             # just combines already-vetted upstream node outputs; re-revising is low value
-    tools: [check_mermaid]
+    # write_code_review: a review fan-out's merged verdict prefers the synthesizer's own record.
+    tools: [check_mermaid, write_code_review]
   media-reader:
     bundle: agents/media-reader
     skills: [format-markdown]

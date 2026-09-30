@@ -5,32 +5,23 @@ import (
 	"strings"
 	"testing"
 
+	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/loadmemorytool"
-	"google.golang.org/adk/v2/tool/preloadmemorytool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
-	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// fakeTool satisfies tool.Tool for testing.
-type fakeTool struct{ name, desc string }
-
-func (f fakeTool) Name() string        { return f.name }
-func (f fakeTool) Description() string { return f.desc }
-func (f fakeTool) IsLongRunning() bool { return false }
-
-var _ tool.Tool = fakeTool{}
-
-// TestAgentLayers verifies each prompt layer appears in the output.
+// TestAgentLayers verifies each prompt layer appears in the output, and that
+// tools are never listed: their declarations already reach the model.
 func TestAgentLayers(t *testing.T) {
-	tools := []tool.Tool{
-		fakeTool{"web_search", "searches the web"},
-		fakeTool{"web_fetch", "fetches a URL"},
+	skills := []*skill.Frontmatter{{Name: "format-markdown", Description: "reformats markdown"}}
+	out := promptbuilder.Agent("web-researcher", "researches the web", skills, false, "## Steps\n1. Plan.", "", "")
+	if strings.Contains(out, "### Tools") {
+		t.Error("Agent() must not list tools in the prompt - each tool's declaration already carries its description")
 	}
-	out := promptbuilder.Agent("web-researcher", "researches the web", tools, nil, false, "## Steps\n1. Plan.", "", "")
 
 	cases := []struct {
 		layer string
@@ -39,9 +30,6 @@ func TestAgentLayers(t *testing.T) {
 		{"identity name", "web-researcher"},
 		{"identity description", "researches the web"},
 		{"capabilities header", "## Capabilities"},
-		{"tools header", "### Tools"},
-		{"tool name", "web_search"},
-		{"tool description", "searches the web"},
 		{"behaviour", "## Steps"},
 		{"environment header", "## Environment"},
 		{"environment today", "Today is"},
@@ -59,7 +47,7 @@ func TestAgentSkillsRendered(t *testing.T) {
 	skills := []*skill.Frontmatter{
 		{Name: "research-git-repos", Description: "clone and read a repo locally"},
 	}
-	out := promptbuilder.Agent("web-researcher", "researches the web", nil, skills, false, "", "", "")
+	out := promptbuilder.Agent("web-researcher", "researches the web", skills, false, "", "", "")
 
 	for _, want := range []string{"### Skills", "load_skill", "research-git-repos", "clone and read a repo locally"} {
 		if !strings.Contains(out, want) {
@@ -72,7 +60,7 @@ func TestAgentSkillsRendered(t *testing.T) {
 // section and never tells the agent to call load_skill, a tool it lacks.
 func TestAgentACPNoFabricatedTools(t *testing.T) {
 	skills := []*skill.Frontmatter{{Name: "ponytail", Description: "laziest thing that works"}}
-	out := promptbuilder.Agent("code-implementer", "implements code", nil, skills, true, "## Ground rules\nCommit atomically.", "", "")
+	out := promptbuilder.Agent("code-implementer", "implements code", skills, true, "## Ground rules\nCommit atomically.", "", "")
 
 	if strings.Contains(out, "### Tools") {
 		t.Error("Agent() with nil tools should never emit a ### Tools section")
@@ -113,7 +101,7 @@ func TestGradingFacts(t *testing.T) {
 // assembled prompt as its own layer.
 func TestAgentGradingRendered(t *testing.T) {
 	grading := promptbuilder.GradingFacts(0.7, 1, true, false)
-	out := promptbuilder.Agent("code-reviewer", "reviews code", nil, nil, false, "", grading, "")
+	out := promptbuilder.Agent("code-reviewer", "reviews code", nil, false, "", grading, "")
 
 	if !strings.Contains(out, "## Grading") {
 		t.Error("Agent() with a non-empty grading fact should emit a ## Grading section")
@@ -124,14 +112,14 @@ func TestAgentGradingRendered(t *testing.T) {
 }
 
 func TestAgentNoGrading(t *testing.T) {
-	out := promptbuilder.Agent("helper", "helps", nil, nil, false, "do stuff", "", "")
+	out := promptbuilder.Agent("helper", "helps", nil, false, "do stuff", "", "")
 	if strings.Contains(out, "## Grading") {
 		t.Error("Agent() should not emit ## Grading when grading is empty")
 	}
 }
 
 func TestAgentNoTools(t *testing.T) {
-	out := promptbuilder.Agent("helper", "helps", nil, nil, false, "do stuff", "", "")
+	out := promptbuilder.Agent("helper", "helps", nil, false, "do stuff", "", "")
 	if strings.Contains(out, "### Tools") {
 		t.Error("Agent() should not emit ### Tools section when no tools provided")
 	}
@@ -141,44 +129,14 @@ func TestAgentNoTools(t *testing.T) {
 }
 
 func TestAgentNoBehaviour(t *testing.T) {
-	out := promptbuilder.Agent("helper", "helps", nil, nil, false, "", "", "")
+	out := promptbuilder.Agent("helper", "helps", nil, false, "", "", "")
 	if !strings.Contains(out, "## Environment") {
 		t.Error("Agent() must include ## Environment even with empty behaviour")
 	}
 }
 
-// toolLine is how promptbuilder renders a tool in the ### Tools section
-// ("- `name` - desc"). Asserting this exact prefix proves the tool is in the
-// Tools list, distinct from a tool name merely mentioned in the behaviour/guidance.
-func toolLine(name string) string { return "- `" + name + "` -" }
-
-// TestAgentMemoryToolsAndGuidance verifies the M6 memory tools AND the memory.md
-// guidance both reach the assembled prompt - the way agent.Build wires them
-// (memory tools in the tool list; memory.md appended to the behaviour).
-func TestAgentMemoryToolsAndGuidance(t *testing.T) {
-	memTools := []tool.Tool{
-		fakeTool{"web_search", "searches the web"},
-		fakeTool{"stage_memory", "stage tradecraft"},
-		fakeTool{"load_memory", "deliberate recall"},
-		fakeTool{"preload_memory", "ambient recall"},
-	}
-	// Build sets behaviour = prompt.md + "\n\n" + memory.md; mirror that here.
-	behaviour := "## Steps\n1. Plan." + "\n\n" + "## What to remember\n\nStage durable tradecraft."
-	out := promptbuilder.Agent("web-researcher", "researches the web", memTools, nil, false, behaviour, "", "")
-
-	for _, name := range []string{"stage_memory", "load_memory", "preload_memory"} {
-		if !strings.Contains(out, toolLine(name)) {
-			t.Errorf("Agent() Tools section missing memory tool %q", name)
-		}
-	}
-	if !strings.Contains(out, "## What to remember") {
-		t.Error("Agent() missing memory.md guidance (## What to remember)")
-	}
-}
-
-// TestAgentMemoryRealBundle: the REAL web-researcher memory.md and the REAL
-// memory tools (the same loader and tools buildAgents wires when memory is
-// enabled) both render in its prompt.
+// TestAgentMemoryRealBundle: the REAL web-researcher memory.md (the same
+// loader buildAgents wires when memory is enabled) renders in its prompt.
 func TestAgentMemoryRealBundle(t *testing.T) {
 	const dir = "../../agents/web-researcher"
 	bundle, err := agent.LoadBundle(context.Background(), nil, dir)
@@ -193,21 +151,9 @@ func TestAgentMemoryRealBundle(t *testing.T) {
 		t.Fatal("web-researcher has no memory.md - memory guidance would never load")
 	}
 
-	builtins, err := tools.Build([]string{"stage_memory"}, tools.Deps{})
-	if err != nil {
-		t.Fatalf("tools.Build(stage_memory): %v", err)
-	}
-	memTools := append(builtins, loadmemorytool.New(), preloadmemorytool.New())
+	behaviour := agent.BehaviourLayer(bundle.Prompt, mem) // exactly what agent.Build assembles
+	out := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, false, behaviour, "", "")
 
-	behaviour := bundle.Prompt + "\n\n" + mem // exactly what agent.Build assembles
-	out := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, memTools, nil, false, behaviour, "", "")
-
-	// Both deliberate memory tools must appear in the Tools section.
-	for _, name := range []string{"stage_memory", "load_memory", "preload_memory"} {
-		if !strings.Contains(out, toolLine(name)) {
-			t.Errorf("web-researcher prompt missing memory tool %q in the Tools section", name)
-		}
-	}
 	// The memory.md guidance must be present (heading is unique to the file).
 	if !strings.Contains(out, "## What to remember") {
 		t.Error("web-researcher prompt missing memory.md guidance")
@@ -218,7 +164,7 @@ func TestAgentMemoryRealBundle(t *testing.T) {
 // Environment layer; a non-coding agent (workspace == "") never fabricates
 // one - the callers decide (build.go "", ACP workspace.PromptBlock).
 func TestAgentWorkspaceRendered(t *testing.T) {
-	out := promptbuilder.Agent("code-implementer", "implements code", nil, nil, false, "", "", "Linux x86_64. Sandbox: landlock (…).")
+	out := promptbuilder.Agent("code-implementer", "implements code", nil, false, "", "", "Linux x86_64. Sandbox: landlock (…).")
 	if !strings.Contains(out, "## Environment") {
 		t.Fatal("Agent() with workspace facts should still emit ## Environment")
 	}
@@ -226,7 +172,7 @@ func TestAgentWorkspaceRendered(t *testing.T) {
 		t.Error("Agent() should render the workspace block verbatim in the Environment layer")
 	}
 
-	out = promptbuilder.Agent("web-researcher", "researches the web", nil, nil, false, "", "", "")
+	out = promptbuilder.Agent("web-researcher", "researches the web", nil, false, "", "", "")
 	if strings.Contains(out, "Sandbox:") {
 		t.Error("Agent() with an empty workspace block should never fabricate one")
 	}
@@ -285,5 +231,18 @@ func TestOrchestratorNoSkills(t *testing.T) {
 	out := promptbuilder.Orchestrator("", nil, "do stuff")
 	if strings.Contains(out, "### Skills") {
 		t.Error("Orchestrator() should not emit a Skills section when no skills provided")
+	}
+}
+
+// TestJudgeNoToolListing: the judge's tools reach the model as declarations, so the
+// system prompt must not list them a second time.
+func TestJudgeNoToolListing(t *testing.T) {
+	tl, err := functiontool.New[map[string]any, map[string]any](functiontool.Config{Name: "submit_verdict", Description: "UNIQUE-TOOL-DESC"},
+		func(adkagent.Context, map[string]any) (map[string]any, error) { return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := promptbuilder.Judge([]tool.Tool{tl}, "## Steps"); strings.Contains(out, "UNIQUE-TOOL-DESC") || strings.Contains(out, "## Tools") {
+		t.Errorf("judge prompt lists its tools again:\n%s", out)
 	}
 }

@@ -1,6 +1,5 @@
-// artifacttools_native_test.go: #1123 regression - a native (non-ACP) gated node's worker
-// must be given the ADK-native artifact tools (list/read/edit/write_<kind>), not just
-// check_mermaid/format-markdown, or its revise round has nothing to revise with.
+// artifacttools_native_test.go: a native node always gets the artifact read tools (#1123),
+// and the write tools only when its config or card asks for them.
 package serve
 
 import (
@@ -18,13 +17,9 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestBuildAgents_NativeNodeGetsArtifactTools: with an artifact.Service
-// wired, a native gated node's ForNode-built tool list must include
-// list_artifacts/read_artifact/edit_artifact/write_artifact plus at least
-// one write_<kind> tool - the set previously only reached the ACP loopback
-// MCP surface (#1091/#1108), leaving native nodes (synthesizer,
-// web-researcher) with nothing to revise with (#1123).
-func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
+// TestBuildAgents_NativeNodeArtifactToolsFollowConfig: list/read for all; write_<kind> only
+// where tools: names it; write/edit_artifact for a card naming an artifact kind.
+func TestBuildAgents_NativeNodeArtifactToolsFollowConfig(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
@@ -40,17 +35,17 @@ func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
 
+	agent := func(bundle string, tools ...string) config.AgentConfig {
+		return config.AgentConfig{Bundle: bundle, Provider: "stub-test", Model: "any-model", Tools: tools}
+	}
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
 			"stub-test": {Kind: "openai", Endpoint: "http://fake-provider.invalid"},
 		},
 		Agents: map[string]config.AgentConfig{
-			"tester": {
-				Bundle:   "../../agents/web-researcher",
-				Provider: "stub-test",
-				Model:    "any-model",
-				Tools:    []string{"current_date"},
-			},
+			"researcher":  agent("../../agents/web-researcher", "current_date"),
+			"synthesizer": agent("../../agents/synthesizer", "current_date", "write_code_review", "write_finding"),
+			"analyst":     agent("testdata/plugins/sleeper/agents/fixture-analyst", "current_date"),
 		},
 		Workspace: config.WorkspaceConfig{Sandbox: "none"},
 	}
@@ -64,34 +59,38 @@ func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 	}
 	defer nodeServers.closeAll()
 
-	na, ok := clientMap["tester"].(nativeAgent)
-	if !ok {
-		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
+	cases := map[string]struct{ want, absent []string }{
+		"researcher":  {want: []string{"list_artifacts", "read_artifact", "current_date"}, absent: []string{"edit_artifact", "write_artifact", "write_code_review", "write_finding"}},
+		"synthesizer": {want: []string{"read_artifact", "write_code_review", "write_finding"}, absent: []string{"edit_artifact", "write_artifact"}},
+		"analyst":     {want: []string{"read_artifact", "write_artifact", "edit_artifact"}, absent: []string{"write_code_review", "write_finding"}},
 	}
-	_, _, tools, setRoundCoords, refreshPrompt, release, err := na.ForNode(context.Background(), "test-plan:test-node", "test-plan/test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node", nil)
-	if err != nil {
-		t.Fatalf("ForNode: %v", err)
-	}
-	defer release(false)
-	if refreshPrompt == nil {
-		t.Error("refreshPrompt is nil, want the per-dispatch holder the gate refreshes at each round start")
-	}
-
-	if setRoundCoords == nil {
-		t.Error("setRoundCoords is nil, want a callback the gate can restamp round/turn/head-sha through")
-	}
-
-	got := map[string]bool{}
-	for _, tl := range tools {
-		got[tl.Name()] = true
-	}
-	for _, want := range []string{"list_artifacts", "read_artifact", "edit_artifact", "write_artifact"} {
-		if !got[want] {
-			t.Errorf("native node's tool list = %v, missing %q", toolNames(tools), want)
+	for name, c := range cases {
+		na, ok := clientMap[name].(nativeAgent)
+		if !ok {
+			t.Fatalf("clientMap[%q] = %T, want nativeAgent", name, clientMap[name])
 		}
-	}
-	if !got["write_finding"] {
-		t.Errorf("native node's tool list = %v, missing write_finding (a structured write_<kind> tool)", toolNames(tools))
+		_, _, tools, setRoundCoords, refreshPrompt, release, err := na.ForNode(context.Background(), "test-plan:"+name, "test-plan/"+name, nil, artifacts, "quack-test", "u1", "chat-1", name, nil)
+		if err != nil {
+			t.Fatalf("%s: ForNode: %v", name, err)
+		}
+		release(false)
+		if refreshPrompt == nil || setRoundCoords == nil {
+			t.Errorf("%s: refreshPrompt/setRoundCoords nil, want the per-dispatch hooks the gate drives", name)
+		}
+		got := map[string]bool{}
+		for _, tl := range tools {
+			got[tl.Name()] = true
+		}
+		for _, w := range c.want {
+			if !got[w] {
+				t.Errorf("%s: tools = %v, missing %q", name, toolNames(tools), w)
+			}
+		}
+		for _, a := range c.absent {
+			if got[a] {
+				t.Errorf("%s: tools = %v, must not carry %q (not in its config or card)", name, toolNames(tools), a)
+			}
+		}
 	}
 }
 

@@ -115,7 +115,7 @@ func TestNativeNode_SkillLoopTripsOwnNode(t *testing.T) {
 	}
 	provider := scriptedProvider(t, "load_skill", map[string]any{"name": "nope"}, "tool-call loop", nil)
 	defer provider.Close()
-	agent, jail := buildStubNodeAgent(t, provider.URL, nil, nil, artifact.InMemoryService(), stubNodeOpts{tripped: tripped})
+	agent, jail := buildStubNodeAgent(t, provider.URL, nil, nil, artifact.InMemoryService(), stubNodeOpts{tripped: tripped, skills: []string{"format-markdown"}})
 	runOwnNode(t, agent, jail)
 
 	mu.Lock()
@@ -154,5 +154,20 @@ func TestNodeMemoryScope(t *testing.T) {
 	}
 	if got := (*memory.Store)(nil).View(base, nodeMemoryScope(jail, "p/gone")).Scope(ctx); got != base {
 		t.Errorf("unregistered node: Scope = %+v, want the base %+v only", got, base)
+	}
+}
+
+// TestNativeNode_SkillToolsetOnlyWithSkills: an agent with no skills: scope gets no
+// load_skill tool at all; one with skills still does.
+func TestNativeNode_SkillToolsetOnlyWithSkills(t *testing.T) {
+	for _, skills := range [][]string{nil, {"format-markdown"}} {
+		var log bodyLog
+		provider := scriptedProvider(t, "current_date", map[string]any{}, `"role":"tool"`, log.record)
+		agent, jail := buildStubNodeAgent(t, provider.URL, []string{"current_date"}, nil, artifact.InMemoryService(), stubNodeOpts{skills: skills})
+		runOwnNode(t, agent, jail)
+		provider.Close()
+		if got := strings.Contains(log.all(), `"name":"load_skill"`); got != (len(skills) > 0) {
+			t.Errorf("skills %v: load_skill offered = %v", skills, got)
+		}
 	}
 }

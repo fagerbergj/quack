@@ -1442,7 +1442,7 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 			promptArt = art
 			promptArtMu.Unlock()
 			behaviour := agent.BehaviourLayer(strings.TrimSpace(art.Body), memGuidance)
-			return promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, true, behaviour, grading, wsBlock)
+			return promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, skillFms, true, behaviour, grading, wsBlock)
 		})
 	preambleArtifact := func(context.Context) artifactsrc.Artifact {
 		promptArtMu.Lock()
@@ -1528,7 +1528,7 @@ type nativeNodeBuilder struct {
 	schemas            *artifactschema.Registry
 }
 
-func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, scope tools.CallScope, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
+func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, scope tools.CallScope, meter *agent.PromptMeter, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
 	base, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1586,9 +1586,12 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	}
 	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
 	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
-	builtins = append(builtins, extraTools...)
-	skillTS := tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped, scope)
-	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, []tool.Toolset{skillTS}, b.memGuidance, b.skillFms, b.grading, drain)
+	builtins = append(builtins, tools.SelectArtifactTools(extraTools, b.ac.Tools, b.bundle.Card.Artifact != "")...)
+	var toolsets []tool.Toolset
+	if len(b.ac.Skills) > 0 {
+		toolsets = []tool.Toolset{tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped, scope)}
+	}
+	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, toolsets, b.memGuidance, b.skillFms, b.grading, drain, meter)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
@@ -1623,7 +1626,8 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken str
 		}
 	}
 	scope := tools.CallScope{AdvisorToken: advisorToken, ChatID: chatID, UserID: userID}
-	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), scope, extraTools...)
+	meter := agent.NewPromptMeter()
+	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), scope, meter, extraTools...)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -1631,7 +1635,9 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken str
 	if b.memSvc != nil {
 		mem = b.memSvc(scope.AdvisorToken)
 	}
-	srv, err := agent.Serve(wag, b.sessions, mem, artifacts, b.compactionFor(b.ac, wm), nodeID, sink)
+	comp := b.compactionFor(b.ac, wm)
+	comp.Meter = meter
+	srv, err := agent.Serve(wag, b.sessions, mem, artifacts, comp, nodeID, sink)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 	}
@@ -1824,7 +1830,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		res:                res,
 		schemas:            gateCfg.Schemas,
 	}
-	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil, "", tools.CallScope{})
+	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil, "", tools.CallScope{}, nil)
 	if err != nil {
 		return nil, fmtErr(name, "%w", err)
 	}
@@ -1835,8 +1841,11 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 	agentTools := ac.Tools
 	if artifacts != nil {
 		// Per-node artifact tools are built per dispatch (dag.buildGateNodes, #1123); named
-		// here too so "why didn't it revise" debugging sees they were offered.
-		agentTools = append(append([]string{}, ac.Tools...), "list_artifacts", "read_artifact", "edit_artifact", "write_artifact", "write_<kind>")
+		// here too so "why didn't it revise" debugging sees what it was offered.
+		agentTools = append(append([]string{}, ac.Tools...), "list_artifacts", "read_artifact")
+		if bundle.Card.Artifact != "" {
+			agentTools = append(agentTools, "write_artifact", "edit_artifact")
+		}
 	}
 	slog.Info("agent serving over A2A per DAG node", "component", "startup", "agent", name, "tools", agentTools)
 	return na, nil
@@ -2568,10 +2577,14 @@ func fmtErr(agentName, format string, args ...any) error {
 
 // resolveToolNames drops runtime-conditional builtins whose dependency is off, and
 // collapses recall_memory/load_memory (the same tool under two names) to whichever is listed first.
+// Artifact tool names are per-dispatch (SelectArtifactTools), never registry builds.
 func resolveToolNames(configured []string, taskMemAvailable bool) (names []string) {
 	names = make([]string, 0, len(configured))
 	sawMemoryRecall := false
 	for _, t := range configured {
+		if tools.IsNativeArtifactTool(t) {
+			continue
+		}
 		switch t {
 		case "stage_memory":
 			if !taskMemAvailable {

@@ -227,6 +227,9 @@ func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	if cfg.EventRetentionSize == 0 && cfg.TokenThreshold > 0 {
 		cfg.EventRetentionSize = defaultEventRetentionSize
 	}
+	if comp.Meter != nil && comp.Meter.resolvable && cfg.TokenThreshold > 0 {
+		cfg.Summarizer = collapsingSummarizer{inner: summarizer, meter: comp.Meter, threshold: cfg.TokenThreshold}
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}

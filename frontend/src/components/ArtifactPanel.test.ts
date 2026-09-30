@@ -187,6 +187,12 @@ describe('isBookkeeping', () => {
     expect(isBookkeeping({ kind: 'bytes', name: 'bytes:issue' })).toBe(true)
   })
 
+  // Every fetched page is stored, so listing them would bury the node's real output.
+  it('excludes fetched web_page artifacts', () => {
+    expect(isBookkeeping({ kind: 'web_page', name: 'web_page:0a1b2c3d4e5f' })).toBe(true)
+    expect(isBookkeeping({ name: 'web_page:0a1b2c3d4e5f' })).toBe(true)
+  })
+
   // dag_plan is NOT bookkeeping by kind - the per-node lineage filter
   // upstream already scopes it to the orchestrator's own panel.
   it('keeps everything else, including dag_plan and an unlisted kind like delivery_record', () => {

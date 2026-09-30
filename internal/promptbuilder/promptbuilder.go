@@ -14,26 +14,20 @@ import (
 )
 
 // Agent: assembles layered system prompt for native or ACP agents. acp is
-// true only for the ACP shape, which has no load_skill tool.
-func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, acp bool, behaviour, grading, workspace string) string {
-	var caps strings.Builder
-	if tl := toolLines(tools); tl != "" {
-		caps.WriteString("### Tools\n\n")
-		caps.WriteString(tl)
-	}
+// true only for the ACP shape, which has no load_skill tool. Tools are never
+// listed: their declarations already reach the model with every request.
+func Agent(name, description string, skills []*skill.Frontmatter, acp bool, behaviour, grading, workspace string) string {
+	var caps string
 	if sl := skillLines(skills, !acp); sl != "" {
-		if caps.Len() > 0 {
-			caps.WriteString("\n")
-		}
-		caps.WriteString("### Skills\n\n")
-		caps.WriteString(sl)
+		caps = "### Skills\n\n" + sl
 	}
-	return layered(fmt.Sprintf("You are Quack's %s. %s", name, description), "Capabilities", caps.String(), behaviour, grading, workspace)
+	return layered(fmt.Sprintf("You are Quack's %s. %s", name, description), "Capabilities", caps, behaviour, grading, workspace)
 }
 
-// Judge assembles the judge's layered prompt; no Grading layer (judge isn't graded).
-func Judge(tools []tool.Tool, behaviour string) string {
-	return layered("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.", "Tools", toolLines(tools), behaviour, "", "")
+// Judge assembles the judge's layered prompt; no Grading layer (judge isn't graded). Its tools'
+// declarations already reach the model, so they are not listed (the parameter goes once judge.go is free to change).
+func Judge(_ []tool.Tool, behaviour string) string {
+	return layered("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.", "", "", behaviour, "", "")
 }
 
 // Orchestrator assembles the system prompt; no Grading layer (orchestrator isn't a gated DAG node).
@@ -90,15 +84,6 @@ func layered(identity, capsHeader, capsBody, behaviour, grading, workspaceFacts 
 		sb.WriteString("\n")
 	}
 	return strings.TrimSpace(sb.String())
-}
-
-// toolLines: one bullet per tool, or "" if none.
-func toolLines(tools []tool.Tool) string {
-	var sb strings.Builder
-	for _, t := range tools {
-		fmt.Fprintf(&sb, "- `%s` - %s\n", t.Name(), t.Description())
-	}
-	return sb.String()
 }
 
 // skillLines: one bullet per skill; loadable agents also get a load_skill

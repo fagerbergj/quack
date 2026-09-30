@@ -19,15 +19,15 @@ import (
 // Build turns a loaded bundle into a runnable ADK llmagent, given its model, selected built-in tools, and optional ADK toolsets (context compaction is
 // wired separately at the runner, see a2a.go's Serve). memoryGuidance (the bundle's memory.md, M6) is appended to the behaviour layer only for
 // memory-participating agents; skills is the agent's declared skill scope (promptbuilder.Agent); grading is the pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when ungated or judge-less.
-func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string) (adkagent.Agent, error) {
-	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, "", drain)
+func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string, meter *PromptMeter) (adkagent.Agent, error) {
+	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, "", drain, meter)
 }
 
 // BuildChat is Build with the delegation mode PINNED to ModeChat, for agents
 // running as a runner's ROOT over a multi-turn session (e.g. the advisor). Pinning matters: runner.Run force-sets an unset mode to ModeChat with an
 // unsynchronized check-then-write on the shared agent - a data race under concurrent consults; a pre-set mode turns that write into a pure read. Workers keep Build's unset mode (single-turn task mode, what the gate wants).
 func BuildChat(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
-	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil)
+	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil, nil)
 }
 
 // BehaviourLayer is the behaviour layer of an assembled system prompt: the
@@ -39,7 +39,7 @@ func BehaviourLayer(prompt, memoryGuidance string) string {
 	return prompt
 }
 
-func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
+func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string, meter *PromptMeter) (adkagent.Agent, error) {
 	name, desc := b.Card.Name, b.Card.Description
 	if prompts == nil {
 		prompts = b.PinPrompt(nil)
@@ -50,10 +50,10 @@ func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 		func(context.Context) string { return prompts.Get().VersionID },
 		func(context.Context) string {
 			// "" workspace: native bundles are never a coding agent (those run as external ACP subprocesses - see internal/serve's ACP branch),
-			// so there is no sandboxed clone/toolchain to state facts about. skills is nil here (not the caller's skills arg): every ADK-native
-			// agent's Toolsets already carries a SkillToolset, whose own ProcessRequest renders the roster - rendering it here too would duplicate it in every request (audit finding A4).
+			// so there is no sandboxed clone/toolchain to state facts about. Tools and skills are left out: each tool's declaration and the
+			// SkillToolset's own ProcessRequest already reach the model, so listing them here too would duplicate them in every request (audit finding A4).
 			layer := BehaviourLayer(strings.TrimSpace(prompts.Get().Body), memoryGuidance)
-			return promptbuilder.Agent(name, desc, tools, nil, false, layer, grading, "")
+			return promptbuilder.Agent(name, desc, nil, false, layer, grading, "")
 		})
 	cfg := llmagent.Config{
 		Name:        name,
@@ -67,6 +67,9 @@ func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 		Mode:     mode,
 	}
 	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
+	if meter != nil {
+		meter.wire(&cfg)
+	}
 	return llmagent.New(cfg)
 }
 

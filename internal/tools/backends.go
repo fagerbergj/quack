@@ -2,9 +2,12 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
 
 // Portability seam: kind-based factory selects adapters for tools backed by external software.
@@ -32,23 +35,65 @@ const (
 	backendCrawl4AI = "crawl4ai"
 )
 
-// newWebSearcher selects the web-search adapter for kind (default: searxng).
+// newWebSearcher selects the web-search adapter for kind (default: searxng),
+// followed by any fallback the same config also names: keyed Exa falls back
+// to keyless Exa, and Exa to the SearXNG at base when one is set.
 func newWebSearcher(kind, base, key string, client *http.Client) (WebSearcher, error) {
 	if kind == "" {
 		kind = backendSearXNG
 	}
+	base = strings.TrimRight(base, "/")
 	switch kind {
 	case backendSearXNG:
 		if base == "" {
 			return nil, fmt.Errorf("web_search requires a SearXNG backend URL")
 		}
-		return &searxngSearcher{client: client, base: strings.TrimRight(base, "/")}, nil
+		return fallbackSearcher{{name: "searxng", s: &searxngSearcher{client: client, base: base}}}, nil
 	case backendExa:
-		// key set ⇒ Exa REST; empty ⇒ keyless hosted MCP; base is unused.
-		return newExaSearcher(key, client), nil
+		var chain fallbackSearcher
+		if key != "" {
+			chain = append(chain, &searchBackend{name: "exa-rest", s: newExaSearcher(key, client)})
+		}
+		chain = append(chain, &searchBackend{name: "exa-keyless", s: newExaSearcher("", client)})
+		if base != "" {
+			chain = append(chain, &searchBackend{name: "searxng", s: &searxngSearcher{client: client, base: base}})
+		}
+		return chain, nil
 	default:
 		return nil, fmt.Errorf("web_search: unknown backend kind %q", kind)
 	}
+}
+
+// searchBackend is one link of a fallback chain; failing marks an ongoing
+// failure streak so it logs one WARN per streak, not one per query.
+type searchBackend struct {
+	name    string
+	s       WebSearcher
+	failing atomic.Bool
+}
+
+// fallbackSearcher tries each backend in order until one answers.
+type fallbackSearcher []*searchBackend
+
+func (f fallbackSearcher) Search(ctx context.Context, query string) ([]SearchResult, string, error) {
+	var errs []error
+	for _, b := range f {
+		results, note, err := b.s.Search(ctx, query)
+		if err == nil {
+			if b.failing.Swap(false) {
+				slog.Info("web_search: backend recovered", "component", "tools", "backend", b.name)
+			}
+			return results, note, nil
+		}
+		if !b.failing.Swap(true) {
+			slog.Warn("web_search: backend failed; falling back to the next configured one", "component", "tools", "backend", b.name, "error", err)
+		}
+		errs = append(errs, err)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, "", errors.Join(errs...)
 }
 
 // web_fetch's adapter is selected by newFetcher in fetch.go.

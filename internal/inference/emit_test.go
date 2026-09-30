@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -17,6 +18,31 @@ import (
 )
 
 var errBoom = errors.New("boom")
+
+// TestTracedModel_RecordedInputOmitsThoughts: the ledger/Langfuse input must
+// be what the adapter sends, and past thoughts are never sent.
+func TestTracedModel_RecordedInputOmitsThoughts(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	modelTurn := &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "SECRET-THOUGHT", Thought: true}, {Text: "answer"}}}
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "q"}}}, modelTurn}}
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{{Content: &genai.Content{Parts: []*genai.Part{{Text: "ok"}}}}}}, name: "m"}
+	for range tm.GenerateContent(context.Background(), req, false) {
+	}
+	if len(capExp.records) != 1 {
+		t.Fatalf("records = %d, want 1", len(capExp.records))
+	}
+	input := attrsOf(t, capExp.records[0])["gen_ai.input.messages"].AsString()
+	if strings.Contains(input, "SECRET-THOUGHT") || !strings.Contains(input, "answer") {
+		t.Errorf("recorded input = %s, want the answer without the thought the adapter never sends", input)
+	}
+	if !modelTurn.Parts[0].Thought || len(modelTurn.Parts) != 2 {
+		t.Error("the session's own model turn was mutated")
+	}
+}
 
 // captureExporter records every emitted record for direct inspection - the
 // simplest possible sdklog.Exporter for a unit test.
