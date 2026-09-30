@@ -35,10 +35,10 @@ const (
 // a compaction can tell whether collapsing stale tool results alone brings it back under the threshold.
 type PromptMeter struct {
 	mu         sync.Mutex
-	tokens     int     // estimated prompt tokens now, including results since the last call
-	lastEst    int     // estimate of the last request, to calibrate against its observed count
-	scale      float64 // observed/estimated prompt tokens from the last response; 0 = uncalibrated
-	resolvable bool    // the agent has read_artifact, so a stub can be followed back
+	tokens     int  // estimated prompt tokens now, including results since the last call
+	lastEst    int  // estimate of the last request; 0 until this build's first model call
+	offset     int  // observed minus estimated prompt tokens: fixed overhead (tool schemas) the estimate misses
+	resolvable bool // the agent has read_artifact, so a stub can be followed back
 }
 
 // NewPromptMeter returns a meter for one worker; Build wires its callbacks.
@@ -61,7 +61,7 @@ func (m *PromptMeter) afterModel(_ adkagent.Context, resp *model.LLMResponse, _ 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if u := resp.UsageMetadata; u != nil && u.PromptTokenCount > 0 && m.lastEst > 0 {
-		m.scale = float64(u.PromptTokenCount) / float64(m.lastEst)
+		m.offset = int(u.PromptTokenCount) - m.lastEst
 	}
 	m.tokens += contentChars(resp.Content) / charsPerToken
 	return nil, nil
@@ -82,16 +82,15 @@ func (m *PromptMeter) wire(cfg *llmagent.Config) {
 	cfg.AfterToolCallbacks = append(cfg.AfterToolCallbacks, m.afterTool)
 }
 
-// fitsAfter reports whether saving `saved` estimated tokens leaves the prompt
-// under collapseFitPercent of threshold, in the model's own token units when calibrated.
+// fitsAfter reports whether saving `saved` estimated tokens leaves the prompt under
+// collapseFitPercent of threshold. Before this build's first call it knows nothing, so it says no.
 func (m *PromptMeter) fitsAfter(saved, threshold int) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	scale := m.scale
-	if scale <= 0 {
-		scale = 1
+	if m.lastEst == 0 {
+		return false
 	}
-	return float64(m.tokens-saved)*scale*100 <= float64(threshold*collapseFitPercent)
+	return (m.tokens-saved+m.offset)*100 <= threshold*collapseFitPercent
 }
 
 // collapsingSummarizer runs at compaction: it first replaces the window with a
@@ -123,7 +122,11 @@ func collapseTranscript(events []*session.Event) (text string, before, stubbed i
 		}
 		content, author := ev.Content, ev.Author
 		if c := ev.Actions.Compaction; c != nil {
-			content, author = c.CompactedContent, "" // an earlier summary: carried forward as-is
+			// ADK hands an earlier summary over as the seed's Content, with CompactedContent cleared.
+			author = ""
+			if content == nil {
+				content = c.CompactedContent
+			}
 		}
 		if content == nil {
 			continue
@@ -151,14 +154,23 @@ func renderPart(b *strings.Builder, author string, p *genai.Part, args map[strin
 			return 1
 		}
 		fmt.Fprintf(b, "%s returned %s\n", fr.Name, marshal(fr.Response))
+	case p.InlineData != nil:
+		fmt.Fprintf(b, "%s: [%s attachment]\n", speaker(author), p.InlineData.MIMEType)
+	case p.FileData != nil:
+		fmt.Fprintf(b, "%s: [%s attachment]\n", speaker(author), p.FileData.MIMEType)
 	case p.Text != "" && author == "":
-		fmt.Fprintf(b, "%s\n", strings.TrimPrefix(p.Text, collapseHeader))
-	case p.Text != "" && author == "user":
-		fmt.Fprintf(b, "User: %s\n", p.Text)
+		fmt.Fprintf(b, "%s\n", strings.TrimSuffix(strings.TrimPrefix(p.Text, collapseHeader), "\n"))
 	case p.Text != "":
-		fmt.Fprintf(b, "You: %s\n", p.Text)
+		fmt.Fprintf(b, "%s: %s\n", speaker(author), p.Text)
 	}
 	return 0
+}
+
+func speaker(author string) string {
+	if author == "user" {
+		return "User"
+	}
+	return "You"
 }
 
 func marshal(m map[string]any) string {

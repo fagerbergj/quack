@@ -118,7 +118,7 @@ func TestCollapsingSummarizer_FallsBackWhenStubsDoNotFit(t *testing.T) {
 		wantModel bool
 	}{{prompt: 10_000, wantModel: false}, {prompt: 40_000, wantModel: true}} {
 		inner := &countingSummarizer{}
-		s := collapsingSummarizer{inner: inner, meter: &PromptMeter{tokens: c.prompt}, threshold: 9_000}
+		s := collapsingSummarizer{inner: inner, meter: &PromptMeter{tokens: c.prompt, lastEst: c.prompt}, threshold: 9_000}
 		got, err := s.SummarizeEvents(context.Background(), window)
 		if err != nil {
 			t.Fatal(err)
@@ -129,8 +129,8 @@ func TestCollapsingSummarizer_FallsBackWhenStubsDoNotFit(t *testing.T) {
 	}
 }
 
-// TestPromptMeter_SkipsThoughtsAndCalibrates: thoughts are dropped before
-// sending, and the observed prompt count rescales the estimate.
+// TestPromptMeter_SkipsThoughtsAndCalibrates: thoughts are dropped before sending, and the
+// observed count adds the overhead the estimate misses (tool schemas), which a collapse keeps.
 func TestPromptMeter_SkipsThoughtsAndCalibrates(t *testing.T) {
 	m := NewPromptMeter()
 	req := &model.LLMRequest{Contents: []*genai.Content{
@@ -142,8 +142,17 @@ func TestPromptMeter_SkipsThoughtsAndCalibrates(t *testing.T) {
 		t.Fatalf("estimate = %d, want 1000 (thought parts are never sent)", m.tokens)
 	}
 	_, _ = m.afterModel(nil, &model.LLMResponse{UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 2_000}}, nil)
-	if m.fitsAfter(0, 2_000) || !m.fitsAfter(0, 2_300) {
-		t.Errorf("scale = %v: a 1000-token estimate observed as 2000 must be judged in observed units", m.scale)
+	// Observed 2000 = estimate 1000 + 1000 overhead; saving 200 leaves exactly 1800, 90% of 2000.
+	if !m.fitsAfter(200, 2_000) || m.fitsAfter(199, 2_000) {
+		t.Errorf("offset = %d: a collapse leaving exactly 90%% of the threshold fits, one token more does not", m.offset)
+	}
+}
+
+// TestPromptMeter_DeclinesBeforeFirstCall: compaction runs ahead of a build's first
+// model call (node reuse, resume); knowing nothing, the meter must not accept a collapse.
+func TestPromptMeter_DeclinesBeforeFirstCall(t *testing.T) {
+	if NewPromptMeter().fitsAfter(85_000, 50_000) {
+		t.Fatal("an uncalibrated meter accepted a collapse; ADK would then block compaction for the whole turn")
 	}
 }
 
@@ -247,8 +256,12 @@ func TestCompaction_CollapsesBeforeSummarizing(t *testing.T) {
 			t.Errorf("call %d: the prompt prefix changed without a compaction - the prefix cache would miss", i+1)
 		}
 	}
-	if drops == 0 || sizes[len(sizes)-1] >= 30*2_000 {
-		t.Fatalf("prompt never dropped: %v", sizes)
+	if drops < 3 || sizes[len(sizes)-1] >= 30*2_000 {
+		t.Fatalf("prompt dropped %d times, want several compactions: %v", drops, sizes)
+	}
+	// Each compaction rolls up the last; the first page's stub must survive all of them.
+	if !strings.Contains(sent[len(sent)-1], artifactFor(1)) {
+		t.Error("after several compactions the last request no longer names the first fetched page's artifact")
 	}
 }
 
@@ -283,10 +296,19 @@ func TestCompaction_OffWithoutReadArtifactOrCompaction(t *testing.T) {
 // TestCollapseTranscript_CarriesEarlierSummary: a rolled-up earlier summary is
 // carried forward once, unlabelled, not re-attributed to the user.
 func TestCollapseTranscript_CarriesEarlierSummary(t *testing.T) {
-	prior := &session.Event{Author: "user", Actions: session.EventActions{Compaction: &session.EventCompaction{
-		CompactedContent: genai.NewContentFromText(collapseHeader+"You: earlier finding", genai.RoleModel)}}}
+	// ADK's snapshot shape: the earlier summary rides in Content, CompactedContent is nil.
+	prior := ev("model", &genai.Part{Text: collapseHeader + "You: earlier finding\n"})
+	prior.Actions.Compaction = &session.EventCompaction{}
 	text, _, _ := collapseTranscript([]*session.Event{prior, ev("model", &genai.Part{Text: "next"})})
-	if strings.Count(text, collapseHeader) != 1 || !strings.Contains(text, "\nYou: earlier finding\n") || strings.Contains(text, "User:") {
+	if strings.Count(text, collapseHeader) != 1 || !strings.Contains(text, "\nYou: earlier finding\nYou: next\n") || strings.Contains(text, "User:") {
 		t.Fatalf("transcript = %q, want the earlier summary once, unlabelled", text)
+	}
+}
+
+// TestCollapseTranscript_AttachmentPlaceholder: media is named, never inlined or dropped silently.
+func TestCollapseTranscript_AttachmentPlaceholder(t *testing.T) {
+	text, _, _ := collapseTranscript([]*session.Event{ev("user", &genai.Part{InlineData: &genai.Blob{MIMEType: "image/png", Data: []byte("png")}})})
+	if !strings.Contains(text, "User: [image/png attachment]") {
+		t.Fatalf("transcript = %q, want an attachment placeholder", text)
 	}
 }
