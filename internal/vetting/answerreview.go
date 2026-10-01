@@ -70,13 +70,6 @@ func parseFindingLines(body string) []ReviewComment {
 	return out
 }
 
-// parseAnswerReview: extracts verdict + findings from reviewer answer. Falls back to comment-review.
-// Widened (#1006) to also read DISMISSED:/CLEAN: sections; kept for existing
-// callers as a (event, comments, ok) view onto ParseAnswerReviewSections.
-func parseAnswerReview(answer string) (event string, comments []ReviewComment, ok bool) {
-	r := ParseAnswerReviewSections(answer)
-	return r.Event, r.Findings, r.OK
-}
 
 // ParseAnswerReviewSections is the section-aware parse (VERDICT/FINDINGS/
 // DISMISSED/CLEAN). When a FINDINGS: header is present, findings come only

@@ -239,17 +239,6 @@ func checkModuleLinked(p plugin.Plugin) error {
 	return nil
 }
 
-// checkPluginModules runs checkModuleLinked over every plugin, fatal on the
-// first failure - boot's original whole-list gate.
-func checkPluginModules(plugins []plugin.Plugin) error {
-	for _, p := range plugins {
-		if err := checkModuleLinked(p); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // checkConfigRequired enforces the namespace block's config: "required" for
 // p. A module not configured at all stays dormant; one whose extensions:
 // block is present but empty fails, named, rather than deeper in its factory.
@@ -264,17 +253,6 @@ func checkConfigRequired(p plugin.Plugin, modules map[string]yaml.Node) error {
 		}
 		if node.IsZero() || len(node.Content) == 0 {
 			return fmt.Errorf("config: extensions.%s is empty, but plugin %q declares config: \"required\"", m.Name, p.Name)
-		}
-	}
-	return nil
-}
-
-// checkPluginConfig runs checkConfigRequired over every plugin, fatal on the
-// first failure - boot's original whole-list gate.
-func checkPluginConfig(plugins []plugin.Plugin, modules map[string]yaml.Node) error {
-	for _, p := range plugins {
-		if err := checkConfigRequired(p, modules); err != nil {
-			return err
 		}
 	}
 	return nil

@@ -16,17 +16,17 @@ FINDINGS:
 `
 
 func TestParseAnswerReview(t *testing.T) {
-	event, comments, ok := parseAnswerReview(reviewAnswer)
-	if !ok || event != "request_changes" {
-		t.Fatalf("verdict: ok=%v event=%q", ok, event)
+	r := ParseAnswerReviewSections(reviewAnswer)
+	if !r.OK || r.Event != "request_changes" {
+		t.Fatalf("verdict: ok=%v event=%q", r.OK, r.Event)
 	}
-	if len(comments) != 2 {
-		t.Fatalf("findings: got %d, want 2: %+v", len(comments), comments)
+	if len(r.Findings) != 2 {
+		t.Fatalf("findings: got %d, want 2: %+v", len(r.Findings), r.Findings)
 	}
-	if comments[0].Path != "internal/server/router.go" || comments[0].Line != 42 || !strings.Contains(comments[0].Body, "SPA fallback") {
-		t.Fatalf("first finding wrong: %+v", comments[0])
+	if r.Findings[0].Path != "internal/server/router.go" || r.Findings[0].Line != 42 || !strings.Contains(r.Findings[0].Body, "SPA fallback") {
+		t.Fatalf("first finding wrong: %+v", r.Findings[0])
 	}
-	if _, _, ok := parseAnswerReview("just prose, no structure"); ok {
+	if r := ParseAnswerReviewSections("just prose, no structure"); r.OK {
 		t.Fatal("prose must not parse as a verdict")
 	}
 }

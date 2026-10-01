@@ -10,6 +10,20 @@ import (
 	"google.golang.org/genai"
 )
 
+// hasFunctionCall is the one part of the old prod helper the assertions here
+// still need: did this content carry a FunctionCall part.
+func hasFunctionCall(c *genai.Content) bool {
+	if c == nil {
+		return false
+	}
+	for _, p := range c.Parts {
+		if p != nil && p.FunctionCall != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // recordingBudgetLLM records the request it actually received, the way
 // scoreMessage's own recordingModel does in internal/agent's tests.
 type recordingBudgetLLM struct{ got *model.LLMRequest }
