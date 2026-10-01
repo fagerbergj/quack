@@ -238,4 +238,3 @@ func SanitizeGatewayError(err error) (summary string, transient bool) {
 	}
 	return fmt.Sprintf("model gateway returned status %d", code), transient
 }
-
