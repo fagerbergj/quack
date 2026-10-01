@@ -78,12 +78,9 @@ func TestSanitizeGatewayError_DropsURLAndBodyKeepsStatusClass(t *testing.T) {
 
 func TestSanitizeGatewayError_5xxIsTransient(t *testing.T) {
 	raw := errors.New(`openai qwen3.8-27b (generate): status 502: POST "http://llm-swap:11436/v1/chat/completions": 502 Bad Gateway`)
-	summary, transient := SanitizeGatewayError(raw)
+	_, transient := SanitizeGatewayError(raw)
 	if !transient {
 		t.Errorf("502 must be classified transient")
-	}
-	if !TransientFromSummary(summary) {
-		t.Errorf("TransientFromSummary(%q) = false, want true", summary)
 	}
 }
 

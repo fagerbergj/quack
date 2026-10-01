@@ -133,18 +133,6 @@ func estimateOverhead(req *model.LLMRequest) int {
 	return chars / budgetCharsPerToken
 }
 
-func hasFunctionCall(c *genai.Content) bool {
-	if c == nil {
-		return false
-	}
-	for _, p := range c.Parts {
-		if p != nil && p.FunctionCall != nil {
-			return true
-		}
-	}
-	return false
-}
-
 // estimateTokens is the same char/4 heuristic quack's compaction buffer
 // sizing already uses (internal/agent.charsPerToken) - rough by design,
 // cheap, and conservative enough for a last-resort guard. FunctionCall/

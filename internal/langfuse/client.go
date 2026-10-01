@@ -97,28 +97,6 @@ func (e *permanentError) Unwrap() error { return e.err }
 
 func markPermanent(err error) error { return &permanentError{err: err} }
 
-// IsTransient reports whether err is a 429/5xx response or a network-level failure -
-// the kind of failure a caller should fall back to static content for. 4xx (other than
-// 429), malformed responses, and a caller mistake (e.g. bad GetPromptOpts) are permanent.
-func IsTransient(err error) bool {
-	if err == nil {
-		return false
-	}
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.Status == http.StatusTooManyRequests || apiErr.Status >= 500
-	}
-	var perm *permanentError
-	if errors.As(err, &perm) {
-		return false
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	// Anything else reaching here is a transport/network failure (dial, timeout, reset).
-	return true
-}
-
 // IsAuthError reports whether err is a 401/403 from Langfuse, i.e. a misconfigured
 // key rather than an outage - callers should log this distinctly, not silently fall back.
 func IsAuthError(err error) bool {

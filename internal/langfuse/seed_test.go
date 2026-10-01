@@ -177,9 +177,6 @@ func TestResolveDoesNotFallThroughOn500(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("expected exactly 1 call (no fallback), got %d", calls)
 	}
-	if !IsTransient(err) {
-		t.Fatalf("want transient error, got %v", err)
-	}
 }
 
 func TestResolveNotFound(t *testing.T) {

@@ -82,9 +82,6 @@ func TestGetPromptLabelAndVersionRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	if IsTransient(err) {
-		t.Fatalf("want permanent error, got transient: %v", err)
-	}
 }
 
 func TestGetPromptChatRejected(t *testing.T) {
@@ -93,23 +90,19 @@ func TestGetPromptChatRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error for chat prompt")
 	}
-	if IsTransient(err) {
-		t.Fatalf("chat-type rejection should be permanent, got transient: %v", err)
-	}
 }
 
 func TestGetPromptStatusCodes(t *testing.T) {
 	cases := []struct {
-		status    int
-		transient bool
-		auth      bool
+		status int
+		auth   bool
 	}{
-		{http.StatusInternalServerError, true, false},
-		{http.StatusBadGateway, true, false},
-		{http.StatusServiceUnavailable, true, false},
-		{http.StatusTooManyRequests, true, false},
-		{http.StatusUnauthorized, false, true},
-		{http.StatusBadRequest, false, false},
+		{http.StatusInternalServerError, false},
+		{http.StatusBadGateway, false},
+		{http.StatusServiceUnavailable, false},
+		{http.StatusTooManyRequests, false},
+		{http.StatusUnauthorized, true},
+		{http.StatusBadRequest, false},
 	}
 	for _, tc := range cases {
 		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -118,9 +111,6 @@ func TestGetPromptStatusCodes(t *testing.T) {
 		_, _, err := c.GetPrompt(context.Background(), "x", GetPromptOpts{})
 		if err == nil {
 			t.Fatalf("status %d: want error", tc.status)
-		}
-		if got := IsTransient(err); got != tc.transient {
-			t.Errorf("status %d: IsTransient = %v, want %v", tc.status, got, tc.transient)
 		}
 		if got := IsAuthError(err); got != tc.auth {
 			t.Errorf("status %d: IsAuthError = %v, want %v", tc.status, got, tc.auth)
@@ -138,9 +128,6 @@ func TestGetPromptCancelledContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	if IsTransient(err) {
-		t.Fatalf("cancelled context should be permanent, got transient: %v", err)
-	}
 }
 
 func TestGetPromptDeadlineExceeded(t *testing.T) {
@@ -152,9 +139,6 @@ func TestGetPromptDeadlineExceeded(t *testing.T) {
 	_, _, err := c.GetPrompt(ctx, "x", GetPromptOpts{})
 	if err == nil {
 		t.Fatal("want error")
-	}
-	if IsTransient(err) {
-		t.Fatalf("deadline exceeded should be permanent, got transient: %v", err)
 	}
 }
 

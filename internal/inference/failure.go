@@ -238,21 +238,3 @@ func SanitizeGatewayError(err error) (summary string, transient bool) {
 	}
 	return fmt.Sprintf("model gateway returned status %d", code), transient
 }
-
-// summaryStatusRe pulls the status code back out of a SanitizeGatewayError
-// summary - used once that summary is all a later caller (e.g. the DagNode.Error
-// column, read back after a round trip through the store) has left.
-var summaryStatusRe = regexp.MustCompile(`returned (\d{3})`)
-
-// TransientFromSummary reports whether a SanitizeGatewayError-shaped summary
-// names a transient status class (429/408/5xx) - callers gate "retry" advice
-// on this so it isn't shown for a 401/400/quota error that won't self-heal
-// (#1109 review finding 4).
-func TransientFromSummary(summary string) bool {
-	m := summaryStatusRe.FindStringSubmatch(summary)
-	if m == nil {
-		return false
-	}
-	code, _ := strconv.Atoi(m[1])
-	return code == http.StatusTooManyRequests || code == http.StatusRequestTimeout || code >= 500
-}
