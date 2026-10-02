@@ -58,6 +58,9 @@ type Disagreement struct {
 type DecisionReport struct {
 	Points []PointStats `json:"points"`
 	Totals PointStats   `json:"totals"`
+	// Skipped: entries the server could not decode; Truncated: the server's limit dropped the oldest.
+	Skipped   int  `json:"skipped,omitempty"`
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 func deref[T any](p *T) (v T) {
@@ -167,6 +170,7 @@ func RunDecisionsReport(ctx context.Context, out io.Writer, server string, f Dec
 		return err
 	}
 	rep := BuildDecisionReport(list.Data)
+	rep.Skipped, rep.Truncated = deref(list.Skipped), deref(list.Truncated)
 	if asJSON {
 		return WriteJSON(out, rep)
 	}
@@ -215,6 +219,12 @@ func writeReportTable(out io.Writer, rep DecisionReport) error {
 		if err := writePointDetail(out, s); err != nil {
 			return err
 		}
+	}
+	if rep.Truncated {
+		fmt.Fprintln(out, "note: server limit reached; the oldest decisions were dropped (narrow with --since)")
+	}
+	if rep.Skipped > 0 {
+		fmt.Fprintf(out, "note: %d entries skipped (undecodable payload)\n", rep.Skipped)
 	}
 	return nil
 }

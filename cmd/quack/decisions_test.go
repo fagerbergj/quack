@@ -20,4 +20,9 @@ func TestParseSince(t *testing.T) {
 	if _, err := parseSince("soon", now); err == nil {
 		t.Error("want error for junk")
 	}
+	for _, in := range []string{"-7d", "0d", "-36h", "0s"} {
+		if _, err := parseSince(in, now); err == nil {
+			t.Errorf("parseSince(%q): want non-positive error", in)
+		}
+	}
 }

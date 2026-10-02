@@ -336,7 +336,7 @@ func TestRunDecisionsExport(t *testing.T) {
 	if err := RunDecisionsExport(context.Background(), &out, srv.URL, DecisionFilter{}, newTestGenClient(t, lfSrv), ing); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(q, "with_state=true") || !strings.Contains(out.String(), "decisions/plan.accept: 4 item(s), run clef@1.2.3") {
+	if !strings.Contains(q, "with_state=true") || !strings.Contains(out.String(), "decisions/plan.accept: 4 item(s), runs clef@1.2.3") {
 		t.Errorf("query %q, out %q", q, out.String())
 	}
 }

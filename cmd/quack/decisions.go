@@ -51,13 +51,23 @@ func (d *decisionFlags) filter() (cli.DecisionFilter, error) {
 func parseSince(s string, now time.Time) (time.Time, error) {
 	if n, ok := strings.CutSuffix(s, "d"); ok {
 		if days, err := strconv.Atoi(n); err == nil {
+			if days <= 0 {
+				return time.Time{}, errNonPositiveWindow(s)
+			}
 			return now.AddDate(0, 0, -days), nil
 		}
 	}
 	if d, err := time.ParseDuration(s); err == nil {
+		if d <= 0 {
+			return time.Time{}, errNonPositiveWindow(s)
+		}
 		return now.Add(-d), nil
 	}
 	return parseDateFlag(s)
+}
+
+func errNonPositiveWindow(s string) error {
+	return fmt.Errorf("relative window must be positive (got %s)", s)
 }
 
 func newDecisionsReportCmd() *cobra.Command {

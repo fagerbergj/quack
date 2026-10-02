@@ -134,7 +134,10 @@ export const listRecordings = <ThrowOnError extends boolean = false>(options?: O
  * evaluation, written by internal/decide), oldest first, backing `quack
  * decisions report` and `export`. `state` and `questions` (the model's
  * input) are included only with `with_state=true`. 404 when no ledger
- * store is configured.
+ * store is configured. Unpaginated but capped: the newest `limit` entries
+ * are returned (default 5000, `truncated` set when more matched), because
+ * entries grow with every evaluation, unlike /recordings. Entries with an
+ * undecodable payload are omitted and counted in `skipped`.
  *
  */
 export const listDecisions = <ThrowOnError extends boolean = false>(options?: Options<ListDecisionsData, ThrowOnError>): RequestResult<ListDecisionsResponses, ListDecisionsErrors, ThrowOnError> => (options?.client ?? client).get<ListDecisionsResponses, ListDecisionsErrors, ThrowOnError>({

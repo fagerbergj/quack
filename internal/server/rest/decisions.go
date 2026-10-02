@@ -2,6 +2,7 @@ package rest
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"slices"
 	"time"
@@ -9,6 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/schema"
 )
+
+const defaultDecisionLimit = 5000
 
 // ListDecisions serves every decision ledger entry across chats (backs `quack decisions`).
 // The cross-chat read is one query; chat and point filters apply after it.
@@ -28,17 +31,34 @@ func (h *Handler) ListDecisions(w http.ResponseWriter, r *http.Request, params s
 	}
 	withState := params.WithState != nil && *params.WithState
 	out := schema.DecisionList{QuackVersion: h.quackVersion, Data: []schema.DecisionRecord{}}
+	skipped := 0
 	for _, e := range entries {
 		if params.Chat != nil && !slices.Contains(*params.Chat, e.ChatID) {
 			continue
 		}
 		var p ledger.DecisionPayload
-		if json.Unmarshal(e.Payload, &p) != nil || (params.Point != nil && p.Point != *params.Point) {
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			slog.Debug("decisions: skipping undecodable payload", "chat", e.ChatID, "seq", e.Seq, "err", err)
+			skipped++
+			continue
+		}
+		if params.Point != nil && p.Point != *params.Point {
 			continue
 		}
 		out.Data = append(out.Data, decisionRecord(e, p, withState))
 	}
 	slices.SortStableFunc(out.Data, func(a, b schema.DecisionRecord) int { return a.At.Compare(b.At) })
+	if skipped > 0 {
+		out.Skipped = &skipped
+	}
+	limit := defaultDecisionLimit
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	if len(out.Data) > limit {
+		trunc := true
+		out.Data, out.Truncated = out.Data[len(out.Data)-limit:], &trunc
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

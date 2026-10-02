@@ -941,6 +941,12 @@ type DecisionList struct {
 
 	// QuackVersion The serving build, not necessarily the one that recorded each entry.
 	QuackVersion string `json:"quack_version"`
+
+	// Skipped Matching-kind entries dropped because their payload did not decode.
+	Skipped *int `json:"skipped,omitempty"`
+
+	// Truncated More entries matched than `limit`; the oldest were dropped.
+	Truncated *bool `json:"truncated,omitempty"`
 }
 
 // DecisionRecord defines model for DecisionRecord.
@@ -1742,6 +1748,9 @@ type ListDecisionsParams struct {
 	// Chat Only these chats (repeat for several).
 	Chat      *[]string `form:"chat,omitempty" json:"chat,omitempty"`
 	WithState *bool     `form:"with_state,omitempty" json:"with_state,omitempty"`
+
+	// Limit Keep only the newest N matching entries.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListMemoriesParams defines parameters for ListMemories.
@@ -3486,6 +3495,19 @@ func (siw *ServerInterfaceWrapper) ListDecisions(w http.ResponseWriter, r *http.
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "with_state"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "with_state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
 		}
 		return
 	}

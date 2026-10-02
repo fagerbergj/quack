@@ -9,6 +9,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/fagerbergj/quack/internal/langfuse"
@@ -54,10 +55,10 @@ type decisionOutput struct {
 
 // DecisionExportSummary counts what ExportDecisions wrote, per point.
 type DecisionExportSummary struct {
-	Point   string `json:"point"`
-	Dataset string `json:"dataset"`
-	Items   int    `json:"items"`
-	Run     string `json:"run"`
+	Point   string   `json:"point"`
+	Dataset string   `json:"dataset"`
+	Items   int      `json:"items"`
+	Runs    []string `json:"runs"`
 }
 
 // ExportDecisions upserts one dataset per point with an item per decision that has a
@@ -88,8 +89,11 @@ func ExportDecisions(ctx context.Context, lf *langfusegen.ClientWithResponses, i
 		}
 		s := sums[r.Point]
 		if s == nil {
-			s = &DecisionExportSummary{Point: r.Point, Dataset: ds, Run: r.Handler + "@" + version}
+			s = &DecisionExportSummary{Point: r.Point, Dataset: ds}
 			sums[r.Point], order = s, append(order, r.Point)
+		}
+		if run := r.Handler + "@" + version; !slices.Contains(s.Runs, run) {
+			s.Runs = append(s.Runs, run)
 		}
 		s.Items++
 	}
@@ -171,7 +175,7 @@ func RunDecisionsExport(ctx context.Context, w io.Writer, server string, f Decis
 		return err
 	}
 	for _, s := range sums {
-		fmt.Fprintf(w, "%s: %d item(s), run %s\n", s.Dataset, s.Items, s.Run)
+		fmt.Fprintf(w, "%s: %d item(s), runs %s\n", s.Dataset, s.Items, strings.Join(s.Runs, ", "))
 	}
 	return nil
 }

@@ -268,7 +268,10 @@ paths:
         evaluation, written by internal/decide), oldest first, backing `quack
         decisions report` and `export`. `state` and `questions` (the model's
         input) are included only with `with_state=true`. 404 when no ledger
-        store is configured.
+        store is configured. Unpaginated but capped: the newest `limit` entries
+        are returned (default 5000, `truncated` set when more matched), because
+        entries grow with every evaluation, unlike /recordings. Entries with an
+        undecodable payload are omitted and counted in `skipped`.
       parameters:
         - name: since
           in: query
@@ -292,6 +295,14 @@ paths:
           in: query
           schema:
             type: boolean
+        - name: limit
+          in: query
+          description: Keep only the newest N matching entries.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50000
+            default: 5000
       responses:
         "200":
           description: The decisions
@@ -299,6 +310,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DecisionList"
+        "400":
+          description: An invalid since, chat, with_state or limit value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Recording is not enabled
           content:
@@ -2124,6 +2141,12 @@ components:
         quack_version:
           type: string
           description: The serving build, not necessarily the one that recorded each entry.
+        skipped:
+          type: integer
+          description: Matching-kind entries dropped because their payload did not decode.
+        truncated:
+          type: boolean
+          description: More entries matched than `limit`; the oldest were dropped.
         data:
           type: array
           items:

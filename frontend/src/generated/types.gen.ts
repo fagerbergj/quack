@@ -492,6 +492,14 @@ export type DecisionList = {
      * The serving build, not necessarily the one that recorded each entry.
      */
     quack_version: string;
+    /**
+     * Matching-kind entries dropped because their payload did not decode.
+     */
+    skipped?: number;
+    /**
+     * More entries matched than `limit`; the oldest were dropped.
+     */
+    truncated?: boolean;
     data: Array<DecisionRecord>;
 };
 
@@ -1282,11 +1290,19 @@ export type ListDecisionsData = {
          */
         chat?: Array<string>;
         with_state?: boolean;
+        /**
+         * Keep only the newest N matching entries.
+         */
+        limit?: number;
     };
     url: '/api/v1/decisions';
 };
 
 export type ListDecisionsErrors = {
+    /**
+     * An invalid since, chat, with_state or limit value
+     */
+    400: ErrorResponse;
     /**
      * Recording is not enabled
      */
