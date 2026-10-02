@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { within, userEvent } from 'storybook/test'
 import A2uiSurfaceView from './A2uiSurface'
 import { pr1085, pr9 } from './A2uiSurface.fixtures'
+import { retrySurface } from './diagram.fixtures'
 
 const meta: Meta<typeof A2uiSurfaceView> = {
   title: 'Chat/A2uiSurface',
@@ -39,4 +40,10 @@ export const Pr9Graded: Story = {
   args: { content: pr9.graded },
   parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true } },
   play: openQuiz,
+}
+
+// The Flow tab as a layered, clickable Diagram and the Risk tab beside it.
+export const DiagramAndRisk: Story = {
+  args: { content: retrySurface },
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
 }

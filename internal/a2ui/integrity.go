@@ -123,6 +123,10 @@ func checkContent(c Component) error {
 		if err := checkPicker(c); err != nil {
 			return err
 		}
+	case "Diagram":
+		if err := checkDiagram(c); err != nil {
+			return err
+		}
 	case "Image", "Video", "AudioPlayer":
 		if s, ok := c["url"].(string); ok && !httpURL(s) {
 			return fmt.Errorf("component %q: url %q must be an absolute http(s) URL", idOf(c), s)

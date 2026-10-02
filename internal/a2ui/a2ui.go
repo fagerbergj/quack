@@ -15,7 +15,7 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// CatalogID names quack's catalog: the v0.9.1 basic catalog plus Mermaid and Code.
+// CatalogID names quack's catalog: the v0.9.1 basic catalog plus Mermaid, Diagram, RiskTable and Code.
 const CatalogID = "https://quack.local/a2ui/v0_9/catalog.json"
 
 // Artifact kinds render_ui writes; both are keyed by surface_id within a chat.
