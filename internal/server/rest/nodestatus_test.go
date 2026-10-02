@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -728,7 +729,7 @@ func TestDeleteChat_CancelsActiveRun(t *testing.T) {
 		t.Fatalf("CreateChat: %v", err)
 	}
 	cancelled := false
-	h.hub.RegisterRun(chatID, "r1", func() { cancelled = true })
+	h.hub.RegisterRun(chatID, "r1", func() { cancelled = true; h.hub.EndRun(chatID, "r1") })
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/chats/"+chatID, nil)
 	rec := httptest.NewRecorder()
@@ -739,6 +740,60 @@ func TestDeleteChat_CancelsActiveRun(t *testing.T) {
 	}
 	if !cancelled {
 		t.Error("DeleteChat did not cancel the chat's active run")
+	}
+}
+
+// TestDeleteChat_WaitsForRunTail: the row survives until the cancelled run's tail has finished
+// (it unregisters last), so the tail's writes never hit a deleted chat.
+func TestDeleteChat_WaitsForRunTail(t *testing.T) {
+	h := newTestHandler(t)
+	c0, err := h.store.CreateChat(context.Background(), "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	chatID := c0.ID
+	var rowAtTail atomic.Bool
+	h.hub.RegisterRun(chatID, "r1", func() {
+		go func() {
+			time.Sleep(100 * time.Millisecond) // the run's tail still writing
+			c, _ := h.store.GetChat(context.Background(), chatID)
+			rowAtTail.Store(c != nil)
+			h.hub.EndRun(chatID, "r1")
+		}()
+	})
+
+	rec := httptest.NewRecorder()
+	h.DeleteChat(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/chats/"+chatID, nil), chatID)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if !rowAtTail.Load() {
+		t.Error("chat row was deleted while the cancelled run's tail was still running")
+	}
+}
+
+// TestDeleteChat_RunStuckRefuses: a run that never unregisters yields 409 and keeps the chat.
+func TestDeleteChat_RunStuckRefuses(t *testing.T) {
+	old := deleteStopWait
+	deleteStopWait = 50 * time.Millisecond
+	t.Cleanup(func() { deleteStopWait = old })
+	h := newTestHandler(t)
+	c0, err := h.store.CreateChat(context.Background(), "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	chatID := c0.ID
+	h.hub.RegisterRun(chatID, "r1", func() {})
+
+	rec := httptest.NewRecorder()
+	h.DeleteChat(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/chats/"+chatID, nil), chatID)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+	if c, _ := h.store.GetChat(context.Background(), chatID); c == nil {
+		t.Error("chat deleted despite a run that never ended")
 	}
 }
 

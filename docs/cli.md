@@ -44,7 +44,7 @@ A chat is a session; a message on it kicks off a run.
 | `quack chat list [--archived exclude\|include\|only]` | List chats with their status. `--archived` defaults to `exclude`; `only` is the CLI's one path to a chat archived in the web UI. |
 | `quack chat export <id>` | Export a chat transcript. |
 | `quack chat stop <id> [--json]` | Stop a chat's active run. |
-| `quack chat delete <id> [--json]` | Delete a chat (irreversible). The confirmation prompt goes to stderr; a non-interactive stdin without `-y` errors instead of silently declining. |
+| `quack chat delete <id> [--json]` | Delete a chat (irreversible); a live run is cancelled and given up to 15 s to finish first, else the server answers 409 and keeps the chat. The confirmation prompt goes to stderr; a non-interactive stdin without `-y` errors instead of silently declining. |
 | `quack chat rename <id> <title>` | Rename a chat. |
 | `quack chat archive <id>` / `unarchive <id>` | Archive or unarchive a chat. |
 | `quack chat artifact list <id>` | List a chat's artifacts and their revision history. |
