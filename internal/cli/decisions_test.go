@@ -272,3 +272,71 @@ func TestIngestReportsEventErrors(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func decisionsServer(t *testing.T, status int, seen *string) *httptest.Server {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*seen = r.URL.RawQuery
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(schema.DecisionList{QuackVersion: "1.2.3", Data: fixture()})
+	}))
+}
+
+func TestRunDecisionsReport(t *testing.T) {
+	var q string
+	srv := decisionsServer(t, http.StatusOK, &q)
+	defer srv.Close()
+	f := DecisionFilter{Since: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Point: "plan.accept", Chats: []string{"c1", "c2"}}
+	var out bytes.Buffer
+	if err := RunDecisionsReport(context.Background(), &out, srv.URL, f, true); err != nil {
+		t.Fatal(err)
+	}
+	var rep DecisionReport
+	if err := json.Unmarshal(out.Bytes(), &rep); err != nil || len(rep.Points) != 2 {
+		t.Fatalf("json = %v %s", err, out.String())
+	}
+	for _, want := range []string{"since=2026-10-01T00%3A00%3A00Z", "point=plan.accept", "chat=c1&chat=c2"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("query %q missing %q", q, want)
+		}
+	}
+	out.Reset()
+	if err := RunDecisionsReport(context.Background(), &out, srv.URL, DecisionFilter{}, false); err != nil || !strings.Contains(out.String(), "POINT") {
+		t.Errorf("table = %v %s", err, out.String())
+	}
+}
+
+func TestRunDecisionsReportEmptyAndNoLedger(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeReportTable(&out, DecisionReport{}); err != nil || !strings.Contains(out.String(), "No decisions") {
+		t.Errorf("empty = %v %q", err, out.String())
+	}
+	var q string
+	srv := decisionsServer(t, http.StatusNotFound, &q)
+	defer srv.Close()
+	err := RunDecisionsReport(context.Background(), &out, srv.URL, DecisionFilter{}, false)
+	if err == nil || !strings.Contains(err.Error(), "no ledger store") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRunDecisionsExport(t *testing.T) {
+	var q string
+	srv := decisionsServer(t, http.StatusOK, &q)
+	defer srv.Close()
+	var calls []lfCall
+	lfSrv := fakeDecisionLangfuse(t, &calls)
+	defer lfSrv.Close()
+	ing := langfuse.New(lfSrv.URL, "pk", "sk", langfuse.WithHTTPClient(lfSrv.Client()))
+	var out bytes.Buffer
+	if err := RunDecisionsExport(context.Background(), &out, srv.URL, DecisionFilter{}, newTestGenClient(t, lfSrv), ing); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(q, "with_state=true") || !strings.Contains(out.String(), "decisions/plan.accept: 4 item(s), run clef@1.2.3") {
+		t.Errorf("query %q, out %q", q, out.String())
+	}
+}
