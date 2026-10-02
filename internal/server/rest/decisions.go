@@ -2,6 +2,7 @@ package rest
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -11,13 +12,24 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-const defaultDecisionLimit = 5000
+const (
+	defaultDecisionLimit = 5000
+	maxDecisionLimit     = 50000 // matches openapi.yaml
+)
 
 // ListDecisions serves every decision ledger entry across chats (backs `quack decisions`).
 // The cross-chat read is one query; chat and point filters apply after it.
 func (h *Handler) ListDecisions(w http.ResponseWriter, r *http.Request, params schema.ListDecisionsParams) {
 	if h.ledgerStore == nil {
 		errMsg(w, http.StatusNotFound, "recording is not enabled")
+		return
+	}
+	limit := defaultDecisionLimit
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	if limit < 1 || limit > maxDecisionLimit {
+		errMsg(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxDecisionLimit))
 		return
 	}
 	var since time.Time
@@ -50,10 +62,6 @@ func (h *Handler) ListDecisions(w http.ResponseWriter, r *http.Request, params s
 	slices.SortStableFunc(out.Data, func(a, b schema.DecisionRecord) int { return a.At.Compare(b.At) })
 	if skipped > 0 {
 		out.Skipped = &skipped
-	}
-	limit := defaultDecisionLimit
-	if params.Limit != nil {
-		limit = *params.Limit
 	}
 	if len(out.Data) > limit {
 		trunc := true

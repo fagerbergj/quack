@@ -105,3 +105,21 @@ func TestListDecisionsOrderSkippedLimit(t *testing.T) {
 		t.Errorf("limit 2 = %+v truncated %v, want newest two, truncated", out.Data, out.Truncated)
 	}
 }
+
+func TestListDecisionsLimitBounds(t *testing.T) {
+	h := newTestHandler(t)
+	h.ledgerStore = ledgertest.NewMemStore()
+	for _, n := range []int{-1, 0, 50001} {
+		rec := httptest.NewRecorder()
+		h.ListDecisions(rec, httptest.NewRequest(http.MethodGet, "/api/v1/decisions", nil), schema.ListDecisionsParams{Limit: &n})
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("limit=%d status = %d, want 400", n, rec.Code)
+		}
+	}
+	max := 50000
+	rec := httptest.NewRecorder()
+	h.ListDecisions(rec, httptest.NewRequest(http.MethodGet, "/api/v1/decisions", nil), schema.ListDecisionsParams{Limit: &max})
+	if rec.Code != http.StatusOK {
+		t.Errorf("limit=max status = %d, want 200", rec.Code)
+	}
+}
