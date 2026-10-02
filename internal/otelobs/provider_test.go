@@ -2,6 +2,8 @@ package otelobs
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -204,5 +206,22 @@ func TestStartLinked_RootSpanCarriesConversationID(t *testing.T) {
 
 	if got := spanAttrs(t, exp, "quack.memory.commit")[GenAIConversationID]; got != "chat-1" {
 		t.Errorf("%s = %q, want chat-1 on the linked root span", GenAIConversationID, got)
+	}
+}
+
+// Shutdown must not stop a reader or processor its provider already owns: the second
+// call surfaces as a spurious "reader is shutdown" warning on every CLI exit.
+func TestInitShutdownWithExportersIsClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	cfg := config.ObservabilityConfig{Otel: config.OtelConfig{Sample: 1.0, Exporters: []config.OtelExporter{
+		{Endpoint: srv.URL, Signals: []config.OtelSignal{config.SignalTraces, config.SignalMetrics}},
+	}}}
+	_, shutdown, err := Init(context.Background(), cfg, nil, "")
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := shutdown(context.Background()); err != nil {
+		t.Errorf("shutdown: %v", err)
 	}
 }
