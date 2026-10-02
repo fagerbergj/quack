@@ -37,31 +37,15 @@ func checkDiagram(c Component) error {
 	}
 	used := map[string]bool{}
 	for _, l := range layers {
-		if err := claim("layer", l); err != nil {
-			return err
-		}
-		if err := checkText(d, "layer", l, "title", maxLayerTitle, true); err != nil {
-			return err
-		}
-		if err := checkText(d, "layer", l, "description", 0, true); err != nil {
+		if err := checkLayer(d, l, claim); err != nil {
 			return err
 		}
 	}
 	for _, n := range nodes {
-		if err := claim("node", n); err != nil {
+		if err := checkNode(d, n, ids, claim, layers); err != nil {
 			return err
 		}
-		layer, _ := n["layer"].(string)
-		if ids[layer] != "layer" {
-			return fmt.Errorf("Diagram %q: node %q is in layer %q, which is not in layers; layers has %s", d, n["id"], layer, idList(layers))
-		}
-		used[layer] = true
-		if err := checkText(d, "node", n, "label", maxNodeLabel, true); err != nil {
-			return err
-		}
-		if err := checkText(d, "node", n, "detail", 0, true); err != nil {
-			return err
-		}
+		used[n["layer"].(string)] = true
 	}
 	for _, l := range layers {
 		if !used[l["id"].(string)] {
@@ -74,6 +58,29 @@ func checkDiagram(c Component) error {
 		}
 	}
 	return nil
+}
+
+func checkLayer(d string, l map[string]any, claim func(string, map[string]any) error) error {
+	if err := claim("layer", l); err != nil {
+		return err
+	}
+	if err := checkText(d, "layer", l, "title", maxLayerTitle, true); err != nil {
+		return err
+	}
+	return checkText(d, "layer", l, "description", 0, true)
+}
+
+func checkNode(d string, n map[string]any, ids map[string]string, claim func(string, map[string]any) error, layers []map[string]any) error {
+	if err := claim("node", n); err != nil {
+		return err
+	}
+	if layer, _ := n["layer"].(string); ids[layer] != "layer" {
+		return fmt.Errorf("Diagram %q: node %q is in layer %q, which is not in layers; layers has %s", d, n["id"], layer, idList(layers))
+	}
+	if err := checkText(d, "node", n, "label", maxNodeLabel, true); err != nil {
+		return err
+	}
+	return checkText(d, "node", n, "detail", 0, true)
 }
 
 func checkEdge(d string, e map[string]any, ids map[string]string, claim func(string, map[string]any) error) error {
