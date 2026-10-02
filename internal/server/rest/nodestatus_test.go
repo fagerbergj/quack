@@ -927,3 +927,16 @@ func TestStopNode_ParkedPausedCancelsRow(t *testing.T) {
 		t.Fatalf("row = %+v err=%v, want cancelled", dn, err)
 	}
 }
+
+// A node that only exists in an earlier plan must be rejected with a message saying why.
+func TestUpdateNodeStatus_EarlierPlanNodeRejected(t *testing.T) {
+	h := newTestHandler(t)
+	seedPlan(t, h, "c1", "p1", "old")
+	time.Sleep(5 * time.Millisecond)
+	seedPlan(t, h, "c1", "p2", "new")
+
+	rec := putNodeStatus(t, h, "c1", "old", schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued})
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "earlier plans") {
+		t.Fatalf("got %d %s, want 404 naming earlier plans", rec.Code, rec.Body.String())
+	}
+}
