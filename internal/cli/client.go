@@ -323,7 +323,7 @@ func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text stri
 		return out, wrapNotFound(errBody(bytes.NewReader(respBody)))
 	}
 	if status >= 400 {
-		return out, fmt.Errorf("POST .../queue: %s", errBody(bytes.NewReader(respBody)))
+		return out, httpFailure(http.MethodPost, ".../queue", status, respBody)
 	}
 	return out, json.Unmarshal(respBody, &out)
 }
@@ -359,10 +359,7 @@ func (c *Client) sendBody(ctx context.Context, method, path string, body []byte)
 		return wrapNotFound(errBody(bytes.NewReader(respBody)))
 	}
 	if status >= 400 {
-		if msg := errBody(bytes.NewReader(respBody)); msg != "" {
-			return fmt.Errorf("%s %s: %s", method, path, msg)
-		}
-		return fmt.Errorf("%s %s: HTTP %d", method, path, status)
+		return httpFailure(method, path, status, respBody)
 	}
 	return nil
 }
@@ -396,12 +393,7 @@ func (c *Client) putStatus(ctx context.Context, path string, body any) error {
 		return wrapNotFound(errBody(resp.Body))
 	}
 	if resp.StatusCode >= 400 {
-		// Surface the server's reason (e.g. a 409 TransitionError names the
-		// allowed target statuses) instead of a bare status line.
-		if msg := errBody(resp.Body); msg != "" {
-			return fmt.Errorf("PUT %s: %s: %s", path, resp.Status, msg)
-		}
-		return fmt.Errorf("PUT %s: server returned %s", path, resp.Status)
+		return httpFailure(http.MethodPut, path, resp.StatusCode, readAll(resp.Body))
 	}
 	return nil
 }
@@ -453,9 +445,28 @@ func (c *Client) send(ctx context.Context, method, path string) error {
 		return wrapNotFound(errBody(bytes.NewReader(body)))
 	}
 	if status >= 400 {
-		return fmt.Errorf("%s %s: %s", method, path, errStatus(status, body))
+		return httpFailure(method, path, status, body)
 	}
 	return nil
+}
+
+// ConflictError is a 409: the server refused because the resource's state
+// moved on. Current is the node status when the body carries one.
+type ConflictError struct{ Msg, Current string }
+
+func (e *ConflictError) Error() string { return e.Msg }
+
+// httpFailure is the one place a >=400 response becomes an error, so every
+// command renders a 409 the same way instead of echoing the raw exchange.
+func httpFailure(method, path string, status int, body []byte) error {
+	if status == http.StatusConflict {
+		var te struct {
+			Current string `json:"current"`
+		}
+		_ = json.Unmarshal(body, &te)
+		return &ConflictError{Msg: errBody(bytes.NewReader(body)), Current: te.Current}
+	}
+	return fmt.Errorf("%s %s: %s", method, path, errStatus(status, body))
 }
 
 // errStatus renders a 4xx/5xx as "HTTP <status>: <server's reason>" using the
