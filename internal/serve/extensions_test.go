@@ -93,6 +93,17 @@ func TestSdkDeliverAdapterForwardsPushErrorAndIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestSdkDeliverAdapterForwardsCommentSeverity(t *testing.T) {
+	fake := &fakeDeliverer{}
+	dc := vetting.DeliveryContext{Items: []vetting.StagedDelivery{{Kind: "review", Comments: []vetting.ReviewComment{{Path: "a.go", Line: 3, Body: "x", Severity: "nit"}}}}}
+	if _, err := (sdkDeliverAdapter{deliverer: fake}).Deliver(context.Background(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if got := fake.got.Items[0].Comments[0].Severity; got != "nit" {
+		t.Errorf("Severity = %q, want it forwarded to the sdk comment", got)
+	}
+}
+
 func init() {
 	// Registered once at package init (extsdk.Register panics on a repeat
 	// name) under names no real extension uses, so BuildDeliveryRecoverer's
