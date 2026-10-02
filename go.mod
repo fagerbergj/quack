@@ -30,7 +30,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/landlock-lsm/go-landlock v0.10.1
 	github.com/moby/moby/api v1.56.0
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/openai/openai-go/v3 v3.61.0
 	github.com/qdrant/go-client v1.19.2
