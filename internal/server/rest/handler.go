@@ -560,8 +560,11 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 }
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
-	// Kill any live run on this chat FIRST so we don't drop the row while it still executes (#468).
-	h.hub.CancelRun(chatID)
+	// Stop the run and wait out its tail (checkpoint, settle, delivery) so nothing writes to a deleted chat (#468).
+	if h.hub.CancelRun(chatID) && !h.waitRunEnded(r.Context(), chatID) {
+		errMsg(w, http.StatusConflict, "chat's run is still stopping; retry the delete shortly")
+		return
+	}
 	if err := h.store.DeleteChat(r.Context(), chatID); err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -578,6 +581,27 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteStopWait bounds how long DeleteChat waits for a cancelled run to unregister.
+var deleteStopWait = 15 * time.Second
+
+// waitRunEnded polls until the hub drops chatID's run (FinishRun's last step) or the wait lapses.
+func (h *Handler) waitRunEnded(ctx context.Context, chatID string) bool {
+	deadline := time.NewTimer(deleteStopWait)
+	defer deadline.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for h.hub.HasRegisteredRun(chatID) {
+		select {
+		case <-tick.C:
+		case <-deadline.C:
+			return false
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return true
 }
 
 // Starts a run and streams it as SSE. Accepts JSON or multipart/form-data (with optional file attachments).
