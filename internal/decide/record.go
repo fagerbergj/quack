@@ -45,12 +45,15 @@ func record(ctx context.Context, r Result, baseline string) {
 func payload(r Result, baseline string) ledger.DecisionPayload {
 	p := ledger.DecisionPayload{
 		Point: r.Point, Mode: r.Mode, Handler: r.Handler, Outcome: string(r.Outcome), Confident: r.Confident,
-		Top: r.Top, TopP: r.TopP, Probabilities: r.Answers, Baseline: baseline,
+		Top: r.Top, TopP: r.TopP, Probabilities: r.Answers,
 		RequestBytes: r.RequestBytes, InputTokens: r.InputTokens, ServerMS: r.ServerMS,
 		LatencyMS: float64(r.Latency) / float64(time.Millisecond),
 	}
+	// A skipped step produced no baseline; whatever the caller passed is a placeholder.
 	if s := r.SkippedStep(); s != "" {
 		p.SkippedStep = &s
+	} else {
+		p.Baseline = baseline
 	}
 	if r.Err != nil {
 		p.Error = r.Err.Error()

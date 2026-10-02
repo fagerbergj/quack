@@ -19,9 +19,9 @@ import (
 	"github.com/fagerbergj/quack/internal/httpx"
 )
 
-// charsPerToken is a deliberately low estimate so the pre-call guard only skips
-// inputs that are certainly over the cap; the server's 413 stays authoritative.
-const charsPerToken = 4
+// bytesPerToken sits above English's ~4 bytes/token so the guard skips only inputs well
+// over the cap; a borderline one gets the server's cheap, authoritative 413.
+const bytesPerToken = 6
 
 // ErrTooLarge: the input is over the handler's max_input_tokens (pre-call guard or HTTP 413).
 var ErrTooLarge = errors.New("decide: input over the handler's token cap")
@@ -86,13 +86,16 @@ type wireResponse struct {
 
 // Ask sends one request; RequestBytes is set even when err != nil.
 func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (Reply, error) {
-	body, err := json.Marshal(map[string]any{"model": c.model, "state": state, "questions": questions})
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // \u003c-style escapes would inflate the size the guard reads
+	if err := enc.Encode(map[string]any{"model": c.model, "state": state, "questions": questions}); err != nil {
 		return Reply{}, fmt.Errorf("decide: encode request: %w", err)
 	}
+	body := buf.Bytes()
 	reply := Reply{RequestBytes: len(body)}
-	if c.maxInputTokens > 0 && len(body)/charsPerToken > c.maxInputTokens {
-		return reply, fmt.Errorf("%w: ~%d tokens, cap %d", ErrTooLarge, len(body)/charsPerToken, c.maxInputTokens)
+	if c.maxInputTokens > 0 && len(body)/bytesPerToken > c.maxInputTokens {
+		return reply, fmt.Errorf("%w: ~%d tokens, cap %d", ErrTooLarge, len(body)/bytesPerToken, c.maxInputTokens)
 	}
 	if c.timeout > 0 {
 		var cancel context.CancelFunc

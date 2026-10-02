@@ -150,3 +150,12 @@ func TestAskBadJSON(t *testing.T) {
 		t.Error("a malformed body must be an error")
 	}
 }
+
+// TestAskGuardReadsUnescapedBytes: HTML-escaping "<" (6 bytes each) would push this under-cap input over it.
+func TestAskGuardReadsUnescapedBytes(t *testing.T) {
+	var calls atomic.Int32
+	srv := fakeServer(t, &calls, func(_ int32, w http.ResponseWriter, _ map[string]any) { _, _ = w.Write([]byte(okBody)) })
+	if _, err := newTestClient(srv.URL, time.Second, 200).Ask(context.Background(), strings.Repeat("<", 600), nil); err != nil || calls.Load() != 1 {
+		t.Errorf("err = %v calls = %d, want the call made", err, calls.Load())
+	}
+}

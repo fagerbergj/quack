@@ -141,6 +141,10 @@ func (d *Decider) DecideWith(ctx context.Context, p Point, state any, baseline s
 	if !d.Enabled(p.ID) {
 		return Result{Point: p.ID, Outcome: OutcomeDisabled, Err: ErrDisabled}
 	}
+	// Boot checks core points' modes; an extension's point is only known here.
+	if mode := d.points[p.ID].Mode; p.Modes != nil && !slices.Contains(p.Modes, mode) {
+		return Result{Point: p.ID, Outcome: OutcomeDisabled, Err: fmt.Errorf("%w: %s does not implement mode %q", ErrDisabled, p.ID, mode)}
+	}
 	r := d.run(ctx, p, state)
 	record(ctx, r, baseline)
 	return r

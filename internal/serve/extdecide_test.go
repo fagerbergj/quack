@@ -46,6 +46,11 @@ func TestExtDecideConfinesAnExtensionToItsNamespace(t *testing.T) {
 	if _, err := github(context.Background(), point("review"), "s", ""); !errors.Is(err, decide.ErrDisabled) {
 		t.Errorf("unconfigured point: err = %v, want ErrDisabled", err)
 	}
+	observeOnly := point("intent")
+	observeOnly.Modes = []string{"observe"}
+	if r, err := github(context.Background(), observeOnly, "s", ""); !errors.Is(err, decide.ErrDisabled) || r.Act() {
+		t.Errorf("mode the extension doesn't implement: %+v %v, want ErrDisabled", r, err)
+	}
 	if calls.Load() != 1 {
 		t.Errorf("calls = %d, want only the own, enabled point to call out", calls.Load())
 	}

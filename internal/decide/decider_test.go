@@ -237,7 +237,7 @@ func TestRecordingPayload(t *testing.T) {
 	p := got[0]
 	if p.Point != "test.accept" || p.Mode != "decide" || p.Handler != "p" || p.Outcome != "act" || !p.Confident ||
 		p.SkippedStep == nil || *p.SkippedStep != "test_judge" ||
-		p.Top != "true" || p.TopP != 0.97 || p.Baseline != "false" || p.InputTokens != 42 || p.ServerMS != 7 ||
+		p.Top != "true" || p.TopP != 0.97 || p.Baseline != "" || p.InputTokens != 42 || p.ServerMS != 7 ||
 		p.RequestBytes == 0 || p.LatencyMS <= 0 || p.Error != "" {
 		t.Errorf("payload = %+v", p)
 	}
