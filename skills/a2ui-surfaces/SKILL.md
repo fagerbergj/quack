@@ -46,7 +46,7 @@ For a three-question quiz whose Column is `quiz` and label is `submit_label`, wi
 
 ### `explain_focus`
 
-Pressed by "Explain more" on a Diagram's detail panel; `context` is `{"element_id": "<node, edge or layer id>", "kind": "node" | "edge" | "layer"}` and `source_component_id` is the Diagram. Load the surface, find that element in the Diagram's `layers`, `nodes` or `edges`, and answer in a short paragraph that goes beyond its `detail`, grounded in the surface's Code excerpts and what the pr-tutor node read. For a longer answer, hand the pr-tutor node a change request that rewrites that one element's `detail` and resends the whole `flow` component (a Diagram replaces by id as a unit); the panel then shows the new text.
+Pressed by "Explain more" on a Diagram's detail panel; `context` is `{"element_id": "<node, edge or layer id>", "kind": "node" | "edge" | "layer"}` and `source_component_id` is the Diagram. Load the surface, find that element in the Diagram's `layers`, `nodes` or `edges`, and answer in a short paragraph that goes beyond its `detail`, grounded in the surface's Code excerpts and what the pr-tutor node read. For a longer answer, hand the pr-tutor node a change request that rewrites that one element's `detail` and resends the whole `flow` component (a Diagram replaces by id as a unit); the panel then shows the new text. If no element has that id, the diagram was redrawn after the click: say so and ask which part of the current diagram they mean.
 
 ### Any other action name
 

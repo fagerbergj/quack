@@ -24,8 +24,9 @@ const nodeKey = (i: number) => `n${i}`
 const edgeKey = (i: number) => `e${i}`
 const layerKey = (i: number) => `l${i}`
 
+// `%` too: mermaid reads a `%%{init}%%` directive anywhere in the source, quoted or not.
 const esc = (s: string) =>
-  s.replace(/#/g, '#35;').replace(/"/g, '#quot;').replace(/</g, '#lt;').replace(/>/g, '#gt;').replace(/`/g, "'").replace(/\s+/g, ' ').trim()
+  s.replace(/#/g, '#35;').replace(/%/g, '#37;').replace(/"/g, '#quot;').replace(/</g, '#lt;').replace(/>/g, '#gt;').replace(/`/g, "'").replace(/\s+/g, ' ').trim()
 
 const text = (mark: string, label: string) => `"${esc(mark ? `${mark} ${label}` : label)}"`
 
@@ -41,7 +42,7 @@ export function buildMermaid(spec: DiagramSpec): string {
     const to = nodeIdx.get(e.to)
     if (from == null || to == null) return
     const arrow = e.change === 'removed' ? '-.->' : '-->'
-    const label = e.label ? `|${text(CHANGE_STYLE[e.change ?? 'unchanged'].mark, e.label)}|` : ''
+    const label = e.label?.trim() ? `|${text(CHANGE_STYLE[e.change ?? 'unchanged'].mark, e.label)}|` : ''
     lines.push(`  ${nodeKey(from)} ${edgeKey(i)}@${arrow}${label} ${nodeKey(to)}`)
   })
   // Invisible links between each layer's first node stack the layers in declared order; real edges alone leave them side by side.

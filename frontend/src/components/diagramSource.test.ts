@@ -25,10 +25,10 @@ describe('buildMermaid', () => {
   it('escapes characters mermaid would read as syntax', () => {
     const spec: DiagramSpec = {
       layers: [{ id: 'a', title: 'A "x"', description: 'd' }],
-      nodes: [{ id: 'n', label: 'a <b> #1 `c`', layer: 'a', detail: 'd' }],
+      nodes: [{ id: 'n', label: 'a <b> #1 `c` %%', layer: 'a', detail: 'd' }],
       edges: [],
     }
-    expect(buildMermaid(spec)).toContain('n0["a #lt;b#gt; #35;1 \'c\'"]')
+    expect(buildMermaid(spec)).toContain('n0["a #lt;b#gt; #35;1 \'c\' #37;#37;"]')
     expect(buildMermaid(spec)).toContain('subgraph l0["A #quot;x#quot;"]')
   })
 

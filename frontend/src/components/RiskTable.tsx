@@ -14,8 +14,8 @@ export function RiskTable({ rows, basis }: { rows: RiskRow[]; basis?: 'diff-only
     <div className="space-y-2">
       {basis === 'diff-only' && <p className="text-xs text-gray-500 dark:text-gray-400">Blast radius is diff-only: it covers code visible in the PR, not callers elsewhere in the repo.</p>}
       <ul className="space-y-2">
-        {rows.map(r => (
-          <li key={r.change} className="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+        {rows.map((r, i) => (
+          <li key={i} className="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
             <div className="flex flex-wrap items-center gap-2">
               <span className="min-w-0 break-all font-mono text-xs text-gray-900 dark:text-gray-100">{r.change}</span>
               <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] dark:bg-gray-700">{r.type}</span>

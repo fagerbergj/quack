@@ -75,7 +75,7 @@ function decorate(host: HTMLElement, spec: DiagramSpec): Map<string, Target> {
   return reg
 }
 
-function paint(reg: Map<string, Target>, host: HTMLElement, sel: Sel | null, spec: DiagramSpec) {
+function paint(reg: Map<string, Target>, host: HTMLElement, sel: Sel | null, spec: DiagramSpec, scroll = true) {
   const keep = sel ? involved(spec, sel.kind, sel.id) : null
   const chosen = sel ? selKey(sel.kind, sel.id) : null
   for (const [key, t] of reg) {
@@ -85,7 +85,7 @@ function paint(reg: Map<string, Target>, host: HTMLElement, sel: Sel | null, spe
     if (key === chosen) {
       t.mark.style.setProperty('stroke', HIGHLIGHT, 'important')
       t.mark.style.setProperty('stroke-width', '3px', 'important')
-      t.mark.scrollIntoView?.({ block: 'nearest', inline: 'center' })
+      if (scroll) t.mark.scrollIntoView?.({ block: 'nearest', inline: 'center' })
     }
   }
   host.querySelectorAll('[data-qid][role="button"]').forEach(el => el.setAttribute('aria-pressed', String(el.getAttribute('data-qid') === chosen)))
@@ -193,7 +193,7 @@ export function DiagramView({ spec, onExplain }: { spec: DiagramSpec; onExplain?
   if (error) return <MermaidError code={code} error={error} />
   if (!svg) return <MermaidPending />
   return (
-    <div role="group" aria-label="Diagram" onKeyDown={onKeyDown} onFocus={onFocus} onBlur={() => host.current && paint(reg.current, host.current, sel, spec)} className="not-prose min-w-0 space-y-3">
+    <div role="group" aria-label="Diagram" onKeyDown={onKeyDown} onFocus={onFocus} onBlur={() => host.current && paint(reg.current, host.current, sel, spec, false)} className="not-prose min-w-0 space-y-3">
       <div className="min-w-0 space-y-2">
         <div ref={host} onClick={e => pick(e.target as Element)} data-testid="diagram-svg" className="overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
         <Legend />
