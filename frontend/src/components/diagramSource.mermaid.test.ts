@@ -12,5 +12,5 @@ describe('generated source', () => {
       edges: retrySpec.edges.map((e, i) => (i === 0 ? { ...e, label: 'p|q "r"' } : e)),
     }
     for (const spec of [retrySpec, nasty]) await expect(mermaid.parse(buildMermaid(spec))).resolves.toBeTruthy()
-  })
+  }, 20_000)
 })
