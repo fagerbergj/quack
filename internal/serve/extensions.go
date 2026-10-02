@@ -679,9 +679,10 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
 			}
 			handedOff = true
+			runCtx, cancelRun := beginExtRun(pinCtx, st, hub, chatID, turnID, req.Run.Timeout)
 			go func() {
 				defer done()
-				driveBoundExtensionRun(pinCtx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, *plan, req.Run.Timeout)
+				driveBoundExtensionRun(pinCtx, runCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, *plan)
 			}()
 			return nil
 		}
@@ -693,7 +694,8 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		if strings.TrimSpace(composed) == "" {
 			return fmt.Errorf("extensions.%s: dispatch composed an empty message (Ask.Message was %q)", name, req.Ask.Message)
 		}
-		go driveExtensionRun(runCtx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, composed, attachments, req.Run.Timeout)
+		driveCtx, cancelRun := beginExtRun(runCtx, st, hub, chatID, turnID, req.Run.Timeout)
+		go driveExtensionRun(runCtx, driveCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, composed, attachments)
 		return nil
 	}
 }
@@ -1191,9 +1193,8 @@ func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next ext
 
 // driveExtensionRun runs one dispatched turn to completion through the orchestrator's own LLM
 // turn (the unshaped/hint path), mirroring rest.Handler.runChat / github.Extension.dispatch.
-// timeout is Run.Timeout - zero means unbounded.
-func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID, message string, attachments []*genai.Part, timeout time.Duration) {
-	driveExtensionRunEvents(ctx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, timeout, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+func driveExtensionRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID, message string, attachments []*genai.Part) {
+	finishExtRun(ctx, runCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
 		// name doubles as the token.usage/cost "source" attribution - the
 		// extension's own registration name (github, remarkable, ...).
 		return orch.Run(runCtx, userID, chatID, name, message, attachments)
@@ -1202,8 +1203,8 @@ func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orch
 
 // driveBoundExtensionRun runs an already-built bound Plan to completion
 // through RunBoundPlan - no orchestrator LLM turn, no planner LLM call.
-func driveBoundExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, plan dag.Plan, timeout time.Duration) {
-	driveExtensionRunEvents(ctx, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, timeout, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+func driveBoundExtensionRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, plan dag.Plan) {
+	finishExtRun(ctx, runCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
 		return orch.RunBoundPlan(runCtx, userID, chatID, name, plan)
 	})
 }
@@ -1218,6 +1219,13 @@ func driveBoundExtensionRun(ctx context.Context, name string, orch *orchestrator
 // timeout>0 bounds runCtx itself (Run.Timeout) so TimedOut is observable
 // below - cancelRun (deferred) is what actually releases it either way.
 func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, timeout time.Duration, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
+	runCtx, cancelRun := beginExtRun(ctx, st, hub, chatID, turnID, timeout)
+	finishExtRun(ctx, runCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, run)
+}
+
+// beginExtRun registers the run with the hub and stamps it active. Dispatch calls it before
+// spawning the goroutine so a status read or shutdown drain right after the ack already sees the run.
+func beginExtRun(ctx context.Context, st *store.Store, hub *stream.Hub, chatID, turnID string, timeout time.Duration) (context.Context, context.CancelFunc) {
 	var runCtx context.Context
 	var cancelRun context.CancelFunc
 	if timeout > 0 {
@@ -1228,6 +1236,11 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	runCtx = stream.WithTurnID(runCtx, turnID)
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
+	return runCtx, cancelRun
+}
+
+// finishExtRun drains a begun run (see beginExtRun) and delivers its outcome.
+func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
 	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
 	defer eventLog.FinishRun(hub, chatID, turnID, cancelRun)
 
