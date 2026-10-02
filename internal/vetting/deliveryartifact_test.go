@@ -91,6 +91,9 @@ func TestRenderReviewFromArtifact_SeverityFallbackForHighlights(t *testing.T) {
 	if !strings.Contains(item.Body, "### Highlights") || !strings.Contains(item.Body, "a.go:10") {
 		t.Fatalf("Body = %q, want the Highlights table to include the Severity-labelled finding", item.Body)
 	}
+	if len(item.Comments) != 1 || item.Comments[0].Severity != "blocking" {
+		t.Fatalf("Comments = %+v, want the finding's Severity carried to the extension", item.Comments)
+	}
 }
 
 // TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd is #1198: the

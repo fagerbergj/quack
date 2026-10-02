@@ -229,6 +229,9 @@ type ReviewComment struct {
 	// SourceNode: the reviewer node that staged this finding in a fan-out
 	// review - lineage only, never rendered into the posted body.
 	SourceNode string
+	// Severity: the backing finding's severity label, passed to extensions
+	// because a write_finding body carries no label text.
+	Severity string
 }
 
 // DeliveryContext: staged set + clone coordinates for extension delivery.

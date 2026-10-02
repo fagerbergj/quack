@@ -473,7 +473,7 @@ func (a sdkDeliverAdapter) Deliver(ctx context.Context, dc vetting.DeliveryConte
 	for i, it := range dc.Items {
 		comments := make([]extsdk.ReviewComment, len(it.Comments))
 		for j, c := range it.Comments {
-			comments[j] = extsdk.ReviewComment{Path: c.Path, Line: c.Line, Body: c.Body}
+			comments[j] = extsdk.ReviewComment{Path: c.Path, Line: c.Line, Body: c.Body, Severity: c.Severity}
 		}
 		sdkItems[i] = extsdk.StagedDelivery{
 			Kind: extsdk.DeliveryKind(it.Kind), Branch: it.Branch, Title: it.Title, Body: it.Body,
