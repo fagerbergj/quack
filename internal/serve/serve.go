@@ -2185,8 +2185,8 @@ func startWorkspaceGC(ctx context.Context, cfg *config.Config, jail *workspace.J
 		}
 		return false
 	}
-	go workspace.RunGC(ctx, jail, gcCfg, gcActive, func(pctx context.Context, dir string) error {
-		return tools.PruneWorktree(pctx, jail.Root(), dir, gcCaps)
+	go workspace.RunGC(ctx, jail, gcCfg, gcActive, func(pctx context.Context, root, dir string) error {
+		return tools.PruneWorktree(pctx, root, dir, gcCaps)
 	})
 	return nil
 }

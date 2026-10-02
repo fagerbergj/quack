@@ -33,8 +33,9 @@ type GCConfig struct {
 // (raw chat id or its ChatDirName rewrite) has a run in flight. nil skips every chat.
 type ActiveChatFunc func(chatDir string) bool
 
-// WorktreePruner detaches a linked worktree before GC removes it. nil = remove-only.
-type WorktreePruner func(ctx context.Context, dir string) error
+// WorktreePruner detaches linked worktree dir before GC removes it; root bounds where its owning clone may live.
+// nil = remove-only.
+type WorktreePruner func(ctx context.Context, root, dir string) error
 
 // GCResult summarizes one sweep.
 type GCResult struct {
@@ -91,7 +92,7 @@ func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFun
 		res.BytesReclaimed += b
 	}
 	if cfg.ScratchTTL > 0 {
-		n, b := sweepBaselineTemp(ctx, cfg.ScratchTTL, cfg.BaselineTempDir, prune)
+		n, b := sweepBaselineTemp(ctx, jail.Root(), cfg.ScratchTTL, cfg.BaselineTempDir, prune)
 		res.ScratchRemoved += n
 		res.BytesReclaimed += b
 		n, b = sweepHomeTmp(cfg.ScratchTTL, jail)
@@ -144,7 +145,7 @@ func sweepChatScopes(ctx context.Context, jail *Jail, ttl time.Duration, isActiv
 				continue
 			}
 			sz := dirSize(scope)
-			pruneWorktreesUnder(ctx, scope, prune)
+			pruneWorktreesUnder(ctx, scope, scope, prune)
 			if err := jail.RemoveChatScope(userID, chatDir); err != nil {
 				slog.Warn("workspace gc: remove chat scope failed", "component", "workspace",
 					"user", userID, "chat", chatDir, "err", err)
@@ -158,7 +159,7 @@ func sweepChatScopes(ctx context.Context, jail *Jail, ttl time.Duration, isActiv
 }
 
 // sweepBaselineTemp removes orphaned baseline-check worktrees (quack-base-*) whose mtime predates ttl.
-func sweepBaselineTemp(ctx context.Context, ttl time.Duration, tempDir string, prune WorktreePruner) (removed int, bytes int64) {
+func sweepBaselineTemp(ctx context.Context, jailRoot string, ttl time.Duration, tempDir string, prune WorktreePruner) (removed int, bytes int64) {
 	if tempDir == "" {
 		tempDir = os.TempDir()
 	}
@@ -177,7 +178,7 @@ func sweepBaselineTemp(ctx context.Context, ttl time.Duration, tempDir string, p
 			continue
 		}
 		sz := dirSize(dir)
-		pruneWorktreesUnder(ctx, dir, prune)
+		pruneWorktreesUnder(ctx, jailRoot, dir, prune)
 		if err := RemoveAllForce(dir); err != nil {
 			slog.Warn("workspace gc: remove baseline scratch failed", "component", "workspace", "dir", dir, "err", err)
 			continue
@@ -298,17 +299,18 @@ func resetHomeDir(home string) error {
 	return os.MkdirAll(home, 0o700)
 }
 
-// pruneWorktreesUnder detaches linked worktrees before root removal. No-op when prune is nil.
-func pruneWorktreesUnder(ctx context.Context, root string, prune WorktreePruner) {
+// pruneWorktreesUnder detaches linked worktrees under dir before its removal, each owning clone bounded by cloneRoot.
+// No-op when prune is nil.
+func pruneWorktreesUnder(ctx context.Context, cloneRoot, dir string, prune WorktreePruner) {
 	if prune == nil {
 		return
 	}
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Name() != ".git" {
 			return nil
 		}
 		wt := filepath.Dir(path)
-		if perr := prune(ctx, wt); perr != nil {
+		if perr := prune(ctx, cloneRoot, wt); perr != nil {
 			slog.Debug("workspace gc: worktree prune failed; removing anyway", "component", "workspace", "dir", wt, "err", perr)
 		}
 		return nil

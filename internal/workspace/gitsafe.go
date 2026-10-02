@@ -1,7 +1,7 @@
 package workspace
 
 // Ceiling of GitCmd's repo pinning: where the kernel has Landlock it denies symlinks and alternates leading outside
-// the clone; without it they stay open. GC's jail-wide prune root stays open either way.
+// the clone; without it they stay open. GC's baseline-scratch prune keeps the jail-wide root.
 
 import (
 	"context"
