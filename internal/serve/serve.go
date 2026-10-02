@@ -737,6 +737,10 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
+	var err error
+	if b.decisions, err = decide.New(b.cfg.Decisions); err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, err
+	}
 	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef, b.decisions)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
@@ -960,9 +964,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 	taskStore, userStore, startSweeps, bootEventLog, err := b.initMemory(ctx, st, artifacts)
 	if err != nil {
-		return nil, nil, "", err
-	}
-	if b.decisions, err = decide.New(b.cfg.Decisions); err != nil {
 		return nil, nil, "", err
 	}
 	sdkExts, sdkTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, &shapesRef)
