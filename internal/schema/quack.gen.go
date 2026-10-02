@@ -935,6 +935,43 @@ type DagOutputItem struct {
 // DagOutputItemType defines model for DagOutputItem.Type.
 type DagOutputItemType string
 
+// DecisionList defines model for DecisionList.
+type DecisionList struct {
+	Data []DecisionRecord `json:"data"`
+
+	// QuackVersion The serving build, not necessarily the one that recorded each entry.
+	QuackVersion string `json:"quack_version"`
+}
+
+// DecisionRecord defines model for DecisionRecord.
+type DecisionRecord struct {
+	At time.Time `json:"at"`
+
+	// Baseline What quack's own logic decided; empty when the step was skipped.
+	Baseline      *string                        `json:"baseline,omitempty"`
+	ChatId        string                         `json:"chat_id"`
+	Confident     bool                           `json:"confident"`
+	Error         *string                        `json:"error,omitempty"`
+	Handler       string                         `json:"handler"`
+	InputTokens   *int                           `json:"input_tokens,omitempty"`
+	LatencyMs     float64                        `json:"latency_ms"`
+	Mode          string                         `json:"mode"`
+	NodeId        *string                        `json:"node_id,omitempty"`
+	Outcome       string                         `json:"outcome"`
+	Point         string                         `json:"point"`
+	Probabilities *map[string]map[string]float64 `json:"probabilities,omitempty"`
+
+	// Questions Model input questions; only with with_state=true.
+	Questions   interface{} `json:"questions,omitempty"`
+	Round       *string     `json:"round,omitempty"`
+	SkippedStep *string     `json:"skipped_step,omitempty"`
+
+	// State Model input state; only with with_state=true.
+	State interface{} `json:"state,omitempty"`
+	Top   *string     `json:"top,omitempty"`
+	TopP  *float64    `json:"top_p,omitempty"`
+}
+
 // DeleteMemoryBody defines model for DeleteMemoryBody.
 type DeleteMemoryBody struct {
 	// Reason Why this memory is being invalidated. Defaults to `"manual delete"` when omitted.
@@ -1694,6 +1731,19 @@ type DiffArtifactRevisionsParams struct {
 	To int `form:"to" json:"to"`
 }
 
+// ListDecisionsParams defines parameters for ListDecisions.
+type ListDecisionsParams struct {
+	// Since Only entries at or after this RFC 3339 time.
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+
+	// Point Only this decision point id.
+	Point *string `form:"point,omitempty" json:"point,omitempty"`
+
+	// Chat Only these chats (repeat for several).
+	Chat      *[]string `form:"chat,omitempty" json:"chat,omitempty"`
+	WithState *bool     `form:"with_state,omitempty" json:"with_state,omitempty"`
+}
+
 // ListMemoriesParams defines parameters for ListMemories.
 type ListMemoriesParams struct {
 	// Bucket Restrict to one bucket (e.g. `repo:NightsOut`, `role:coding`, `user:jason`). Omitted lists/searches every bucket.
@@ -2051,6 +2101,9 @@ type ServerInterface interface {
 	// Read-only, client-visible server config
 	// (GET /api/v1/config)
 	GetConfig(w http.ResponseWriter, r *http.Request)
+	// List recorded decision-point evaluations
+	// (GET /api/v1/decisions)
+	ListDecisions(w http.ResponseWriter, r *http.Request, params ListDecisionsParams)
 	// List enabled extensions for SPA nav
 	// (GET /api/v1/extensions)
 	ListExtensions(w http.ResponseWriter, r *http.Request)
@@ -2243,6 +2296,12 @@ func (_ Unimplemented) SubscribeChatStream(w http.ResponseWriter, r *http.Reques
 // Read-only, client-visible server config
 // (GET /api/v1/config)
 func (_ Unimplemented) GetConfig(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List recorded decision-point evaluations
+// (GET /api/v1/decisions)
+func (_ Unimplemented) ListDecisions(w http.ResponseWriter, r *http.Request, params ListDecisionsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3362,6 +3421,86 @@ func (siw *ServerInterfaceWrapper) GetConfig(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ListDecisions operation middleware
+func (siw *ServerInterfaceWrapper) ListDecisions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListDecisionsParams
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "since"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "point" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "point", r.URL.Query(), &params.Point, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "point"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "point", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "chat" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "chat", r.URL.Query(), &params.Chat, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "chat"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "with_state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "with_state", r.URL.Query(), &params.WithState, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "with_state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "with_state", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDecisions(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListExtensions operation middleware
 func (siw *ServerInterfaceWrapper) ListExtensions(w http.ResponseWriter, r *http.Request) {
 
@@ -4085,6 +4224,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/config", wrapper.GetConfig)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/decisions", wrapper.ListDecisions)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/extensions", wrapper.ListExtensions)

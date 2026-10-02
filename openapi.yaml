@@ -259,6 +259,53 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/decisions:
+    get:
+      operationId: listDecisions
+      summary: List recorded decision-point evaluations
+      description: |
+        Every `decision` ledger entry across all chats (one per intercept-point
+        evaluation, written by internal/decide), oldest first, backing `quack
+        decisions report` and `export`. `state` and `questions` (the model's
+        input) are included only with `with_state=true`. 404 when no ledger
+        store is configured.
+      parameters:
+        - name: since
+          in: query
+          description: Only entries at or after this RFC 3339 time.
+          schema:
+            type: string
+            format: date-time
+        - name: point
+          in: query
+          description: Only this decision point id.
+          schema:
+            type: string
+        - name: chat
+          in: query
+          description: Only these chats (repeat for several).
+          schema:
+            type: array
+            items:
+              type: string
+        - name: with_state
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: The decisions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionList"
+        "404":
+          description: Recording is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/chats/{chat_id}/recording:
     get:
       operationId: getChatRecording
@@ -2041,6 +2088,46 @@ components:
     # -------------------------------------------------------------------------
     # Ledger recording
     # -------------------------------------------------------------------------
+
+    DecisionRecord:
+      type: object
+      required: [chat_id, at, point, mode, handler, outcome, confident, latency_ms]
+      properties:
+        chat_id: {type: string}
+        node_id: {type: string}
+        round: {type: string}
+        at: {type: string, format: date-time}
+        point: {type: string}
+        mode: {type: string}
+        handler: {type: string}
+        outcome: {type: string}
+        confident: {type: boolean}
+        top: {type: string}
+        top_p: {type: number, format: double}
+        baseline: {type: string, description: "What quack's own logic decided; empty when the step was skipped."}
+        probabilities:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: {type: number, format: double}
+        skipped_step: {type: string, nullable: true}
+        input_tokens: {type: integer}
+        latency_ms: {type: number, format: double}
+        error: {type: string}
+        state: {description: "Model input state; only with with_state=true."}
+        questions: {description: "Model input questions; only with with_state=true."}
+
+    DecisionList:
+      type: object
+      required: [quack_version, data]
+      properties:
+        quack_version:
+          type: string
+          description: The serving build, not necessarily the one that recorded each entry.
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DecisionRecord"
 
     RecordingSummary:
       type: object

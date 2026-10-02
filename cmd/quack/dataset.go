@@ -103,7 +103,7 @@ func parseDateFlag(s string) (time.Time, error) {
 func langfuseGenClientFromConfig(cfg *config.Config) (*langfusegen.ClientWithResponses, error) {
 	sc, ok := cfg.Store(cfg.Prompts.Store)
 	if !ok || sc.Kind != "langfuse" {
-		return nil, fmt.Errorf("dataset/experiment: prompts.store %q is not a configured langfuse store", cfg.Prompts.Store)
+		return nil, fmt.Errorf("langfuse is not configured: prompts.store %q is not a langfuse store (needs stores.<name> kind: langfuse with url, public_key, secret_key)", cfg.Prompts.Store)
 	}
 	return langfuse.NewGenClient(sc.URL, sc.PublicKey, sc.SecretKey)
 }

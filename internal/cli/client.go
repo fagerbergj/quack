@@ -128,6 +128,27 @@ func (c *Client) ListRecordings(ctx context.Context) ([]schema.RecordingSummary,
 	return out.Data, nil
 }
 
+// ListDecisions fetches decision ledger entries via GET /api/v1/decisions. 404
+// (recording disabled) surfaces as ErrNotFound.
+func (c *Client) ListDecisions(ctx context.Context, f DecisionFilter, withState bool) (schema.DecisionList, error) {
+	q := url.Values{}
+	if !f.Since.IsZero() {
+		q.Set("since", f.Since.UTC().Format(time.RFC3339))
+	}
+	if f.Point != "" {
+		q.Set("point", f.Point)
+	}
+	for _, id := range f.Chats {
+		q.Add("chat", id)
+	}
+	if withState {
+		q.Set("with_state", "true")
+	}
+	var out schema.DecisionList
+	err := c.getJSON(ctx, "/api/v1/decisions?"+q.Encode(), &out)
+	return out, err
+}
+
 // GetVersion fetches the server's build version via GET /api/v1/config, for
 // `quack server list`'s optional version column. "" if the server predates
 // the version field.
