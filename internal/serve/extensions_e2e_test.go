@@ -161,7 +161,7 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := &config.Config{Workspace: config.WorkspaceConfig{Root: t.TempDir()}}
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "bogus-extension:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil)
+	_, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for an unconfigured/uncompiled extension name")
 	}
@@ -407,7 +407,7 @@ func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: false\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	customDataDir := filepath.Join(t.TempDir(), "custom-noop-data")
 	cfg := noopModulesConfig(t, workspaceRoot, "noop:\n  data_dir: "+customDataDir+"\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n  data_dir: \"\"\n  greeting: still works\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "chat:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil)
+	_, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for an extension name colliding with a reserved route")
 	}

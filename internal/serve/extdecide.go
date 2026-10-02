@@ -3,23 +3,30 @@ package serve
 import (
 	"context"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+
 	"github.com/fagerbergj/quack/internal/decide"
 )
 
-// extDecideFunc is the quack side of the proposed sdk.Host.Decide; the SDK has no
-// such field yet, so nothing mounts it until quack-extensions adds one.
-type extDecideFunc func(ctx context.Context, p decide.Point, state any, baseline string) (decide.Result, error)
-
-// extDecide confines an extension to its own ext:<plugin>/<name> points; a point
-// calls out only when decisions.points names it, and an error is always "no decision".
-func extDecide(d *decide.Decider, plugin string) extDecideFunc {
-	return func(ctx context.Context, p decide.Point, state any, baseline string) (decide.Result, error) {
-		id, err := decide.ExtPointID(plugin, p.ID)
+// extDecide mounts sdk.Host.Decide for one plugin, confined to its own
+// ext:<plugin>/<name> points; any error is "no decision" to the extension.
+func extDecide(d *decide.Decider, plugin string) func(context.Context, extsdk.DecideRequest) (extsdk.Decision, error) {
+	return func(ctx context.Context, req extsdk.DecideRequest) (extsdk.Decision, error) {
+		id, err := decide.ExtPointID(plugin, req.Point)
 		if err != nil {
-			return decide.Result{Point: p.ID, Outcome: decide.OutcomeDisabled, Err: err}, err
+			return extsdk.Decision{}, err
 		}
-		p.ID = id
-		r := d.DecideWith(ctx, p, state, baseline)
-		return r, r.Err
+		qs := make(map[string]decide.Question, len(req.Questions))
+		for k, q := range req.Questions {
+			qs[k] = decide.Question{Type: q.Type, Instructions: q.Instructions, Criteria: q.Criteria}
+		}
+		r := d.DecideWith(ctx, decide.Point{ID: id, Questions: qs, Primary: req.Primary, Restrictive: req.Restrictive}, req.State, req.Baseline)
+		if r.Err != nil {
+			return extsdk.Decision{}, r.Err
+		}
+		return extsdk.Decision{
+			Top: r.Top, TopP: r.TopP, Probabilities: r.Answers,
+			Outcome: string(r.Outcome), Act: r.Act(), Restrict: r.Restricts(),
+		}, nil
 	}
 }

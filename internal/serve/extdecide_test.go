@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/decide"
 )
@@ -31,25 +33,24 @@ func TestExtDecideConfinesAnExtensionToItsNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	point := func(id string) decide.Point {
-		return decide.Point{ID: id, Primary: "write", Questions: map[string]decide.Question{"write": {Type: "noul"}}}
+	req := func(id string) extsdk.DecideRequest {
+		return extsdk.DecideRequest{Point: id, Primary: "write", Questions: map[string]extsdk.DecisionQuestion{"write": {Type: "noul"}}, State: "push it now", Baseline: "false"}
 	}
 	github := extDecide(d, "github")
 
-	r, err := github(context.Background(), point("intent"), "push it now", "false")
-	if err != nil || r.Point != "ext:github/intent" || !r.Act() || r.Top != "true" {
+	r, err := github(context.Background(), req("intent"))
+	if err != nil || !r.Act || r.Top != "true" || r.Outcome != "act" || r.Probabilities["write"]["true"] != 0.97 {
 		t.Errorf("own point: %+v %v, want ext:github/intent acting on true", r, err)
 	}
-	if _, err := github(context.Background(), point("ext:sleeper/intent"), "s", ""); !errors.Is(err, decide.ErrNamespace) {
+	if _, err := github(context.Background(), req("ext:sleeper/intent")); !errors.Is(err, decide.ErrNamespace) {
 		t.Errorf("another extension's point: err = %v, want ErrNamespace", err)
 	}
-	if _, err := github(context.Background(), point("review"), "s", ""); !errors.Is(err, decide.ErrDisabled) {
+	if _, err := github(context.Background(), req("review")); !errors.Is(err, decide.ErrDisabled) {
 		t.Errorf("unconfigured point: err = %v, want ErrDisabled", err)
 	}
-	observeOnly := point("intent")
-	observeOnly.Modes = []string{"observe"}
-	if r, err := github(context.Background(), observeOnly, "s", ""); !errors.Is(err, decide.ErrDisabled) || r.Act() {
-		t.Errorf("mode the extension doesn't implement: %+v %v, want ErrDisabled", r, err)
+	var nilDecider *decide.Decider
+	if _, err := extDecide(nilDecider, "github")(context.Background(), req("intent")); !errors.Is(err, decide.ErrDisabled) {
+		t.Errorf("nil decider: err = %v, want ErrDisabled", err)
 	}
 	if calls.Load() != 1 {
 		t.Errorf("calls = %d, want only the own, enabled point to call out", calls.Load())

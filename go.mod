@@ -16,7 +16,7 @@ require (
 	github.com/fagerbergj/quack-extensions/github v0.16.2
 	github.com/fagerbergj/quack-extensions/noop v0.2.1
 	github.com/fagerbergj/quack-extensions/remarkable v0.3.2
-	github.com/fagerbergj/quack-extensions/sdk v0.16.0
+	github.com/fagerbergj/quack-extensions/sdk v0.17.0
 	github.com/fagerbergj/quack-extensions/sleeper v0.8.0
 	github.com/fagerbergj/quack-extensions/usage v0.3.4
 	github.com/glebarez/go-sqlite v1.23.0

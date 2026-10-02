@@ -508,6 +508,8 @@ type boot struct {
 	admission *dag.Admission
 	hooks     *shutdownHooks
 	cleanups  []func()
+	// decisions is built before the extensions so Host.Decide can close over it.
+	decisions *decide.Decider
 	// pristine is cfg before plugin seeding; a reload seeds a fresh copy of it.
 	pristine   *config.Config
 	seedOwners map[string]string // plugin-seeded agent -> plugin
@@ -735,7 +737,7 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
-	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef)
+	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef, b.decisions)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -850,11 +852,7 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 
 // assembles the orchestrator, re-enters resumed nodes, and starts the extensions and sweeps
 func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resumeNodes []store.ResumableNode, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
-	decisions, err := decide.New(b.cfg.Decisions)
-	if err != nil {
-		return nil, err
-	}
-	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, roster, judgeFactory, planJudge, decisions, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, setupFn, b.admission, artifactSchemas)
+	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, roster, judgeFactory, planJudge, b.decisions, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, setupFn, b.admission, artifactSchemas)
 	if err != nil {
 		return nil, err
 	}
@@ -962,6 +960,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 	taskStore, userStore, startSweeps, bootEventLog, err := b.initMemory(ctx, st, artifacts)
 	if err != nil {
+		return nil, nil, "", err
+	}
+	if b.decisions, err = decide.New(b.cfg.Decisions); err != nil {
 		return nil, nil, "", err
 	}
 	sdkExts, sdkTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, &shapesRef)
