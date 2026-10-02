@@ -51,6 +51,15 @@ A noul question's options are `true` and `false`; a score question's options are
 | --- | --- | --- | --- |
 | `plan.accept` | `observe` | `accept` (noul, primary): should a reviewer accept this plan step? | The user's request and the plan summary the plan judge sees. It runs beside the plan judge and never changes the judge's verdict. |
 
+The [Sleeper extension](https://github.com/fagerbergj/quack-extensions/tree/main/sleeper#decision-points) declares four points, asked one at a time after a `lineup`, `waivers` or `trade` job run ends `done`, from that job's artifact. They never change an artifact or a dispatch. Each state carries the player rows (id, name, position, team, opponent, injury and practice status, projection, floor and ceiling, recent points) and the analyst's reasoning for that row, without its verdict, `replaces`, confidence or rank, plus `chat_id`, `league_id`, `season` and `week` for joining against actual points. The calls run after the run, outside its context, so they are traced as `quack.decision` spans but have no chat to land in the ledger under.
+
+| Point | Modes | Questions | Restrictive | Baseline |
+| --- | --- | --- | --- | --- |
+| `ext:sleeper/lineup_change` | `observe` | `swap` (noul, primary): should the proposed player start in this slot instead of the current one? | none | `true`, asked per recommended swap. |
+| `ext:sleeper/waiver_pickup` | `observe` | `pickup` (noul, primary): is this add worth its drop and the waiver priority or FAAB? | none | `true` for a recommended add, `false` for one the scout checked and passed on. |
+| `ext:sleeper/waiver_priority` | `observe` | `priority` (score, primary): five levels, fifth claim or later (`0`) to first claim (`4`) | none | `5 - min(rank, 5)`, asked per ranked add when two or more are ranked. |
+| `ext:sleeper/trade_accept` | `observe` | `accept` (noul, primary): should this trade happen exactly as written? | none | `true` when the analyst's verdict is `send`, `false` for `decline` or `counter`. |
+
 Points are built once at boot, so changing `decisions:` needs a restart.
 
 ## Recording

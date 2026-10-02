@@ -426,7 +426,7 @@ plugins:
     - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline
     - .agents/plugins/usage                 # manifest for the compiled-in usage extension
     # Pinned to the same tag as go.mod's quack-extensions/sleeper; its agents/workflows seed only once extensions.sleeper below is configured.
-    - github:fagerbergj/quack-extensions@sleeper/v0.8.0#sleeper/plugin
+    - github:fagerbergj/quack-extensions@sleeper/v0.9.0#sleeper/plugin
     - .agents/plugins/github                # its code-implementer/reviewer/explorer agents seed only once extensions.github below is configured
 
 # workflows: a top-level key (not nested under skills:) that either teaches
