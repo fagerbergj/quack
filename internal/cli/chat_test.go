@@ -777,6 +777,10 @@ func TestNodeVerbs409AlreadyFinished(t *testing.T) {
 		"retry":  RunNodeRetry(ctx, io.Discard, srv.URL, "c1", "n2", "", false),
 		"pause":  RunNodePause(ctx, io.Discard, srv.URL, "c1", "n2", false),
 		"resume": RunNodeResume(ctx, io.Discard, srv.URL, "c1", "n2", false),
+		"queue":  RunNodeQueue(ctx, io.Discard, srv.URL, "c1", "n2", "hi", false),
+		"edit":   RunNodeQueueEdit(ctx, io.Discard, srv.URL, "c1", "n2", "m1", "hi", false),
+		"remove": RunNodeQueueRemove(ctx, io.Discard, srv.URL, "c1", "n2", "m1", false),
+		"task":   RunNodeEditTask(ctx, io.Discard, srv.URL, "c1", "n2", "t", false),
 	} {
 		if err == nil || err.Error() != "node n2 already finished (done)" {
 			t.Errorf("%s: got %v, want %q", name, err, "node n2 already finished (done)")
